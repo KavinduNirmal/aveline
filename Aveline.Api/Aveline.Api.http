@@ -1,0 +1,6 @@
+@Aveline.Api_HostAddress = http://localhost:5091
+
+GET {{Aveline.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

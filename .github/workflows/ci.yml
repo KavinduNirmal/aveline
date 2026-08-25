@@ -1,0 +1,94 @@
+name: Aveline CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Build & Test — ASP.NET Core API
+  # ---------------------------------------------------------------------------
+  build-api:
+    name: Build & Test API
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore dependencies
+        run: dotnet restore Aveline.Api/Aveline.Api.csproj
+
+      - name: Build
+        run: dotnet build Aveline.Api/Aveline.Api.csproj --no-restore -c Release
+
+      # Uncomment when tests are added:
+      # - name: Test
+      #   run: dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj --no-build -c Release --verbosity normal
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Lint — Python Agent Service
+  # ---------------------------------------------------------------------------
+  lint-python:
+    name: Lint Python Agent Service
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Run ruff lint
+        run: ruff check agnet-service/app/
+        continue-on-error: true # Non-blocking until codebase is established
+
+      # Uncomment when tests are added:
+      # - name: Run pytest
+      #   run: |
+      #     pip install -r agnet-service/requirements.txt
+      #     pytest agnet-service/tests/ -v
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Analyze — Flutter Mobile App
+  # ---------------------------------------------------------------------------
+  analyze-flutter:
+    name: Analyze Flutter App
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "stable"
+          channel: "stable"
+
+      - name: Flutter pub get
+        run: flutter pub get
+        working-directory: frontend/aveline_mobile
+
+      - name: Flutter analyze
+        run: flutter analyze --no-fatal-infos
+        working-directory: frontend/aveline_mobile
+        continue-on-error: true # Non-blocking until codebase is established
+
+      # Uncomment when tests are added:
+      # - name: Flutter test
+      #   run: flutter test
+      #   working-directory: frontend/aveline_mobile

@@ -1,0 +1,34 @@
+# Core runtime
+fastapi
+uvicorn[standard]
+
+# LangGraph & LangChain
+langgraph
+langchain
+langchain-openai
+langchain-community
+
+# Database
+psycopg2-binary
+pgvector
+sqlalchemy[asyncio]
+asyncpg
+
+# Config & validation
+pydantic
+pydantic-settings
+python-dotenv
+
+# HTTP client
+httpx
+
+# LLM provider
+openai
+
+# Testing
+pytest
+pytest-asyncio
+respx
+
+# Linting (dev)
+ruff

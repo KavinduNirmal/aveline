@@ -1,0 +1,83 @@
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL with pgvector extension
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: aveline_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-aveline}
+      POSTGRES_USER: ${POSTGRES_USER:-aveline}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aveline}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Redis — caching layer
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: aveline_redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # ASP.NET Core Web API
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: ./Aveline.Api
+      dockerfile: Dockerfile
+    container_name: aveline_api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-5000}:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__DefaultConnection: >-
+        Host=postgres;Port=5432;Database=${POSTGRES_DB:-aveline};
+        Username=${POSTGRES_USER:-aveline};Password=${POSTGRES_PASSWORD}
+      Redis__ConnectionString: redis:6379
+      # Add other env vars here (Clerk, WhatsApp, payment gateway keys, etc.)
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # Python Agent Service (FastAPI + LangGraph)
+  # ---------------------------------------------------------------------------
+  agent:
+    build:
+      context: ./agnet-service
+      dockerfile: Dockerfile
+    container_name: aveline_agent
+    restart: unless-stopped
+    ports:
+      - "${AGENT_PORT:-8000}:8000"
+    environment:
+      DATABASE_URL: >-
+        postgresql+asyncpg://${POSTGRES_USER:-aveline}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aveline}
+      # Add other env vars here (OpenAI key, etc.)
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+    driver: local

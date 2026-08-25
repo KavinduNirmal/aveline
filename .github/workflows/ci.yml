@@ -2,23 +2,61 @@ name: Aveline CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, master, development]
   pull_request:
-    branches: [main]
+    branches: [main, master, development]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Job 1: Build & Test — ASP.NET Core API
+  # Job 1: Repository Hygiene (Locks, Env, Secrets)
+  # ---------------------------------------------------------------------------
+  hygiene:
+    name: Repository Hygiene & Lockfile Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify only bun lockfile exists
+        run: |
+          echo "Checking for disallowed package manager lockfiles..."
+          DISALLOWED=$(find . -name "package-lock.json" -o -name "yarn.lock" -o -name "pnpm-lock.yaml" -o -name "pnpm-lock.yml" -o -name "npm-shrinkwrap.json" | grep -v node_modules || true)
+          if [ -n "$DISALLOWED" ]; then
+            echo "::error::Disallowed lockfiles found in repository. Only bun.lock / bun.lockb is permitted:"
+            echo "$DISALLOWED"
+            exit 1
+          fi
+          echo "✓ Lockfile hygiene passed"
+
+      - name: Verify no .env files committed
+        run: |
+          echo "Checking for committed .env files..."
+          ENV_FILES=$(find . -name ".env" -o -name ".env.local" -o -name ".env.production" -o -name ".env.development" | grep -v "\.env\.example" || true)
+          if [ -n "$ENV_FILES" ]; then
+            echo "::error::Committed environment file(s) detected:"
+            echo "$ENV_FILES"
+            exit 1
+          fi
+          echo "✓ No .env files found"
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Build & Test — ASP.NET Core API
   # ---------------------------------------------------------------------------
   build-api:
     name: Build & Test API
     runs-on: ubuntu-latest
+    needs: hygiene
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup .NET
+      - name: Setup .NET SDK
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
@@ -26,22 +64,19 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore Aveline.Api/Aveline.Api.csproj
 
-      - name: Build
+      - name: Build API
         run: dotnet build Aveline.Api/Aveline.Api.csproj --no-restore -c Release
 
-      # Uncomment when tests are added:
-      # - name: Test
-      #   run: dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj --no-build -c Release --verbosity normal
-
   # ---------------------------------------------------------------------------
-  # Job 2: Lint — Python Agent Service
+  # Job 3: Lint & Verify — Python Agent Service
   # ---------------------------------------------------------------------------
   lint-python:
     name: Lint Python Agent Service
     runs-on: ubuntu-latest
+    needs: hygiene
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Python
@@ -49,28 +84,25 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install ruff
-        run: pip install ruff
+      - name: Install dependencies & linter
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff -r agnet-service/requirements.txt
 
-      - name: Run ruff lint
+      - name: Run Ruff Lint
         run: ruff check agnet-service/app/
-        continue-on-error: true # Non-blocking until codebase is established
-
-      # Uncomment when tests are added:
-      # - name: Run pytest
-      #   run: |
-      #     pip install -r agnet-service/requirements.txt
-      #     pytest agnet-service/tests/ -v
+        continue-on-error: true
 
   # ---------------------------------------------------------------------------
-  # Job 3: Analyze — Flutter Mobile App
+  # Job 4: Analyze — Flutter Mobile App
   # ---------------------------------------------------------------------------
   analyze-flutter:
     name: Analyze Flutter App
     runs-on: ubuntu-latest
+    needs: hygiene
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Flutter
@@ -79,16 +111,11 @@ jobs:
           flutter-version: "stable"
           channel: "stable"
 
-      - name: Flutter pub get
+      - name: Install Flutter dependencies
         run: flutter pub get
         working-directory: frontend/aveline_mobile
 
-      - name: Flutter analyze
+      - name: Analyze Flutter codebase
         run: flutter analyze --no-fatal-infos
         working-directory: frontend/aveline_mobile
-        continue-on-error: true # Non-blocking until codebase is established
-
-      # Uncomment when tests are added:
-      # - name: Flutter test
-      #   run: flutter test
-      #   working-directory: frontend/aveline_mobile
+        continue-on-error: true

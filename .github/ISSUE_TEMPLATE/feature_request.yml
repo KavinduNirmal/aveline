@@ -1,0 +1,47 @@
+name: Feature Request
+description: Propose a new feature or enhancement for Aveline
+title: "[Feature]: "
+labels: ["enhancement", "gitflow:feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing a new feature! Please fill out the details below.
+  - type: dropdown
+    id: slice
+    attributes:
+      label: Vertical Slice
+      description: Which vertical slice does this feature belong to?
+      options:
+        - "Slice 1: Customer Concierge & Memory (Student 1)"
+        - "Slice 2: Visual Intelligence & Sourcing (Student 2)"
+        - "Slice 3: Commerce Validation & Optimization (Student 3)"
+        - "Cross-Cutting / Shared Infrastructure"
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / Use Case
+      description: What problem does this solve?
+      placeholder: As an associate / boutique owner, I want to...
+    validations:
+      required: true
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: Proposed Solution & Technical Approach
+      description: Detail the expected changes across API, Agent, Database, or UI.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance Criteria
+      description: List the testable criteria for this feature to be considered done.
+      placeholder: |
+        - [ ] API endpoint returns 200 with expected response model
+        - [ ] Unit / Integration tests pass
+        - [ ] Documented in README and OpenAPI spec
+    validations:
+      required: true

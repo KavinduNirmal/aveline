@@ -11,7 +11,7 @@ Ensure you have the following installed on your machine:
 - **Package Manager**: [Bun](https://bun.sh/) _(Recommended)_, [pnpm](https://pnpm.io/), or `npm`
 - **.NET SDK**: .NET 10 SDK (for `Aveline.Api/`)
 - **Python**: Python 3.12+ (for `agnet-service/`)
-- **Flutter**: Flutter 3.13+ / Dart 3.13+ (for `frontend/aveline_mobile/`)
+- **Flutter**: Latest stable Flutter / Dart SDK 3.13+ (for `frontend/aveline_mobile/`)
 - **Docker & Docker Compose**: For local PostgreSQL (pgvector) and Redis instances
 - **Git**: Configured with your university/GitHub credentials
 
@@ -88,7 +88,9 @@ dotnet restore
 dotnet run
 ```
 
-- Swagger / OpenAPI endpoint: `http://localhost:5000/openapi/v1.json`
+- Swagger / OpenAPI endpoint:
+  - `dotnet run` (local): `http://localhost:5091/openapi/v1.json`
+  - `docker compose up api` (host-mapped): `http://localhost:5000/openapi/v1.json`
 
 ### Python Agentic AI Service (`agnet-service/`)
 

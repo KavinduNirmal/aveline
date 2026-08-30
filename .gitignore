@@ -170,8 +170,6 @@ build/
 # Dart tool generated
 .dart_tool/
 .packages
-pubspec.lock
-# Keep pubspec.lock for apps (remove the above line if you want to track it)
 
 # Generated files
 *.g.dart

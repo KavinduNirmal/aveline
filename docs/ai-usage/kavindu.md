@@ -236,6 +236,26 @@ Stack decided with user: **Provider (ChangeNotifier) + dio + go_router**, matchi
 - `flutter build apk --debug` **failed in the native Gradle step**: the machine only has JDK 26 (`/usr/lib/jvm/java-26-openjdk`), and AGP 9.1.0's `JdkImageTransform`/`jlink` cannot run under it (`/home/kavindu/Android/platforms/android-36/core-for-system-modules.jar` transform error). Pre-existing toolchain limitation, not a code error — Dart code compiles and is verified by analyze + tests. Fix requires installing JDK 21 (or older) and pointing Gradle at it.
 - No changes committed; #8/#9 pending user review to close.
 
+### Follow-up (same session): Vite scaffold + Issues #10/#11 — Flutter route-guard tests + Clerk in the React dashboard
+
+- **Scaffolded the web dashboard** (`frontend/web/`): Vite 8 + React 19 + TypeScript (via `bun create vite`), plus `@clerk/react@6.14.8`, `react-router-dom@7.18.3`, `axios@1.20.0` (bun package manager, matching the repo's `bun.lock` convention). Replaced the template demo with a real app structure:
+  - `src/main.tsx` — `ClerkProvider` (signInUrl/signUpUrl) > `BrowserRouter` > `App`.
+  - `src/App.tsx` — route table: `/`, `/sign-in/*`, `/sign-up/*`; protected tree via `ProtectedRoute`.
+  - `src/components/` — `ProtectedRoute` (`useAuth`, redirects to `/sign-in`), `SignOutButton` (`useClerk().signOut(() => navigate(...))`).
+  - `src/routes/` — `RootLayout` (header, identity, sign-out), `Dashboard`, `SignInPage`/`SignUpPage` (Clerk prebuilt components with `fallbackRedirectUrl="/"`).
+  - `src/lib/` — `env.ts` (typed env: `VITE_CLERK_PUBLISHABLE_KEY`, `VITE_API_BASE_URL`), `api.ts` (axios client for #13).
+  - `.env.example` + gitignored `.env.local` (real publishable key from root `.env.local`); `index.html` title/meta; clean `index.css`.
+- **#11 (Clerk React SDK)** implemented by this scaffold: sign-in/sign-up UI, session persistence + logout via Clerk, protected dashboard.
+- **#10 (Flutter route guards)**: the guard logic already shipped in #8/#9; hardened it for testability — `RouteGuards.redirectForAuth` now takes just `matchedLocation` (decoupled from `GoRouterState`) and added `test/core/router/route_guards_test.dart` (4 cases: unauth → redirect to `/auth`, unauth on auth screen → no redirect, auth on protected screen → no redirect, auth on auth screen → redirect home).
+- Docs: `frontend/web/README.md`, updated `README.md` (web stack row) and `GET_STARTED.md` (web run instructions). Note: `@clerk/react` v6 removed provider-level `afterSignInUrl/afterSignUpUrl` — redirects are now component-level `fallbackRedirectUrl`.
+
+### Verification (scaffold + #10/#11)
+
+- `bun run build` (tsc -b + vite build): **passes** (98 modules, 360 kB JS / 108 kB gzip).
+- `bun run lint` (oxlint): passes.
+- `flutter analyze`: no issues; `flutter test`: **17 passed** (13 prior + 4 route-guard tests).
+- No changes committed; web scaffold + #10/#11 pending user review to close.
+
 
 
 

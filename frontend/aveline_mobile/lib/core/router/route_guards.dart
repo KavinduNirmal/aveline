@@ -11,11 +11,14 @@ abstract final class RouteGuards {
   /// Redirects unauthenticated users to the sign-in screen and signed-in
   /// users away from the sign-in screen. Returns `null` when no redirect is
   /// needed.
+  ///
+  /// Takes only [matchedLocation] (a `GoRouterState` string) so the rule stays
+  /// free of router internals and is trivially testable.
   static String? redirectForAuth(
-    GoRouterState state, {
+    String matchedLocation, {
     required bool isSignedIn,
   }) {
-    final atAuthScreen = state.matchedLocation == AppRoutes.auth;
+    final atAuthScreen = matchedLocation == AppRoutes.auth;
 
     if (!isSignedIn && !atAuthScreen) {
       return AppRoutes.auth;

@@ -92,7 +92,7 @@ graph TD
 | **Database** | PostgreSQL 16 + `pgvector` | Relational business data + vector embeddings for semantic memory |
 | **Cache** | Redis 7 | High-performance session & query caching |
 | **Mobile App** | Flutter (Dart SDK 3.13+) | Boutique floor associate mobile interface (Clean Architecture) |
-| **Web Dashboard** | React / Vite *(TBD)* | Boutique owner & manager dashboard for approvals, analytics, and rules |
+| **Web Dashboard** | React 19 / Vite 8 + TypeScript (`@clerk/react`, React Router) | Boutique owner & manager dashboard for approvals, analytics, and rules |
 | **Authentication** | Clerk | Unified JWT authentication & role-based authorization |
 | **Package Management** | Bun | Fast package execution and deterministic lockfile management (`bun.lock`) |
 | **CI/CD** | GitHub Actions | Automated multi-project compilation, linting, analysis, and quality gates |

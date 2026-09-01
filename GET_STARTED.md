@@ -124,6 +124,21 @@ flutter run \
 On sign-in the app persists the Clerk session; tokens are attached to API
 requests automatically and a 401 triggers a token refresh, then sign-out.
 
+### Web Admin Dashboard (`frontend/web`)
+
+```bash
+cd frontend/web
+bun install
+cp .env.example .env.local   # fill in VITE_CLERK_PUBLISHABLE_KEY
+bun dev
+```
+
+- `VITE_CLERK_PUBLISHABLE_KEY` (**required**) — Clerk publishable key (`pk_...`).
+- `VITE_API_BASE_URL` (optional) — defaults to `http://localhost:5091`.
+
+Routes: `/sign-in`, `/sign-up`, and `/` (dashboard, protected). Sessions persist
+across reloads via Clerk.
+
 ---
 
 ## 4. Git Flow & Contribution Rules

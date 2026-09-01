@@ -76,7 +76,7 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
           : AppRoutes.auth,
       refreshListenable: widget.clerkAuthState,
       redirect: (context, state) => RouteGuards.redirectForAuth(
-        state,
+        state.matchedLocation,
         isSignedIn: _authRepository.isSignedIn,
       ),
       routes: [

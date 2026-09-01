@@ -277,6 +277,22 @@ Applied the new brand identity in `.agents/brain/DESIGN.md` to both frontends. P
 - Flutter: `flutter analyze` no issues; `flutter test` **17 passed**.
 - No changes committed; theming pending user review.
 
+### Follow-up (same session): Issue #12 — protect admin routes and enforce admin role
+
+Implemented in the Vite dashboard (`frontend/web/`):
+
+- **`src/lib/auth.ts`** — `AvelineClaims` type, `decodeJwtPayload` (base64url → JSON, UTF-8 safe), and `hasAdminRole`. The admin set mirrors the backend's **`Managers` policy** exactly (`manager`, `owner`, `org:manager`, `org:owner`, `org:admin` — from `Aveline.Api/Configurations/AuthorizationConfiguration.cs` / `Roles.cs`), matching either `user_role` or `org_role`, case-insensitively.
+- **`src/components/RequireAdmin.tsx`** — route guard: `useAuth().getToken({ template: 'jwt-aveline-v1' })`, decodes claims, redirects non-admins to `/forbidden`; guarded against refetch loops (`isAdmin === null` gate) and unmount (cancellation flag).
+- **`src/routes/ForbiddenPage.tsx`** — branded 403 card ("No access") with sign-out; routed under the signed-in `RootLayout`.
+- **`src/components/PageLoader.tsx`** — extracted shared loading state (now reused by `ProtectedRoute` and `RequireAdmin`).
+- **`src/App.tsx`** — `/` sits behind `ProtectedRoute` > `RootLayout` > `RequireAdmin`; `/forbidden` inside the signed-in shell.
+- **Tests:** added Vitest (`bun add -d vitest`, `test` script) with `src/lib/auth.test.ts` — 13 cases covering claim decoding (incl. malformed token) and the admin role matrix (owner/manager/admin → allow; associate/member → deny; user_role path; case-insensitivity; missing roles).
+
+### Verification (#12)
+
+- `bun run build` passes; `bun run lint` passes (2 pre-existing shadcn fast-refresh warnings); `bun run test` → **13 passed**.
+- No changes committed; #12 pending user review to close.
+
 
 
 

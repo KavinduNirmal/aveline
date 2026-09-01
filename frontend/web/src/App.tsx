@@ -1,7 +1,9 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 
 import { ProtectedRoute } from './components/ProtectedRoute'
+import { RequireAdmin } from './components/RequireAdmin'
 import { Dashboard } from './routes/Dashboard'
+import { ForbiddenPage } from './routes/ForbiddenPage'
 import { RootLayout } from './routes/RootLayout'
 import { SignInPage } from './routes/SignInPage'
 import { SignUpPage } from './routes/SignUpPage'
@@ -11,7 +13,10 @@ export default function App() {
     <Routes>
       <Route element={<ProtectedRoute />}>
         <Route element={<RootLayout />}>
-          <Route path="/" element={<Dashboard />} />
+          <Route element={<RequireAdmin />}>
+            <Route path="/" element={<Dashboard />} />
+          </Route>
+          <Route path="/forbidden" element={<ForbiddenPage />} />
         </Route>
       </Route>
 

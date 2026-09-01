@@ -43,6 +43,7 @@ Environment:
 | `bun dev` | Start the Vite dev server |
 | `bun run build` | Type-check (`tsc -b`) and production build |
 | `bun run lint` | oxlint |
+| `bun run test` | Vitest unit tests |
 | `bun run preview` | Preview the production build |
 
 ## Structure
@@ -62,5 +63,13 @@ src/
 - `/sign-in`, `/sign-up` — Clerk prebuilt components (multi-step flows via `/*` wildcard).
 - Everything else sits behind `ProtectedRoute`, which redirects unauthenticated
   users to `/sign-in`. On sign-in/up the user lands on `/` (dashboard).
+- Admin routes sit behind `RequireAdmin`, which decodes the `jwt-aveline-v1`
+  token and allows only owner/manager roles (matching the API's `Managers`
+  policy). Non-admins are redirected to `/forbidden` (403).
 - Session persistence, refresh, and sign-out are handled by Clerk.
-- Role-based admin enforcement is Issue #12; the JWT API interceptor is Issue #13.
+- The JWT API interceptor is Issue #13.
+
+## Testing
+
+`bun run test` runs Vitest unit tests (JWT claim decoding + role checks in
+`src/lib/auth.test.ts`).

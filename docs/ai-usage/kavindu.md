@@ -92,7 +92,26 @@
 - Created `docs/architecture/authentication.md` with C4 context + container diagrams, sequence diagrams for login and an authenticated API call (including internal agent call), and the role model (`user_role` vs `org_role`).
 - Created `docs/ADR/ADR-007-clerk-authentication.md` (template-compliant): Clerk as identity provider; `JwtBearer` + Clerk JWKS for validation; service-to-service shared-secret decision deferred to #18.
 - Updated `docs/ADR/README.md` to list ADR-007.
-- No changes committed; awaiting user review before closing #7 and starting #14.
+
+### Follow-up (same session): Issue #14 — .NET backend JWT auth
+
+- Added `Microsoft.AspNetCore.Authentication.JwtBearer` (10.0.11) to `Aveline.Api.csproj`.
+- Rewrote `Program.cs`: `AddAuthentication().AddJwtBearer()` against the Clerk **Authority** (OIDC discovery → JWKS), with issuer/lifetime/signing-key validation. Audience validation disabled because Clerk `jwt-aveline-v1` template tokens carry no `aud` claim (instance signing key already scopes tokens). Claims: `NameClaimType = NameIdentifier` (sub), and `OnTokenValidated` exposes `user_role` + `org_role` as `ClaimTypes.Role` so `[Authorize(Roles=...)]` works for both. Added protected `GET /api/auth/claims` verification endpoint.
+- Added `Clerk:Authority` to `appsettings.Development.json` (dev Frontend API URL; overridable via `Clerk__Authority`).
+- Documented `Clerk__Authority` in `Aveline.Api/.env.example`; added a `.http` request for the claims endpoint.
+- **Refactor (user request):** moved JwtBearer + authorization setup out of `Program.cs` into `Aveline.Api/Configurations/AuthenticationConfiguration.cs` (`AddAvelineAuthentication(this IServiceCollection, IConfiguration)`). `Program.cs` is now concise (endpoints only). Re-verified: no token → 401, valid fresh token → 200 with `roles: ["associate","org:admin"]`.
+
+### Verification (Issue #14)
+
+- Ran the API locally; `GET /api/auth/claims`:
+  - no token → **401**
+  - garbage token → **401**
+  - valid token (minted from `jwt-aveline-v1` via Clerk Backend API) → **200**, `userId: user_3Ij3bVkA6VdraN15mEnh5782F48`, `roles: ["associate"]`
+- Created a test org + `org:admin` membership; fresh token carried `org_id`/`org_role: org:admin`/`org_slug`; API returned `roles: ["associate","org:admin"]`.
+- `dotnet build` 0 errors (only pre-existing NU1903 warning).
+- Test data left in dev instance: user `aveline_test1` (role `associate`), org `Aveline Boutique Colombo` — reused by later auth issues (#15/#16/#22).
+- No changes committed; awaiting user review before closing #14 and starting #15.
+
 
 
 

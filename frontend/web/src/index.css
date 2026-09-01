@@ -1,108 +1,155 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Aveline — "Serene Concierge" brand (see .agents/brain/DESIGN.md).
+ * Colors, typography and radius follow the design tokens; layout spacing does not.
+ */
 :root {
-  --brand: #7b4b6f;
-  --brand-strong: #6a3f61;
-  --surface: #ffffff;
-  --background: #f6f4f6;
-  --text: #1f1b1e;
-  --muted: #6b6468;
-  --border: #e6e0e4;
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  line-height: 1.5;
-  color: var(--text);
-  background-color: var(--background);
+  --radius: 1rem;
+
+  --background: #fff8f7;
+  --foreground: #1e1b1b;
+
+  --card: #ffffff;
+  --card-foreground: #1e1b1b;
+
+  --popover: #ffffff;
+  --popover-foreground: #1e1b1b;
+
+  --primary: #7a303f;
+  --primary-foreground: #ffffff;
+
+  --secondary: #e6dedd;
+  --secondary-foreground: #4a4645;
+
+  --muted: #f5eceb;
+  --muted-foreground: #534244;
+
+  --accent: #f5eceb;
+  --accent-foreground: #1e1b1b;
+
+  --destructive: #ba1a1a;
+  --destructive-foreground: #ffffff;
+
+  --border: #e9e0e0;
+  --input: #d9c1c3;
+  --ring: #5d1a29;
+
+  /* Agent states: commerce maroon, visual gold, memory rose, plus neutrals. */
+  --chart-1: #7a303f;
+  --chart-2: #c9a227;
+  --chart-3: #b0566b;
+  --chart-4: #d5c2c2;
+  --chart-5: #534646;
+
+  --sidebar: #f5eceb;
+  --sidebar-foreground: #1e1b1b;
+  --sidebar-primary: #7a303f;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e6dedd;
+  --sidebar-accent-foreground: #1e1b1b;
+  --sidebar-border: #e9e0e0;
+  --sidebar-ring: #5d1a29;
 }
 
-* {
-  box-sizing: border-box;
+.dark {
+  --background: #1e1b1b;
+  --foreground: #f8efee;
+
+  --card: #342f2f;
+  --card-foreground: #f8efee;
+
+  --popover: #342f2f;
+  --popover-foreground: #f8efee;
+
+  --primary: #ffb2bc;
+  --primary-foreground: #3e0214;
+
+  --secondary: #625d5d;
+  --secondary-foreground: #f8efee;
+
+  --muted: #453e3f;
+  --muted-foreground: #d9c1c3;
+
+  --accent: #453e3f;
+  --accent-foreground: #f8efee;
+
+  --destructive: #ffb4ab;
+  --destructive-foreground: #690005;
+
+  --border: #453e3f;
+  --input: #453e3f;
+  --ring: #ffb2bc;
+
+  --chart-1: #ffb2bc;
+  --chart-2: #e0b64c;
+  --chart-3: #b0566b;
+  --chart-4: #d5c2c2;
+  --chart-5: #c6b4b4;
+
+  --sidebar: #2a2324;
+  --sidebar-foreground: #f8efee;
+  --sidebar-primary: #ffb2bc;
+  --sidebar-primary-foreground: #3e0214;
+  --sidebar-accent: #453e3f;
+  --sidebar-accent-foreground: #f8efee;
+  --sidebar-border: #453e3f;
+  --sidebar-ring: #ffb2bc;
 }
 
-body {
-  margin: 0;
-  min-height: 100vh;
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --font-sans:
+    'Hanken Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-serif: 'Playfair Display', ui-serif, Georgia, serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-#root {
-  min-height: 100vh;
-}
-
-.app-shell {
-  display: flex;
-  flex-direction: column;
-  min-height: 100vh;
-}
-
-.app-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.75rem 1.5rem;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-}
-
-.brand {
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--brand);
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-.user-name {
-  font-size: 0.9rem;
-  color: var(--muted);
-}
-
-.sign-out-button {
-  padding: 0.4rem 0.9rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
-  cursor: pointer;
-  font: inherit;
-  color: var(--text);
-}
-
-.sign-out-button:hover {
-  border-color: var(--brand);
-  color: var(--brand);
-}
-
-.app-content {
-  flex: 1;
-  padding: 1.5rem;
-  max-width: 960px;
-  width: 100%;
-  margin: 0 auto;
-}
-
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 1.5rem;
-}
-
-.muted {
-  color: var(--muted);
-}
-
-.auth-page {
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  padding: 3rem 1rem;
-}
-
-.page-loader {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 100vh;
-  color: var(--muted);
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+  }
 }

@@ -7,10 +7,18 @@ ASP.NET Core API only — never the Python agent service directly.
 ## Stack
 
 - **Vite 8** + **React 19** + **TypeScript**
+- **Tailwind CSS v4** + **shadcn/ui** — design system components
 - **@clerk/react** — authentication, sessions, prebuilt sign-in/sign-up
 - **react-router-dom v7** — declarative routing with a `ProtectedRoute` guard
 - **axios** — shared API client (JWT interceptor added in Issue #13)
 - **oxlint** — linting
+
+## Design system
+
+The UI follows the "Serene Concierge" brand (`.agents/brain/DESIGN.md`):
+warm oatmeal surfaces, deep maroon primary, and Playfair Display + Hanken
+Grotesk typography. Brand **colors, typography, and radius** are mapped to the
+shadcn theme tokens in `src/index.css` (the DESIGN spacing tokens are not used).
 
 ## Getting started
 

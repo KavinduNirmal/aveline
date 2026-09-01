@@ -256,6 +256,27 @@ Stack decided with user: **Provider (ChangeNotifier) + dio + go_router**, matchi
 - `flutter analyze`: no issues; `flutter test`: **17 passed** (13 prior + 4 route-guard tests).
 - No changes committed; web scaffold + #10/#11 pending user review to close.
 
+### Follow-up (same session): Brand theming — shadcn in the web dashboard + Material Theme for Flutter
+
+Applied the new brand identity in `.agents/brain/DESIGN.md` to both frontends. Per the user's instruction, only **colors, typography, and styles** were referenced; the DESIGN **spacing tokens were intentionally not applied**.
+
+- **Web (`frontend/web/`)** — initialized **Tailwind CSS v4** + **shadcn/ui**:
+  - Installed `tailwindcss`, `@tailwindcss/vite` (Vite plugin), `tw-animate-css`, `clsx`, `tailwind-merge`, `lucide-react`, `class-variance-authority`; `radix-ui` pulled in by the CLI.
+  - Config: `components.json`, `src/lib/utils.ts` (`cn`), `@/*` alias in `vite.config.ts` (ESM-safe `fileURLToPath`) + `tsconfig.app.json` (`paths` without the deprecated `baseUrl`), Google Fonts (Hanken Grotesk + Playfair Display) in `index.html`.
+  - `src/index.css` — Tailwind v4 theme mapping the brand tokens to shadcn CSS variables: warm oatmeal `--background #fff8f7`, charcoal `--foreground #1e1b1b`, maroon `--primary #7a303f` (per the DESIGN "solid burgundy buttons" spec) with `--ring #5d1a29`, tonal surfaces for `--muted/accent`, `--radius: 1rem` (16px card radius), `--chart-1..5` from the agent states (commerce maroon, visual gold, memory rose), plus a token-derived dark mode. Fonts wired as `--font-sans: Hanken Grotesk`, `--font-serif: Playfair Display`.
+  - Added shadcn components: `button card input label badge separator avatar` (the CLI initially emitted them to a literal `@/` dir due to alias resolution — moved to `src/components/ui/`; `class-variance-authority` was missing from `bun add` and added manually).
+  - Restyled `RootLayout`, `Dashboard`, `SignInPage`, `SignUpPage`, `SignOutButton`, `ProtectedRoute` with the brand: serif headings, uppercase overlines, warm maroon-tinted card shadow (`0 4px 20px rgba(122,48,63,0.06)`).
+- **Flutter (`frontend/aveline_mobile/`)** — added `google_fonts`; rewrote `core/theme/app_theme.dart`:
+  - Full Material 3 `ColorScheme` built from the DESIGN M3 tokens (primary `#5D1A29`, primaryContainer `#7A303F`, surface `#FFF8F7`, all surface-container tones, outline variants, inverse tokens). Note: this Flutter SDK names the token `onInverseSurface` (not `inverseOnSurface`).
+  - `textTheme` from Google Fonts: Playfair Display for display/headlines, Hanken Grotesk for body/title/label (heights 1.2–1.6, letterSpacing converted from `em` at the DESIGN font sizes).
+  - ThemeData: tonal card theme (16px radius), maroon FilledButtons (`primaryContainer` bg + white text), soft-beige filled inputs with maroon focus border.
+
+### Verification (brand theming)
+
+- Web: `bun run build` passes (2010 modules, CSS 30 kB); `bun run lint` passes with 2 non-fatal oxlint fast-refresh warnings on shadcn's generated `buttonVariants`/`badgeVariants` exports.
+- Flutter: `flutter analyze` no issues; `flutter test` **17 passed**.
+- No changes committed; theming pending user review.
+
 
 
 

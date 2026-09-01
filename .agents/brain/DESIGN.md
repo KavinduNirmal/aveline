@@ -1,5 +1,5 @@
 ---
-name: Serene Concierge
+name: Aveline
 colors:
   surface: '#fff8f7'
   surface-dim: '#e1d8d8'

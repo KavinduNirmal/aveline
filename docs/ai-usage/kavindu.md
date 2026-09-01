@@ -148,6 +148,53 @@
 - OpenAPI lists all paths under `/api/v1`.
 - No changes committed; #16 skipped (needs richer response), #17 pending user review to close.
 
+### Follow-up (same session): Issues #18/#19 — service-to-service auth & secure Python agent
+
+- **Backend (#18):** created the internal-auth HTTP client stack:
+  - `Infrastructure/Integrations/InternalServiceAuthHandler.cs` — `DelegatingHandler` adding `X-Internal-Token` from `AgentService:InternalToken`.
+  - `Infrastructure/Integrations/AgentServiceClient.cs` — typed `HttpClient` (`IAgentServiceClient`).
+  - `Configurations/ServiceClientsConfiguration.cs` — `AddAgentServiceClient()` (base URL from `AgentService:BaseUrl`).
+  - `Endpoints/AgentEndpoints.cs` — `POST /api/v1/agents/ping` (requires staff auth) that forwards the caller's `userId`/`roles` to the agent via the internal token.
+  - Config: `AgentService:BaseUrl`/`InternalToken` in `appsettings.Development.json` + documented in `Aveline.Api/.env.example`.
+- **Python agent (#19):** secured `agnet-service`:
+  - `app/core/config.py` — pydantic-settings `Settings` (`INTERNAL_API_TOKEN`).
+  - `app/core/security.py` — `require_internal_token` FastAPI dependency (constant-time `hmac.compare_digest`; 401 on mismatch; 500 if unconfigured).
+  - `app/api/agents.py` — `APIRouter` with router-level dependency; `POST /agents/ping` logs forwarded user context.
+  - `app/main.py` — mounts the router; `/health` stays public.
+  - Added `__init__.py` for `app/`, `app/core/`, `app/api/`.
+  - `agnet-service/.env.example` + root `.env.example`: `INTERNAL_API_TOKEN`.
+- **docker-compose:** agent no longer exposed to the host (`expose: 8000` only — private network, satisfies "not accessible from public internet"); `INTERNAL_API_TOKEN` passed to both services; API uses `AgentService__BaseUrl=http://agent:8000`.
+
+### Verification (#18/#19)
+
+- Agent: `/health` → 200 (public); `/agents/ping` no token → **401**, wrong token → **401**, correct token → **200**; forwarded user context appears in agent logs.
+- Backend→agent end-to-end: `/api/v1/agents/ping` no user token → **401**; with valid Clerk token → **200**, echo contains `userId: user_3Ij3bVkA6VdraN15mEnh5782F48` and `roles: ["associate","org:admin"]`.
+- `ruff check app/` passes (fixed B008/B006 in `agents.py`); `dotnet build` 0 errors; `docker compose config` valid.
+- Fixed during implementation: `InternalServiceAuthHandler` must be **transient** (not singleton) for `HttpClientFactory` (DelegatingHandler `InnerHandler` assignment).
+- No changes committed; #18/#19 pending user review to close.
+
+### Follow-up (same session): Issues #20/#21 — unit tests for backend + Python auth
+
+- **Backend testability refactor:** extracted `AuthenticationConfiguration.BuildTokenValidationParameters(authority)` and created `Authorization/RoleClaimNormalizer.cs` (`PromoteRoleClaims`) so the auth rules are directly testable.
+- **`.NET` test project `Aveline.Api.Tests`** (xUnit, added to `Aveline.Api.sln`; `dotnet test Aveline.Api/Aveline.Api.sln` now runs it). Test files (independent):
+  - `JwtValidationTests.cs` — offline, locally-signed RSA tokens: valid, wrong-key, expired, not-yet-valid, wrong issuer, missing `aud`, mismatched audience, missing role claims.
+  - `RoleClaimNormalizerTests.cs` — promotion of `user_role`/`org_role`, no-role, empty value, existing role not duplicated, null identity.
+  - `AuthorizationPolicyTests.cs` — every role policy (Associates/Managers/Owners) allowed/denied cases + permission policies (`approvals:approve`, `payments:refund`, `catalog:view`, `settings:manage`) + raw-unpromoted claim denial.
+  - `AuthenticationConfigurationTests.cs` — Bearer scheme registration + throws when authority missing.
+  - `CorsConfigurationTests.cs` — policy origins allow-list + throws when missing/empty.
+  - `ServiceToServiceAuthTests.cs` — handler adds `X-Internal-Token`, throws when unset; typed client forwards path to base address; client registration + throws when BaseUrl missing.
+- **Python tests** `agnet-service/tests/test_internal_auth.py` (pytest + TestClient): `/health` public; `/agents/ping` missing/invalid token → 401, valid → 200 with echo; logs forwarded user context; dependency-level valid/missing/invalid → pass/401/401; unconfigured token → 500. Added `[tool.pytest.ini_options]` (`testpaths`, `pythonpath`, `asyncio_mode=auto`) to `agnet-service/pyproject.toml`.
+- **Robustness fixes surfaced by tests:** `CorsConfiguration` and `InternalServiceAuthHandler` now reject empty/whitespace config values.
+- **CI fix:** `build-api` now builds the solution (`Aveline.Api.sln`) so the `dotnet test --no-build` step can run the new test project.
+
+### Verification (#20/#21)
+
+- `dotnet test Aveline.Api/Aveline.Api.sln`: **58 passed, 0 failed** (Release build 0 errors).
+- `pytest agnet-service/tests/`: **9 passed** (works from repo root too).
+- `ruff check app/ tests/` passes.
+- Coverage (per-class, auth/config/client): AuthorizationConfiguration, PermissionAuthorizationHandler, Permissions, RoleClaimNormalizer, CorsConfiguration, ServiceClientsConfiguration, InternalServiceAuthHandler, AgentServiceClient, PermissionRequirement → **100%**; AuthenticationConfiguration 63% (validation rules covered; DI plumbing not). Auth-code coverage comfortably above 80%.
+- No changes committed; #20/#21 pending user review to close.
+
 
 
 

@@ -2,15 +2,44 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Aveline.Api", "Aveline.Api.csproj", "{B74BA3C2-22DC-4D69-A6C0-71B10CE14714}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Aveline.Api.Tests", "..\Aveline.Api.Tests\Aveline.Api.Tests.csproj", "{F04DD1A4-8A27-410B-8A9C-522AA20DE348}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
+		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
 		Release|Any CPU = Release|Any CPU
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{B74BA3C2-22DC-4D69-A6C0-71B10CE14714}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{B74BA3C2-22DC-4D69-A6C0-71B10CE14714}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B74BA3C2-22DC-4D69-A6C0-71B10CE14714}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{B74BA3C2-22DC-4D69-A6C0-71B10CE14714}.Debug|x64.Build.0 = Debug|Any CPU
+		{B74BA3C2-22DC-4D69-A6C0-71B10CE14714}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{B74BA3C2-22DC-4D69-A6C0-71B10CE14714}.Debug|x86.Build.0 = Debug|Any CPU
 		{B74BA3C2-22DC-4D69-A6C0-71B10CE14714}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{B74BA3C2-22DC-4D69-A6C0-71B10CE14714}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B74BA3C2-22DC-4D69-A6C0-71B10CE14714}.Release|x64.ActiveCfg = Release|Any CPU
+		{B74BA3C2-22DC-4D69-A6C0-71B10CE14714}.Release|x64.Build.0 = Release|Any CPU
+		{B74BA3C2-22DC-4D69-A6C0-71B10CE14714}.Release|x86.ActiveCfg = Release|Any CPU
+		{B74BA3C2-22DC-4D69-A6C0-71B10CE14714}.Release|x86.Build.0 = Release|Any CPU
+		{F04DD1A4-8A27-410B-8A9C-522AA20DE348}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F04DD1A4-8A27-410B-8A9C-522AA20DE348}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F04DD1A4-8A27-410B-8A9C-522AA20DE348}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{F04DD1A4-8A27-410B-8A9C-522AA20DE348}.Debug|x64.Build.0 = Debug|Any CPU
+		{F04DD1A4-8A27-410B-8A9C-522AA20DE348}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{F04DD1A4-8A27-410B-8A9C-522AA20DE348}.Debug|x86.Build.0 = Debug|Any CPU
+		{F04DD1A4-8A27-410B-8A9C-522AA20DE348}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F04DD1A4-8A27-410B-8A9C-522AA20DE348}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F04DD1A4-8A27-410B-8A9C-522AA20DE348}.Release|x64.ActiveCfg = Release|Any CPU
+		{F04DD1A4-8A27-410B-8A9C-522AA20DE348}.Release|x64.Build.0 = Release|Any CPU
+		{F04DD1A4-8A27-410B-8A9C-522AA20DE348}.Release|x86.ActiveCfg = Release|Any CPU
+		{F04DD1A4-8A27-410B-8A9C-522AA20DE348}.Release|x86.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
 	EndGlobalSection
 EndGlobal

@@ -52,12 +52,16 @@ services:
         Host=postgres;Port=5432;Database=${POSTGRES_DB:-aveline};
         Username=${POSTGRES_USER:-aveline};Password=${POSTGRES_PASSWORD}
       Redis__ConnectionString: redis:6379
+      AgentService__BaseUrl: http://agent:8000
+      AgentService__InternalToken: ${INTERNAL_API_TOKEN:-change-me-internal-token}
       # Add other env vars here (Clerk, WhatsApp, payment gateway keys, etc.)
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      agent:
+        condition: service_started
 
   # ---------------------------------------------------------------------------
   # Python Agent Service (FastAPI + LangGraph)
@@ -68,11 +72,14 @@ services:
       dockerfile: Dockerfile
     container_name: aveline_agent
     restart: unless-stopped
-    ports:
-      - "${AGENT_PORT:-8000}:8000"
+    # NOTE: intentionally NOT exposed to the host — the agent is only reachable
+    # within the compose network via http://agent:8000 (service-to-service auth).
+    expose:
+      - "8000"
     environment:
       DATABASE_URL: >-
         postgresql+asyncpg://${POSTGRES_USER:-aveline}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aveline}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-change-me-internal-token}
       # Add other env vars here (OpenAI key, etc.)
     depends_on:
       postgres:

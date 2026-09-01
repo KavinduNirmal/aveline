@@ -65,7 +65,7 @@ jobs:
         run: dotnet restore Aveline.Api/Aveline.Api.csproj
 
       - name: Build API
-        run: dotnet build Aveline.Api/Aveline.Api.csproj --no-restore -c Release
+        run: dotnet build Aveline.Api/Aveline.Api.sln --no-restore -c Release
 
       - name: Test API
         run: dotnet test Aveline.Api/Aveline.Api.sln --no-build --no-restore -c Release

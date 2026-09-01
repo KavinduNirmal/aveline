@@ -20,8 +20,13 @@ public static class CorsConfiguration
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        var allowedOrigins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
-            ?? throw new InvalidOperationException("Cors:AllowedOrigins is not configured.");
+        var allowedOrigins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>();
+        if (allowedOrigins is null
+            || allowedOrigins.Length == 0
+            || allowedOrigins.Any(string.IsNullOrWhiteSpace))
+        {
+            throw new InvalidOperationException("Cors:AllowedOrigins must contain at least one non-empty origin.");
+        }
 
         services.AddCors(options =>
         {

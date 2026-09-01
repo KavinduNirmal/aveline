@@ -1,10 +1,12 @@
-using System.Security.Claims;
 using Aveline.Api.Configurations;
+using Aveline.Api.Endpoints;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenApi();
 builder.Services.AddAvelineAuthentication(builder.Configuration);
+builder.Services.AddAvelineAuthorization();
+builder.Services.AddAvelineCors(builder.Configuration);
 
 var app = builder.Build();
 
@@ -14,26 +16,13 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseCors(CorsConfiguration.DefaultPolicy);
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Protected endpoint used to verify Clerk JWT validation (Issue #14).
-app.MapGet("/api/auth/claims", (ClaimsPrincipal user) =>
-{
-    var rawClaims = user.Claims
-        .Where(c => !c.Type.StartsWith("http://schemas.microsoft.com")
-                 && !c.Type.StartsWith("http://schemas.xmlsoap.org"))
-        .GroupBy(c => c.Type)
-        .ToDictionary(g => g.Key, g => g.Select(c => c.Value).ToArray());
-
-    return Results.Ok(new
-    {
-        UserId = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? user.FindFirstValue("sub"),
-        Email = user.FindFirstValue("email"),
-        Roles = user.FindAll(ClaimTypes.Role).Select(c => c.Value).ToArray(),
-        Claims = rawClaims,
-    });
-}).RequireAuthorization();
+var v1 = app.MapGroup("/api/v1");
+v1.MapAuthEndpoints();
+v1.MapAuthPolicyDemoEndpoints();
 
 var summaries = new[]
 {

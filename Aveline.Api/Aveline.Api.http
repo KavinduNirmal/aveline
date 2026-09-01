@@ -6,7 +6,7 @@ Accept: application/json
 ###
 
 # Requires a valid Clerk JWT (jwt-aveline-v1 template). Without a token this returns 401.
-GET {{Aveline.Api_HostAddress}}/api/auth/claims
+GET {{Aveline.Api_HostAddress}}/api/v1/auth/claims
 Authorization: Bearer {{clerk_token}}
 
 ###

@@ -1,6 +1,5 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.IdentityModel.Tokens;
 
 namespace Aveline.Api.Configurations;
@@ -63,8 +62,6 @@ public static class AuthenticationConfiguration
                     }
                 };
             });
-
-        services.AddAuthorization();
 
         return services;
     }

@@ -112,6 +112,42 @@
 - Test data left in dev instance: user `aveline_test1` (role `associate`), org `Aveline Boutique Colombo` — reused by later auth issues (#15/#16/#22).
 - No changes committed; awaiting user review before closing #14 and starting #15.
 
+### Follow-up (same session): Issue #15 — Authorization policies in .NET
+
+- Created `Aveline.Api/Configurations/AuthorizationConfiguration.cs`: role-based policies (`Associates`, `Managers`, `Owners`) and permission-based policies backed by a permission→roles matrix (`PermissionRequirement` + `PermissionAuthorizationHandler`). Added `AddAvelineAuthorization(this IServiceCollection)`.
+- Removed `AddAuthorization()` from `AuthenticationConfiguration.cs` (now lives in the new file).
+- Created `Aveline.Api/Endpoints/AuthPolicyDemoEndpoints.cs` (`/api/policies/*`) to demonstrate the policies; registered in `Program.cs`.
+
+### Verification (Issue #15)
+
+- Ran the API with the `associate` + `org:admin` test token:
+  - `/api/policies/associate` → **200**, `/manager` → **200**, `/owner` → **403**
+  - `/api/policies/approvals/approve` (permission) → **200**, `/api/policies/payments/refund` (permission) → **403**
+  - no token / garbage token → **401**
+- Fixed a handler bug during verification: the permission handler was looking up roles in a permission→roles map (wrong direction); corrected to resolve allowed roles from the permission then intersect with the caller's roles.
+- No changes committed; awaiting user review before closing #15 and starting #16.
+
+### Follow-up (same session): versioning, CORS (#17), and authorization refactor
+
+- **API versioning:** moved all API endpoints under `/api/v1` using route groups (`var v1 = app.MapGroup("/api/v1")`). Verified OpenAPI exposes only `/api/v1/*` paths; the old `/api/auth/claims` path returns 404. (URL-prefix versioning; can be upgraded to `Asp.Versioning.Http` negotiation later if needed.)
+- **CORS (Issue #17):** created `Aveline.Api/Configurations/CorsConfiguration.cs` with `AddAvelineCors()` — named policy `aveline-cors`, origins from `Cors:AllowedOrigins` (added `http://localhost:5173` to `appsettings.json`), `AllowAnyHeader`/`AllowAnyMethod`. Applied via `app.UseCors(...)`. Native Flutter clients send no Origin and are unaffected.
+- **Authorization refactor (user request):** split `AuthorizationConfiguration.cs` into single-responsibility files:
+  - `Authorization/Roles.cs` — role constants (model)
+  - `Authorization/Permissions.cs` — permission names + permission→roles catalog (model)
+  - `Authorization/PermissionRequirement.cs` — requirement (model)
+  - `Authorization/PermissionAuthorizationHandler.cs` — handler (implementation)
+  - `Configurations/AuthorizationConfiguration.cs` — registration only (policies + handler DI)
+- Moved `GET /api/auth/claims` out of `Program.cs` into `Endpoints/AuthEndpoints.cs`; updated `AuthPolicyDemoEndpoints.cs` to the `/api/v1/policies` group and to use `Permissions.*` constants. `Program.cs` is now ~50 lines.
+
+### Verification (versioning + CORS + refactor)
+
+- `dotnet build` 0 errors.
+- `/api/v1/auth/claims`: no token → 401, valid token → 200; old `/api/auth/claims` → 404.
+- `/api/v1/policies/*`: associate 200, manager 200, owner 403, approvals/approve 200, payments/refund 403.
+- CORS preflight: Origin `http://localhost:5173` → 204 + `Access-Control-Allow-Origin`; Origin `http://evil.com` → 204 with **no** allow-origin header.
+- OpenAPI lists all paths under `/api/v1`.
+- No changes committed; #16 skipped (needs richer response), #17 pending user review to close.
+
 
 
 

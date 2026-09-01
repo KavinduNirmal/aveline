@@ -13,7 +13,7 @@ namespace Aveline.Api.Tests;
 public class AuthenticationConfigurationTests
 {
     [Fact]
-    public void Registers_JwtBearer_Scheme()
+    public async Task Registers_JwtBearer_Scheme()
     {
         var config = TestConfig(new Dictionary<string, string?>
         {
@@ -25,7 +25,7 @@ public class AuthenticationConfigurationTests
             .BuildServiceProvider();
 
         var schemes = provider.GetRequiredService<IAuthenticationSchemeProvider>();
-        var scheme = schemes.GetSchemeAsync(JwtBearerDefaults.AuthenticationScheme).GetAwaiter().GetResult();
+        var scheme = await schemes.GetSchemeAsync(JwtBearerDefaults.AuthenticationScheme);
 
         Assert.NotNull(scheme);
         Assert.Equal(typeof(JwtBearerHandler), scheme!.HandlerType);

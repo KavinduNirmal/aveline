@@ -27,3 +27,7 @@ v1.MapAuthPolicyDemoEndpoints();
 v1.MapAgentEndpoints();
 
 app.Run();
+
+// Exposed for integration tests (WebApplicationFactory<Program>).
+public partial class Program;
+

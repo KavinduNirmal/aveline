@@ -13,7 +13,7 @@ namespace Aveline.Api.Tests;
 public class CorsConfigurationTests
 {
     [Fact]
-    public void Registers_Policy_With_Configured_Origins()
+    public async Task Registers_Policy_With_Configured_Origins()
     {
         var config = TestConfig(new Dictionary<string, string?>
         {
@@ -26,10 +26,7 @@ public class CorsConfigurationTests
             .BuildServiceProvider();
 
         var policyProvider = provider.GetRequiredService<ICorsPolicyProvider>();
-        var policy = policyProvider
-            .GetPolicyAsync(new DefaultHttpContext(), CorsConfiguration.DefaultPolicy)
-            .GetAwaiter()
-            .GetResult();
+        var policy = await policyProvider.GetPolicyAsync(new DefaultHttpContext(), CorsConfiguration.DefaultPolicy);
 
         Assert.NotNull(policy);
         Assert.Equal(

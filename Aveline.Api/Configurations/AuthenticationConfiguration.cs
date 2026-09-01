@@ -29,6 +29,9 @@ public static class AuthenticationConfiguration
             .AddJwtBearer(options =>
             {
                 options.Authority = authority;
+                // Defaults to true (secure). Set Clerk:RequireHttpsMetadata=false only
+                // for local development/tests against an HTTP authority.
+                options.RequireHttpsMetadata = configuration.GetValue("Clerk:RequireHttpsMetadata", true);
                 options.TokenValidationParameters = BuildTokenValidationParameters(authority);
 
                 options.Events = new JwtBearerEvents

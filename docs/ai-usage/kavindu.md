@@ -195,6 +195,26 @@
 - Coverage (per-class, auth/config/client): AuthorizationConfiguration, PermissionAuthorizationHandler, Permissions, RoleClaimNormalizer, CorsConfiguration, ServiceClientsConfiguration, InternalServiceAuthHandler, AgentServiceClient, PermissionRequirement → **100%**; AuthenticationConfiguration 63% (validation rules covered; DI plumbing not). Auth-code coverage comfortably above 80%.
 - No changes committed; #20/#21 pending user review to close.
 
+### Follow-up (same session): docs/tests + Issue #22 — integration tests for the full auth flow
+
+- Created `docs/tests/README.md` — documents the test layers (unit vs integration), how to run each suite, coverage targets, and CI wiring.
+- **Issue #22 — `Aveline.Api.Tests/FullAuthFlowIntegrationTests.cs`** (xUnit, `IAsyncLifetime`), fully offline:
+  - `StubAuthServer` (real Kestrel on an ephemeral port) serves OIDC discovery + a JWKS for a locally-generated RSA key, so `AddJwtBearer` runs its real discovery → signature → issuer → lifetime pipeline.
+  - `StubAgentServer` records the `X-Internal-Token` header and echoes the payload (mirrors `agnet-service/app/api/agents.py`).
+  - `WebApplicationFactory<Program>` boots the real API; `Clerk__Authority`, `AgentService__BaseUrl`, `AgentService__InternalToken`, and `Clerk__RequireHttpsMetadata=false` are set via env vars (env vars load after `appsettings.*.json` and reliably win).
+  - Cases: no token → 401; invalid token → 401; valid token → 200 with agent receiving the internal token and `userId`/`roles` propagated; valid token without roles → 403 (agent not called).
+- **App change to enable this:** `AddAvelineAuthentication` now reads `Clerk:RequireHttpsMetadata` (defaults to `true`; overridable for dev/test HTTP authorities).
+- Exposed `Program` for the test host: `public partial class Program;` in `Program.cs`.
+- Test project now references `Microsoft.AspNetCore.Mvc.Testing` + `FrameworkReference Microsoft.AspNetCore.App`.
+
+### Verification (#22 + full suite)
+
+- `dotnet test Aveline.Api/Aveline.Api.sln`: **62 passed** (58 unit + 4 integration), 0 failed, no warnings.
+- `pytest agnet-service/tests/`: 9 passed.
+- Coverage with integration tests: **100%** across all auth/config/client classes **including `AuthenticationConfiguration` and `Program`**.
+- Fixed along the way: dynamic-port Kestrel binding (`Listen(IPAddress.Loopback, 0)` not `ListenLocalhost(0)`); `RequireHttpsMetadata` for the HTTP stub; env-var config override (in-memory `ConfigureAppConfiguration` did not take precedence over `appsettings.Development.json`).
+- No changes committed; #22 pending user review to close.
+
 
 
 

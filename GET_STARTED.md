@@ -109,8 +109,20 @@ uvicorn app.main:app --reload --port 8000
 ```bash
 cd frontend/aveline_mobile
 flutter pub get
-flutter run
+flutter run \
+  --dart-define=CLERK_PUBLISHABLE_KEY=pk_test_... \
+  --dart-define=API_BASE_URL=http://10.0.2.2:5091
 ```
+
+- `CLERK_PUBLISHABLE_KEY` (**required**) — the Clerk publishable key (`pk_...`).
+- `API_BASE_URL` (optional) — defaults to `http://10.0.2.2:5091`, the host machine's
+  API as seen from the Android emulator. On a physical device or iOS simulator,
+  pass the host's LAN address instead (e.g. `http://192.168.x.x:5091`).
+- `JWT_TEMPLATE_NAME` (optional) — defaults to `jwt-aveline-v1` (the Aveline
+  template that mints `user_role`/`org_role` claims the backend authorizes on).
+
+On sign-in the app persists the Clerk session; tokens are attached to API
+requests automatically and a 401 triggers a token refresh, then sign-out.
 
 ---
 

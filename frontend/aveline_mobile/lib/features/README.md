@@ -7,9 +7,11 @@ its own `data/`, `domain/`, and `presentation/` layers following clean architect
 
 ```
 features/
-├── customers/      # Slice 1 — Customer profiles, interactions, memory
-├── inventory/      # Slice 2 — Inventory browsing, image analysis, sourcing
-└── commerce/       # Slice 3 — Orders, payments, approvals, delivery
+├── auth/          # Sign-in/up, sessions, JWT provisioning (Clerk)
+├── customers/     # Slice 1 — Customer profiles, interactions, memory
+├── home/          # Post-auth landing screen
+├── inventory/     # Slice 2 — Inventory browsing, image analysis, sourcing
+└── commerce/      # Slice 3 — Orders, payments, approvals, delivery
 ```
 
 ## Layer responsibilities per feature

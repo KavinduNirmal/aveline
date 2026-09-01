@@ -215,6 +215,27 @@
 - Fixed along the way: dynamic-port Kestrel binding (`Listen(IPAddress.Loopback, 0)` not `ListenLocalhost(0)`); `RequireHttpsMetadata` for the HTTP stub; env-var config override (in-memory `ConfigureAppConfiguration` did not take precedence over `appsettings.Development.json`).
 - No changes committed; #22 pending user review to close.
 
+### Follow-up (same session): Issues #8/#9 — Clerk SDK in Flutter + auth token interceptor
+
+Stack decided with user: **Provider (ChangeNotifier) + dio + go_router**, matching the app's clean-arch feature modules. Research on the beta `clerk_flutter` SDK (0.0.18-beta): `ClerkAuth`/`ClerkAuthBuilder`/`ClerkAuthentication`/`ClerkErrorListener`, `ClerkAuthState.sessionToken(templateName:)` → `SessionToken.jwt`, `isSignedIn`, `signOut()`, sessions persisted by the SDK.
+
+- **#8 — Clerk SDK integration** (`frontend/aveline_mobile/lib/`):
+  - `core/config/app_config.dart` — reads `CLERK_PUBLISHABLE_KEY` (required), `API_BASE_URL` (default `http://10.0.2.2:5091` for Android emulator), `JWT_TEMPLATE_NAME` (default `jwt-aveline-v1`) from `--dart-define`.
+  - `core/theme/app_theme.dart` — Material 3 theme (seed `0xFF7B4B6F`).
+  - `features/auth/{domain,data,presentation}` — `AuthRepository` (extends `core`'s `AuthTokenProvider` port), `AuthUser`, `AuthClaims` (parses `user_role`/`org_role`/`org_id`/`org_slug`), `ClerkAuthRepository`, `AuthUserMapper`, `AuthScreen` (SDK prebuilt sign-in/up UI under `ClerkErrorListener`).
+  - `features/home/presentation/screens/home_screen.dart` — signed-in landing with user info + sign-out.
+  - `app.dart` — composition root: `ClerkAuth` > `ClerkAuthBuilder` > `AvelineAppShell` (owns repository, Dio, GoRouter) > `MultiProvider` > `MaterialApp.router`. `core/router/route_guards.dart` holds the pure auth redirect; `ClerkAuthState` is the router's `refreshListenable`, so sign-in/out (and 401 sign-out) redirect automatically.
+- **#9 — Auth token interceptor** (`core/network/`): `AuthTokenProvider` port, `AuthInterceptor` (attaches `Bearer`, on 401 refreshes via `refreshToken()`, retries once, and signs out if still rejected), `ApiClientFactory.create()`. Single Dio instance provided via DI.
+- Android: added `INTERNET` permission; `clerk_auth` added as a direct dependency (imported by data layer).
+- Docs: `features/auth/README.md`, `features/home/README.md`, updated `features/README.md` + `core/README.md`, and `GET_STARTED.md` Flutter run instructions.
+
+### Verification (#8/#9)
+
+- `flutter analyze`: **no issues** (CI command `flutter analyze --no-fatal-infos` also clean).
+- `flutter test`: **13 passed** — `AuthClaims.fromBody`, `AuthUser` display-name/withClaims, `AuthInterceptor` (Bearer attach, no-token, 401 refresh+retry once, persistent-401 → sign-out, non-401 no retry), theme smoke test.
+- `flutter build apk --debug` **failed in the native Gradle step**: the machine only has JDK 26 (`/usr/lib/jvm/java-26-openjdk`), and AGP 9.1.0's `JdkImageTransform`/`jlink` cannot run under it (`/home/kavindu/Android/platforms/android-36/core-for-system-modules.jar` transform error). Pre-existing toolchain limitation, not a code error — Dart code compiles and is verified by analyze + tests. Fix requires installing JDK 21 (or older) and pointing Gradle at it.
+- No changes committed; #8/#9 pending user review to close.
+
 
 
 

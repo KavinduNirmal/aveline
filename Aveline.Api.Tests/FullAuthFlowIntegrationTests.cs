@@ -100,6 +100,16 @@ public class FullAuthFlowIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AllResponses_Include_SecurityHeaders()
+    {
+        var response = await _client.SendAsync(PingRequest());
+
+        Assert.Equal("nosniff", response.Headers.GetValues("X-Content-Type-Options").Single());
+        Assert.Equal("DENY", response.Headers.GetValues("X-Frame-Options").Single());
+        Assert.Equal("no-referrer", response.Headers.GetValues("Referrer-Policy").Single());
+    }
+
+    [Fact]
     public async Task InvalidToken_Returns401()
     {
         var request = PingRequest();

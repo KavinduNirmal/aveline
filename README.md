@@ -159,6 +159,10 @@ All pull requests and commits targeting `development`, `main`, and `master` trig
 ## Documentation Index
 
 - [Developer Setup & Onboarding Guide](GET_STARTED.md)
+- [Running Aveline Locally with Authentication](docs/guides/local-auth-development.md)
+- [Authentication Architecture](docs/architecture/authentication.md)
+- [Authentication Security Review](docs/security/auth-security-review.md)
+- [Test Suite Documentation](docs/tests/README.md)
 - [Git Flow & Branching Strategy Guide](docs/git-flow.md)
 - [Architecture Decision Records (ADRs)](docs/ADR/README.md)
 - [CI/CD Workflow Specification](spec/spec-process-cicd-ci.md)

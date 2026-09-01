@@ -310,6 +310,38 @@ Implemented in `frontend/web/`:
 - `bun run build` passes; `bun run lint` passes (2 pre-existing shadcn fast-refresh warnings); `bun run test` → **27 passed** (13 auth + 8 api-error + 6 api).
 - No changes committed; #13 pending user review to close.
 
+### Follow-up (same session): Issues #25–#29 in one pass (docs, logging, security review, quality metrics)
+
+Closed the remaining roadmap (except deferred #16):
+
+**#25 — ADRs** (`docs/ADR/`): created the missing required ADRs **ADR-001 (modular monolith), ADR-002 (LangGraph), ADR-003 (PostgreSQL+pgvector), ADR-004 (React state mgmt), ADR-005 (Flutter state mgmt)** and the new **ADR-008 (JWT strategy: Clerk `jwt-aveline-v1` template claims) + ADR-009 (internal service auth: `X-Internal-Token`)**; updated the ADR index. Each follows the repo template (Status/Context/Options/Decision/Consequences).
+
+**#26 — Auth module docs**: created `Aveline.Api/README.md` (env keys: `Clerk:Authority`, `Clerk:RequireHttpsMetadata`, `Cors:AllowedOrigins`, `AgentService:BaseUrl/InternalToken`, `Logging:UseJsonConsole`; endpoints; policies), `agnet-service/README.md` (INTERNAL_API_TOKEN, fail-closed behavior), rewrote the Flutter `frontend/aveline_mobile/README.md` (dart-defines, auth flow, structure), and added **`docs/guides/local-auth-development.md`** (step-by-step run-the-system-with-auth for a new dev incl. troubleshooting). Linked from GET_STARTED + README docs index.
+
+**#29 — Auth logging (backend + Python)**:
+- .NET: JwtBearer `OnTokenValidated`/`OnAuthenticationFailed` structured logs (`Aveline.Api.Authentication`); new `LoggingConfiguration` with **401/403 audit middleware** (`userId`, status, method, path) and config-driven **JSON console** logging (`Logging:UseJsonConsole`). Note: event contexts share no public base → helper methods take `HttpContext`.
+- Python: new `app/core/logging.py` JSON formatter (configurable via `AVELINE_LOG_FORMAT`; avoids `LogRecord._defaults`, which Python 3.14 removed; ruff UP017 → `datetime.UTC` module alias); `security.py` logs token-validation failures (reason: not_configured/invalid_token) and `agents.py` ping logs structured `user_id`/`roles` extras.
+
+**#28 — Security review**: wrote **`docs/security/auth-security-review.md`** (methodology, scope, findings). Findings: SEC-H1 Microsoft.OpenApi already fixed (GHSA via OpenApi 10.0.11); SEC-M1 audience-not-validated and SEC-M2 no-rate-limiting accepted/documented; low items documented. **Hardening applied**: new `SecurityConfiguration.UseAvelineSecurityHeaders` (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`) + integration test (63 .NET tests now). CI added **`dependency-review-action`** (PR gate) and **`zap-baseline`** job (boots the API with a dummy Clerk authority, ZAP baseline scan, non-blocking `continue-on-error`, JSON report artifact).
+
+**#27 — Quality metrics**: measured current coverage (.NET 32.3%, web 95.4%, Python 100%) and set gates:
+- .NET: `dotnet test --collect:"XPlat Code Coverage"` + python threshold check (**line ≥ 30%**) + ReportGenerator HTML artifact in `build-api`.
+- Web: `@vitest/coverage-v8`, thresholds (**lines ≥ 80**, functions/branches ≥ 70) in `vite.config.ts`, `test:coverage` script, report uploaded.
+- Python: `pytest-cov` with **`--cov-fail-under=90`** + xml report artifact.
+- Flutter: `flutter test --coverage` + lcov artifact (report-only).
+- Coverage reports uploaded as artifacts for all components.
+
+**CI/spec**: `spec/spec-process-cicd-ci.md` → v3.0 (jobs table, REQ-009/010/011, quality gates, 6 parallel jobs). Fixed a YAML break (step name containing `:` needed quoting).
+
+### Verification (#25–#29)
+
+- .NET: build + **63 tests** (Release) pass; vulnerable scan clean.
+- Python: **9 passed**, ruff clean; JSON formatter smoke-tested.
+- Web: `bun run build` ✓, lint ✓ (2 pre-existing shadcn warnings), **27 tests** ✓; `test:coverage` passes the 80% gate.
+- Flutter: analyze clean, **17 tests** pass.
+- Workflow + Dependabot YAML parse clean.
+- No changes committed; #25–#29 pending user review to close.
+
 ### Follow-up (same session): Issues #23/#24 — CI/CD pipeline + security scanning (Dependabot)
 
 **#23 — CI/CD pipeline** (`.github/workflows/ci.yml` rewritten; spec bumped to v2.0):

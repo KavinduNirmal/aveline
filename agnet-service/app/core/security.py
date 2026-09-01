@@ -1,10 +1,13 @@
 import hmac
+import logging
 
 from fastapi import Header, HTTPException, status
 
 from app.core.config import get_settings
 
 INTERNAL_TOKEN_HEADER = "X-Internal-Token"
+
+logger = logging.getLogger("aveline.agent.security")
 
 
 async def require_internal_token(
@@ -18,13 +21,26 @@ async def require_internal_token(
     settings = get_settings()
 
     if not settings.internal_api_token:
+        logger.error(
+            "Internal token validation failed",
+            extra={"reason": "token_not_configured"},
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="INTERNAL_API_TOKEN is not configured.",
         )
 
     if not hmac.compare_digest(x_internal_token or "", settings.internal_api_token):
+        logger.warning(
+            "Internal token validation failed",
+            extra={"reason": "invalid_token"},
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid internal token.",
         )
+
+    logger.debug(
+        "Internal token validated",
+        extra={"action": "internal_token_validation"},
+    )

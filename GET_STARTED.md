@@ -80,6 +80,9 @@ docker compose up -d postgres redis
 
 ## 3. Running Sub-Projects Locally
 
+> For authentication-focused setup (Clerk keys, JWT template, sign-in flows), see
+> [Running Aveline Locally with Authentication](docs/guides/local-auth-development.md).
+
 ### ASP.NET Core API (`Aveline.Api/`)
 
 ```bash

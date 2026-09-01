@@ -1,11 +1,12 @@
-import logging
+import os
 
 from fastapi import FastAPI
 
 from app.api import agents
 from app.core.config import get_settings
+from app.core.logging import configure_logging
 
-logging.basicConfig(level=logging.INFO)
+configure_logging(log_format=os.getenv("AVELINE_LOG_FORMAT", "json"))
 
 settings = get_settings()
 

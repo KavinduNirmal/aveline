@@ -19,6 +19,8 @@ control as an audit trail.
 | `ADR-005-state-management-flutter.md` | State management approach for the Flutter app |
 | `ADR-006-deployment-platform.md` | Cloud platform selection (Azure/Railway/Render + Vercel) |
 | `ADR-007-clerk-authentication.md` | Clerk as identity provider + JwtBearer/JWKS validation strategy |
+| `ADR-008-jwt-token-strategy.md` | JWT strategy — Clerk custom template `jwt-aveline-v1` and its role claims |
+| `ADR-009-internal-service-authentication.md` | Internal service-to-service auth via `X-Internal-Token` |
 
 ## ADR Template
 

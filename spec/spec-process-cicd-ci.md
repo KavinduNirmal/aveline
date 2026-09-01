@@ -1,10 +1,10 @@
 ---
 title: CI/CD Workflow Specification - Aveline CI
-version: 2.0
+version: 3.0
 date_created: 2026-08-25
 last_updated: 2026-09-01
 owner: DevOps & Engineering Team
-tags: [process, cicd, github-actions, automation, dotnet, python, flutter, vite, security, gitflow]
+tags: [process, cicd, github-actions, automation, dotnet, python, flutter, vite, security, coverage, gitflow]
 ---
 
 ## Workflow Overview
@@ -28,6 +28,8 @@ graph TD
     Hygiene --> TestWeb[Job 4: Build, Test & Lint Web Dashboard]
     Hygiene --> TestFlutter[Job 5: Analyze, Test & Build Flutter App]
     Hygiene --> Security[Job 6: Security & Dependency Scan]
+    Hygiene --> DepReview[Job 7: Dependency Review]
+    Hygiene --> Zap[Job 8: OWASP ZAP Baseline]
     BuildApi --> Artifacts[Deployment Artifacts: API publish, web dist, APK]
     TestWeb --> Artifacts
     TestFlutter --> Artifacts
@@ -36,6 +38,8 @@ graph TD
     TestWeb --> Gate
     TestFlutter --> Gate
     Security --> Gate
+    DepReview --> Gate
+    Zap -. best effort .-> Gate
 
     style Trigger fill:#e1f5fe
     style Hygiene fill:#f3e5f5
@@ -47,11 +51,13 @@ graph TD
 | Job Name | Purpose | Dependencies | Execution Context |
 |----------|---------|--------------|-------------------|
 | `hygiene` | Repository rules: only `bun.lock` lockfiles, no committed `.env` files | None | `ubuntu-latest` |
-| `build-api` | Restore, build, test, and `dotnet publish` the ASP.NET Core API; uploads artifact | `hygiene` | `ubuntu-latest` (.NET 10.0.x) |
-| `test-python` | Ruff lint + pytest for the Python agent service | `hygiene` | `ubuntu-latest` (Python 3.12) |
-| `test-web` | Bun install, oxlint, Vitest, Vite build; uploads `dist` artifact | `hygiene` | `ubuntu-latest` (Bun) |
-| `test-flutter` | `flutter analyze`, `flutter test`, release APK build; uploads APK | `hygiene` | `ubuntu-latest` (Flutter Stable) |
+| `build-api` | Restore, build, test, coverage gate (≥30% lines), `dotnet publish`; uploads API + coverage artifacts | `hygiene` | `ubuntu-latest` (.NET 10.0.x) |
+| `test-python` | Ruff lint + pytest with coverage gate (≥90%); uploads coverage | `hygiene` | `ubuntu-latest` (Python 3.12) |
+| `test-web` | Bun install, oxlint, Vitest coverage gate (≥80% lines), Vite build; uploads `dist` + coverage | `hygiene` | `ubuntu-latest` (Bun) |
+| `test-flutter` | `flutter analyze`, `flutter test --coverage`, release APK build; uploads APK + lcov | `hygiene` | `ubuntu-latest` (Flutter Stable) |
 | `security-scan` | .NET vulnerable-package scan, `bun audit`, Trivy fs scan (+ SARIF upload) | `hygiene` | `ubuntu-latest` |
+| `dependency-review` | Blocks PRs introducing high-severity vulnerable runtime deps | `hygiene`, PR only | `ubuntu-latest` |
+| `zap-baseline` | OWASP ZAP baseline scan of the booted API; **best effort** (non-blocking) | `hygiene` | `ubuntu-latest` |
 
 ## Requirements Matrix
 
@@ -63,9 +69,12 @@ graph TD
 | REQ-003 | ASP.NET Core Compilation & Tests | High | Restores, builds, and runs the xUnit suite for `Aveline.Api.sln`. |
 | REQ-004 | Python Agent Lint & Tests | High | Ruff passes on `agnet-service/app/`; pytest passes on `agnet-service/tests/`. |
 | REQ-005 | Web Build, Lint & Tests | High | oxlint, Vitest, and `tsc -b && vite build` pass in `frontend/web`. |
-| REQ-006 | Flutter Analyze, Tests & APK | High | `flutter analyze`, `flutter test`, and `flutter build apk --release` pass. |
+| REQ-006 | Flutter Analyze, Tests & APK | High | `flutter analyze`, `flutter test --coverage`, and `flutter build apk --release` pass. |
 | REQ-007 | Deployment Artifacts | High | API publish, web `dist`, and mobile APK are uploaded as artifacts. |
 | REQ-008 | Concurrent Run Cancellation | Medium | Outdated runs for the same branch ref are cancelled. |
+| REQ-009 | Coverage Reporting & Gates | High | Coverage collected for all components and uploaded as artifacts; gates fail the build below thresholds (.NET ≥ 30%, web ≥ 80%, Python ≥ 90%). |
+| REQ-010 | PR Dependency Review | High | `dependency-review-action` blocks PRs introducing high-severity vulnerable runtime dependencies. |
+| REQ-011 | OWASP ZAP Baseline | Medium | ZAP baseline scan runs against a locally booted API; report uploaded as an artifact (best effort). |
 
 ### Security Requirements
 | ID | Requirement | Implementation Constraint |
@@ -80,7 +89,7 @@ graph TD
 ### Performance Requirements
 | ID | Metric | Target | Measurement Method |
 |----|-------|--------|-------------------|
-| PERF-001 | Parallel Job Execution | 5 parallel sub-jobs | `build-api`, `test-python`, `test-web`, `test-flutter`, `security-scan` run concurrently after `hygiene`. |
+| PERF-001 | Parallel Job Execution | 6 parallel sub-jobs | `build-api`, `test-python`, `test-web`, `test-flutter`, `security-scan`, `zap-baseline` run concurrently after `hygiene`. |
 
 ## Input/Output Contracts
 
@@ -135,11 +144,11 @@ artifacts: aveline-api | aveline-web | aveline-mobile-apk
 | Gate | Criteria | Bypass Conditions |
 |------|----------|-------------------|
 | Repository Hygiene | Zero non-bun lockfiles, zero committed `.env` files | None |
-| API | Clean build + 62 passing tests | None |
-| Agent Service | Ruff + pytest pass | None |
-| Web Dashboard | oxlint, Vitest, Vite build pass | None |
+| API | Clean build + tests pass + line coverage ≥ 30% | None |
+| Agent Service | Ruff + pytest pass + coverage ≥ 90% | None |
+| Web Dashboard | oxlint, Vitest (coverage ≥ 80%), Vite build pass | None |
 | Flutter App | Analyze, tests, release APK build pass | None |
-| Security | No vulnerable .NET packages, bun audit clean, Trivy CRITICAL/HIGH clean | None |
+| Security | No vulnerable .NET packages, bun audit clean, Trivy CRITICAL/HIGH clean | ZAP baseline (best effort, non-blocking) |
 
 ## Monitoring & Observability
 

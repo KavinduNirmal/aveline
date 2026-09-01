@@ -4,6 +4,7 @@ using Aveline.Api.Endpoints;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenApi();
+builder.Services.AddAvelineLogging(builder.Configuration);
 builder.Services.AddAvelineAuthentication(builder.Configuration);
 builder.Services.AddAvelineAuthorization();
 builder.Services.AddAvelineCors(builder.Configuration);
@@ -17,9 +18,11 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseAvelineSecurityHeaders();
 app.UseCors(CorsConfiguration.DefaultPolicy);
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseAvelineAuthAudit();
 
 var v1 = app.MapGroup("/api/v1");
 v1.MapAuthEndpoints();

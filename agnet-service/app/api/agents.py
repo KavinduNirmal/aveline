@@ -25,5 +25,6 @@ async def agents_ping(payload: Annotated[dict | None, Body()] = None) -> dict:
         "Agent ping received: user_id=%s roles=%s",
         payload.get("userId"),
         payload.get("roles"),
+        extra={"action": "agent_ping", "user_id": payload.get("userId"), "roles": payload.get("roles")},
     )
     return {"status": "ok", "echo": payload}

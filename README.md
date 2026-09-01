@@ -146,9 +146,13 @@ Every commit is validated locally against 6 quality gates:
 ### Continuous Integration (GitHub Actions)
 All pull requests and commits targeting `development`, `main`, and `master` trigger the [Aveline CI](.github/workflows/ci.yml) workflow:
 - **`hygiene`**: Repository hygiene and lockfile compliance.
-- **`build-api`**: .NET 10 compilation and test suite execution.
-- **`lint-python`**: Ruff linter verification across the agent service.
-- **`analyze-flutter`**: Flutter static analyzer and widget tests.
+- **`build-api`**: .NET 10 build, test suite, and `dotnet publish` artifact.
+- **`test-python`**: Ruff lint and pytest for the agent service.
+- **`test-web`**: oxlint, Vitest, and Vite build for the dashboard (+ `dist` artifact).
+- **`test-flutter`**: `flutter analyze`, tests, and release APK artifact.
+- **`security-scan`**: `.NET` vulnerable-package scan, `bun audit`, and a Trivy filesystem scan (SARIF uploaded to Code Scanning).
+
+[Dependabot](.github/dependabot.yml) opens dependency update PRs and security alerts for all ecosystems (GitHub Actions, npm, pub, NuGet, pip).
 
 ---
 

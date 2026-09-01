@@ -310,6 +310,31 @@ Implemented in `frontend/web/`:
 - `bun run build` passes; `bun run lint` passes (2 pre-existing shadcn fast-refresh warnings); `bun run test` → **27 passed** (13 auth + 8 api-error + 6 api).
 - No changes committed; #13 pending user review to close.
 
+### Follow-up (same session): Issues #23/#24 — CI/CD pipeline + security scanning (Dependabot)
+
+**#23 — CI/CD pipeline** (`.github/workflows/ci.yml` rewritten; spec bumped to v2.0):
+- **`hygiene`** (unchanged) — lockfile + committed-`.env` checks.
+- **`build-api`** → adds `dotnet publish` + uploads a `aveline-api` artifact.
+- **`lint-python`** → renamed **`test-python`**: ruff + **pytest** (`agnet-service/tests/`).
+- **`test-web`** (new): `oven-sh/setup-bun`, `bun install --frozen-lockfile`, oxlint, Vitest, Vite build (with optional `secrets.VITE_CLERK_PUBLISHABLE_KEY` for a functional bundle), uploads `aveline-web` `dist`.
+- **`test-flutter`** (renamed): `flutter analyze` + `flutter test` + **`flutter build apk --release`**, uploads `aveline-mobile-apk`.
+- All jobs `needs: hygiene`; workflow-level `permissions: contents: read`.
+- Deployment artifacts produced: API publish, web dist, APK. Secrets referenced via GitHub Secrets (`VITE_CLERK_PUBLISHABLE_KEY`).
+
+**#24 — Security scanning**:
+- **`.github/dependabot.yml`** — weekly update + security alerts for `github-actions`, `npm` (`frontend/web`), `pub` (`frontend/aveline_mobile`), `nuget` (`Aveline.Api`), `pip` (`agnet-service`). Satisfies "alerts generated for critical vulnerabilities".
+- **`security-scan`** job: `dotnet list package --vulnerable --include-transitive` (fails when the "has the following vulnerable packages" marker appears — note the clean-output line also contains "vulnerable packages", so the grep must be exact), `bun audit --audit-level high`, and **Trivy** fs scan (`aquasecurity/trivy-action`, CRITICAL/HIGH, `ignore-unfixed`, `limit-severities-for-sarif`) with SARIF uploaded to GitHub Code Scanning via `github/codeql-action/upload-sarif` (`if: always()`).
+- All new third-party actions **SHA-pinned** (resolved via GitHub API): `oven-sh/setup-bun` v2.2.0 `0c5077e5…`, `actions/upload-artifact` v4.6.2 `ea165f8d…`, `aquasecurity/trivy-action` v0.36.0 `a9c7b0f0…`, `github/codeql-action` v4.37.9 `a35ac6e6…`.
+
+**Security fix discovered by the new scan**: `dotnet list package --vulnerable` surfaced **Microsoft.OpenApi 2.0.0 (High, GHSA-v5pm-xwqc-g5wc)** — the transitive dep flagged earlier as NU1903. Advisory range is `2.0.0-preview.11 … 2.7.4`, patched at **2.7.5**. The clean fix was bumping `Microsoft.AspNetCore.OpenApi` **10.0.10 → 10.0.11** (its nuspec pins `Microsoft.OpenApi [2.7.5, 3.0.0)`), NOT overriding `Microsoft.OpenApi` 2.0.1 (still in the vulnerable range).
+
+### Verification (#23/#24)
+
+- `dotnet build`/`dotnet test` (Release): **62 passed**; `dotnet list package --vulnerable`: **clean** for both projects.
+- Workflow + Dependabot YAML parse cleanly; input names for trivy-action verified against its `action.yaml`.
+- Flutter/Web/Python suites unchanged and green (17 Flutter tests, 27 Vitest, 9 pytest).
+- No changes committed; #23/#24 pending user review to close.
+
 
 
 

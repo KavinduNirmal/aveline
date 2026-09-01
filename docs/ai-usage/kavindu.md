@@ -46,3 +46,11 @@
 - Flagged `NU1903` high-severity vulnerability warning in `Microsoft.OpenApi 2.0.0` (pre-existing) — recommend bumping the package.
 - No changes committed; `pubspec.lock` is now trackable but not yet added to version control.
 
+### Follow-up (same session): Azure deployment research
+
+- Researched an Azure deployment strategy for the demo phase (< $100 budget) targeting Azure for Students, Azure Container Apps, PostgreSQL Flexible Server (B1ms + pgvector), Static Web Apps, Key Vault, and Application Insights, with GitHub Actions + OIDC + Bicep for CI/CD.
+- Wrote `docs/ADR/ADR-006-deployment-platform.md` (required ADR, follows the repo template).
+- Wrote `docs/deployment.md` — phased implementation plan (to be implemented later).
+- Sources verified from official Azure pages (Azure for Students, Container Apps pricing).
+- No changes committed.
+

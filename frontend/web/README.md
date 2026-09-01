@@ -53,9 +53,9 @@ src/
 ├── main.tsx                 # Entry: ClerkProvider > BrowserRouter > App
 ├── App.tsx                  # Route table (protected tree + auth pages)
 ├── index.css
-├── components/              # ProtectedRoute, SignOutButton
-├── lib/                     # env.ts (typed env), api.ts (axios client)
-└── routes/                  # RootLayout, Dashboard, SignInPage, SignUpPage
+├── components/              # ProtectedRoute, RequireAdmin, SignOutButton, PageLoader
+├── lib/                     # env, auth claims, api client (+ bridge), api-error
+└── routes/                  # RootLayout, Dashboard, ForbiddenPage, SignInPage, SignUpPage
 ```
 
 ## Routing & auth
@@ -67,9 +67,24 @@ src/
   token and allows only owner/manager roles (matching the API's `Managers`
   policy). Non-admins are redirected to `/forbidden` (403).
 - Session persistence, refresh, and sign-out are handled by Clerk.
-- The JWT API interceptor is Issue #13.
+
+## API client
+
+`src/lib/api.ts` exports a shared axios client (`apiClient`) plus a factory
+(`createApiClient`) for tests. A request interceptor attaches the
+`jwt-aveline-v1` JWT as a `Bearer` token to every call. The response interceptor
+rejects with a typed `ApiError` (`src/lib/api-error.ts`) carrying a friendly
+message, and:
+- **401** signs the user out and returns to `/sign-in` (re-authentication)
+- **403** redirects to `/forbidden`
+
+The token getter and 401/403 handlers are registered from the Clerk context by
+`src/lib/AuthApiBridge.tsx` (mounted in `App.tsx`), so the client itself stays
+React-free.
 
 ## Testing
 
-`bun run test` runs Vitest unit tests (JWT claim decoding + role checks in
-`src/lib/auth.test.ts`).
+`bun run test` runs Vitest unit tests:
+- `src/lib/auth.test.ts` — JWT claim decoding + admin role checks
+- `src/lib/api.test.ts` — token attachment + 401/403 interceptor behavior
+- `src/lib/api-error.test.ts` — error mapping + friendly messages

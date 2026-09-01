@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { RequireAdmin } from './components/RequireAdmin'
+import { AuthApiBridge } from './lib/AuthApiBridge'
 import { Dashboard } from './routes/Dashboard'
 import { ForbiddenPage } from './routes/ForbiddenPage'
 import { RootLayout } from './routes/RootLayout'
@@ -10,7 +11,9 @@ import { SignUpPage } from './routes/SignUpPage'
 
 export default function App() {
   return (
-    <Routes>
+    <>
+      <AuthApiBridge />
+      <Routes>
       <Route element={<ProtectedRoute />}>
         <Route element={<RootLayout />}>
           <Route element={<RequireAdmin />}>
@@ -25,5 +28,6 @@ export default function App() {
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </>
   )
 }

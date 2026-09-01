@@ -293,6 +293,23 @@ Implemented in the Vite dashboard (`frontend/web/`):
 - `bun run build` passes; `bun run lint` passes (2 pre-existing shadcn fast-refresh warnings); `bun run test` → **13 passed**.
 - No changes committed; #12 pending user review to close.
 
+### Follow-up (same session): Issue #13 — token interceptor in the Vite dashboard
+
+Implemented in `frontend/web/`:
+
+- **`src/lib/api.ts`** — rewritten: `createApiClient(baseUrl)` factory + shared `apiClient` singleton.
+  - **Request interceptor**: attaches `Authorization: Bearer <jwt-aveline-v1 token>` to every request (skips when signed out). Token obtained from a registered `TokenGetter` so the client stays React-free.
+  - **Response interceptor**: normalizes failures to a typed `ApiError` and rejects; **401** invokes the registered unauthorized handler, **403** the forbidden handler; other statuses pass through untouched.
+  - Module-level registration: `registerAuthTokenGetter`, `registerUnauthorizedHandler`, `registerForbiddenHandler`.
+- **`src/lib/api-error.ts`** — `ApiError` (status, message, code, details) + `toApiError` with friendly messages per status (401 session-expired, 403 permission, 404, network `0`, 5xx) that prefer a server-provided `message`/`detail`/`title`. NOTE: `erasableSyntaxOnly` in the Vite tsconfig bans constructor parameter properties → explicit field declarations.
+- **`src/lib/AuthApiBridge.tsx`** — component mounted in `App.tsx` inside ClerkProvider + Router: registers `getToken({ template: 'jwt-aveline-v1' })`, and handlers that `signOut(() => navigate('/sign-in'))` on 401 and `navigate('/forbidden')` on 403.
+- **Tests** (`vitest`): `api-error.test.ts` (8) — ApiError mapping incl. server-provided messages, network, 5xx, plain errors; `api.test.ts` (6) — Bearer attachment, no header when signed out, 401 → ApiError + unauthorized handler, 403 → ApiError + forbidden handler, other statuses untouched, success passthrough. One TS gotcha fixed: a `let` narrowed to `null` by a closure assignment makes `?.` resolve to `never` — switched to a `const { error }` holder.
+
+### Verification (#13)
+
+- `bun run build` passes; `bun run lint` passes (2 pre-existing shadcn fast-refresh warnings); `bun run test` → **27 passed** (13 auth + 8 api-error + 6 api).
+- No changes committed; #13 pending user review to close.
+
 
 
 

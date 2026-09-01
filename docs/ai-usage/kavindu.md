@@ -342,6 +342,15 @@ Closed the remaining roadmap (except deferred #16):
 - Workflow + Dependabot YAML parse clean.
 - No changes committed; #25–#29 pending user review to close.
 
+### Follow-up (same session): PR #31 CI failures fixed
+
+First CI run on PR #31 failed 4 jobs; all fixed:
+
+1. **`test-web`** — `src/lib/env.ts` threw at **module load** because `VITE_CLERK_PUBLISHABLE_KEY` isn't inlined in CI (tests import `api.ts` → `env.ts`). Fixed by making `clerkPublishableKey()` a **lazy function** (throws only when called, e.g. in `main.tsx`), so unit tests don't require the secret. Verified with `VITE_CLERK_PUBLISHABLE_KEY="" bun run test` → 27 passed.
+2. **`dependency-review`** — action requires GitHub Advanced Security + dependency graph, which the repo doesn't have; it can never pass. **Removed** the job (Dependabot still covers alerts). Updated `spec-process-cicd-ci.md` (v3.0 → job table/diagram/REQ-010) and the security review doc.
+3. **`security-scan`** — `github/codeql-action/upload-sarif` failed with "Resource not accessible by integration" when reading the workflow run for telemetry. Fixed by adding **`actions: read`** to the job permissions.
+4. **`zap-baseline`** — the API never came up because `dotnet run --no-launch-profile` ran in the **Production** environment (no `Clerk:Authority` → startup crash → ZAP connection refused). Fixed by setting **`ASPNETCORE_ENVIRONMENT: Development`** (loads `appsettings.Development.json`) with a fail-fast wait loop that prints `/tmp/api.log` and exits 1 if the API doesn't start.
+
 ### Follow-up (same session): Issues #23/#24 — CI/CD pipeline + security scanning (Dependabot)
 
 **#23 — CI/CD pipeline** (`.github/workflows/ci.yml` rewritten; spec bumped to v2.0):

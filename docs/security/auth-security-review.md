@@ -13,7 +13,6 @@
   - `bun audit --audit-level high` (npm/pnpm advisories for the web dashboard)
   - Trivy filesystem scan (CRITICAL/HIGH, SARIF → GitHub Code Scanning)
   - Dependabot security alerts for all ecosystems
-  - `actions/dependency-review-action` on pull requests
   - OWASP ZAP baseline scan against the API (best-effort job)
 - **Integration tests** exercising the real JwtBearer + JWKS pipeline
   (`Aveline.Api.Tests/FullAuthFlowIntegrationTests.cs`).
@@ -55,7 +54,7 @@ No other high or critical issues were identified.
 
 1. **Security headers middleware** (`UseAvelineSecurityHeaders`): `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` on every response (tested in `FullAuthFlowIntegrationTests`).
 2. **Structured auth logging** (Issue #29): authentication success/failure events, 401/403 audit trail with `userId`, and JSON console output — enables detection of scanning/credential-stuffing attempts.
-3. **Automated gates**: `dependency-review-action` on PRs and OWASP ZAP baseline scan in CI.
+3. **Automated gates**: OWASP ZAP baseline scan in CI (best effort) and the Trivy SARIF report in Code Scanning.
 
 ## Verification
 

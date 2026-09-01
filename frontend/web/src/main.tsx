@@ -10,7 +10,7 @@ import { clerkPublishableKey } from './lib/env'
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ClerkProvider
-      publishableKey={clerkPublishableKey}
+      publishableKey={clerkPublishableKey()}
       signInUrl="/sign-in"
       signUpUrl="/sign-up"
     >

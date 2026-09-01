@@ -28,8 +28,7 @@ graph TD
     Hygiene --> TestWeb[Job 4: Build, Test & Lint Web Dashboard]
     Hygiene --> TestFlutter[Job 5: Analyze, Test & Build Flutter App]
     Hygiene --> Security[Job 6: Security & Dependency Scan]
-    Hygiene --> DepReview[Job 7: Dependency Review]
-    Hygiene --> Zap[Job 8: OWASP ZAP Baseline]
+    Hygiene --> Zap[Job 7: OWASP ZAP Baseline]
     BuildApi --> Artifacts[Deployment Artifacts: API publish, web dist, APK]
     TestWeb --> Artifacts
     TestFlutter --> Artifacts
@@ -38,7 +37,6 @@ graph TD
     TestWeb --> Gate
     TestFlutter --> Gate
     Security --> Gate
-    DepReview --> Gate
     Zap -. best effort .-> Gate
 
     style Trigger fill:#e1f5fe
@@ -56,7 +54,6 @@ graph TD
 | `test-web` | Bun install, oxlint, Vitest coverage gate (≥80% lines), Vite build; uploads `dist` + coverage | `hygiene` | `ubuntu-latest` (Bun) |
 | `test-flutter` | `flutter analyze`, `flutter test --coverage`, release APK build; uploads APK + lcov | `hygiene` | `ubuntu-latest` (Flutter Stable) |
 | `security-scan` | .NET vulnerable-package scan, `bun audit`, Trivy fs scan (+ SARIF upload) | `hygiene` | `ubuntu-latest` |
-| `dependency-review` | Blocks PRs introducing high-severity vulnerable runtime deps | `hygiene`, PR only | `ubuntu-latest` |
 | `zap-baseline` | OWASP ZAP baseline scan of the booted API; **best effort** (non-blocking) | `hygiene` | `ubuntu-latest` |
 
 ## Requirements Matrix
@@ -73,8 +70,7 @@ graph TD
 | REQ-007 | Deployment Artifacts | High | API publish, web `dist`, and mobile APK are uploaded as artifacts. |
 | REQ-008 | Concurrent Run Cancellation | Medium | Outdated runs for the same branch ref are cancelled. |
 | REQ-009 | Coverage Reporting & Gates | High | Coverage collected for all components and uploaded as artifacts; gates fail the build below thresholds (.NET ≥ 30%, web ≥ 80%, Python ≥ 90%). |
-| REQ-010 | PR Dependency Review | High | `dependency-review-action` blocks PRs introducing high-severity vulnerable runtime dependencies. |
-| REQ-011 | OWASP ZAP Baseline | Medium | ZAP baseline scan runs against a locally booted API; report uploaded as an artifact (best effort). |
+| REQ-010 | OWASP ZAP Baseline | Medium | ZAP baseline scan runs against a locally booted API; report uploaded as an artifact (best effort). |
 
 ### Security Requirements
 | ID | Requirement | Implementation Constraint |

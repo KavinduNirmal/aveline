@@ -54,3 +54,39 @@
 - Sources verified from official Azure pages (Azure for Students, Container Apps pricing).
 - No changes committed.
 
+## Session 2026-09-01
+
+**Task:** Implement Clerk Authentication roadmap — Issue #6 first: "Set up Clerk Application and Configure JWT Template"
+**Tool used:** opencode (Claude) AI coding agent + Clerk CLI (v1.5.0)
+
+### Intended Work (session start)
+
+- Execute the prioritized Clerk auth roadmap (issues #6–#29) one issue at a time, pausing after each for user review.
+- Approved decisions: `.NET` JWT via JwtBearer + JWKS; insert "scaffold Vite dashboard" as a prerequisite before the React issues (#11/#12/#13); first issue = #6.
+- JWT template `jwt-aveline-v1` claims: `user_role` = `{{user.public_metadata.role}}` (Aveline team role), `org_role` = `{{org.role}}` (per-store owner/staff role), plus `org_id`/`org_slug`.
+
+### Work Performed (Issue #6)
+
+- Confirmed Clerk CLI logged in as `kavindunirmald@gmail.com`; linked the repo to the **Aveline** app `app_3IixDnrbjebOuMCicC8FSsiq7Zw` (`clerk link --app ...`).
+- Verified the JWT template `jwt-aveline-v1` exists via Clerk Backend API (id `jtmp_3Ij0A97NwM6f8pIjmsqeXd9zrgy`) with the four claims.
+- Pulled dev keys with `clerk env pull` into gitignored `.env.local` (`CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`); values not printed/exposed.
+- Configured the Vite dev allowed origin `http://localhost:5173` on the Clerk instance via `PATCH /instance`; verified.
+- Ran `clerk doctor` — clean for dev instance (production instance not configured yet; CLI update 1.5.0 → 3.2.0 available).
+- Updated `Aveline.Api/.env.example` with Clerk variable names + issuer/JWKS URLs + JWT template reference + allowed origin (no secret values).
+
+### Verification Performed
+
+- `clerk whoami` / `clerk apps list` → linked to correct app.
+- `clerk api jwt_templates` → template claims confirmed.
+- `clerk api instance` → `allowed_origins: ["http://localhost:5173"]`.
+- `git check-ignore .env.local` → ignored (no secrets tracked).
+- `git status` → no secret files staged.
+
+### Remaining Work / Notes
+
+- Issue #6 pending user confirmation to close (production origin + production instance are deployment-phase items).
+- `clerk` CLI update 1.5.0 → 3.2.0 available — flagging; not applied mid-task.
+- Next: Issue #7 (auth flow design + architecture diagram + ADR), then #14 (.NET JwtBearer + JWKS).
+- No changes committed.
+
+

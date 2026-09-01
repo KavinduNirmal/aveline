@@ -18,6 +18,7 @@ control as an audit trail.
 | `ADR-004-state-management-react.md` | State management approach for the React dashboard |
 | `ADR-005-state-management-flutter.md` | State management approach for the Flutter app |
 | `ADR-006-deployment-platform.md` | Cloud platform selection (Azure/Railway/Render + Vercel) |
+| `ADR-007-clerk-authentication.md` | Clerk as identity provider + JwtBearer/JWKS validation strategy |
 
 ## ADR Template
 

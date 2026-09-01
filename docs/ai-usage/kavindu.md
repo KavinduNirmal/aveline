@@ -84,9 +84,15 @@
 
 ### Remaining Work / Notes
 
-- Issue #6 pending user confirmation to close (production origin + production instance are deployment-phase items).
-- `clerk` CLI update 1.5.0 → 3.2.0 available — flagging; not applied mid-task.
-- Next: Issue #7 (auth flow design + architecture diagram + ADR), then #14 (.NET JwtBearer + JWKS).
-- No changes committed.
+- Issue #6 was closed by the user (commit `4bc371a feat: Initialized Clerk Closes #6`); Clerk CLI updated to 3.2.0.
+- Production origin + production instance are deployment-phase items.
+
+### Follow-up (same session): Issue #7 — Auth flow design
+
+- Created `docs/architecture/authentication.md` with C4 context + container diagrams, sequence diagrams for login and an authenticated API call (including internal agent call), and the role model (`user_role` vs `org_role`).
+- Created `docs/ADR/ADR-007-clerk-authentication.md` (template-compliant): Clerk as identity provider; `JwtBearer` + Clerk JWKS for validation; service-to-service shared-secret decision deferred to #18.
+- Updated `docs/ADR/README.md` to list ADR-007.
+- No changes committed; awaiting user review before closing #7 and starting #14.
+
 
 

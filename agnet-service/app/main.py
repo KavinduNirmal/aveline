@@ -1,36 +1,26 @@
-"""
-Aveline Agent Service — FastAPI Entry Point
-
-This is the main entry point for the Aveline Agentic AI service.
-It is a FastAPI application that exposes HTTP endpoints consumed
-exclusively by the ASP.NET Core backend (Aveline.Api).
-
-DO NOT call this service directly from React or Flutter.
-
-Routes will be registered here as agents are built.
-See app/api/ for route handler modules.
-"""
+import os
 
 from fastapi import FastAPI
 
+from app.api import agents
+from app.core.config import get_settings
+from app.core.logging import configure_logging
+
+configure_logging(log_format=os.getenv("AVELINE_LOG_FORMAT", "json"))
+
+settings = get_settings()
+
 app = FastAPI(
-    title="Aveline Agent Service",
+    title=settings.app_name,
     description="LangGraph-powered agentic AI for Boutique Concierge workflows.",
-    version="0.1.0",
+    version=settings.version,
 )
 
-# ---------------------------------------------------------------------------
-# Route registration
-# Routes will be mounted here as each agent module is built.
-# Example:
-#   from app.api import customer_memory, visual_insight, commerce
-#   app.include_router(customer_memory.router, prefix="/agents/customer-memory")
-#   app.include_router(visual_insight.router, prefix="/agents/visual-insight")
-#   app.include_router(commerce.router, prefix="/agents/commerce")
-# ---------------------------------------------------------------------------
+# Routers under /agents require the internal service token (see app/core/security.py).
+app.include_router(agents.router)
 
 
 @app.get("/health", tags=["Health"])
 async def health_check() -> dict:
-    """Basic health check endpoint used by docker-compose and CI."""
+    """Basic health check used by docker-compose and CI (public)."""
     return {"status": "ok", "service": "aveline-agent-service"}

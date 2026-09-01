@@ -12,8 +12,9 @@ App-wide constants and configuration:
 
 ### `network/`
 HTTP client setup:
-- `api_client.dart` — Configured `Dio` instance with base URL, auth interceptor, error interceptor
-- `auth_interceptor.dart` — Attaches Clerk JWT bearer token to every request
+- `api_client.dart` — `ApiClientFactory`: configured `Dio` instance with base URL + auth interceptor
+- `auth_token_provider.dart` — `AuthTokenProvider` port (get/refresh/sign-out); implemented by the auth feature
+- `auth_interceptor.dart` — Attaches the Clerk JWT bearer token to every request; refreshes and retries once on 401, signs out if still rejected
 - `error_interceptor.dart` — Maps HTTP errors to typed app exceptions
 
 ### `router/`

@@ -691,6 +691,12 @@
       "skillPath": "identity/restore-credentials/SKILL.md",
       "computedHash": "f20bfdd60da17942b489ea6eeba786f572afc5bf0b754fbaf1ec25fa1cf62044"
     },
+    "shadcn": {
+      "source": "shadcn/ui",
+      "sourceType": "github",
+      "skillPath": "skills/shadcn/SKILL.md",
+      "computedHash": "a86630dd9b32722a4ea6846abc6756d5da8f06bdc2343dbc625923cc5c7a758b"
+    },
     "sql-optimization": {
       "source": "github/awesome-copilot",
       "sourceType": "github",

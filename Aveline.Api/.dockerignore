@@ -1,0 +1,25 @@
+# Build outputs
+bin/
+obj/
+
+# IDE
+.idea/
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Logs
+[Ll]og/
+[Ll]ogs/
+
+# Secrets (keep the example)
+.env
+.env.*
+!.env.example
+
+# Test results
+[Tt]est[Rr]esult*/
+CodeCoverage/
+*.trx

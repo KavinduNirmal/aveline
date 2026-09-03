@@ -11,7 +11,7 @@ Ensure you have the following installed on your machine:
 - **Package Manager**: [Bun](https://bun.sh/) _(Recommended)_, [pnpm](https://pnpm.io/), or `npm`
 - **.NET SDK**: .NET 10 SDK (for `Aveline.Api/`)
 - **Python**: Python 3.12+ (for `agnet-service/`)
-- **Flutter**: Flutter 3.13+ / Dart 3.13+ (for `frontend/aveline_mobile/`)
+- **Flutter**: Latest stable Flutter / Dart SDK 3.13+ (for `frontend/aveline_mobile/`)
 - **Docker & Docker Compose**: For local PostgreSQL (pgvector) and Redis instances
 - **Git**: Configured with your university/GitHub credentials
 
@@ -80,6 +80,9 @@ docker compose up -d postgres redis
 
 ## 3. Running Sub-Projects Locally
 
+> For authentication-focused setup (Clerk keys, JWT template, sign-in flows), see
+> [Running Aveline Locally with Authentication](docs/guides/local-auth-development.md).
+
 ### ASP.NET Core API (`Aveline.Api/`)
 
 ```bash
@@ -88,7 +91,9 @@ dotnet restore
 dotnet run
 ```
 
-- Swagger / OpenAPI endpoint: `http://localhost:5000/openapi/v1.json`
+- Swagger / OpenAPI endpoint:
+  - `dotnet run` (local): `http://localhost:5091/openapi/v1.json`
+  - `docker compose up api` (host-mapped): `http://localhost:5000/openapi/v1.json`
 
 ### Python Agentic AI Service (`agnet-service/`)
 
@@ -107,8 +112,35 @@ uvicorn app.main:app --reload --port 8000
 ```bash
 cd frontend/aveline_mobile
 flutter pub get
-flutter run
+flutter run \
+  --dart-define=CLERK_PUBLISHABLE_KEY=pk_test_... \
+  --dart-define=API_BASE_URL=http://10.0.2.2:5091
 ```
+
+- `CLERK_PUBLISHABLE_KEY` (**required**) — the Clerk publishable key (`pk_...`).
+- `API_BASE_URL` (optional) — defaults to `http://10.0.2.2:5091`, the host machine's
+  API as seen from the Android emulator. On a physical device or iOS simulator,
+  pass the host's LAN address instead (e.g. `http://192.168.x.x:5091`).
+- `JWT_TEMPLATE_NAME` (optional) — defaults to `jwt-aveline-v1` (the Aveline
+  template that mints `user_role`/`org_role` claims the backend authorizes on).
+
+On sign-in the app persists the Clerk session; tokens are attached to API
+requests automatically and a 401 triggers a token refresh, then sign-out.
+
+### Web Admin Dashboard (`frontend/web`)
+
+```bash
+cd frontend/web
+bun install
+cp .env.example .env.local   # fill in VITE_CLERK_PUBLISHABLE_KEY
+bun dev
+```
+
+- `VITE_CLERK_PUBLISHABLE_KEY` (**required**) — Clerk publishable key (`pk_...`).
+- `VITE_API_BASE_URL` (optional) — defaults to `http://localhost:5091`.
+
+Routes: `/sign-in`, `/sign-up`, and `/` (dashboard, protected). Sessions persist
+across reloads via Clerk.
 
 ---
 

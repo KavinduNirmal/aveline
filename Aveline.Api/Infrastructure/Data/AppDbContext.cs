@@ -1,3 +1,4 @@
+using Aveline.Api.Modules.Commerce.Models;
 using Aveline.Api.Modules.Shared.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -10,6 +11,14 @@ public class AppDbContext : DbContext
     }
 
     public DbSet<User> Users => Set<User>();
+
+    // Commerce Module (Slice 3)
+    public DbSet<Order> Orders => Set<Order>();
+    public DbSet<OrderItem> OrderItems => Set<OrderItem>();
+    public DbSet<Payment> Payments => Set<Payment>();
+    public DbSet<ApprovalQueueEntry> ApprovalQueue => Set<ApprovalQueueEntry>();
+    public DbSet<DeliveryPlan> DeliveryPlans => Set<DeliveryPlan>();
+    public DbSet<BusinessRule> BusinessRules => Set<BusinessRule>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -92,7 +92,7 @@ graph TD
 | **Database** | PostgreSQL 16 + `pgvector` | Relational business data + vector embeddings for semantic memory |
 | **Cache** | Redis 7 | High-performance session & query caching |
 | **Mobile App** | Flutter (Dart SDK 3.13+) | Boutique floor associate mobile interface (Clean Architecture) |
-| **Web Dashboard** | React / Vite *(TBD)* | Boutique owner & manager dashboard for approvals, analytics, and rules |
+| **Web Dashboard** | React 19 / Vite 8 + TypeScript (`@clerk/react`, React Router) | Boutique owner & manager dashboard for approvals, analytics, and rules |
 | **Authentication** | Clerk | Unified JWT authentication & role-based authorization |
 | **Package Management** | Bun | Fast package execution and deterministic lockfile management (`bun.lock`) |
 | **CI/CD** | GitHub Actions | Automated multi-project compilation, linting, analysis, and quality gates |
@@ -146,15 +146,23 @@ Every commit is validated locally against 6 quality gates:
 ### Continuous Integration (GitHub Actions)
 All pull requests and commits targeting `development`, `main`, and `master` trigger the [Aveline CI](.github/workflows/ci.yml) workflow:
 - **`hygiene`**: Repository hygiene and lockfile compliance.
-- **`build-api`**: .NET 10 compilation and test suite execution.
-- **`lint-python`**: Ruff linter verification across the agent service.
-- **`analyze-flutter`**: Flutter static analyzer and widget tests.
+- **`build-api`**: .NET 10 build, test suite, and `dotnet publish` artifact.
+- **`test-python`**: Ruff lint and pytest for the agent service.
+- **`test-web`**: oxlint, Vitest, and Vite build for the dashboard (+ `dist` artifact).
+- **`test-flutter`**: `flutter analyze`, tests, and release APK artifact.
+- **`security-scan`**: `.NET` vulnerable-package scan, `bun audit`, and a Trivy filesystem scan (SARIF uploaded to Code Scanning).
+
+[Dependabot](.github/dependabot.yml) opens dependency update PRs and security alerts for all ecosystems (GitHub Actions, npm, pub, NuGet, pip).
 
 ---
 
 ## Documentation Index
 
 - [Developer Setup & Onboarding Guide](GET_STARTED.md)
+- [Running Aveline Locally with Authentication](docs/guides/local-auth-development.md)
+- [Authentication Architecture](docs/architecture/authentication.md)
+- [Authentication Security Review](docs/security/auth-security-review.md)
+- [Test Suite Documentation](docs/tests/README.md)
 - [Git Flow & Branching Strategy Guide](docs/git-flow.md)
 - [Architecture Decision Records (ADRs)](docs/ADR/README.md)
 - [CI/CD Workflow Specification](spec/spec-process-cicd-ci.md)

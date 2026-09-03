@@ -1,0 +1,35 @@
+version: 2
+updates:
+  # GitHub Actions — keep CI actions up to date.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # Web dashboard (Vite / React).
+  - package-ecosystem: "npm"
+    directory: "/frontend/web"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  # Flutter mobile app (Dart / pub).
+  - package-ecosystem: "pub"
+    directory: "/frontend/aveline_mobile"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  # ASP.NET Core Web API.
+  - package-ecosystem: "nuget"
+    directory: "/Aveline.Api"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  # Python agent service.
+  - package-ecosystem: "pip"
+    directory: "/agnet-service"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5

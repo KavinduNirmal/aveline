@@ -477,3 +477,42 @@ First CI run on PR #31 failed 4 jobs; all fixed:
 3. **Verification**:
    - `bun run lint && bun test && bun run build` -> 30/30 tests passed, 0 errors, production build verified.
 
+## Session 2026-09-03 (Part 2)
+
+**Task:** Issue #33: Cache Full User Entity in Redis for Fast Authentication & Authorization
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed & Verified
+
+### Work Performed
+
+1. **GitHub Issue Creation**:
+   - Created [Issue #33](https://github.com/KavinduNirmal/aveline/issues/33) using the `feature_request` template before implementation.
+2. **Cache Layer Expansion**:
+   - Extended `IUserCacheService` and `UserCacheService` with `GetUserProfileAsync(string clerkId)` and `SetUserProfileAsync(string clerkId, UserDto user, TimeSpan? ttl)`.
+   - Used `user:profile:{clerkId}` key format with 24-hour default TTL and graceful logging on failure.
+   - Updated `InvalidateAsync(string clerkId)` to clear both `user:onboarding:{clerkId}` and `user:profile:{clerkId}` atomically.
+3. **Cache-Aside Pattern in UserService**:
+   - Updated `UserService.GetByClerkIdAsync` to check Redis profile cache first, querying PostgreSQL only on cache-miss and warming the cache on lookup.
+   - Updated `UserService.GetOrSynchronizeUserAsync` to pre-warm the user profile cache upon user synchronization.
+   - Updated `UserService.CompleteOnboardingAsync` to write both onboarding and full profile caches upon profile updates.
+4. **Unit & Regression Testing**:
+   - Added unit tests in `UserCacheServiceTests` for `GetUserProfileAsync`, `SetUserProfileAsync`, and dual-key invalidation.
+   - Added unit tests in `UserServiceTests` verifying cache-hit avoids DB calls, cache-miss populates cache, and onboarding updates both cache keys.
+
+### Files Created or Modified
+
+- `Aveline.Api/Infrastructure/Caching/IUserCacheService.cs`
+- `Aveline.Api/Infrastructure/Caching/UserCacheService.cs`
+- `Aveline.Api/Modules/Shared/Services/UserService.cs`
+- `Aveline.Api.Tests/UserCacheServiceTests.cs`
+- `Aveline.Api.Tests/UserServiceTests.cs`
+- `docs/ai-usage/kavindu.md`
+
+### Verification Performed
+
+1. **Backend Tests**: `dotnet test Aveline.Api.Tests` -> **87 passed, 0 failed** (100% success rate, 6 new unit tests passed).
+2. **Web Tests & Linter**: `bun run lint && bun test && bun run build` -> **30 passed, 0 failed**, 0 lint errors, build succeeded.
+3. **Flutter Tests & Analyzer**: `flutter analyze --no-fatal-infos && flutter test` -> **No issues found**, **20 passed, 0 failed**.
+
+
+

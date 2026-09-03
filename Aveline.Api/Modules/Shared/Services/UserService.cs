@@ -82,14 +82,33 @@ public class UserService : IUserService
         }
 
         var cacheItem = MapToCacheItem(user);
+        var userDto = UserDto.FromEntity(user);
         await _cacheService.SetUserAsync(clerkId, cacheItem, cancellationToken: cancellationToken);
+        await _cacheService.SetUserProfileAsync(clerkId, userDto, cancellationToken: cancellationToken);
         return cacheItem;
     }
 
     public async Task<UserDto?> GetByClerkIdAsync(string clerkId, CancellationToken cancellationToken = default)
     {
+        // 1. Check Redis profile cache
+        var cachedProfile = await _cacheService.GetUserProfileAsync(clerkId, cancellationToken);
+        if (cachedProfile != null)
+        {
+            return cachedProfile;
+        }
+
+        // 2. Cache miss - Query database
         var user = await _userRepository.GetByClerkIdAsync(clerkId, cancellationToken);
-        return user == null ? null : UserDto.FromEntity(user);
+        if (user == null)
+        {
+            return null;
+        }
+
+        var dto = UserDto.FromEntity(user);
+
+        // 3. Populate Redis profile cache
+        await _cacheService.SetUserProfileAsync(clerkId, dto, cancellationToken: cancellationToken);
+        return dto;
     }
 
     public async Task<UserDto> CompleteOnboardingAsync(
@@ -118,11 +137,13 @@ public class UserService : IUserService
         await _userRepository.UpdateAsync(user, cancellationToken);
         _logger.LogInformation("User {ClerkId} completed onboarding successfully.", clerkId);
 
-        // Update Redis Cache immediately
+        // Update Redis Cache immediately (both onboarding item and full profile DTO)
         var cacheItem = MapToCacheItem(user);
+        var updatedDto = UserDto.FromEntity(user);
         await _cacheService.SetUserAsync(clerkId, cacheItem, cancellationToken: cancellationToken);
+        await _cacheService.SetUserProfileAsync(clerkId, updatedDto, cancellationToken: cancellationToken);
 
-        return UserDto.FromEntity(user);
+        return updatedDto;
     }
 
     private static UserOnboardingCacheItem MapToCacheItem(User user)

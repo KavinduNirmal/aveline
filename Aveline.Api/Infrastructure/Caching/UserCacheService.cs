@@ -16,13 +16,14 @@ public class UserCacheService : IUserCacheService
         _logger = logger;
     }
 
-    private static string GetCacheKey(string clerkId) => $"user:onboarding:{clerkId}";
+    private static string GetOnboardingCacheKey(string clerkId) => $"user:onboarding:{clerkId}";
+    private static string GetProfileCacheKey(string clerkId) => $"user:profile:{clerkId}";
 
     public async Task<UserOnboardingCacheItem?> GetUserAsync(string clerkId, CancellationToken cancellationToken = default)
     {
         try
         {
-            var key = GetCacheKey(clerkId);
+            var key = GetOnboardingCacheKey(clerkId);
             var cachedJson = await _cache.GetStringAsync(key, cancellationToken);
             if (string.IsNullOrEmpty(cachedJson))
             {
@@ -33,7 +34,7 @@ public class UserCacheService : IUserCacheService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to read user cache for clerkId={ClerkId}. Proceeding as cache miss.", clerkId);
+            _logger.LogWarning(ex, "Failed to read user onboarding cache for clerkId={ClerkId}. Proceeding as cache miss.", clerkId);
             return null;
         }
     }
@@ -42,7 +43,7 @@ public class UserCacheService : IUserCacheService
     {
         try
         {
-            var key = GetCacheKey(clerkId);
+            var key = GetOnboardingCacheKey(clerkId);
             var json = JsonSerializer.Serialize(item);
             var options = new DistributedCacheEntryOptions
             {
@@ -52,7 +53,45 @@ public class UserCacheService : IUserCacheService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to write user cache for clerkId={ClerkId}.", clerkId);
+            _logger.LogWarning(ex, "Failed to write user onboarding cache for clerkId={ClerkId}.", clerkId);
+        }
+    }
+
+    public async Task<Aveline.Api.Modules.Shared.DTOs.UserDto?> GetUserProfileAsync(string clerkId, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var key = GetProfileCacheKey(clerkId);
+            var cachedJson = await _cache.GetStringAsync(key, cancellationToken);
+            if (string.IsNullOrEmpty(cachedJson))
+            {
+                return null;
+            }
+
+            return JsonSerializer.Deserialize<Aveline.Api.Modules.Shared.DTOs.UserDto>(cachedJson);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to read user profile cache for clerkId={ClerkId}. Proceeding as cache miss.", clerkId);
+            return null;
+        }
+    }
+
+    public async Task SetUserProfileAsync(string clerkId, Aveline.Api.Modules.Shared.DTOs.UserDto user, TimeSpan? ttl = null, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var key = GetProfileCacheKey(clerkId);
+            var json = JsonSerializer.Serialize(user);
+            var options = new DistributedCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = ttl ?? DefaultTtl
+            };
+            await _cache.SetStringAsync(key, json, options, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to write user profile cache for clerkId={ClerkId}.", clerkId);
         }
     }
 
@@ -60,8 +99,11 @@ public class UserCacheService : IUserCacheService
     {
         try
         {
-            var key = GetCacheKey(clerkId);
-            await _cache.RemoveAsync(key, cancellationToken);
+            var onboardingKey = GetOnboardingCacheKey(clerkId);
+            var profileKey = GetProfileCacheKey(clerkId);
+
+            await _cache.RemoveAsync(onboardingKey, cancellationToken);
+            await _cache.RemoveAsync(profileKey, cancellationToken);
         }
         catch (Exception ex)
         {

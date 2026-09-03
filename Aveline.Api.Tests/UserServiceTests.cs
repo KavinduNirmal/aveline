@@ -196,4 +196,108 @@ public class UserServiceTests
         await Assert.ThrowsAsync<KeyNotFoundException>(() =>
             _sut.CompleteOnboardingAsync("non_existent_clerk_id", request));
     }
+
+    [Fact]
+    public async Task GetByClerkIdAsync_WhenProfileInCache_ReturnsCachedProfileWithoutDbCall()
+    {
+        var cachedProfile = new UserDto
+        {
+            Id = Guid.NewGuid(),
+            ClerkId = "clerk_cached_profile_only",
+            Email = "cached_profile@aveline.lk",
+            FirstName = "Cached",
+            LastName = "Profile",
+            DisplayName = "Cached Profile",
+            UserRole = "owner",
+            OrganizationRole = "org:admin",
+            HasCompletedOnboarding = true
+        };
+
+        await _cacheService.SetUserProfileAsync("clerk_cached_profile_only", cachedProfile);
+
+        // Intentionally do NOT put user in _userRepository / DB.
+        var result = await _sut.GetByClerkIdAsync("clerk_cached_profile_only");
+
+        Assert.NotNull(result);
+        Assert.Equal(cachedProfile.Id, result.Id);
+        Assert.Equal("Cached Profile", result.DisplayName);
+        Assert.Equal("cached_profile@aveline.lk", result.Email);
+    }
+
+    [Fact]
+    public async Task GetByClerkIdAsync_WhenNotInCache_QueriesDbAndPopulatesProfileCache()
+    {
+        var dbUser = new User
+        {
+            Id = Guid.NewGuid(),
+            ClerkId = "clerk_miss_user",
+            Email = "miss@aveline.lk",
+            FirstName = "Miss",
+            LastName = "Hit",
+            Username = "miss_hit",
+            DisplayName = "Miss Hit",
+            UserRole = "associate",
+            OrganizationRole = "org:member",
+            HasCompletedOnboarding = true
+        };
+        await _userRepository.CreateAsync(dbUser);
+
+        // Before call, cache must be empty
+        var cacheBefore = await _cacheService.GetUserProfileAsync("clerk_miss_user");
+        Assert.Null(cacheBefore);
+
+        var result = await _sut.GetByClerkIdAsync("clerk_miss_user");
+
+        Assert.NotNull(result);
+        Assert.Equal("clerk_miss_user", result.ClerkId);
+        Assert.Equal("Miss Hit", result.DisplayName);
+
+        // Verify cache is now populated
+        var cacheAfter = await _cacheService.GetUserProfileAsync("clerk_miss_user");
+        Assert.NotNull(cacheAfter);
+        Assert.Equal(dbUser.Id, cacheAfter.Id);
+        Assert.Equal("Miss Hit", cacheAfter.DisplayName);
+    }
+
+    [Fact]
+    public async Task CompleteOnboardingAsync_UpdatesBothOnboardingAndProfileCache()
+    {
+        var user = new User
+        {
+            Id = Guid.NewGuid(),
+            ClerkId = "clerk_complete_dual",
+            Email = "dual@aveline.lk",
+            FirstName = "Dual",
+            LastName = "Cache",
+            Username = "dual_cache",
+            UserRole = "manager",
+            HasCompletedOnboarding = false
+        };
+        await _userRepository.CreateAsync(user);
+
+        var request = new CompleteOnboardingRequest
+        {
+            DisplayName = "Dual Cache Completed",
+            PhoneNumber = "+94771122334",
+            Address = "Colombo 03",
+            ContactPreference = ContactPreferences.WhatsApp,
+            PushNotificationsEnabled = true
+        };
+
+        await _sut.CompleteOnboardingAsync("clerk_complete_dual", request);
+
+        // Verify Onboarding Cache
+        var onboardingCache = await _cacheService.GetUserAsync("clerk_complete_dual");
+        Assert.NotNull(onboardingCache);
+        Assert.True(onboardingCache.HasCompletedOnboarding);
+        Assert.Equal("Dual Cache Completed", onboardingCache.DisplayName);
+
+        // Verify Profile Cache
+        var profileCache = await _cacheService.GetUserProfileAsync("clerk_complete_dual");
+        Assert.NotNull(profileCache);
+        Assert.True(profileCache.HasCompletedOnboarding);
+        Assert.Equal("Dual Cache Completed", profileCache.DisplayName);
+        Assert.Equal("+94771122334", profileCache.PhoneNumber);
+        Assert.Equal(ContactPreferences.WhatsApp, profileCache.ContactPreference);
+    }
 }

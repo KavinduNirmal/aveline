@@ -1,5 +1,6 @@
-using System.ComponentModel.DataAnnotations.Schema;
 using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+using System.Text.Json.Serialization;
 
 namespace Aveline.Api.Modules.Shared.Models;
 
@@ -34,21 +35,25 @@ public class User
     [Required]
     [MaxLength(20)]
     public string OrganizationRole { get; set; } = string.Empty;
+    [MaxLength(200)]
+    public string? DisplayName { get; set; }
+    public string? Address { get; set; }
+    public bool HasCompletedOnboarding { get; set; } = false;
     public ContactPreferences ContactPreference { get; set; } = ContactPreferences.None;
     public bool PushNotificationsEnabled { get; set; } = false;
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? DeletedAt { get; set; }
-
-
 }
 
+[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum ContactPreferences
 {
     Email,
     Phone,
     SMS,
+    WhatsApp,
     None
 }
 

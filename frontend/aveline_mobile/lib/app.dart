@@ -7,12 +7,14 @@ import 'package:provider/provider.dart';
 import 'core/config/app_config.dart';
 import 'core/network/api_client.dart';
 import 'core/network/auth_token_provider.dart';
+import 'core/providers/user_provider.dart';
 import 'core/router/route_guards.dart';
 import 'core/theme/app_theme.dart';
 import 'features/auth/data/clerk_auth_repository.dart';
 import 'features/auth/domain/auth_repository.dart';
 import 'features/auth/presentation/screens/auth_screen.dart';
 import 'features/home/presentation/screens/home_screen.dart';
+import 'features/onboarding/presentation/screens/onboarding_screen.dart';
 
 /// Root widget: wraps the app in Clerk, wires DI, and configures routing.
 class AvelineApp extends StatelessWidget {
@@ -52,6 +54,7 @@ class AvelineAppShell extends StatefulWidget {
 
 class _AvelineAppShellState extends State<AvelineAppShell> {
   late final AuthRepository _authRepository;
+  late final UserProvider _userProvider;
   late final Dio _dio;
   late final GoRouter _router;
 
@@ -62,22 +65,47 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
       widget.clerkAuthState,
       jwtTemplateName: widget.config.jwtTemplateName,
     );
+    _userProvider = UserProvider();
     _dio = ApiClientFactory.create(
       baseUrl: widget.config.apiBaseUrl,
       tokenProvider: _authRepository,
     );
     _router = _buildRouter();
+
+    if (_authRepository.isSignedIn) {
+      _userProvider.fetchUser(_dio);
+    }
+
+    widget.clerkAuthState.addListener(_onAuthChanged);
+  }
+
+  void _onAuthChanged() {
+    if (_authRepository.isSignedIn) {
+      _userProvider.fetchUser(_dio);
+    } else {
+      _userProvider.clear();
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.clerkAuthState.removeListener(_onAuthChanged);
+    _userProvider.dispose();
+    super.dispose();
   }
 
   GoRouter _buildRouter() {
     return GoRouter(
       initialLocation: _authRepository.isSignedIn
-          ? AppRoutes.home
+          ? (_userProvider.hasCompletedOnboarding ? AppRoutes.home : AppRoutes.onboarding)
           : AppRoutes.auth,
-      refreshListenable: widget.clerkAuthState,
+      refreshListenable: Listenable.merge([widget.clerkAuthState, _userProvider]),
       redirect: (context, state) => RouteGuards.redirectForAuth(
         state.matchedLocation,
         isSignedIn: _authRepository.isSignedIn,
+        hasCompletedOnboarding: _authRepository.isSignedIn
+            ? _userProvider.hasCompletedOnboarding
+            : null,
       ),
       routes: [
         GoRoute(
@@ -90,6 +118,11 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
           name: 'auth',
           builder: (context, state) => const AuthScreen(),
         ),
+        GoRoute(
+          path: AppRoutes.onboarding,
+          name: 'onboarding',
+          builder: (context, state) => const OnboardingScreen(),
+        ),
       ],
     );
   }
@@ -101,6 +134,7 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
         Provider<AppConfig>.value(value: widget.config),
         Provider<AuthRepository>.value(value: _authRepository),
         Provider<AuthTokenProvider>.value(value: _authRepository),
+        ChangeNotifierProvider<UserProvider>.value(value: _userProvider),
         Provider<Dio>.value(value: _dio),
       ],
       child: MaterialApp.router(

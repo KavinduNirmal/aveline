@@ -9,6 +9,7 @@ export type TokenGetter = () => Promise<string | null>
 let tokenGetter: TokenGetter | null = null
 let onUnauthorized: (() => void) | null = null
 let onForbidden: ((error: unknown) => void) | null = null
+let onOnboardingStatusChanged: ((isOnboarded: boolean) => void) | null = null
 
 /** Registers the Clerk token getter (mounted inside the ClerkProvider). */
 export function registerAuthTokenGetter(getter: TokenGetter | null): void {
@@ -25,6 +26,13 @@ export function registerForbiddenHandler(
   handler: ((error: unknown) => void) | null,
 ): void {
   onForbidden = handler
+}
+
+/** Registers the handler invoked when X-Completed-Onboarding header is detected. */
+export function registerOnboardingStatusHandler(
+  handler: ((isOnboarded: boolean) => void) | null,
+): void {
+  onOnboardingStatusChanged = handler
 }
 
 export function createApiClient(baseUrl: string): AxiosInstance {
@@ -44,9 +52,17 @@ export function createApiClient(baseUrl: string): AxiosInstance {
     return config
   })
 
-  // Surface typed errors and react to 401 / 403.
+  // Surface typed errors, extract onboarding header, and react to 401 / 403.
   client.interceptors.response.use(
-    (response) => response,
+    (response) => {
+      const onboardingHeader =
+        response.headers['x-completed-onboarding'] ??
+        response.headers['X-Completed-Onboarding']
+      if (typeof onboardingHeader === 'string') {
+        onOnboardingStatusChanged?.(onboardingHeader.toLowerCase() === 'true')
+      }
+      return response
+    },
     (error: unknown) => {
       const apiError = toApiError(error)
       if (apiError.status === 401) {

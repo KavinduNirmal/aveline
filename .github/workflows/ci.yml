@@ -98,7 +98,7 @@ jobs:
         run: reportgenerator -reports:TestResults/**/coverage.cobertura.xml -targetdir:coverage-report -reporttypes:Html
 
       - name: Upload API coverage report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aveline-api-coverage
           path: coverage-report
@@ -107,7 +107,7 @@ jobs:
         run: dotnet publish Aveline.Api/Aveline.Api.csproj -c Release --no-restore -o api-publish
 
       - name: Upload API artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aveline-api
           path: api-publish
@@ -142,7 +142,7 @@ jobs:
         working-directory: agnet-service
 
       - name: Upload agent coverage report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aveline-agent-coverage
           path: agnet-service/coverage.xml
@@ -175,7 +175,7 @@ jobs:
         working-directory: frontend/web
 
       - name: Upload web coverage report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aveline-web-coverage
           path: frontend/web/coverage
@@ -188,7 +188,7 @@ jobs:
         working-directory: frontend/web
 
       - name: Upload web artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aveline-web
           path: frontend/web/dist
@@ -224,7 +224,7 @@ jobs:
         working-directory: frontend/aveline_mobile
 
       - name: Upload Flutter coverage report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aveline-mobile-coverage
           path: frontend/aveline_mobile/coverage/lcov.info
@@ -234,7 +234,7 @@ jobs:
         working-directory: frontend/aveline_mobile
 
       - name: Upload APK artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aveline-mobile-apk
           path: frontend/aveline_mobile/build/app/outputs/flutter-apk
@@ -356,7 +356,7 @@ jobs:
           cmd_options: "-J results.json"
 
       - name: Upload ZAP report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: aveline-zap-baseline

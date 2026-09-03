@@ -196,3 +196,18 @@ The agent must distinguish between:
 When an implementation requires a significant design decision that was not specified, the agent should explain the decision and its alternatives rather than silently treating its assumption as a project requirement.
 
 The agent must not fabricate requirements, test results, documentation, or implementation details.
+
+# 31. UI Components and Design System (shadcn/ui)
+
+When developing or modifying the web frontend:
+
+- **Do NOT create custom UI components or write raw styled HTML elements as a first choice.**
+- Always reference and follow the `shadcn` skill ([.agents/skills/shadcn/SKILL.md](file:///run/media/kavindu/Development/Development/3-1/SEF/aveline/.agents/skills/shadcn/SKILL.md)) and its architectural guidelines.
+- Always check the list of installed components under `src/components/ui/` before building UI.
+- When a required component is not yet installed, add it using the project package runner (`bunx --bun shadcn@latest add <component>`) rather than hand-rolling custom HTML elements or styled divs.
+- Compose interfaces using shadcn/ui primitives:
+  - **Form Controls**: Use `Input`, `Textarea`, `Label`, `Switch`, `ToggleGroup`, `Checkbox`, `Select` instead of raw `<input>`, `<textarea>`, `<label>`, or custom toggle divs.
+  - **Feedback & States**: Use `Alert` for warnings/errors, `Skeleton` for loading states, `Badge` for status tags.
+  - **Layout & Surfaces**: Use `Card`, `Avatar`, `Separator`, `Button` instead of unstyled containers or generic tags.
+- Always use semantic theme tokens (`bg-background`, `text-foreground`, `text-muted-foreground`, `border-border`, `text-destructive`) to preserve design consistency across themes and prevent hardcoded color literals.
+

@@ -146,4 +146,24 @@ describe('response interceptor', () => {
     expect(response.status).toBe(200)
     expect(response.data).toEqual({ ok: true })
   })
+
+  it('triggers onboarding handler when x-completed-onboarding header is present', async () => {
+    const client = buildClient()
+    let observedOnboarded: boolean | null = null
+    const { registerOnboardingStatusHandler } = await import('./api')
+    registerOnboardingStatusHandler((status) => {
+      observedOnboarded = status
+    })
+
+    client.defaults.adapter = async (config) => ({
+      status: 200,
+      statusText: 'OK',
+      headers: { 'x-completed-onboarding': 'false' },
+      config,
+      data: { ok: true },
+    })
+
+    await client.get('/api/v1/users/me')
+    expect(observedOnboarded).toBe(false)
+  })
 })

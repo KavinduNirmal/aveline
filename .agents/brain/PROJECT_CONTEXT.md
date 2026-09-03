@@ -4,7 +4,7 @@
 
 ## Project Overview
 
-You are being engaged to build **Boutique Concierge AI**, a full-stack platform for semi-luxury boutiques in Sri Lanka. The system solves a real problem: boutique owners and associates manage customer relationships, inventory, sourcing, payments, and deliveries through WhatsApp messages, phone calls, and in-person visits. They have no integrated system to remember customer preferences, track inventory intelligence, or automate business workflows.
+You are being engaged to build **Aveline AI**, a full-stack platform for semi-luxury boutiques in Sri Lanka. The system solves a real problem: boutique owners and associates manage customer relationships, inventory, sourcing, payments, and deliveries through WhatsApp messages, phone calls, and in-person visits. They have no integrated system to remember customer preferences, track inventory intelligence, or automate business workflows.
 
 The platform consists of a Flutter mobile app for boutique associates and managers, a React web dashboard for boutique owners, an ASP.NET Core Web API as the mandatory public backend, PostgreSQL as the database, and a Python-based Agentic AI subsystem using LangGraph.
 

@@ -28,7 +28,7 @@ public class FullAuthFlowIntegrationTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _signingKey = new RsaSecurityKey(RSA.Create(2048));
+        _signingKey = new RsaSecurityKey(RSA.Create(2048)) { KeyId = "test-kid" };
 
         _authServer = new StubAuthServer(_signingKey);
         await _authServer.StartAsync();
@@ -36,15 +36,14 @@ public class FullAuthFlowIntegrationTests : IAsyncLifetime
         _agentServer = new StubAgentServer();
         await _agentServer.StartAsync();
 
-        // Environment variables load after appsettings.*.json, so they reliably
-        // point the app at the in-process stub servers. The stub authority is HTTP,
-        // so HTTPS-metadata enforcement is disabled for the test run only.
-        Environment.SetEnvironmentVariable("Clerk__Authority", _authServer.BaseUrl);
-        Environment.SetEnvironmentVariable("Clerk__RequireHttpsMetadata", "false");
-        Environment.SetEnvironmentVariable("AgentService__BaseUrl", _agentServer.BaseUrl + "/");
-        Environment.SetEnvironmentVariable("AgentService__InternalToken", InternalToken);
-
-        _factory = new WebApplicationFactory<Program>();
+        _factory = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
+                builder.UseSetting("AgentService:BaseUrl", _agentServer.BaseUrl + "/");
+                builder.UseSetting("AgentService:InternalToken", InternalToken);
+            });
         _client = _factory.CreateClient();
     }
 
@@ -54,11 +53,6 @@ public class FullAuthFlowIntegrationTests : IAsyncLifetime
         await _factory.DisposeAsync();
         await _authServer.DisposeAsync();
         await _agentServer.DisposeAsync();
-
-        Environment.SetEnvironmentVariable("Clerk__Authority", null);
-        Environment.SetEnvironmentVariable("Clerk__RequireHttpsMetadata", null);
-        Environment.SetEnvironmentVariable("AgentService__BaseUrl", null);
-        Environment.SetEnvironmentVariable("AgentService__InternalToken", null);
     }
 
     private static HttpRequestMessage PingRequest() => new(HttpMethod.Post, "/api/v1/agents/ping")
@@ -124,10 +118,27 @@ public class FullAuthFlowIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task ValidToken_FullFlow_AgentReceivesInternalToken_IdentityPropagated()
     {
+        var token = CreateToken("user_123", userRole: "associate", orgRole: "org:admin");
+
+        // Complete onboarding first so onboarding gate permits downstream access
+        var onboardingReq = new HttpRequestMessage(HttpMethod.Post, "/api/v1/users/onboarding")
+        {
+            Content = new StringContent(
+                JsonSerializer.Serialize(new
+                {
+                    displayName = "Test Associate",
+                    phoneNumber = "+94771234567",
+                    address = "123 Galle Road, Colombo"
+                }),
+                Encoding.UTF8,
+                "application/json")
+        };
+        onboardingReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var onboardingRes = await _client.SendAsync(onboardingReq);
+        Assert.Equal(HttpStatusCode.OK, onboardingRes.StatusCode);
+
         var request = PingRequest();
-        request.Headers.Authorization = new AuthenticationHeaderValue(
-            "Bearer",
-            CreateToken("user_123", userRole: "associate", orgRole: "org:admin"));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         var response = await _client.SendAsync(request);
 

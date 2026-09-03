@@ -1,14 +1,28 @@
+using Aveline.Api.Common.Middleware;
 using Aveline.Api.Configurations;
 using Aveline.Api.Endpoints;
+using Aveline.Api.Infrastructure.Caching;
+using Aveline.Api.Modules.Shared.Repositories;
+using Aveline.Api.Modules.Shared.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenApi();
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+});
 builder.Services.AddAvelineLogging(builder.Configuration);
+builder.Services.AddAvelineDatabase(builder.Configuration);
+builder.Services.AddAvelineCache(builder.Configuration);
 builder.Services.AddAvelineAuthentication(builder.Configuration);
 builder.Services.AddAvelineAuthorization();
 builder.Services.AddAvelineCors(builder.Configuration);
 builder.Services.AddAgentServiceClient(builder.Configuration);
+
+builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<IUserCacheService, UserCacheService>();
+builder.Services.AddScoped<IUserService, UserService>();
 
 var app = builder.Build();
 
@@ -23,11 +37,13 @@ app.UseCors(CorsConfiguration.DefaultPolicy);
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseAvelineAuthAudit();
+app.UseAvelineOnboarding();
 
 var v1 = app.MapGroup("/api/v1");
 v1.MapAuthEndpoints();
 v1.MapAuthPolicyDemoEndpoints();
 v1.MapAgentEndpoints();
+v1.MapUserEndpoints();
 
 app.Run();
 

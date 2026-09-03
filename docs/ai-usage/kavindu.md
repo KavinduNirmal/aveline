@@ -319,12 +319,14 @@ Closed the remaining roadmap (except deferred #16):
 **#26 — Auth module docs**: created `Aveline.Api/README.md` (env keys: `Clerk:Authority`, `Clerk:RequireHttpsMetadata`, `Cors:AllowedOrigins`, `AgentService:BaseUrl/InternalToken`, `Logging:UseJsonConsole`; endpoints; policies), `agnet-service/README.md` (INTERNAL_API_TOKEN, fail-closed behavior), rewrote the Flutter `frontend/aveline_mobile/README.md` (dart-defines, auth flow, structure), and added **`docs/guides/local-auth-development.md`** (step-by-step run-the-system-with-auth for a new dev incl. troubleshooting). Linked from GET_STARTED + README docs index.
 
 **#29 — Auth logging (backend + Python)**:
+
 - .NET: JwtBearer `OnTokenValidated`/`OnAuthenticationFailed` structured logs (`Aveline.Api.Authentication`); new `LoggingConfiguration` with **401/403 audit middleware** (`userId`, status, method, path) and config-driven **JSON console** logging (`Logging:UseJsonConsole`). Note: event contexts share no public base → helper methods take `HttpContext`.
 - Python: new `app/core/logging.py` JSON formatter (configurable via `AVELINE_LOG_FORMAT`; avoids `LogRecord._defaults`, which Python 3.14 removed; ruff UP017 → `datetime.UTC` module alias); `security.py` logs token-validation failures (reason: not_configured/invalid_token) and `agents.py` ping logs structured `user_id`/`roles` extras.
 
 **#28 — Security review**: wrote **`docs/security/auth-security-review.md`** (methodology, scope, findings). Findings: SEC-H1 Microsoft.OpenApi already fixed (GHSA via OpenApi 10.0.11); SEC-M1 audience-not-validated and SEC-M2 no-rate-limiting accepted/documented; low items documented. **Hardening applied**: new `SecurityConfiguration.UseAvelineSecurityHeaders` (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`) + integration test (63 .NET tests now). CI added **`dependency-review-action`** (PR gate) and **`zap-baseline`** job (boots the API with a dummy Clerk authority, ZAP baseline scan, non-blocking `continue-on-error`, JSON report artifact).
 
 **#27 — Quality metrics**: measured current coverage (.NET 32.3%, web 95.4%, Python 100%) and set gates:
+
 - .NET: `dotnet test --collect:"XPlat Code Coverage"` + python threshold check (**line ≥ 30%**) + ReportGenerator HTML artifact in `build-api`.
 - Web: `@vitest/coverage-v8`, thresholds (**lines ≥ 80**, functions/branches ≥ 70) in `vite.config.ts`, `test:coverage` script, report uploaded.
 - Python: `pytest-cov` with **`--cov-fail-under=90`** + xml report artifact.
@@ -355,6 +357,7 @@ First CI run on PR #31 failed 4 jobs; all fixed:
 ### Follow-up (same session): Issues #23/#24 — CI/CD pipeline + security scanning (Dependabot)
 
 **#23 — CI/CD pipeline** (`.github/workflows/ci.yml` rewritten; spec bumped to v2.0):
+
 - **`hygiene`** (unchanged) — lockfile + committed-`.env` checks.
 - **`build-api`** → adds `dotnet publish` + uploads a `aveline-api` artifact.
 - **`lint-python`** → renamed **`test-python`**: ruff + **pytest** (`agnet-service/tests/`).
@@ -364,6 +367,7 @@ First CI run on PR #31 failed 4 jobs; all fixed:
 - Deployment artifacts produced: API publish, web dist, APK. Secrets referenced via GitHub Secrets (`VITE_CLERK_PUBLISHABLE_KEY`).
 
 **#24 — Security scanning**:
+
 - **`.github/dependabot.yml`** — weekly update + security alerts for `github-actions`, `npm` (`frontend/web`), `pub` (`frontend/aveline_mobile`), `nuget` (`Aveline.Api`), `pip` (`agnet-service`). Satisfies "alerts generated for critical vulnerabilities".
 - **`security-scan`** job: `dotnet list package --vulnerable --include-transitive` (fails when the "has the following vulnerable packages" marker appears — note the clean-output line also contains "vulnerable packages", so the grep must be exact), `bun audit --audit-level high`, and **Trivy** fs scan (`aquasecurity/trivy-action`, CRITICAL/HIGH, `ignore-unfixed`, `limit-severities-for-sarif`) with SARIF uploaded to GitHub Code Scanning via `github/codeql-action/upload-sarif` (`if: always()`).
 - All new third-party actions **SHA-pinned** (resolved via GitHub API): `oven-sh/setup-bun` v2.2.0 `0c5077e5…`, `actions/upload-artifact` v4.6.2 `ea165f8d…`, `aquasecurity/trivy-action` v0.36.0 `a9c7b0f0…`, `github/codeql-action` v4.37.9 `a35ac6e6…`.
@@ -377,6 +381,138 @@ First CI run on PR #31 failed 4 jobs; all fixed:
 - Flutter/Web/Python suites unchanged and green (17 Flutter tests, 27 Vitest, 9 pytest).
 - No changes committed; #23/#24 pending user review to close.
 
+## Session 2026-09-03
+
+**Task:** Issue #32: Clerk User Propagation to Aveline Database & Presentation Layer Streamlining
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed & Verified
+
+### Work Performed
+
+1. **Backend Database & Persistence (EF Core + PostgreSQL)**:
+   - Configured `AppDbContext` and entity Fluent API configuration `UserConfiguration` with unique index on `ClerkId`, soft-delete filter, and constraints.
+   - Enhanced `User` model with `HasCompletedOnboarding`, `DisplayName`, `Address`, `ContactPreferences` (including `WhatsApp`), and `PushNotificationsEnabled`.
+   - Created `IUserRepository` and `UserRepository` with async CRUD and soft-delete support.
+   - Configured `DatabaseConfiguration` with seamless fallback to in-memory database for testing and environments without PostgreSQL.
+
+2. **Backend Redis Caching Layer**:
+   - Implemented `IUserCacheService` and `UserCacheService` storing `user:onboarding:{clerkId}` cache items with 24-hour TTL and invalidation.
+   - Configured `CacheConfiguration` with Redis distributed cache and in-memory cache fallback.
+
+3. **Backend Service, Middleware & Endpoints**:
+   - Implemented `IUserService` and `UserService` executing the `Request -> Redis -> DB (or Stub Create) -> Redis` cache-aside pipeline.
+   - Created `OnboardingMiddleware` and extension `UseAvelineOnboarding()` to attach `X-Completed-Onboarding` response header and enforce `403 Forbidden` (`OnboardingRequired`) on protected business endpoints when onboarding is incomplete.
+   - Created `UserEndpoints` mapping `GET /api/v1/users/me` and `POST /api/v1/users/onboarding` with data validation.
+   - Updated `CorsConfiguration` to expose `X-Completed-Onboarding` header to browser clients.
+
+4. **Web Frontend (React)**:
+   - Created `UserContext` and `UserProvider` managing profile state, onboarding status, and real-time header synchronization.
+   - Created `RequireOnboarding` route guard directing un-onboarded users to `/onboarding`.
+   - Created luxury "Serene Concierge" `OnboardingPage` with Playfair Display typography, warm tones, and form validation.
+   - Updated `api.ts` response interceptor to process `X-Completed-Onboarding` header.
+   - Configured routing in `App.tsx`.
+
+5. **Mobile Frontend (Flutter)**:
+   - Created `AvelineUser` domain model with JSON serialization.
+   - Created `UserProvider` (`ChangeNotifier`) for reactive user state and onboarding management.
+   - Created `OnboardingScreen` matching `AppTheme` design system with auto-filled Clerk details and profile completion form.
+   - Updated `RouteGuards.redirectForAuth` and `app.dart` GoRouter to handle `/onboarding` redirects.
+
+### Files Created or Modified
+
+- **Backend**:
+  - `Aveline.Api/Modules/Shared/Models/User.cs`
+  - `Aveline.Api/Infrastructure/Data/AppDbContext.cs`
+  - `Aveline.Api/Infrastructure/Data/Configurations/UserConfiguration.cs`
+  - `Aveline.Api/Modules/Shared/Repositories/IUserRepository.cs` & `UserRepository.cs`
+  - `Aveline.Api/Infrastructure/Caching/IUserCacheService.cs` & `UserCacheService.cs`
+  - `Aveline.Api/Configurations/CacheConfiguration.cs`
+  - `Aveline.Api/Configurations/DatabaseConfiguration.cs`
+  - `Aveline.Api/Configurations/CorsConfiguration.cs`
+  - `Aveline.Api/Modules/Shared/DTOs/UserDto.cs` & `CompleteOnboardingRequest.cs`
+  - `Aveline.Api/Modules/Shared/Services/IUserService.cs` & `UserService.cs`
+  - `Aveline.Api/Common/Middleware/OnboardingMiddleware.cs`
+  - `Aveline.Api/Endpoints/UserEndpoints.cs`
+  - `Aveline.Api/Program.cs`
+- **Frontend (Web)**:
+  - `frontend/web/src/types/user.ts`
+  - `frontend/web/src/lib/api.ts`
+  - `frontend/web/src/contexts/UserContext.tsx`
+  - `frontend/web/src/components/RequireOnboarding.tsx`
+  - `frontend/web/src/routes/OnboardingPage.tsx`
+  - `frontend/web/src/App.tsx`
+- **Frontend (Flutter)**:
+  - `frontend/aveline_mobile/lib/features/auth/domain/aveline_user.dart`
+  - `frontend/aveline_mobile/lib/core/providers/user_provider.dart`
+  - `frontend/aveline_mobile/lib/features/onboarding/presentation/screens/onboarding_screen.dart`
+  - `frontend/aveline_mobile/lib/core/router/route_guards.dart`
+  - `frontend/aveline_mobile/lib/app.dart`
+- **Tests**:
+  - `Aveline.Api.Tests/UserCacheServiceTests.cs`
+  - `Aveline.Api.Tests/UserRepositoryTests.cs`
+  - `Aveline.Api.Tests/UserServiceTests.cs`
+  - `Aveline.Api.Tests/OnboardingMiddlewareTests.cs`
+  - `Aveline.Api.Tests/UserEndpointsIntegrationTests.cs`
+  - `Aveline.Api.Tests/FullAuthFlowIntegrationTests.cs`
+  - `frontend/web/src/lib/api.test.ts`
+  - `frontend/web/src/contexts/UserContext.test.ts`
+  - `frontend/aveline_mobile/test/core/router/route_guards_test.dart`
+  - `frontend/aveline_mobile/test/features/auth/domain/aveline_user_test.dart`
+
+### Verification Performed
+
+1. **Backend Tests**: `dotnet test Aveline.Api.Tests` -> **81 passed, 0 failed** (100% success).
+2. **Web Tests & Linter**: `bun run lint && bun test && bun run build` -> **30 passed, 0 failed**, build succeeded with 0 errors.
+3. **Flutter Analyzer & Tests**: `flutter analyze --no-fatal-infos && flutter test` -> **No issues found**, **20 passed, 0 failed**.
+
+### Follow-up: Web Frontend shadcn/ui Component Alignment & Agent Rule Addition
+
+1. **Installed & Integrated shadcn/ui Components**:
+   - Added `alert`, `switch`, `toggle-group`, `toggle`, `skeleton`, `textarea` components to `src/components/ui/`.
+   - Updated `tsconfig.json` with `compilerOptions.baseUrl` and `paths` alias for seamless `@/` resolution by the shadcn CLI.
+   - Refactored `OnboardingPage.tsx` to fully eliminate raw HTML form elements and custom markup in favor of `Alert`, `AlertDescription`, `Avatar`, `AvatarImage`, `AvatarFallback`, `Button`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `Input`, `Label`, `Textarea`, `Switch`, and `ToggleGroup`/`ToggleGroupItem`.
+   - Refactored `PageLoader.tsx` to use `Skeleton` rather than plain text.
+2. **Project Rules Update**:
+   - Appended Rule 31 ("UI Components and Design System (shadcn/ui)") to `.agents/rules/Rules2.md` instructing future agents to prioritize shadcn/ui primitives, reference the `shadcn` skill, and avoid building custom UI components or raw HTML controls.
+3. **Verification**:
+   - `bun run lint && bun test && bun run build` -> 30/30 tests passed, 0 errors, production build verified.
+
+## Session 2026-09-03 (Part 2)
+
+**Task:** Issue #33: Cache Full User Entity in Redis for Fast Authentication & Authorization
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed & Verified
+
+### Work Performed
+
+1. **GitHub Issue Creation**:
+   - Created [Issue #33](https://github.com/KavinduNirmal/aveline/issues/33) using the `feature_request` template before implementation.
+2. **Cache Layer Expansion**:
+   - Extended `IUserCacheService` and `UserCacheService` with `GetUserProfileAsync(string clerkId)` and `SetUserProfileAsync(string clerkId, UserDto user, TimeSpan? ttl)`.
+   - Used `user:profile:{clerkId}` key format with 24-hour default TTL and graceful logging on failure.
+   - Updated `InvalidateAsync(string clerkId)` to clear both `user:onboarding:{clerkId}` and `user:profile:{clerkId}` atomically.
+3. **Cache-Aside Pattern in UserService**:
+   - Updated `UserService.GetByClerkIdAsync` to check Redis profile cache first, querying PostgreSQL only on cache-miss and warming the cache on lookup.
+   - Updated `UserService.GetOrSynchronizeUserAsync` to pre-warm the user profile cache upon user synchronization.
+   - Updated `UserService.CompleteOnboardingAsync` to write both onboarding and full profile caches upon profile updates.
+4. **Unit & Regression Testing**:
+   - Added unit tests in `UserCacheServiceTests` for `GetUserProfileAsync`, `SetUserProfileAsync`, and dual-key invalidation.
+   - Added unit tests in `UserServiceTests` verifying cache-hit avoids DB calls, cache-miss populates cache, and onboarding updates both cache keys.
+
+### Files Created or Modified
+
+- `Aveline.Api/Infrastructure/Caching/IUserCacheService.cs`
+- `Aveline.Api/Infrastructure/Caching/UserCacheService.cs`
+- `Aveline.Api/Modules/Shared/Services/UserService.cs`
+- `Aveline.Api.Tests/UserCacheServiceTests.cs`
+- `Aveline.Api.Tests/UserServiceTests.cs`
+- `docs/ai-usage/kavindu.md`
+
+### Verification Performed
+
+1. **Backend Tests**: `dotnet test Aveline.Api.Tests` -> **87 passed, 0 failed** (100% success rate, 6 new unit tests passed).
+2. **Web Tests & Linter**: `bun run lint && bun test && bun run build` -> **30 passed, 0 failed**, 0 lint errors, build succeeded.
+3. **Flutter Tests & Analyzer**: `flutter analyze --no-fatal-infos && flutter test` -> **No issues found**, **20 passed, 0 failed**.
 
 
 

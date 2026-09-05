@@ -516,3 +516,28 @@ First CI run on PR #31 failed 4 jobs; all fixed:
 
 
 
+
+## Session 2026-09-05
+
+**Task:** Issue #50 — Add organization membership and invitation entities (branch `feature/50-organization-membership`, branched from `feature/49-role-permission-catalog`)
+**Tool used:** opencode (Claude) AI coding agent
+**Status:** Implemented & verified (not committed)
+
+### Work Performed
+
+1. **New module `Aveline.Api/Modules/Organizations/`** with domain models, exceptions, repositories, and services:
+   - `Models/Organization.cs` — boutique org: unique `Slug`, **unique `ClerkOrgId`** (external key for the Clerk `org_...` id carried by the JWT `org_id` claim and the legacy `User.OrganizationId` string — added per user feedback that the org entity must FK the Clerk org id), `OwnerUserId`, lifecycle fields, memberships/invitations collections.
+   - `Models/OrganizationMembership.cs` — canonical membership: user/org, canonical `BoutiqueRole` (`org:boutique_*`), `MembershipStatus`, unique `(OrganizationId, UserId)`.
+   - `Models/OrganizationInvitation.cs` — SHA-256 `TokenHash` only (never plaintext), expiry, revocation (`RevokedAt`/`RevokedByUserId`), inviter, intended recipient (`RecipientUserId` and/or `RecipientEmail`), one-time `AcceptedAt`.
+   - `Models/MembershipStatus.cs`, `Models/OrganizationDomainExceptions.cs`, `Services/InvitationTokens.cs` (RNGCryptoServiceProvider code + SHA-256 hash).
+2. **Persistence**: EF configs (`OrganizationConfiguration`, `OrganizationMembershipConfiguration`, `OrganizationInvitationConfiguration`) with FKs (Restrict to Users, Cascade to Organizations), unique indexes (`Slug`, `ClerkOrgId`, `TokenHash`, `(OrgId, UserId)`), DbSets in `AppDbContext`. Relationships declared once to avoid EF shadow-FK duplication (initial generation produced a bogus `UserId1` shadow — fixed by declaring each relationship in a single configuration and using navigation selectors).
+3. **Generated first EF migration** `AddOrganizationDomain` (via `dotnet ef` using `dotnet exec` on the tool DLL because the global-tool shim was broken: net8-targeted tool would not resolve under only runtime 10). Because no baseline existed, this migration captures the entire current model (incl. the pre-existing `Users` table) — it is the repo's migration baseline and must be coordinated with #47.
+4. **Repositories/services**: `IOrganizationRepository`/`OrganizationRepository`, `IInvitationRepository`/`InvitationRepository` (with an **atomic `AcceptAsync`** that adds the membership and marks the invite accepted in a single `SaveChanges` for one-time acceptance), `IOrganizationService`/`OrganizationService` (create org + owner membership, invite returning the one-time code, accept with recipient/expiry/revoked/one-time validation, list memberships). Wired in `Program.cs`.
+5. **Tests** (`OrganizationRepositoryTests`, `OrganizationServiceTests`, InMemory) — 16 new tests: org persistence/slug/ClerkOrgId, owner membership, invite code-hash separation, one-time acceptance, expired/revoked/unknown-code rejection, recipient email case-insensitivity + user-scoped invites, already-member rejection, and **new staff user with no membership/org_id can accept**.
+6. Documented backfill behavior for legacy `User.OrganizationId`/`OrganizationRole` in the module README (one-time reconcile from Clerk org data keyed on `ClerkOrgId`; legacy strings kept until then; new users need no `org_id`).
+
+### Verification
+
+- `dotnet test Aveline.Api/Aveline.Api.sln -c Release` → **107 passed, 0 failed** (91 pre-existing + 16 new).
+- `dotnet build -c Release` clean; migration generation succeeds with no shadow-FK warning.
+- No changes committed; #50 pending review. Suggested follow-ups: HTTP endpoints (create org / invite / accept / my orgs) and the #47-coordinated backfill.

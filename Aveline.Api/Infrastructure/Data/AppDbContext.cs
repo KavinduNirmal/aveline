@@ -1,3 +1,4 @@
+using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Shared.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -10,6 +11,12 @@ public class AppDbContext : DbContext
     }
 
     public DbSet<User> Users => Set<User>();
+
+    public DbSet<Organization> Organizations => Set<Organization>();
+
+    public DbSet<OrganizationMembership> OrganizationMemberships => Set<OrganizationMembership>();
+
+    public DbSet<OrganizationInvitation> OrganizationInvitations => Set<OrganizationInvitation>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

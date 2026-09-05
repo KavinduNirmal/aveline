@@ -54,6 +54,58 @@ class ClerkAuthRepository implements AuthRepository {
   @override
   Future<void> signOut() => _authState.signOut();
 
+  @override
+  Future<String?> signInWithPassword({
+    required String identifier,
+    required String password,
+  }) =>
+      _run(() => _authState.attemptSignIn(
+            strategy: clerk.Strategy.password,
+            identifier: identifier,
+            password: password,
+          ));
+
+  @override
+  Future<String?> signUpWithPassword({
+    required String emailAddress,
+    String? username,
+    String? firstName,
+    String? lastName,
+    required String password,
+  }) =>
+      _run(() => _authState.attemptSignUp(
+            strategy: clerk.Strategy.password,
+            emailAddress: emailAddress,
+            username: username,
+            firstName: firstName,
+            lastName: lastName,
+            password: password,
+            passwordConfirmation: password,
+          ));
+
+  @override
+  Future<String?> sendEmailVerificationCode() =>
+      _run(() => _authState.attemptSignUp(strategy: clerk.Strategy.emailCode));
+
+  @override
+  Future<String?> verifyEmailCode({required String code}) =>
+      _run(() => _authState.attemptSignUp(
+            strategy: clerk.Strategy.emailCode,
+            code: code,
+          ));
+
+  /// Runs an auth action, translating failures into a human-readable message.
+  Future<String?> _run(Future<void> Function() action) async {
+    try {
+      await action();
+      return null;
+    } on clerk.ClerkError catch (error) {
+      return error.message;
+    } on Exception catch (error) {
+      return error.toString().replaceFirst('Exception: ', '');
+    }
+  }
+
   Future<clerk.SessionToken?> _fetchToken() async {
     if (!_authState.isSignedIn) {
       return null;

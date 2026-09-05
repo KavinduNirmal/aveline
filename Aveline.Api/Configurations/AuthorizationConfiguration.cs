@@ -13,6 +13,9 @@ public static class AuthorizationConfiguration
     public const string ManagersPolicy = "Managers";
     public const string OwnersPolicy = "Owners";
 
+    /// <summary>Team-level reviewers allowed to review admin access requests.</summary>
+    public const string AdminReviewPolicy = "AdminReview";
+
     /// <summary>
     /// Org-scoped policy name: requires an active canonical membership for the
     /// organization named by the request's <c>organizationId</c> route value and a
@@ -41,6 +44,9 @@ public static class AuthorizationConfiguration
             options.AddPolicy(ManagersPolicy, p => p.RequireRole(Roles.ManagementAccess));
 
             options.AddPolicy(OwnersPolicy, p => p.RequireRole(Roles.OwnershipAccess));
+
+            options.AddPolicy(AdminReviewPolicy, p => p.RequireRole(
+                Roles.Moderator, Roles.Admin, Roles.Owner));
 
             // Organization-scoped policy: authenticated + active membership for the
             // target organization whose boutique role grants catalog:view.

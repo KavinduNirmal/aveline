@@ -542,6 +542,46 @@ First CI run on PR #31 failed 4 jobs; all fixed:
 - `dotnet build -c Release` clean; migration generation succeeds with no shadow-FK warning.
 - No changes committed; #50 pending review. Suggested follow-ups: HTTP endpoints (create org / invite / accept / my orgs) and the #47-coordinated backfill.
 
+### Follow-up (branch `feature/custom-clerk-auth`): auth screen polish + account-type & admin sign-up
+
+Refined the custom Clerk auth work from user feedback:
+- **Branding**: tagline changed from "Boutique Concierge" to **"Atelier Concierge"** (web AuthShell, mobile AuthScreen, onboarding eyebrow).
+- **Layout/spacing**: bigger label-to-input gap, compact card (smaller paddings/headline, removed marketing blurb, max-w 400px), inputs shortened to `h-11` and **fully rounded (pill)**; all shadcn buttons now **rounded-full** globally (button.tsx cva base); cards reduced from `rounded-3xl` to `rounded-2xl`.
+- **Account type**: `/sign-up` now starts with an account-type picker (boutique owner vs staff member); chosen type is echoed in the form with a "Change" control and stored as `unsafeMetadata.accountType`.
+- **Quiet admin sign-up**: new `/sign-up/admin` route — plain, unassuming light screen (no aurora art) noting admin access is provisioned by the team; email/password + verification code; linked via a muted "Administrator sign-up" footer link on the auth card.
+- Verified: web `tsc`, oxlint, Vitest 31, `vite build`; Flutter `analyze` clean + 20 tests.
+
+### Follow-up (branch `feature/custom-clerk-auth`): auth split-layout redesign (web)
+
+Per user direction, replaced the card-in-center auth screens with a two-panel layout:
+- **Left panel**: flower/aurora art + Aveline brand story, big serif statement, dashed-border perk tiles (Next.js landing style).
+- **Right panel**: full-height, card removed — edge-to-edge form column (kicker/title/children), docked footer with dashed top border.
+- **Footer (sign-up)**: required **Terms & Conditions / Privacy** checkbox that gates account creation (`canSubmit`), plus Administrator sign-up link and switch-to-sign-in. Sign-in footer has switch-to-sign-up + admin link.
+- **Dashed, evident borders** throughout (panel divider, footer top, perk tiles, account-type tiles, pill inputs `border-dashed`).
+- New public `/terms` page (dashed section cards). Verified web `tsc`, oxlint, Vitest 31, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #58): auth redesign completion + admin screen polish
+
+Finished the auth redesign tracked as issue **#58** (split-panel layout, "assistant that remembers" branding, dashed-divider-only borders, account-type + terms gate, compact footer):
+- Compacted footers (quick links + copyright), moved terms block under the sign-up form, removed per-input/per-tile dashed borders so dashed = dividers only; left-panel perks are now an icon list with dashed row separators.
+- Larger typography across panels/forms; pill inputs/buttons; removed now-unused `AuthShell`.
+- Tagline/brand copy changed from "boutique/concierge" to "The assistant that remembers" / "Aveline remembers" (web + mobile label + onboarding eyebrow).
+- **AdminSignUpPage** touch-up (quiet light): dashed accents, pill inputs `h-11`, bigger type, refined header/back link.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #59): admin verification backend
+
+Admin access-request backend (review/approve/reject + Clerk BAPI role grant):
+- `IClerkAdminClient`/`ClerkAdminClient` (typed HttpClient) with `Clerk:SecretKey` + optional `Clerk:BackendApiUrl`; `PATCH /v1/users/{id}` sets `public_metadata.role=admin`.
+- `Modules/Admin`: `AdminApprovalRequest` entity + EF config + migration `AddAdminApprovalRequests`; repo + `AdminApprovalService` (idempotent submit; list pending; approve grants role via Clerk first, updates local `User.UserRole=admin` + cache invalidation; reject).
+- `AdminEndpoints`: `POST /api/v1/admin/requests` (auth), `GET`/`approve`/`reject` guarded by new `AdminReviewPolicy` (moderator/admin/owner). `/api/v1/admin` added to the onboarding pending allow-list so a just-signed-up requester can submit.
+- Tests (5, fake `IClerkAdminClient`): submit idempotency, non-reviewer 403, approve → role granted, reject → approve-after-reject conflict, Clerk failure → 502 and stays Pending. Full .NET suite **112 passing**.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #59): admin verification web
+
+- `lib/admin.ts` helpers: submit/list/approve/reject admin requests.
+- `AdminSignUpPage`: after email verification the flow finalizes, submits the request (`POST /api/v1/admin/requests`), and shows a **"Request received" pending** state (no app entry) with sign-out; failed submissions show retry.
+- `Dashboard`: when the signed-in role is a team reviewer (`moderator`/`admin`/`owner`), renders an **"Administrator access requests"** card listing pending requests with Approve/Reject wired to the API (row removed on success).
+- Verified web `tsc`, oxlint, Vitest 31, `vite build`.
 ### Follow-up (same session, branch `feature/51-org-onboarding`): Issue #51 — organization-aware onboarding (backend increment)
 
 Started #51 (depends on #49/#50): replaced the boolean onboarding gate with explicit account lifecycle states and added the owner-creation + staff-join flows (authoritative API side).

@@ -21,6 +21,7 @@ public class OnboardingMiddleware
         "/api/v1/users/me",
         "/api/v1/users/onboarding",
         "/api/v1/auth/claims",
+        "/api/v1/admin",
         "/api/v1/orgs",
         "/api/v1/orgs/my",
         "/api/v1/invitations",

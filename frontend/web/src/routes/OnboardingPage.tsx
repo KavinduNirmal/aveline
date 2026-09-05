@@ -67,8 +67,8 @@ export function OnboardingPage() {
         contactPreference,
         pushNotificationsEnabled,
       })
-      await refreshUser()
-      navigate('/', { replace: true })
+      const me = await refreshUser()
+      navigate(me?.accountState === 'Active' ? '/' : '/org-setup', { replace: true })
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Unable to complete onboarding. Please try again.'
       setFormError(msg)

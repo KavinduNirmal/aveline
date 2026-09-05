@@ -674,3 +674,11 @@ Design feedback round on the landing page:
 - Enterprise "Aveline for groups" spacing balanced (`py-20` around the card).
 - How-it-works connector width reduced ~20% (from `3%` insets to `12%` each side) so it no longer overflows past the cards.
 - Verified web `tsc`, oxlint, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #61): landing uniqueness + contrast pass
+
+- **Asymmetric hero**: two-column on desktop — editorial left-aligned headline ("She remembers, so you don’t have to.") + CTAs, and a floating **live conversation preview** (WhatsApp-style thread where Ava/Elle/Lina respond to a real boutique query, with agent chips + typing indicator).
+- **Message marquee**: a scrolling strip of authentic customer questions ("Wedding on Saturday — anything blush?") between hero and persona (CSS marquee, reduced-motion safe).
+- **Contrast**: body/description copy bumped `neutral-500 → neutral-600`; hero veil strengthened behind the headline; darker gradient stops.
+- New `marquee` keyframes + `.marquee-track` utility in `index.css`.
+- Verified web `tsc`, oxlint, `vite build`.

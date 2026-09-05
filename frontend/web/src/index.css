@@ -173,3 +173,23 @@
     @apply bg-background font-sans text-foreground antialiased;
   }
 }
+
+/* Landing marquee */
+@keyframes aveline-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.marquee-track {
+  animation: aveline-marquee 32s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee-track {
+    animation: none;
+  }
+}

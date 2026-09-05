@@ -271,7 +271,7 @@ function AgentDiagram({ reduce }: { reduce: boolean | null }) {
                 <p className={cn('mt-5 font-serif text-xl font-medium leading-snug', agent.ink)}>
                   {agent.line}
                 </p>
-                <p className="mt-2 text-sm leading-relaxed text-neutral-500">{agent.copy}</p>
+                <p className="mt-2 text-sm leading-relaxed text-neutral-600">{agent.copy}</p>
 
                 <ul className="mt-6 space-y-2.5 border-t-2 border-dashed border-neutral-200 pt-5">
                   {agent.points.map((point) => (
@@ -290,6 +290,111 @@ function AgentDiagram({ reduce }: { reduce: boolean | null }) {
   )
 }
 
+const QUERIES = [
+  'Wedding on Saturday — anything blush?',
+  'Can you get the dress I saw on Pinterest?',
+  'Reserve the fourth one for me.',
+  'Do you have it in my size?',
+  'Is the navy in stock?',
+  'Hold the gold earrings until Friday.',
+  'Do you have something bluish for an evening?',
+  'Anything new for my sister’s engagement?',
+]
+
+function ConversationPreview() {
+  const reduce = useReducedMotion()
+  return (
+    <div className="relative mx-auto w-full max-w-sm">
+      <div className="absolute -inset-6 -z-10 rounded-[2rem] bg-gradient-to-br from-commerce/20 via-memory/15 to-visual/20 blur-2xl" aria-hidden />
+      <motion.div
+        className="absolute -right-6 -top-8 -z-10 text-rose-200/70"
+        animate={reduce ? {} : { y: [0, -10, 0], rotate: [0, 10, 0] }}
+        transition={{ duration: 7, repeat: Infinity, ease: 'easeInOut' }}
+      >
+        <Blossom className="size-28" />
+      </motion.div>
+
+      <motion.div
+        animate={reduce ? {} : { y: [0, -8, 0] }}
+        transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut' }}
+        className="relative overflow-hidden rounded-[1.75rem] border border-neutral-200 bg-white/95 p-5 shadow-[0_40px_90px_-50px_rgba(122,48,63,0.6)] backdrop-blur"
+      >
+        {/* header */}
+        <div className="flex items-center justify-between border-b border-dashed border-neutral-200 pb-3">
+          <div className="flex items-center gap-3">
+            <span className="relative flex size-10 items-center justify-center rounded-full bg-commerce text-white">
+              <Blossom className="size-5" />
+              <span className="absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-white bg-emerald-500" />
+            </span>
+            <div>
+              <p className="text-sm font-semibold text-neutral-900">Aveline</p>
+              <p className="text-xs text-neutral-600">Concierge · online</p>
+            </div>
+          </div>
+          <span className="text-xs text-neutral-400">now</span>
+        </div>
+
+        {/* thread */}
+        <div className="space-y-3 pt-4">
+          <div className="flex justify-end">
+            <p className="max-w-[80%] rounded-2xl rounded-br-md bg-neutral-100 px-3.5 py-2 text-sm text-neutral-800">
+              Hi! I have a wedding on Saturday — do you have anything blush in my size?
+            </p>
+          </div>
+          <div className="flex justify-start">
+            <p className="max-w-[85%] rounded-2xl rounded-bl-md bg-commerce px-3.5 py-2 text-sm text-white">
+              Found three. Elle picked the one that matches your earrings — shall I reserve it?
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            {[
+              ['Ava', 'bg-memory'],
+              ['Elle', 'bg-visual'],
+              ['Lina', 'bg-commerce'],
+            ].map(([label, chip]) => (
+              <span
+                key={label}
+                className={cn('rounded-full px-2.5 py-1 text-[11px] font-semibold text-white', chip)}
+              >
+                {label}
+              </span>
+            ))}
+          </div>
+
+          {/* typing indicator */}
+          <div className="flex w-fit items-center gap-1 rounded-2xl rounded-bl-md bg-neutral-100 px-3 py-2.5">
+            {[0, 1, 2].map((i) => (
+              <motion.span
+                key={i}
+                className="size-1.5 rounded-full bg-neutral-400"
+                animate={reduce ? {} : { opacity: [0.3, 1, 0.3] }}
+                transition={{ duration: 1.1, repeat: Infinity, delay: i * 0.2 }}
+              />
+            ))}
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
+function MessageMarquee() {
+  const items = [...QUERIES, ...QUERIES]
+  return (
+    <div className="relative overflow-hidden">
+      <div className="marquee-track flex w-max items-center gap-10">
+        {items.map((q, i) => (
+          <span key={i} className="flex shrink-0 items-center gap-3 text-lg text-neutral-700">
+            <Blossom className="size-4 text-commerce/50" />
+            <span className="font-serif italic">“{q}”</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function LandingPage() {
   const reduce = useReducedMotion()
 
@@ -300,52 +405,66 @@ export function LandingPage() {
         <AuroraField />
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_72%_62%_at_50%_34%,rgba(253,250,248,0.92)_0%,rgba(253,250,248,0.55)_55%,rgba(253,250,248,0)_78%)]"
+          className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_70%_60%_at_38%_32%,rgba(253,250,248,0.94)_0%,rgba(253,250,248,0.6)_52%,rgba(253,250,248,0)_80%)]"
         />
-        <div className="relative z-10 mx-auto flex w-full max-w-5xl flex-col items-center px-5 pb-24 pt-20 text-center lg:px-8 lg:pt-28">
-          <Reveal>
-            <span className="inline-flex items-center gap-2 rounded-full border border-dashed border-commerce/25 bg-white/70 px-4 py-2 text-xs font-medium uppercase tracking-[0.18em] text-commerce shadow-sm backdrop-blur">
-              <Sparkles className="size-3.5" aria-hidden />
-              Aveline — the assistant that remembers
-            </span>
-          </Reveal>
+        <div className="relative z-10 mx-auto w-full max-w-6xl px-5 pb-24 pt-16 lg:px-8 lg:pt-24">
+          <div className="grid items-center gap-14 lg:grid-cols-[1.05fr_0.95fr]">
+            <div className="text-center lg:text-left">
+              <Reveal>
+                <span className="inline-flex items-center gap-2 rounded-full border border-dashed border-commerce/30 bg-white/80 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-commerce shadow-sm backdrop-blur">
+                  <Sparkles className="size-3.5" aria-hidden />
+                  The assistant that remembers
+                </span>
+              </Reveal>
 
-          <Reveal delay={0.08}>
-            <h1 className="mt-8 max-w-3xl font-serif text-5xl font-medium leading-[1.06] tracking-tight text-neutral-900 sm:text-6xl lg:text-7xl [text-shadow:0_2px_30px_rgba(255,255,255,0.45)]">
-              A boutique’s memory,{' '}
-              <span className="bg-gradient-to-r from-[#7a303f] via-[#b0566b] to-[#8a6a14] bg-clip-text text-transparent">
-                made personal.
-              </span>
-            </h1>
-          </Reveal>
+              <Reveal delay={0.08}>
+                <h1 className="mt-7 max-w-xl font-serif text-5xl font-medium leading-[1.05] tracking-tight text-neutral-900 sm:text-6xl lg:text-7xl [text-shadow:0_2px_34px_rgba(255,255,255,0.5)]">
+                  She remembers, so{' '}
+                  <span className="bg-gradient-to-r from-[#7a303f] via-[#b0566b] to-[#8a6a14] bg-clip-text text-transparent">
+                    you don’t have to.
+                  </span>
+                </h1>
+              </Reveal>
 
-          <Reveal delay={0.16}>
-            <p className="mt-6 max-w-xl text-lg leading-relaxed text-neutral-600">
-              Aveline remembers every customer, every product and every deal — so
-              you can stay close and personal without worrying about the little
-              things.
-            </p>
-          </Reveal>
+              <Reveal delay={0.16}>
+                <p className="mx-auto mt-6 max-w-xl text-lg leading-relaxed text-neutral-600 lg:mx-0">
+                  Aveline keeps every customer, product and deal in mind — and
+                  nudges you only when a decision is truly yours to make.
+                </p>
+              </Reveal>
 
-          <Reveal delay={0.24}>
-            <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
-              <Button asChild size="lg" className="h-12 px-8">
-                <Link to="/sign-up">
-                  Create account
-                  <ArrowRight className="size-4" aria-hidden />
-                </Link>
-              </Button>
-              <Button asChild size="lg" variant="outline" className="h-12 border-neutral-300 bg-white/80 px-8 shadow-sm backdrop-blur">
-                <Link to="/download">Download app</Link>
-              </Button>
+              <Reveal delay={0.24}>
+                <div className="mt-9 flex flex-wrap items-center justify-center gap-3 lg:justify-start">
+                  <Button asChild size="lg" className="h-12 px-8">
+                    <Link to="/sign-up">
+                      Create account
+                      <ArrowRight className="size-4" aria-hidden />
+                    </Link>
+                  </Button>
+                  <Button asChild size="lg" variant="outline" className="h-12 border-neutral-300 bg-white/80 px-8 shadow-sm backdrop-blur">
+                    <Link to="/download">Download app</Link>
+                  </Button>
+                </div>
+              </Reveal>
+
+              <Reveal delay={0.32}>
+                <p className="mt-8 text-xs uppercase tracking-[0.22em] text-neutral-400">
+                  For boutiques in Colombo &amp; across Sri Lanka · Clerk-secured
+                </p>
+              </Reveal>
             </div>
-          </Reveal>
 
-          <Reveal delay={0.32}>
-            <p className="mt-8 text-xs uppercase tracking-[0.22em] text-neutral-400">
-              For boutique owners, managers &amp; staff · Sri Lanka · Clerk-secured
-            </p>
-          </Reveal>
+            <Reveal delay={0.18}>
+              <ConversationPreview />
+            </Reveal>
+          </div>
+        </div>
+      </section>
+
+      {/* ------------------------------------------------ Marquee */}
+      <section className="border-y-2 border-dashed border-neutral-200 bg-white/70 backdrop-blur">
+        <div className="mx-auto w-full max-w-6xl px-5 py-7 lg:px-8">
+          <MessageMarquee />
         </div>
       </section>
 
@@ -383,7 +502,7 @@ export function LandingPage() {
                     <Icon className="size-6" aria-hidden />
                   </span>
                   <h3 className="mt-6 font-serif text-3xl font-medium text-neutral-900">{title}</h3>
-                  <p className="mt-3 text-base leading-relaxed text-neutral-500">{copy}</p>
+                  <p className="mt-3 text-base leading-relaxed text-neutral-600">{copy}</p>
                 </div>
               </Reveal>
             ))}
@@ -402,7 +521,7 @@ export function LandingPage() {
             <h2 className="mt-3 font-serif text-5xl font-medium tracking-tight text-neutral-900">
               One Aveline, three minds.
             </h2>
-            <p className="mt-4 text-lg text-neutral-500">
+            <p className="mt-4 text-lg text-neutral-600">
               A specialist for the customer, the product and the deal — branching
               from a single concierge.
             </p>
@@ -455,7 +574,7 @@ export function LandingPage() {
                   <StepImage step={step} index={i} />
                   <div className="flex flex-1 flex-col p-6">
                     <h3 className="font-serif text-2xl font-medium text-neutral-900">{step.title}</h3>
-                    <p className="mt-2 text-[15px] leading-relaxed text-neutral-500">{step.copy}</p>
+                    <p className="mt-2 text-[15px] leading-relaxed text-neutral-600">{step.copy}</p>
                   </div>
                 </motion.div>
               ))}

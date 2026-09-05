@@ -13,6 +13,9 @@ public static class AuthorizationConfiguration
     public const string ManagersPolicy = "Managers";
     public const string OwnersPolicy = "Owners";
 
+    /// <summary>Team-level reviewers allowed to review admin access requests.</summary>
+    public const string AdminReviewPolicy = "AdminReview";
+
     public static IServiceCollection AddAvelineAuthorization(this IServiceCollection services)
     {
         services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
@@ -25,6 +28,9 @@ public static class AuthorizationConfiguration
             options.AddPolicy(ManagersPolicy, p => p.RequireRole(Roles.ManagementAccess));
 
             options.AddPolicy(OwnersPolicy, p => p.RequireRole(Roles.OwnershipAccess));
+
+            options.AddPolicy(AdminReviewPolicy, p => p.RequireRole(
+                Roles.Moderator, Roles.Admin, Roles.Owner));
 
             // Permission-based policies (one per permission in the catalog).
             foreach (var permission in Permissions.All)

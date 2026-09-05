@@ -567,3 +567,11 @@ Finished the auth redesign tracked as issue **#58** (split-panel layout, "assist
 - Larger typography across panels/forms; pill inputs/buttons; removed now-unused `AuthShell`.
 - Tagline/brand copy changed from "boutique/concierge" to "The assistant that remembers" / "Aveline remembers" (web + mobile label + onboarding eyebrow).
 - **AdminSignUpPage** touch-up (quiet light): dashed accents, pill inputs `h-11`, bigger type, refined header/back link.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #59): admin verification backend
+
+Admin access-request backend (review/approve/reject + Clerk BAPI role grant):
+- `IClerkAdminClient`/`ClerkAdminClient` (typed HttpClient) with `Clerk:SecretKey` + optional `Clerk:BackendApiUrl`; `PATCH /v1/users/{id}` sets `public_metadata.role=admin`.
+- `Modules/Admin`: `AdminApprovalRequest` entity + EF config + migration `AddAdminApprovalRequests`; repo + `AdminApprovalService` (idempotent submit; list pending; approve grants role via Clerk first, updates local `User.UserRole=admin` + cache invalidation; reject).
+- `AdminEndpoints`: `POST /api/v1/admin/requests` (auth), `GET`/`approve`/`reject` guarded by new `AdminReviewPolicy` (moderator/admin/owner). `/api/v1/admin` added to the onboarding pending allow-list so a just-signed-up requester can submit.
+- Tests (5, fake `IClerkAdminClient`): submit idempotency, non-reviewer 403, approve → role granted, reject → approve-after-reject conflict, Clerk failure → 502 and stays Pending. Full .NET suite **112 passing**.

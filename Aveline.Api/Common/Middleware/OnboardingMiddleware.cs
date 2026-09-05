@@ -13,6 +13,7 @@ public class OnboardingMiddleware
         "/api/v1/users/me",
         "/api/v1/users/onboarding",
         "/api/v1/auth/claims",
+        "/api/v1/admin",
         "/openapi",
     };
 

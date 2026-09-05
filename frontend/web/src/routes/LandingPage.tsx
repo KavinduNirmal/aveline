@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import {
   ArrowRight,
+  Check,
   Coins,
   Eye,
   Heart,
@@ -21,36 +22,74 @@ import { SitePage } from '@/components/site/SitePage'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
-const FEATURES = [
+interface Feature {
+  icon: LucideIcon
+  title: string
+  copy: string
+  span: string
+  tint: string
+  ink: string
+  chip: string
+  wide?: boolean
+}
+
+const FEATURES: Feature[] = [
   {
     icon: Sparkles,
     title: 'Concierge memory',
     copy: 'Every preference, occasion and purchase remembered — so every message feels personal.',
+    span: 'lg:col-span-3',
+    tint: 'from-rose-50 via-[#fff1f4] to-white',
+    ink: 'text-memory',
+    chip: 'bg-memory/10 text-memory',
+    wide: true,
   },
   {
     icon: MessageCircle,
     title: 'Orders & WhatsApp',
     copy: 'Inquiries and orders flow from WhatsApp and Instagram into one tidy workspace.',
+    span: 'lg:col-span-3',
+    tint: 'from-amber-50 via-[#fdf6e7] to-white',
+    ink: 'text-visual',
+    chip: 'bg-visual/10 text-visual',
+    wide: true,
   },
   {
     icon: ShieldCheck,
     title: 'Roles & approvals',
     copy: 'Owners set the rules. High-value calls pause for a human decision, never slip past.',
+    span: 'lg:col-span-2',
+    tint: 'from-lavender-soft to-white',
+    ink: 'text-lavender',
+    chip: 'bg-lavender/10 text-lavender',
   },
   {
     icon: Shirt,
     title: 'Outfits & sourcing',
     copy: 'Reference images, matching stock, and supplier sourcing when it isn’t on the shelf.',
+    span: 'lg:col-span-2',
+    tint: 'from-rose-50 to-white',
+    ink: 'text-coral',
+    chip: 'bg-coral/10 text-coral',
   },
   {
     icon: Wallet,
     title: 'Payments & delivery',
     copy: 'Deposits, margins and couriers handled — with clean numbers the owner can trust.',
+    span: 'lg:col-span-2',
+    tint: 'from-amber-50 to-white',
+    ink: 'text-commerce',
+    chip: 'bg-commerce/10 text-commerce',
   },
   {
     icon: HeartHandshake,
     title: 'The human touch',
     copy: 'Aveline drafts and suggests; your staff always have the final word with the customer.',
+    span: 'lg:col-span-6',
+    tint: 'from-[#f0eafa] via-[#f7f1fb] to-white',
+    ink: 'text-commerce',
+    chip: 'bg-commerce/10 text-commerce',
+    wide: true,
   },
 ]
 
@@ -64,6 +103,7 @@ interface Agent {
   line: string
   copy: string
   points: string[]
+  preview: string
 }
 
 const AGENTS: Agent[] = [
@@ -77,6 +117,7 @@ const AGENTS: Agent[] = [
     line: 'She remembers every customer.',
     copy: 'Parses messages, builds warm profiles and recalls each preference, occasion and past purchase.',
     points: ['Facts & preferences', 'Conversation briefs', 'Personal drafts'],
+    preview: 'Hi Shanali — the blush dress you loved is back in your size.',
   },
   {
     name: 'Elle',
@@ -88,6 +129,7 @@ const AGENTS: Agent[] = [
     line: 'She sees what suits you.',
     copy: 'Reads a reference photo, searches the shelf and composes outfits that fit the moment.',
     points: ['Image understanding', 'Customer matching', 'Supplier sourcing'],
+    preview: 'Matched three outfits for Saturday’s wedding.',
   },
   {
     name: 'Lina',
@@ -99,13 +141,8 @@ const AGENTS: Agent[] = [
     line: 'She closes with care.',
     copy: 'Checks margins, issues deposits, and pauses big decisions for your approval before delivery.',
     points: ['Pricing & margins', 'Payments', 'Approvals & delivery'],
+    preview: 'Deposit request sent — holding the order for your approval.',
   },
-]
-
-const LINKS = [
-  { d: 'M600 8 C 430 22 320 46 210 118', color: '#b0566b' },
-  { d: 'M600 8 C 600 40 600 78 600 118', color: '#8a6a14' },
-  { d: 'M600 8 C 770 22 880 46 990 118', color: '#7a303f' },
 ]
 
 interface Step {
@@ -171,116 +208,79 @@ function StepImage({ step, index }: { step: Step; index: number }) {
   )
 }
 
-/** Animated hub + connectors showing Aveline branching into the three agents. */
-function AgentDiagram({ reduce }: { reduce: boolean | null }) {
+function AgentsTimeline() {
+  const reduce = useReducedMotion()
   return (
     <div className="relative mx-auto mt-16 max-w-5xl">
-      {/* Hub */}
-      <Reveal>
-        <div className="flex flex-col items-center">
-          <div className="relative flex size-32 items-center justify-center">
-            <motion.div
-              className="absolute inset-0 rounded-full bg-gradient-to-br from-commerce via-memory to-visual opacity-20 blur-2xl"
-              animate={reduce ? {} : { scale: [1, 1.12, 1], opacity: [0.18, 0.32, 0.18] }}
-              transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut' }}
-            />
-            <motion.div
-              className="absolute inset-0 rounded-full bg-[conic-gradient(from_0deg,#7a303f,#b0566b,#8a6a14,#8e7cc3,#ef7a68,#7a303f)] p-[3px]"
-              animate={reduce ? {} : { rotate: 360 }}
-              transition={{ duration: 26, repeat: Infinity, ease: 'linear' }}
-            >
-              <div className="flex size-full items-center justify-center rounded-full bg-[#fdfaf8]">
-                <motion.div
-                  animate={reduce ? {} : { scale: [1, 1.06, 1] }}
-                  transition={{ duration: 4, repeat: Infinity, ease: 'easeInOut' }}
-                >
-                  <Blossom className="size-14 text-commerce drop-shadow-[0_4px_16px_rgba(122,48,63,0.45)]" />
-                </motion.div>
-              </div>
-            </motion.div>
-          </div>
-          <p className="mt-4 font-serif text-2xl font-medium text-neutral-900">Aveline</p>
-          <p className="mt-1 text-xs font-semibold uppercase tracking-[0.2em] text-neutral-400">
-            One concierge
-          </p>
-        </div>
-      </Reveal>
+      {/* vertical rail */}
+      <div aria-hidden className="absolute bottom-6 top-6 left-7 hidden w-px sm:block">
+        <div className="absolute inset-0 border-l-2 border-dashed border-neutral-200" />
+        <motion.span
+          className="absolute left-[-3px] top-0 h-16 w-[7px] rounded-full bg-gradient-to-b from-memory via-visual to-commerce"
+          animate={reduce ? {} : { top: ['0%', '100%'] }}
+          transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut' }}
+        />
+      </div>
 
-      {/* Connectors */}
-      <svg
-        aria-hidden
-        viewBox="0 0 1200 130"
-        className="mx-auto mt-3 h-28 w-full max-w-4xl overflow-visible"
-      >
-        {LINKS.map((link, i) => (
-          <motion.path
-            key={i}
-            d={link.d}
-            fill="none"
-            stroke={link.color}
-            strokeOpacity="0.5"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeDasharray="7 8"
-            animate={reduce ? {} : { strokeDashoffset: [0, -15] }}
-            transition={{ duration: 1.4 + i * 0.3, repeat: Infinity, ease: 'linear' }}
-          />
-        ))}
-      </svg>
-
-      {/* Agent cards */}
-      <div className="grid gap-6 md:grid-cols-3">
+      <div className="space-y-8">
         {AGENTS.map((agent, i) => {
           const Icon = agent.icon
           return (
             <motion.div
               key={agent.name}
-              initial={{ opacity: 0, y: 28 }}
+              initial={{ opacity: 0, y: 30 }}
               whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ duration: 0.6, delay: 0.15 + i * 0.12, ease: [0.22, 1, 0.36, 1] }}
-              className="group relative flex h-full flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white p-8 shadow-[0_28px_70px_-55px_rgba(122,48,63,0.5)] transition-transform duration-300 hover:-translate-y-1"
+              viewport={{ once: true, margin: '-80px' }}
+              transition={{ duration: 0.7, delay: i * 0.12, ease: [0.22, 1, 0.36, 1] }}
+              className="group relative overflow-hidden rounded-3xl border border-neutral-200 bg-white p-7 shadow-[0_30px_80px_-60px_rgba(122,48,63,0.5)] sm:pl-24 lg:p-9 lg:pl-28"
             >
               <div
-                className={cn(
-                  'pointer-events-none absolute inset-0 bg-gradient-to-br opacity-70 transition-opacity duration-500 group-hover:opacity-100',
-                  agent.tint,
-                )}
+                className={cn('pointer-events-none absolute inset-0 bg-gradient-to-br opacity-70', agent.tint)}
                 aria-hidden
               />
-              <div className="relative flex h-full flex-col">
-                <div className="flex items-center gap-3">
-                  <span
-                    className={cn(
-                      'flex size-12 items-center justify-center rounded-2xl text-white shadow-md transition-transform duration-300 group-hover:-translate-y-0.5 group-hover:rotate-3',
-                      agent.chip,
-                    )}
-                  >
-                    <Icon className="size-6" aria-hidden />
-                  </span>
-                  <div>
-                    <p className={cn('font-serif text-2xl font-medium leading-none', agent.ink)}>
-                      {agent.name}
-                    </p>
-                    <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-400">
-                      {agent.tag}
-                    </p>
+              <Blossom className="absolute -right-10 -top-10 size-40 text-neutral-900/[0.04] transition-transform duration-700 group-hover:rotate-12 group-hover:scale-110" />
+
+              {/* node on the rail */}
+              <span
+                className={cn(
+                  'absolute left-7 top-9 hidden size-12 -translate-x-1/2 items-center justify-center rounded-full border-4 border-white text-white shadow-md sm:flex',
+                  agent.chip,
+                )}
+              >
+                <Icon className="size-5" aria-hidden />
+              </span>
+
+              <div className="relative grid gap-6 lg:grid-cols-[1.05fr_1.15fr_0.95fr] lg:items-center">
+                <div>
+                  <div className="flex items-center gap-3 sm:hidden">
+                    <span className={cn('flex size-11 items-center justify-center rounded-2xl text-white shadow-md', agent.chip)}>
+                      <Icon className="size-5" aria-hidden />
+                    </span>
+                    <p className={cn('font-serif text-2xl font-medium', agent.ink)}>{agent.name}</p>
+                  </div>
+                  <p className={cn('hidden font-serif text-4xl font-medium sm:block', agent.ink)}>{agent.name}</p>
+                  <p className="mt-1 text-xs font-semibold uppercase tracking-[0.2em] text-neutral-400">{agent.tag}</p>
+                  <p className="mt-4 font-serif text-2xl italic leading-snug text-neutral-800">{agent.line}</p>
+                </div>
+
+                <div>
+                  <p className="text-[15px] leading-relaxed text-neutral-600">{agent.copy}</p>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {agent.points.map((point) => (
+                      <span
+                        key={point}
+                        className="rounded-full border border-neutral-200 bg-white/70 px-3 py-1 text-xs font-medium text-neutral-700"
+                      >
+                        {point}
+                      </span>
+                    ))}
                   </div>
                 </div>
 
-                <p className={cn('mt-5 font-serif text-xl font-medium leading-snug', agent.ink)}>
-                  {agent.line}
-                </p>
-                <p className="mt-2 text-sm leading-relaxed text-neutral-600">{agent.copy}</p>
-
-                <ul className="mt-6 space-y-2.5 border-t-2 border-dashed border-neutral-200 pt-5">
-                  {agent.points.map((point) => (
-                    <li key={point} className="flex items-center gap-2.5 text-sm font-medium text-neutral-700">
-                      <span className={cn('size-2 rounded-full', agent.chip)} />
-                      {point}
-                    </li>
-                  ))}
-                </ul>
+                <div className="rounded-2xl border border-neutral-200/70 bg-white/70 p-4 shadow-sm">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-400">In action</p>
+                  <p className="mt-2 font-serif text-[15px] italic leading-snug text-neutral-700">{agent.preview}</p>
+                </div>
               </div>
             </motion.div>
           )
@@ -396,7 +396,6 @@ function MessageMarquee() {
 }
 
 export function LandingPage() {
-  const reduce = useReducedMotion()
 
   return (
     <SitePage>
@@ -469,16 +468,36 @@ export function LandingPage() {
       </section>
 
       {/* ------------------------------------------------ Persona */}
-      <section className="relative border-y-2 border-dashed border-neutral-200 bg-white/80 backdrop-blur">
-        <Reveal className="mx-auto max-w-3xl px-5 py-24 text-center lg:px-8">
-          <p className="font-serif text-4xl font-medium italic leading-snug text-neutral-800 sm:text-5xl">
-            “She remembers, so you don’t have to — every client, every detail,
-            warmly.”
-          </p>
-          <p className="mt-6 text-base text-neutral-400">
-            Meet the three who keep your boutique moving.
-          </p>
-        </Reveal>
+      <section className="relative overflow-hidden border-y-2 border-dashed border-neutral-200 bg-white">
+        <AuroraField className="opacity-25" />
+        <div className="relative mx-auto grid w-full max-w-6xl items-center gap-12 px-5 py-24 lg:grid-cols-[1.15fr_0.85fr] lg:px-8">
+          <Reveal>
+            <p className="font-serif text-4xl font-medium italic leading-snug text-neutral-800 sm:text-5xl">
+              “She remembers, so you don’t have to — every client, every detail,
+              warmly.”
+            </p>
+            <p className="mt-6 text-base text-neutral-500">
+              Aveline isn’t a dashboard that sits and waits. She’s three specialists
+              working quietly behind every conversation.
+            </p>
+          </Reveal>
+
+          <Reveal delay={0.1}>
+            <div className="flex flex-col divide-y-2 divide-dashed divide-neutral-200">
+              {AGENTS.map((agent) => (
+                <div key={agent.name} className="flex items-start gap-4 py-5">
+                  <span className={cn('mt-1.5 size-2.5 shrink-0 rounded-full', agent.chip)} />
+                  <div>
+                    <p className="font-serif text-xl font-medium text-neutral-900">
+                      {agent.name} — <span className="italic">{agent.tag}</span>
+                    </p>
+                    <p className="mt-1 text-sm text-neutral-600">{agent.line}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Reveal>
+        </div>
       </section>
 
       {/* ------------------------------------------------ Features */}
@@ -494,15 +513,30 @@ export function LandingPage() {
             </h2>
           </Reveal>
 
-          <div className="mt-16 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {FEATURES.map(({ icon: Icon, title, copy }, i) => (
-              <Reveal key={title} delay={i * 0.05} className="h-full">
-                <div className="group h-full rounded-2xl border border-neutral-200 bg-white/85 p-8 shadow-[0_24px_60px_-50px_rgba(122,48,63,0.45)] backdrop-blur transition-transform duration-300 hover:-translate-y-1">
-                  <span className="flex size-12 items-center justify-center rounded-2xl bg-commerce/10 text-commerce transition-all duration-300 group-hover:scale-110 group-hover:bg-commerce group-hover:text-white">
-                    <Icon className="size-6" aria-hidden />
-                  </span>
-                  <h3 className="mt-6 font-serif text-3xl font-medium text-neutral-900">{title}</h3>
-                  <p className="mt-3 text-base leading-relaxed text-neutral-600">{copy}</p>
+          <div className="mt-16 grid gap-6 sm:grid-cols-2 lg:grid-cols-6">
+            {FEATURES.map(({ icon: Icon, title, copy, span, tint, ink, chip, wide }, i) => (
+              <Reveal key={title} delay={i * 0.05} className={cn(span, 'h-full')}>
+                <div className="group relative h-full overflow-hidden rounded-2xl border border-neutral-200 bg-white p-8 shadow-[0_24px_60px_-50px_rgba(122,48,63,0.4)] transition-transform duration-300 hover:-translate-y-1">
+                  <div className={cn('pointer-events-none absolute inset-0 bg-gradient-to-br opacity-70', tint)} aria-hidden />
+                  {wide && (
+                    <Blossom
+                      className="absolute -right-8 -top-8 size-36 text-neutral-900/[0.04] transition-transform duration-500 group-hover:rotate-12 group-hover:scale-110"
+                    />
+                  )}
+                  <div className="relative flex h-full flex-col">
+                    <span className={cn('flex size-12 items-center justify-center rounded-2xl transition-transform duration-300 group-hover:scale-110', chip)}>
+                      <Icon className="size-6" aria-hidden />
+                    </span>
+                    <h3 className={cn('mt-6 font-serif text-3xl font-medium text-neutral-900', wide && 'sm:text-4xl')}>
+                      {title}
+                    </h3>
+                    <p className={cn('mt-3 text-base leading-relaxed text-neutral-600', wide && 'max-w-xl')}>{copy}</p>
+                    {wide && (
+                      <p className={cn('mt-6 text-xs font-semibold uppercase tracking-[0.18em]', ink)}>
+                        Always on · always personal
+                      </p>
+                    )}
+                  </div>
                 </div>
               </Reveal>
             ))}
@@ -527,7 +561,7 @@ export function LandingPage() {
             </p>
           </Reveal>
 
-          <AgentDiagram reduce={reduce} />
+          <AgentsTimeline />
 
           <Reveal delay={0.15}>
             <p className="mx-auto mt-14 max-w-2xl text-center text-[15px] leading-relaxed text-neutral-400">
@@ -588,7 +622,7 @@ export function LandingPage() {
         <Reveal className="mx-auto max-w-6xl">
           <div className="relative overflow-hidden rounded-3xl border-2 border-dashed border-lavender/40 bg-lavender-soft/80 shadow-[0_40px_90px_-60px_rgba(142,124,195,0.5)]">
             <AuroraField className="opacity-35" />
-            <div className="relative flex flex-col items-start justify-between gap-6 p-10 lg:flex-row lg:items-center lg:p-14">
+            <div className="relative flex flex-col items-start justify-between gap-8 p-10 lg:flex-row lg:items-center lg:p-14">
               <div className="max-w-xl">
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-lavender">
                   Aveline for groups
@@ -600,6 +634,16 @@ export function LandingPage() {
                   Multi-store rules, consolidated approvals and dedicated support.
                   Let’s shape a plan around your ateliers.
                 </p>
+                <ul className="mt-6 grid gap-3 sm:grid-cols-2">
+                  {['One view across every store', 'Shared customer memory', 'Owner-level approvals', 'Priority onboarding'].map((perk) => (
+                    <li key={perk} className="flex items-center gap-2.5 text-sm font-medium text-neutral-700">
+                      <span className="flex size-5 items-center justify-center rounded-full bg-lavender/20 text-lavender">
+                        <Check className="size-3.5" aria-hidden />
+                      </span>
+                      {perk}
+                    </li>
+                  ))}
+                </ul>
               </div>
               <div className="flex flex-wrap gap-3">
                 <Button asChild size="lg" className="h-12 px-6">
@@ -625,7 +669,8 @@ export function LandingPage() {
           className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_60%_70%_at_50%_50%,rgba(253,250,248,0.85)_0%,rgba(253,250,248,0)_70%)]"
         />
         <Reveal className="relative z-10 mx-auto max-w-2xl text-center">
-          <h2 className="font-serif text-5xl font-medium leading-tight tracking-tight text-neutral-900 [text-shadow:0_2px_30px_rgba(255,255,255,0.5)]">
+          <p className="font-serif text-2xl italic text-memory">Ava · Elle · Lina</p>
+          <h2 className="mt-4 font-serif text-5xl font-medium leading-tight tracking-tight text-neutral-900 [text-shadow:0_2px_30px_rgba(255,255,255,0.5)]">
             Ready to be remembered?
           </h2>
           <p className="mx-auto mt-4 max-w-md text-lg text-neutral-600">
@@ -639,6 +684,9 @@ export function LandingPage() {
               <Link to="/download">Download app</Link>
             </Button>
           </div>
+          <p className="mt-6 text-xs uppercase tracking-[0.2em] text-neutral-400">
+            No card required · set up in minutes
+          </p>
         </Reveal>
       </section>
     </SitePage>

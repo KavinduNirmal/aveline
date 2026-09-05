@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { ArrowRight, Check } from 'lucide-react'
 
+import { AuroraField } from '@/components/site/AuroraField'
 import { Reveal } from '@/components/site/Reveal'
 import { SitePage } from '@/components/site/SitePage'
 import { Button } from '@/components/ui/button'
@@ -51,7 +52,9 @@ const TIERS = [
 export function PlansPage() {
   return (
     <SitePage>
-      <section className="mx-auto w-full max-w-6xl px-5 py-20 lg:px-8">
+      <section className="relative overflow-hidden">
+        <AuroraField className="opacity-40" />
+        <div className="relative mx-auto w-full max-w-6xl px-5 py-20 lg:px-8">
         <Reveal className="max-w-2xl">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-commerce">
             Plans
@@ -129,6 +132,7 @@ export function PlansPage() {
             .
           </p>
         </Reveal>
+        </div>
       </section>
     </SitePage>
   )

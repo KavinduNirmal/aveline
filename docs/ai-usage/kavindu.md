@@ -682,3 +682,11 @@ Design feedback round on the landing page:
 - **Contrast**: body/description copy bumped `neutral-500 → neutral-600`; hero veil strengthened behind the headline; darker gradient stops.
 - New `marquee` keyframes + `.marquee-track` utility in `index.css`.
 - Verified web `tsc`, oxlint, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #61): three-agents redesign + bento features
+
+- **"The three of her" redesigned** as an editorial vertical timeline: a dashed rail with an animated rose→gold→maroon gradient comet connecting numbered nodes; each agent is a wide row card (tinted gradient wash + blossom watermark) with a large serif name/statement, capability pills, and an "In action" mini preview bubble showing a real moment (Ava remembers a size, Elle matches outfits, Lina holds an order for approval).
+- **Features** turned into a **bento grid** (3/3/2/2/2/6 spans) with per-card gradient tints, colored icon chips, wide cards with flourish watermark + "always on" kicker.
+- **Persona** split into an editorial two-column (big quote + the three agents as a divided list); **enterprise** gained a multi-store benefit checklist; **final CTA** gained the "Ava · Elle · Lina" flourish + "no card required" line.
+- Subpages (Plans/Contact/Docs/Download) got a matching aurora header treatment; fixed a transient JSX wrapper imbalance.
+- Verified web `tsc`, oxlint, `vite build`.

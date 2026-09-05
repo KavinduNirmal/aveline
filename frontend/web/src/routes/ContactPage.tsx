@@ -1,5 +1,6 @@
 import { Mail, MapPin, MessageCircle } from 'lucide-react'
 
+import { AuroraField } from '@/components/site/AuroraField'
 import { Reveal } from '@/components/site/Reveal'
 import { SitePage } from '@/components/site/SitePage'
 import { Button } from '@/components/ui/button'
@@ -28,7 +29,9 @@ const CHANNELS = [
 export function ContactPage() {
   return (
     <SitePage>
-      <section className="mx-auto w-full max-w-4xl px-5 py-20 lg:px-8">
+      <section className="relative overflow-hidden">
+        <AuroraField className="opacity-40" />
+        <div className="relative mx-auto w-full max-w-4xl px-5 py-20 lg:px-8">
         <Reveal className="max-w-2xl">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-commerce">
             Contact
@@ -82,6 +85,7 @@ export function ContactPage() {
             </Button>
           </div>
         </Reveal>
+        </div>
       </section>
     </SitePage>
   )

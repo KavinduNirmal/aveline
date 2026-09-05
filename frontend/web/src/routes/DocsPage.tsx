@@ -1,3 +1,4 @@
+import { AuroraField } from '@/components/site/AuroraField'
 import { Reveal } from '@/components/site/Reveal'
 import { SitePage } from '@/components/site/SitePage'
 
@@ -34,7 +35,9 @@ const DOCS = [
 export function DocsPage() {
   return (
     <SitePage>
-      <section className="mx-auto w-full max-w-4xl px-5 py-20 lg:px-8">
+      <section className="relative overflow-hidden">
+        <AuroraField className="opacity-40" />
+        <div className="relative mx-auto w-full max-w-4xl px-5 py-20 lg:px-8">
         <Reveal className="max-w-2xl">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-commerce">
             Docs
@@ -68,6 +71,7 @@ export function DocsPage() {
             </a>
           </p>
         </Reveal>
+        </div>
       </section>
     </SitePage>
   )

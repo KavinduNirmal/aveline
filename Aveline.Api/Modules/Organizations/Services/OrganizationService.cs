@@ -227,6 +227,87 @@ public partial class OrganizationService : IOrganizationService
         return await _organizationRepository.UserHasActiveMembershipAsync(userId, cancellationToken);
     }
 
+    public async Task<OrganizationMembership> SetMembershipStatusAsync(
+        Guid organizationId,
+        Guid memberUserId,
+        MembershipStatus status,
+        CancellationToken cancellationToken = default)
+    {
+        if (status == MembershipStatus.Active)
+        {
+            return await ActivateMembershipAsync(organizationId, memberUserId, cancellationToken);
+        }
+
+        var organization = await _organizationRepository.GetByIdAsync(organizationId, cancellationToken)
+            ?? throw new KeyNotFoundException($"Organization '{organizationId}' not found.");
+
+        if (organization.OwnerUserId == memberUserId)
+        {
+            throw new CannotManageOwnerMembershipException();
+        }
+
+        var membership = await _organizationRepository.GetMembershipAsync(
+            organizationId, memberUserId, cancellationToken)
+            ?? throw new MembershipNotFoundException(organizationId, memberUserId);
+
+        membership.Status = status;
+        await _organizationRepository.UpdateMembershipAsync(membership, cancellationToken);
+
+        _logger.LogInformation(
+            "Membership status updated. organizationId={OrganizationId} userId={UserId} status={Status}",
+            organizationId, memberUserId, status);
+
+        await InvalidateUserCacheAsync(memberUserId, cancellationToken);
+        return membership;
+    }
+
+    public async Task RemoveMembershipAsync(
+        Guid organizationId,
+        Guid memberUserId,
+        CancellationToken cancellationToken = default)
+    {
+        var organization = await _organizationRepository.GetByIdAsync(organizationId, cancellationToken)
+            ?? throw new KeyNotFoundException($"Organization '{organizationId}' not found.");
+
+        if (organization.OwnerUserId == memberUserId)
+        {
+            throw new CannotManageOwnerMembershipException();
+        }
+
+        var membership = await _organizationRepository.GetMembershipAsync(
+            organizationId, memberUserId, cancellationToken)
+            ?? throw new MembershipNotFoundException(organizationId, memberUserId);
+
+        await _organizationRepository.RemoveMembershipAsync(membership, cancellationToken);
+
+        _logger.LogInformation(
+            "Membership removed. organizationId={OrganizationId} userId={UserId}",
+            organizationId, memberUserId);
+
+        await InvalidateUserCacheAsync(memberUserId, cancellationToken);
+    }
+
+    /// <summary>Reactivates a membership (previously suspended or pending).</summary>
+    private async Task<OrganizationMembership> ActivateMembershipAsync(
+        Guid organizationId,
+        Guid memberUserId,
+        CancellationToken cancellationToken)
+    {
+        var membership = await _organizationRepository.GetMembershipAsync(
+            organizationId, memberUserId, cancellationToken)
+            ?? throw new MembershipNotFoundException(organizationId, memberUserId);
+
+        membership.Status = MembershipStatus.Active;
+        await _organizationRepository.UpdateMembershipAsync(membership, cancellationToken);
+
+        _logger.LogInformation(
+            "Membership activated. organizationId={OrganizationId} userId={UserId}",
+            organizationId, memberUserId);
+
+        await InvalidateUserCacheAsync(memberUserId, cancellationToken);
+        return membership;
+    }
+
     [GeneratedRegex("[^a-z0-9]+")]
     private static partial Regex NonAlphanumericRegex();
 

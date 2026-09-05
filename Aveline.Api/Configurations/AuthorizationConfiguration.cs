@@ -21,6 +21,12 @@ public static class AuthorizationConfiguration
     /// </summary>
     public const string BoutiqueAccessPolicy = "BoutiqueAccess";
 
+    /// <summary>
+    /// Org-scoped policy for membership management: requires an active membership in
+    /// the target organization whose role grants <c>settings:manage</c> (boutique owners).
+    /// </summary>
+    public const string BoutiqueMembershipManagePolicy = "BoutiqueMembershipManage";
+
     public static IServiceCollection AddAvelineAuthorization(this IServiceCollection services)
     {
         services.AddHttpContextAccessor();
@@ -42,6 +48,12 @@ public static class AuthorizationConfiguration
             {
                 p.RequireAuthenticatedUser();
                 p.AddRequirements(new OrganizationScopeRequirement(Permissions.CatalogView));
+            });
+
+            options.AddPolicy(BoutiqueMembershipManagePolicy, p =>
+            {
+                p.RequireAuthenticatedUser();
+                p.AddRequirements(new OrganizationScopeRequirement(Permissions.SettingsManage));
             });
 
             // Permission-based policies (one per permission in the catalog).

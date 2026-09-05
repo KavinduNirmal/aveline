@@ -19,6 +19,14 @@ public interface IOrganizationRepository
         OrganizationMembership membership,
         CancellationToken cancellationToken = default);
 
+    Task<OrganizationMembership> UpdateMembershipAsync(
+        OrganizationMembership membership,
+        CancellationToken cancellationToken = default);
+
+    Task RemoveMembershipAsync(
+        OrganizationMembership membership,
+        CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<OrganizationMembership>> ListMembershipsForUserAsync(
         Guid userId,
         CancellationToken cancellationToken = default);

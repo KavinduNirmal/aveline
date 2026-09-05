@@ -34,6 +34,12 @@ Server-side enforcement sits on top of the role claims:
 - **Membership-change invalidation.** Creating an organization or accepting an
   invitation invalidates the affected user's cached authorization snapshot so the
   next request re-syncs from the canonical tables instead of a 24-hour-old cache.
+- **Membership management.** Boutique owners manage members via
+  `POST /orgs/{organizationId}/members/{userId}/suspend|activate` and
+  `DELETE /orgs/{organizationId}/members/{userId}`, guarded by the
+  `settings:manage` org-scoped policy. Suspending or removing a membership
+  invalidates the member's cached state and immediately revokes org-scoped
+  access; the organization owner's own membership is protected server-side.
 - **`/auth/claims`.** Returns the raw Clerk claims plus the authoritative
   `AccountState`, `UserRole`, and `OrganizationRole` resolved by the middleware
   read model, for debugging without trusting client-side checks.

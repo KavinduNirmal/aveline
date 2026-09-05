@@ -70,6 +70,168 @@ public class OrganizationAuthorizationIntegrationTests : IAsyncLifetime
             Headers = { Authorization = new AuthenticationHeaderValue("Bearer", token) },
         };
 
+    [Fact]
+    public async Task Owner_SuspendsMember_ScopedAccessDenied_ThenActivateRestores()
+    {
+        var (owner, member, org) = await SeedBoutiqueAsync("mgmt_suspend");
+        var memberId = member.Id;
+        var orgId = org.Id;
+        var ownerToken = CreateToken(owner.ClerkId, "staff");
+        var memberToken = CreateToken(member.ClerkId, "staff");
+
+        var before = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/policies/orgs/{orgId}/catalog", memberToken));
+        Assert.Equal(HttpStatusCode.OK, before.StatusCode);
+
+        var suspend = await _client.SendAsync(
+            Authorized(HttpMethod.Post, $"/api/v1/orgs/{orgId}/members/{memberId}/suspend", ownerToken));
+        Assert.Equal(HttpStatusCode.OK, suspend.StatusCode);
+        var suspendBody = JsonDocument.Parse(await suspend.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("Suspended", suspendBody.GetProperty("status").GetString());
+
+        // Suspended membership denies even a valid JWT on the org-scoped resource.
+        var denied = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/policies/orgs/{orgId}/catalog", memberToken));
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+
+        var activate = await _client.SendAsync(
+            Authorized(HttpMethod.Post, $"/api/v1/orgs/{orgId}/members/{memberId}/activate", ownerToken));
+        Assert.Equal(HttpStatusCode.OK, activate.StatusCode);
+
+        var restored = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/policies/orgs/{orgId}/catalog", memberToken));
+        Assert.Equal(HttpStatusCode.OK, restored.StatusCode);
+    }
+
+    [Fact]
+    public async Task StaffMember_CannotManageMembership_InOwnOrg()
+    {
+        var (owner, member, org) = await SeedBoutiqueAsync("mgmt_staff_denied");
+        var staffToken = CreateToken(member.ClerkId, "staff");
+        var other = Guid.CreateVersion7();
+
+        var response = await _client.SendAsync(
+            Authorized(
+                HttpMethod.Post,
+                $"/api/v1/orgs/{org.Id}/members/{other}/suspend",
+                staffToken));
+
+        // Valid member, but lacks the settings:manage grant -> forbidden.
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        _ = owner;
+    }
+
+    [Fact]
+    public async Task OwnerOfOtherOrg_CannotManageForeignMembership()
+    {
+        var (_, member, orgA) = await SeedBoutiqueAsync("mgmt_cross_a");
+        var (foreignOwner, _, _) = await SeedBoutiqueAsync("mgmt_cross_b");
+        var foreignToken = CreateToken(foreignOwner.ClerkId, "staff");
+
+        var response = await _client.SendAsync(
+            Authorized(
+                HttpMethod.Post,
+                $"/api/v1/orgs/{orgA.Id}/members/{member.Id}/suspend",
+                foreignToken));
+
+        // Foreign owner is not a member of org A -> denied by org scope.
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Owner_RemovesMember_ScopedAccessDenied()
+    {
+        var (owner, member, org) = await SeedBoutiqueAsync("mgmt_remove");
+        var ownerToken = CreateToken(owner.ClerkId, "staff");
+        var memberToken = CreateToken(member.ClerkId, "staff");
+
+        var remove = await _client.SendAsync(
+            Authorized(HttpMethod.Delete, $"/api/v1/orgs/{org.Id}/members/{member.Id}", ownerToken));
+        Assert.Equal(HttpStatusCode.NoContent, remove.StatusCode);
+
+        var denied = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/policies/orgs/{org.Id}/catalog", memberToken));
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+    }
+
+    [Fact]
+    public async Task OwnerCannotManageOwnOwnerMembership()
+    {
+        var (owner, _, org) = await SeedBoutiqueAsync("mgmt_owner_guard");
+        var ownerToken = CreateToken(owner.ClerkId, "staff");
+
+        var response = await _client.SendAsync(
+            Authorized(
+                HttpMethod.Post,
+                $"/api/v1/orgs/{org.Id}/members/{owner.Id}/suspend",
+                ownerToken));
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("owner", await response.Content.ReadAsStringAsync());
+    }
+
+    private async Task<(User owner, User member, Organization org)> SeedBoutiqueAsync(string slugSuffix)
+    {
+        await using var context = CreateSeedContext();
+        var owner = new User
+        {
+            Id = Guid.CreateVersion7(),
+            ClerkId = $"owner_{slugSuffix}",
+            Email = $"{slugSuffix}.owner@aveline.lk",
+            FirstName = "Owner",
+            LastName = slugSuffix,
+            Username = $"owner_{slugSuffix}",
+            UserRole = Roles.Staff,
+            OrganizationRole = string.Empty,
+            HasCompletedOnboarding = true,
+            AccountState = AccountState.Active,
+        };
+        var member = new User
+        {
+            Id = Guid.CreateVersion7(),
+            ClerkId = $"member_{slugSuffix}",
+            Email = $"{slugSuffix}.member@aveline.lk",
+            FirstName = "Member",
+            LastName = slugSuffix,
+            Username = $"member_{slugSuffix}",
+            UserRole = Roles.Staff,
+            OrganizationRole = string.Empty,
+            HasCompletedOnboarding = true,
+            AccountState = AccountState.Active,
+        };
+        context.Users.AddRange(owner, member);
+        await context.SaveChangesAsync();
+
+        var org = new Organization
+        {
+            Name = $"Org {slugSuffix}",
+            Slug = $"org-{slugSuffix}",
+            OwnerUserId = owner.Id,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        context.Organizations.Add(org);
+        await context.SaveChangesAsync();
+
+        context.OrganizationMemberships.AddRange(
+            new OrganizationMembership
+            {
+                OrganizationId = org.Id,
+                UserId = owner.Id,
+                BoutiqueRole = Roles.BoutiqueOwner,
+                Status = MembershipStatus.Active,
+            },
+            new OrganizationMembership
+            {
+                OrganizationId = org.Id,
+                UserId = member.Id,
+                BoutiqueRole = Roles.BoutiqueStaff,
+                Status = MembershipStatus.Active,
+            });
+        await context.SaveChangesAsync();
+
+        return (owner, member, org);
+    }
+
     private static AppDbContext CreateSeedContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()

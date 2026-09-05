@@ -70,6 +70,24 @@ public class OrganizationRepository : IOrganizationRepository
         return membership;
     }
 
+    public async Task<OrganizationMembership> UpdateMembershipAsync(
+        OrganizationMembership membership,
+        CancellationToken cancellationToken = default)
+    {
+        membership.UpdatedAt = DateTime.UtcNow;
+        _context.OrganizationMemberships.Update(membership);
+        await _context.SaveChangesAsync(cancellationToken);
+        return membership;
+    }
+
+    public async Task RemoveMembershipAsync(
+        OrganizationMembership membership,
+        CancellationToken cancellationToken = default)
+    {
+        _context.OrganizationMemberships.Remove(membership);
+        await _context.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlyList<OrganizationMembership>> ListMembershipsForUserAsync(
         Guid userId,
         CancellationToken cancellationToken = default)

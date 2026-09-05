@@ -294,4 +294,77 @@ public class OrganizationServiceTests
         // The stale snapshot must be invalidated so the next request re-syncs to Active.
         Assert.Null(await _cacheService.GetUserAsync("clerk_staff_inv"));
     }
+
+    [Fact]
+    public async Task SuspendMembershipAsync_SuspendsAndInvalidatesCache()
+    {
+        var owner = await AddUserAsync("clerk_owner_sus", "owner.sus@aveline.lk");
+        var staff = await AddUserAsync("clerk_staff_sus", "staff.sus@aveline.lk");
+        var organization = await _sut.CreateOrganizationAsync(owner.Id, "Suspend Boutique", null);
+
+        var invite = await _sut.InviteMemberAsync(
+            organization.Id, owner.Id,
+            new InviteMemberRequest(Roles.BoutiqueStaff, RecipientEmail: staff.Email));
+        await _sut.AcceptInvitationAsync(invite.Code, staff.Id, staff.Email);
+
+        await _cacheService.SetUserAsync("clerk_staff_sus", new UserOnboardingCacheItem
+        {
+            Id = staff.Id,
+            ClerkId = staff.ClerkId,
+            HasCompletedOnboarding = true,
+            Email = staff.Email,
+            FirstName = "Test",
+            LastName = "User",
+            UserRole = Roles.Staff,
+            OrganizationRole = string.Empty,
+        });
+
+        var suspended = await _sut.SetMembershipStatusAsync(
+            organization.Id, staff.Id, MembershipStatus.Suspended);
+
+        Assert.Equal(MembershipStatus.Suspended, suspended.Status);
+        Assert.Null(await _cacheService.GetUserAsync("clerk_staff_sus"));
+    }
+
+    [Fact]
+    public async Task RemoveMembershipAsync_RemovesAndInvalidatesCache()
+    {
+        var owner = await AddUserAsync("clerk_owner_rem", "owner.rem@aveline.lk");
+        var staff = await AddUserAsync("clerk_staff_rem", "staff.rem@aveline.lk");
+        var organization = await _sut.CreateOrganizationAsync(owner.Id, "Remove Boutique", null);
+
+        var invite = await _sut.InviteMemberAsync(
+            organization.Id, owner.Id,
+            new InviteMemberRequest(Roles.BoutiqueStaff, RecipientEmail: staff.Email));
+        await _sut.AcceptInvitationAsync(invite.Code, staff.Id, staff.Email);
+
+        await _cacheService.SetUserAsync("clerk_staff_rem", new UserOnboardingCacheItem
+        {
+            Id = staff.Id,
+            ClerkId = staff.ClerkId,
+            HasCompletedOnboarding = true,
+            Email = staff.Email,
+            FirstName = "Test",
+            LastName = "User",
+            UserRole = Roles.Staff,
+            OrganizationRole = string.Empty,
+        });
+
+        await _sut.RemoveMembershipAsync(organization.Id, staff.Id);
+
+        Assert.Empty(await _sut.GetUserMembershipsAsync(staff.Id));
+        Assert.Null(await _cacheService.GetUserAsync("clerk_staff_rem"));
+    }
+
+    [Fact]
+    public async Task OwnerMembership_CannotBeSuspendedOrRemoved()
+    {
+        var owner = await AddUserAsync("clerk_owner_guard", "owner.guard@aveline.lk");
+        var organization = await _sut.CreateOrganizationAsync(owner.Id, "Owner Guard", null);
+
+        await Assert.ThrowsAsync<CannotManageOwnerMembershipException>(() =>
+            _sut.SetMembershipStatusAsync(organization.Id, owner.Id, MembershipStatus.Suspended));
+        await Assert.ThrowsAsync<CannotManageOwnerMembershipException>(() =>
+            _sut.RemoveMembershipAsync(organization.Id, owner.Id));
+    }
 }

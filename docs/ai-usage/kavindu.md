@@ -590,3 +590,13 @@ Opened PR #55 for the #51 work, then started #52 on a fresh branch. Slice 1 deli
 - **`/auth/claims` (item 7)**: returns authoritative `AccountState`/`UserRole`/`OrganizationRole` from the middleware read model in an `Account` object.
 - **Docs**: `docs/architecture/authorization.md` gained an Enforcement model section. Full .NET suite **124 passing**.
 - Remaining for #52 (later slices): membership removal/suspend endpoints + revocation invalidation, converting demo scoped policy usage into real feature endpoints, and deeper resource handlers/tests.
+
+### Follow-up (branch `feature/52-account-org-authorization`): #52 slice 2 — membership management + revocation invalidation
+
+Continued #52. Added canonical membership management with immediate revocation and invalidation:
+
+- **Repo/service**: `OrganizationRepository.UpdateMembershipAsync`/`RemoveMembershipAsync`; `IOrganizationService.SetMembershipStatusAsync` (suspend/reactivate) + `RemoveMembershipAsync`, both invalidating the member's cached authorization snapshot; owner-membership guard (`CannotManageOwnerMembershipException`); new `MembershipNotFoundException`.
+- **Endpoints** (real org-module endpoints, not demo): `POST /api/v1/orgs/{organizationId}/members/{userId}/suspend|activate` and `DELETE /api/v1/orgs/{organizationId}/members/{userId}`, authorized via new `BoutiqueMembershipManagePolicy` (`OrganizationScopeRequirement` with `settings:manage` = boutique owners only).
+- **Tests**: 3 service tests (suspend+invalidate, remove+invalidate, owner-guard) and 5 integration tests (owner suspends → member org-scoped access denied → activate restores; staff member denied managing in own org; foreign org owner denied; owner removes member → denied; owner cannot manage own owner membership). Full .NET suite **132 passing**.
+- Docs: `docs/architecture/authorization.md` gained the membership-management bullet.
+- Remaining for #52 (later): finishing `/auth/claims`/error/docs polish already partly done in slice 1; nothing else outstanding beyond converting scoped policy usage as real boutique feature endpoints appear.

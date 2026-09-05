@@ -6,6 +6,7 @@ import { RequireAdmin } from './components/RequireAdmin'
 import { RequireOnboarding } from './components/RequireOnboarding'
 import { UserProvider } from './contexts/UserContext'
 import { AuthApiBridge } from './lib/AuthApiBridge'
+import { AdminSignUpPage } from './routes/AdminSignUpPage'
 import { Dashboard } from './routes/Dashboard'
 import { ForbiddenPage } from './routes/ForbiddenPage'
 import { OnboardingPage } from './routes/OnboardingPage'
@@ -34,6 +35,7 @@ export default function App() {
           <Route path="/sso-callback" element={<AuthenticateWithRedirectCallback signInFallbackRedirectUrl="/" signUpFallbackRedirectUrl="/" />} />
           <Route path="/sign-in/*" element={<SignInPage />} />
           <Route path="/sign-up/*" element={<SignUpPage />} />
+          <Route path="/sign-up/admin" element={<AdminSignUpPage />} />
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -11,7 +11,13 @@ const SSO_REDIRECT = () => `${window.location.origin}/sso-callback`
 
 type Step = 'details' | 'verify'
 
-export function SignUpForm() {
+export function SignUpForm({
+  accountType,
+  onResetAccountType,
+}: {
+  accountType: 'owner' | 'staff' | 'admin' | undefined
+  onResetAccountType?: () => void
+}) {
   const { isLoaded } = useAuth()
   const { signUp, errors, fetchStatus } = useSignUp()
   const navigate = useNavigate()
@@ -63,6 +69,7 @@ export function SignUpForm() {
         firstName: firstName || undefined,
         lastName: lastName || undefined,
         username: username || undefined,
+        unsafeMetadata: accountType ? { accountType } : undefined,
       })
       surfaceError(error)
 
@@ -159,9 +166,26 @@ export function SignUpForm() {
       <AuthError message={globalError} />
 
       {!needsEmailVerify ? (
-        <form onSubmit={handleDetails} className="flex flex-col gap-4">
+        <form onSubmit={handleDetails} className="flex flex-col gap-3">
+          {accountType && onResetAccountType && (
+            <div className="flex items-center justify-between gap-3 rounded-full border border-white/10 bg-white/5 py-2 pl-4 pr-2 text-[13px] text-white/70">
+              <span>
+                Setting up as{' '}
+                <span className="font-semibold text-white">
+                  {accountType === 'owner' ? 'boutique owner' : `${accountType} member`}
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={onResetAccountType}
+                className="rounded-full bg-white/10 px-3 py-1 font-medium text-rose-100 transition-colors hover:bg-white/20"
+              >
+                Change
+              </button>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-2">
               <Label htmlFor="firstName" className="text-white/70">
                 First name
               </Label>
@@ -171,10 +195,10 @@ export function SignUpForm() {
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
                 placeholder="Kasun"
-                className="h-12 rounded-xl border-white/10 bg-white/5 px-4 text-white placeholder:text-white/30"
+                className="h-11 rounded-full border-white/10 bg-white/5 px-4 text-[15px] text-white placeholder:text-white/40"
               />
             </div>
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-2">
               <Label htmlFor="lastName" className="text-white/70">
                 Last name
               </Label>
@@ -184,12 +208,12 @@ export function SignUpForm() {
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
                 placeholder="Delpachithra"
-                className="h-12 rounded-xl border-white/10 bg-white/5 px-4 text-white placeholder:text-white/30"
+                className="h-11 rounded-full border-white/10 bg-white/5 px-4 text-[15px] text-white placeholder:text-white/40"
               />
             </div>
           </div>
 
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-2">
             <Label htmlFor="username" className="text-white/70">
               Username
             </Label>
@@ -201,11 +225,11 @@ export function SignUpForm() {
               value={username}
               onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
               placeholder="kasun_d"
-              className="h-12 rounded-xl border-white/10 bg-white/5 px-4 text-white placeholder:text-white/30"
+              className="h-11 rounded-full border-white/10 bg-white/5 px-4 text-[15px] text-white placeholder:text-white/40"
             />
           </div>
 
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-2">
             <Label htmlFor="email" className="text-white/70">
               Email
             </Label>
@@ -216,11 +240,11 @@ export function SignUpForm() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
-              className="h-12 rounded-xl border-white/10 bg-white/5 px-4 text-white placeholder:text-white/30"
+              className="h-11 rounded-full border-white/10 bg-white/5 px-4 text-[15px] text-white placeholder:text-white/40"
             />
           </div>
 
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-2">
             <Label htmlFor="password" className="text-white/70">
               Password
             </Label>
@@ -231,7 +255,7 @@ export function SignUpForm() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="At least 8 characters"
-              className="h-12 rounded-xl border-white/10 bg-white/5 px-4 text-white placeholder:text-white/30"
+              className="h-11 rounded-full border-white/10 bg-white/5 px-4 text-[15px] text-white placeholder:text-white/40"
             />
           </div>
 
@@ -241,14 +265,14 @@ export function SignUpForm() {
           <Button
             type="submit"
             disabled={busyState || !email || !password}
-            className="mt-1 h-12 w-full rounded-xl bg-[#7a303f] text-[15px] font-semibold text-white shadow-[0_10px_30px_-8px_rgba(122,48,63,0.7)] transition-all hover:bg-[#8c3b4c] disabled:opacity-60"
+            className="mt-1 h-11 w-full rounded-full bg-[#7a303f] text-[15px] font-semibold text-white shadow-[0_10px_30px_-8px_rgba(122,48,63,0.7)] transition-all hover:bg-[#8c3b4c] disabled:opacity-60"
           >
             {busyState ? 'Creating account…' : 'Create account'}
           </Button>
         </form>
       ) : (
-        <form onSubmit={handleVerify} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
+        <form onSubmit={handleVerify} className="flex flex-col gap-3">
+          <div className="flex flex-col gap-2">
             <Label htmlFor="verify-code" className="text-white/70">
               Verification code
             </Label>
@@ -260,7 +284,7 @@ export function SignUpForm() {
               value={code}
               onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
               placeholder="••••••"
-              className="h-12 rounded-xl border-white/10 bg-white/5 px-4 text-center font-mono text-xl tracking-[0.5em] text-white placeholder:text-white/30"
+              className="h-11 rounded-full border-white/10 bg-white/5 px-4 text-center font-mono text-lg tracking-[0.35em] text-white placeholder:text-white/40"
             />
             <p className="text-xs text-white/40">
               We sent a one-time code to {email}. Enter it to verify your account.
@@ -269,7 +293,7 @@ export function SignUpForm() {
           <Button
             type="submit"
             disabled={busyState || !code}
-            className="mt-1 h-12 w-full rounded-xl bg-[#7a303f] text-white hover:bg-[#8c3b4c]"
+            className="mt-1 h-11 w-full rounded-full bg-[#7a303f] text-white hover:bg-[#8c3b4c]"
           >
             {busyState ? 'Verifying…' : 'Verify & continue'}
           </Button>

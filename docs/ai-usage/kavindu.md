@@ -541,3 +541,12 @@ First CI run on PR #31 failed 4 jobs; all fixed:
 - `dotnet test Aveline.Api/Aveline.Api.sln -c Release` → **107 passed, 0 failed** (91 pre-existing + 16 new).
 - `dotnet build -c Release` clean; migration generation succeeds with no shadow-FK warning.
 - No changes committed; #50 pending review. Suggested follow-ups: HTTP endpoints (create org / invite / accept / my orgs) and the #47-coordinated backfill.
+
+### Follow-up (branch `feature/custom-clerk-auth`): auth screen polish + account-type & admin sign-up
+
+Refined the custom Clerk auth work from user feedback:
+- **Branding**: tagline changed from "Boutique Concierge" to **"Atelier Concierge"** (web AuthShell, mobile AuthScreen, onboarding eyebrow).
+- **Layout/spacing**: bigger label-to-input gap, compact card (smaller paddings/headline, removed marketing blurb, max-w 400px), inputs shortened to `h-11` and **fully rounded (pill)**; all shadcn buttons now **rounded-full** globally (button.tsx cva base); cards reduced from `rounded-3xl` to `rounded-2xl`.
+- **Account type**: `/sign-up` now starts with an account-type picker (boutique owner vs staff member); chosen type is echoed in the form with a "Change" control and stored as `unsafeMetadata.accountType`.
+- **Quiet admin sign-up**: new `/sign-up/admin` route — plain, unassuming light screen (no aurora art) noting admin access is provisioned by the team; email/password + verification code; linked via a muted "Administrator sign-up" footer link on the auth card.
+- Verified: web `tsc`, oxlint, Vitest 31, `vite build`; Flutter `analyze` clean + 20 tests.

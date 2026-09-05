@@ -207,8 +207,8 @@ export function SignInForm() {
       <AuthError message={globalError} />
 
       {view === 'credentials' && (
-        <form onSubmit={handlePassword} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
+        <form onSubmit={handlePassword} className="flex flex-col gap-3">
+          <div className="flex flex-col gap-2">
             <Label htmlFor="identifier" className="text-white/70">
               Email or username
             </Label>
@@ -221,10 +221,10 @@ export function SignInForm() {
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
               placeholder="you@example.com"
-              className="h-12 rounded-xl border-white/10 bg-white/5 px-4 text-white placeholder:text-white/30"
+              className="h-11 rounded-full border-white/10 bg-white/5 px-4 text-[15px] text-white placeholder:text-white/40"
             />
           </div>
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
               <Label htmlFor="password" className="text-white/70">
                 Password
@@ -244,13 +244,13 @@ export function SignInForm() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••••"
-              className="h-12 rounded-xl border-white/10 bg-white/5 px-4 text-white placeholder:text-white/30"
+              className="h-11 rounded-full border-white/10 bg-white/5 px-4 text-[15px] text-white placeholder:text-white/40"
             />
           </div>
           <Button
             type="submit"
             disabled={busyState || !identifier || !password}
-            className="mt-1 h-12 w-full rounded-xl bg-[#7a303f] text-[15px] font-semibold text-white shadow-[0_10px_30px_-8px_rgba(122,48,63,0.7)] transition-all hover:bg-[#8c3b4c] disabled:opacity-60"
+            className="mt-1 h-11 w-full rounded-full bg-[#7a303f] text-[15px] font-semibold text-white shadow-[0_10px_30px_-8px_rgba(122,48,63,0.7)] transition-all hover:bg-[#8c3b4c] disabled:opacity-60"
           >
             {busyState ? 'Signing in…' : 'Sign in'}
           </Button>
@@ -258,8 +258,8 @@ export function SignInForm() {
       )}
 
       {view === 'forgot-request' && (
-        <form onSubmit={beginForgot} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
+        <form onSubmit={beginForgot} className="flex flex-col gap-3">
+          <div className="flex flex-col gap-2">
             <Label htmlFor="forgot-identifier" className="text-white/70">
               Email or username
             </Label>
@@ -270,13 +270,13 @@ export function SignInForm() {
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
               placeholder="you@example.com"
-              className="h-12 rounded-xl border-white/10 bg-white/5 px-4 text-white placeholder:text-white/30"
+              className="h-11 rounded-full border-white/10 bg-white/5 px-4 text-[15px] text-white placeholder:text-white/40"
             />
           </div>
           <Button
             type="submit"
             disabled={busyState || !identifier}
-            className="mt-1 h-12 w-full rounded-xl bg-[#7a303f] text-white hover:bg-[#8c3b4c]"
+            className="mt-1 h-11 w-full rounded-full bg-[#7a303f] text-white hover:bg-[#8c3b4c]"
           >
             {busyState ? 'Sending…' : 'Send reset code'}
           </Button>
@@ -291,8 +291,8 @@ export function SignInForm() {
       )}
 
       {(view === 'forgot-verify' || isMfa) && (
-        <form onSubmit={isMfa ? handleMfa : verifyResetCode} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
+        <form onSubmit={isMfa ? handleMfa : verifyResetCode} className="flex flex-col gap-3">
+          <div className="flex flex-col gap-2">
             <Label htmlFor="code" className="text-white/70">
               {isMfa ? 'Two-factor code' : 'Verification code'}
             </Label>
@@ -304,7 +304,7 @@ export function SignInForm() {
               value={code}
               onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
               placeholder="••••••"
-              className="h-12 rounded-xl border-white/10 bg-white/5 px-4 text-center font-mono text-xl tracking-[0.5em] text-white placeholder:text-white/30"
+              className="h-11 rounded-full border-white/10 bg-white/5 px-4 text-center font-mono text-lg tracking-[0.35em] text-white placeholder:text-white/40"
             />
             <p className="text-xs text-white/40">
               {isMfa
@@ -316,7 +316,7 @@ export function SignInForm() {
           </div>
 
           {!isMfa && signIn?.status === 'needs_new_password' && (
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-2">
               <Label htmlFor="new-password" className="text-white/70">
                 New password
               </Label>
@@ -327,7 +327,7 @@ export function SignInForm() {
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 placeholder="••••••••••"
-                className="h-12 rounded-xl border-white/10 bg-white/5 px-4 text-white placeholder:text-white/30"
+                className="h-11 rounded-full border-white/10 bg-white/5 px-4 text-[15px] text-white placeholder:text-white/40"
               />
             </div>
           )}
@@ -335,7 +335,7 @@ export function SignInForm() {
           <Button
             type="submit"
             disabled={busyState || !code}
-            className="mt-1 h-12 w-full rounded-xl bg-[#7a303f] text-white hover:bg-[#8c3b4c]"
+            className="mt-1 h-11 w-full rounded-full bg-[#7a303f] text-white hover:bg-[#8c3b4c]"
           >
             {busyState ? 'Verifying…' : 'Verify'}
           </Button>

@@ -77,7 +77,7 @@ class _AuthScreenState extends State<AuthScreen> {
                         ),
                       ),
                       Text(
-                        'BOUTIQUE CONCIERGE',
+                        'ATELIER CONCIERGE',
                         style: theme.textTheme.labelSmall?.copyWith(
                           color: scheme.onSurfaceVariant,
                           letterSpacing: 3,

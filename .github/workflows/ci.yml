@@ -361,3 +361,56 @@ jobs:
         with:
           name: aveline-zap-baseline
           path: results.json
+
+  # ---------------------------------------------------------------------------
+  # Job 8: Publish versioned Android APK GitHub Release (master pushes only)
+  # ---------------------------------------------------------------------------
+  release-android:
+    name: Publish Android APK Release
+    # Only real pushes to the stable branch produce a release; PRs never do.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    needs: test-flutter
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download APK artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: aveline-mobile-apk
+          path: apk
+
+      - name: Derive app version from pubspec
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(sed -n 's/^version: *\(.*\)/\1/p' frontend/aveline_mobile/pubspec.yaml | head -1)"
+          if [ -z "$VERSION" ]; then
+            echo "::error::Unable to read version from frontend/aveline_mobile/pubspec.yaml"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "safe=${VERSION//+/.}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          SAFE="${{ steps.version.outputs.safe }}"
+          RUN_NUMBER="${{ github.run_number }}"
+          TAG="v${SAFE}-build.${RUN_NUMBER}"
+          APK="$(find apk -name '*.apk' -type f | head -1)"
+          if [ -z "$APK" ]; then
+            echo "::error::No APK found in the aveline-mobile-apk artifact."
+            exit 1
+          fi
+          gh release create "$TAG" "$APK#aveline-mobile-${SAFE}-build.${RUN_NUMBER}.apk" \
+            --repo "${{ github.repository }}" \
+            --title "Aveline Mobile v${VERSION} (build #${RUN_NUMBER})" \
+            --notes "Automated release from \`master\` at ${{ github.sha }}." \
+            --target master

@@ -667,3 +667,10 @@ Design feedback round on the landing page:
 - **How it works** rebuilt as product-style cards: image top as a shorter rectangle (`h-44`), text in a joined white body panel; plus an animated gradient "comet" that travels left→right along a dashed rail across the three step images on desktop.
 - Hero/CTA headings: added a soft radial veil behind the text and a faint white text-shadow to lift contrast against the busy aurora; gradient headline colors deepened.
 - Verified web `tsc`, oxlint, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #61): landing polish round 3
+
+- **"The three of her" is now a diagram**: an animated Aveline hub (blossom orb with rotating conic gradient ring + breathing glow) sits on top, with three flowing connector paths (Ava rose / Elle gold / Lina maroon) branching down to the three agent cards (marching-dash animation, reduced-motion safe).
+- Enterprise "Aveline for groups" spacing balanced (`py-20` around the card).
+- How-it-works connector width reduced ~20% (from `3%` insets to `12%` each side) so it no longer overflows past the cards.
+- Verified web `tsc`, oxlint, `vite build`.

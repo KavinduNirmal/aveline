@@ -102,6 +102,12 @@ const AGENTS: Agent[] = [
   },
 ]
 
+const LINKS = [
+  { d: 'M600 8 C 430 22 320 46 210 118', color: '#b0566b' },
+  { d: 'M600 8 C 600 40 600 78 600 118', color: '#8a6a14' },
+  { d: 'M600 8 C 770 22 880 46 990 118', color: '#7a303f' },
+]
+
 interface Step {
   n: string
   icon: LucideIcon
@@ -138,12 +144,7 @@ function StepImage({ step, index }: { step: Step; index: number }) {
   const reduce = useReducedMotion()
   const Icon = step.icon
   return (
-    <div
-      className={cn(
-        'relative h-44 overflow-hidden bg-gradient-to-br',
-        step.tint,
-      )}
-    >
+    <div className={cn('relative h-44 overflow-hidden bg-gradient-to-br', step.tint)}>
       <motion.div
         className="absolute -right-8 -top-10 text-rose-200/70"
         animate={reduce ? {} : { y: [0, -12, 0], rotate: [0, 12, 0] }}
@@ -170,13 +171,133 @@ function StepImage({ step, index }: { step: Step; index: number }) {
   )
 }
 
+/** Animated hub + connectors showing Aveline branching into the three agents. */
+function AgentDiagram({ reduce }: { reduce: boolean | null }) {
+  return (
+    <div className="relative mx-auto mt-16 max-w-5xl">
+      {/* Hub */}
+      <Reveal>
+        <div className="flex flex-col items-center">
+          <div className="relative flex size-32 items-center justify-center">
+            <motion.div
+              className="absolute inset-0 rounded-full bg-gradient-to-br from-commerce via-memory to-visual opacity-20 blur-2xl"
+              animate={reduce ? {} : { scale: [1, 1.12, 1], opacity: [0.18, 0.32, 0.18] }}
+              transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut' }}
+            />
+            <motion.div
+              className="absolute inset-0 rounded-full bg-[conic-gradient(from_0deg,#7a303f,#b0566b,#8a6a14,#8e7cc3,#ef7a68,#7a303f)] p-[3px]"
+              animate={reduce ? {} : { rotate: 360 }}
+              transition={{ duration: 26, repeat: Infinity, ease: 'linear' }}
+            >
+              <div className="flex size-full items-center justify-center rounded-full bg-[#fdfaf8]">
+                <motion.div
+                  animate={reduce ? {} : { scale: [1, 1.06, 1] }}
+                  transition={{ duration: 4, repeat: Infinity, ease: 'easeInOut' }}
+                >
+                  <Blossom className="size-14 text-commerce drop-shadow-[0_4px_16px_rgba(122,48,63,0.45)]" />
+                </motion.div>
+              </div>
+            </motion.div>
+          </div>
+          <p className="mt-4 font-serif text-2xl font-medium text-neutral-900">Aveline</p>
+          <p className="mt-1 text-xs font-semibold uppercase tracking-[0.2em] text-neutral-400">
+            One concierge
+          </p>
+        </div>
+      </Reveal>
+
+      {/* Connectors */}
+      <svg
+        aria-hidden
+        viewBox="0 0 1200 130"
+        className="mx-auto mt-3 h-28 w-full max-w-4xl overflow-visible"
+      >
+        {LINKS.map((link, i) => (
+          <motion.path
+            key={i}
+            d={link.d}
+            fill="none"
+            stroke={link.color}
+            strokeOpacity="0.5"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeDasharray="7 8"
+            animate={reduce ? {} : { strokeDashoffset: [0, -15] }}
+            transition={{ duration: 1.4 + i * 0.3, repeat: Infinity, ease: 'linear' }}
+          />
+        ))}
+      </svg>
+
+      {/* Agent cards */}
+      <div className="grid gap-6 md:grid-cols-3">
+        {AGENTS.map((agent, i) => {
+          const Icon = agent.icon
+          return (
+            <motion.div
+              key={agent.name}
+              initial={{ opacity: 0, y: 28 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.6, delay: 0.15 + i * 0.12, ease: [0.22, 1, 0.36, 1] }}
+              className="group relative flex h-full flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white p-8 shadow-[0_28px_70px_-55px_rgba(122,48,63,0.5)] transition-transform duration-300 hover:-translate-y-1"
+            >
+              <div
+                className={cn(
+                  'pointer-events-none absolute inset-0 bg-gradient-to-br opacity-70 transition-opacity duration-500 group-hover:opacity-100',
+                  agent.tint,
+                )}
+                aria-hidden
+              />
+              <div className="relative flex h-full flex-col">
+                <div className="flex items-center gap-3">
+                  <span
+                    className={cn(
+                      'flex size-12 items-center justify-center rounded-2xl text-white shadow-md transition-transform duration-300 group-hover:-translate-y-0.5 group-hover:rotate-3',
+                      agent.chip,
+                    )}
+                  >
+                    <Icon className="size-6" aria-hidden />
+                  </span>
+                  <div>
+                    <p className={cn('font-serif text-2xl font-medium leading-none', agent.ink)}>
+                      {agent.name}
+                    </p>
+                    <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-400">
+                      {agent.tag}
+                    </p>
+                  </div>
+                </div>
+
+                <p className={cn('mt-5 font-serif text-xl font-medium leading-snug', agent.ink)}>
+                  {agent.line}
+                </p>
+                <p className="mt-2 text-sm leading-relaxed text-neutral-500">{agent.copy}</p>
+
+                <ul className="mt-6 space-y-2.5 border-t-2 border-dashed border-neutral-200 pt-5">
+                  {agent.points.map((point) => (
+                    <li key={point} className="flex items-center gap-2.5 text-sm font-medium text-neutral-700">
+                      <span className={cn('size-2 rounded-full', agent.chip)} />
+                      {point}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </motion.div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 export function LandingPage() {
+  const reduce = useReducedMotion()
+
   return (
     <SitePage>
       {/* ------------------------------------------------ Hero */}
       <section className="relative overflow-hidden">
         <AuroraField />
-        {/* Soft radial veil behind the headline to lift contrast */}
         <div
           aria-hidden
           className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_72%_62%_at_50%_34%,rgba(253,250,248,0.92)_0%,rgba(253,250,248,0.55)_55%,rgba(253,250,248,0)_78%)]"
@@ -261,9 +382,7 @@ export function LandingPage() {
                   <span className="flex size-12 items-center justify-center rounded-2xl bg-commerce/10 text-commerce transition-all duration-300 group-hover:scale-110 group-hover:bg-commerce group-hover:text-white">
                     <Icon className="size-6" aria-hidden />
                   </span>
-                  <h3 className="mt-6 font-serif text-3xl font-medium text-neutral-900">
-                    {title}
-                  </h3>
+                  <h3 className="mt-6 font-serif text-3xl font-medium text-neutral-900">{title}</h3>
                   <p className="mt-3 text-base leading-relaxed text-neutral-500">{copy}</p>
                 </div>
               </Reveal>
@@ -272,7 +391,7 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* ------------------------------------------------ Three agents — joined */}
+      {/* ------------------------------------------------ Three of her — diagram */}
       <section className="relative overflow-hidden border-y-2 border-dashed border-neutral-200 bg-white">
         <AuroraField className="opacity-40" />
         <div className="relative mx-auto w-full max-w-6xl px-5 py-24 lg:px-8">
@@ -281,78 +400,18 @@ export function LandingPage() {
               The three of her
             </p>
             <h2 className="mt-3 font-serif text-5xl font-medium tracking-tight text-neutral-900">
-              Ava, Elle &amp; Lina.
+              One Aveline, three minds.
             </h2>
             <p className="mt-4 text-lg text-neutral-500">
-              Three specialists, one Aveline — working together behind every
-              conversation.
+              A specialist for the customer, the product and the deal — branching
+              from a single concierge.
             </p>
           </Reveal>
 
-          {/* One joined panel: outer corners rounded only */}
-          <Reveal delay={0.08} className="mt-16">
-            <div className="overflow-hidden rounded-3xl border-2 border-dashed border-neutral-200 bg-white shadow-[0_40px_90px_-60px_rgba(122,48,63,0.35)]">
-              <div className="grid lg:grid-cols-3">
-                {AGENTS.map((agent, i) => {
-                  const Icon = agent.icon
-                  return (
-                    <motion.div
-                      key={agent.name}
-                      initial={{ opacity: 0, y: 24 }}
-                      whileInView={{ opacity: 1, y: 0 }}
-                      viewport={{ once: true }}
-                      transition={{ duration: 0.6, delay: 0.1 + i * 0.12, ease: [0.22, 1, 0.36, 1] }}
-                      className={cn(
-                        'group relative p-10 lg:p-12',
-                        'border-t-2 border-dashed border-neutral-200 first:border-t-0',
-                        'lg:border-l-2 lg:border-t-0 lg:first:border-l-0',
-                      )}
-                    >
-                      <div
-                        className={cn(
-                          'pointer-events-none absolute inset-0 bg-gradient-to-br opacity-70 transition-opacity duration-500 group-hover:opacity-100',
-                          agent.tint,
-                        )}
-                        aria-hidden
-                      />
-                      <div className="relative flex h-full flex-col">
-                        <span
-                          className={cn(
-                            'flex size-14 items-center justify-center rounded-2xl text-white shadow-md transition-transform duration-300 group-hover:-translate-y-1 group-hover:rotate-3',
-                            agent.chip,
-                          )}
-                        >
-                          <Icon className="size-7" aria-hidden />
-                        </span>
-                        <p className={cn('mt-7 font-serif text-3xl font-medium lg:text-4xl', agent.ink)}>
-                          {agent.name}
-                        </p>
-                        <p className="mt-1 text-xs font-semibold uppercase tracking-[0.18em] text-neutral-400">
-                          {agent.tag}
-                        </p>
-                        <p className={cn('mt-5 font-serif text-2xl font-medium leading-snug', agent.ink)}>
-                          {agent.line}
-                        </p>
-                        <p className="mt-3 text-base leading-relaxed text-neutral-500">{agent.copy}</p>
-
-                        <ul className="mt-8 space-y-3">
-                          {agent.points.map((point) => (
-                            <li key={point} className="flex items-center gap-3 text-[15px] font-medium text-neutral-700">
-                              <span className={cn('size-2 rounded-full', agent.chip)} />
-                              {point}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    </motion.div>
-                  )
-                })}
-              </div>
-            </div>
-          </Reveal>
+          <AgentDiagram reduce={reduce} />
 
           <Reveal delay={0.15}>
-            <p className="mx-auto mt-12 max-w-2xl text-center text-[15px] leading-relaxed text-neutral-400">
+            <p className="mx-auto mt-14 max-w-2xl text-center text-[15px] leading-relaxed text-neutral-400">
               Every high-impact action pauses for human approval — your owner,
               your call. Aveline completes the rest.
             </p>
@@ -374,8 +433,7 @@ export function LandingPage() {
           </Reveal>
 
           <div className="relative mt-16">
-            {/* Animated gradient connector across the step images (large screens) */}
-            <div className="pointer-events-none absolute left-[3%] right-[3%] top-[88px] hidden h-[3px] lg:block">
+            <div className="pointer-events-none absolute left-[12%] right-[12%] top-[88px] hidden h-[3px] lg:block">
               <div className="absolute inset-0 rounded-full border-t-2 border-dashed border-neutral-300/60" />
               <motion.span
                 className="absolute top-[-2px] h-[7px] w-40 rounded-full bg-gradient-to-r from-transparent via-memory to-transparent blur-[1px]"
@@ -396,9 +454,7 @@ export function LandingPage() {
                 >
                   <StepImage step={step} index={i} />
                   <div className="flex flex-1 flex-col p-6">
-                    <h3 className="font-serif text-2xl font-medium text-neutral-900">
-                      {step.title}
-                    </h3>
+                    <h3 className="font-serif text-2xl font-medium text-neutral-900">{step.title}</h3>
                     <p className="mt-2 text-[15px] leading-relaxed text-neutral-500">{step.copy}</p>
                   </div>
                 </motion.div>
@@ -409,7 +465,7 @@ export function LandingPage() {
       </section>
 
       {/* ------------------------------------------------ Enterprise */}
-      <section className="px-5 pb-24 pt-4 lg:px-8">
+      <section className="px-5 py-20 lg:px-8">
         <Reveal className="mx-auto max-w-6xl">
           <div className="relative overflow-hidden rounded-3xl border-2 border-dashed border-lavender/40 bg-lavender-soft/80 shadow-[0_40px_90px_-60px_rgba(142,124,195,0.5)]">
             <AuroraField className="opacity-35" />

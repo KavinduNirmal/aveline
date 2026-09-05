@@ -181,6 +181,122 @@ public class OrganizationEndpointsIntegrationTests : IAsyncLifetime
         Assert.Equal(Roles.BoutiqueManager, myDoc[0].GetProperty("boutiqueRole").GetString());
     }
 
+    [Fact]
+    public async Task Staff_ReplaysInviteCode_SecondAccept_Returns400_AndDoesNotDuplicateMembership()
+    {
+        // Seed an organization + invitation.
+        await using var context = CreateSeedContext();
+        var owner = new User { Id = Guid.CreateVersion7(), ClerkId = "seed_owner_replay", Email = "seed.owner.replay@aveline.lk", FirstName = "Seed", LastName = "Owner", Username = "seed_owner_replay", UserRole = Roles.Staff, OrganizationRole = string.Empty };
+        context.Users.Add(owner);
+        await context.SaveChangesAsync();
+
+        var organization = new Organization { Name = "Replay Boutique", Slug = "replay-boutique", OwnerUserId = owner.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        context.Organizations.Add(organization);
+        await context.SaveChangesAsync();
+
+        var code = InvitationTokens.GenerateCode();
+        context.OrganizationInvitations.Add(new OrganizationInvitation
+        {
+            OrganizationId = organization.Id,
+            InvitedByUserId = owner.Id,
+            RecipientEmail = "staff.replay@aveline.lk",
+            TokenHash = InvitationTokens.Hash(code),
+            BoutiqueRole = Roles.BoutiqueStaff,
+            ExpiresAt = DateTime.UtcNow.AddDays(3),
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        });
+        await context.SaveChangesAsync();
+
+        var token = CreateToken("user_staff_replay", "staff.replay@aveline.lk", "Replay", "Staff", "staff");
+
+        var first = await _client.SendAsync(AuthorizedJson(HttpMethod.Post, "/api/v1/invitations/accept", token, new { code }));
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+
+        // Replaying the same code must fail and must not create a second membership.
+        var second = await _client.SendAsync(AuthorizedJson(HttpMethod.Post, "/api/v1/invitations/accept", token, new { code }));
+        Assert.Equal(HttpStatusCode.BadRequest, second.StatusCode);
+        Assert.Contains("already accepted", await second.Content.ReadAsStringAsync());
+
+        var my = await _client.SendAsync(Authorized(HttpMethod.Get, "/api/v1/orgs/my", token));
+        var myDoc = JsonDocument.Parse(await my.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal(1, myDoc.GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Staff_AcceptsExpiredInvite_Returns400_AndStaysOnboardingPending()
+    {
+        await using var context = CreateSeedContext();
+        var owner = new User { Id = Guid.CreateVersion7(), ClerkId = "seed_owner_expired", Email = "seed.owner.expired@aveline.lk", FirstName = "Seed", LastName = "Owner", Username = "seed_owner_expired", UserRole = Roles.Staff, OrganizationRole = string.Empty };
+        context.Users.Add(owner);
+        await context.SaveChangesAsync();
+
+        var organization = new Organization { Name = "Expired Boutique", Slug = "expired-boutique", OwnerUserId = owner.Id, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        context.Organizations.Add(organization);
+        await context.SaveChangesAsync();
+
+        var code = InvitationTokens.GenerateCode();
+        context.OrganizationInvitations.Add(new OrganizationInvitation
+        {
+            OrganizationId = organization.Id,
+            InvitedByUserId = owner.Id,
+            RecipientEmail = "staff.expired@aveline.lk",
+            TokenHash = InvitationTokens.Hash(code),
+            BoutiqueRole = Roles.BoutiqueStaff,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(-1),
+            CreatedAt = DateTime.UtcNow.AddDays(-2),
+            UpdatedAt = DateTime.UtcNow.AddDays(-2),
+        });
+        await context.SaveChangesAsync();
+
+        var token = CreateToken("user_staff_expired", "staff.expired@aveline.lk", "Late", "Staff", "staff");
+
+        var accept = await _client.SendAsync(AuthorizedJson(HttpMethod.Post, "/api/v1/invitations/accept", token, new { code }));
+        Assert.Equal(HttpStatusCode.BadRequest, accept.StatusCode);
+        Assert.Contains("expired", await accept.Content.ReadAsStringAsync());
+
+        // Account remains pending: no memberships and business endpoints stay blocked.
+        var my = await _client.SendAsync(Authorized(HttpMethod.Get, "/api/v1/orgs/my", token));
+        var myDoc = JsonDocument.Parse(await my.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal(0, myDoc.GetArrayLength());
+
+        var business = await _client.SendAsync(Authorized(HttpMethod.Get, "/api/v1/policies/associate", token));
+        Assert.Equal(HttpStatusCode.Forbidden, business.StatusCode);
+        Assert.Contains("onboarding-required", await business.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task SuspendedAccount_AllEndpoints_Return403AccountSuspended()
+    {
+        await using var context = CreateSeedContext();
+        context.Users.Add(new User
+        {
+            Id = Guid.CreateVersion7(),
+            ClerkId = "user_suspended_flow",
+            Email = "suspended.flow@aveline.lk",
+            FirstName = "Suspended",
+            LastName = "User",
+            Username = "user_suspended_flow",
+            UserRole = Roles.Staff,
+            OrganizationRole = string.Empty,
+            HasCompletedOnboarding = true,
+            AccountState = AccountState.Suspended,
+            IsActive = false,
+        });
+        await context.SaveChangesAsync();
+
+        var token = CreateToken("user_suspended_flow", "suspended.flow@aveline.lk", "Suspended", "User", "staff");
+
+        // Even profile/allowed paths are blocked once the account is suspended.
+        var business = await _client.SendAsync(Authorized(HttpMethod.Get, "/api/v1/policies/associate", token));
+        Assert.Equal(HttpStatusCode.Forbidden, business.StatusCode);
+        Assert.Contains("account-suspended", await business.Content.ReadAsStringAsync());
+
+        var me = await _client.SendAsync(Authorized(HttpMethod.Get, "/api/v1/users/me", token));
+        Assert.Equal(HttpStatusCode.Forbidden, me.StatusCode);
+        Assert.Contains("account-suspended", await me.Content.ReadAsStringAsync());
+    }
+
     private static AppDbContext CreateSeedContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()

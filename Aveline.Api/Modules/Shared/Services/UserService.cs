@@ -4,7 +4,6 @@ using Aveline.Api.Modules.Shared.DTOs;
 using Aveline.Api.Modules.Shared.Models;
 using Aveline.Api.Modules.Shared.Repositories;
 using Microsoft.Extensions.Logging;
-
 namespace Aveline.Api.Modules.Shared.Services;
 
 public class UserService : IUserService
@@ -73,6 +72,7 @@ public class UserService : IUserService
                 OrganizationRole = orgRole,
                 OrganizationId = orgId,
                 HasCompletedOnboarding = false,
+                AccountState = AccountState.OnboardingPending,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -132,6 +132,7 @@ public class UserService : IUserService
         user.ContactPreference = request.ContactPreference;
         user.PushNotificationsEnabled = request.PushNotificationsEnabled;
         user.HasCompletedOnboarding = true;
+        user.AccountState = ResolveAccountState(user);
         user.UpdatedAt = DateTime.UtcNow;
 
         await _userRepository.UpdateAsync(user, cancellationToken);
@@ -144,6 +145,43 @@ public class UserService : IUserService
         await _cacheService.SetUserProfileAsync(clerkId, updatedDto, cancellationToken: cancellationToken);
 
         return updatedDto;
+    }
+
+    public async Task<UserDto?> SetAccountStateAsync(
+        string clerkId,
+        AccountState state,
+        CancellationToken cancellationToken = default)
+    {
+        var user = await _userRepository.GetByClerkIdAsync(clerkId, cancellationToken);
+        if (user == null)
+        {
+            return null;
+        }
+
+        user.AccountState = state;
+        user.IsActive = state != AccountState.Suspended;
+        user.UpdatedAt = DateTime.UtcNow;
+
+        await _userRepository.UpdateAsync(user, cancellationToken);
+        _logger.LogInformation("Account state updated. clerkId={ClerkId} state={State}", clerkId, state);
+
+        var cacheItem = MapToCacheItem(user);
+        var dto = UserDto.FromEntity(user);
+        await _cacheService.SetUserAsync(clerkId, cacheItem, cancellationToken: cancellationToken);
+        await _cacheService.SetUserProfileAsync(clerkId, dto, cancellationToken: cancellationToken);
+        return dto;
+    }
+
+    private static AccountState ResolveAccountState(User user)
+    {
+        if (!user.IsActive)
+        {
+            return AccountState.Suspended;
+        }
+
+        var hasOrgContext = !string.IsNullOrWhiteSpace(user.OrganizationRole)
+                            || !string.IsNullOrWhiteSpace(user.OrganizationId);
+        return hasOrgContext ? AccountState.Active : AccountState.OnboardingPending;
     }
 
     private static UserOnboardingCacheItem MapToCacheItem(User user)
@@ -161,7 +199,8 @@ public class UserService : IUserService
             Address = user.Address,
             ProfileImageUrl = user.ProfileImageUrl,
             UserRole = user.UserRole,
-            OrganizationRole = user.OrganizationRole
+            OrganizationRole = user.OrganizationRole,
+            AccountState = user.AccountState,
         };
     }
 }

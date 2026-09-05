@@ -541,3 +541,14 @@ First CI run on PR #31 failed 4 jobs; all fixed:
 - `dotnet test Aveline.Api/Aveline.Api.sln -c Release` → **107 passed, 0 failed** (91 pre-existing + 16 new).
 - `dotnet build -c Release` clean; migration generation succeeds with no shadow-FK warning.
 - No changes committed; #50 pending review. Suggested follow-ups: HTTP endpoints (create org / invite / accept / my orgs) and the #47-coordinated backfill.
+
+### Follow-up (same session, branch `feature/51-org-onboarding`): Issue #51 — organization-aware onboarding (backend increment)
+
+Started #51 (depends on #49/#50): replaced the boolean onboarding gate with explicit account lifecycle states and added the owner-creation + staff-join flows (authoritative API side).
+
+- **`AccountState`** enum (`OnboardingPending` / `Active` / `Suspended`) added to `User` (stored string column, migration `AddUserAccountState`). `HasCompletedOnboarding`/`IsActive` retained for compatibility/profile + suspension.
+- **`UserService`**: stub creation → `OnboardingPending`; `CompleteOnboardingAsync` resolves state from org context (`OrganizationRole`/`OrganizationId` set → `Active`, else stays `OnboardingPending`); new `SetAccountStateAsync` updates the row + Redis caches.
+- **`OnboardingMiddleware`** now gates on `AccountState`: `Suspended` → 403 `account-suspended` problem for everything; `OnboardingPending` → allowed only profile/org/invitation endpoints, else 403 `onboarding-required` problem; `Active` → pass. Adds `X-Account-State` header.
+- **New endpoints** (`OrganizationEndpoints`): `POST /api/v1/orgs` (owner creates boutique → account `Active`), `POST /api/v1/invitations/accept` (staff joins by code → `Active`), `GET /api/v1/orgs/my`.
+- **Tests**: updated `OnboardingMiddlewareTests` to the state model + added a suspended-case test; new `OrganizationEndpointsIntegrationTests` (pending user 403 onboarding-required; owner creates org → active + membership + business access; staff accepts seeded invite → active + membership). Full suite **111 passed**.
+- Notes: `OnboardingMiddleware` runs after `UseAuthorization`, so policy 403s surface before the onboarding gate; org-context resolution currently uses the legacy `OrganizationRole`/`OrganizationId` fields (canonical memberships come next). Remaining #51 work (deferred): Clerk claim/session refresh after org changes, matching React/Flutter routing/UI, and E2E tests.

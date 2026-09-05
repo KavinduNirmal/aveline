@@ -212,16 +212,17 @@ function AgentWorkflow() {
   const reduce = useReducedMotion()
 
   const flows = [
-    { d: 'M450 6 C 330 34 240 72 150 122', color: '#b0566b', verb: 'remembers' },
-    { d: 'M450 6 C 450 46 450 82 450 122', color: '#8a6a14', verb: 'sees' },
-    { d: 'M450 6 C 570 34 660 72 750 122', color: '#7a303f', verb: 'closes' },
+    { key: 'ava', d: 'M450 0 L450 56 L150 56 L150 130', color: '#b0566b' },
+    { key: 'elle', d: 'M450 0 L450 56 L450 130', color: '#8a6a14' },
+    { key: 'lina', d: 'M450 0 L450 56 L750 56 L750 130', color: '#7a303f' },
   ]
 
   return (
     <div className="relative mx-auto mt-16 max-w-5xl">
-      {/* Aveline hub */}
+      {/* Aveline hub — label on top of the flower */}
       <div className="flex flex-col items-center">
-        <div className="relative flex size-28 items-center justify-center">
+        <p className="font-serif text-3xl font-medium text-neutral-900">Aveline</p>
+        <div className="relative mt-3 flex size-24 items-center justify-center">
           <motion.div
             className="absolute -inset-4 rounded-full bg-gradient-to-br from-commerce via-memory to-visual opacity-20 blur-2xl"
             animate={reduce ? {} : { scale: [1, 1.12, 1], opacity: [0.16, 0.3, 0.16] }}
@@ -233,56 +234,67 @@ function AgentWorkflow() {
             transition={{ duration: 24, repeat: Infinity, ease: 'linear' }}
           >
             <div className="flex size-full items-center justify-center rounded-full bg-[#fdfaf8]">
-              <Blossom className="size-12 text-commerce drop-shadow-[0_4px_16px_rgba(122,48,63,0.45)]" />
+              <Blossom className="size-11 text-commerce drop-shadow-[0_4px_16px_rgba(122,48,63,0.45)]" />
             </div>
           </motion.div>
         </div>
-        <p className="mt-4 font-serif text-3xl font-medium text-neutral-900">Aveline</p>
-        <p className="mt-1.5 text-xs font-semibold uppercase tracking-[0.22em] text-neutral-400">
+        <p className="mt-3 text-xs font-semibold uppercase tracking-[0.22em] text-neutral-400">
           powers the three
         </p>
       </div>
 
-      {/* Workflow connectors */}
+      {/* Orthogonal connector lines */}
       <svg
         aria-hidden
         viewBox="0 0 900 130"
         preserveAspectRatio="none"
-        className="mx-auto -mt-1 h-24 w-full max-w-4xl overflow-visible"
+        className="mx-auto -mt-1 h-28 w-full max-w-4xl overflow-visible"
       >
-        {flows.map((f, i) => (
-          <g key={i}>
+        {flows.map((f) => (
+          <g key={f.key}>
+            {/* base line */}
             <path
               d={f.d}
               fill="none"
-              stroke={f.color}
-              strokeOpacity="0.22"
+              stroke="#e7dcdc"
               strokeWidth="2"
-              strokeDasharray="2 7"
+              strokeDasharray="2 8"
               strokeLinecap="round"
+              strokeLinejoin="round"
             />
+            {/* colored gradient line with flowing pulse */}
             <motion.path
               d={f.d}
               fill="none"
               stroke={f.color}
-              strokeOpacity="0.85"
+              strokeOpacity="0.9"
               strokeWidth="2.5"
               strokeLinecap="round"
-              strokeDasharray="10 10"
-              animate={reduce ? {} : { strokeDashoffset: [0, -20] }}
-              transition={{ duration: 1.2 + i * 0.25, repeat: Infinity, ease: 'linear' }}
+              strokeLinejoin="round"
+              strokeDasharray="14 16"
+              animate={reduce ? {} : { strokeDashoffset: [0, -30] }}
+              transition={{ duration: 1.3, repeat: Infinity, ease: 'linear' }}
             />
-            <text
-              x={f.d.includes('570') ? 620 : f.d.includes('330') ? 285 : 450}
-              y={i === 1 ? 54 : 50}
-              textAnchor="middle"
-              fill={f.color}
-              fontSize="15"
-              fontStyle="italic"
-              opacity="0.9"
-            >
-              {f.verb}
-            </text>
+            {/* traveling comet pulse */}
+            {!reduce && (
+              <motion.circle
+                r="4.5"
+                fill={f.color}
+                style={{ offsetPath: `path('${f.d}')`, offsetDistance: '0%' }}
+                animate={{ offsetDistance: ['0%', '100%'] }}
+                transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }}
+              />
+            )}
+            {!reduce && (
+              <motion.circle
+                r="2.5"
+                fill={f.color}
+                opacity="0.6"
+                style={{ offsetPath: `path('${f.d}')`, offsetDistance: '0%' }}
+                animate={{ offsetDistance: ['0%', '100%'] }}
+                transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut', delay: 0.35 }}
+              />
+            )}
           </g>
         ))}
       </svg>

@@ -696,3 +696,10 @@ Design feedback round on the landing page:
 - Rebuilt "the three of her" as a **hub-and-spoke workflow diagram**: an animated Aveline hub on top (rotating conic ring + breathing glow) labeled "Aveline — powers the three", with three connector paths flowing downward to the agent cards, each carrying an animated marching-dash pulse and an italic verb label ("remembers" rose / "sees" gold / "closes" maroon).
 - Agent cards slimmed to icon + name/tag + statement + copy + capability pills (content re-balanced), footer line "One Aveline · three specialists · one workflow".
 - Verified web `tsc`, oxlint, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #61): workflow lines polish
+
+- Connector lines now **orthogonal** (straight with 90° bends) instead of curves, running from the flower hub to each agent card.
+- "Aveline" label moved **on top of the flower** orb; lines connect to the orb's bottom edge.
+- Added **gradient pulses** along each line: a colored dashed stroke animating (marching gradient) plus two glowing comet dots traveling the full path in a staggered trail (reduced-motion safe).
+- Verified web `tsc`, oxlint, `vite build`.

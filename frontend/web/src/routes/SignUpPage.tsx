@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { Building2, type LucideIcon, Users } from 'lucide-react'
+import { Link } from 'react-router-dom'
 
 import { SignUpForm } from '@/components/auth/SignUpForm'
-import { AuthShell } from '@/components/auth/AuthShell'
+import { AuthSplitLayout } from '@/components/auth/AuthSplitLayout'
 import { cn } from '@/lib/utils'
 
 type AccountType = 'owner' | 'staff'
@@ -30,20 +31,17 @@ const ACCOUNT_TYPES: {
 function AccountTypeStep({ onSelect }: { onSelect: (v: AccountType) => void }) {
   return (
     <div className="flex flex-col gap-2.5">
-      <p className="pb-1 text-center text-xs uppercase tracking-[0.22em] text-white/40">
-        Choose your account type
-      </p>
       {ACCOUNT_TYPES.map(({ value, icon: Icon, title, blurb }) => (
         <button
           key={value}
           type="button"
           onClick={() => onSelect(value)}
           className={cn(
-            'group flex w-full items-center gap-3 rounded-2xl border border-white/10 bg-white/5 p-3.5 text-left transition-all',
-            'hover:border-rose-200/40 hover:bg-white/10',
+            'group flex w-full items-center gap-3 rounded-2xl border-2 border-dashed border-white/20 bg-white/[0.04] p-3.5 text-left transition-colors',
+            'hover:border-rose-200/50 hover:bg-white/[0.07]',
           )}
         >
-          <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#7a303f]/30 text-rose-100 transition-colors group-hover:bg-[#7a303f]/50">
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#7a303f]/40 text-rose-100">
             <Icon className="size-5" aria-hidden />
           </span>
           <span className="flex min-w-0 flex-col">
@@ -52,28 +50,84 @@ function AccountTypeStep({ onSelect }: { onSelect: (v: AccountType) => void }) {
           </span>
         </button>
       ))}
-      <p className="pt-2 text-center text-xs leading-relaxed text-white/40">
-        Owners and staff create accounts here. Administrator access is
-        provisioned by the Aveline team.
+      <p className="pt-1 text-center text-xs leading-relaxed text-white/35">
+        Administrator access is provisioned by the Aveline team.
       </p>
     </div>
   )
 }
 
-/** Custom Clerk sign-up page with the flower/aurora brand treatment. */
+function SignUpFooter({
+  accepted,
+  onChangeAccepted,
+}: {
+  accepted: boolean
+  onChangeAccepted: (v: boolean) => void
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      <label className="flex cursor-pointer items-start gap-3 text-[13px] leading-snug text-white/60">
+        <input
+          type="checkbox"
+          checked={accepted}
+          onChange={(e) => onChangeAccepted(e.target.checked)}
+          className="mt-0.5 size-4 shrink-0 accent-[#ffb2bc]"
+        />
+        <span>
+          I agree to the{' '}
+          <Link to="/terms" className="font-medium text-rose-200/90 hover:underline">
+            Terms &amp; Conditions
+          </Link>{' '}
+          and acknowledge the{' '}
+          <Link to="/terms#privacy" className="font-medium text-rose-200/90 hover:underline">
+            Privacy Policy
+          </Link>
+          .
+        </span>
+      </label>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[13px]">
+        <Link
+          to="/sign-in"
+          className="text-white/50 transition-colors hover:text-white/90"
+        >
+          Already have an account?{' '}
+          <span className="font-medium text-rose-200/90">Sign in</span>
+        </Link>
+        <Link
+          to="/sign-up/admin"
+          className="text-white/35 transition-colors hover:text-white/70"
+        >
+          Administrator sign-up
+        </Link>
+      </div>
+    </div>
+  )
+}
+
+/** Custom Clerk sign-up page — split layout, account type step, terms gate. */
 export function SignUpPage() {
   const [accountType, setAccountType] = useState<AccountType | null>(null)
+  const [termsAccepted, setTermsAccepted] = useState(false)
 
   return (
-    <AuthShell mode="signup">
+    <AuthSplitLayout
+      mode="signup"
+      footer={
+        <SignUpFooter
+          accepted={termsAccepted}
+          onChangeAccepted={setTermsAccepted}
+        />
+      }
+    >
       {accountType === null ? (
         <AccountTypeStep onSelect={setAccountType} />
       ) : (
         <SignUpForm
           accountType={accountType}
           onResetAccountType={() => setAccountType(null)}
+          canSubmit={termsAccepted}
         />
       )}
-    </AuthShell>
+    </AuthSplitLayout>
   )
 }

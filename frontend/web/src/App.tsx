@@ -13,6 +13,7 @@ import { OnboardingPage } from './routes/OnboardingPage'
 import { RootLayout } from './routes/RootLayout'
 import { SignInPage } from './routes/SignInPage'
 import { SignUpPage } from './routes/SignUpPage'
+import { TermsPage } from './routes/TermsPage'
 
 export default function App() {
   return (
@@ -36,6 +37,7 @@ export default function App() {
           <Route path="/sign-in/*" element={<SignInPage />} />
           <Route path="/sign-up/*" element={<SignUpPage />} />
           <Route path="/sign-up/admin" element={<AdminSignUpPage />} />
+          <Route path="/terms" element={<TermsPage />} />
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

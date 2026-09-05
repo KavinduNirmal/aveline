@@ -550,3 +550,12 @@ Refined the custom Clerk auth work from user feedback:
 - **Account type**: `/sign-up` now starts with an account-type picker (boutique owner vs staff member); chosen type is echoed in the form with a "Change" control and stored as `unsafeMetadata.accountType`.
 - **Quiet admin sign-up**: new `/sign-up/admin` route — plain, unassuming light screen (no aurora art) noting admin access is provisioned by the team; email/password + verification code; linked via a muted "Administrator sign-up" footer link on the auth card.
 - Verified: web `tsc`, oxlint, Vitest 31, `vite build`; Flutter `analyze` clean + 20 tests.
+
+### Follow-up (branch `feature/custom-clerk-auth`): auth split-layout redesign (web)
+
+Per user direction, replaced the card-in-center auth screens with a two-panel layout:
+- **Left panel**: flower/aurora art + Aveline brand story, big serif statement, dashed-border perk tiles (Next.js landing style).
+- **Right panel**: full-height, card removed — edge-to-edge form column (kicker/title/children), docked footer with dashed top border.
+- **Footer (sign-up)**: required **Terms & Conditions / Privacy** checkbox that gates account creation (`canSubmit`), plus Administrator sign-up link and switch-to-sign-in. Sign-in footer has switch-to-sign-up + admin link.
+- **Dashed, evident borders** throughout (panel divider, footer top, perk tiles, account-type tiles, pill inputs `border-dashed`).
+- New public `/terms` page (dashed section cards). Verified web `tsc`, oxlint, Vitest 31, `vite build`.

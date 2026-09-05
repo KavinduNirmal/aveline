@@ -1,4 +1,11 @@
 import type { ReactNode } from 'react'
+import {
+  Bot,
+  type LucideIcon,
+  ShieldCheck,
+  Sparkles,
+  UsersRound,
+} from 'lucide-react'
 import { motion } from 'motion/react'
 
 import { Blossom } from './Blossom'
@@ -13,7 +20,7 @@ const COPY: Record<
   signin: {
     kicker: 'Welcome back',
     title: 'Sign in to Aveline',
-    sub: 'The concierge remembers you — pick up right where you left off.',
+    sub: 'Aveline remembers — pick up right where you left off.',
   },
   signup: {
     kicker: 'Join the ecosystem',
@@ -22,17 +29,18 @@ const COPY: Record<
   },
 }
 
-const PERKS = [
-  { k: 'Boutique AI', v: 'Concierge, sourcing & replies in one place.' },
-  { k: 'People-first', v: 'Roles and permissions for owners & staff.' },
-  { k: 'Client memory', v: 'Every conversation remembered, warmly.' },
-  { k: 'Secure by design', v: 'Clerk-managed sessions, always.' },
+const PERKS: { icon: LucideIcon; k: string; v: string }[] = [
+  { icon: Bot, k: 'Boutique AI', v: 'Orders, sourcing & replies in one place.' },
+  { icon: UsersRound, k: 'People-first', v: 'Roles and permissions for owners & staff.' },
+  { icon: Sparkles, k: 'Relational memory', v: 'Every client remembered, warmly.' },
+  { icon: ShieldCheck, k: 'Secure by design', v: 'Clerk-managed sessions, always.' },
 ]
 
 const STORY =
-  'Aveline is the quiet intelligence behind modern boutiques — a concierge that '
-    .concat('keeps orders, WhatsApp threads, sourcing and client memory moving ' +
-      'so you can focus on the craft.')
+  'Aveline is the assistant that remembers, so you don’t have to. It keeps '
+    .concat('orders, WhatsApp threads, sourcing and client history moving — ' +
+      'so you can stay close and personal with every customer, without ' +
+      'worrying about the little things.')
 
 /** Two-panel auth layout (Next.js-style dashed borders): left brand/art +
  *  story panel, right edge-to-edge form column with a docked footer. */
@@ -66,39 +74,45 @@ export function AuthSplitLayout({
             <div className="leading-tight">
               <p className="font-serif text-lg font-medium text-white">Aveline</p>
               <p className="text-[10px] uppercase tracking-[0.3em] text-white/40">
-                Atelier Concierge
+                The assistant that remembers
               </p>
             </div>
           </div>
 
           <div className="max-w-xl">
-            <p className="mb-4 text-xs font-medium uppercase tracking-[0.3em] text-rose-200/70">
-              Boutique intelligence
+            <p className="mb-4 text-[13px] font-medium uppercase tracking-[0.3em] text-rose-200/80">
+              Aveline remembers
             </p>
             <h1 className="font-serif text-4xl font-medium leading-[1.15] tracking-tight text-white xl:text-[2.9rem]">
-              The concierge that never sleeps,{' '}
+              So you don’t have to. Every client,{' '}
               <span className="bg-gradient-to-r from-rose-100 via-rose-200 to-[#e0b64c] bg-clip-text text-transparent">
-                for boutiques that never stop.
+                remembered personally.
               </span>
             </h1>
-            <p className="mt-6 max-w-md text-[15px] leading-relaxed text-white/55">
+            <p className="mt-6 max-w-md text-base leading-relaxed text-white/65">
               {STORY}
             </p>
           </div>
 
-          <div className="grid max-w-xl grid-cols-2 gap-3">
-            {PERKS.map((perk) => (
+          {/* Feature list (no cards — dividers between rows) */}
+          <div className="flex max-w-md flex-col">
+            {PERKS.map(({ icon: Icon, k, v }) => (
               <div
-                key={perk.k}
-                className="rounded-2xl border border-dashed border-white/20 bg-white/[0.03] p-4 backdrop-blur-sm"
+                key={k}
+                className="flex items-center gap-4 py-3.5 [&:not(:last-child)]:border-b-2 [&:not(:last-child)]:border-dashed [&:not(:last-child)]:border-white/15"
               >
-                <p className="text-sm font-semibold text-white">{perk.k}</p>
-                <p className="mt-1 text-[13px] leading-snug text-white/45">{perk.v}</p>
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-rose-200/90">
+                  <Icon className="size-[18px]" aria-hidden />
+                </span>
+                <span className="flex min-w-0 flex-col">
+                  <span className="text-[15px] font-semibold text-white">{k}</span>
+                  <span className="text-sm leading-snug text-white/55">{v}</span>
+                </span>
               </div>
             ))}
           </div>
 
-          <p className="text-xs text-white/30">
+          <p className="text-[13px] text-white/40">
             Owner &amp; staff workspaces · Sri Lanka · Clerk-secured
           </p>
         </motion.section>
@@ -114,20 +128,20 @@ export function AuthSplitLayout({
               <span className="font-serif text-lg font-medium text-white">Aveline</span>
             </div>
             <p className="text-[10px] uppercase tracking-[0.3em] text-white/40">
-              Atelier Concierge
+              The assistant that remembers
             </p>
           </div>
 
           {/* Scrollable form area */}
           <div className="flex-1 overflow-y-auto">
             <div className="mx-auto flex w-full max-w-[440px] flex-col px-6 py-8 sm:py-12">
-              <p className="text-xs font-medium uppercase tracking-[0.3em] text-rose-200/70">
+              <p className="text-[13px] font-medium uppercase tracking-[0.3em] text-rose-200/80">
                 {copy.kicker}
               </p>
-              <h2 className="mt-2 font-serif text-3xl font-medium tracking-tight text-white">
+              <h2 className="mt-2 font-serif text-4xl font-medium tracking-tight text-white">
                 {copy.title}
               </h2>
-              <p className="mt-2 text-sm leading-relaxed text-white/50">{copy.sub}</p>
+              <p className="mt-3 text-base leading-relaxed text-white/65">{copy.sub}</p>
 
               <div className="mt-7">{children}</div>
             </div>

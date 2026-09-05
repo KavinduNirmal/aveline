@@ -221,7 +221,7 @@ export function SignInForm() {
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
               placeholder="you@example.com"
-              className="h-11 rounded-full border-dashed border-white/25 bg-white/[0.06] px-4 text-[15px] text-white placeholder:text-white/40"
+              className="h-11 rounded-full border-white/10 bg-white/5 px-4 text-base text-white placeholder:text-white/40"
             />
           </div>
           <div className="flex flex-col gap-2">
@@ -244,7 +244,7 @@ export function SignInForm() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••••"
-              className="h-11 rounded-full border-dashed border-white/25 bg-white/[0.06] px-4 text-[15px] text-white placeholder:text-white/40"
+              className="h-11 rounded-full border-white/10 bg-white/5 px-4 text-base text-white placeholder:text-white/40"
             />
           </div>
           <Button
@@ -270,7 +270,7 @@ export function SignInForm() {
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
               placeholder="you@example.com"
-              className="h-11 rounded-full border-dashed border-white/25 bg-white/[0.06] px-4 text-[15px] text-white placeholder:text-white/40"
+              className="h-11 rounded-full border-white/10 bg-white/5 px-4 text-base text-white placeholder:text-white/40"
             />
           </div>
           <Button
@@ -327,7 +327,7 @@ export function SignInForm() {
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 placeholder="••••••••••"
-                className="h-11 rounded-full border-dashed border-white/25 bg-white/[0.06] px-4 text-[15px] text-white placeholder:text-white/40"
+                className="h-11 rounded-full border-white/10 bg-white/5 px-4 text-base text-white placeholder:text-white/40"
               />
             </div>
           )}

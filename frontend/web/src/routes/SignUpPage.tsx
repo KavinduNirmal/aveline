@@ -37,8 +37,8 @@ function AccountTypeStep({ onSelect }: { onSelect: (v: AccountType) => void }) {
           type="button"
           onClick={() => onSelect(value)}
           className={cn(
-            'group flex w-full items-center gap-3 rounded-2xl border-2 border-dashed border-white/20 bg-white/[0.04] p-3.5 text-left transition-colors',
-            'hover:border-rose-200/50 hover:bg-white/[0.07]',
+            'group flex w-full items-center gap-3 rounded-2xl border border-white/10 bg-white/5 p-3.5 text-left transition-colors',
+            'hover:border-rose-200/40 hover:bg-white/[0.08]',
           )}
         >
           <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#7a303f]/40 text-rose-100">
@@ -50,14 +50,12 @@ function AccountTypeStep({ onSelect }: { onSelect: (v: AccountType) => void }) {
           </span>
         </button>
       ))}
-      <p className="pt-1 text-center text-xs leading-relaxed text-white/35">
-        Administrator access is provisioned by the Aveline team.
-      </p>
     </div>
   )
 }
 
-function SignUpFooter({
+/** Terms acceptance, rendered just below the form (not in the footer). */
+function TermsBlock({
   accepted,
   onChangeAccepted,
 }: {
@@ -65,42 +63,25 @@ function SignUpFooter({
   onChangeAccepted: (v: boolean) => void
 }) {
   return (
-    <div className="flex flex-col gap-3">
-      <label className="flex cursor-pointer items-start gap-3 text-[13px] leading-snug text-white/60">
-        <input
-          type="checkbox"
-          checked={accepted}
-          onChange={(e) => onChangeAccepted(e.target.checked)}
-          className="mt-0.5 size-4 shrink-0 accent-[#ffb2bc]"
-        />
-        <span>
-          I agree to the{' '}
-          <Link to="/terms" className="font-medium text-rose-200/90 hover:underline">
-            Terms &amp; Conditions
-          </Link>{' '}
-          and acknowledge the{' '}
-          <Link to="/terms#privacy" className="font-medium text-rose-200/90 hover:underline">
-            Privacy Policy
-          </Link>
-          .
-        </span>
-      </label>
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[13px]">
-        <Link
-          to="/sign-in"
-          className="text-white/50 transition-colors hover:text-white/90"
-        >
-          Already have an account?{' '}
-          <span className="font-medium text-rose-200/90">Sign in</span>
+    <label className="mt-5 flex cursor-pointer items-start gap-3 border-t-2 border-dashed border-white/15 pt-5 text-sm leading-snug text-white/65">
+      <input
+        type="checkbox"
+        checked={accepted}
+        onChange={(e) => onChangeAccepted(e.target.checked)}
+        className="mt-0.5 size-4 shrink-0 accent-[#ffb2bc]"
+      />
+      <span>
+        I agree to the{' '}
+        <Link to="/terms" className="font-medium text-rose-200/90 hover:underline">
+          Terms &amp; Conditions
+        </Link>{' '}
+        and acknowledge the{' '}
+        <Link to="/terms#privacy" className="font-medium text-rose-200/90 hover:underline">
+          Privacy Policy
         </Link>
-        <Link
-          to="/sign-up/admin"
-          className="text-white/35 transition-colors hover:text-white/70"
-        >
-          Administrator sign-up
-        </Link>
-      </div>
-    </div>
+        .
+      </span>
+    </label>
   )
 }
 
@@ -113,20 +94,52 @@ export function SignUpPage() {
     <AuthSplitLayout
       mode="signup"
       footer={
-        <SignUpFooter
-          accepted={termsAccepted}
-          onChangeAccepted={setTermsAccepted}
-        />
+        <div className="flex flex-col gap-1.5">
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[13px]">
+            <Link
+              to="/sign-in"
+              className="text-white/55 transition-colors hover:text-white/90"
+            >
+              Already have an account?{' '}
+              <span className="font-medium text-rose-200/90">Sign in</span>
+            </Link>
+            <span className="flex items-center gap-2.5 text-white/40">
+              <Link
+                to="/sign-up/admin"
+                className="transition-colors hover:text-white"
+              >
+                Admin sign-up
+              </Link>
+              <span className="text-white/20">·</span>
+              <Link to="/terms" className="transition-colors hover:text-white">
+                Terms
+              </Link>
+              <span className="text-white/20">·</span>
+              <Link to="/terms#privacy" className="transition-colors hover:text-white">
+                Privacy
+              </Link>
+            </span>
+          </div>
+          <p className="text-[11px] text-white/30">
+            © 2026 Aveline · contact@aveline.lk · Colombo, Sri Lanka
+          </p>
+        </div>
       }
     >
       {accountType === null ? (
         <AccountTypeStep onSelect={setAccountType} />
       ) : (
-        <SignUpForm
-          accountType={accountType}
-          onResetAccountType={() => setAccountType(null)}
-          canSubmit={termsAccepted}
-        />
+        <>
+          <SignUpForm
+            accountType={accountType}
+            onResetAccountType={() => setAccountType(null)}
+            canSubmit={termsAccepted}
+          />
+          <TermsBlock
+            accepted={termsAccepted}
+            onChangeAccepted={setTermsAccepted}
+          />
+        </>
       )}
     </AuthSplitLayout>
   )

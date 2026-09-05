@@ -197,7 +197,7 @@ export function SignUpForm({
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
                 placeholder="Kasun"
-                className="h-11 rounded-full border-dashed border-white/25 bg-white/[0.06] px-4 text-[15px] text-white placeholder:text-white/40"
+                className="h-11 rounded-full border-white/10 bg-white/5 px-4 text-base text-white placeholder:text-white/40"
               />
             </div>
             <div className="flex flex-col gap-2">
@@ -210,7 +210,7 @@ export function SignUpForm({
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
                 placeholder="Delpachithra"
-                className="h-11 rounded-full border-dashed border-white/25 bg-white/[0.06] px-4 text-[15px] text-white placeholder:text-white/40"
+                className="h-11 rounded-full border-white/10 bg-white/5 px-4 text-base text-white placeholder:text-white/40"
               />
             </div>
           </div>
@@ -227,7 +227,7 @@ export function SignUpForm({
               value={username}
               onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
               placeholder="kasun_d"
-              className="h-11 rounded-full border-dashed border-white/25 bg-white/[0.06] px-4 text-[15px] text-white placeholder:text-white/40"
+              className="h-11 rounded-full border-white/10 bg-white/5 px-4 text-base text-white placeholder:text-white/40"
             />
           </div>
 
@@ -242,7 +242,7 @@ export function SignUpForm({
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
-              className="h-11 rounded-full border-dashed border-white/25 bg-white/[0.06] px-4 text-[15px] text-white placeholder:text-white/40"
+              className="h-11 rounded-full border-white/10 bg-white/5 px-4 text-base text-white placeholder:text-white/40"
             />
           </div>
 
@@ -257,7 +257,7 @@ export function SignUpForm({
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="At least 8 characters"
-              className="h-11 rounded-full border-dashed border-white/25 bg-white/[0.06] px-4 text-[15px] text-white placeholder:text-white/40"
+              className="h-11 rounded-full border-white/10 bg-white/5 px-4 text-base text-white placeholder:text-white/40"
             />
           </div>
 
@@ -291,7 +291,7 @@ export function SignUpForm({
               value={code}
               onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
               placeholder="••••••"
-              className="h-11 rounded-full border-dashed border-white/25 bg-white/[0.06] px-4 text-center font-mono text-lg tracking-[0.35em] text-white placeholder:text-white/40"
+              className="h-11 rounded-full border-white/10 bg-white/5 px-4 text-center font-mono text-lg tracking-[0.35em] text-white placeholder:text-white/40"
             />
             <p className="text-xs text-white/40">
               We sent a one-time code to {email}. Enter it to verify your account.

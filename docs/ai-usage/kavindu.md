@@ -559,3 +559,11 @@ Per user direction, replaced the card-in-center auth screens with a two-panel la
 - **Footer (sign-up)**: required **Terms & Conditions / Privacy** checkbox that gates account creation (`canSubmit`), plus Administrator sign-up link and switch-to-sign-in. Sign-in footer has switch-to-sign-up + admin link.
 - **Dashed, evident borders** throughout (panel divider, footer top, perk tiles, account-type tiles, pill inputs `border-dashed`).
 - New public `/terms` page (dashed section cards). Verified web `tsc`, oxlint, Vitest 31, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #58): auth redesign completion + admin screen polish
+
+Finished the auth redesign tracked as issue **#58** (split-panel layout, "assistant that remembers" branding, dashed-divider-only borders, account-type + terms gate, compact footer):
+- Compacted footers (quick links + copyright), moved terms block under the sign-up form, removed per-input/per-tile dashed borders so dashed = dividers only; left-panel perks are now an icon list with dashed row separators.
+- Larger typography across panels/forms; pill inputs/buttons; removed now-unused `AuthShell`.
+- Tagline/brand copy changed from "boutique/concierge" to "The assistant that remembers" / "Aveline remembers" (web + mobile label + onboarding eyebrow).
+- **AdminSignUpPage** touch-up (quiet light): dashed accents, pill inputs `h-11`, bigger type, refined header/back link.

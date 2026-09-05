@@ -703,3 +703,11 @@ Design feedback round on the landing page:
 - "Aveline" label moved **on top of the flower** orb; lines connect to the orb's bottom edge.
 - Added **gradient pulses** along each line: a colored dashed stroke animating (marching gradient) plus two glowing comet dots traveling the full path in a staggered trail (reduced-motion safe).
 - Verified web `tsc`, oxlint, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #61): how-it-works redesign
+
+- Redesigned "How it works" into a **horizontal journey**: centered header, three numbered medallion steps (Step 01/02/03) on a white section with aurora, each with a gradient-tinted icon medallion (breathing pulse) + serif title + copy.
+- Animated **journey track** behind the medallions (dashed rail + traveling rose gradient comet, reduced-motion safe).
+- Added a **journey ribbon** below: "Customer messages → Ava · Elle · Lina act → You approve" with arrow separators.
+- Removed the old product-card/`StepImage` implementation.
+- Verified web `tsc`, oxlint, `vite build`.

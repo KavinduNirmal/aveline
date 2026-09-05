@@ -149,6 +149,7 @@ interface Step {
   n: string
   icon: LucideIcon
   tint: string
+  accent: string
   title: string
   copy: string
 }
@@ -158,6 +159,7 @@ const STEPS: Step[] = [
     n: '01',
     icon: Heart,
     tint: 'from-[#ffe3ec] via-[#fce3ec] to-[#f0eafa]',
+    accent: 'text-[#b0566b]',
     title: 'Create your account',
     copy: 'Owners open a boutique. Staff join with an invitation code.',
   },
@@ -165,6 +167,7 @@ const STEPS: Step[] = [
     n: '02',
     icon: Eye,
     tint: 'from-[#fdeed2] via-[#f7e8c8] to-[#ffe9e2]',
+    accent: 'text-[#8a6a14]',
     title: 'Connect your day',
     copy: 'Bring in WhatsApp, your catalogue and your business rules.',
   },
@@ -172,41 +175,11 @@ const STEPS: Step[] = [
     n: '03',
     icon: Coins,
     tint: 'from-[#ffe9ef] via-[#f8d7e0] to-[#ffe3d6]',
+    accent: 'text-[#7a303f]',
     title: 'Let Aveline tend the details',
     copy: 'Ava, Elle and Lina keep customers, products and deals moving — you approve the big calls.',
   },
 ]
-
-function StepImage({ step, index }: { step: Step; index: number }) {
-  const reduce = useReducedMotion()
-  const Icon = step.icon
-  return (
-    <div className={cn('relative h-44 overflow-hidden bg-gradient-to-br', step.tint)}>
-      <motion.div
-        className="absolute -right-8 -top-10 text-rose-200/70"
-        animate={reduce ? {} : { y: [0, -12, 0], rotate: [0, 12, 0] }}
-        transition={{ duration: 8 + index * 2, repeat: Infinity, ease: 'easeInOut' }}
-      >
-        <Blossom className="size-40" />
-      </motion.div>
-      <motion.div
-        className="absolute -bottom-10 -left-7 text-amber-200/80"
-        animate={reduce ? {} : { y: [0, 10, 0], rotate: [0, -14, 0] }}
-        transition={{ duration: 9 + index * 2, repeat: Infinity, ease: 'easeInOut', delay: 1 }}
-      >
-        <Blossom className="size-32" />
-      </motion.div>
-
-      <span className="absolute left-6 top-4 font-serif text-6xl font-medium text-white/90 drop-shadow-sm">
-        {step.n}
-      </span>
-
-      <div className="absolute bottom-4 right-5 flex size-14 items-center justify-center rounded-2xl bg-white/90 text-commerce shadow-sm">
-        <Icon className="size-6" aria-hidden />
-      </div>
-    </div>
-  )
-}
 
 function AgentWorkflow() {
   const reduce = useReducedMotion()
@@ -468,6 +441,7 @@ function MessageMarquee() {
 }
 
 export function LandingPage() {
+  const reduceMotion = useReducedMotion()
 
   return (
     <SitePage>
@@ -645,46 +619,91 @@ export function LandingPage() {
       </section>
 
       {/* ------------------------------------------------ How it works */}
-      <section className="relative overflow-hidden">
-        <AuroraField className="opacity-45" />
+      <section className="relative overflow-hidden border-y-2 border-dashed border-neutral-200 bg-white">
+        <AuroraField className="opacity-40" />
         <div className="relative mx-auto w-full max-w-6xl px-5 py-24 lg:px-8">
-          <Reveal className="max-w-2xl">
+          <Reveal className="mx-auto max-w-2xl text-center">
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-commerce">
               How it works
             </p>
             <h2 className="mt-3 font-serif text-5xl font-medium tracking-tight text-neutral-900">
               From first message to final delivery.
             </h2>
+            <p className="mt-4 text-lg text-neutral-600">
+              Three steps. One assistant doing the remembering in between.
+            </p>
           </Reveal>
 
-          <div className="relative mt-16">
-            <div className="pointer-events-none absolute left-[12%] right-[12%] top-[88px] hidden h-[3px] lg:block">
-              <div className="absolute inset-0 rounded-full border-t-2 border-dashed border-neutral-300/60" />
+          <div className="relative mt-20">
+            {/* Animated journey track */}
+            <div className="pointer-events-none absolute left-[16%] right-[16%] top-[52px] hidden h-[3px] lg:block">
+              <div className="absolute inset-0 rounded-full border-t-2 border-dashed border-neutral-300/70" />
               <motion.span
-                className="absolute top-[-2px] h-[7px] w-40 rounded-full bg-gradient-to-r from-transparent via-memory to-transparent blur-[1px]"
-                animate={{ left: ['-18%', '104%'] }}
-                transition={{ duration: 4.5, repeat: Infinity, ease: 'easeInOut' }}
+                className="absolute top-[-3px] h-[9px] w-44 rounded-full bg-gradient-to-r from-transparent via-[#b0566b] to-transparent blur-[2px]"
+                animate={{ left: ['-12%', '104%'] }}
+                transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut' }}
               />
             </div>
 
-            <div className="grid gap-8 md:grid-cols-3">
-              {STEPS.map((step, i) => (
-                <motion.div
-                  key={step.n}
-                  initial={{ opacity: 0, y: 34 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true, margin: '-60px' }}
-                  transition={{ duration: 0.7, delay: i * 0.16, ease: [0.22, 1, 0.36, 1] }}
-                  className="relative flex h-full flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-[0_24px_60px_-50px_rgba(122,48,63,0.4)]"
-                >
-                  <StepImage step={step} index={i} />
-                  <div className="flex flex-1 flex-col p-6">
-                    <h3 className="font-serif text-2xl font-medium text-neutral-900">{step.title}</h3>
-                    <p className="mt-2 text-[15px] leading-relaxed text-neutral-600">{step.copy}</p>
-                  </div>
-                </motion.div>
-              ))}
+            <div className="grid gap-12 md:grid-cols-3">
+              {STEPS.map((step, i) => {
+                const Icon = step.icon
+                return (
+                  <motion.div
+                    key={step.n}
+                    initial={{ opacity: 0, y: 30 }}
+                    whileInView={{ opacity: 1, y: 0 }}
+                    viewport={{ once: true, margin: '-70px' }}
+                    transition={{ duration: 0.7, delay: i * 0.16, ease: [0.22, 1, 0.36, 1] }}
+                    className="relative flex flex-col items-center text-center"
+                  >
+                    <span className="rounded-full border border-neutral-200 bg-white px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-neutral-500 shadow-sm">
+                      Step {step.n}
+                    </span>
+
+                    <div className="relative z-10 mt-5 flex size-20 items-center justify-center">
+                      <span
+                        className={cn(
+                          'absolute inset-0 rounded-full bg-gradient-to-br opacity-70',
+                          step.tint,
+                        )}
+                      />
+                      <span className="absolute inset-0 rounded-full border border-white/70" />
+                      <motion.span
+                        animate={reduceMotion ? {} : { scale: [1, 1.08, 1] }}
+                        transition={{ duration: 4 + i, repeat: Infinity, ease: 'easeInOut', delay: i * 0.6 }}
+                        className={cn('relative flex size-14 items-center justify-center rounded-full bg-white/80 shadow-sm', step.accent)}
+                      >
+                        <Icon className="size-7" aria-hidden />
+                      </motion.span>
+                    </div>
+
+                    <h3 className="mt-6 font-serif text-2xl font-medium text-neutral-900">
+                      {step.title}
+                    </h3>
+                    <p className="mt-2 max-w-xs text-[15px] leading-relaxed text-neutral-600">
+                      {step.copy}
+                    </p>
+                  </motion.div>
+                )
+              })}
             </div>
+
+            {/* Journey ribbon */}
+            <Reveal delay={0.1}>
+              <div className="mx-auto mt-16 flex w-fit flex-wrap items-center justify-center gap-x-3 gap-y-3 rounded-full border-2 border-dashed border-neutral-200 bg-white/70 px-7 py-3.5 backdrop-blur">
+                {['Customer messages', 'Ava · Elle · Lina act', 'You approve'].map(
+                  (label, i, arr) => (
+                    <span key={label} className="flex items-center gap-3">
+                      <span className="text-sm font-medium text-neutral-700">{label}</span>
+                      {i < arr.length - 1 && (
+                        <ArrowRight className="size-4 text-commerce/60" aria-hidden />
+                      )}
+                    </span>
+                  ),
+                )}
+              </div>
+            </Reveal>
           </div>
         </div>
       </section>

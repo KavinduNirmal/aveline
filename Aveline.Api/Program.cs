@@ -2,6 +2,8 @@ using Aveline.Api.Common.Middleware;
 using Aveline.Api.Configurations;
 using Aveline.Api.Endpoints;
 using Aveline.Api.Infrastructure.Caching;
+using Aveline.Api.Modules.Organizations.Repositories;
+using Aveline.Api.Modules.Organizations.Services;
 using Aveline.Api.Modules.Shared.Repositories;
 using Aveline.Api.Modules.Shared.Services;
 
@@ -23,6 +25,10 @@ builder.Services.AddAgentServiceClient(builder.Configuration);
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IUserCacheService, UserCacheService>();
 builder.Services.AddScoped<IUserService, UserService>();
+
+builder.Services.AddScoped<IOrganizationRepository, OrganizationRepository>();
+builder.Services.AddScoped<IInvitationRepository, InvitationRepository>();
+builder.Services.AddScoped<IOrganizationService, OrganizationService>();
 
 var app = builder.Build();
 

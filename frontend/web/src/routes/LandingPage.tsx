@@ -208,84 +208,144 @@ function StepImage({ step, index }: { step: Step; index: number }) {
   )
 }
 
-function AgentsTimeline() {
+function AgentWorkflow() {
   const reduce = useReducedMotion()
+
+  const flows = [
+    { d: 'M450 6 C 330 34 240 72 150 122', color: '#b0566b', verb: 'remembers' },
+    { d: 'M450 6 C 450 46 450 82 450 122', color: '#8a6a14', verb: 'sees' },
+    { d: 'M450 6 C 570 34 660 72 750 122', color: '#7a303f', verb: 'closes' },
+  ]
+
   return (
     <div className="relative mx-auto mt-16 max-w-5xl">
-      {/* vertical rail */}
-      <div aria-hidden className="absolute bottom-6 top-6 left-7 hidden w-px sm:block">
-        <div className="absolute inset-0 border-l-2 border-dashed border-neutral-200" />
-        <motion.span
-          className="absolute left-[-3px] top-0 h-16 w-[7px] rounded-full bg-gradient-to-b from-memory via-visual to-commerce"
-          animate={reduce ? {} : { top: ['0%', '100%'] }}
-          transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut' }}
-        />
+      {/* Aveline hub */}
+      <div className="flex flex-col items-center">
+        <div className="relative flex size-28 items-center justify-center">
+          <motion.div
+            className="absolute -inset-4 rounded-full bg-gradient-to-br from-commerce via-memory to-visual opacity-20 blur-2xl"
+            animate={reduce ? {} : { scale: [1, 1.12, 1], opacity: [0.16, 0.3, 0.16] }}
+            transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut' }}
+          />
+          <motion.div
+            className="absolute inset-0 rounded-full bg-[conic-gradient(from_0deg,#7a303f,#b0566b,#8a6a14,#8e7cc3,#ef7a68,#7a303f)] p-[3px]"
+            animate={reduce ? {} : { rotate: 360 }}
+            transition={{ duration: 24, repeat: Infinity, ease: 'linear' }}
+          >
+            <div className="flex size-full items-center justify-center rounded-full bg-[#fdfaf8]">
+              <Blossom className="size-12 text-commerce drop-shadow-[0_4px_16px_rgba(122,48,63,0.45)]" />
+            </div>
+          </motion.div>
+        </div>
+        <p className="mt-4 font-serif text-3xl font-medium text-neutral-900">Aveline</p>
+        <p className="mt-1.5 text-xs font-semibold uppercase tracking-[0.22em] text-neutral-400">
+          powers the three
+        </p>
       </div>
 
-      <div className="space-y-8">
+      {/* Workflow connectors */}
+      <svg
+        aria-hidden
+        viewBox="0 0 900 130"
+        preserveAspectRatio="none"
+        className="mx-auto -mt-1 h-24 w-full max-w-4xl overflow-visible"
+      >
+        {flows.map((f, i) => (
+          <g key={i}>
+            <path
+              d={f.d}
+              fill="none"
+              stroke={f.color}
+              strokeOpacity="0.22"
+              strokeWidth="2"
+              strokeDasharray="2 7"
+              strokeLinecap="round"
+            />
+            <motion.path
+              d={f.d}
+              fill="none"
+              stroke={f.color}
+              strokeOpacity="0.85"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeDasharray="10 10"
+              animate={reduce ? {} : { strokeDashoffset: [0, -20] }}
+              transition={{ duration: 1.2 + i * 0.25, repeat: Infinity, ease: 'linear' }}
+            />
+            <text
+              x={f.d.includes('570') ? 620 : f.d.includes('330') ? 285 : 450}
+              y={i === 1 ? 54 : 50}
+              textAnchor="middle"
+              fill={f.color}
+              fontSize="15"
+              fontStyle="italic"
+              opacity="0.9"
+            >
+              {f.verb}
+            </text>
+          </g>
+        ))}
+      </svg>
+
+      {/* Agent cards */}
+      <div className="grid gap-6 md:grid-cols-3">
         {AGENTS.map((agent, i) => {
           const Icon = agent.icon
           return (
             <motion.div
               key={agent.name}
-              initial={{ opacity: 0, y: 30 }}
+              initial={{ opacity: 0, y: 28 }}
               whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, margin: '-80px' }}
-              transition={{ duration: 0.7, delay: i * 0.12, ease: [0.22, 1, 0.36, 1] }}
-              className="group relative overflow-hidden rounded-3xl border border-neutral-200 bg-white p-7 shadow-[0_30px_80px_-60px_rgba(122,48,63,0.5)] sm:pl-24 lg:p-9 lg:pl-28"
+              viewport={{ once: true }}
+              transition={{ duration: 0.6, delay: 0.15 + i * 0.12, ease: [0.22, 1, 0.36, 1] }}
+              className="group relative flex h-full flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white p-7 shadow-[0_28px_70px_-55px_rgba(122,48,63,0.5)] transition-transform duration-300 hover:-translate-y-1"
             >
               <div
-                className={cn('pointer-events-none absolute inset-0 bg-gradient-to-br opacity-70', agent.tint)}
+                className={cn('pointer-events-none absolute inset-0 bg-gradient-to-br opacity-70 transition-opacity duration-500 group-hover:opacity-100', agent.tint)}
                 aria-hidden
               />
-              <Blossom className="absolute -right-10 -top-10 size-40 text-neutral-900/[0.04] transition-transform duration-700 group-hover:rotate-12 group-hover:scale-110" />
+              <div className="relative flex h-full flex-col">
+                <div className="flex items-center gap-3">
+                  <span
+                    className={cn(
+                      'flex size-12 items-center justify-center rounded-2xl text-white shadow-md transition-transform duration-300 group-hover:-translate-y-0.5 group-hover:rotate-3',
+                      agent.chip,
+                    )}
+                  >
+                    <Icon className="size-6" aria-hidden />
+                  </span>
+                  <div>
+                    <p className={cn('font-serif text-2xl font-medium leading-none', agent.ink)}>{agent.name}</p>
+                    <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-400">
+                      {agent.tag}
+                    </p>
+                  </div>
+                </div>
 
-              {/* node on the rail */}
-              <span
-                className={cn(
-                  'absolute left-7 top-9 hidden size-12 -translate-x-1/2 items-center justify-center rounded-full border-4 border-white text-white shadow-md sm:flex',
-                  agent.chip,
-                )}
-              >
-                <Icon className="size-5" aria-hidden />
-              </span>
+                <p className={cn('mt-5 font-serif text-xl font-medium leading-snug', agent.ink)}>
+                  {agent.line}
+                </p>
+                <p className="mt-2 text-sm leading-relaxed text-neutral-600">{agent.copy}</p>
 
-              <div className="relative grid gap-6 lg:grid-cols-[1.05fr_1.15fr_0.95fr] lg:items-center">
-                <div>
-                  <div className="flex items-center gap-3 sm:hidden">
-                    <span className={cn('flex size-11 items-center justify-center rounded-2xl text-white shadow-md', agent.chip)}>
-                      <Icon className="size-5" aria-hidden />
+                <div className="mt-auto flex flex-wrap gap-2 pt-5">
+                  {agent.points.map((point) => (
+                    <span
+                      key={point}
+                      className="rounded-full border border-neutral-200 bg-white/70 px-3 py-1 text-xs font-medium text-neutral-700"
+                    >
+                      {point}
                     </span>
-                    <p className={cn('font-serif text-2xl font-medium', agent.ink)}>{agent.name}</p>
-                  </div>
-                  <p className={cn('hidden font-serif text-4xl font-medium sm:block', agent.ink)}>{agent.name}</p>
-                  <p className="mt-1 text-xs font-semibold uppercase tracking-[0.2em] text-neutral-400">{agent.tag}</p>
-                  <p className="mt-4 font-serif text-2xl italic leading-snug text-neutral-800">{agent.line}</p>
-                </div>
-
-                <div>
-                  <p className="text-[15px] leading-relaxed text-neutral-600">{agent.copy}</p>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {agent.points.map((point) => (
-                      <span
-                        key={point}
-                        className="rounded-full border border-neutral-200 bg-white/70 px-3 py-1 text-xs font-medium text-neutral-700"
-                      >
-                        {point}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-neutral-200/70 bg-white/70 p-4 shadow-sm">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-400">In action</p>
-                  <p className="mt-2 font-serif text-[15px] italic leading-snug text-neutral-700">{agent.preview}</p>
+                  ))}
                 </div>
               </div>
             </motion.div>
           )
         })}
       </div>
+
+      <p className="mt-10 text-center text-xs font-semibold uppercase tracking-[0.22em] text-neutral-400">
+        One Aveline · three specialists · one workflow
+      </p>
     </div>
   )
 }
@@ -561,7 +621,7 @@ export function LandingPage() {
             </p>
           </Reveal>
 
-          <AgentsTimeline />
+          <AgentWorkflow />
 
           <Reveal delay={0.15}>
             <p className="mx-auto mt-14 max-w-2xl text-center text-[15px] leading-relaxed text-neutral-400">

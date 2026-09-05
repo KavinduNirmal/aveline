@@ -690,3 +690,9 @@ Design feedback round on the landing page:
 - **Persona** split into an editorial two-column (big quote + the three agents as a divided list); **enterprise** gained a multi-store benefit checklist; **final CTA** gained the "Ava · Elle · Lina" flourish + "no card required" line.
 - Subpages (Plans/Contact/Docs/Download) got a matching aurora header treatment; fixed a transient JSX wrapper imbalance.
 - Verified web `tsc`, oxlint, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #61): three-of-her as a powered workflow
+
+- Rebuilt "the three of her" as a **hub-and-spoke workflow diagram**: an animated Aveline hub on top (rotating conic ring + breathing glow) labeled "Aveline — powers the three", with three connector paths flowing downward to the agent cards, each carrying an animated marching-dash pulse and an italic verb label ("remembers" rose / "sees" gold / "closes" maroon).
+- Agent cards slimmed to icon + name/tag + statement + copy + capability pills (content re-balanced), footer line "One Aveline · three specialists · one workflow".
+- Verified web `tsc`, oxlint, `vite build`.

@@ -575,3 +575,10 @@ Admin access-request backend (review/approve/reject + Clerk BAPI role grant):
 - `Modules/Admin`: `AdminApprovalRequest` entity + EF config + migration `AddAdminApprovalRequests`; repo + `AdminApprovalService` (idempotent submit; list pending; approve grants role via Clerk first, updates local `User.UserRole=admin` + cache invalidation; reject).
 - `AdminEndpoints`: `POST /api/v1/admin/requests` (auth), `GET`/`approve`/`reject` guarded by new `AdminReviewPolicy` (moderator/admin/owner). `/api/v1/admin` added to the onboarding pending allow-list so a just-signed-up requester can submit.
 - Tests (5, fake `IClerkAdminClient`): submit idempotency, non-reviewer 403, approve → role granted, reject → approve-after-reject conflict, Clerk failure → 502 and stays Pending. Full .NET suite **112 passing**.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #59): admin verification web
+
+- `lib/admin.ts` helpers: submit/list/approve/reject admin requests.
+- `AdminSignUpPage`: after email verification the flow finalizes, submits the request (`POST /api/v1/admin/requests`), and shows a **"Request received" pending** state (no app entry) with sign-out; failed submissions show retry.
+- `Dashboard`: when the signed-in role is a team reviewer (`moderator`/`admin`/`owner`), renders an **"Administrator access requests"** card listing pending requests with Approve/Reject wired to the API (row removed on success).
+- Verified web `tsc`, oxlint, Vitest 31, `vite build`.

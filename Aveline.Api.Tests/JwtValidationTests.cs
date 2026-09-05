@@ -66,8 +66,8 @@ public class JwtValidationTests
         var claims = new[]
         {
             new Claim("sub", "user_123"),
-            new Claim("user_role", "associate"),
-            new Claim("org_role", "org:admin"),
+            new Claim("user_role", "staff"),
+            new Claim("org_role", "org:boutique_supervisor"),
         };
         var (token, _) = CreateToken(Authority, key, claims: claims);
 
@@ -75,8 +75,8 @@ public class JwtValidationTests
 
         Assert.True(result.IsValid);
         Assert.Equal("user_123", result.ClaimsIdentity?.FindFirst("sub")?.Value);
-        Assert.Equal("associate", result.ClaimsIdentity?.FindFirst("user_role")?.Value);
-        Assert.Equal("org:admin", result.ClaimsIdentity?.FindFirst("org_role")?.Value);
+        Assert.Equal("staff", result.ClaimsIdentity?.FindFirst("user_role")?.Value);
+        Assert.Equal("org:boutique_supervisor", result.ClaimsIdentity?.FindFirst("org_role")?.Value);
     }
 
     [Fact]

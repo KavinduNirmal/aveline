@@ -11,15 +11,15 @@ export interface AvelineClaims {
 
 /**
  * Roles allowed on the admin dashboard. Mirrors the API's `Managers` policy
- * (see `Aveline.Api/Configurations/AuthorizationConfiguration.cs`), which the
- * dashboard was designed for (owners and managers).
+ * (see `Aveline.Api/Configurations/AuthorizationConfiguration.cs`).
  */
 const ADMIN_ROLES = new Set([
-  'manager',
+  'moderator',
+  'admin',
   'owner',
-  'org:manager',
-  'org:owner',
-  'org:admin',
+  'org:boutique_manager',
+  'org:boutique_supervisor',
+  'org:boutique_owner',
 ])
 
 /** Decodes a JWT payload into a plain object. Returns `{}` if undecodable. */

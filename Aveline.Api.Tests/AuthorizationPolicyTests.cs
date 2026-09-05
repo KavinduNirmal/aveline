@@ -34,14 +34,15 @@ public class AuthorizationPolicyTests
         Authorization.AuthorizeAsync(principal, null, policy).GetAwaiter().GetResult().Succeeded;
 
     [Theory]
-    [InlineData("associate")]
-    [InlineData("manager")]
+    [InlineData("staff")]
+    [InlineData("customer_relations")]
+    [InlineData("moderator")]
+    [InlineData("admin")]
     [InlineData("owner")]
-    [InlineData("org:associate")]
-    [InlineData("org:manager")]
-    [InlineData("org:owner")]
-    [InlineData("org:admin")]
-    [InlineData("org:member")]
+    [InlineData("org:boutique_staff")]
+    [InlineData("org:boutique_manager")]
+    [InlineData("org:boutique_supervisor")]
+    [InlineData("org:boutique_owner")]
     public void AssociatesPolicy_Allows_AnyStaffRole(string role)
     {
         Assert.True(IsAuthorized(Principal(role), AuthorizationConfiguration.AssociatesPolicy));
@@ -55,21 +56,28 @@ public class AuthorizationPolicyTests
         Assert.False(IsAuthorized(principal, AuthorizationConfiguration.AssociatesPolicy));
     }
 
+    [Fact]
+    public void AssociatesPolicy_Allows_BoutiqueStaff()
+    {
+        Assert.True(IsAuthorized(Principal("org:boutique_staff"), AuthorizationConfiguration.AssociatesPolicy));
+    }
+
     [Theory]
-    [InlineData("manager")]
+    [InlineData("moderator")]
+    [InlineData("admin")]
     [InlineData("owner")]
-    [InlineData("org:manager")]
-    [InlineData("org:owner")]
-    [InlineData("org:admin")]
+    [InlineData("org:boutique_manager")]
+    [InlineData("org:boutique_supervisor")]
+    [InlineData("org:boutique_owner")]
     public void ManagersPolicy_Allows_ManagerAndAbove(string role)
     {
         Assert.True(IsAuthorized(Principal(role), AuthorizationConfiguration.ManagersPolicy));
     }
 
     [Theory]
-    [InlineData("associate")]
-    [InlineData("org:associate")]
-    [InlineData("org:member")]
+    [InlineData("staff")]
+    [InlineData("customer_relations")]
+    [InlineData("org:boutique_staff")]
     public void ManagersPolicy_Denies_StaffOnlyRoles(string role)
     {
         Assert.False(IsAuthorized(Principal(role), AuthorizationConfiguration.ManagersPolicy));
@@ -77,17 +85,17 @@ public class AuthorizationPolicyTests
 
     [Theory]
     [InlineData("owner")]
-    [InlineData("org:owner")]
+    [InlineData("org:boutique_owner")]
     public void OwnersPolicy_Allows_OnlyOwners(string role)
     {
         Assert.True(IsAuthorized(Principal(role), AuthorizationConfiguration.OwnersPolicy));
     }
 
     [Theory]
-    [InlineData("associate")]
-    [InlineData("manager")]
-    [InlineData("org:admin")]
-    [InlineData("org:manager")]
+    [InlineData("admin")]
+    [InlineData("moderator")]
+    [InlineData("org:boutique_supervisor")]
+    [InlineData("org:boutique_manager")]
     public void OwnersPolicy_Denies_NonOwners(string role)
     {
         Assert.False(IsAuthorized(Principal(role), AuthorizationConfiguration.OwnersPolicy));
@@ -98,42 +106,42 @@ public class AuthorizationPolicyTests
     {
         // Simulates a token before RoleClaimNormalizer runs: only the raw "user_role"
         // claim is present, so policy checks (which read ClaimTypes.Role) must fail.
-        Assert.False(IsAuthorized(PrincipalWithRawRoles("associate"), AuthorizationConfiguration.AssociatesPolicy));
+        Assert.False(IsAuthorized(PrincipalWithRawRoles("staff"), AuthorizationConfiguration.AssociatesPolicy));
     }
 
     [Fact]
-    public void ApprovalsApprove_Allows_Manager()
+    public void ApprovalsApprove_Allows_BoutiqueSupervisor()
     {
-        Assert.True(IsAuthorized(Principal("manager"), "approvals:approve"));
+        Assert.True(IsAuthorized(Principal("org:boutique_supervisor"), "approvals:approve"));
     }
 
     [Fact]
     public void ApprovalsApprove_Denies_Associate()
     {
-        Assert.False(IsAuthorized(Principal("associate"), "approvals:approve"));
+        Assert.False(IsAuthorized(Principal("org:boutique_manager"), "approvals:approve"));
     }
 
     [Fact]
     public void PaymentsRefund_Allows_Owner()
     {
-        Assert.True(IsAuthorized(Principal("owner"), "payments:refund"));
+        Assert.True(IsAuthorized(Principal("org:boutique_owner"), "payments:refund"));
     }
 
     [Fact]
     public void PaymentsRefund_Denies_Manager()
     {
-        Assert.False(IsAuthorized(Principal("manager"), "payments:refund"));
+        Assert.False(IsAuthorized(Principal("org:boutique_supervisor"), "payments:refund"));
     }
 
     [Fact]
     public void CatalogView_Allows_AllStaff()
     {
-        Assert.True(IsAuthorized(Principal("associate"), "catalog:view"));
+        Assert.True(IsAuthorized(Principal("staff"), "catalog:view"));
     }
 
     [Fact]
     public void SettingsManage_Denies_Manager()
     {
-        Assert.False(IsAuthorized(Principal("manager"), "settings:manage"));
+        Assert.False(IsAuthorized(Principal("org:boutique_supervisor"), "settings:manage"));
     }
 }

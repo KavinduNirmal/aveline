@@ -29,8 +29,8 @@ void main() {
     test('replaces role claims while keeping identity fields', () {
       const user = AuthUser(id: 'user_1', firstName: 'Ada', email: 'a@b.dev');
       const claims = AuthClaims(
-        userRole: 'associate',
-        orgRole: 'manager',
+        userRole: 'staff',
+        orgRole: 'org:boutique_manager',
         orgId: 'org_9',
         orgSlug: 'aveline-colombo',
       );
@@ -40,8 +40,8 @@ void main() {
       expect(updated.id, 'user_1');
       expect(updated.firstName, 'Ada');
       expect(updated.email, 'a@b.dev');
-      expect(updated.userRole, 'associate');
-      expect(updated.orgRole, 'manager');
+      expect(updated.userRole, 'staff');
+      expect(updated.orgRole, 'org:boutique_manager');
       expect(updated.orgId, 'org_9');
       expect(updated.orgSlug, 'aveline-colombo');
     });

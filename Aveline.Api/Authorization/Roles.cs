@@ -9,13 +9,31 @@ namespace Aveline.Api.Authorization;
 /// </summary>
 public static class Roles
 {
-    public const string Associate = "associate";
-    public const string Manager = "manager";
+    public const string Staff = "staff";
+    public const string CustomerRelations = "customer_relations";
+    public const string Moderator = "moderator";
+    public const string Admin = "admin";
     public const string Owner = "owner";
 
-    public const string OrgAssociate = "org:associate";
-    public const string OrgManager = "org:manager";
-    public const string OrgOwner = "org:owner";
-    public const string OrgAdmin = "org:admin";
-    public const string OrgMember = "org:member";
+    public const string BoutiqueStaff = "org:boutique_staff";
+    public const string BoutiqueManager = "org:boutique_manager";
+    public const string BoutiqueSupervisor = "org:boutique_supervisor";
+    public const string BoutiqueOwner = "org:boutique_owner";
+
+    public static readonly string[] StaffAccess =
+    [
+        Staff, CustomerRelations, Moderator, Admin, Owner,
+        BoutiqueStaff, BoutiqueManager, BoutiqueSupervisor, BoutiqueOwner,
+    ];
+
+    public static readonly string[] ManagementAccess =
+    [
+        Moderator, Admin, Owner,
+        BoutiqueManager, BoutiqueSupervisor, BoutiqueOwner,
+    ];
+
+    public static readonly string[] OwnershipAccess =
+    [
+        Owner, BoutiqueOwner,
+    ];
 }

@@ -1,3 +1,4 @@
+import { AuthenticateWithRedirectCallback } from '@clerk/react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 
 import { ProtectedRoute } from './components/ProtectedRoute'
@@ -30,6 +31,7 @@ export default function App() {
             </Route>
           </Route>
 
+          <Route path="/sso-callback" element={<AuthenticateWithRedirectCallback signInFallbackRedirectUrl="/" signUpFallbackRedirectUrl="/" />} />
           <Route path="/sign-in/*" element={<SignInPage />} />
           <Route path="/sign-up/*" element={<SignUpPage />} />
 

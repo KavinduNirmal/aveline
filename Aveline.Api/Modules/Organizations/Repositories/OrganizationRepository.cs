@@ -81,6 +81,17 @@ public class OrganizationRepository : IOrganizationRepository
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<bool> UserHasActiveMembershipAsync(
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        return await _context.OrganizationMemberships
+            .AsNoTracking()
+            .AnyAsync(
+                m => m.UserId == userId && m.Status == MembershipStatus.Active,
+                cancellationToken);
+    }
+
     public async Task<IReadOnlyList<OrganizationMembership>> ListMembershipsForOrganizationAsync(
         Guid organizationId,
         CancellationToken cancellationToken = default)

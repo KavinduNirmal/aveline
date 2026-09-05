@@ -47,4 +47,9 @@ public interface IOrganizationService
     Task<IReadOnlyList<OrganizationMembership>> GetUserMembershipsAsync(
         Guid userId,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Returns whether the user holds at least one active organization membership.</summary>
+    Task<bool> HasActiveMembershipAsync(
+        Guid userId,
+        CancellationToken cancellationToken = default);
 }

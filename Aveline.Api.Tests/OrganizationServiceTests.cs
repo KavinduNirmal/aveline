@@ -62,6 +62,8 @@ public class OrganizationServiceTests
         Assert.Equal(organization.Id, ownerMembership.OrganizationId);
         Assert.Equal(Roles.BoutiqueOwner, ownerMembership.BoutiqueRole);
         Assert.Equal(MembershipStatus.Active, ownerMembership.Status);
+
+        Assert.True(await _sut.HasActiveMembershipAsync(owner.Id));
     }
 
     [Fact]

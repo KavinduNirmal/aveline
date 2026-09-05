@@ -50,6 +50,7 @@ v1.MapAuthEndpoints();
 v1.MapAuthPolicyDemoEndpoints();
 v1.MapAgentEndpoints();
 v1.MapUserEndpoints();
+v1.MapOrganizationEndpoints();
 
 app.Run();
 

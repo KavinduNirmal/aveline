@@ -1,25 +1,28 @@
 using System.Security.Claims;
 using Aveline.Api.Infrastructure.Caching;
+using Aveline.Api.Modules.Organizations.Services;
 using Aveline.Api.Modules.Shared.DTOs;
 using Aveline.Api.Modules.Shared.Models;
 using Aveline.Api.Modules.Shared.Repositories;
 using Microsoft.Extensions.Logging;
-
 namespace Aveline.Api.Modules.Shared.Services;
 
 public class UserService : IUserService
 {
     private readonly IUserRepository _userRepository;
     private readonly IUserCacheService _cacheService;
+    private readonly IOrganizationService _organizationService;
     private readonly ILogger<UserService> _logger;
 
     public UserService(
         IUserRepository userRepository,
         IUserCacheService cacheService,
+        IOrganizationService organizationService,
         ILogger<UserService> logger)
     {
         _userRepository = userRepository;
         _cacheService = cacheService;
+        _organizationService = organizationService;
         _logger = logger;
     }
 
@@ -32,12 +35,33 @@ public class UserService : IUserService
         var cached = await _cacheService.GetUserAsync(clerkId, cancellationToken);
         if (cached != null)
         {
+            // A refreshed Clerk session may carry a new role/org context; adopt it so the
+            // local read model never lags behind the claims for long.
+            if (ClaimsContextDiffers(cached, principal))
+            {
+                var user = await _userRepository.GetByClerkIdAsync(clerkId, cancellationToken);
+                if (user != null)
+                {
+                    var changed = ApplyClaimContext(user, principal);
+                    if (changed)
+                    {
+                        var resolved = await ResolveAccountStateAsync(user, cancellationToken);
+                        if (resolved != user.AccountState)
+                        {
+                            user.AccountState = resolved;
+                        }
+
+                        return await PersistAndRefreshCachesAsync(user, cancellationToken);
+                    }
+                }
+            }
+
             return cached;
         }
 
         // 2. Cache Miss - Query Database
-        var user = await _userRepository.GetByClerkIdAsync(clerkId, cancellationToken);
-        if (user == null)
+        var dbUser = await _userRepository.GetByClerkIdAsync(clerkId, cancellationToken);
+        if (dbUser == null)
         {
             // 3. User does not exist in DB yet - Create stub record from Clerk claims
             var email = principal.FindFirstValue("email")
@@ -61,7 +85,7 @@ public class UserService : IUserService
             var orgRole = principal.FindFirstValue("org_role") ?? string.Empty;
             var orgId = principal.FindFirstValue("org_id") ?? string.Empty;
 
-            user = new User
+            var user = new User
             {
                 Id = Guid.CreateVersion7(),
                 ClerkId = clerkId,
@@ -73,16 +97,40 @@ public class UserService : IUserService
                 OrganizationRole = orgRole,
                 OrganizationId = orgId,
                 HasCompletedOnboarding = false,
+                AccountState = AccountState.OnboardingPending,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
 
             await _userRepository.CreateAsync(user, cancellationToken);
             _logger.LogInformation("Created new Aveline DB stub user for ClerkId={ClerkId}, Email={Email}", clerkId, email);
+
+            dbUser = user;
+        }
+        else
+        {
+            // 4. Existing DB record - adopt refreshed session claims and reconcile the
+            //    account state against the canonical organization memberships.
+            var changed = ApplyClaimContext(dbUser, principal);
+            if (changed || dbUser.AccountState == AccountState.OnboardingPending)
+            {
+                var resolved = await ResolveAccountStateAsync(dbUser, cancellationToken);
+                if (resolved != dbUser.AccountState)
+                {
+                    dbUser.AccountState = resolved;
+                    dbUser.UpdatedAt = DateTime.UtcNow;
+                    changed = true;
+                }
+            }
+
+            if (changed)
+            {
+                await _userRepository.UpdateAsync(dbUser, cancellationToken);
+            }
         }
 
-        var cacheItem = MapToCacheItem(user);
-        var userDto = UserDto.FromEntity(user);
+        var cacheItem = MapToCacheItem(dbUser);
+        var userDto = UserDto.FromEntity(dbUser);
         await _cacheService.SetUserAsync(clerkId, cacheItem, cancellationToken: cancellationToken);
         await _cacheService.SetUserProfileAsync(clerkId, userDto, cancellationToken: cancellationToken);
         return cacheItem;
@@ -132,6 +180,7 @@ public class UserService : IUserService
         user.ContactPreference = request.ContactPreference;
         user.PushNotificationsEnabled = request.PushNotificationsEnabled;
         user.HasCompletedOnboarding = true;
+        user.AccountState = await ResolveAccountStateAsync(user, cancellationToken);
         user.UpdatedAt = DateTime.UtcNow;
 
         await _userRepository.UpdateAsync(user, cancellationToken);
@@ -144,6 +193,119 @@ public class UserService : IUserService
         await _cacheService.SetUserProfileAsync(clerkId, updatedDto, cancellationToken: cancellationToken);
 
         return updatedDto;
+    }
+
+    public async Task<UserDto?> SetAccountStateAsync(
+        string clerkId,
+        AccountState state,
+        CancellationToken cancellationToken = default)
+    {
+        var user = await _userRepository.GetByClerkIdAsync(clerkId, cancellationToken);
+        if (user == null)
+        {
+            return null;
+        }
+
+        user.AccountState = state;
+        user.IsActive = state != AccountState.Suspended;
+        user.UpdatedAt = DateTime.UtcNow;
+
+        await _userRepository.UpdateAsync(user, cancellationToken);
+        _logger.LogInformation("Account state updated. clerkId={ClerkId} state={State}", clerkId, state);
+
+        var cacheItem = MapToCacheItem(user);
+        var dto = UserDto.FromEntity(user);
+        await _cacheService.SetUserAsync(clerkId, cacheItem, cancellationToken: cancellationToken);
+        await _cacheService.SetUserProfileAsync(clerkId, dto, cancellationToken: cancellationToken);
+        return dto;
+    }
+
+    private async Task<AccountState> ResolveAccountStateAsync(
+        User user,
+        CancellationToken cancellationToken)
+    {
+        if (!user.IsActive)
+        {
+            return AccountState.Suspended;
+        }
+
+        if (HasLegacyOrgContext(user))
+        {
+            return AccountState.Active;
+        }
+
+        // Canonical source of truth: a valid organization membership makes the account active
+        // even before Clerk session claims carry the org context.
+        return await _organizationService.HasActiveMembershipAsync(user.Id, cancellationToken)
+            ? AccountState.Active
+            : AccountState.OnboardingPending;
+    }
+
+    private static bool HasLegacyOrgContext(User user)
+    {
+        return !string.IsNullOrWhiteSpace(user.OrganizationRole)
+               || !string.IsNullOrWhiteSpace(user.OrganizationId);
+    }
+
+    /// <summary>
+    /// Adopts the role/org context carried by a (possibly refreshed) Clerk session token into
+    /// the local read model. Only claims that are actually present are adopted; a token without
+    /// org claims never clears an existing context.
+    /// </summary>
+    private static bool ApplyClaimContext(User user, ClaimsPrincipal principal)
+    {
+        var changed = false;
+
+        var userRole = principal.FindFirstValue("user_role");
+        if (!string.IsNullOrWhiteSpace(userRole) && !string.Equals(user.UserRole, userRole, StringComparison.Ordinal))
+        {
+            user.UserRole = userRole;
+            changed = true;
+        }
+
+        var orgRole = principal.FindFirstValue("org_role");
+        if (!string.IsNullOrWhiteSpace(orgRole) && !string.Equals(user.OrganizationRole, orgRole, StringComparison.Ordinal))
+        {
+            user.OrganizationRole = orgRole;
+            changed = true;
+        }
+
+        var orgId = principal.FindFirstValue("org_id");
+        if (!string.IsNullOrWhiteSpace(orgId) && !string.Equals(user.OrganizationId, orgId, StringComparison.Ordinal))
+        {
+            user.OrganizationId = orgId;
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    private static bool ClaimsContextDiffers(UserOnboardingCacheItem cached, ClaimsPrincipal principal)
+    {
+        var userRole = principal.FindFirstValue("user_role");
+        if (!string.IsNullOrWhiteSpace(userRole) && !string.Equals(cached.UserRole, userRole, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var orgRole = principal.FindFirstValue("org_role");
+        return !string.IsNullOrWhiteSpace(orgRole)
+               && !string.Equals(cached.OrganizationRole, orgRole, StringComparison.Ordinal);
+    }
+
+    private async Task<UserOnboardingCacheItem> PersistAndRefreshCachesAsync(
+        User user,
+        CancellationToken cancellationToken)
+    {
+        user.UpdatedAt = DateTime.UtcNow;
+        await _userRepository.UpdateAsync(user, cancellationToken);
+        _logger.LogInformation("User read model synchronized from refreshed session claims. clerkId={ClerkId}", user.ClerkId);
+
+        var cacheItem = MapToCacheItem(user);
+        var dto = UserDto.FromEntity(user);
+        await _cacheService.SetUserAsync(user.ClerkId, cacheItem, cancellationToken: cancellationToken);
+        await _cacheService.SetUserProfileAsync(user.ClerkId, dto, cancellationToken: cancellationToken);
+        return cacheItem;
     }
 
     private static UserOnboardingCacheItem MapToCacheItem(User user)
@@ -161,7 +323,8 @@ public class UserService : IUserService
             Address = user.Address,
             ProfileImageUrl = user.ProfileImageUrl,
             UserRole = user.UserRole,
-            OrganizationRole = user.OrganizationRole
+            OrganizationRole = user.OrganizationRole,
+            AccountState = user.AccountState,
         };
     }
 }

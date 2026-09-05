@@ -193,6 +193,13 @@ public partial class OrganizationService : IOrganizationService
         return await _organizationRepository.ListMembershipsForUserAsync(userId, cancellationToken);
     }
 
+    public async Task<bool> HasActiveMembershipAsync(
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        return await _organizationRepository.UserHasActiveMembershipAsync(userId, cancellationToken);
+    }
+
     [GeneratedRegex("[^a-z0-9]+")]
     private static partial Regex NonAlphanumericRegex();
 

@@ -541,3 +541,40 @@ First CI run on PR #31 failed 4 jobs; all fixed:
 - `dotnet test Aveline.Api/Aveline.Api.sln -c Release` → **107 passed, 0 failed** (91 pre-existing + 16 new).
 - `dotnet build -c Release` clean; migration generation succeeds with no shadow-FK warning.
 - No changes committed; #50 pending review. Suggested follow-ups: HTTP endpoints (create org / invite / accept / my orgs) and the #47-coordinated backfill.
+
+### Follow-up (same session, branch `feature/51-org-onboarding`): Issue #51 — organization-aware onboarding (backend increment)
+
+Started #51 (depends on #49/#50): replaced the boolean onboarding gate with explicit account lifecycle states and added the owner-creation + staff-join flows (authoritative API side).
+
+- **`AccountState`** enum (`OnboardingPending` / `Active` / `Suspended`) added to `User` (stored string column, migration `AddUserAccountState`). `HasCompletedOnboarding`/`IsActive` retained for compatibility/profile + suspension.
+- **`UserService`**: stub creation → `OnboardingPending`; `CompleteOnboardingAsync` resolves state from org context (`OrganizationRole`/`OrganizationId` set → `Active`, else stays `OnboardingPending`); new `SetAccountStateAsync` updates the row + Redis caches.
+- **`OnboardingMiddleware`** now gates on `AccountState`: `Suspended` → 403 `account-suspended` problem for everything; `OnboardingPending` → allowed only profile/org/invitation endpoints, else 403 `onboarding-required` problem; `Active` → pass. Adds `X-Account-State` header.
+- **New endpoints** (`OrganizationEndpoints`): `POST /api/v1/orgs` (owner creates boutique → account `Active`), `POST /api/v1/invitations/accept` (staff joins by code → `Active`), `GET /api/v1/orgs/my`.
+- **Tests**: updated `OnboardingMiddlewareTests` to the state model + added a suspended-case test; new `OrganizationEndpointsIntegrationTests` (pending user 403 onboarding-required; owner creates org → active + membership + business access; staff accepts seeded invite → active + membership). Full suite **111 passed**.
+- Notes: `OnboardingMiddleware` runs after `UseAuthorization`, so policy 403s surface before the onboarding gate; org-context resolution currently uses the legacy `OrganizationRole`/`OrganizationId` fields (canonical memberships come next). Remaining #51 work (deferred): Clerk claim/session refresh after org changes, matching React/Flutter routing/UI, and E2E tests.
+
+### Follow-up (same session, branch `feature/51-org-onboarding`): #51 item 5 (backend read-model sync)
+
+Kept #51 open per user choice; continued with the next checklist item ("refresh Clerk claims/session after org changes and synchronize the local read model"). The Clerk session refresh itself is client-driven (Clerk SDK re-mints a `jwt-aveline-v1` token after the org context changes); the authoritative API side implemented here keeps the local read model correct:
+
+- **Canonical membership lookup**: `IOrganizationRepository.UserHasActiveMembershipAsync` + `IOrganizationService.HasActiveMembershipAsync` (repo + service tests).
+- **Membership-aware account state**: `UserService` now resolves `AccountState` against canonical active memberships when the legacy `OrganizationRole`/`OrganizationId` snapshot is empty, so a staff account that accepted an invite (or an owner who created a boutique) is `Active` even before Clerk session claims carry the org context. Fixes the "profile completed after invite acceptance" downgrade.
+- **Claim-context adoption on sync**: `GetOrSynchronizeUserAsync` adopts refreshed-session claims (`user_role`/`org_role`/`org_id`) into the read model whenever they drift from the cached/DB snapshot, recomputes state, persists, and refreshes both caches. Tokens without org claims never clear an existing context.
+- **Tests** (+4): membership-aware activation when profile is completed after invite; pending user promoted to Active when a membership appears (cold cache); cached user synced when refreshed claims carry a new org context; active-membership existence query ignores pending/suspended. Full suite **115 passed**.
+- Remaining #51 items (deferred): #5 leaves Clerk-side refresh mechanics to the clients; #6 React + Flutter routing/UI states; #7 E2E tests (incl. replayed/expired invite, suspended access).
+
+### Follow-up (same session, branch `feature/51-org-onboarding`): #51 item 6 — React + Flutter account-state routing/UI
+
+Implemented matching onboarding/account-state UX in both frontends keyed on the API `AccountState` (not just the legacy boolean):
+
+- **React web (`frontend/web`)**: `UserDto` gains `accountState`; new `types/organization.ts` + `lib/organizations.ts` (`createOrganization`, `fetchMyOrganizations`, `acceptInvitation`); axios interceptor now reads the `X-Account-State` header and surfaces RFC 7807 `type` on `ApiError`. `UserContext` tracks `accountState`. New `RequireAccountState` guard (Suspended→`/suspended`, pending w/o profile→`/onboarding`, pending w/ profile→`/org-setup`, Active→app). New `OrgSetupPage` (owner create-boutique + staff join-by-code), `SuspendedPage`; `AuthApiBridge` routes 403 by problem type. `OnboardingPage` continues to `/org-setup` when the account is still pending. Vitest **35 pass**, coverage thresholds green.
+- **Flutter mobile (`frontend/aveline_mobile`)**: `AvelineAccountState` enum added to `AvelineUser` (parse + wire round-trip, fallback derivation when payload omits it); `UserProvider` exposes `accountState`, `isAccountActive`, and `acceptInvitationCode` (POST `/api/v1/invitations/accept` + profile refresh). `RouteGuards`/`AppRoutes` grow `/org-setup` + `/suspended` with pure rules keyed on state; `app.dart` routes them; `OnboardingScreen` continues to `/org-setup` when pending; new `OrgSetupScreen` (invite code) + `SuspendedScreen`. `flutter analyze` clean; **24 tests pass**.
+- Note: Clerk-side session/claim refresh after org changes (create/activate the Clerk org so the token carries `org_id`/`org_role`) remains client-integration work that needs live Clerk credentials; the API/DB is authoritative meanwhile. Remaining #51 item #7 (E2E tests incl. replayed/expired invite) is the next chunk.
+
+### Follow-up (same session, branch `feature/51-org-onboarding`): #51 item 7 — HTTP end-to-end tests
+
+Added the missing E2E (HTTP-level, via WebApplicationFactory) coverage in `OrganizationEndpointsIntegrationTests` (3 new):
+- **Replayed invite**: second accept of the same code → 400 "already accepted", membership count stays 1.
+- **Expired invite**: accept of a past-`ExpiresAt` code → 400 "expired"; account stays pending (no memberships, business endpoints still 403 `onboarding-required`).
+- **Suspended access**: a suspended account is rejected with 403 `account-suspended` on business endpoints AND on `/users/me` (no authenticated access at all).
+Full .NET suite now **118 passed**. Combined with the earlier integration tests this closes issue #51 item 7's checklist (owner creation, staff pending, invite acceptance, activation, replayed/expired, suspended access) at the API level, matching the repo's E2E convention (no browser harness in the monorepo).

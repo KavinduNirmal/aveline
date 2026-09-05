@@ -1,3 +1,5 @@
+using Aveline.Api.Modules.Shared.Models;
+
 namespace Aveline.Api.Infrastructure.Caching;
 
 public class UserOnboardingCacheItem
@@ -5,6 +7,7 @@ public class UserOnboardingCacheItem
     public Guid Id { get; set; }
     public string ClerkId { get; set; } = string.Empty;
     public bool HasCompletedOnboarding { get; set; }
+    public AccountState AccountState { get; set; } = AccountState.OnboardingPending;
     public string Email { get; set; } = string.Empty;
     public string FirstName { get; set; } = string.Empty;
     public string LastName { get; set; } = string.Empty;

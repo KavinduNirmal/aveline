@@ -45,6 +45,30 @@ describe('toApiError', () => {
     expect(error.message).toBe('Email already in use')
   })
 
+  it('extracts the RFC 7807 problem type from the response body', () => {
+    const error = toApiError({
+      isAxiosError: true,
+      response: {
+        status: 403,
+        data: {
+          type: 'https://aveline.app/errors/account-suspended',
+          title: 'Account Suspended',
+          detail: 'This account is suspended.',
+        },
+      },
+    })
+    expect(error.type).toBe('https://aveline.app/errors/account-suspended')
+    expect(error.message).toContain('This account is suspended.')
+  })
+
+  it('leaves the problem type undefined when the body has none', () => {
+    const error = toApiError({
+      isAxiosError: true,
+      response: { status: 403, data: { message: 'forbidden' } },
+    })
+    expect(error.type).toBeUndefined()
+  })
+
   it('maps a network failure (no response) to a connection message', () => {
     const error = toApiError({ isAxiosError: true, response: undefined })
     expect(error.status).toBe(0)

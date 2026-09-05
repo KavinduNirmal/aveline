@@ -34,6 +34,7 @@ describe('UserContext and Onboarding Data Types', () => {
       organizationRole: 'org:boutique_supervisor',
       organizationId: 'org_123',
       hasCompletedOnboarding: true,
+      accountState: 'Active',
       contactPreference: 'WhatsApp',
       pushNotificationsEnabled: true,
       isActive: true,
@@ -42,6 +43,7 @@ describe('UserContext and Onboarding Data Types', () => {
     }
 
     expect(userDto.hasCompletedOnboarding).toBe(true)
+    expect(userDto.accountState).toBe('Active')
     expect(userDto.organizationRole).toBe('org:boutique_supervisor')
     expect(userDto.userRole).toBe('owner')
   })

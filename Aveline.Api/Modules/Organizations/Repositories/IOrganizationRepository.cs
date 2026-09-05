@@ -23,6 +23,11 @@ public interface IOrganizationRepository
         Guid userId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Returns whether the user holds at least one <see cref="MembershipStatus.Active"/> membership.</summary>
+    Task<bool> UserHasActiveMembershipAsync(
+        Guid userId,
+        CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<OrganizationMembership>> ListMembershipsForOrganizationAsync(
         Guid organizationId,
         CancellationToken cancellationToken = default);

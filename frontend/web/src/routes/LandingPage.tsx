@@ -70,7 +70,7 @@ const AGENTS: Agent[] = [
   {
     name: 'Ava',
     icon: Heart,
-    tint: 'from-rose-100/90 via-[#ffe3ec] to-white',
+    tint: 'from-rose-100 via-[#ffe3ec] to-white',
     ink: 'text-memory',
     chip: 'bg-memory',
     tag: 'The memory agent',
@@ -81,7 +81,7 @@ const AGENTS: Agent[] = [
   {
     name: 'Elle',
     icon: Eye,
-    tint: 'from-amber-100/90 via-[#fdf0d8] to-white',
+    tint: 'from-amber-100 via-[#fdf0d8] to-white',
     ink: 'text-visual',
     chip: 'bg-visual',
     tag: 'The visual agent',
@@ -134,37 +134,37 @@ const STEPS: Step[] = [
   },
 ]
 
-function StepArt({ step, index }: { step: Step; index: number }) {
+function StepImage({ step, index }: { step: Step; index: number }) {
   const reduce = useReducedMotion()
   const Icon = step.icon
   return (
     <div
       className={cn(
-        'relative aspect-[5/4] overflow-hidden rounded-3xl border-2 border-dashed border-neutral-200 bg-gradient-to-br',
+        'relative h-44 overflow-hidden bg-gradient-to-br',
         step.tint,
       )}
     >
       <motion.div
-        className="absolute -right-6 -top-8 text-rose-200/60"
+        className="absolute -right-8 -top-10 text-rose-200/70"
         animate={reduce ? {} : { y: [0, -12, 0], rotate: [0, 12, 0] }}
         transition={{ duration: 8 + index * 2, repeat: Infinity, ease: 'easeInOut' }}
       >
         <Blossom className="size-40" />
       </motion.div>
       <motion.div
-        className="absolute -bottom-8 -left-6 text-amber-200/70"
+        className="absolute -bottom-10 -left-7 text-amber-200/80"
         animate={reduce ? {} : { y: [0, 10, 0], rotate: [0, -14, 0] }}
         transition={{ duration: 9 + index * 2, repeat: Infinity, ease: 'easeInOut', delay: 1 }}
       >
         <Blossom className="size-32" />
       </motion.div>
 
-      <span className="absolute left-5 top-5 font-serif text-6xl font-medium text-white/80 drop-shadow-sm">
+      <span className="absolute left-6 top-4 font-serif text-6xl font-medium text-white/90 drop-shadow-sm">
         {step.n}
       </span>
 
-      <div className="absolute bottom-5 right-5 flex size-16 items-center justify-center rounded-full bg-white/85 text-commerce shadow-sm backdrop-blur">
-        <Icon className="size-7" aria-hidden />
+      <div className="absolute bottom-4 right-5 flex size-14 items-center justify-center rounded-2xl bg-white/90 text-commerce shadow-sm">
+        <Icon className="size-6" aria-hidden />
       </div>
     </div>
   )
@@ -176,25 +176,30 @@ export function LandingPage() {
       {/* ------------------------------------------------ Hero */}
       <section className="relative overflow-hidden">
         <AuroraField />
-        <div className="relative mx-auto flex w-full max-w-5xl flex-col items-center px-5 pb-24 pt-20 text-center lg:px-8 lg:pt-28">
+        {/* Soft radial veil behind the headline to lift contrast */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_72%_62%_at_50%_34%,rgba(253,250,248,0.92)_0%,rgba(253,250,248,0.55)_55%,rgba(253,250,248,0)_78%)]"
+        />
+        <div className="relative z-10 mx-auto flex w-full max-w-5xl flex-col items-center px-5 pb-24 pt-20 text-center lg:px-8 lg:pt-28">
           <Reveal>
-            <span className="inline-flex items-center gap-2 rounded-full border border-dashed border-commerce/25 bg-white/70 px-4 py-2 text-xs font-medium uppercase tracking-[0.18em] text-commerce backdrop-blur">
+            <span className="inline-flex items-center gap-2 rounded-full border border-dashed border-commerce/25 bg-white/70 px-4 py-2 text-xs font-medium uppercase tracking-[0.18em] text-commerce shadow-sm backdrop-blur">
               <Sparkles className="size-3.5" aria-hidden />
               Aveline — the assistant that remembers
             </span>
           </Reveal>
 
           <Reveal delay={0.08}>
-            <h1 className="mt-8 max-w-3xl font-serif text-5xl font-medium leading-[1.06] tracking-tight text-neutral-900 sm:text-6xl lg:text-7xl">
+            <h1 className="mt-8 max-w-3xl font-serif text-5xl font-medium leading-[1.06] tracking-tight text-neutral-900 sm:text-6xl lg:text-7xl [text-shadow:0_2px_30px_rgba(255,255,255,0.45)]">
               A boutique’s memory,{' '}
-              <span className="bg-gradient-to-r from-commerce via-memory to-visual bg-clip-text text-transparent">
+              <span className="bg-gradient-to-r from-[#7a303f] via-[#b0566b] to-[#8a6a14] bg-clip-text text-transparent">
                 made personal.
               </span>
             </h1>
           </Reveal>
 
           <Reveal delay={0.16}>
-            <p className="mt-6 max-w-xl text-lg leading-relaxed text-neutral-500">
+            <p className="mt-6 max-w-xl text-lg leading-relaxed text-neutral-600">
               Aveline remembers every customer, every product and every deal — so
               you can stay close and personal without worrying about the little
               things.
@@ -209,7 +214,7 @@ export function LandingPage() {
                   <ArrowRight className="size-4" aria-hidden />
                 </Link>
               </Button>
-              <Button asChild size="lg" variant="outline" className="h-12 border-neutral-300 bg-white/80 px-8 backdrop-blur">
+              <Button asChild size="lg" variant="outline" className="h-12 border-neutral-300 bg-white/80 px-8 shadow-sm backdrop-blur">
                 <Link to="/download">Download app</Link>
               </Button>
             </div>
@@ -238,7 +243,7 @@ export function LandingPage() {
 
       {/* ------------------------------------------------ Features */}
       <section id="features" className="relative overflow-hidden scroll-mt-20">
-        <AuroraField className="opacity-60" />
+        <AuroraField className="opacity-55" />
         <div className="relative mx-auto w-full max-w-6xl px-5 py-24 lg:px-8">
           <Reveal className="max-w-2xl">
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-commerce">
@@ -249,19 +254,17 @@ export function LandingPage() {
             </h2>
           </Reveal>
 
-          <div className="mt-16 grid gap-x-10 gap-y-12 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-16 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {FEATURES.map(({ icon: Icon, title, copy }, i) => (
-              <Reveal key={title} delay={i * 0.05}>
-                <div className="group relative">
-                  <span className="flex size-12 items-center justify-center rounded-full bg-commerce/10 text-commerce transition-all duration-300 group-hover:scale-110 group-hover:bg-commerce group-hover:text-white">
+              <Reveal key={title} delay={i * 0.05} className="h-full">
+                <div className="group h-full rounded-2xl border border-neutral-200 bg-white/85 p-8 shadow-[0_24px_60px_-50px_rgba(122,48,63,0.45)] backdrop-blur transition-transform duration-300 hover:-translate-y-1">
+                  <span className="flex size-12 items-center justify-center rounded-2xl bg-commerce/10 text-commerce transition-all duration-300 group-hover:scale-110 group-hover:bg-commerce group-hover:text-white">
                     <Icon className="size-6" aria-hidden />
                   </span>
                   <h3 className="mt-6 font-serif text-3xl font-medium text-neutral-900">
                     {title}
                   </h3>
-                  <p className="mt-3 max-w-xs text-base leading-relaxed text-neutral-500">
-                    {copy}
-                  </p>
+                  <p className="mt-3 text-base leading-relaxed text-neutral-500">{copy}</p>
                 </div>
               </Reveal>
             ))}
@@ -271,7 +274,7 @@ export function LandingPage() {
 
       {/* ------------------------------------------------ Three agents — joined */}
       <section className="relative overflow-hidden border-y-2 border-dashed border-neutral-200 bg-white">
-        <AuroraField className="opacity-45" />
+        <AuroraField className="opacity-40" />
         <div className="relative mx-auto w-full max-w-6xl px-5 py-24 lg:px-8">
           <Reveal className="mx-auto max-w-2xl text-center">
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-commerce">
@@ -288,7 +291,7 @@ export function LandingPage() {
 
           {/* One joined panel: outer corners rounded only */}
           <Reveal delay={0.08} className="mt-16">
-            <div className="overflow-hidden rounded-[2.5rem] border-2 border-dashed border-neutral-200 bg-white shadow-[0_40px_90px_-60px_rgba(122,48,63,0.35)]">
+            <div className="overflow-hidden rounded-3xl border-2 border-dashed border-neutral-200 bg-white shadow-[0_40px_90px_-60px_rgba(122,48,63,0.35)]">
               <div className="grid lg:grid-cols-3">
                 {AGENTS.map((agent, i) => {
                   const Icon = agent.icon
@@ -359,7 +362,7 @@ export function LandingPage() {
 
       {/* ------------------------------------------------ How it works */}
       <section className="relative overflow-hidden">
-        <AuroraField className="opacity-55" />
+        <AuroraField className="opacity-45" />
         <div className="relative mx-auto w-full max-w-6xl px-5 py-24 lg:px-8">
           <Reveal className="max-w-2xl">
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-commerce">
@@ -370,31 +373,46 @@ export function LandingPage() {
             </h2>
           </Reveal>
 
-          <div className="mt-16 grid gap-8 md:grid-cols-3">
-            {STEPS.map((step, i) => (
-              <motion.div
-                key={step.n}
-                initial={{ opacity: 0, y: 34 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, margin: '-60px' }}
-                transition={{ duration: 0.7, delay: i * 0.14, ease: [0.22, 1, 0.36, 1] }}
-              >
-                <StepArt step={step} index={i} />
-                <h3 className="mt-6 font-serif text-2xl font-medium text-neutral-900">
-                  {step.title}
-                </h3>
-                <p className="mt-2 text-[15px] leading-relaxed text-neutral-500">{step.copy}</p>
-              </motion.div>
-            ))}
+          <div className="relative mt-16">
+            {/* Animated gradient connector across the step images (large screens) */}
+            <div className="pointer-events-none absolute left-[3%] right-[3%] top-[88px] hidden h-[3px] lg:block">
+              <div className="absolute inset-0 rounded-full border-t-2 border-dashed border-neutral-300/60" />
+              <motion.span
+                className="absolute top-[-2px] h-[7px] w-40 rounded-full bg-gradient-to-r from-transparent via-memory to-transparent blur-[1px]"
+                animate={{ left: ['-18%', '104%'] }}
+                transition={{ duration: 4.5, repeat: Infinity, ease: 'easeInOut' }}
+              />
+            </div>
+
+            <div className="grid gap-8 md:grid-cols-3">
+              {STEPS.map((step, i) => (
+                <motion.div
+                  key={step.n}
+                  initial={{ opacity: 0, y: 34 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true, margin: '-60px' }}
+                  transition={{ duration: 0.7, delay: i * 0.16, ease: [0.22, 1, 0.36, 1] }}
+                  className="relative flex h-full flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-[0_24px_60px_-50px_rgba(122,48,63,0.4)]"
+                >
+                  <StepImage step={step} index={i} />
+                  <div className="flex flex-1 flex-col p-6">
+                    <h3 className="font-serif text-2xl font-medium text-neutral-900">
+                      {step.title}
+                    </h3>
+                    <p className="mt-2 text-[15px] leading-relaxed text-neutral-500">{step.copy}</p>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
           </div>
         </div>
       </section>
 
       {/* ------------------------------------------------ Enterprise */}
-      <section className="px-5 lg:px-8">
+      <section className="px-5 pb-24 pt-4 lg:px-8">
         <Reveal className="mx-auto max-w-6xl">
-          <div className="relative overflow-hidden rounded-[2.5rem] border-2 border-dashed border-lavender/40 bg-lavender-soft/70">
-            <AuroraField className="opacity-40" />
+          <div className="relative overflow-hidden rounded-3xl border-2 border-dashed border-lavender/40 bg-lavender-soft/80 shadow-[0_40px_90px_-60px_rgba(142,124,195,0.5)]">
+            <AuroraField className="opacity-35" />
             <div className="relative flex flex-col items-start justify-between gap-6 p-10 lg:flex-row lg:items-center lg:p-14">
               <div className="max-w-xl">
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-lavender">
@@ -425,20 +443,24 @@ export function LandingPage() {
       </section>
 
       {/* ------------------------------------------------ Final CTA */}
-      <section className="relative overflow-hidden px-5 pb-28 pt-24 lg:px-8">
+      <section className="relative overflow-hidden px-5 pb-28 lg:px-8">
         <AuroraField />
-        <Reveal className="relative mx-auto max-w-2xl text-center">
-          <h2 className="font-serif text-5xl font-medium leading-tight tracking-tight text-neutral-900">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_60%_70%_at_50%_50%,rgba(253,250,248,0.85)_0%,rgba(253,250,248,0)_70%)]"
+        />
+        <Reveal className="relative z-10 mx-auto max-w-2xl text-center">
+          <h2 className="font-serif text-5xl font-medium leading-tight tracking-tight text-neutral-900 [text-shadow:0_2px_30px_rgba(255,255,255,0.5)]">
             Ready to be remembered?
           </h2>
-          <p className="mx-auto mt-4 max-w-md text-lg text-neutral-500">
+          <p className="mx-auto mt-4 max-w-md text-lg text-neutral-600">
             Join the boutiques letting Ava, Elle and Lina tend the details.
           </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
             <Button asChild size="lg" className="h-12 px-8">
               <Link to="/sign-up">Create account</Link>
             </Button>
-            <Button asChild size="lg" variant="outline" className="h-12 border-neutral-300 bg-white/80 px-8">
+            <Button asChild size="lg" variant="outline" className="h-12 border-neutral-300 bg-white/80 px-8 shadow-sm">
               <Link to="/download">Download app</Link>
             </Button>
           </div>

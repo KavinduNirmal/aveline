@@ -658,3 +658,12 @@ Design feedback round on the landing page:
 - **Three specialists joined**: Ava/Elle/Lina now render as one connected band — single container with only outer corners rounded (`rounded-[2.5rem]`, overflow hidden), dashed dividers between cells, per-agent pastel gradient tint + bigger serif names (`text-3xl/4xl`), icons (Heart/Eye/Coins) in tinted chips, larger statements/bullets.
 - **How it works**: each step now has an illustrated "image" panel (gradient art with drifting blossoms + step number + icon medallion) and per-step staggered scroll animations; hero/CTA button heights normalised.
 - Verified web `tsc`, oxlint, Vitest 35, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #61): landing polish round 2
+
+- Reduced card roundness (`rounded-[2.5rem]` → `rounded-3xl` band/enterprise; product cards `rounded-2xl`).
+- Enterprise "Aveline for groups" card given breathing room (`pt-4 pb-24`) so it no longer sits flush against the neighboring aurora sections.
+- **Features** are now soft white cards (rounded, dashed-free border, soft shadow, hover lift, icon chip) instead of bare text on the aurora.
+- **How it works** rebuilt as product-style cards: image top as a shorter rectangle (`h-44`), text in a joined white body panel; plus an animated gradient "comet" that travels left→right along a dashed rail across the three step images on desktop.
+- Hero/CTA headings: added a soft radial veil behind the text and a faint white text-shadow to lift contrast against the busy aurora; gradient headline colors deepened.
+- Verified web `tsc`, oxlint, `vite build`.

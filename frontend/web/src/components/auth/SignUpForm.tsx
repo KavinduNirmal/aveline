@@ -45,7 +45,7 @@ export function SignUpForm({
   async function finalize() {
     await signUp?.finalize({
       navigate: ({ decorateUrl }) => {
-        const url = decorateUrl('/')
+        const url = decorateUrl('/app')
         if (url.startsWith('http')) {
           window.location.href = url
         } else {

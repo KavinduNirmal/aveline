@@ -43,7 +43,7 @@ export function SignInForm() {
   async function finalize() {
     await signIn?.finalize({
       navigate: ({ decorateUrl }) => {
-        const url = decorateUrl('/')
+        const url = decorateUrl('/app')
         if (url.startsWith('http')) {
           window.location.href = url
         } else {

@@ -640,3 +640,13 @@ Continued #52. Added canonical membership management with immediate revocation a
 - **Tests**: 3 service tests (suspend+invalidate, remove+invalidate, owner-guard) and 5 integration tests (owner suspends → member org-scoped access denied → activate restores; staff member denied managing in own org; foreign org owner denied; owner removes member → denied; owner cannot manage own owner membership). Full .NET suite **132 passing**.
 - Docs: `docs/architecture/authorization.md` gained the membership-management bullet.
 - Remaining for #52 (later): finishing `/auth/claims`/error/docs polish already partly done in slice 1; nothing else outstanding beyond converting scoped policy usage as real boutique feature endpoints appear.
+
+### New session (branch `feature/custom-clerk-auth`, issue #61): marketing landing page
+
+Elegant public landing page + supporting pages (web only):
+- **Routing**: `/` → public `LandingPage`; signed-in dashboard moved to `/app`; post-auth landings (finalize, onboarding, org-setup, SSO callbacks) retarget `/app`; `*` → `/`.
+- **Design tokens**: added lavender/lilac + coral (+ blush) accents and agent colors (`--color-memory` rose, `--color-visual` gold, `--color-commerce` maroon) in `index.css`.
+- **Landing** (`LandingPage.tsx`): hero with animated aurora + petals and Create account / Download app CTAs; persona pull-quote; **Features** (`#features`); **the three agents Ava / Elle / Lina** in rose/gold/maroon cards; how-it-works steps; enterprise band ("Contact sales"); final CTA band.
+- **Nav/Footer** (`SiteNav`, `SiteFooter`, `SitePage`, `Reveal`/`AuroraField`): sticky glass nav with Features anchor + Contact/Plans/Docs routes and Sign in / Create account / Download app; dashed-border footer.
+- **Pages**: `PlansPage` (Starter/Boutique/Atelier placeholders), `ContactPage` (mailto/WhatsApp/location, enterprise sales), `DocsPage` (hand-written guide), `DownloadPage` (iOS coming soon; Android APK → GitHub Releases latest).
+- Verified web: `tsc`, oxlint clean, Vitest 35, `vite build`.

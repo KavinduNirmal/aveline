@@ -640,3 +640,74 @@ Continued #52. Added canonical membership management with immediate revocation a
 - **Tests**: 3 service tests (suspend+invalidate, remove+invalidate, owner-guard) and 5 integration tests (owner suspends → member org-scoped access denied → activate restores; staff member denied managing in own org; foreign org owner denied; owner removes member → denied; owner cannot manage own owner membership). Full .NET suite **132 passing**.
 - Docs: `docs/architecture/authorization.md` gained the membership-management bullet.
 - Remaining for #52 (later): finishing `/auth/claims`/error/docs polish already partly done in slice 1; nothing else outstanding beyond converting scoped policy usage as real boutique feature endpoints appear.
+
+### New session (branch `feature/custom-clerk-auth`, issue #61): marketing landing page
+
+Elegant public landing page + supporting pages (web only):
+- **Routing**: `/` → public `LandingPage`; signed-in dashboard moved to `/app`; post-auth landings (finalize, onboarding, org-setup, SSO callbacks) retarget `/app`; `*` → `/`.
+- **Design tokens**: added lavender/lilac + coral (+ blush) accents and agent colors (`--color-memory` rose, `--color-visual` gold, `--color-commerce` maroon) in `index.css`.
+- **Landing** (`LandingPage.tsx`): hero with animated aurora + petals and Create account / Download app CTAs; persona pull-quote; **Features** (`#features`); **the three agents Ava / Elle / Lina** in rose/gold/maroon cards; how-it-works steps; enterprise band ("Contact sales"); final CTA band.
+- **Nav/Footer** (`SiteNav`, `SiteFooter`, `SitePage`, `Reveal`/`AuroraField`): sticky glass nav with Features anchor + Contact/Plans/Docs routes and Sign in / Create account / Download app; dashed-border footer.
+- **Pages**: `PlansPage` (Starter/Boutique/Atelier placeholders), `ContactPage` (mailto/WhatsApp/location, enterprise sales), `DocsPage` (hand-written guide), `DownloadPage` (iOS coming soon; Android APK → GitHub Releases latest).
+- Verified web: `tsc`, oxlint clean, Vitest 35, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #61): landing design pass
+
+Design feedback round on the landing page:
+- **Animated backgrounds**: new `AuroraField` — richer gradient aurora blobs (rose/lavender/coral/gold radial meshes) drifting with motion, plus 14 floating `Blossom` SVGs; used behind hero, features, agents, how-it-works, enterprise and CTA sections (reduced-motion safe).
+- **Three specialists joined**: Ava/Elle/Lina now render as one connected band — single container with only outer corners rounded (`rounded-[2.5rem]`, overflow hidden), dashed dividers between cells, per-agent pastel gradient tint + bigger serif names (`text-3xl/4xl`), icons (Heart/Eye/Coins) in tinted chips, larger statements/bullets.
+- **How it works**: each step now has an illustrated "image" panel (gradient art with drifting blossoms + step number + icon medallion) and per-step staggered scroll animations; hero/CTA button heights normalised.
+- Verified web `tsc`, oxlint, Vitest 35, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #61): landing polish round 2
+
+- Reduced card roundness (`rounded-[2.5rem]` → `rounded-3xl` band/enterprise; product cards `rounded-2xl`).
+- Enterprise "Aveline for groups" card given breathing room (`pt-4 pb-24`) so it no longer sits flush against the neighboring aurora sections.
+- **Features** are now soft white cards (rounded, dashed-free border, soft shadow, hover lift, icon chip) instead of bare text on the aurora.
+- **How it works** rebuilt as product-style cards: image top as a shorter rectangle (`h-44`), text in a joined white body panel; plus an animated gradient "comet" that travels left→right along a dashed rail across the three step images on desktop.
+- Hero/CTA headings: added a soft radial veil behind the text and a faint white text-shadow to lift contrast against the busy aurora; gradient headline colors deepened.
+- Verified web `tsc`, oxlint, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #61): landing polish round 3
+
+- **"The three of her" is now a diagram**: an animated Aveline hub (blossom orb with rotating conic gradient ring + breathing glow) sits on top, with three flowing connector paths (Ava rose / Elle gold / Lina maroon) branching down to the three agent cards (marching-dash animation, reduced-motion safe).
+- Enterprise "Aveline for groups" spacing balanced (`py-20` around the card).
+- How-it-works connector width reduced ~20% (from `3%` insets to `12%` each side) so it no longer overflows past the cards.
+- Verified web `tsc`, oxlint, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #61): landing uniqueness + contrast pass
+
+- **Asymmetric hero**: two-column on desktop — editorial left-aligned headline ("She remembers, so you don’t have to.") + CTAs, and a floating **live conversation preview** (WhatsApp-style thread where Ava/Elle/Lina respond to a real boutique query, with agent chips + typing indicator).
+- **Message marquee**: a scrolling strip of authentic customer questions ("Wedding on Saturday — anything blush?") between hero and persona (CSS marquee, reduced-motion safe).
+- **Contrast**: body/description copy bumped `neutral-500 → neutral-600`; hero veil strengthened behind the headline; darker gradient stops.
+- New `marquee` keyframes + `.marquee-track` utility in `index.css`.
+- Verified web `tsc`, oxlint, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #61): three-agents redesign + bento features
+
+- **"The three of her" redesigned** as an editorial vertical timeline: a dashed rail with an animated rose→gold→maroon gradient comet connecting numbered nodes; each agent is a wide row card (tinted gradient wash + blossom watermark) with a large serif name/statement, capability pills, and an "In action" mini preview bubble showing a real moment (Ava remembers a size, Elle matches outfits, Lina holds an order for approval).
+- **Features** turned into a **bento grid** (3/3/2/2/2/6 spans) with per-card gradient tints, colored icon chips, wide cards with flourish watermark + "always on" kicker.
+- **Persona** split into an editorial two-column (big quote + the three agents as a divided list); **enterprise** gained a multi-store benefit checklist; **final CTA** gained the "Ava · Elle · Lina" flourish + "no card required" line.
+- Subpages (Plans/Contact/Docs/Download) got a matching aurora header treatment; fixed a transient JSX wrapper imbalance.
+- Verified web `tsc`, oxlint, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #61): three-of-her as a powered workflow
+
+- Rebuilt "the three of her" as a **hub-and-spoke workflow diagram**: an animated Aveline hub on top (rotating conic ring + breathing glow) labeled "Aveline — powers the three", with three connector paths flowing downward to the agent cards, each carrying an animated marching-dash pulse and an italic verb label ("remembers" rose / "sees" gold / "closes" maroon).
+- Agent cards slimmed to icon + name/tag + statement + copy + capability pills (content re-balanced), footer line "One Aveline · three specialists · one workflow".
+- Verified web `tsc`, oxlint, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #61): workflow lines polish
+
+- Connector lines now **orthogonal** (straight with 90° bends) instead of curves, running from the flower hub to each agent card.
+- "Aveline" label moved **on top of the flower** orb; lines connect to the orb's bottom edge.
+- Added **gradient pulses** along each line: a colored dashed stroke animating (marching gradient) plus two glowing comet dots traveling the full path in a staggered trail (reduced-motion safe).
+- Verified web `tsc`, oxlint, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #61): how-it-works redesign
+
+- Redesigned "How it works" into a **horizontal journey**: centered header, three numbered medallion steps (Step 01/02/03) on a white section with aurora, each with a gradient-tinted icon medallion (breathing pulse) + serif title + copy.
+- Animated **journey track** behind the medallions (dashed rail + traveling rose gradient comet, reduced-motion safe).
+- Added a **journey ribbon** below: "Customer messages → Ava · Elle · Lina act → You approve" with arrow separators.
+- Removed the old product-card/`StepImage` implementation.
+- Verified web `tsc`, oxlint, `vite build`.

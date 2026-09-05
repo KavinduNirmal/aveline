@@ -53,6 +53,16 @@
   --sidebar-accent-foreground: #1e1b1b;
   --sidebar-border: #e9e0e0;
   --sidebar-ring: #5d1a29;
+
+  /* Aveline landing accents — agent colors + colorful aurora additions. */
+  --aveline-memory: #b0566b;      /* rose  — Ava, memory */
+  --aveline-visual: #c9972b;      /* gold  — Elle, visual */
+  --aveline-commerce: #7a303f;    /* maroon — Lina, commerce */
+  --aveline-lavender: #8e7cc3;
+  --aveline-lavender-soft: #f0eafa;
+  --aveline-coral: #ef7a68;
+  --aveline-coral-soft: #ffe9e2;
+  --aveline-blush: #ffd9dd;
 }
 
 .dark {
@@ -139,6 +149,16 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
+  /* Landing palette */
+  --color-memory: var(--aveline-memory);
+  --color-visual: var(--aveline-visual);
+  --color-commerce: var(--aveline-commerce);
+  --color-lavender: var(--aveline-lavender);
+  --color-lavender-soft: var(--aveline-lavender-soft);
+  --color-coral: var(--aveline-coral);
+  --color-coral-soft: var(--aveline-coral-soft);
+  --color-blush: var(--aveline-blush);
+
   --font-sans:
     'Hanken Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-serif: 'Playfair Display', ui-serif, Georgia, serif;
@@ -151,5 +171,25 @@
   }
   body {
     @apply bg-background font-sans text-foreground antialiased;
+  }
+}
+
+/* Landing marquee */
+@keyframes aveline-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.marquee-track {
+  animation: aveline-marquee 32s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee-track {
+    animation: none;
   }
 }

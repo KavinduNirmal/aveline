@@ -45,7 +45,7 @@ export function OrgSetupPage() {
       setIsSubmitting(true)
       await createOrganization({ name: name.trim() })
       await refreshUser()
-      navigate('/', { replace: true })
+      navigate('/app', { replace: true })
     } catch (err: unknown) {
       const msg =
         err instanceof Error
@@ -71,7 +71,7 @@ export function OrgSetupPage() {
       setIsSubmitting(true)
       await acceptInvitation(trimmed)
       await refreshUser()
-      navigate('/', { replace: true })
+      navigate('/app', { replace: true })
     } catch (err: unknown) {
       const msg =
         err instanceof Error

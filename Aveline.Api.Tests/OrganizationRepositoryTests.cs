@@ -135,6 +135,35 @@ public class OrganizationRepositoryTests
         Assert.Empty(await invitationRepo.ListPendingByOrganizationAsync(org.Id));
     }
 
+    [Fact]
+    public async Task UserHasActiveMembershipAsync_OnlyCountsActiveMemberships()
+    {
+        var userId = Guid.CreateVersion7();
+        var otherUser = Guid.CreateVersion7();
+        var org = await _sut.CreateAsync(new Organization { Name = "Active Check", Slug = "active-check", OwnerUserId = otherUser });
+
+        Assert.False(await _sut.UserHasActiveMembershipAsync(userId));
+
+        await _sut.AddMembershipAsync(new OrganizationMembership
+        {
+            OrganizationId = org.Id,
+            UserId = userId,
+            BoutiqueRole = Roles.BoutiqueStaff,
+            Status = MembershipStatus.Pending,
+        });
+        Assert.False(await _sut.UserHasActiveMembershipAsync(userId));
+
+        await _sut.AddMembershipAsync(new OrganizationMembership
+        {
+            OrganizationId = org.Id,
+            UserId = userId,
+            BoutiqueRole = Roles.BoutiqueStaff,
+            Status = MembershipStatus.Active,
+        });
+        Assert.True(await _sut.UserHasActiveMembershipAsync(userId));
+        Assert.False(await _sut.UserHasActiveMembershipAsync(otherUser));
+    }
+
     // NOTE: the (OrganizationId, UserId) uniqueness and TokenHash uniqueness are
     // enforced by the PostgreSQL database indexes, which the EF InMemory provider
     // does not simulate; they are validated by integration against Npgsql.

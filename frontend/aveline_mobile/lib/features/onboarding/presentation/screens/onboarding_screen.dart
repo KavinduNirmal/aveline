@@ -1,6 +1,7 @@
 import 'package:aveline_mobile/core/providers/user_provider.dart';
 import 'package:aveline_mobile/core/router/route_guards.dart';
 import 'package:aveline_mobile/features/auth/domain/auth_repository.dart';
+import 'package:aveline_mobile/features/auth/domain/aveline_user.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -80,7 +81,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       );
 
       if (mounted) {
-        context.go(AppRoutes.home);
+        final user = userProvider.user;
+        final isActive = user?.accountState == AvelineAccountState.active;
+        context.go(isActive ? AppRoutes.home : AppRoutes.orgSetup);
       }
     } catch (e) {
       if (mounted) {

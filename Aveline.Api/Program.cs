@@ -40,7 +40,7 @@ var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
+    app.MapOpenApi().AllowAnonymous();
 }
 
 app.UseHttpsRedirection();
@@ -57,6 +57,7 @@ v1.MapAuthPolicyDemoEndpoints();
 v1.MapAgentEndpoints();
 v1.MapUserEndpoints();
 v1.MapAdminEndpoints();
+v1.MapOrganizationEndpoints();
 
 app.Run();
 

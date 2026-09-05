@@ -1,7 +1,9 @@
 using System.Text.RegularExpressions;
 using Aveline.Api.Authorization;
+using Aveline.Api.Infrastructure.Caching;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Organizations.Repositories;
+using Aveline.Api.Modules.Shared.Repositories;
 using Microsoft.Extensions.Logging;
 
 namespace Aveline.Api.Modules.Organizations.Services;
@@ -17,16 +19,37 @@ public partial class OrganizationService : IOrganizationService
 
     private readonly IOrganizationRepository _organizationRepository;
     private readonly IInvitationRepository _invitationRepository;
+    private readonly IUserRepository _userRepository;
+    private readonly IUserCacheService _userCacheService;
     private readonly ILogger<OrganizationService> _logger;
 
     public OrganizationService(
         IOrganizationRepository organizationRepository,
         IInvitationRepository invitationRepository,
+        IUserRepository userRepository,
+        IUserCacheService userCacheService,
         ILogger<OrganizationService> logger)
     {
         _organizationRepository = organizationRepository;
         _invitationRepository = invitationRepository;
+        _userRepository = userRepository;
+        _userCacheService = userCacheService;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Invalidates the cached authorization-relevant user state so the next request
+    /// re-syncs from the canonical membership tables instead of a stale snapshot.
+    /// </summary>
+    private async Task InvalidateUserCacheAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var user = await _userRepository.GetByIdAsync(userId, cancellationToken);
+        if (user is null)
+        {
+            return;
+        }
+
+        await _userCacheService.InvalidateAsync(user.ClerkId, cancellationToken);
     }
 
     public async Task<Organization> CreateOrganizationAsync(
@@ -72,6 +95,8 @@ public partial class OrganizationService : IOrganizationService
         _logger.LogInformation(
             "Organization created. organizationId={OrganizationId} slug={Slug} ownerUserId={OwnerUserId}",
             organization.Id, organization.Slug, ownerUserId);
+
+        await InvalidateUserCacheAsync(ownerUserId, cancellationToken);
 
         return organization;
     }
@@ -179,6 +204,8 @@ public partial class OrganizationService : IOrganizationService
             "Invitation accepted. invitationId={InvitationId} userId={UserId} organizationId={OrganizationId} role={Role}",
             invitation.Id, acceptingUserId, invitation.OrganizationId, invitation.BoutiqueRole);
 
+        await InvalidateUserCacheAsync(acceptingUserId, cancellationToken);
+
         return new AcceptedMembership(
             invitation.OrganizationId,
             acceptingUserId,
@@ -191,6 +218,94 @@ public partial class OrganizationService : IOrganizationService
         CancellationToken cancellationToken = default)
     {
         return await _organizationRepository.ListMembershipsForUserAsync(userId, cancellationToken);
+    }
+
+    public async Task<bool> HasActiveMembershipAsync(
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        return await _organizationRepository.UserHasActiveMembershipAsync(userId, cancellationToken);
+    }
+
+    public async Task<OrganizationMembership> SetMembershipStatusAsync(
+        Guid organizationId,
+        Guid memberUserId,
+        MembershipStatus status,
+        CancellationToken cancellationToken = default)
+    {
+        if (status == MembershipStatus.Active)
+        {
+            return await ActivateMembershipAsync(organizationId, memberUserId, cancellationToken);
+        }
+
+        var organization = await _organizationRepository.GetByIdAsync(organizationId, cancellationToken)
+            ?? throw new KeyNotFoundException($"Organization '{organizationId}' not found.");
+
+        if (organization.OwnerUserId == memberUserId)
+        {
+            throw new CannotManageOwnerMembershipException();
+        }
+
+        var membership = await _organizationRepository.GetMembershipAsync(
+            organizationId, memberUserId, cancellationToken)
+            ?? throw new MembershipNotFoundException(organizationId, memberUserId);
+
+        membership.Status = status;
+        await _organizationRepository.UpdateMembershipAsync(membership, cancellationToken);
+
+        _logger.LogInformation(
+            "Membership status updated. organizationId={OrganizationId} userId={UserId} status={Status}",
+            organizationId, memberUserId, status);
+
+        await InvalidateUserCacheAsync(memberUserId, cancellationToken);
+        return membership;
+    }
+
+    public async Task RemoveMembershipAsync(
+        Guid organizationId,
+        Guid memberUserId,
+        CancellationToken cancellationToken = default)
+    {
+        var organization = await _organizationRepository.GetByIdAsync(organizationId, cancellationToken)
+            ?? throw new KeyNotFoundException($"Organization '{organizationId}' not found.");
+
+        if (organization.OwnerUserId == memberUserId)
+        {
+            throw new CannotManageOwnerMembershipException();
+        }
+
+        var membership = await _organizationRepository.GetMembershipAsync(
+            organizationId, memberUserId, cancellationToken)
+            ?? throw new MembershipNotFoundException(organizationId, memberUserId);
+
+        await _organizationRepository.RemoveMembershipAsync(membership, cancellationToken);
+
+        _logger.LogInformation(
+            "Membership removed. organizationId={OrganizationId} userId={UserId}",
+            organizationId, memberUserId);
+
+        await InvalidateUserCacheAsync(memberUserId, cancellationToken);
+    }
+
+    /// <summary>Reactivates a membership (previously suspended or pending).</summary>
+    private async Task<OrganizationMembership> ActivateMembershipAsync(
+        Guid organizationId,
+        Guid memberUserId,
+        CancellationToken cancellationToken)
+    {
+        var membership = await _organizationRepository.GetMembershipAsync(
+            organizationId, memberUserId, cancellationToken)
+            ?? throw new MembershipNotFoundException(organizationId, memberUserId);
+
+        membership.Status = MembershipStatus.Active;
+        await _organizationRepository.UpdateMembershipAsync(membership, cancellationToken);
+
+        _logger.LogInformation(
+            "Membership activated. organizationId={OrganizationId} userId={UserId}",
+            organizationId, memberUserId);
+
+        await InvalidateUserCacheAsync(memberUserId, cancellationToken);
+        return membership;
     }
 
     [GeneratedRegex("[^a-z0-9]+")]

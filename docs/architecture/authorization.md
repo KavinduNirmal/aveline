@@ -12,7 +12,37 @@ to standard ASP.NET role claims and evaluates named permissions server-side.
 
 Team roles and boutique roles are separate namespaces. A team role does not
 grant access to another boutique's resources; tenant-bound enforcement is
-implemented with the organization membership work tracked in issue #52.
+handled by the canonical organization-membership authorization described below.
+
+## Enforcement model
+
+Server-side enforcement sits on top of the role claims:
+
+- **Fallback policy.** `FallbackPolicy = DefaultPolicy` (authentication), so any
+  new endpoint requires a valid bearer token unless it is deliberately marked
+  anonymous (currently only the dev OpenAPI document).
+- **Account-state gate.** `OnboardingMiddleware` rejects `Suspended` accounts with
+  `403 account-suspended` before endpoint execution, and limits
+  `OnboardingPending` accounts to profile/organization/invitation endpoints. The
+  decision uses the locally synchronized read model, not the JWT alone.
+- **Organization scope.** Endpoints that are tenant-bound are declared with the
+  `BoutiqueAccess`-style policy. `OrganizationScopeAuthorizationHandler` resolves
+  the caller from the `sub` claim, the target organization from the
+  `organizationId` route value, and requires an `Active` row in
+  `OrganizationMembership` whose boutique role grants the required permission.
+  A still-valid JWT carrying stale org claims cannot cross organizations.
+- **Membership-change invalidation.** Creating an organization or accepting an
+  invitation invalidates the affected user's cached authorization snapshot so the
+  next request re-syncs from the canonical tables instead of a 24-hour-old cache.
+- **Membership management.** Boutique owners manage members via
+  `POST /orgs/{organizationId}/members/{userId}/suspend|activate` and
+  `DELETE /orgs/{organizationId}/members/{userId}`, guarded by the
+  `settings:manage` org-scoped policy. Suspending or removing a membership
+  invalidates the member's cached state and immediately revokes org-scoped
+  access; the organization owner's own membership is protected server-side.
+- **`/auth/claims`.** Returns the raw Clerk claims plus the authoritative
+  `AccountState`, `UserRole`, and `OrganizationRole` resolved by the middleware
+  read model, for debugging without trusting client-side checks.
 
 ## Permission matrix
 

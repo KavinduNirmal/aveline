@@ -7,8 +7,10 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   createApiClient,
+  registerAccountStateHandler,
   registerAuthTokenGetter,
   registerForbiddenHandler,
+  registerOnboardingStatusHandler,
   registerUnauthorizedHandler,
 } from './api'
 import { ApiError } from './api-error'
@@ -43,6 +45,8 @@ afterEach(() => {
   registerAuthTokenGetter(null)
   registerUnauthorizedHandler(null)
   registerForbiddenHandler(null)
+  registerOnboardingStatusHandler(null)
+  registerAccountStateHandler(null)
 })
 
 describe('request interceptor', () => {
@@ -150,7 +154,6 @@ describe('response interceptor', () => {
   it('triggers onboarding handler when x-completed-onboarding header is present', async () => {
     const client = buildClient()
     let observedOnboarded: boolean | null = null
-    const { registerOnboardingStatusHandler } = await import('./api')
     registerOnboardingStatusHandler((status) => {
       observedOnboarded = status
     })
@@ -165,5 +168,58 @@ describe('response interceptor', () => {
 
     await client.get('/api/v1/users/me')
     expect(observedOnboarded).toBe(false)
+  })
+
+  it('triggers the account-state handler when x-account-state header is present', async () => {
+    const client = buildClient()
+    const observed: string[] = []
+    registerAccountStateHandler((state) => {
+      observed.push(state)
+    })
+
+    client.defaults.adapter = async (config) => ({
+      status: 200,
+      statusText: 'OK',
+      headers: { 'x-account-state': 'OnboardingPending' },
+      config,
+      data: { ok: true },
+    })
+
+    await client.get('/api/v1/users/me')
+    expect(observed).toEqual(['OnboardingPending'])
+  })
+
+  it('passes the RFC 7807 problem type to the forbidden handler', async () => {
+    const client = buildClient()
+    const forbidden: { error?: ApiError } = {}
+    registerForbiddenHandler((error: unknown) => {
+      forbidden.error = error as ApiError
+    })
+    client.defaults.adapter = async (config) => {
+      const response: AxiosResponse = {
+        status: 403,
+        statusText: '',
+        headers: {},
+        config,
+        data: {
+          type: 'https://aveline.app/errors/onboarding-required',
+          title: 'Onboarding Required',
+          status: 403,
+          detail: 'Complete your profile.',
+        },
+      }
+      throw new AxiosError(
+        'Request failed with status code 403',
+        '403',
+        config,
+        null,
+        response,
+      )
+    }
+
+    const error = (await client.get('/api/v1/policies/associate').catch((e: unknown) => e)) as ApiError
+
+    expect(error.type).toBe('https://aveline.app/errors/onboarding-required')
+    expect(forbidden.error?.type).toBe('https://aveline.app/errors/onboarding-required')
   })
 })

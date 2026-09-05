@@ -39,6 +39,7 @@ public class User
     public string? DisplayName { get; set; }
     public string? Address { get; set; }
     public bool HasCompletedOnboarding { get; set; } = false;
+    public AccountState AccountState { get; set; } = AccountState.OnboardingPending;
     public ContactPreferences ContactPreference { get; set; } = ContactPreferences.None;
     public bool PushNotificationsEnabled { get; set; } = false;
     public bool IsActive { get; set; } = true;

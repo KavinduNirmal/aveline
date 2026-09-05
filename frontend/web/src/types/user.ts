@@ -1,5 +1,7 @@
 export type ContactPreferences = 'Email' | 'Phone' | 'SMS' | 'WhatsApp' | 'None'
 
+export type AccountState = 'OnboardingPending' | 'Active' | 'Suspended'
+
 export interface UserDto {
   id: string
   clerkId: string
@@ -15,6 +17,7 @@ export interface UserDto {
   organizationRole: string
   organizationId: string
   hasCompletedOnboarding: boolean
+  accountState: AccountState
   contactPreference: ContactPreferences
   pushNotificationsEnabled: boolean
   isActive: boolean

@@ -12,6 +12,9 @@ class UserProvider extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
   bool get hasCompletedOnboarding => _user?.hasCompletedOnboarding ?? false;
+  AvelineAccountState? get accountState => _user?.accountState;
+  bool get isAccountActive =>
+      _user?.accountState == AvelineAccountState.active;
 
   void setUser(AvelineUser? user) {
     _user = user;
@@ -90,5 +93,45 @@ class UserProvider extends ChangeNotifier {
       _isLoading = false;
       notifyListeners();
     }
+  }
+
+  /// Accepts an invitation code (staff join flow), then refreshes the profile
+  /// so the account state reflects the new active membership.
+  Future<void> acceptInvitationCode(Dio dio, {required String code}) async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final response = await dio.post(
+        '/api/v1/invitations/accept',
+        data: {'code': code.trim()},
+      );
+      if (response.statusCode != 200) {
+        throw Exception('Unable to accept the invitation.');
+      }
+    } on DioException catch (e) {
+      _errorMessage = _invitationErrorMessage(e);
+      rethrow;
+    } catch (e) {
+      _errorMessage = e.toString();
+      rethrow;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+
+    await fetchUser(dio);
+  }
+
+  String _invitationErrorMessage(DioException e) {
+    final data = e.response?.data;
+    if (data is Map<String, dynamic>) {
+      final detail = data['detail'] ?? data['message'];
+      if (detail is String && detail.isNotEmpty) {
+        return detail;
+      }
+    }
+    return e.message ?? 'Unable to accept the invitation.';
   }
 }

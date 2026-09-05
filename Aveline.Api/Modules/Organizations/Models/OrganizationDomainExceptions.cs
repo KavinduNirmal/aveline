@@ -44,3 +44,21 @@ public class MembershipAlreadyExistsException : InvalidOperationException
     {
     }
 }
+
+/// <summary>Raised when a membership is not found for the organization/user pair.</summary>
+public class MembershipNotFoundException : KeyNotFoundException
+{
+    public MembershipNotFoundException(Guid organizationId, Guid userId)
+        : base($"No membership found for user '{userId}' in organization '{organizationId}'.")
+    {
+    }
+}
+
+/// <summary>Raised when a caller tries to suspend or remove an organization owner.</summary>
+public class CannotManageOwnerMembershipException : InvalidOperationException
+{
+    public CannotManageOwnerMembershipException()
+        : base("The organization owner's membership cannot be suspended or removed.")
+    {
+    }
+}

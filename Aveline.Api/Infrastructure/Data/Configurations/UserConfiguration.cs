@@ -55,6 +55,11 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
             .IsRequired()
             .HasDefaultValue(false);
 
+        builder.Property(u => u.AccountState)
+            .HasConversion<string>()
+            .HasMaxLength(20)
+            .HasDefaultValue(AccountState.OnboardingPending);
+
         builder.Property(u => u.IsActive)
             .IsRequired()
             .HasDefaultValue(true);

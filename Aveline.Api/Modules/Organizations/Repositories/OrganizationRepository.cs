@@ -70,6 +70,24 @@ public class OrganizationRepository : IOrganizationRepository
         return membership;
     }
 
+    public async Task<OrganizationMembership> UpdateMembershipAsync(
+        OrganizationMembership membership,
+        CancellationToken cancellationToken = default)
+    {
+        membership.UpdatedAt = DateTime.UtcNow;
+        _context.OrganizationMemberships.Update(membership);
+        await _context.SaveChangesAsync(cancellationToken);
+        return membership;
+    }
+
+    public async Task RemoveMembershipAsync(
+        OrganizationMembership membership,
+        CancellationToken cancellationToken = default)
+    {
+        _context.OrganizationMemberships.Remove(membership);
+        await _context.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlyList<OrganizationMembership>> ListMembershipsForUserAsync(
         Guid userId,
         CancellationToken cancellationToken = default)
@@ -79,6 +97,17 @@ public class OrganizationRepository : IOrganizationRepository
             .Where(m => m.UserId == userId)
             .OrderByDescending(m => m.CreatedAt)
             .ToListAsync(cancellationToken);
+    }
+
+    public async Task<bool> UserHasActiveMembershipAsync(
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        return await _context.OrganizationMemberships
+            .AsNoTracking()
+            .AnyAsync(
+                m => m.UserId == userId && m.Status == MembershipStatus.Active,
+                cancellationToken);
     }
 
     public async Task<IReadOnlyList<OrganizationMembership>> ListMembershipsForOrganizationAsync(

@@ -118,7 +118,7 @@ public class FullAuthFlowIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task ValidToken_FullFlow_AgentReceivesInternalToken_IdentityPropagated()
     {
-        var token = CreateToken("user_123", userRole: "associate", orgRole: "org:admin");
+        var token = CreateToken("user_123", userRole: "staff", orgRole: "org:boutique_supervisor");
 
         // Complete onboarding first so onboarding gate permits downstream access
         var onboardingReq = new HttpRequestMessage(HttpMethod.Post, "/api/v1/users/onboarding")
@@ -148,7 +148,7 @@ public class FullAuthFlowIntegrationTests : IAsyncLifetime
         var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
         Assert.Equal("user_123", body.GetProperty("userId").GetString());
         var roles = body.GetProperty("roles").EnumerateArray().Select(r => r.GetString()).ToArray();
-        Assert.Equal(new[] { "associate", "org:admin" }, roles);
+        Assert.Equal(new[] { "staff", "org:boutique_supervisor" }, roles);
     }
 
     [Fact]

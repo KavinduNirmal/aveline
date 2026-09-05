@@ -20,18 +20,14 @@ public static class AuthorizationConfiguration
         services.AddAuthorization(options =>
         {
             // Role-based policies.
-            options.AddPolicy(AssociatesPolicy, p => p.RequireRole(
-                Roles.Associate, Roles.Manager, Roles.Owner,
-                Roles.OrgAssociate, Roles.OrgManager, Roles.OrgOwner, Roles.OrgAdmin, Roles.OrgMember));
+            options.AddPolicy(AssociatesPolicy, p => p.RequireRole(Roles.StaffAccess));
 
-            options.AddPolicy(ManagersPolicy, p => p.RequireRole(
-                Roles.Manager, Roles.Owner, Roles.OrgManager, Roles.OrgOwner, Roles.OrgAdmin));
+            options.AddPolicy(ManagersPolicy, p => p.RequireRole(Roles.ManagementAccess));
 
-            options.AddPolicy(OwnersPolicy, p => p.RequireRole(
-                Roles.Owner, Roles.OrgOwner));
+            options.AddPolicy(OwnersPolicy, p => p.RequireRole(Roles.OwnershipAccess));
 
             // Permission-based policies (one per permission in the catalog).
-            foreach (var permission in Permissions.PermissionRoles.Keys)
+            foreach (var permission in Permissions.All)
             {
                 options.AddPolicy(permission, p => p.Requirements.Add(new PermissionRequirement(permission)));
             }

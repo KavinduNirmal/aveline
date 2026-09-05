@@ -20,22 +20,22 @@ public class RoleClaimNormalizerTests
     {
         var principal = PrincipalWith(
             new Claim("sub", "user_123"),
-            new Claim("user_role", "associate"),
-            new Claim("org_role", "org:admin"));
+            new Claim("user_role", "staff"),
+            new Claim("org_role", "org:boutique_supervisor"));
 
         RoleClaimNormalizer.PromoteRoleClaims(principal);
 
-        Assert.Equal(new[] { "associate", "org:admin" }, PromotedRoles(principal));
+        Assert.Equal(new[] { "staff", "org:boutique_supervisor" }, PromotedRoles(principal));
     }
 
     [Fact]
     public void Promotes_Only_When_RoleClaim_Present()
     {
-        var principal = PrincipalWith(new Claim("user_role", "manager"));
+        var principal = PrincipalWith(new Claim("user_role", "admin"));
 
         RoleClaimNormalizer.PromoteRoleClaims(principal);
 
-        Assert.Equal(new[] { "manager" }, PromotedRoles(principal));
+        Assert.Equal(new[] { "admin" }, PromotedRoles(principal));
     }
 
     [Fact]
@@ -63,12 +63,12 @@ public class RoleClaimNormalizerTests
     public void Existing_RoleClaim_Is_Not_Duplicated()
     {
         var principal = PrincipalWith(
-            new Claim(ClaimTypes.Role, "manager"),
-            new Claim("user_role", "associate"));
+            new Claim(ClaimTypes.Role, "admin"),
+            new Claim("user_role", "staff"));
 
         RoleClaimNormalizer.PromoteRoleClaims(principal);
 
-        Assert.Equal(new[] { "manager", "associate" }, PromotedRoles(principal));
+        Assert.Equal(new[] { "admin", "staff" }, PromotedRoles(principal));
     }
 
     [Fact]
@@ -79,6 +79,16 @@ public class RoleClaimNormalizerTests
         RoleClaimNormalizer.PromoteRoleClaims(principal);
 
         Assert.Empty(PromotedRoles(principal));
+    }
+
+    [Fact]
+    public void Promotes_RoleClaims_AsLowercaseCanonicalValues()
+    {
+        var principal = PrincipalWith(new Claim("org_role", "ORG:BOUTIQUE_OWNER"));
+
+        RoleClaimNormalizer.PromoteRoleClaims(principal);
+
+        Assert.Equal(new[] { "org:boutique_owner" }, PromotedRoles(principal));
     }
 
     [Fact]

@@ -31,7 +31,7 @@ describe('UserContext and Onboarding Data Types', () => {
       address: 'Colombo 03',
       profileImageUrl: 'https://img.clerk.com/avatar.png',
       userRole: 'owner',
-      organizationRole: 'org:admin',
+      organizationRole: 'org:boutique_supervisor',
       organizationId: 'org_123',
       hasCompletedOnboarding: true,
       contactPreference: 'WhatsApp',
@@ -42,7 +42,7 @@ describe('UserContext and Onboarding Data Types', () => {
     }
 
     expect(userDto.hasCompletedOnboarding).toBe(true)
-    expect(userDto.organizationRole).toBe('org:admin')
+    expect(userDto.organizationRole).toBe('org:boutique_supervisor')
     expect(userDto.userRole).toBe('owner')
   })
 })

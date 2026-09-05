@@ -650,3 +650,11 @@ Elegant public landing page + supporting pages (web only):
 - **Nav/Footer** (`SiteNav`, `SiteFooter`, `SitePage`, `Reveal`/`AuroraField`): sticky glass nav with Features anchor + Contact/Plans/Docs routes and Sign in / Create account / Download app; dashed-border footer.
 - **Pages**: `PlansPage` (Starter/Boutique/Atelier placeholders), `ContactPage` (mailto/WhatsApp/location, enterprise sales), `DocsPage` (hand-written guide), `DownloadPage` (iOS coming soon; Android APK → GitHub Releases latest).
 - Verified web: `tsc`, oxlint clean, Vitest 35, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #61): landing design pass
+
+Design feedback round on the landing page:
+- **Animated backgrounds**: new `AuroraField` — richer gradient aurora blobs (rose/lavender/coral/gold radial meshes) drifting with motion, plus 14 floating `Blossom` SVGs; used behind hero, features, agents, how-it-works, enterprise and CTA sections (reduced-motion safe).
+- **Three specialists joined**: Ava/Elle/Lina now render as one connected band — single container with only outer corners rounded (`rounded-[2.5rem]`, overflow hidden), dashed dividers between cells, per-agent pastel gradient tint + bigger serif names (`text-3xl/4xl`), icons (Heart/Eye/Coins) in tinted chips, larger statements/bullets.
+- **How it works**: each step now has an illustrated "image" panel (gradient art with drifting blossoms + step number + icon medallion) and per-step staggered scroll animations; hero/CTA button heights normalised.
+- Verified web `tsc`, oxlint, Vitest 35, `vite build`.

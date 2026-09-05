@@ -33,14 +33,15 @@ public class UserServiceTests
         _dbContext = new AppDbContext(dbOptions);
         _userRepository = new UserRepository(_dbContext);
 
-        var orgRepository = new OrganizationRepository(_dbContext);
-        var invitationRepository = new InvitationRepository(_dbContext);
-        _organizationService = new OrganizationService(
-            orgRepository, invitationRepository, NullLogger<OrganizationService>.Instance);
-
         var memCacheOptions = Options.Create(new MemoryDistributedCacheOptions());
         var distCache = new MemoryDistributedCache(memCacheOptions);
         _cacheService = new UserCacheService(distCache, NullLogger<UserCacheService>.Instance);
+
+        var orgRepository = new OrganizationRepository(_dbContext);
+        var invitationRepository = new InvitationRepository(_dbContext);
+        _organizationService = new OrganizationService(
+            orgRepository, invitationRepository, _userRepository, _cacheService,
+            NullLogger<OrganizationService>.Instance);
 
         _sut = new UserService(_userRepository, _cacheService, _organizationService, NullLogger<UserService>.Instance);
     }

@@ -578,3 +578,15 @@ Added the missing E2E (HTTP-level, via WebApplicationFactory) coverage in `Organ
 - **Expired invite**: accept of a past-`ExpiresAt` code → 400 "expired"; account stays pending (no memberships, business endpoints still 403 `onboarding-required`).
 - **Suspended access**: a suspended account is rejected with 403 `account-suspended` on business endpoints AND on `/users/me` (no authenticated access at all).
 Full .NET suite now **118 passed**. Combined with the earlier integration tests this closes issue #51 item 7's checklist (owner creation, staff pending, invite acceptance, activation, replayed/expired, suspended access) at the API level, matching the repo's E2E convention (no browser harness in the monorepo).
+
+### New session (branch `feature/52-account-org-authorization`): Issue #52 — enforce account state + org scope in authorization (slice 1)
+
+Opened PR #55 for the #51 work, then started #52 on a fresh branch. Slice 1 delivered server-side enforcement:
+
+- **Fallback policy (item 4)**: `AuthorizationConfiguration` sets `FallbackPolicy = DefaultPolicy` so new endpoints require authentication unless marked anonymous; dev OpenAPI is `AllowAnonymous`. Verified by a deliberately unannotated demo endpoint (401 without token, 200 with an active account).
+- **Tenant scope (items 2/3/6)**: new `OrganizationScopeRequirement` + `OrganizationScopeAuthorizationHandler` resolve the caller via `sub` and the target org via the `organizationId` route value, requiring an `Active` canonical `OrganizationMembership` whose `BoutiqueRole` grants the permission (`BoutiqueAccessPolicy` = `catalog:view`). `IHttpContextAccessor` + handler registered; demo endpoint `GET /api/v1/policies/orgs/{organizationId}/catalog`. Cross-org calls with a valid JWT are denied (test).
+- **Suspended pre-execution denial (item 1)**: verified at the scoped endpoint (active membership + suspended account → 403 `account-suspended` before the handler runs), on top of the #51 middleware gate.
+- **Cache invalidation (item 5)**: `OrganizationService` now depends on `IUserRepository` + `IUserCacheService` and invalidates the user's cached authorization snapshot after org creation and invitation acceptance (service-level stale-cache test).
+- **`/auth/claims` (item 7)**: returns authoritative `AccountState`/`UserRole`/`OrganizationRole` from the middleware read model in an `Account` object.
+- **Docs**: `docs/architecture/authorization.md` gained an Enforcement model section. Full .NET suite **124 passing**.
+- Remaining for #52 (later slices): membership removal/suspend endpoints + revocation invalidation, converting demo scoped policy usage into real feature endpoints, and deeper resource handlers/tests.

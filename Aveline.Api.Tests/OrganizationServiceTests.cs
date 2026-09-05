@@ -1,11 +1,16 @@
 using Aveline.Api.Authorization;
+using Aveline.Api.Infrastructure.Caching;
 using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Organizations.Repositories;
 using Aveline.Api.Modules.Organizations.Services;
 using Aveline.Api.Modules.Shared.Models;
+using Aveline.Api.Modules.Shared.Repositories;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace Aveline.Api.Tests;
 
@@ -13,6 +18,7 @@ public class OrganizationServiceTests
 {
     private readonly AppDbContext _context;
     private readonly OrganizationService _sut;
+    private readonly IUserCacheService _cacheService;
 
     public OrganizationServiceTests()
     {
@@ -21,9 +27,14 @@ public class OrganizationServiceTests
             .Options;
 
         _context = new AppDbContext(options);
+        var memCacheOptions = Options.Create(new MemoryDistributedCacheOptions());
+        var distCache = new MemoryDistributedCache(memCacheOptions);
+        _cacheService = new UserCacheService(distCache, NullLogger<UserCacheService>.Instance);
         _sut = new OrganizationService(
             new OrganizationRepository(_context),
             new InvitationRepository(_context),
+            new UserRepository(_context),
+            _cacheService,
             NullLogger<OrganizationService>.Instance);
     }
 
@@ -252,5 +263,35 @@ public class OrganizationServiceTests
 
         await Assert.ThrowsAsync<MembershipAlreadyExistsException>(() =>
             _sut.AcceptInvitationAsync(invite.Code, staff.Id, staff.Email));
+    }
+
+    [Fact]
+    public async Task AcceptInvitationAsync_InvalidatesStaleCachedUserState()
+    {
+        var owner = await AddUserAsync("clerk_owner_inv", "owner.inv@aveline.lk");
+        var staff = await AddUserAsync("clerk_staff_inv", "staff.inv@aveline.lk");
+        var organization = await _sut.CreateOrganizationAsync(owner.Id, "Cache Invalidation", null);
+
+        var invite = await _sut.InviteMemberAsync(
+            organization.Id, owner.Id,
+            new InviteMemberRequest(Roles.BoutiqueStaff, RecipientEmail: staff.Email));
+
+        // Simulate a stale 24h snapshot: pending even though the membership is about to exist.
+        await _cacheService.SetUserAsync("clerk_staff_inv", new UserOnboardingCacheItem
+        {
+            Id = staff.Id,
+            ClerkId = staff.ClerkId,
+            HasCompletedOnboarding = true,
+            Email = staff.Email,
+            FirstName = "Test",
+            LastName = "User",
+            UserRole = Roles.Staff,
+            OrganizationRole = string.Empty,
+        });
+
+        await _sut.AcceptInvitationAsync(invite.Code, staff.Id, staff.Email);
+
+        // The stale snapshot must be invalidated so the next request re-syncs to Active.
+        Assert.Null(await _cacheService.GetUserAsync("clerk_staff_inv"));
     }
 }

@@ -52,4 +52,17 @@ public interface IOrganizationService
     Task<bool> HasActiveMembershipAsync(
         Guid userId,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Changes a member's membership status (suspend/reactivate) and invalidates their cached state.</summary>
+    Task<OrganizationMembership> SetMembershipStatusAsync(
+        Guid organizationId,
+        Guid memberUserId,
+        MembershipStatus status,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Removes a member's membership and invalidates their cached state.</summary>
+    Task RemoveMembershipAsync(
+        Guid organizationId,
+        Guid memberUserId,
+        CancellationToken cancellationToken = default);
 }

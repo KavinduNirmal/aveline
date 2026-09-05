@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Aveline.Api.Configurations;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Organizations.Services;
 using Aveline.Api.Modules.Shared.Models;
@@ -93,6 +94,68 @@ public static class OrganizationEndpoints
                 m.Status,
             }));
         }).RequireAuthorization();
+
+        // Membership management (boutique owners only — org-scoped settings:manage).
+        orgGroup.MapPost("/{organizationId:guid}/members/{userId:guid}/suspend", async (
+            Guid organizationId,
+            Guid userId,
+            IOrganizationService organizationService,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                var membership = await organizationService.SetMembershipStatusAsync(
+                    organizationId, userId, MembershipStatus.Suspended, ct);
+                return Results.Ok(new { membership.OrganizationId, membership.UserId, membership.BoutiqueRole, membership.Status });
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound(new { message = "Organization or membership not found." });
+            }
+            catch (CannotManageOwnerMembershipException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueMembershipManagePolicy);
+
+        orgGroup.MapPost("/{organizationId:guid}/members/{userId:guid}/activate", async (
+            Guid organizationId,
+            Guid userId,
+            IOrganizationService organizationService,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                var membership = await organizationService.SetMembershipStatusAsync(
+                    organizationId, userId, MembershipStatus.Active, ct);
+                return Results.Ok(new { membership.OrganizationId, membership.UserId, membership.BoutiqueRole, membership.Status });
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound(new { message = "Organization or membership not found." });
+            }
+        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueMembershipManagePolicy);
+
+        orgGroup.MapDelete("/{organizationId:guid}/members/{userId:guid}", async (
+            Guid organizationId,
+            Guid userId,
+            IOrganizationService organizationService,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                await organizationService.RemoveMembershipAsync(organizationId, userId, ct);
+                return Results.NoContent();
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound(new { message = "Organization or membership not found." });
+            }
+            catch (CannotManageOwnerMembershipException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueMembershipManagePolicy);
 
         var inviteGroup = endpoints.MapGroup("/invitations");
 

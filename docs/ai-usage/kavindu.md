@@ -800,3 +800,38 @@ Design feedback round on the landing page:
 - `bun run lint`: oxlint verified with zero errors.
 
 
+
+## Session 2026-09-07
+
+**Task:** Complete overhaul of the `/plans` pricing page (`PlansPage.tsx`)
+**Tool used:** Antigravity AI Assistant
+
+### Work Planned / Performed
+
+- Read `docs/architecture/pricing_plan.md` in full to map the four tiers (Seed, Bloom, Orchid, Rose), the Blossom credit system, Flower Pack top-ups, billing rules, and brand positioning guidelines.
+- Reviewed current `PlansPage.tsx` (old placeholder with three outdated, USD-priced tiers).
+- Completely rewrote `frontend/web/src/routes/PlansPage.tsx` (827 lines) with the following structure:
+
+**New sections:**
+1. **Hero** — Updated copy from pricing_plan.md ("Every boutique starts as a seed"), monthly/annual billing toggle with animated switch (2 months free label).
+2. **Tier Cards** — Four cards: Seed (Free), Bloom (LKR 3,500/mo), Orchid (LKR 9,000/mo), Rose (LKR 20,000/mo). Each card has an animated `Blossom` medallion with per-tier colour, scale limits (Blossoms/Staff/Customers), and feature list.
+3. **Blossom System Explainer** — Editorial two-column layout: animated large Blossom medallion + copy explaining the abstraction concept. Includes a visual mini workflow diagram ("Find something for Maya" → approx 3.7 Blossoms).
+4. **Comparison Table** — Full feature matrix for all four tiers (13 rows covering all features).
+5. **Blossom Packs** — Three top-up packs (100/500/1,000 Blossoms) in a decorative bordered panel.
+6. **FAQ Accordion** — 12 questions with AnimatePresence height animations, accessible ARIA attributes.
+7. **Enterprise Banner** — Dark section with radial gradient, for multi-branch / custom pricing.
+
+### Files Modified
+- `frontend/web/src/routes/PlansPage.tsx` — Full rewrite.
+- `docs/ai-usage/kavindu.md` — This entry.
+
+### Architectural Decisions
+- Re-used existing design tokens (text-commerce, text-memory, text-visual, text-lavender) for per-tier colour theming.
+- Re-used Blossom component with animateCounter and staggered counterDuration per tier.
+- Re-used AuroraField, Reveal, CtaArrow, Button, SitePage — no new abstractions introduced.
+- Annual pricing shown as approximate monthly equivalent (10 months price / 12 months service), consistent with pricing_plan.md.
+- Feature values typed as boolean or string literals with colour-coded badges in the comparison table.
+
+### Verification Performed
+- bunx tsc --noEmit: Only pre-existing baseUrl deprecation warning; zero errors in PlansPage.tsx.
+- File written successfully, 827 lines.

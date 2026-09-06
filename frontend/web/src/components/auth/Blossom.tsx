@@ -42,8 +42,10 @@ import type { CSSProperties } from 'react'
  * 8-petal blossom composed of two 4-petal layers (base at 0, 90, 180, 270 deg;
  * top layer at 45, 135, 225, 315 deg).
  *
- * Supports optional counter-rotation (`animateCounter`) which smoothly spins
- * the base layer clockwise and the top layer counter-clockwise.
+ * Supports optional counter-sway (`animateCounter`) which gently rocks the base
+ * layer clockwise and the top layer counter-clockwise. The sway is intentionally
+ * kept within ±12 deg so the two layers never fully overlap and collapse to 4
+ * visible petals.
  */
 export function Blossom({
   className,
@@ -55,9 +57,9 @@ export function Blossom({
   className?: string
   style?: CSSProperties
   petalClassName?: string
-  /** If true, rotates base and top layers in opposite directions */
+  /** If true, gently sways base and top layers in opposite directions */
   animateCounter?: boolean
-  /** Duration in seconds for a full rotation loop */
+  /** Duration in seconds for one full sway cycle */
   counterDuration?: number
 }) {
   const baseAngles = [0, 90, 180, 270]
@@ -74,27 +76,29 @@ export function Blossom({
       <defs>
         {animateCounter && (
           <style>{`
-            @keyframes aveline-spin-base {
-              0% { transform: rotate(0deg); }
-              42% { transform: rotate(14deg); }
-              78% { transform: rotate(-10deg); }
+            @keyframes aveline-sway-base {
+              0%   { transform: rotate(0deg); }
+              25%  { transform: rotate(12deg); }
+              50%  { transform: rotate(0deg); }
+              75%  { transform: rotate(-12deg); }
               100% { transform: rotate(0deg); }
             }
-            @keyframes aveline-spin-top {
-              0% { transform: rotate(0deg); }
-              48% { transform: rotate(-15deg); }
-              82% { transform: rotate(8deg); }
+            @keyframes aveline-sway-top {
+              0%   { transform: rotate(0deg); }
+              25%  { transform: rotate(-10deg); }
+              50%  { transform: rotate(0deg); }
+              75%  { transform: rotate(10deg); }
               100% { transform: rotate(0deg); }
             }
             .aveline-petal-layer-base {
               transform-origin: 12px 12px;
-              animation: aveline-spin-base ${counterDuration}s ease-in-out infinite;
-              animation-delay: -${(counterDuration * 0.35).toFixed(1)}s;
+              animation: aveline-sway-base ${counterDuration}s ease-in-out infinite;
+              animation-delay: -${(counterDuration * 0.25).toFixed(1)}s;
             }
             .aveline-petal-layer-top {
               transform-origin: 12px 12px;
-              animation: aveline-spin-top ${counterDuration * 1.25}s ease-in-out infinite;
-              animation-delay: -${(counterDuration * 0.85).toFixed(1)}s;
+              animation: aveline-sway-top ${counterDuration}s ease-in-out infinite;
+              animation-delay: 0s;
             }
           `}</style>
         )}

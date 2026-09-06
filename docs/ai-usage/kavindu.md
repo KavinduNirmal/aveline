@@ -924,3 +924,76 @@ Design feedback round on the landing page:
 - `bun run lint`: Oxlint ran across 76 files with 0 errors.
 - `bun run test`: Vitest test suite executed and passed 35/35 tests across 4 test files.
 - `pytest tests/ --cov=app --cov-report=term --cov-fail-under=90`: Executed in isolated Python environment with `requirements-dev.txt` dependencies — 9 passed, 97.14% coverage (exceeding the 90% threshold).
+
+## Session 2026-09-07
+
+**Task:** Blossom Usage Tracking & Recording Infrastructure (Issue #67, branch `feature/67-blossom-usage-tracking`)
+**Tool used:** Antigravity AI Assistant
+
+### Summary of Activities
+
+- Architected and implemented the recording, monitoring, and auditing infrastructure for the Blossom credit system based on `docs/architecture/pricing_plan.md`.
+- Documented key architectural decisions in `docs/ADR/ADR-010-usage-tracking-architecture.md`:
+  - Two-table persistence pattern: append-only `ai_usage_records` audit log and mutable `usage_accounts` period ledger.
+  - Usage recording strictly owned by .NET API (source of truth), communicating via `httpx` async calls with `X-Internal-Token` header (inter-service auth per ADR-009) until future gRPC migration.
+  - Blossom normalization formula: `ceil((input + output + cached) / 1000, 1 dp)`, minimum `0.1` Blossom.
+  - Active customer definition: 90-day interaction window.
+  - Enforcement explicitly deferred to future subscription/payment slice.
+- Implemented `Aveline.Api/Modules/Billing/`:
+  - `PlanTier.cs`: String-serialized enum defining subscription tiers (`Seed`, `Bloom`, `Orchid`, `Rose`, `Enterprise`) via `JsonStringEnumConverter`.
+  - `AiUsageRecord.cs`: Immutable entity capturing workflow token usage, provider, model, USD cost, and server-calculated Blossom units.
+  - `UsageAccount.cs`: Mutable billing period ledger tracking `MonthlyBlossomLimit`, `BlossomUsed`, and `BlossomRemaining`.
+  - `BillingDomainExceptions.cs`: Domain-level validation exceptions.
+  - `IUsageRepository.cs` and `UsageRepository.cs`: Persistence abstraction executing atomic record persistence and ledger increment (with relational and in-memory test compatibility).
+  - `IUsageTrackerService.cs` and `UsageTrackerService.cs`: Domain service encapsulating the Blossom normalization formula, validation, structured logging, and configurable abnormal cost alerting (`[ABNORMAL_USAGE]`).
+  - `UsageEndpoints.cs`: Minimal API endpoints (`/internal/usage/record`, `/internal/usage/summary/{orgId}`, `/internal/usage/records/{orgId}`).
+  - `BillingModule.cs`: DI and routing module registration.
+- Configured EF Core in `Aveline.Api`:
+  - Added `DbSet<AiUsageRecord>` and `DbSet<UsageAccount>` to `AppDbContext.cs`.
+  - Added `BillingConfigurations.cs` configuring precision, indexes, and unique constraints.
+  - Created `InternalTokenAuthenticationHandler.cs` and registered `InternalServicePolicy` in `AuthorizationConfiguration.cs` and `AuthenticationConfiguration.cs`.
+  - Updated `OnboardingMiddleware.cs` to bypass internal `/internal/` service routes.
+  - Registered `BillingModule` in `Program.cs`.
+- Implemented in `agnet-service/`:
+  - Added `api_base_url` to `app/core/config.py`.
+  - Created `app/services/usage_reporter.py` async client reporting token usage to `/internal/usage/record` with `X-Internal-Token`.
+  - Authored `tests/test_usage_reporter.py` covering successful submission, custom client injection, HTTP status errors, and network errors using `respx`.
+- Created unit and integration test suite in `Aveline.Api.Tests`:
+  - `UsageTrackerServiceTests.cs`: Verified Blossom calculation formula across edge cases, invalid request validation, abnormal cost alerting log verification, and summary retrieval.
+  - `UsageEndpointsIntegrationTests.cs`: Verified unauthorized responses on missing/invalid internal tokens, successful record creation, ledger decrement, summary query, and paginated records query.
+
+### Files Created or Modified
+
+- `docs/ADR/ADR-010-usage-tracking-architecture.md` [NEW]
+- `docs/ADR/README.md` [MODIFY]
+- `Aveline.Api/Modules/Billing/Models/PlanTier.cs` [NEW]
+- `Aveline.Api/Modules/Billing/Models/AiUsageRecord.cs` [NEW]
+- `Aveline.Api/Modules/Billing/Models/UsageAccount.cs` [NEW]
+- `Aveline.Api/Modules/Billing/Models/BillingDomainExceptions.cs` [NEW]
+- `Aveline.Api/Modules/Billing/Services/IUsageTrackerService.cs` [NEW]
+- `Aveline.Api/Modules/Billing/Services/UsageTrackerService.cs` [NEW]
+- `Aveline.Api/Modules/Billing/Repositories/IUsageRepository.cs` [NEW]
+- `Aveline.Api/Modules/Billing/Repositories/UsageRepository.cs` [NEW]
+- `Aveline.Api/Modules/Billing/Endpoints/UsageEndpoints.cs` [NEW]
+- `Aveline.Api/Modules/Billing/BillingModule.cs` [NEW]
+- `Aveline.Api/Infrastructure/Data/Configurations/BillingConfigurations.cs` [NEW]
+- `Aveline.Api/Infrastructure/Integrations/InternalTokenAuthenticationHandler.cs` [NEW]
+- `Aveline.Api/Infrastructure/Data/AppDbContext.cs` [MODIFY]
+- `Aveline.Api/Configurations/AuthenticationConfiguration.cs` [MODIFY]
+- `Aveline.Api/Configurations/AuthorizationConfiguration.cs` [MODIFY]
+- `Aveline.Api/Common/Middleware/OnboardingMiddleware.cs` [MODIFY]
+- `Aveline.Api/Program.cs` [MODIFY]
+- `agnet-service/app/core/config.py` [MODIFY]
+- `agnet-service/app/services/usage_reporter.py` [NEW]
+- `agnet-service/tests/test_usage_reporter.py` [NEW]
+- `Aveline.Api.Tests/UsageTrackerServiceTests.cs` [NEW]
+- `Aveline.Api.Tests/UsageEndpointsIntegrationTests.cs` [NEW]
+- `docs/ai-usage/kavindu.md` [MODIFY]
+
+### Verification Performed
+
+- `dotnet build Aveline.Api`: Succeeded with 0 warnings, 0 errors.
+- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj`: All 153 tests passed (16 new billing unit and integration tests + 137 existing tests).
+- Verified EF Core migration skip as requested (database not running locally; migrations will be generated when database is accessible).
+- Formatted Python import blocks across `agnet-service/app/services/usage_reporter.py` and `agnet-service/tests/test_usage_reporter.py` to satisfy ruff rule `I001`.
+

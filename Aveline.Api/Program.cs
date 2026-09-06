@@ -4,6 +4,7 @@ using Aveline.Api.Endpoints;
 using Aveline.Api.Infrastructure.Caching;
 using Aveline.Api.Modules.Admin.Repositories;
 using Aveline.Api.Modules.Admin.Services;
+using Aveline.Api.Modules.Billing;
 using Aveline.Api.Modules.Organizations.Repositories;
 using Aveline.Api.Modules.Organizations.Services;
 using Aveline.Api.Modules.Shared.Repositories;
@@ -24,6 +25,7 @@ builder.Services.AddAvelineAuthorization();
 builder.Services.AddAvelineCors(builder.Configuration);
 builder.Services.AddAgentServiceClient(builder.Configuration);
 builder.Services.AddClerkAdminClient();
+builder.Services.AddBillingModule();
 
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IUserCacheService, UserCacheService>();
@@ -58,6 +60,8 @@ v1.MapAgentEndpoints();
 v1.MapUserEndpoints();
 v1.MapAdminEndpoints();
 v1.MapOrganizationEndpoints();
+
+app.MapBillingEndpoints();
 
 app.Run();
 

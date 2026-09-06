@@ -35,6 +35,14 @@ public class OnboardingMiddleware
 
     public async Task InvokeAsync(HttpContext context, IUserService userService)
     {
+        // Internal service calls (e.g. /internal/usage) do not have Clerk user accounts
+        if (context.Request.Path.StartsWithSegments("/internal") ||
+            context.User.IsInRole("InternalService"))
+        {
+            await _next(context);
+            return;
+        }
+
         if (context.User.Identity?.IsAuthenticated != true)
         {
             await _next(context);

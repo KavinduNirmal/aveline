@@ -50,6 +50,22 @@ public class InvitationRepository : IInvitationRepository
         return invitation;
     }
 
+    public async Task<bool> DeleteAsync(
+        Guid invitationId,
+        CancellationToken cancellationToken = default)
+    {
+        var invitation = await _context.OrganizationInvitations
+            .FirstOrDefaultAsync(i => i.Id == invitationId, cancellationToken);
+        if (invitation is null)
+        {
+            return false;
+        }
+
+        _context.OrganizationInvitations.Remove(invitation);
+        await _context.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
     public async Task<IReadOnlyList<OrganizationInvitation>> ListPendingByOrganizationAsync(
         Guid organizationId,
         CancellationToken cancellationToken = default)

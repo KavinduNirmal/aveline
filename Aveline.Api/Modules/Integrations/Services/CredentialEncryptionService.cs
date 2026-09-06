@@ -47,7 +47,7 @@ public sealed class CredentialEncryptionService : ICredentialEncryptionService
         _key = key;
     }
 
-    public string Encrypt(string plaintext)
+    public string Encrypt(string plaintext, string? associatedData = null)
     {
         ArgumentNullException.ThrowIfNull(plaintext);
 
@@ -55,14 +55,15 @@ public sealed class CredentialEncryptionService : ICredentialEncryptionService
         var nonce = RandomNumberGenerator.GetBytes(NonceSizeBytes);
         var ciphertext = new byte[plaintextBytes.Length];
         var tag = new byte[TagSizeBytes];
+        var aad = ToAad(associatedData);
 
         using var aes = new AesGcm(_key, TagSizeBytes);
-        aes.Encrypt(nonce, plaintextBytes, ciphertext, tag);
+        aes.Encrypt(nonce, plaintextBytes, ciphertext, tag, aad);
 
         return $"{Convert.ToHexString(nonce)}:{Convert.ToHexString(tag)}:{Convert.ToHexString(ciphertext)}";
     }
 
-    public string Decrypt(string value)
+    public string Decrypt(string value, string? associatedData = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value);
 
@@ -75,11 +76,22 @@ public sealed class CredentialEncryptionService : ICredentialEncryptionService
         var nonce = Convert.FromHexString(parts[0]);
         var tag = Convert.FromHexString(parts[1]);
         var ciphertext = Convert.FromHexString(parts[2]);
+        var aad = ToAad(associatedData);
 
         var plaintext = new byte[ciphertext.Length];
         using var aes = new AesGcm(_key, TagSizeBytes);
-        aes.Decrypt(nonce, ciphertext, tag, plaintext);
+        aes.Decrypt(nonce, ciphertext, tag, plaintext, aad);
 
         return Encoding.UTF8.GetString(plaintext);
     }
+
+    /// <summary>
+    /// Converts optional associated data to the byte form used by GCM. When no AAD is
+    /// configured the standard empty AAD is used (backward compatible with blobs written
+    /// before AAD binding was introduced).
+    /// </summary>
+    private static byte[] ToAad(string? associatedData) =>
+        string.IsNullOrEmpty(associatedData)
+            ? []
+            : Encoding.UTF8.GetBytes(associatedData);
 }

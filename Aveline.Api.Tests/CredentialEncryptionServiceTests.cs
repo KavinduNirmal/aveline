@@ -101,4 +101,32 @@ public class CredentialEncryptionServiceTests
         var svc = BuildService(Key(1));
         Assert.Throws<FormatException>(() => svc.Decrypt("not-an-encrypted-blob"));
     }
+
+    [Fact]
+    public void Encrypt_WithAad_RoundTrips_OnlyWithSameAad()
+    {
+        var svc = BuildService(Key(5));
+        const string aad = "org-a:WhatsApp";
+
+        var encrypted = svc.Encrypt("very-secret", aad);
+
+        // Correct AAD decrypts; a different/missing AAD must fail (tamper / swapped row).
+        Assert.Equal("very-secret", svc.Decrypt(encrypted, aad));
+        Assert.Throws<System.Security.Cryptography.AuthenticationTagMismatchException>(
+            () => svc.Decrypt(encrypted, "org-b:WhatsApp"));
+        Assert.Throws<System.Security.Cryptography.AuthenticationTagMismatchException>(
+            () => svc.Decrypt(encrypted));
+    }
+
+    [Fact]
+    public void CiphertextBoundToDifferentAad_DoesNotDecrypt_CrossRow()
+    {
+        var svc = BuildService(Key(6));
+
+        var orgACipher = svc.Encrypt("secret-a", "org-a:PaymentGateway");
+
+        // Attempting to read org A's ciphertext as org B must fail even under the same key.
+        Assert.Throws<System.Security.Cryptography.AuthenticationTagMismatchException>(
+            () => svc.Decrypt(orgACipher, "org-b:PaymentGateway"));
+    }
 }

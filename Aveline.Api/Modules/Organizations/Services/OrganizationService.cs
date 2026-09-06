@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Aveline.Api.Authorization;
 using Aveline.Api.Infrastructure.Caching;
+using Aveline.Api.Modules.Organizations.DTOs;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Organizations.Repositories;
 using Aveline.Api.Modules.Shared.Repositories;
@@ -65,7 +66,13 @@ public partial class OrganizationService : IOrganizationService
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
-        slug = string.IsNullOrWhiteSpace(slug) ? ToSlug(name) : slug.Trim();
+        var requested = string.IsNullOrWhiteSpace(slug) ? name : slug;
+        slug = OrgSlug.From(requested);
+        if (string.IsNullOrEmpty(slug))
+        {
+            throw new ArgumentException("The boutique slug must contain letters or numbers.");
+        }
+
         if (await _organizationRepository.ExistsBySlugAsync(slug, cancellationToken))
         {
             throw new OrganizationSlugAlreadyInUseException(slug);
@@ -245,6 +252,54 @@ public partial class OrganizationService : IOrganizationService
         return await _organizationRepository.ListMembershipsForUserAsync(userId, cancellationToken);
     }
 
+    public async Task<OrganizationProfileWithMembershipDto?> GetOrganizationProfileBySlugAsync(
+        string slug,
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        var organization = await _organizationRepository.GetBySlugAsync(slug, cancellationToken);
+        if (organization is null)
+        {
+            return null;
+        }
+
+        var membership = await _organizationRepository.GetMembershipAsync(
+            organization.Id, userId, cancellationToken);
+
+        return new OrganizationProfileWithMembershipDto(
+            Organization: MapProfile(organization),
+            Membership: membership is null ? null : MapMembership(organization, membership));
+    }
+
+    public async Task<OrganizationProfileDto?> GetOrganizationProfileAsync(
+        Guid organizationId,
+        CancellationToken cancellationToken = default)
+    {
+        var organization = await _organizationRepository.GetByIdAsync(organizationId, cancellationToken);
+        return organization is null ? null : MapProfile(organization);
+    }
+
+    private static OrganizationProfileDto MapProfile(Organization org) => new(
+        org.Id,
+        org.Name,
+        org.Slug,
+        org.ClerkOrgId,
+        org.OwnerUserId,
+        org.Address,
+        org.PhoneNumber,
+        org.Description,
+        org.LogoUrl,
+        org.PlanTier,
+        org.HasCompletedOnboarding,
+        org.CreatedAt);
+
+    private static OrganizationMembershipView MapMembership(Organization org, OrganizationMembership m) => new(
+        m.OrganizationId,
+        org.Name,
+        org.Slug,
+        m.BoutiqueRole,
+        m.Status.ToString());
+
     public async Task<IReadOnlyList<OrganizationInvitation>> ListPendingInvitationsAsync(
         Guid organizationId,
         CancellationToken cancellationToken = default)
@@ -368,9 +423,6 @@ public partial class OrganizationService : IOrganizationService
         return membership;
     }
 
-    [GeneratedRegex("[^a-z0-9]+")]
-    private static partial Regex NonAlphanumericRegex();
-
     /// <summary>Resolves an invitation from a code via the transient store, falling back to the durable hash.</summary>
     private async Task<OrganizationInvitation?> ResolveInvitationByCodeAsync(
         string code,
@@ -398,11 +450,5 @@ public partial class OrganizationService : IOrganizationService
             // The Postgres log is authoritative; a leftover code is harmless and TTL-expires.
             _logger.LogWarning(ex, "Could not remove redeemed invitation code from the store. It will TTL-expire.");
         }
-    }
-
-    private static string ToSlug(string name)
-    {
-        var slug = NonAlphanumericRegex().Replace(name.ToLowerInvariant(), "-");
-        return slug.Trim('-');
     }
 }

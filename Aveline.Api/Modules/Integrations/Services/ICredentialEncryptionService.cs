@@ -7,9 +7,18 @@ namespace Aveline.Api.Modules.Integrations.Services;
 /// </summary>
 public interface ICredentialEncryptionService
 {
-    /// <summary>Encrypts plaintext, returning a <c>iv:tag:ciphertext</c> hex string.</summary>
-    string Encrypt(string plaintext);
+    /// <summary>
+    /// Encrypts <paramref name="plaintext"/>, returning an <c>iv:tag:ciphertext</c> hex
+    /// string. When <paramref name="associatedData"/> is supplied it is bound into the GCM
+    /// tag (AAD) so the ciphertext cannot be replayed against a different row context
+    /// (e.g. a different organization or integration type).
+    /// </summary>
+    string Encrypt(string plaintext, string? associatedData = null);
 
-    /// <summary>Decrypts a value previously produced by <see cref="Encrypt"/>.</summary>
-    string Decrypt(string value);
+    /// <summary>
+    /// Decrypts a value previously produced by <see cref="Encrypt(string, string?)"/>.
+    /// The same <paramref name="associatedData"/> used at encryption time must be supplied;
+    /// a mismatch throws, signalling tampering or a swapped blob.
+    /// </summary>
+    string Decrypt(string value, string? associatedData = null);
 }

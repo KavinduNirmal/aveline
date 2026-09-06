@@ -3,13 +3,12 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { RequireAccountState } from './components/RequireAccountState'
-import { RequireAdmin } from './components/RequireAdmin'
 import { UserProvider } from './contexts/UserContext'
 import { AuthApiBridge } from './lib/AuthApiBridge'
 import { Toaster } from './components/ui/sonner'
 import { AdminSignUpPage } from './routes/AdminSignUpPage'
 import { ContactPage } from './routes/ContactPage'
-import { Dashboard } from './routes/Dashboard'
+import { DashboardRedirect } from './routes/Dashboard'
 import { DocsPage } from './routes/DocsPage'
 import { DownloadPage } from './routes/DownloadPage'
 import { ForbiddenPage } from './routes/ForbiddenPage'
@@ -22,6 +21,7 @@ import { RootLayout } from './routes/RootLayout'
 import { SignInPage } from './routes/SignInPage'
 import { SignUpPage } from './routes/SignUpPage'
 import { SuspendedPage } from './routes/SuspendedPage'
+import { TenantDashboard } from './routes/TenantDashboard'
 import { TermsPage } from './routes/TermsPage'
 
 export default function App() {
@@ -43,10 +43,9 @@ export default function App() {
             <Route path="/org-setup" element={<OrgSetupPage />} />
             <Route path="/invite" element={<InvitePage />} />
             <Route element={<RequireAccountState />}>
+              <Route path="/app" element={<DashboardRedirect />} />
+              <Route path="/app/b/:slug" element={<TenantDashboard />} />
               <Route element={<RootLayout />}>
-                <Route element={<RequireAdmin />}>
-                  <Route path="/app" element={<Dashboard />} />
-                </Route>
                 <Route path="/forbidden" element={<ForbiddenPage />} />
               </Route>
             </Route>

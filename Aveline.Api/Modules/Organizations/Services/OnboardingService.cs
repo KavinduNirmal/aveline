@@ -83,7 +83,15 @@ public partial class OnboardingService : IOnboardingService
         var user = await _userRepository.GetByIdAsync(userId, cancellationToken)
             ?? throw new KeyNotFoundException($"User '{userId}' was not found.");
 
-        var slug = string.IsNullOrWhiteSpace(request.Slug) ? ToSlug(request.Name) : request.Slug.Trim();
+        // Normalize the requested slug (or derive it from the name). The result is
+        // always lowercase + alphanumeric/hyphen and capped at the column length, so a
+        // stored slug always matches the case-sensitive by-slug tenant lookup.
+        var requestedSlug = string.IsNullOrWhiteSpace(request.Slug) ? request.Name : request.Slug;
+        var slug = OrgSlug.From(requestedSlug);
+        if (string.IsNullOrEmpty(slug))
+        {
+            slug = OrgSlug.From(request.Name);
+        }
 
         var existingOrg = await _organizationRepository.GetByOwnerUserIdAsync(userId, cancellationToken);
         if (existingOrg is null)
@@ -328,13 +336,4 @@ public partial class OnboardingService : IOnboardingService
         CustomerPreferences: org.CustomerPreferences,
         OnboardingStep: org.OnboardingStep,
         HasCompletedOnboarding: org.HasCompletedOnboarding);
-
-    [GeneratedRegex("[^a-z0-9]+")]
-    private static partial Regex NonAlphanumericRegex();
-
-    private static string ToSlug(string name)
-    {
-        var slug = NonAlphanumericRegex().Replace(name.ToLowerInvariant(), "-");
-        return slug.Trim('-');
-    }
 }

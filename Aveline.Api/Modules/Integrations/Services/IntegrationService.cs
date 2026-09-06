@@ -59,7 +59,8 @@ public sealed class IntegrationService : IIntegrationService
             throw new InvalidIntegrationCredentialsException(type, string.Join(", ", missing));
         }
 
-        var encrypted = _encryption.Encrypt(JsonSerializer.Serialize(normalized));
+        var encrypted = _encryption.Encrypt(
+            JsonSerializer.Serialize(normalized), Aad(organizationId, type));
         await _repository.UpsertAsync(organizationId, type, encrypted, request.Metadata, cancellationToken);
 
         _logger.LogInformation(
@@ -92,7 +93,8 @@ public sealed class IntegrationService : IIntegrationService
     {
         try
         {
-            var json = _encryption.Decrypt(row.EncryptedValue);
+            var json = _encryption.Decrypt(
+                row.EncryptedValue, Aad(row.OrganizationId, row.IntegrationType));
             return JsonSerializer.Deserialize<Dictionary<string, string>>(json);
         }
         catch (Exception)
@@ -115,7 +117,7 @@ public sealed class IntegrationService : IIntegrationService
             throw new IntegrationNotConfiguredException(type);
         }
 
-        var json = _encryption.Decrypt(row.EncryptedValue);
+        var json = _encryption.Decrypt(row.EncryptedValue, Aad(organizationId, type));
         return JsonSerializer.Deserialize<Dictionary<string, string>>(json)
                ?? new Dictionary<string, string>(StringComparer.Ordinal);
     }
@@ -145,6 +147,10 @@ public sealed class IntegrationService : IIntegrationService
             Metadata: metadata,
             UpdatedAt: updatedAt);
     }
+
+    /// <summary>Normalized associated data binding a ciphertext to its owning org + type.</summary>
+    private static string Aad(Guid organizationId, IntegrationType type) =>
+        $"{organizationId}:{type}";
 
     private static Dictionary<string, string> Normalize(IDictionary<string, string> credentials)
     {

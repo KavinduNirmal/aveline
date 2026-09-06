@@ -4,6 +4,7 @@ using Aveline.Api.Configurations;
 using Aveline.Api.Infrastructure.Notifications;
 using Aveline.Api.Modules.Organizations.DTOs;
 using Aveline.Api.Modules.Organizations.Models;
+using Aveline.Api.Modules.Organizations.Repositories;
 using Aveline.Api.Modules.Organizations.Services;
 using Aveline.Api.Modules.Shared.Models;
 using Aveline.Api.Modules.Shared.Services;
@@ -159,10 +160,16 @@ public static class OrganizationEndpoints
 
             try
             {
+                // ClerkOrgId is taken from the authenticated JWT's org claim, never from the
+                // client body. A caller could otherwise bind their boutique to a Clerk org they
+                // do not control, corrupting webhook-driven membership sync.
+                var clerkOrgId = principal.FindFirstValue("org_id")
+                                 ?? principal.FindFirstValue("orgId");
+
                 var organization = await organizationService.CreateOrganizationAsync(
                     profile.Id,
                     request.Name,
-                    request.ClerkOrgId,
+                    string.IsNullOrWhiteSpace(clerkOrgId) ? null : clerkOrgId.Trim(),
                     request.Slug,
                     ct);
 
@@ -187,12 +194,17 @@ public static class OrganizationEndpoints
             {
                 return Results.Conflict(new { message = "An organization with that slug already exists." });
             }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
         }).RequireAuthorization();
 
         orgGroup.MapGet("/my", async (
             ClaimsPrincipal principal,
             IUserService userService,
             IOrganizationService organizationService,
+            IOrganizationRepository organizationRepository,
             CancellationToken ct) =>
         {
             var profile = await ResolveProfileAsync(principal, userService, ct);
@@ -202,14 +214,67 @@ public static class OrganizationEndpoints
             }
 
             var memberships = await organizationService.GetUserMembershipsAsync(profile.Id, ct);
-            return Results.Ok(memberships.Select(m => new
+            var result = new List<object>(memberships.Count);
+            foreach (var membership in memberships)
             {
-                m.OrganizationId,
-                m.UserId,
-                m.BoutiqueRole,
-                m.Status,
-            }));
+                var org = await organizationRepository.GetByIdAsync(membership.OrganizationId, ct);
+                result.Add(new
+                {
+                    membership.OrganizationId,
+                    membership.UserId,
+                    OrganizationName = org?.Name,
+                    Slug = org?.Slug,
+                    membership.BoutiqueRole,
+                    membership.Status,
+                });
+            }
+            return Results.Ok(result);
         }).RequireAuthorization();
+
+        orgGroup.MapGet("/by-slug/{slug}", async (
+            string slug,
+            ClaimsPrincipal principal,
+            IUserService userService,
+            IOrganizationService organizationService,
+            CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(slug))
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["slug"] = ["A boutique slug is required."],
+                });
+            }
+
+            var profile = await ResolveProfileAsync(principal, userService, ct);
+            if (profile is null)
+            {
+                return Results.NotFound(new { message = "User record does not exist in Aveline database." });
+            }
+
+            var result = await organizationService.GetOrganizationProfileBySlugAsync(
+                slug.Trim().ToLowerInvariant(), profile.Id, ct);
+
+            // Tenant isolation: resolve to a boutique only when the caller holds an active
+            // membership. Unknown slugs and valid boutiques the caller does not belong to are
+            // indistinguishable (404), preventing boutique existence/PII enumeration.
+            var isMember = result?.Membership is not null
+                && string.Equals(result.Membership.Status, MembershipStatus.Active.ToString(), StringComparison.Ordinal);
+            return isMember
+                ? Results.Ok(result)
+                : Results.NotFound(new { message = "No boutique exists with that slug." });
+        }).RequireAuthorization();
+
+        orgGroup.MapGet("/{organizationId:guid}", async (
+            Guid organizationId,
+            IOrganizationService organizationService,
+            CancellationToken ct) =>
+        {
+            var profile = await organizationService.GetOrganizationProfileAsync(organizationId, ct);
+            return profile is null
+                ? Results.NotFound(new { message = "Organization not found." })
+                : Results.Ok(profile);
+        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueAccessPolicy);
 
         // Membership management (boutique owners only — org-scoped settings:manage).
         orgGroup.MapPost("/{organizationId:guid}/members/{userId:guid}/suspend", async (
@@ -373,6 +438,11 @@ public static class OrganizationEndpoints
     }
 }
 
-public record CreateOrganizationRequest(string Name, string? Slug = null, string? ClerkOrgId = null);
+/// <summary>
+/// Request to create a boutique. <c>ClerkOrgId</c> is deliberately NOT accepted here —
+/// it is derived server-side from the JWT <c>org_id</c> claim to prevent a caller from
+/// claiming a Clerk organization they do not own.
+/// </summary>
+public record CreateOrganizationRequest(string Name, string? Slug = null);
 
 public record AcceptInvitationRequest(string Code);

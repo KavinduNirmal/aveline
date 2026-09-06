@@ -92,7 +92,7 @@ or use a test user's session token from the Clerk Dashboard.
 docker compose up -d   # postgres, redis, api, agent
 ```
 
-The API and agent advertise `http://localhost:5000` / `http://localhost:8000`
+The API and agent advertise `http://localhost:5091` / `http://localhost:8000`
 on the host (`docker-compose.yml`).
 
 ## Troubleshooting

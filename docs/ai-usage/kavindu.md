@@ -1038,3 +1038,26 @@ Design feedback round on the landing page:
 - Frontend: `tsc -b` clean, `oxlint` warnings-only, `vitest run` 40/40, `vite build` succeeded.
 - Python warmup tests authored but not executed locally (no Python env); mirrored the passing `test_internal_auth.py` pattern.
 
+## Session 2026-09-07 (Session 3)
+
+**Task:** Tenant-scoped boutique dashboard at `/app/b/{slug}` (Issue #74) + security hardening, local docker/db bring-up, onboarding validation, dashboard UI redesign
+**Tool used:** opencode (Claude) AI coding agent
+
+### Summary of Activities
+
+- **Planned** the tenant dashboard via codebase research and confirmed scope with the user (admin-only access; Overview page + placeholder sections; `/app` kept as a slug resolver; org-scoped usage endpoint).
+- **Backend (`Aveline.Api`)**:
+  - New `OrganizationDtos` (`OrganizationProfileDto`, `OrganizationMembershipView`, `OrganizationProfileWithMembershipDto`); `OrganizationService` profile-by-slug/by-id lookups.
+  - Endpoints: `GET /orgs/by-slug/{slug}`, `GET /orgs/{organizationId:guid}`, enriched `GET /orgs/my` (slug/name); new `OrgUsageEndpoints` `GET /orgs/{organizationId:guid}/usage` (org-scoped Blossom summary).
+- **Frontend (`frontend/web`)**: typed clients (`fetchOrganizationBySlug`, `fetchOrganizationUsage`); routing `/app` → `DashboardRedirect`, `/app/b/:slug` → `TenantDashboard`; new `DashboardShell`, `Overview`, `SectionPlaceholder`; permission-gated nav mirroring `Permissions.cs`; org switcher; profile/plan/blossom/user-menu UI using the Aveline `Blossom` component.
+- **Security hardening** (acted on the security review I produced): gated `/orgs/by-slug` to active members (404 for non-members) to stop boutique/PII enumeration; centralized slug normalization in `OrgSlug` (lowercase, `[a-z0-9-]`, truncate to 100) applied to onboarding + org create; removed client-supplied `clerkOrgId` (now derived from the JWT `org_id` claim); removed raw `/orgs` from the pending-account allow-list to close the onboarding bypass; bound AES-256-GCM ciphertext to org+type via associated data.
+- **Local bring-up debugging**: aligned docker API host port to the frontend default (5091), set `ASPNETCORE_URLS=http://+:8080`, exposed `X-Account-State` in CORS, added a Development-only guarded EF migration on startup, applied all pending migrations to the first-boot Postgres, and reconnected a Postgres container left off the compose network after a port conflict (host Postgres on 5432 → docker on 5433).
+- **Onboarding validation**: numeric-only, 9-digit Sri Lankan phone auto-formatted to `+94 77 12 12 123` (`lib/boutique.ts`), string length limits + counters, description cap; mirrored submit-time checks.
+- **Dashboard redesign**: fixed the oval avatar, plan pill, gradient blossom-count pill, sidebar user popover (settings/billing/sign-out), top-up + notifications controls; corrected not-found fallback to route back to `/app`.
+
+### Verification Performed
+
+- `dotnet test Aveline.Api.Tests`: all backend tests pass (225).
+- Frontend: `tsc -b` clean, `oxlint` exit 0, `vitest` 69 passed, `vite build` success.
+- Manual: docker services healthy (postgres/redis/agent/api on 5091); migrations applied; CORS preflight from `http://localhost:5173` returns 204; OpenAPI 200 on 5091.
+

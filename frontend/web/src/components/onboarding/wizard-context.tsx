@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { toast } from 'sonner'
 
 import { useUserContext } from '@/contexts/UserContext'
 import type { PlanTier } from '@/lib/onboarding'
@@ -17,6 +18,7 @@ export type AccountType = 'owner' | 'staff'
 export interface WizardDraft {
   accountType: AccountType
   inviteCode: string
+  organizationId: string
   boutiqueName: string
   address: string
   phoneNumber: string
@@ -32,6 +34,7 @@ export interface WizardDraft {
 export const DEFAULT_DRAFT: WizardDraft = {
   accountType: 'owner',
   inviteCode: '',
+  organizationId: '',
   boutiqueName: '',
   address: '',
   phoneNumber: '+94 ',
@@ -48,14 +51,13 @@ export const DEFAULT_DRAFT: WizardDraft = {
 }
 
 interface OwnerOnboardingWizardContextValue {
-  /** Wizard step label number (2 = Role, 3 = Details, 4 = Plan, 5 = Context, 6 = Launch). */
+  /** Wizard step label number (2 = Role, 3 = Details, 4 = Plan, 5 = Context, 6 = Integrations, 7 = Team, 8 = Launch). */
   step: number
   goTo: (step: number) => void
   draft: WizardDraft
   patch: (partial: Partial<WizardDraft>) => void
   isLoadingStatus: boolean
   isSubmitting: boolean
-  errorMsg: string | null
   isSuccess: boolean
   completedAllocation: number
   handleStaffJoin: () => Promise<void>
@@ -85,12 +87,10 @@ export function OwnerOnboardingWizardProvider({ children }: { children: React.Re
 
   const [isLoadingStatus, setIsLoadingStatus] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [isSuccess, setIsSuccess] = useState(false)
   const [completedAllocation, setCompletedAllocation] = useState<number>(750)
 
   const goTo = useCallback((next: number) => {
-    setErrorMsg(null)
     setStep(next)
   }, [])
 
@@ -112,6 +112,7 @@ export function OwnerOnboardingWizardProvider({ children }: { children: React.Re
         if (res.organization) {
           const org = res.organization
           patch({
+            organizationId: org.id,
             boutiqueName: org.name || '',
             address: org.address || '',
             phoneNumber: org.phoneNumber || '+94 ',
@@ -140,10 +141,9 @@ export function OwnerOnboardingWizardProvider({ children }: { children: React.Re
   }, [navigate, patch])
 
   const handleStaffJoin = useCallback(async () => {
-    setErrorMsg(null)
     const code = draft.inviteCode.trim()
     if (!code) {
-      setErrorMsg('Please enter the invitation code provided by your boutique owner.')
+      toast.error('Please enter the invitation code provided by your boutique owner.')
       return
     }
     try {
@@ -152,59 +152,56 @@ export function OwnerOnboardingWizardProvider({ children }: { children: React.Re
       await refreshUser()
       navigate('/app', { replace: true })
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Unable to accept invitation code.'
-      setErrorMsg(msg)
+      toast.error(err instanceof Error ? err.message : 'Unable to accept invitation code.')
     } finally {
       setIsSubmitting(false)
     }
   }, [draft.inviteCode, navigate, refreshUser])
 
   const handleSaveBoutiqueDetails = useCallback(async () => {
-    setErrorMsg(null)
     if (!draft.boutiqueName.trim()) {
-      setErrorMsg('Please enter your boutique name.')
+      toast.error('Please enter your boutique name.')
       return
     }
     if (!draft.address.trim()) {
-      setErrorMsg('Please enter your boutique physical address.')
+      toast.error('Please enter your boutique physical address.')
       return
     }
     if (!draft.phoneNumber.trim() || draft.phoneNumber.trim() === '+94') {
-      setErrorMsg('Please enter a valid boutique contact phone number.')
+      toast.error('Please enter a valid boutique contact phone number.')
       return
     }
     try {
       setIsSubmitting(true)
-      await saveBoutiqueDetails({
+      const saved = await saveBoutiqueDetails({
         name: draft.boutiqueName.trim(),
         address: draft.address.trim(),
         phoneNumber: draft.phoneNumber.trim(),
         description: draft.description.trim() || undefined,
         logoUrl: draft.logoUrl.trim() || undefined,
       })
+      patch({ organizationId: saved.id })
       setStep(4)
     } catch (err: unknown) {
-      setErrorMsg(err instanceof Error ? err.message : 'Failed to save boutique details.')
+      toast.error(err instanceof Error ? err.message : 'Failed to save boutique details.')
     } finally {
       setIsSubmitting(false)
     }
   }, [draft])
 
   const handleSelectPlan = useCallback(async () => {
-    setErrorMsg(null)
     try {
       setIsSubmitting(true)
       await selectPlan(draft.selectedPlanTier)
       setStep(5)
     } catch (err: unknown) {
-      setErrorMsg(err instanceof Error ? err.message : 'Failed to select plan.')
+      toast.error(err instanceof Error ? err.message : 'Failed to select plan.')
     } finally {
       setIsSubmitting(false)
     }
   }, [draft.selectedPlanTier])
 
   const handleSaveAiContext = useCallback(async () => {
-    setErrorMsg(null)
     try {
       setIsSubmitting(true)
       // Only send fields permitted by the selected tier.
@@ -225,22 +222,22 @@ export function OwnerOnboardingWizardProvider({ children }: { children: React.Re
       await saveAiCustomization(payload)
       setStep(6)
     } catch (err: unknown) {
-      setErrorMsg(err instanceof Error ? err.message : 'Failed to save AI customization.')
+      toast.error(err instanceof Error ? err.message : 'Failed to save AI customization.')
     } finally {
       setIsSubmitting(false)
     }
   }, [draft])
 
   const handleCompleteOnboarding = useCallback(async () => {
-    setErrorMsg(null)
     try {
       setIsSubmitting(true)
       const res = await completeOnboarding()
       setCompletedAllocation(res.blossomAllocation)
       setIsSuccess(true)
+      toast.success(`Boutique created with ${res.blossomAllocation.toLocaleString()} Blossoms.`)
       await refreshUser()
     } catch (err: unknown) {
-      setErrorMsg(
+      toast.error(
         err instanceof Error ? err.message : 'Failed to finalize boutique onboarding.',
       )
     } finally {
@@ -260,7 +257,6 @@ export function OwnerOnboardingWizardProvider({ children }: { children: React.Re
       patch,
       isLoadingStatus,
       isSubmitting,
-      errorMsg,
       isSuccess,
       completedAllocation,
       handleStaffJoin,
@@ -277,7 +273,6 @@ export function OwnerOnboardingWizardProvider({ children }: { children: React.Re
       patch,
       isLoadingStatus,
       isSubmitting,
-      errorMsg,
       isSuccess,
       completedAllocation,
       handleStaffJoin,

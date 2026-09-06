@@ -37,6 +37,7 @@ builder.Services.AddScoped<IOrganizationService, OrganizationService>();
 
 builder.Services.AddScoped<IAdminApprovalRepository, AdminApprovalRepository>();
 builder.Services.AddScoped<IAdminApprovalService, AdminApprovalService>();
+builder.Services.AddScoped<IOnboardingService, OnboardingService>();
 
 var app = builder.Build();
 
@@ -60,6 +61,7 @@ v1.MapAgentEndpoints();
 v1.MapUserEndpoints();
 v1.MapAdminEndpoints();
 v1.MapOrganizationEndpoints();
+v1.MapOnboardingEndpoints();
 
 app.MapBillingEndpoints();
 

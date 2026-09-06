@@ -25,6 +25,7 @@ public class OnboardingMiddleware
         "/api/v1/orgs",
         "/api/v1/orgs/my",
         "/api/v1/invitations",
+        "/api/v1/onboarding",
         "/openapi",
     };
 

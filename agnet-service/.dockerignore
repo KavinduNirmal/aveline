@@ -4,6 +4,10 @@ venv/
 env/
 ENV/
 
+# Git & VCS
+.git/
+.gitignore
+
 # Byte-compiled / cache
 __pycache__/
 *.py[cod]
@@ -13,6 +17,11 @@ __pycache__/
 
 # Tests (not needed in the runtime image)
 tests/
+
+# Build & tooling (not needed in the runtime image)
+pyproject.toml
+Dockerfile
+.dockerignore
 
 # Documentation
 *.md

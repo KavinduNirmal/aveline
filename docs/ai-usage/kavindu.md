@@ -711,3 +711,31 @@ Design feedback round on the landing page:
 - Added a **journey ribbon** below: "Customer messages → Ava · Elle · Lina act → You approve" with arrow separators.
 - Removed the old product-card/`StepImage` implementation.
 - Verified web `tsc`, oxlint, `vite build`.
+
+## Session 2026-09-06
+
+**Task:** Brighten primary colour palette and switch body typography to DM Sans (Issue #63)
+**Tool used:** Antigravity AI Assistant
+
+### Summary of Activities
+
+- Created GitHub Issue [#63](https://github.com/KavinduNirmal/aveline/issues/63) ("Brighten primary colour palette and update frontend themes").
+- Shifted the brand primary palette across design tokens and themes:
+  - `primary`: `#5D1A29` → `#8B2E42` (vivid wine-rose, +13 lightness)
+  - `primary-container`: `#7A303F` → `#A84056`
+  - `on-primary-container`: `#FF9CAB` → `#FFBBC6`
+  - `inverse-primary`: `#FFB2BC` → `#FFCDD5`
+  - `surface-tint`: `#954554` → `#B3556A`
+  - `primary-fixed`: `#FFD9DD` → `#FFE0E5`
+  - `primary-fixed-dim`: `#FFB2BC` → `#FFCDD5`
+  - `on-primary-fixed-variant`: `#772E3D` → `#8B2E42`
+  - Dark theme primary / ring / sidebar-primary: `#FFB2BC` → `#FFCDD5`
+- Updated body & UI typography from `Hanken Grotesk` to `DM Sans` (gently rounded terminals for warmer, contemporary feel):
+  - `.agents/brain/DESIGN.md`: Updated `title-lg`, `body-lg`, `body-md`, `label-md`, `label-sm` tokens and design narrative.
+  - `frontend/web/index.html`: Updated Google Fonts stylesheet link to import `DM Sans` alongside `Playfair Display`.
+  - `frontend/web/src/index.css`: Updated `--font-sans` to `'DM Sans'`.
+  - `frontend/aveline_mobile/lib/core/theme/app_theme.dart`: Migrated all `GoogleFonts.hankenGrotesk` calls to `GoogleFonts.dmSans`.
+- **Verification performed**:
+  - `cd frontend/web && bun run build` passed cleanly (`tsc -b` and Vite production build).
+  - `cd frontend/aveline_mobile && dart analyze` passed with 0 issues.
+

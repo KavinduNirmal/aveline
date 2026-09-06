@@ -15,12 +15,12 @@ colors:
   inverse-on-surface: '#f8efee'
   outline: '#867274'
   outline-variant: '#d9c1c3'
-  surface-tint: '#954554'
-  primary: '#5d1a29'
+  surface-tint: '#b3556a'
+  primary: '#8b2e42'
   on-primary: '#ffffff'
-  primary-container: '#7a303f'
-  on-primary-container: '#ff9cab'
-  inverse-primary: '#ffb2bc'
+  primary-container: '#a84056'
+  on-primary-container: '#ffbbc6'
+  inverse-primary: '#ffcdd5'
   secondary: '#625d5d'
   on-secondary: '#ffffff'
   secondary-container: '#e6dedd'
@@ -33,10 +33,10 @@ colors:
   on-error: '#ffffff'
   error-container: '#ffdad6'
   on-error-container: '#93000a'
-  primary-fixed: '#ffd9dd'
-  primary-fixed-dim: '#ffb2bc'
+  primary-fixed: '#ffe0e5'
+  primary-fixed-dim: '#ffcdd5'
   on-primary-fixed: '#3e0214'
-  on-primary-fixed-variant: '#772e3d'
+  on-primary-fixed-variant: '#8b2e42'
   secondary-fixed: '#e8e1e0'
   secondary-fixed-dim: '#ccc5c4'
   on-secondary-fixed: '#1e1b1b'
@@ -66,28 +66,28 @@ typography:
     fontWeight: '500'
     lineHeight: '1.3'
   title-lg:
-    fontFamily: Hanken Grotesk
+    fontFamily: DM Sans
     fontSize: 20px
     fontWeight: '600'
     lineHeight: '1.4'
   body-lg:
-    fontFamily: Hanken Grotesk
+    fontFamily: DM Sans
     fontSize: 18px
     fontWeight: '400'
     lineHeight: '1.6'
   body-md:
-    fontFamily: Hanken Grotesk
+    fontFamily: DM Sans
     fontSize: 16px
     fontWeight: '400'
     lineHeight: '1.6'
   label-md:
-    fontFamily: Hanken Grotesk
+    fontFamily: DM Sans
     fontSize: 14px
     fontWeight: '500'
     lineHeight: '1.2'
     letterSpacing: 0.05em
   label-sm:
-    fontFamily: Hanken Grotesk
+    fontFamily: DM Sans
     fontSize: 12px
     fontWeight: '600'
     lineHeight: '1.2'
@@ -114,12 +114,12 @@ The style is **Modern Minimalist with Tactile warmth**. It avoids the clinical c
 ## Colors
 The palette is inspired by natural fibers—cashmere, linen, and silk—interspersed with deep architectural accents.
 
-- **Primary (Maroon/Burgundy):** Used for key actions, active states, and primary navigation. It represents authority and the heritage of the boutique.
+- **Primary (Rose-Burgundy / Wine):** Used for key actions, active states, and primary navigation. It represents authority and the heritage of the boutique with a warm, modern vibrancy.
 - **Surface & Backgrounds:** We use a "warm oatmeal" base instead of pure white to reduce eye strain and provide a premium, paper-like feel.
 - **Agent States:** 
   - **Memory:** A muted magenta-rose, used for historical data and relationship tracking.
   - **Visual:** A soft gold/brass, used for aesthetic curation and product discovery.
-  - **Commerce:** The primary maroon, representing the finality of a transaction.
+  - **Commerce:** The primary rose-burgundy, representing the finality of a transaction.
 - **Functional Neutrals:** Text is rendered in a soft charcoal rather than black to maintain the low-contrast, "quiet" luxury feel.
 
 ## Typography
@@ -127,7 +127,7 @@ The typography pairing balances classical elegance with modern legibility.
 
 **Playfair Display** is used for emotive moments: greetings, section headers, and key numbers. Its high contrast stems from traditional calligraphy, grounding the digital product in human craftsmanship.
 
-**Hanken Grotesk** (a refined alternative to Inter) provides a clean, neutral counterpoint for functional UI elements, lists, and dense body text. It is highly legible on small screens while maintaining a contemporary, sharp edge.
+**DM Sans** provides a clean, contemporary counterpoint with gently rounded letterforms for functional UI elements, lists, and dense body text. It softens the interface with approachable warmth while maintaining crisp legibility on high-density displays.
 
 **Hierarchy Rules:**
 - Use `display-lg` for personalized greetings.
@@ -146,7 +146,7 @@ The layout follows a **Fixed-Fluid Hybrid** model. While the content centers wit
 Depth in this design system is achieved through **Tonal Layering** and **Soft Ambient Shadows** rather than harsh borders.
 
 1.  **Level 0 (Base):** The oatmeal background (`#F9F1F0`).
-2.  **Level 1 (Cards):** Slightly lighter or subtly tinted surfaces. If a card needs to pop, use a very soft shadow: `0 4px 20px rgba(122, 48, 63, 0.06)`. Note the subtle maroon tint in the shadow to keep it warm.
+2.  **Level 1 (Cards):** Slightly lighter or subtly tinted surfaces. If a card needs to pop, use a very soft shadow: `0 4px 20px rgba(139, 46, 66, 0.06)`. Note the subtle warm tint in the shadow to keep it warm.
 3.  **Level 2 (Interactive):** Elements like "Clocked In" use a solid fill to denote the highest state of importance.
 4.  **Glassmorphism:** Use sparingly for floating action bars or navigation overlays with a 12px blur and 80% opacity of the background color to maintain the sense of place.
 
@@ -159,8 +159,8 @@ The shape language is "Softly Geometric." We avoid sharp corners to keep the UI 
 
 ## Components
 - **Buttons:**
-    - **Primary:** Solid Burgundy (`#7A303F`) with white text. High-contrast, no border.
-    - **Secondary:** Transparent with a thin (1px) Burgundy border or a tonal fill (`#E8D5D5`).
+    - **Primary:** Solid Wine-Rose (`#A84056`) with white text. High-contrast, no border.
+    - **Secondary:** Transparent with a thin (1px) Wine-Rose border or a tonal fill (`#E8D5D5`).
 - **Cards:** Use the 16px corner radius. Group related items (like "Today's Brief") into stacked cards with 8px gaps between them to show they are part of a single collection.
 - **Input Fields:** Soft beige backgrounds with a subtle bottom border that transforms into a full border on focus.
 - **Chips/Badges:** Use the Agent State colors (Gold, Magenta, Maroon) with 10% opacity fills and 100% opacity text for a sophisticated, low-contrast look.

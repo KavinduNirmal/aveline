@@ -19,7 +19,7 @@
   --popover: #ffffff;
   --popover-foreground: #1e1b1b;
 
-  --primary: #7a303f;
+  --primary: #8b2e42;
   --primary-foreground: #ffffff;
 
   --secondary: #e6dedd;
@@ -36,10 +36,10 @@
 
   --border: #e9e0e0;
   --input: #d9c1c3;
-  --ring: #5d1a29;
+  --ring: #8b2e42;
 
-  /* Agent states: commerce maroon, visual gold, memory rose, plus neutrals. */
-  --chart-1: #7a303f;
+  /* Agent states: commerce wine-rose, visual gold, memory rose, plus neutrals. */
+  --chart-1: #8b2e42;
   --chart-2: #c9a227;
   --chart-3: #b0566b;
   --chart-4: #d5c2c2;
@@ -47,22 +47,22 @@
 
   --sidebar: #f5eceb;
   --sidebar-foreground: #1e1b1b;
-  --sidebar-primary: #7a303f;
+  --sidebar-primary: #8b2e42;
   --sidebar-primary-foreground: #ffffff;
   --sidebar-accent: #e6dedd;
   --sidebar-accent-foreground: #1e1b1b;
   --sidebar-border: #e9e0e0;
-  --sidebar-ring: #5d1a29;
+  --sidebar-ring: #8b2e42;
 
   /* Aveline landing accents — agent colors + colorful aurora additions. */
   --aveline-memory: #b0566b;      /* rose  — Ava, memory */
   --aveline-visual: #c9972b;      /* gold  — Elle, visual */
-  --aveline-commerce: #7a303f;    /* maroon — Lina, commerce */
+  --aveline-commerce: #8b2e42;    /* wine-rose — Lina, commerce */
   --aveline-lavender: #8e7cc3;
   --aveline-lavender-soft: #f0eafa;
   --aveline-coral: #ef7a68;
   --aveline-coral-soft: #ffe9e2;
-  --aveline-blush: #ffd9dd;
+  --aveline-blush: #ffe0e5;
 }
 
 .dark {
@@ -75,7 +75,7 @@
   --popover: #342f2f;
   --popover-foreground: #f8efee;
 
-  --primary: #ffb2bc;
+  --primary: #ffcdd5;
   --primary-foreground: #3e0214;
 
   --secondary: #625d5d;
@@ -92,9 +92,9 @@
 
   --border: #453e3f;
   --input: #453e3f;
-  --ring: #ffb2bc;
+  --ring: #ffcdd5;
 
-  --chart-1: #ffb2bc;
+  --chart-1: #ffcdd5;
   --chart-2: #e0b64c;
   --chart-3: #b0566b;
   --chart-4: #d5c2c2;
@@ -102,12 +102,12 @@
 
   --sidebar: #2a2324;
   --sidebar-foreground: #f8efee;
-  --sidebar-primary: #ffb2bc;
+  --sidebar-primary: #ffcdd5;
   --sidebar-primary-foreground: #3e0214;
   --sidebar-accent: #453e3f;
   --sidebar-accent-foreground: #f8efee;
   --sidebar-border: #453e3f;
-  --sidebar-ring: #ffb2bc;
+  --sidebar-ring: #ffcdd5;
 }
 
 @theme inline {
@@ -160,7 +160,7 @@
   --color-blush: var(--aveline-blush);
 
   --font-sans:
-    'Hanken Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
+    'DM Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-serif: 'Playfair Display', ui-serif, Georgia, serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 }

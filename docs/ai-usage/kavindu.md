@@ -739,3 +739,64 @@ Design feedback round on the landing page:
   - `cd frontend/web && bun run build` passed cleanly (`tsc -b` and Vite production build).
   - `cd frontend/aveline_mobile && dart analyze` passed with 0 issues.
 
+### Follow-up (same session): Issue #64 — Landing Page Redesign: Staff Concierge Mockup, Boutique Hero Slideshow, Whimsical Problem & Testimonial Cards, and Dual-Layer Blossom
+
+**Task:** Complete landing page overhaul to reflect Aveline's staff-facing concierge model with animated phone mockup, boutique photography slideshow, social proof, whimsical problem statement, testimonials, and 8-petaled counter-rotating blossom.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed & Verified
+
+#### Work Performed
+- Created GitHub Issue [#64](https://github.com/KavinduNirmal/aveline/issues/64) tracking the landing page overhaul.
+- **8-Petaled Dual-Layer Blossom (`Blossom.tsx`)**:
+  - Re-architected Blossom into two 4-petal layers (base at 0°, 90°, 180°, 270°; top at 45°, 135°, 225°, 315°).
+  - Added `animateCounter` and `counterDuration` props to rotate the base and top layers in opposite directions for a blooming kaleidoscope effect.
+  - Retained the legacy 5-petal SVG implementation commented out at the top of the file as requested.
+- **Staff-Facing Phone Mockup (`PhoneMockup.tsx`)**:
+  - Implemented realistic phone frame with curved bezel, iOS status bar, and dynamic island.
+  - Embedded incoming WhatsApp customer inquiry bubble with customer profile badge (tier, spend, preferences).
+  - Sequenced collaboration stream for specialist agents (Ava memory note, Elle visual gown match, Lina deposit & margin lock).
+  - Staff decision controls: "Approve & Send to WhatsApp" and "Decline" with live state transition feedback and multi-scenario inquiry toggling.
+- **Hero Boutique Slideshow (`HeroSlideshow.tsx`)**:
+  - Embedded curated Pexels boutique atelier imagery with cross-fade transitions and ambient overlays.
+  - Hovering glassmorphic Aveline specialist update badges with active blossom indicators.
+- **Social Proof Bar (`SocialProofBar.tsx`)**:
+  - Featured renowned boutiques (*The Galle Fort Atelier*, *Cinnamon Row Tailors*, *Studio 9 Colombo*, etc.) with operational trust metrics (40+ ateliers, 100% staff sign-off, LKR 45M+ volume, 4.9/5 rating).
+- **Problem Statement Section (`ProblemSection.tsx`)**:
+  - "Your customers are slipping through the cracks" diagnosing memory gaps, 3 AM response drift, stock search black holes, and margin leakage in whimsical dashed-border cards with symmetric rounded corners.
+- **Testimonials Section (`TestimonialsSection.tsx`)**:
+  - Editorial quotes from boutique directors and head stylists with 5-star ratings, metric badges, and atelier verification marks.
+- **Refinements & Flow Adjustments**:
+  - Reordered landing page flow: 1. Hero → 2. Sample Messages Carousel → 3. Image Slideshow with Aveline Messages → 4. Trusted Shops with Bigger Statistics → 5. Problem Statement (2x2 grid) → Persona & Remaining Sections.
+  - Moved `HeroSlideshow` out of the hero header column into a dedicated expansive showroom section.
+  - Made trust statistics significantly larger and more prominent in `SocialProofBar`.
+  - Converted `ProblemSection` cards to a 2 by 2 grid (`md:grid-cols-2`), reduced border radius to `rounded-2xl`, and increased typography size.
+  - Re-aligned the animated journey gradient pulse in "How it works" to run precisely through the center of the step circles (`top-[86px]`).
+  - Added asymmetric delay and non-overlapping bloom keyframes to `Blossom.tsx` so rotating petal layers never eclipse into 4 petals.
+  - Replaced agent icons (Ava, Elle, Lina) with colored Blossom icons (rose, amber, wine).
+  - Staggered chat components in `PhoneMockup.tsx` with sequenced delays (customer inquiry → Ava → Elle → Lina → reservation card) to visually demonstrate the workflow progression.
+  - Redesigned the **Blossoms Concept** section in `LandingPage.tsx`:
+    - Converted from a boxed card (`border-2 border-dashed ... rounded-2xl`) into a unique, open editorial vignette.
+    - Removed cost estimations ("1 Blossom", "2 Blossoms") and removed the three agent mini-boxes.
+    - Added an ethereal centered counter-rotating Blossom medallion with ambient glow, delicate gradient divider rules, and editorial narrative.
+    - Added direct call-to-action: *"Check pricing for detailed information"* linking to `/plans`.
+  - Fixed **How It Works** animated pulse overflowing:
+    - Encapsulated the rail in an `overflow-hidden rounded-full` container (`h-[12px]`, concentric center at `top-[86px]`).
+    - Reduced pulse thickness to a sleek `2.5px` (down from `9px`), aligning precisely with the dashed rail border.
+    - Extended the tail length to `w-64` (256px) with an atelier directional gradient (`from-transparent via-memory/35 via-visual/65 to-commerce`) and a luminous leading comet head (`size-1.5` wine-rose with drop-glow).
+    - Clamped traversal keyframes (`left: ['-40%', '100%']`) to smoothly enter and exit within the clipped rail bounds without overflowing beyond the section or into page margins.
+    - Added `reduceMotion` guard to prevent animation for users with motion sensitivity.
+
+  - Added **Icon Library Integration & Horizontal Hover Animations**:
+    - Installed official `simple-icons` (`bun add simple-icons`) for brand marks.
+    - Updated `frontend/web/src/components/site/Icons.tsx`:
+      - Used `siGoogleplay` and `siApple` from `simple-icons` for `PlayStoreIcon` and `AppleIcon`.
+      - Used `ArrowRight` from `lucide-react` for `CtaArrow` / `CurvedArrow`.
+      - Configured on-hover animation to be **purely horizontal** (`transition-transform duration-300 ease-out group-hover:translate-x-1.5`) without any vertical or popover displacement.
+    - Integrated across all CTAs and download buttons on `LandingPage.tsx`, `SiteNav.tsx`, and `DownloadPage.tsx`.
+
+#### Verification Performed
+- `bun run build`: `tsc -b && vite build` completed with zero TypeScript errors.
+- `bun test`: All 35 tests across 4 test suites passed cleanly.
+- `bun run lint`: oxlint verified with zero errors.
+
+

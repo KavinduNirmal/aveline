@@ -1,6 +1,7 @@
 # Owner Onboarding Flow — Architecture
 
-> **Status:** Implemented (feature branch `feature/69-owner-account-creation-flow`, PR #70).
+> **Status:** Implemented (feature branch `feature/69-owner-account-creation-flow`, PR #70) —
+> extended with integrations & team invitations (#71/#72).
 > **Related:** [Pricing Plan](pricing_plan.md) · [Authentication](authentication.md) · [Authorization](authorization.md)
 > Diagrams use the **C4 model** plus UML-style **sequence diagrams**, rendered with Mermaid.
 
@@ -17,10 +18,14 @@ The flow:
 2. Captures boutique identity and contact details.
 3. Selects a subscription plan (demo mode — no payment).
 4. Customizes the AI concierge context, with fields unlocking by plan tier.
-5. Finalizes: activates the organization, provisions the Blossom allowance, and warms up the agents.
+5. Optionally connects third-party channels (WhatsApp, Instagram, payment gateway) —
+   credentials stored encrypted and tenant-scoped.
+6. Optionally invites team members by email / generated code / shareable link.
+7. Finalizes: activates the organization, provisions the Blossom allowance, and warms up the agents.
 
 It is intentionally **resumable** — a partially completed wizard is hydrated from the backend
-so the owner can continue where they left off.
+so the owner can continue where they left off. Integrations and team invitations are optional
+and can also be completed later from Settings.
 
 ---
 
@@ -58,7 +63,7 @@ onboarding module, with the **Agent Service** handling the final warm-up call.
 
 ---
 
-## 3. The 6-Step Flow
+## 3. The 8-Step Flow
 
 ```mermaid
 sequenceDiagram
@@ -111,6 +116,12 @@ sequenceDiagram
     W-->>U: Success screen → Dashboard
     end
 ```
+
+> **Note (integrations & team):** Steps 6 and 7 are **optional/skippable** and are
+> inserted between AI customization (step 5) and finalize (step 8). Because the two optional
+> steps are additive, the backend `OnboardingStep` transitions still treat AI customization as
+> the last *required* milestone before `POST /complete` — resumed sessions continue from the
+> AI-context step and may skip straight to finalize.
 
 ---
 
@@ -192,6 +203,49 @@ contacted for payment."_
 
 ---
 
+### 4.6 Team invitations (owner-facing)
+
+Owner invitation-management endpoints are org-scoped (`BoutiqueMembershipManagePolicy`) and
+tenant-isolated under the same `/orgs/{organizationId}` route used by memberships:
+
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| POST | `/api/v1/orgs/{organizationId}/invitations` | Create an invitation (role + optional email); returns one-time code + shareable link and sends an invitation email. |
+| GET | `/api/v1/orgs/{organizationId}/invitations` | List pending invitations. |
+| POST | `/api/v1/orgs/{organizationId}/invitations/{invitationId}/revoke` | Revoke a pending invitation. |
+
+Creation reuses `OrganizationService.InviteMemberAsync`; a one-time **24-hour** code is issued and
+mapped to the invitation in a transient store (Redis via `IDistributedCache`,
+`IInvitationCodeStore`), while the SHA-256 hash and full lifecycle remain in Postgres as a durable
+audit log + fallback (see [ADR-012](../ADR/ADR-012-invitation-code-lifecycle.md)). Acceptance
+resolves the code through the store, falling back to the hash; the transient mapping is removed on
+redemption. `POST /invitations/accept` is rate-limited per client IP (default 10/min, 429 when
+exceeded). Email delivery is behind an `IEmailService` abstraction whose demo
+`LoggingEmailService` records dispatch **without** logging the one-time code — the link's
+`code` query parameter is stripped from log output. The link points to `/invite?code=…`
+(`InvitePage`), which accepts the invitation and routes the new member to the app.
+
+### 4.7 Integration credentials (secure tenant secrets)
+
+Owners connect channels during step 6 through org-scoped endpoints under
+`/api/v1/orgs/{organizationId}/integrations` (see `IntegrationEndpoints.cs`):
+
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| GET | `/api/v1/orgs/{organizationId}/integrations` | Masked connection status for all configured types. |
+| PUT | `/api/v1/orgs/{organizationId}/integrations/{type}` | Save/upsert credentials for `whatsapp`/`instagram`/`paymentgateway`. |
+| DELETE | `/api/v1/orgs/{organizationId}/integrations/{type}` | Disconnect / remove stored credentials. |
+
+Secrets are **AES-256-GCM encrypted** (`CredentialEncryptionService`, key
+`Credentials:EncryptionKey`) and stored as a `nonce:tag:ciphertext` blob in a new
+`IntegrationCredentials` table keyed by `(OrganizationId, IntegrationType)` — one row per
+integration per boutique, so tenant isolation is enforced at the data layer. Status responses
+return only a masked preview (`****Wxyz`); plaintext is decrypted transiently by
+`IntegrationService` for backend outbound calls only. See
+[ADR-011](../ADR/ADR-011-credential-encryption.md).
+
+---
+
 ## 5. Agent Service integration
 
 After the organization is finalized, `OnboardingService` calls
@@ -237,7 +291,9 @@ After the organization is finalized, `OnboardingService` calls
 | 3    | `BoutiqueDetailsStep`    | Boutique name (with live slug preview), address, phone, description, logo. |
 | 4    | `PlanSelectionStep`      | Seed / Bloom / Orchid / Rose cards; demo-mode banner.                  |
 | 5    | `AiCustomizationStep`    | Fields unlock per tier (Seed = locked; Bloom basic; Orchid/Rose full). |
-| 6    | `ReviewStep` + `SuccessStep` | Summary, agent warm-up state, Blossom allocation, dashboard CTA.   |
+| 6    | `IntegrationsStep`       | Optional: connect WhatsApp / Instagram / payment gateway (encrypted, masked status). |
+| 7    | `InviteStaffStep`        | Optional: invite staff by email, generated code, or copyable link; pending list + revoke. |
+| 8    | `ReviewStep` + `SuccessStep` | Summary, agent warm-up state, Blossom allocation, dashboard CTA.   |
 
 ### 6.4 Visual treatment
 
@@ -249,7 +305,9 @@ wizard remains legible — consistent with the **Quiet Luxury** brand system.
 
 `lib/onboarding.ts` provides typed wrappers (`fetchOnboardingStatus`,
 `saveBoutiqueDetails`, `selectPlan`, `saveAiCustomization`, `completeOnboarding`) matching the
-backend DTO contracts.
+backend DTO contracts. Step 6 uses `lib/integrations.ts`, and step 7 uses `lib/invitations.ts`
+(plus the shared `acceptInvitation` in `lib/organizations.ts`). Staff joining from an emailed
+link land on `routes/InvitePage.tsx` (`/invite?code=…`).
 
 ---
 
@@ -269,21 +327,30 @@ backend DTO contracts.
 ## 8. Verification
 
 - **.NET:** `Aveline.Api.Tests/OnboardingServiceTests.cs` and
-  `OnboardingEndpointsIntegrationTests.cs` exercise the full 6-step flow end-to-end
+  `OnboardingEndpointsIntegrationTests.cs` exercise the full onboarding flow end-to-end
   (step transitions, Seed/Bloom/Orchid tier gating, completion, Blossom provisioning,
-  status resumption). `dotnet test Aveline.Api.Tests` passes (161 tests).
+  status resumption). The integrations slice is covered by `CredentialEncryptionServiceTests`,
+  `IntegrationServiceTests`, and `IntegrationEndpointsIntegrationTests`; the team-invitation
+  slice by `OrganizationInvitationLifecycleTests`, `InvitationManagementEndpointsIntegrationTests`,
+  `EmailServiceTests`, `DistributedInvitationCodeStoreTests`, `DistributedRateLimiterTests`, and
+  `InvitationAcceptRateLimitIntegrationTests`. `dotnet test Aveline.Api.Tests` passes (206 tests).
 - **Agent Service:** `agnet-service/tests/test_agents_warmup.py` covers warmup auth and payload.
-- **Frontend:** `vitest run` (onboarding contracts), `tsc -b`, `oxlint`, and `vite build`.
+- **Frontend:** `vitest run` (onboarding/integration/invitation contracts), `tsc -b`, `oxlint`, and `vite build`.
 
 ---
 
 ## 9. Open questions / follow-ups
 
-1. **EF Core migration** for the new `Organization` columns is outstanding (database not
-   available locally during implementation).
+1. The migration `AddIntegrationCredentials` also carries previously-outstanding
+   Organization-onboarding and Billing model diffs (they had been reflected in the model
+   snapshot but never shipped as a migration). Verify it applies cleanly to a fresh PostgreSQL
+   database before release.
 2. The plan document described dual-prefix mapping (`/api/onboarding` and `/api/v1/onboarding`);
    only the `/api/v1/onboarding` group is currently mapped, consistent with the React client.
 3. Python warm-up tests were authored to mirror the existing internal-auth tests but were not
    executed locally (no Python environment); they should run in CI.
 4. Demo-mode banner copy and Blossom figures should be confirmed against `pricing_plan.md` before
    billing is enabled.
+5. `IEmailService` is a logging/no-op sender; wire a real provider (SMTP/SendGrid) before launch.
+6. Instagram connection currently uses manual credential entry; a full Meta OAuth redirect flow
+   is a follow-up.

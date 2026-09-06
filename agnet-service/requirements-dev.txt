@@ -1,5 +1,6 @@
 # Development & testing only — not installed in the runtime image.
 pytest
 pytest-asyncio
+pytest-cov
 respx
 ruff

@@ -908,6 +908,8 @@ Design feedback round on the landing page:
 - `frontend/web/src/routes/LandingPage.tsx` (Concept of Blossoms Gradient Styling):
   - Applied the signature luxury brand gradient (`bg-gradient-to-r from-primary via-[#b0566b] to-amber-700 bg-clip-text text-transparent`) to the **Blossoms** keyword in the section title, kicker tag, and body narrative.
 - `docs/architecture/pricing_plan.md` — Aligned documentation nomenclature across the architecture guide, migrating all legacy "Flower" terms to "Blossom" credits.
+- `agnet-service/requirements-dev.txt` — Added `pytest-cov` alongside existing `pytest-asyncio`, `pytest`, `respx`, and `ruff`.
+- `.github/workflows/ci.yml` — Updated `test-python` job to install `-r agnet-service/requirements-dev.txt` alongside `requirements.txt`, ensuring `pytest-asyncio` is available to execute async test functions and satisfy `asyncio_mode = "auto"`.
 - `docs/ai-usage/kavindu.md` — This log entry.
 
 ### Issues Resolved
@@ -921,3 +923,4 @@ Design feedback round on the landing page:
 - `bun run build`: TypeScript (`tsc -b`) and Vite production bundle succeeded with 0 errors.
 - `bun run lint`: Oxlint ran across 76 files with 0 errors.
 - `bun run test`: Vitest test suite executed and passed 35/35 tests across 4 test files.
+- `pytest tests/ --cov=app --cov-report=term --cov-fail-under=90`: Executed in isolated Python environment with `requirements-dev.txt` dependencies — 9 passed, 97.14% coverage (exceeding the 90% threshold).

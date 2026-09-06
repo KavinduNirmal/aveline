@@ -18,6 +18,28 @@ public class InvitationNotFoundException : KeyNotFoundException
     }
 }
 
+/// <summary>Raised when a role is not a valid staff role that can be invited.</summary>
+public class InvalidInvitationRoleException(string role)
+    : InvalidOperationException($"'{role}' is not an invitable boutique staff role.")
+{
+}
+
+/// <summary>
+/// Raised when the invitation code store (Redis/distributed cache) is unavailable during
+/// invitation creation. Creation is fail-fast so an invitation is never issued whose code
+/// cannot be redeemed promptly.
+/// </summary>
+public class InvitationCodeStoreUnavailableException()
+    : InvalidOperationException("The invitation code store is unavailable. Please retry shortly.")
+{
+}
+
+/// <summary>Raised when an already-accepted invitation is revoked.</summary>
+public class CannotRevokeAcceptedInvitationException()
+    : InvalidOperationException("An already-accepted invitation cannot be revoked.")
+{
+}
+
 /// <summary>Raised when an invitation is expired, revoked, or already accepted.</summary>
 public class InvitationNotAcceptableException : InvalidOperationException
 {

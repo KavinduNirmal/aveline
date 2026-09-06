@@ -1,12 +1,13 @@
-import { AlertCircle, Check, Crown } from 'lucide-react'
+import { Check, Crown } from 'lucide-react'
 
 import { AuroraField } from '@/components/site/AuroraField'
-import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Skeleton } from '@/components/ui/skeleton'
 
 import { AccountTypeStep } from './steps/AccountTypeStep'
 import { AiCustomizationStep } from './steps/AiCustomizationStep'
 import { BoutiqueDetailsStep } from './steps/BoutiqueDetailsStep'
+import { IntegrationsStep } from './steps/IntegrationsStep'
+import { InviteStaffStep } from './steps/InviteStaffStep'
 import { PlanSelectionStep } from './steps/PlanSelectionStep'
 import { ReviewStep } from './steps/ReviewStep'
 import { SuccessStep } from './steps/SuccessStep'
@@ -18,38 +19,32 @@ const STEP_LABELS = [
   { num: 3, label: 'Details' },
   { num: 4, label: 'Plan' },
   { num: 5, label: 'Context' },
-  { num: 6, label: 'Launch' },
+  { num: 6, label: 'Integrations' },
+  { num: 7, label: 'Team' },
+  { num: 8, label: 'Launch' },
 ]
 
 function StepIndicator({ step }: { step: number }) {
   return (
-    <div className="flex items-center justify-between max-w-xl mx-auto w-full px-2 py-3 bg-muted/40 rounded-full border border-border">
+    <div className="max-w-xl mx-auto w-full px-2 py-3 bg-muted/40 rounded-full border border-border flex items-center justify-center gap-1.5 sm:gap-2">
       {STEP_LABELS.map((s, idx) => {
-        const done = s.num === 1 ? true : step > s.num
+        const done = step > s.num
         const active = step === s.num
         return (
           <div key={s.num} className="flex items-center gap-1.5 sm:gap-2">
+            {idx > 0 && <span className={`h-px w-2 sm:w-3 ${done || active ? 'bg-primary/50' : 'bg-border'}`} />}
             <div
-              className={`size-6 sm:size-7 rounded-full flex items-center justify-center text-xs font-semibold transition-all ${
+              title={s.label}
+              className={`flex items-center justify-center rounded-full text-[10px] font-semibold transition-all ${
                 active
-                  ? 'bg-primary text-primary-foreground shadow-sm ring-2 ring-primary/20'
+                  ? 'bg-primary text-primary-foreground ring-2 ring-primary/20 size-6 sm:size-6'
                   : done
-                    ? 'bg-primary/20 text-primary'
-                    : 'bg-muted text-muted-foreground'
+                    ? 'bg-primary/20 text-primary size-5 sm:size-6'
+                    : 'bg-muted text-muted-foreground size-5 sm:size-6'
               }`}
             >
-              {done && !active ? <Check className="size-3.5" aria-hidden /> : s.num}
+              {done ? <Check className="size-3" aria-hidden /> : s.num}
             </div>
-            <span
-              className={`text-xs hidden sm:inline ${
-                active ? 'font-medium text-foreground' : 'text-muted-foreground'
-              }`}
-            >
-              {s.label}
-            </span>
-            {idx < STEP_LABELS.length - 1 && (
-              <span className="text-muted-foreground/30 text-xs sm:inline">/</span>
-            )}
           </div>
         )
       })}
@@ -58,7 +53,7 @@ function StepIndicator({ step }: { step: number }) {
 }
 
 function WizardView() {
-  const { step, isLoadingStatus, errorMsg, isSuccess } = useOwnerOnboardingWizard()
+  const { step, isLoadingStatus, isSuccess } = useOwnerOnboardingWizard()
 
   if (isLoadingStatus) {
     return (
@@ -81,7 +76,11 @@ function WizardView() {
           ? 'Select Your Atelier Plan'
           : step === 5
             ? 'Customize Your Concierge Intelligence'
-            : 'Review & Initialize Boutique'
+            : step === 6
+              ? 'Connect Your Channels'
+              : step === 7
+                ? 'Invite Your Team'
+                : 'Review & Initialize Boutique'
 
   const subtitle = isSuccess
     ? 'Your boutique operations and AI intelligence agents have been initialized.'
@@ -93,7 +92,11 @@ function WizardView() {
           ? 'Experience Aveline risk-free in demo mode. No payment is required today.'
           : step === 5
             ? 'Help your AI agents understand your unique brand voice, policies, and customer etiquette.'
-            : 'Confirm your boutique parameters and initialize your customer intelligence agents.'
+            : step === 6
+              ? 'Optionally link WhatsApp, Instagram, and your payment gateway. Credentials stay encrypted.'
+              : step === 7
+                ? 'Bring your team aboard with an email invitation or a shareable code.'
+                : 'Confirm your boutique parameters and initialize your customer intelligence agents.'
 
   // Renders the active wizard stage.
   const renderStep = () => {
@@ -108,6 +111,10 @@ function WizardView() {
       case 5:
         return <AiCustomizationStep />
       case 6:
+        return <IntegrationsStep />
+      case 7:
+        return <InviteStaffStep />
+      case 8:
         return <ReviewStep />
       default:
         return null
@@ -139,14 +146,6 @@ function WizardView() {
 
           {/* Progress Stepper Bar (Hidden on Success) */}
           {!isSuccess && <StepIndicator step={step} />}
-
-          {/* Error Alert */}
-          {errorMsg && (
-            <Alert variant="destructive">
-              <AlertCircle className="size-4" />
-              <AlertDescription>{errorMsg}</AlertDescription>
-            </Alert>
-          )}
 
           {renderStep()}
         </div>

@@ -6,12 +6,14 @@ import { RequireAccountState } from './components/RequireAccountState'
 import { RequireAdmin } from './components/RequireAdmin'
 import { UserProvider } from './contexts/UserContext'
 import { AuthApiBridge } from './lib/AuthApiBridge'
+import { Toaster } from './components/ui/sonner'
 import { AdminSignUpPage } from './routes/AdminSignUpPage'
 import { ContactPage } from './routes/ContactPage'
 import { Dashboard } from './routes/Dashboard'
 import { DocsPage } from './routes/DocsPage'
 import { DownloadPage } from './routes/DownloadPage'
 import { ForbiddenPage } from './routes/ForbiddenPage'
+import { InvitePage } from './routes/InvitePage'
 import { LandingPage } from './routes/LandingPage'
 import { OnboardingPage } from './routes/OnboardingPage'
 import { OrgSetupPage } from './routes/OrgSetupPage'
@@ -39,6 +41,7 @@ export default function App() {
           <Route element={<ProtectedRoute />}>
             <Route path="/onboarding" element={<OnboardingPage />} />
             <Route path="/org-setup" element={<OrgSetupPage />} />
+            <Route path="/invite" element={<InvitePage />} />
             <Route element={<RequireAccountState />}>
               <Route element={<RootLayout />}>
                 <Route element={<RequireAdmin />}>
@@ -58,6 +61,8 @@ export default function App() {
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+
+        <Toaster />
       </UserProvider>
     </>
   )

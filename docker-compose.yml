@@ -56,6 +56,10 @@ services:
       Redis__ConnectionString: redis:6379
       AgentService__BaseUrl: http://agent:8000
       AgentService__InternalToken: ${INTERNAL_API_TOKEN:-change-me-internal-token}
+      # AES-256-GCM key for tenant integration credentials (base64, 32 bytes).
+      Credentials__EncryptionKey: ${CREDENTIALS_ENCRYPTION_KEY:?CREDENTIALS_ENCRYPTION_KEY is required}
+      # Public base URL used to build staff-invitation links.
+      App__BaseUrl: ${APP_BASE_URL:-http://localhost:5173}
       # Add other env vars here (Clerk, WhatsApp, payment gateway keys, etc.)
     depends_on:
       postgres:

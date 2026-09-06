@@ -19,6 +19,7 @@ public class OrganizationServiceTests
     private readonly AppDbContext _context;
     private readonly OrganizationService _sut;
     private readonly IUserCacheService _cacheService;
+    private readonly FakeInvitationCodeStore _codeStore;
 
     public OrganizationServiceTests()
     {
@@ -30,9 +31,11 @@ public class OrganizationServiceTests
         var memCacheOptions = Options.Create(new MemoryDistributedCacheOptions());
         var distCache = new MemoryDistributedCache(memCacheOptions);
         _cacheService = new UserCacheService(distCache, NullLogger<UserCacheService>.Instance);
+        _codeStore = new FakeInvitationCodeStore();
         _sut = new OrganizationService(
             new OrganizationRepository(_context),
             new InvitationRepository(_context),
+            _codeStore,
             new UserRepository(_context),
             _cacheService,
             NullLogger<OrganizationService>.Instance);

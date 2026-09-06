@@ -43,6 +43,18 @@ public interface IOrganizationService
         string? acceptingEmail,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Returns pending (unaccepted, unrevoked, unexpired) invitations for an organization.</summary>
+    Task<IReadOnlyList<OrganizationInvitation>> ListPendingInvitationsAsync(
+        Guid organizationId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Revokes a pending invitation so it can no longer be accepted.</summary>
+    Task RevokeInvitationAsync(
+        Guid organizationId,
+        Guid invitationId,
+        Guid revokingUserId,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Returns the user's active memberships.</summary>
     Task<IReadOnlyList<OrganizationMembership>> GetUserMembershipsAsync(
         Guid userId,

@@ -154,7 +154,7 @@ export function AiCustomizationStep() {
           Back
         </Button>
         <Button form="contextForm" type="submit" disabled={isSubmitting}>
-          {isSubmitting ? 'Saving…' : 'Continue to Final Review'}{' '}
+          {isSubmitting ? 'Saving…' : 'Continue to Integrations'}{' '}
           <ArrowRight className="size-4" data-icon="inline-end" />
         </Button>
       </CardFooter>

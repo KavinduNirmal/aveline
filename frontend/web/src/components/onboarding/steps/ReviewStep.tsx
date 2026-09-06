@@ -65,8 +65,8 @@ export function ReviewStep() {
         </div>
       </CardContent>
       <CardFooter className="flex justify-between gap-3">
-        <Button variant="outline" onClick={() => goTo(5)}>
-          Back to Customization
+        <Button variant="outline" onClick={() => goTo(7)}>
+          Back to Team
         </Button>
         <Button
           size="lg"

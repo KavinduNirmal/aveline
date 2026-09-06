@@ -4,6 +4,8 @@ import type {
   CreateOrganizationRequest,
   CreateOrganizationResponse,
   OrganizationMembership,
+  OrganizationProfileWithMembershipDto,
+  OrganizationUsageSummary,
 } from '@/types/organization'
 
 /**
@@ -40,6 +42,32 @@ export async function acceptInvitation(
   const response = await apiClient.post<AcceptInvitationResponse>(
     '/api/v1/invitations/accept',
     { code },
+  )
+  return response.data
+}
+
+/**
+ * Resolves a boutique by slug and returns its profile plus the caller's membership
+ * (null when the caller is not a member). See GET /api/v1/orgs/by-slug/{slug}.
+ */
+export async function fetchOrganizationBySlug(
+  slug: string,
+): Promise<OrganizationProfileWithMembershipDto> {
+  const response = await apiClient.get<OrganizationProfileWithMembershipDto>(
+    `/api/v1/orgs/by-slug/${encodeURIComponent(slug)}`,
+  )
+  return response.data
+}
+
+/**
+ * Returns the current billing period's Blossom usage for a boutique.
+ * See GET /api/v1/orgs/{organizationId}/usage.
+ */
+export async function fetchOrganizationUsage(
+  organizationId: string,
+): Promise<OrganizationUsageSummary> {
+  const response = await apiClient.get<OrganizationUsageSummary>(
+    `/api/v1/orgs/${organizationId}/usage`,
   )
   return response.data
 }

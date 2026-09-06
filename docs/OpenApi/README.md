@@ -9,7 +9,7 @@ This folder contains the OpenAPI (Swagger) specification files for the Aveline A
   ```bash
   dotnet run --project Aveline.Api -- --openapi-export
   ```
-  Or download from `http://localhost:5000/openapi/v1.json` when the API is running.
+  Or download from `http://localhost:5091/openapi/v1.json` when the API is running.
 
 - **Slice-specific specs** (optional, for clarity during development):
   - `customer-concierge-api.yaml`

@@ -2,11 +2,14 @@ using Aveline.Api.Common.Middleware;
 using Aveline.Api.Configurations;
 using Aveline.Api.Endpoints;
 using Aveline.Api.Infrastructure.Caching;
+using Aveline.Api.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
 using Aveline.Api.Infrastructure.Notifications;
 using Aveline.Api.Infrastructure.RateLimiting;
 using Aveline.Api.Modules.Admin.Repositories;
 using Aveline.Api.Modules.Admin.Services;
 using Aveline.Api.Modules.Billing;
+using Aveline.Api.Modules.Billing.Endpoints;
 using Aveline.Api.Modules.Integrations;
 using Aveline.Api.Modules.Organizations.Repositories;
 using Aveline.Api.Modules.Organizations.Services;
@@ -70,8 +73,22 @@ v1.MapAdminEndpoints();
 v1.MapOrganizationEndpoints();
 v1.MapOnboardingEndpoints();
 v1.MapIntegrationEndpoints();
+v1.MapOrgUsageEndpoints();
 
 app.MapBillingEndpoints();
+
+// Apply EF Core migrations on startup for a fresh/local database. Guarded to the
+// relational (PostgreSQL) provider so the in-memory contexts used by the test suite are
+// skipped, and to the Development environment to avoid unexpected migrations in prod.
+if (app.Environment.IsDevelopment())
+{
+    using var scope = app.Services.CreateScope();
+    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    if (dbContext.Database.IsRelational())
+    {
+        await dbContext.Database.MigrateAsync();
+    }
+}
 
 app.Run();
 

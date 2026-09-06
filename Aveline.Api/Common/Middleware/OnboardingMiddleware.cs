@@ -9,8 +9,9 @@ namespace Aveline.Api.Common.Middleware;
 /// Enforces the account lifecycle state (replaces the boolean onboarding gate).
 /// Only <see cref="AccountState.Active"/> accounts reach business endpoints;
 /// <see cref="AccountState.OnboardingPending"/> accounts are limited to profile,
-/// organization, and invitation endpoints; <see cref="AccountState.Suspended"/>
-/// accounts get no authenticated API access.
+/// onboarding-wizard, and invitation endpoints; <see cref="AccountState.Suspended"/>
+/// accounts get no authenticated API access. Raw <c>/orgs</c> endpoints are excluded for
+/// pending accounts so a caller cannot create an organization to bypass onboarding.
 /// </summary>
 public class OnboardingMiddleware
 {
@@ -22,8 +23,6 @@ public class OnboardingMiddleware
         "/api/v1/users/onboarding",
         "/api/v1/auth/claims",
         "/api/v1/admin",
-        "/api/v1/orgs",
-        "/api/v1/orgs/my",
         "/api/v1/invitations",
         "/api/v1/onboarding",
         "/openapi",
@@ -87,7 +86,9 @@ public class OnboardingMiddleware
                 return;
 
             default:
-                // OnboardingPending: profile + organization/invitation endpoints only.
+                // OnboardingPending: profile, onboarding-wizard, and invitation endpoints only.
+                // Raw /orgs endpoints are intentionally excluded so a caller cannot create an
+                // organization to short-circuit onboarding into an Active state.
                 var path = context.Request.Path.Value?.TrimEnd('/') ?? string.Empty;
                 var isAllowed = AllowedPathsForOnboardingPending.Any(p =>
                     path.Equals(p, StringComparison.OrdinalIgnoreCase)

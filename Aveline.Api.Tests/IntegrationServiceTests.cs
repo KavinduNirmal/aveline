@@ -62,8 +62,8 @@ public class IntegrationServiceTests
         var row = await _repository.GetAsync(orgId, IntegrationType.WhatsApp);
         Assert.NotNull(row);
         Assert.DoesNotContain("wa-access-token", row.EncryptedValue);
-        // Encrypted blob round-trips to the original secret.
-        var decrypted = _encryption.Decrypt(row.EncryptedValue);
+        // Encrypted blob round-trips to the original secret using the org+type AAD.
+        var decrypted = _encryption.Decrypt(row.EncryptedValue, $"{orgId}:{IntegrationType.WhatsApp}");
         Assert.Contains("wa-access-token", decrypted);
     }
 

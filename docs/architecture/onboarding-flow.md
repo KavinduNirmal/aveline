@@ -268,7 +268,9 @@ After the organization is finalized, `OnboardingService` calls
 - `/onboarding` (`routes/OnboardingPage.tsx`) renders `OwnerOnboardingWizard`.
 - `RequireAccountState` redirects any **OnboardingPending** account to `/onboarding`, where the
   unified wizard handles both owner setup and staff invitation acceptance.
-- Once `POST /complete` succeeds the account becomes **Active** and the owner may enter `/app`.
+- Once `POST /complete` succeeds the account becomes **Active** and the owner enters the
+  tenant dashboard: `/app` resolves the caller's boutique and redirects to `/app/b/{slug}`
+  (`routes/Dashboard.tsx` → `routes/TenantDashboard.tsx`). See issue #74.
 
 ### 6.2 Wizard architecture
 

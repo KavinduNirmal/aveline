@@ -3,6 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { useUserContext } from '@/contexts/UserContext'
+import {
+  ADDRESS_MAX,
+  BOUTIQUE_DESCRIPTION_MAX,
+  BOUTIQUE_NAME_MAX,
+  isValidLkPhone,
+} from '@/lib/boutique'
 import type { PlanTier } from '@/lib/onboarding'
 import {
   completeOnboarding,
@@ -159,25 +165,41 @@ export function OwnerOnboardingWizardProvider({ children }: { children: React.Re
   }, [draft.inviteCode, navigate, refreshUser])
 
   const handleSaveBoutiqueDetails = useCallback(async () => {
-    if (!draft.boutiqueName.trim()) {
+    const name = draft.boutiqueName.trim()
+    const address = draft.address.trim()
+    const description = draft.description.trim()
+
+    if (!name) {
       toast.error('Please enter your boutique name.')
       return
     }
-    if (!draft.address.trim()) {
+    if (name.length > BOUTIQUE_NAME_MAX) {
+      toast.error(`Boutique name must be ${BOUTIQUE_NAME_MAX} characters or fewer.`)
+      return
+    }
+    if (!address) {
       toast.error('Please enter your boutique physical address.')
       return
     }
-    if (!draft.phoneNumber.trim() || draft.phoneNumber.trim() === '+94') {
-      toast.error('Please enter a valid boutique contact phone number.')
+    if (address.length > ADDRESS_MAX) {
+      toast.error(`Physical address must be ${ADDRESS_MAX} characters or fewer.`)
+      return
+    }
+    if (!isValidLkPhone(draft.phoneNumber)) {
+      toast.error('Enter a valid Sri Lankan phone number, e.g. +94 77 12 12 123 (9 digits).')
+      return
+    }
+    if (description.length > BOUTIQUE_DESCRIPTION_MAX) {
+      toast.error(`Boutique description must be ${BOUTIQUE_DESCRIPTION_MAX} characters or fewer.`)
       return
     }
     try {
       setIsSubmitting(true)
       const saved = await saveBoutiqueDetails({
-        name: draft.boutiqueName.trim(),
-        address: draft.address.trim(),
+        name,
+        address,
         phoneNumber: draft.phoneNumber.trim(),
-        description: draft.description.trim() || undefined,
+        description: description || undefined,
         logoUrl: draft.logoUrl.trim() || undefined,
       })
       patch({ organizationId: saved.id })

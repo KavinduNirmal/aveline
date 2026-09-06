@@ -995,4 +995,5 @@ Design feedback round on the landing page:
 - `dotnet build Aveline.Api`: Succeeded with 0 warnings, 0 errors.
 - `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj`: All 153 tests passed (16 new billing unit and integration tests + 137 existing tests).
 - Verified EF Core migration skip as requested (database not running locally; migrations will be generated when database is accessible).
+- Formatted Python import blocks across `agnet-service/app/services/usage_reporter.py` and `agnet-service/tests/test_usage_reporter.py` to satisfy ruff rule `I001`.
 

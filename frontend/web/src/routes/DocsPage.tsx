@@ -1,78 +1,77 @@
-import { AuroraField } from '@/components/site/AuroraField'
-import { Reveal } from '@/components/site/Reveal'
-import { SitePage } from '@/components/site/SitePage'
+import { useMemo } from 'react'
+import { useParams, Navigate } from 'react-router-dom'
+import { DocsLayout } from '@/components/docs/DocsLayout'
+import { DocsContent } from '@/components/docs/DocsContent'
+import { type TocItem } from '@/components/docs/DocsToc'
+import { DEFAULT_SLUG, getDocPageBySlug } from '@/docs/config'
 
-const DOCS = [
-  {
-    title: 'Getting started',
-    body: 'Owners create a boutique and set their business rules. Staff create an '
-      .concat('account and join with an invitation code from their owner.'),
-  },
-  {
-    title: 'Roles & permissions',
-    body: 'Aveline team roles (owner, manager, staff) pair with per-boutique roles. '
-      .concat('Boutique owners manage memberships; high-value actions pause for the '
-        + 'owner’s approval before they complete.'),
-  },
-  {
-    title: 'Ava, Elle & Lina',
-    body: 'Ava (memory) keeps every customer close. Elle (visual) understands products '
-      .concat('and composes outfits. Lina (commerce) handles pricing, payments and '
-        + 'delivery — always pausing for approval on big decisions.'),
-  },
-  {
-    title: 'Admin access',
-    body: 'Administrator access is requested through the unassuming admin sign-up and '
-      .concat('granted only after review by the Aveline team.'),
-  },
-  {
-    title: 'Privacy & security',
-    body: 'Sessions are managed by Clerk. Customer data stays within your boutique. '
-      .concat('See the Terms & Conditions for the full privacy policy.'),
-  },
-]
+// Import all markdown documents statically via Vite's ?raw feature
+import gettingStartedMd from '@/docs/getting-started.md?raw'
+import rolesPermissionsMd from '@/docs/roles-permissions.md?raw'
+import avaMd from '@/docs/ava.md?raw'
+import elleMd from '@/docs/elle.md?raw'
+import linaMd from '@/docs/lina.md?raw'
+import adminAccessMd from '@/docs/admin-access.md?raw'
+import privacySecurityMd from '@/docs/privacy-security.md?raw'
+
+const DOC_CONTENTS: Record<string, string> = {
+  'getting-started': gettingStartedMd,
+  'roles-permissions': rolesPermissionsMd,
+  ava: avaMd,
+  elle: elleMd,
+  lina: linaMd,
+  'admin-access': adminAccessMd,
+  'privacy-security': privacySecurityMd,
+}
+
+function parseHeadings(markdown: string): TocItem[] {
+  const lines = markdown.split('\n')
+  const toc: TocItem[] = []
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    const match = trimmed.match(/^(#{2,3})\s+(.+)$/)
+    if (match) {
+      const level = match[1].length
+      const rawText = match[2]
+      // Strip markdown links, bold, code ticks
+      const cleanText = rawText
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        .replace(/[*_`]/g, '')
+        .trim()
+
+      const id = cleanText
+        .toLowerCase()
+        .replace(/[^\w\s-]/g, '')
+        .replace(/\s+/g, '-')
+
+      toc.push({ id, text: cleanText, level })
+    }
+  }
+
+  return toc
+}
 
 export function DocsPage() {
+  const { slug } = useParams<{ slug?: string }>()
+  const activeSlug = slug || DEFAULT_SLUG
+
+  // Validate slug exists in catalog
+  const pageMeta = getDocPageBySlug(activeSlug)
+  const markdown = DOC_CONTENTS[activeSlug]
+
+  const toc = useMemo(() => {
+    if (!markdown) return []
+    return parseHeadings(markdown)
+  }, [markdown])
+
+  if (!pageMeta || !markdown) {
+    return <Navigate to={`/docs/${DEFAULT_SLUG}`} replace />
+  }
+
   return (
-    <SitePage>
-      <section className="relative overflow-hidden">
-        <AuroraField className="opacity-40" />
-        <div className="relative mx-auto w-full max-w-4xl px-5 py-20 lg:px-8">
-        <Reveal className="max-w-2xl">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-commerce">
-            Docs
-          </p>
-          <h1 className="mt-3 font-serif text-4xl font-medium tracking-tight text-neutral-900 sm:text-5xl">
-            How Aveline works.
-          </h1>
-          <p className="mt-4 text-lg text-neutral-500">
-            A quick guide to getting the most from your assistant.
-          </p>
-        </Reveal>
-
-        <div className="mt-12 flex flex-col gap-4">
-          {DOCS.map((doc, i) => (
-            <Reveal key={doc.title} delay={i * 0.05}>
-              <section className="rounded-3xl border-2 border-dashed border-neutral-200 bg-white p-7">
-                <h2 className="font-serif text-2xl font-medium text-neutral-900">
-                  {doc.title}
-                </h2>
-                <p className="mt-2 text-[15px] leading-relaxed text-neutral-600">{doc.body}</p>
-              </section>
-            </Reveal>
-          ))}
-        </div>
-
-        <Reveal delay={0.1}>
-          <p className="mt-10 text-sm text-neutral-400">
-            Something not covered?{' '}
-            <a href="mailto:support@aveline.lk" className="text-commerce hover:underline">
-              support@aveline.lk
-            </a>
-          </p>
-        </Reveal>
-        </div>
-      </section>
-    </SitePage>
+    <DocsLayout currentSlug={activeSlug} toc={toc}>
+      <DocsContent markdown={markdown} currentSlug={activeSlug} />
+    </DocsLayout>
   )
 }

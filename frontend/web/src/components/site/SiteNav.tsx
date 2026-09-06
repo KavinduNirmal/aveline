@@ -13,7 +13,7 @@ const TABS = [
   { label: 'Features', to: '/#features' },
   { label: 'Contact', to: '/contact' },
   { label: 'Plans', to: '/plans' },
-  { label: 'Docs', to: '/docs' },
+  { label: 'Docs', to: '/docs/getting-started' },
 ]
 
 /** Sticky glass navigation used across the public marketing pages. */
@@ -46,21 +46,26 @@ export function SiteNav() {
         </Link>
 
         <nav className="hidden items-center gap-1 md:flex">
-          {TABS.map((tab) => (
-            <NavLink
-              key={tab.label}
-              to={tab.to}
-              onClick={(e) => handleAnchor(e, tab.to)}
-              className={({ isActive }) =>
-                cn(
+          {TABS.map((tab) => {
+            const isDocsTab = tab.label === 'Docs'
+            const isTabActive = isDocsTab
+              ? location.pathname.startsWith('/docs')
+              : location.pathname === tab.to && tab.to !== '/#features'
+
+            return (
+              <NavLink
+                key={tab.label}
+                to={tab.to}
+                onClick={(e) => handleAnchor(e, tab.to)}
+                className={cn(
                   'rounded-full px-3.5 py-1.5 text-sm text-neutral-500 transition-colors hover:text-neutral-900',
-                  isActive && tab.to !== '/#features' && 'text-neutral-900',
-                )
-              }
-            >
-              {tab.label}
-            </NavLink>
-          ))}
+                  isTabActive && 'text-neutral-900 font-medium',
+                )}
+              >
+                {tab.label}
+              </NavLink>
+            )
+          })}
         </nav>
 
         <div className="hidden items-center gap-2 md:flex">

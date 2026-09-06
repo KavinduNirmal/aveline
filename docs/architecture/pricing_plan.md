@@ -10,7 +10,7 @@ This document defines the proposed pricing model for Aveline AI, a boutique conc
 
 The pricing model is designed around four principles:
 
-1. **Flowers are the primary customer-facing usage unit.**
+1. **Blossoms are the primary customer-facing usage unit.**
 2. **AI infrastructure costs are measured internally rather than exposed as token quotas.**
 3. **Every plan should allow customers to experience Aveline's core capabilities.**
 4. **Paid plans primarily increase scale, automation, team capacity, and business intelligence.**
@@ -23,8 +23,8 @@ This document is a living draft and should be updated as real usage and cost dat
 
 1. Executive Summary
 2. Pricing Philosophy
-3. The Flower System
-4. Flower Calculation
+3. The Blossom System
+4. Blossom Calculation
 5. Plan Overview
 6. Plan Details
 7. Free Tier Strategy
@@ -45,7 +45,7 @@ This document is a living draft and should be updated as real usage and cost dat
 
 Aveline uses a hybrid SaaS pricing model built around:
 
-- **Flower Credits** — the primary AI usage allowance.
+- **Blossom Credits** — the primary AI usage allowance.
 - **Staff Seats** — the number of employees who can actively use Aveline.
 - **Active Customer Limits** — the number of active customer profiles supported by a plan.
 - **Features and Capabilities** — integrations, automation, analytics, API access, and business context differentiate higher plans.
@@ -56,13 +56,13 @@ This has been revised.
 
 ## Revised principle
 
-> **Customers pay for Aveline's AI capabilities through Flowers, not directly for tokens.**
+> **Customers pay for Aveline's AI capabilities through Blossoms, not directly for tokens.**
 
 Tokens remain an **internal infrastructure and cost-management metric**.
 
 A customer should understand:
 
-> "I have 750 Flowers this month."
+> "I have 750 Blossoms this month."
 
 They should not need to understand:
 
@@ -94,14 +94,14 @@ Therefore, the pricing model should represent **AI work performed by Aveline**, 
 
 | Dimension        | Purpose                                          |
 | ---------------- | ------------------------------------------------ |
-| Flowers          | Measures AI usage                                |
+| Blossoms         | Measures AI usage                                |
 | Staff Seats      | Determines team capacity                         |
 | Active Customers | Determines customer-data scale                   |
 | Features         | Determines business capability and plan maturity |
 
 The dimensions serve different purposes.
 
-Flowers measure **how much AI the customer uses**.
+Blossoms measure **how much AI the customer uses**.
 
 Staff and customer limits determine **how large the business using Aveline is**.
 
@@ -109,19 +109,19 @@ Features determine **what Aveline can do for that business**.
 
 ---
 
-# 3. The Flower System
+# 3. The Blossom System
 
-## 3.1 What is a Flower?
+## 3.1 What is a Blossom?
 
-A Flower is Aveline's customer-facing unit of AI usage.
+A Blossom is Aveline's customer-facing unit of AI usage.
 
-A Flower does **not** represent a literal API token count.
+A Blossom does **not** represent a literal API token count.
 
 Instead:
 
-> **A Flower represents a normalized unit of AI work performed by Aveline.**
+> **A Blossom represents a normalized unit of AI work performed by Aveline.**
 
-The underlying AI usage and infrastructure cost are measured internally and converted into Flower usage.
+The underlying AI usage and infrastructure cost are measured internally and converted into Blossom usage.
 
 This allows Aveline to change:
 
@@ -136,9 +136,9 @@ without forcing a redesign of the customer-facing pricing model.
 
 ---
 
-## 3.2 Why Flowers?
+## 3.2 Why Blossoms?
 
-Flowers provide a simple abstraction.
+Blossoms provide a simple abstraction.
 
 Instead of exposing:
 
@@ -155,7 +155,7 @@ Aveline exposes:
 ```text
 Your bouquet
      ↓
-750 Flowers
+750 Blossoms
      ↓
 AI work
 ```
@@ -164,7 +164,7 @@ This preserves the "Quiet Luxury" positioning while still allowing precise inter
 
 ---
 
-# 4. Flower Calculation
+# 4. Blossom Calculation
 
 ## 4.1 Initial Normalization
 
@@ -172,18 +172,18 @@ For the initial implementation, Aveline may use a token-equivalent normalization
 
 Proposed baseline:
 
-> **1 Flower ≈ 1,000 normalized AI usage units**
+> **1 Blossom ≈ 1,000 normalized AI usage units**
 
 For example:
 
-|     AI Usage | Flower Usage |
-| -----------: | -----------: |
-|    250 units | 0.25 Flowers |
-|    500 units | 0.50 Flowers |
-|  1,000 units |     1 Flower |
-|  2,500 units |  2.5 Flowers |
-|  5,000 units |    5 Flowers |
-| 10,000 units |   10 Flowers |
+|     AI Usage | Blossom Usage |
+| -----------: | ------------: |
+|    250 units | 0.25 Blossoms |
+|    500 units | 0.50 Blossoms |
+|  1,000 units |     1 Blossom |
+|  2,500 units |  2.5 Blossoms |
+|  5,000 units |    5 Blossoms |
+| 10,000 units |   10 Blossoms |
 
 These values are an implementation baseline, not a permanent pricing guarantee.
 
@@ -230,18 +230,18 @@ Total normalized usage
 3,700 units
 
 3,700 / 1,000
-= 3.7 Flowers
+= 3.7 Blossoms
 ```
 
 The workflow therefore consumes approximately:
 
-> **3.7 Flowers**
+> **3.7 Blossoms**
 
 ---
 
 ## 4.3 Tool Calls
 
-A tool call does not automatically cost Flowers simply because a tool was called.
+A tool call does not automatically cost Blossoms simply because a tool was called.
 
 For example:
 
@@ -251,11 +251,11 @@ SearchInventory()
 
 is not itself necessarily an AI-token expense.
 
-However, if the result is returned to an LLM and contributes to AI usage, the associated model usage is included in the Flower calculation.
+However, if the result is returned to an LLM and contributes to AI usage, the associated model usage is included in the Blossom calculation.
 
 Therefore:
 
-> **Flowers measure AI work, not the number of API/database calls.**
+> **Blossoms measure AI work, not the number of API/database calls.**
 
 Infrastructure costs such as database queries, Redis operations, or external APIs should be tracked separately.
 
@@ -276,10 +276,10 @@ Model-specific cost calculation
         ↓
 Normalized AI cost
         ↓
-Flower units
+Blossom units
 ```
 
-This means the customer-facing Flower system remains stable even if Aveline changes AI providers or models.
+This means the customer-facing Blossom system remains stable even if Aveline changes AI providers or models.
 
 The exact normalization formula should be determined after collecting real production usage data.
 
@@ -290,7 +290,7 @@ The exact normalization formula should be determined after collecting real produ
 |                      |      Seed |        Bloom |       Orchid |          Rose |
 | -------------------- | --------: | -----------: | -----------: | ------------: |
 | **Price**            |      Free | LKR 3,500/mo | LKR 9,000/mo | LKR 20,000/mo |
-| **Flowers**          |       150 |          750 |        2,000 |         5,000 |
+| **Blossoms**         |       150 |          750 |        2,000 |         5,000 |
 | **Staff**            |         1 |            3 |           10 |            25 |
 | **Active Customers** |        50 |          250 |        1,000 |         5,000 |
 | Memory Agent         |       Yes |          Yes |          Yes |           Yes |
@@ -319,7 +319,7 @@ Seed is designed to let a boutique experience the important parts of Aveline bef
 ### Limits
 
 - Free
-- 150 Flowers/month
+- 150 Blossoms/month
 - 1 staff member
 - 50 active customers
 
@@ -360,7 +360,7 @@ The purpose is:
 
 ### Limits
 
-- 750 Flowers/month
+- 750 Blossoms/month
 - 3 staff members
 - 250 active customers
 
@@ -399,7 +399,7 @@ A small but established boutique with several employees that wants Aveline to be
 
 ### Limits
 
-- 2,000 Flowers/month
+- 2,000 Blossoms/month
 - 10 staff members
 - 1,000 active customers
 
@@ -441,7 +441,7 @@ Established boutiques where Aveline is becoming an operational assistant rather 
 
 ### Limits
 
-- 5,000 Flowers/month
+- 5,000 Blossoms/month
 - 25 staff members
 - 5,000 active customers
 
@@ -470,7 +470,7 @@ It is intended for businesses requiring:
 
 - more than 25 staff
 - more than 5,000 active customers
-- more than 5,000 Flowers
+- more than 5,000 Blossoms
 - extensive multi-branch operations
 - custom integrations
 - SLAs
@@ -517,7 +517,7 @@ Limited
 WhatsApp
 Limited
 
-Flowers
+Blossoms
 150/month
 
 Staff
@@ -543,7 +543,7 @@ A new boutique could:
 6. Generate a recommendation.
 7. Test a small number of WhatsApp interactions.
 8. Experience the workflow.
-9. Reach the Flower limit.
+9. Reach the Blossom limit.
 10. Upgrade to Bloom.
 
 The customer should understand what Aveline does **before** being asked to pay.
@@ -588,15 +588,15 @@ Historical records should remain accessible without necessarily counting toward 
 
 # 9. Add-ons
 
-Customers should eventually be able to purchase additional Flowers without immediately changing plans.
+Customers should eventually be able to purchase additional Blossoms without immediately changing plans.
 
-## Proposed Flower Packs
+## Proposed Blossom Packs
 
-| Pack          |     Price |
-| ------------- | --------: |
-| 100 Flowers   |   LKR 500 |
-| 500 Flowers   | LKR 2,000 |
-| 1,000 Flowers | LKR 3,500 |
+| Pack           |     Price |
+| -------------- | --------: |
+| 100 Blossoms   |   LKR 500 |
+| 500 Blossoms   | LKR 2,000 |
+| 1,000 Blossoms | LKR 3,500 |
 
 These values are initial proposals and should be validated against actual AI costs.
 
@@ -611,10 +611,10 @@ Example:
 ```text
 Bloom
 LKR 3,500
-750 Flowers
+750 Blossoms
 
 Customer repeatedly buys:
-1,000 additional Flowers
+1,000 additional Blossoms
 ```
 
 Eventually the customer should recognize that upgrading to Orchid provides better value.
@@ -647,7 +647,7 @@ When upgrading during a billing period:
 
 - The plan change should take effect immediately.
 - Remaining usage should be handled through a defined proration policy.
-- Additional Flower allowance should become available immediately.
+- Additional Blossom allowance should become available immediately.
 
 The exact financial calculation should be implemented by the billing provider rather than manually calculated wherever possible.
 
@@ -661,7 +661,7 @@ If the customer currently exceeds the lower plan's:
 
 - staff limit
 - active customer limit
-- Flower allowance
+- Blossom allowance
 
 the downgrade should require resolution before taking effect.
 
@@ -696,7 +696,7 @@ These are implementation details.
 
 The customer interacts with:
 
-> **Flowers**
+> **Blossoms**
 
 The Aveline team monitors:
 
@@ -708,9 +708,9 @@ The Aveline team monitors:
 
 A customer should not encounter:
 
-> "You still have 300 Flowers, but your token quota is exhausted."
+> "You still have 300 Blossoms, but your token quota is exhausted."
 
-This would make the Flower system confusing and undermine its purpose.
+This would make the Blossom system confusing and undermine its purpose.
 
 ---
 
@@ -723,7 +723,7 @@ For example:
 ```text
 AI Request
     ↓
-Check Flower balance
+Check Blossom balance
     ↓
 Allow request
     ↓
@@ -733,7 +733,7 @@ Record actual usage
     ↓
 Calculate actual cost
     ↓
-Update Flower usage
+Update Blossom usage
 ```
 
 Separately:
@@ -784,7 +784,7 @@ cached_tokens
 
 actual_cost
 
-flower_units
+Blossom_units
 
 created_at
 ```
@@ -796,9 +796,9 @@ UsageAccount
 
 organization_id
 
-monthly_flower_limit
-flower_used
-flower_remaining
+monthly_Blossom_limit
+Blossom_used
+Blossom_remaining
 
 active_customer_count
 staff_count
@@ -817,7 +817,7 @@ status
                 AI REQUEST
                     │
                     ▼
-           Check Flower balance
+           Check Blossom balance
                     │
                     ▼
               Run workflow
@@ -834,10 +834,10 @@ status
           Calculate AI cost
                     │
                     ▼
-          Convert to Flowers
+          Convert to Blossoms
                     │
                     ▼
-          Deduct Flower usage
+          Deduct Blossom usage
 ```
 
 ---
@@ -890,9 +890,9 @@ Exceeds Rose limits?
 
 The UsageTracker service should be responsible for:
 
-- checking Flower availability
+- checking Blossom availability
 - recording AI usage
-- calculating Flower consumption
+- calculating Blossom consumption
 - maintaining monthly usage
 - preventing usage beyond limits
 - recording model/provider information
@@ -903,7 +903,7 @@ The UsageTracker service should be responsible for:
 
 ---
 
-## 14.2 Flower Calculation
+## 14.2 Blossom Calculation
 
 Initial implementation:
 
@@ -913,7 +913,7 @@ normalized_usage =
     + output_tokens
     + applicable cached/multimodal usage
 
-flower_usage =
+Blossom_usage =
     normalized_usage / 1,000
 ```
 
@@ -926,7 +926,7 @@ AI cost
       ↓
 Cost normalization
       ↓
-Flower value
+Blossom value
 ```
 
 to ensure each plan remains profitable.
@@ -935,15 +935,15 @@ to ensure each plan remains profitable.
 
 ## 14.3 Minimum Charge
 
-Very small AI requests may produce inconveniently small Flower values.
+Very small AI requests may produce inconveniently small Blossom values.
 
 The system may therefore define minimum billing increments such as:
 
 ```text
-0.1 Flower
-0.25 Flower
-0.5 Flower
-1 Flower
+0.1 Blossom
+0.25 Blossom
+0.5 Blossom
+1 Blossom
 ```
 
 The final granularity should be selected based on actual usage patterns.
@@ -967,27 +967,27 @@ Example:
 }
 ```
 
-The UsageTracker then determines the corresponding Flower consumption.
+The UsageTracker then determines the corresponding Blossom consumption.
 
 ---
 
 # 15. Open Questions
 
-| Question                                                        | Status                                                              |
-| --------------------------------------------------------------- | ------------------------------------------------------------------- |
-| What is the exact monetary value of one Flower?                 | To validate                                                         |
-| Should Flowers be calculated from tokens or normalized AI cost? | Initial token-equivalent implementation; cost normalization planned |
-| What is the minimum Flower billing increment?                   | To determine                                                        |
-| Should unused Flowers roll over?                                | To validate                                                         |
-| Should Flower add-ons expire?                                   | To determine                                                        |
-| Exact annual pricing?                                           | To determine                                                        |
-| Exact proration policy?                                         | To determine                                                        |
-| Exact active-customer definition?                               | To determine                                                        |
-| Additional staff seat pricing?                                  | Future                                                              |
-| Exact Seed WhatsApp allowance?                                  | To determine                                                        |
-| Exact Seed Visual/Commerce allowance?                           | To determine                                                        |
-| Enterprise pricing?                                             | Future                                                              |
-| Internal abnormal-usage threshold?                              | To determine                                                        |
+| Question                                                         | Status                                                              |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------- |
+| What is the exact monetary value of one Blossom?                 | To validate                                                         |
+| Should Blossoms be calculated from tokens or normalized AI cost? | Initial token-equivalent implementation; cost normalization planned |
+| What is the minimum Blossom billing increment?                   | To determine                                                        |
+| Should unused Blossoms roll over?                                | To validate                                                         |
+| Should Blossom add-ons expire?                                   | To determine                                                        |
+| Exact annual pricing?                                            | To determine                                                        |
+| Exact proration policy?                                          | To determine                                                        |
+| Exact active-customer definition?                                | To determine                                                        |
+| Additional staff seat pricing?                                   | Future                                                              |
+| Exact Seed WhatsApp allowance?                                   | To determine                                                        |
+| Exact Seed Visual/Commerce allowance?                            | To determine                                                        |
+| Enterprise pricing?                                              | Future                                                              |
+| Internal abnormal-usage threshold?                               | To determine                                                        |
 
 ---
 
@@ -997,9 +997,9 @@ The UsageTracker then determines the corresponding Flower consumption.
 
 Aveline uses a hybrid SaaS pricing model.
 
-The primary usage unit is called a **Flower**. Flowers represent a normalized amount of AI work performed by Aveline rather than exposing technical concepts such as API tokens to boutique owners.
+The primary usage unit is called a **Blossom**. Blossoms represent a normalized amount of AI work performed by Aveline rather than exposing technical concepts such as API tokens to boutique owners.
 
-Each subscription provides a monthly Flower allowance, while staff and active-customer limits determine the scale of the business that can use the platform.
+Each subscription provides a monthly Blossom allowance, while staff and active-customer limits determine the scale of the business that can use the platform.
 
 Higher plans also unlock capabilities such as WhatsApp integration, advanced AI context, automation, analytics, API access, and custom agents.
 
@@ -1007,7 +1007,7 @@ Internally, Aveline records token usage and actual AI costs for every workflow. 
 
 The important separation is:
 
-> **Flowers are the commercial abstraction; tokens are an internal cost metric.**
+> **Blossoms are the commercial abstraction; tokens are an internal cost metric.**
 
 This allows Aveline to change AI models or providers without changing the customer-facing pricing model.
 
@@ -1060,7 +1060,7 @@ The pricing system should follow one fundamental principle:
 The customer sees:
 
 ```text
-Flowers
+Blossoms
 Staff
 Customers
 Features
@@ -1083,16 +1083,16 @@ This separation should remain fundamental to the pricing architecture.
 
 ## Next Steps
 
-1. Define the initial Flower normalization formula.
+1. Define the initial Blossom normalization formula.
 2. Instrument all AI workflows with usage tracking.
 3. Measure actual token consumption per workflow.
 4. Calculate actual AI cost per workflow.
-5. Validate proposed Flower allowances against real usage.
+5. Validate proposed Blossom allowances against real usage.
 6. Finalize Seed's limited Visual, Commerce, and WhatsApp allowances.
 7. Define active-customer rules.
 8. Implement the UsageTracker backend service.
 9. Integrate UsageTracker with the agent service.
-10. Implement billing and Flower allocation.
+10. Implement billing and Blossom allocation.
 11. Build the pricing page.
 12. Test the pricing model with several hypothetical boutique usage profiles.
 

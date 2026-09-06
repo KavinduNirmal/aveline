@@ -32,7 +32,8 @@ export default function App() {
           <Route path="/" element={<LandingPage />} />
           <Route path="/plans" element={<PlansPage />} />
           <Route path="/contact" element={<ContactPage />} />
-          <Route path="/docs" element={<DocsPage />} />
+          <Route path="/docs" element={<Navigate to="/docs/getting-started" replace />} />
+          <Route path="/docs/:slug" element={<DocsPage />} />
           <Route path="/download" element={<DownloadPage />} />
 
           <Route element={<ProtectedRoute />}>

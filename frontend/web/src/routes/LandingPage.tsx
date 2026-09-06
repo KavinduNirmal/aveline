@@ -368,13 +368,24 @@ function AgentWorkflow() {
         {/* Editorial Narrative */}
         <div className="relative mx-auto mt-5 max-w-2xl px-4">
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-primary">
-            The Concept of Blossoms
+            The Concept of{' '}
+            <span className="bg-gradient-to-r from-primary via-[#b0566b] to-amber-700 bg-clip-text text-transparent">
+              Blossoms
+            </span>
           </p>
           <h3 className="mt-3 font-serif text-3xl font-medium tracking-tight text-neutral-900 sm:text-4xl">
-            Every agentic action powered by Blossoms.
+            Every agentic action powered by{' '}
+            <span className="bg-gradient-to-r from-primary via-[#b0566b] to-amber-700 bg-clip-text text-transparent italic">
+              Blossoms
+            </span>
+            .
           </h3>
           <p className="mx-auto mt-4 max-w-xl text-base leading-relaxed text-neutral-600">
-            Aveline operates on Blossoms—universal credits consumed only when genuine concierge work is performed.
+            Aveline operates on{' '}
+            <span className="bg-gradient-to-r from-primary via-[#b0566b] to-amber-700 bg-clip-text text-transparent font-semibold">
+              Blossoms
+            </span>
+            —universal credits consumed only when genuine concierge work is performed.
             No opaque seat charges or mystery token bills; your atelier only expends energy when intelligence is delivered.
           </p>
 

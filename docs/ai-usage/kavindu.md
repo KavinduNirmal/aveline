@@ -835,3 +835,89 @@ Design feedback round on the landing page:
 ### Verification Performed
 - bunx tsc --noEmit: Only pre-existing baseUrl deprecation warning; zero errors in PlansPage.tsx.
 - File written successfully, 827 lines.
+
+## Session 2026-09-06
+
+**Task:** Create an implementation plan to overhaul the documentation page (`/docs`) to use markdown-based documentation, modelled after the motion.dev/docs reference design (three-column layout: left sidebar navigation, centre markdown content, right table-of-contents). Work is to be tracked via a feature branch and a GitHub Issue.
+**Tool used:** Antigravity AI Assistant
+
+### Summary of Activities
+
+- Read project rules, user information, design system (`DESIGN.md`), existing `DocsPage.tsx`, `App.tsx`, `SiteNav.tsx`, `SitePage.tsx`, installed shadcn/ui components, `package.json`, and GitHub issue templates.
+- Identified the current state: `DocsPage.tsx` was a static hardcoded card list with no markdown support or sidebar navigation.
+- Produced and received user approval on `implementation_plan.md`.
+- Created GitHub Feature Request Issue [#65](https://github.com/KavinduNirmal/aveline/issues/65) tracking the overhaul.
+- Created Git Flow feature branch `feature/65-docs-markdown-overhaul`.
+- Installed dependencies: `react-markdown`, `remark-gfm`, `rehype-slug`, `rehype-autolink-headings`.
+- Authored markdown documentation pages under `src/docs/`:
+  - `getting-started.md`
+  - `roles-permissions.md`
+  - `ava.md`
+  - `elle.md`
+  - `lina.md`
+  - `admin-access.md`
+  - `privacy-security.md`
+- Created `src/docs/config.ts` for declarative section and page categorization.
+- Created `src/types/markdown.d.ts` for Vite raw markdown imports.
+- Created modular documentation components in `src/components/docs/`:
+  - `DocsLayout.tsx`: 3-column responsive layout (sticky sidebar, main content, sticky table of contents, mobile menu drawer).
+  - `DocsSidebar.tsx`: Categorized page navigation with active indicators and badges.
+  - `DocsContent.tsx`: Markdown prose renderer with custom styled code blocks, links, tables, and pagination.
+  - `DocsToc.tsx`: On-this-page table of contents with scrollspy active heading tracking.
+- Added `.aveline-prose` typography tokens to `src/index.css`.
+- Updated `src/App.tsx` routes: `/docs` redirect to `/docs/getting-started` and dynamic route `/docs/:slug`.
+- Updated `src/components/site/SiteNav.tsx` tabs to link directly to `/docs/getting-started` with prefix-aware active highlights.
+
+### Files Created or Modified
+
+- `frontend/web/package.json` & `bun.lock` — Added markdown dependencies (`react-markdown`, `remark-gfm`, `rehype-slug`, `rehype-autolink-headings`, `mermaid`, `rehype-highlight`).
+- `frontend/web/src/typeset.css` — Created standalone shadcn Typeset system with rhythm controls (`--typeset-size`, `--typeset-leading`, `--typeset-flow`) and `.typeset-docs` preset tailored to Aveline tokens.
+- `frontend/web/src/docs/config.ts` — Documentation metadata & section registry.
+- `frontend/web/src/docs/*.md` — 7 markdown topic documents, including readable top-down (`flowchart TD`) Mermaid flowcharts with clear branching in `roles-permissions.md` and `lina.md`.
+- `frontend/web/src/types/markdown.d.ts` — Raw markdown module declarations.
+- `frontend/web/src/components/docs/DocsLayout.tsx` — 3-column layout shell.
+- `frontend/web/src/components/docs/DocsSidebar.tsx` — Categorized navigation sidebar.
+- `frontend/web/src/components/docs/DocsContent.tsx` — Markdown renderer with Typeset integration, custom code block extraction, Mermaid diagram dispatch, and full-width responsive pagination cards.
+- `frontend/web/src/components/docs/Mermaid.tsx` — Dynamic client-side Mermaid diagram rendering component with Aveline Quiet Luxury theme tokens, enhanced font sizing (14px), white node surfaces with wine-rose borders, and error boundaries.
+- `frontend/web/src/components/docs/CodeBlock.tsx` — Fixed newline and indentation collapse by wrapping code content in `<pre>` with `whitespace-pre` and `leading-relaxed`. Styled container and header with warm espresso atelier palette (`#161213`).
+- `frontend/web/index.html` — Added `Geist+Mono:wght@100..900` to Google Fonts link.
+- `frontend/web/public/favicon.svg` — Replaced generic template favicon with dynamic Aveline Blossom SVG that adapts to light and dark browser tab themes.
+- `frontend/web/src/components/docs/DocsToc.tsx` — Scrollspy Table of Contents.
+- `frontend/web/src/routes/DocsPage.tsx` — Route container parsing slugs and headings.
+- `frontend/web/src/App.tsx` — Redirect and route additions.
+- `frontend/web/src/components/site/SiteNav.tsx` — Nav link updates.
+- `frontend/web/src/components/site/PhoneMockup.tsx` — Complete overhaul into an interactive scroll-synchronized 6-stage lifecycle slideshow:
+  1. Aveline 2.0 Aura Startup Screen with chromatic glowing Orb, subagent status badges (Ava, Elle, Lina), and greeting.
+  2. Inventory arrival signal (`#AVL-902` with image) + incoming embedded WhatsApp inquiry from Sarah.
+  3. Ava (Memory) analysis recalling Sarah's sister's Galle wedding in 3 weeks and past preferences.
+  4. Elle (Visual Intelligence) discrepancy analysis between store stock and Sarah's moodboard photo, initiating supplier sourcing.
+  5. Lina (Commerce & Margin) recommendation of 3 matching suppliers with a 40% margin, order proposal, and interactive Approve/Reject controls.
+  6. Final clienteling WhatsApp conversation between associate and Sarah, closing the deposit reservation.
+  Includes scroll-tracking viewport observer, manual pill & dot controls, and keyboard navigation.
+- `frontend/web/src/components/site/PhoneMockup.tsx` (Scroll Behavior, Alignment & Light Theme Conversion):
+  - Replaced passive window scroll listener with non-passive container `wheel` interception (`{ passive: false }`) and gesture debounce.
+  - Prevents native window scroll (`e.preventDefault()`) when scrolling inside the slideshow (steps 0 to 5), advancing slides sequentially.
+  - Naturally allows browser page scrolling when boundaries are reached (scrolling down at step 5 or scrolling up at step 0).
+  - Fixed content alignment from `justify-center` to `justify-start pt-1 pb-3`, sticking conversation cards directly under the iPhone status bar / Dynamic Island without artificial vertical dead space.
+  - Refined Slide 0 startup screen: replaced hard circular orb ring with borderless pulsating atmospheric gradient glow, set Blossom to rotate continuously while pulsing in scale without counterwise petal rotation (`animateCounter={false}`), and structured the slide with `justify-between` so the header sticks to the top, the action button sticks to the bottom, and the presentation fills the entire viewport height.
+  - Converted the entire phone screen interface to a luxury atelier light theme: warm ivory background (`#faf6f5`), dark status bar typography (`text-neutral-800`), crisp white conversation and operational cards with subtle borders (`border-neutral-200/80`), soft pastel agent accents (Ava rose, Elle amber, Lina commerce), accessible contrast text, and light-theme bottom indicator bar.
+  - Slimmed down the hardware chassis bezel: reduced border thickness from `10px` to `3px` and chassis bezel padding from `14px` (`p-3.5`) to `6px` (`p-1.5`), creating modern edge-to-edge micro-bezels.
+  - Adjusted overall mockup width from `max-w-[360px]` down to `max-w-[325px]` to eliminate wide tablet aesthetics and achieve authentic, slender 19.5:9 smartphone ergonomics.
+  - Added touch swipe handling (`onTouchStart`/`onTouchEnd`) for mobile screen interaction.
+  - Added keyboard arrow controls (`ArrowDown`/`ArrowUp`/`ArrowLeft`/`ArrowRight`) and interactive mouse scroll hint badge.
+- `frontend/web/src/routes/LandingPage.tsx` (Concept of Blossoms Gradient Styling):
+  - Applied the signature luxury brand gradient (`bg-gradient-to-r from-primary via-[#b0566b] to-amber-700 bg-clip-text text-transparent`) to the **Blossoms** keyword in the section title, kicker tag, and body narrative.
+- `docs/architecture/pricing_plan.md` — Aligned documentation nomenclature across the architecture guide, migrating all legacy "Flower" terms to "Blossom" credits.
+- `docs/ai-usage/kavindu.md` — This log entry.
+
+### Issues Resolved
+
+- Closes #63: Brighten primary colour palette and update frontend themes
+- Closes #64: Landing page redesign with whimsical atelier aesthetic and interactive concierge mockup
+- Closes #65: Markdown-based documentation page overhaul
+
+### Verification Performed
+
+- `bun run build`: TypeScript (`tsc -b`) and Vite production bundle succeeded with 0 errors.
+- `bun run lint`: Oxlint ran across 76 files with 0 errors.
+- `bun run test`: Vitest test suite executed and passed 35/35 tests across 4 test files.

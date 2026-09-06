@@ -19,13 +19,6 @@ public class OrganizationRepository : IOrganizationRepository
             .FirstOrDefaultAsync(o => o.Id == id, cancellationToken);
     }
 
-    public async Task<Organization?> GetByOwnerUserIdAsync(Guid ownerUserId, CancellationToken cancellationToken = default)
-    {
-        return await _context.Organizations
-            .OrderByDescending(o => o.CreatedAt)
-            .FirstOrDefaultAsync(o => o.OwnerUserId == ownerUserId, cancellationToken);
-    }
-
     public async Task<Organization?> GetBySlugAsync(string slug, CancellationToken cancellationToken = default)
     {
         return await _context.Organizations

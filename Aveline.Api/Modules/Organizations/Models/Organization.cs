@@ -1,5 +1,3 @@
-using Aveline.Api.Modules.Billing.Models;
-
 namespace Aveline.Api.Modules.Organizations.Models;
 
 /// <summary>
@@ -30,39 +28,6 @@ public class Organization
     /// <summary>Owner identity (the user who created the organization).</summary>
     public Guid OwnerUserId { get; set; }
 
-    /// <summary>Boutique physical address.</summary>
-    public string? Address { get; set; }
-
-    /// <summary>Boutique contact phone number.</summary>
-    public string? PhoneNumber { get; set; }
-
-    /// <summary>Boutique description and specialization summary.</summary>
-    public string? Description { get; set; }
-
-    /// <summary>Boutique logo or brand mark URL.</summary>
-    public string? LogoUrl { get; set; }
-
-    /// <summary>Current selected subscription plan tier.</summary>
-    public PlanTier PlanTier { get; set; } = PlanTier.Seed;
-
-    /// <summary>Configured brand voice (e.g., tone of customer communications).</summary>
-    public string? BrandVoice { get; set; }
-
-    /// <summary>Configured business rules (discounts, returns, delivery policies).</summary>
-    public string? BusinessRules { get; set; }
-
-    /// <summary>Preferred colors and fabric specializations.</summary>
-    public string? PreferredColorsFabrics { get; set; }
-
-    /// <summary>Customer greeting etiquette and memory preferences.</summary>
-    public string? CustomerPreferences { get; set; }
-
-    /// <summary>Current step completed in the 6-step owner onboarding wizard.</summary>
-    public int OnboardingStep { get; set; } = 2;
-
-    /// <summary>Whether the owner has fully completed boutique onboarding.</summary>
-    public bool HasCompletedOnboarding { get; set; } = false;
-
     public bool IsActive { get; set; } = true;
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
@@ -73,4 +38,3 @@ public class Organization
 
     public ICollection<OrganizationInvitation> Invitations { get; set; } = [];
 }
-

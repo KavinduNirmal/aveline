@@ -1,4 +1,3 @@
-using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Shared.Models;
 using Microsoft.EntityFrameworkCore;
@@ -36,44 +35,6 @@ public class OrganizationConfiguration : IEntityTypeConfiguration<Organization>
         builder.Property(o => o.IsActive)
             .IsRequired()
             .HasDefaultValue(true);
-
-        builder.Property(o => o.Address)
-            .HasMaxLength(500);
-
-        builder.Property(o => o.PhoneNumber)
-            .HasMaxLength(50);
-
-        builder.Property(o => o.Description)
-            .HasMaxLength(1000);
-
-        builder.Property(o => o.LogoUrl)
-            .HasMaxLength(1000);
-
-        builder.Property(o => o.PlanTier)
-            .IsRequired()
-            .HasConversion<string>()
-            .HasMaxLength(32)
-            .HasDefaultValue(PlanTier.Seed);
-
-        builder.Property(o => o.BrandVoice)
-            .HasMaxLength(500);
-
-        builder.Property(o => o.BusinessRules)
-            .HasMaxLength(1000);
-
-        builder.Property(o => o.PreferredColorsFabrics)
-            .HasMaxLength(1000);
-
-        builder.Property(o => o.CustomerPreferences)
-            .HasMaxLength(1000);
-
-        builder.Property(o => o.OnboardingStep)
-            .IsRequired()
-            .HasDefaultValue(2);
-
-        builder.Property(o => o.HasCompletedOnboarding)
-            .IsRequired()
-            .HasDefaultValue(false);
 
         builder.Property(o => o.CreatedAt)
             .IsRequired();

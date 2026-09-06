@@ -11,7 +11,7 @@ import { PageLoader } from './PageLoader'
  * - `Active`           → business route tree
  */
 export function RequireAccountState() {
-  const { accountState, isLoading } = useUserContext()
+  const { user, accountState, isLoading } = useUserContext()
 
   if (isLoading || accountState === null) {
     return <PageLoader />
@@ -22,7 +22,8 @@ export function RequireAccountState() {
   }
 
   if (accountState === 'OnboardingPending') {
-    return <Navigate to="/onboarding" replace />
+    const needsProfile = user == null || !user.hasCompletedOnboarding
+    return <Navigate to={needsProfile ? '/onboarding' : '/org-setup'} replace />
   }
 
   return <Outlet />

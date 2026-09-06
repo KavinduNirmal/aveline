@@ -1,5 +1,6 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
+@import './typeset.css';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -19,7 +20,7 @@
   --popover: #ffffff;
   --popover-foreground: #1e1b1b;
 
-  --primary: #7a303f;
+  --primary: #8b2e42;
   --primary-foreground: #ffffff;
 
   --secondary: #e6dedd;
@@ -36,10 +37,10 @@
 
   --border: #e9e0e0;
   --input: #d9c1c3;
-  --ring: #5d1a29;
+  --ring: #8b2e42;
 
-  /* Agent states: commerce maroon, visual gold, memory rose, plus neutrals. */
-  --chart-1: #7a303f;
+  /* Agent states: commerce wine-rose, visual gold, memory rose, plus neutrals. */
+  --chart-1: #8b2e42;
   --chart-2: #c9a227;
   --chart-3: #b0566b;
   --chart-4: #d5c2c2;
@@ -47,22 +48,22 @@
 
   --sidebar: #f5eceb;
   --sidebar-foreground: #1e1b1b;
-  --sidebar-primary: #7a303f;
+  --sidebar-primary: #8b2e42;
   --sidebar-primary-foreground: #ffffff;
   --sidebar-accent: #e6dedd;
   --sidebar-accent-foreground: #1e1b1b;
   --sidebar-border: #e9e0e0;
-  --sidebar-ring: #5d1a29;
+  --sidebar-ring: #8b2e42;
 
   /* Aveline landing accents — agent colors + colorful aurora additions. */
   --aveline-memory: #b0566b;      /* rose  — Ava, memory */
   --aveline-visual: #c9972b;      /* gold  — Elle, visual */
-  --aveline-commerce: #7a303f;    /* maroon — Lina, commerce */
+  --aveline-commerce: #8b2e42;    /* wine-rose — Lina, commerce */
   --aveline-lavender: #8e7cc3;
   --aveline-lavender-soft: #f0eafa;
   --aveline-coral: #ef7a68;
   --aveline-coral-soft: #ffe9e2;
-  --aveline-blush: #ffd9dd;
+  --aveline-blush: #ffe0e5;
 }
 
 .dark {
@@ -75,7 +76,7 @@
   --popover: #342f2f;
   --popover-foreground: #f8efee;
 
-  --primary: #ffb2bc;
+  --primary: #ffcdd5;
   --primary-foreground: #3e0214;
 
   --secondary: #625d5d;
@@ -92,9 +93,9 @@
 
   --border: #453e3f;
   --input: #453e3f;
-  --ring: #ffb2bc;
+  --ring: #ffcdd5;
 
-  --chart-1: #ffb2bc;
+  --chart-1: #ffcdd5;
   --chart-2: #e0b64c;
   --chart-3: #b0566b;
   --chart-4: #d5c2c2;
@@ -102,12 +103,12 @@
 
   --sidebar: #2a2324;
   --sidebar-foreground: #f8efee;
-  --sidebar-primary: #ffb2bc;
+  --sidebar-primary: #ffcdd5;
   --sidebar-primary-foreground: #3e0214;
   --sidebar-accent: #453e3f;
   --sidebar-accent-foreground: #f8efee;
   --sidebar-border: #453e3f;
-  --sidebar-ring: #ffb2bc;
+  --sidebar-ring: #ffcdd5;
 }
 
 @theme inline {
@@ -160,9 +161,10 @@
   --color-blush: var(--aveline-blush);
 
   --font-sans:
-    'Hanken Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
+    'DM Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-serif: 'Playfair Display', ui-serif, Georgia, serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-mono:
+    'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 @layer base {
@@ -193,3 +195,145 @@
     animation: none;
   }
 }
+
+/* Documentation Prose Styling */
+.aveline-prose h1 {
+  font-family: var(--font-serif);
+  font-size: 2.25rem;
+  line-height: 1.25;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  margin-bottom: 1.25rem;
+}
+
+.aveline-prose h2 {
+  font-family: var(--font-serif);
+  font-size: 1.5rem;
+  line-height: 1.35;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  margin-top: 2.5rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px dashed var(--color-border);
+}
+
+.aveline-prose h3 {
+  font-family: var(--font-serif);
+  font-size: 1.2rem;
+  line-height: 1.4;
+  font-weight: 500;
+  margin-top: 1.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.aveline-prose p {
+  font-size: 1rem;
+  line-height: 1.7;
+  color: var(--color-muted-foreground);
+  margin-bottom: 1.25rem;
+}
+
+.aveline-prose ul {
+  list-style-type: disc;
+  padding-left: 1.5rem;
+  margin-bottom: 1.25rem;
+  color: var(--color-muted-foreground);
+}
+
+.aveline-prose ol {
+  list-style-type: decimal;
+  padding-left: 1.5rem;
+  margin-bottom: 1.25rem;
+  color: var(--color-muted-foreground);
+}
+
+.aveline-prose li {
+  margin-bottom: 0.5rem;
+  line-height: 1.6;
+}
+
+.aveline-prose hr {
+  margin-top: 2.5rem;
+  margin-bottom: 2.5rem;
+  border: 0;
+  border-top: 1px dashed var(--color-border);
+}
+
+.aveline-prose strong {
+  font-weight: 600;
+  color: var(--color-foreground);
+}
+
+/* ==========================================================================
+   Aveline Quiet Luxury Code Syntax Highlighting Theme
+   ========================================================================== */
+.hljs {
+  color: #ede5e6;
+  background: transparent;
+}
+
+/* Keywords, export, import, control flow: Wine-Rose accent */
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-section,
+.hljs-tag,
+.hljs-name {
+  color: #e58296;
+  font-weight: 500;
+}
+
+/* Functions, method calls: Cream-Blush */
+.hljs-function,
+.hljs-title,
+.hljs-title.function_ {
+  color: #fce4e8;
+}
+
+/* Strings, regular expressions: Visual Gold / Champagne */
+.hljs-string,
+.hljs-regexp,
+.hljs-addition {
+  color: #e8be56;
+}
+
+/* Built-in types, classes, interfaces: Lavender */
+.hljs-built_in,
+.hljs-type,
+.hljs-title.class_ {
+  color: #b8a6e6;
+}
+
+/* Comments: Muted Cashmere */
+.hljs-comment,
+.hljs-quote,
+.hljs-deletion {
+  color: #8f7d80;
+  font-style: italic;
+}
+
+/* Numbers, literals, booleans: Coral-Blush */
+.hljs-number,
+.hljs-literal {
+  color: #f29a92;
+}
+
+/* Variables, object attributes & keys: Soft Warm Rose */
+.hljs-variable,
+.hljs-template-variable,
+.hljs-attr,
+.hljs-property {
+  color: #dfb2b6;
+}
+
+/* Operators, punctuation: Neutral Cashmere */
+.hljs-punctuation,
+.hljs-operator {
+  color: #bfaeb0;
+}
+
+.hljs-meta {
+  color: #a49194;
+}
+
+

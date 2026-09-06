@@ -6,15 +6,15 @@ import 'package:google_fonts/google_fonts.dart';
 /// Colors and typography follow the brand tokens in
 /// `.agents/brain/DESIGN.md`; layout spacing is intentionally not applied.
 abstract final class AppTheme {
-  /// Brand maroon used for key actions and active states.
-  static const Color seedColor = Color(0xFF5D1A29);
+  /// Brand wine-rose used for key actions and active states.
+  static const Color seedColor = Color(0xFF8B2E42);
 
   static ColorScheme get colorScheme => const ColorScheme(
         brightness: Brightness.light,
-        primary: Color(0xFF5D1A29),
+        primary: Color(0xFF8B2E42),
         onPrimary: Color(0xFFFFFFFF),
-        primaryContainer: Color(0xFF7A303F),
-        onPrimaryContainer: Color(0xFFFF9CAB),
+        primaryContainer: Color(0xFFA84056),
+        onPrimaryContainer: Color(0xFFFFBBC6),
         secondary: Color(0xFF625D5D),
         onSecondary: Color(0xFFFFFFFF),
         secondaryContainer: Color(0xFFE6DEDD),
@@ -41,12 +41,12 @@ abstract final class AppTheme {
         outlineVariant: Color(0xFFD9C1C3),
         inverseSurface: Color(0xFF342F2F),
         onInverseSurface: Color(0xFFF8EFEE),
-        inversePrimary: Color(0xFFFFB2BC),
-        surfaceTint: Color(0xFF954554),
+        inversePrimary: Color(0xFFFFCDD5),
+        surfaceTint: Color(0xFFB3556A),
       );
 
   /// Brand typography: Playfair Display for display/headlines,
-  /// Hanken Grotesk for UI and body.
+  /// DM Sans for UI and body.
   static TextTheme get textTheme => TextTheme(
         displayLarge: GoogleFonts.playfairDisplay(
           fontSize: 40,
@@ -69,33 +69,33 @@ abstract final class AppTheme {
           fontWeight: FontWeight.w500,
           height: 1.3,
         ),
-        titleLarge: GoogleFonts.hankenGrotesk(
+        titleLarge: GoogleFonts.dmSans(
           fontSize: 20,
           fontWeight: FontWeight.w600,
           height: 1.4,
         ),
-        titleMedium: GoogleFonts.hankenGrotesk(
+        titleMedium: GoogleFonts.dmSans(
           fontSize: 16,
           fontWeight: FontWeight.w600,
           height: 1.4,
         ),
-        bodyLarge: GoogleFonts.hankenGrotesk(
+        bodyLarge: GoogleFonts.dmSans(
           fontSize: 18,
           fontWeight: FontWeight.w400,
           height: 1.6,
         ),
-        bodyMedium: GoogleFonts.hankenGrotesk(
+        bodyMedium: GoogleFonts.dmSans(
           fontSize: 16,
           fontWeight: FontWeight.w400,
           height: 1.6,
         ),
-        labelMedium: GoogleFonts.hankenGrotesk(
+        labelMedium: GoogleFonts.dmSans(
           fontSize: 14,
           fontWeight: FontWeight.w500,
           height: 1.2,
           letterSpacing: 0.7,
         ),
-        labelSmall: GoogleFonts.hankenGrotesk(
+        labelSmall: GoogleFonts.dmSans(
           fontSize: 12,
           fontWeight: FontWeight.w600,
           height: 1.2,

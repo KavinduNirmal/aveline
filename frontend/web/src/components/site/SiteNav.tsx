@@ -6,13 +6,14 @@ import { Menu, X } from 'lucide-react'
 
 import { Blossom } from '@/components/auth/Blossom'
 import { Button } from '@/components/ui/button'
+import { AppleIcon, CurvedArrow, PlayStoreIcon } from '@/components/site/Icons'
 import { cn } from '@/lib/utils'
 
 const TABS = [
   { label: 'Features', to: '/#features' },
   { label: 'Contact', to: '/contact' },
   { label: 'Plans', to: '/plans' },
-  { label: 'Docs', to: '/docs' },
+  { label: 'Docs', to: '/docs/getting-started' },
 ]
 
 /** Sticky glass navigation used across the public marketing pages. */
@@ -45,21 +46,26 @@ export function SiteNav() {
         </Link>
 
         <nav className="hidden items-center gap-1 md:flex">
-          {TABS.map((tab) => (
-            <NavLink
-              key={tab.label}
-              to={tab.to}
-              onClick={(e) => handleAnchor(e, tab.to)}
-              className={({ isActive }) =>
-                cn(
+          {TABS.map((tab) => {
+            const isDocsTab = tab.label === 'Docs'
+            const isTabActive = isDocsTab
+              ? location.pathname.startsWith('/docs')
+              : location.pathname === tab.to && tab.to !== '/#features'
+
+            return (
+              <NavLink
+                key={tab.label}
+                to={tab.to}
+                onClick={(e) => handleAnchor(e, tab.to)}
+                className={cn(
                   'rounded-full px-3.5 py-1.5 text-sm text-neutral-500 transition-colors hover:text-neutral-900',
-                  isActive && tab.to !== '/#features' && 'text-neutral-900',
-                )
-              }
-            >
-              {tab.label}
-            </NavLink>
-          ))}
+                  isTabActive && 'text-neutral-900 font-medium',
+                )}
+              >
+                {tab.label}
+              </NavLink>
+            )
+          })}
         </nav>
 
         <div className="hidden items-center gap-2 md:flex">
@@ -72,11 +78,20 @@ export function SiteNav() {
               <Link to="/sign-in">Sign in</Link>
             </Button>
           )}
-          <Button asChild variant="outline" size="sm">
-            <Link to="/download">Download app</Link>
+          <Button asChild variant="outline" size="sm" className="group">
+            <Link to="/download" className="inline-flex items-center gap-1.5">
+              <span className="flex items-center gap-1 text-neutral-500 transition-colors group-hover:text-neutral-900">
+                <AppleIcon className="size-3.5" aria-hidden="true" />
+                <PlayStoreIcon className="size-3" />
+              </span>
+              <span>Download app</span>
+            </Link>
           </Button>
-          <Button asChild size="sm">
-            <Link to="/sign-up">Create account</Link>
+          <Button asChild size="sm" className="group">
+            <Link to="/sign-up" className="inline-flex items-center gap-1.5">
+              <span>Create account</span>
+              <CurvedArrow className="size-3.5 text-white" />
+            </Link>
           </Button>
         </div>
 
@@ -114,8 +129,20 @@ export function SiteNav() {
                 <Link to="/sign-in">Sign in</Link>
               </Button>
             )}
-            <Button asChild>
-              <Link to="/sign-up">Create account</Link>
+            <Button asChild variant="outline" className="group">
+              <Link to="/download" className="inline-flex items-center justify-center gap-1.5">
+                <span className="flex items-center gap-1 text-neutral-500">
+                  <AppleIcon className="size-3.5" aria-hidden="true" />
+                  <PlayStoreIcon className="size-3" />
+                </span>
+                <span>Download app</span>
+              </Link>
+            </Button>
+            <Button asChild className="group">
+              <Link to="/sign-up" className="inline-flex items-center justify-center gap-1.5">
+                <span>Create account</span>
+                <CurvedArrow className="size-3.5 text-white" />
+              </Link>
             </Button>
           </div>
         </div>

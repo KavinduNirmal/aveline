@@ -1,9 +1,10 @@
-import { Apple, Download, Smartphone } from 'lucide-react'
+import { Download } from 'lucide-react'
 
 import { AuroraField } from '@/components/site/AuroraField'
 import { Reveal } from '@/components/site/Reveal'
 import { SitePage } from '@/components/site/SitePage'
 import { Button } from '@/components/ui/button'
+import { AppleIcon, PlayStoreIcon } from '@/components/site/Icons'
 
 export function DownloadPage() {
   return (
@@ -28,7 +29,7 @@ export function DownloadPage() {
           <Reveal>
             <div className="flex h-full flex-col justify-between rounded-3xl border-2 border-dashed border-neutral-200 bg-white p-8">
               <span className="flex size-11 items-center justify-center rounded-full bg-neutral-900 text-white">
-                <Apple className="size-5" aria-hidden />
+                <AppleIcon className="size-5" aria-hidden />
               </span>
               <div className="mt-6">
                 <h2 className="text-lg font-semibold text-neutral-900">iOS</h2>
@@ -44,8 +45,8 @@ export function DownloadPage() {
 
           <Reveal delay={0.06}>
             <div className="flex h-full flex-col justify-between rounded-3xl border-2 border-dashed border-neutral-200 bg-white p-8">
-              <span className="flex size-11 items-center justify-center rounded-full bg-[#0f9d58] text-white">
-                <Smartphone className="size-5" aria-hidden />
+              <span className="flex size-11 items-center justify-center rounded-full bg-[#01875f] text-white">
+                <PlayStoreIcon className="size-5" />
               </span>
               <div className="mt-6">
                 <h2 className="text-lg font-semibold text-neutral-900">Android</h2>

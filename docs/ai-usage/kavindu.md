@@ -711,3 +711,216 @@ Design feedback round on the landing page:
 - Added a **journey ribbon** below: "Customer messages → Ava · Elle · Lina act → You approve" with arrow separators.
 - Removed the old product-card/`StepImage` implementation.
 - Verified web `tsc`, oxlint, `vite build`.
+
+## Session 2026-09-06
+
+**Task:** Brighten primary colour palette and switch body typography to DM Sans (Issue #63)
+**Tool used:** Antigravity AI Assistant
+
+### Summary of Activities
+
+- Created GitHub Issue [#63](https://github.com/KavinduNirmal/aveline/issues/63) ("Brighten primary colour palette and update frontend themes").
+- Shifted the brand primary palette across design tokens and themes:
+  - `primary`: `#5D1A29` → `#8B2E42` (vivid wine-rose, +13 lightness)
+  - `primary-container`: `#7A303F` → `#A84056`
+  - `on-primary-container`: `#FF9CAB` → `#FFBBC6`
+  - `inverse-primary`: `#FFB2BC` → `#FFCDD5`
+  - `surface-tint`: `#954554` → `#B3556A`
+  - `primary-fixed`: `#FFD9DD` → `#FFE0E5`
+  - `primary-fixed-dim`: `#FFB2BC` → `#FFCDD5`
+  - `on-primary-fixed-variant`: `#772E3D` → `#8B2E42`
+  - Dark theme primary / ring / sidebar-primary: `#FFB2BC` → `#FFCDD5`
+- Updated body & UI typography from `Hanken Grotesk` to `DM Sans` (gently rounded terminals for warmer, contemporary feel):
+  - `.agents/brain/DESIGN.md`: Updated `title-lg`, `body-lg`, `body-md`, `label-md`, `label-sm` tokens and design narrative.
+  - `frontend/web/index.html`: Updated Google Fonts stylesheet link to import `DM Sans` alongside `Playfair Display`.
+  - `frontend/web/src/index.css`: Updated `--font-sans` to `'DM Sans'`.
+  - `frontend/aveline_mobile/lib/core/theme/app_theme.dart`: Migrated all `GoogleFonts.hankenGrotesk` calls to `GoogleFonts.dmSans`.
+- **Verification performed**:
+  - `cd frontend/web && bun run build` passed cleanly (`tsc -b` and Vite production build).
+  - `cd frontend/aveline_mobile && dart analyze` passed with 0 issues.
+
+### Follow-up (same session): Issue #64 — Landing Page Redesign: Staff Concierge Mockup, Boutique Hero Slideshow, Whimsical Problem & Testimonial Cards, and Dual-Layer Blossom
+
+**Task:** Complete landing page overhaul to reflect Aveline's staff-facing concierge model with animated phone mockup, boutique photography slideshow, social proof, whimsical problem statement, testimonials, and 8-petaled counter-rotating blossom.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed & Verified
+
+#### Work Performed
+- Created GitHub Issue [#64](https://github.com/KavinduNirmal/aveline/issues/64) tracking the landing page overhaul.
+- **8-Petaled Dual-Layer Blossom (`Blossom.tsx`)**:
+  - Re-architected Blossom into two 4-petal layers (base at 0°, 90°, 180°, 270°; top at 45°, 135°, 225°, 315°).
+  - Added `animateCounter` and `counterDuration` props to rotate the base and top layers in opposite directions for a blooming kaleidoscope effect.
+  - Retained the legacy 5-petal SVG implementation commented out at the top of the file as requested.
+- **Staff-Facing Phone Mockup (`PhoneMockup.tsx`)**:
+  - Implemented realistic phone frame with curved bezel, iOS status bar, and dynamic island.
+  - Embedded incoming WhatsApp customer inquiry bubble with customer profile badge (tier, spend, preferences).
+  - Sequenced collaboration stream for specialist agents (Ava memory note, Elle visual gown match, Lina deposit & margin lock).
+  - Staff decision controls: "Approve & Send to WhatsApp" and "Decline" with live state transition feedback and multi-scenario inquiry toggling.
+- **Hero Boutique Slideshow (`HeroSlideshow.tsx`)**:
+  - Embedded curated Pexels boutique atelier imagery with cross-fade transitions and ambient overlays.
+  - Hovering glassmorphic Aveline specialist update badges with active blossom indicators.
+- **Social Proof Bar (`SocialProofBar.tsx`)**:
+  - Featured renowned boutiques (*The Galle Fort Atelier*, *Cinnamon Row Tailors*, *Studio 9 Colombo*, etc.) with operational trust metrics (40+ ateliers, 100% staff sign-off, LKR 45M+ volume, 4.9/5 rating).
+- **Problem Statement Section (`ProblemSection.tsx`)**:
+  - "Your customers are slipping through the cracks" diagnosing memory gaps, 3 AM response drift, stock search black holes, and margin leakage in whimsical dashed-border cards with symmetric rounded corners.
+- **Testimonials Section (`TestimonialsSection.tsx`)**:
+  - Editorial quotes from boutique directors and head stylists with 5-star ratings, metric badges, and atelier verification marks.
+- **Refinements & Flow Adjustments**:
+  - Reordered landing page flow: 1. Hero → 2. Sample Messages Carousel → 3. Image Slideshow with Aveline Messages → 4. Trusted Shops with Bigger Statistics → 5. Problem Statement (2x2 grid) → Persona & Remaining Sections.
+  - Moved `HeroSlideshow` out of the hero header column into a dedicated expansive showroom section.
+  - Made trust statistics significantly larger and more prominent in `SocialProofBar`.
+  - Converted `ProblemSection` cards to a 2 by 2 grid (`md:grid-cols-2`), reduced border radius to `rounded-2xl`, and increased typography size.
+  - Re-aligned the animated journey gradient pulse in "How it works" to run precisely through the center of the step circles (`top-[86px]`).
+  - Added asymmetric delay and non-overlapping bloom keyframes to `Blossom.tsx` so rotating petal layers never eclipse into 4 petals.
+  - Replaced agent icons (Ava, Elle, Lina) with colored Blossom icons (rose, amber, wine).
+  - Staggered chat components in `PhoneMockup.tsx` with sequenced delays (customer inquiry → Ava → Elle → Lina → reservation card) to visually demonstrate the workflow progression.
+  - Redesigned the **Blossoms Concept** section in `LandingPage.tsx`:
+    - Converted from a boxed card (`border-2 border-dashed ... rounded-2xl`) into a unique, open editorial vignette.
+    - Removed cost estimations ("1 Blossom", "2 Blossoms") and removed the three agent mini-boxes.
+    - Added an ethereal centered counter-rotating Blossom medallion with ambient glow, delicate gradient divider rules, and editorial narrative.
+    - Added direct call-to-action: *"Check pricing for detailed information"* linking to `/plans`.
+  - Fixed **How It Works** animated pulse overflowing:
+    - Encapsulated the rail in an `overflow-hidden rounded-full` container (`h-[12px]`, concentric center at `top-[86px]`).
+    - Reduced pulse thickness to a sleek `2.5px` (down from `9px`), aligning precisely with the dashed rail border.
+    - Extended the tail length to `w-64` (256px) with an atelier directional gradient (`from-transparent via-memory/35 via-visual/65 to-commerce`) and a luminous leading comet head (`size-1.5` wine-rose with drop-glow).
+    - Clamped traversal keyframes (`left: ['-40%', '100%']`) to smoothly enter and exit within the clipped rail bounds without overflowing beyond the section or into page margins.
+    - Added `reduceMotion` guard to prevent animation for users with motion sensitivity.
+
+  - Added **Icon Library Integration & Horizontal Hover Animations**:
+    - Installed official `simple-icons` (`bun add simple-icons`) for brand marks.
+    - Updated `frontend/web/src/components/site/Icons.tsx`:
+      - Used `siGoogleplay` and `siApple` from `simple-icons` for `PlayStoreIcon` and `AppleIcon`.
+      - Used `ArrowRight` from `lucide-react` for `CtaArrow` / `CurvedArrow`.
+      - Configured on-hover animation to be **purely horizontal** (`transition-transform duration-300 ease-out group-hover:translate-x-1.5`) without any vertical or popover displacement.
+    - Integrated across all CTAs and download buttons on `LandingPage.tsx`, `SiteNav.tsx`, and `DownloadPage.tsx`.
+
+#### Verification Performed
+- `bun run build`: `tsc -b && vite build` completed with zero TypeScript errors.
+- `bun test`: All 35 tests across 4 test suites passed cleanly.
+- `bun run lint`: oxlint verified with zero errors.
+
+
+
+## Session 2026-09-07
+
+**Task:** Complete overhaul of the `/plans` pricing page (`PlansPage.tsx`)
+**Tool used:** Antigravity AI Assistant
+
+### Work Planned / Performed
+
+- Read `docs/architecture/pricing_plan.md` in full to map the four tiers (Seed, Bloom, Orchid, Rose), the Blossom credit system, Flower Pack top-ups, billing rules, and brand positioning guidelines.
+- Reviewed current `PlansPage.tsx` (old placeholder with three outdated, USD-priced tiers).
+- Completely rewrote `frontend/web/src/routes/PlansPage.tsx` (827 lines) with the following structure:
+
+**New sections:**
+1. **Hero** — Updated copy from pricing_plan.md ("Every boutique starts as a seed"), monthly/annual billing toggle with animated switch (2 months free label).
+2. **Tier Cards** — Four cards: Seed (Free), Bloom (LKR 3,500/mo), Orchid (LKR 9,000/mo), Rose (LKR 20,000/mo). Each card has an animated `Blossom` medallion with per-tier colour, scale limits (Blossoms/Staff/Customers), and feature list.
+3. **Blossom System Explainer** — Editorial two-column layout: animated large Blossom medallion + copy explaining the abstraction concept. Includes a visual mini workflow diagram ("Find something for Maya" → approx 3.7 Blossoms).
+4. **Comparison Table** — Full feature matrix for all four tiers (13 rows covering all features).
+5. **Blossom Packs** — Three top-up packs (100/500/1,000 Blossoms) in a decorative bordered panel.
+6. **FAQ Accordion** — 12 questions with AnimatePresence height animations, accessible ARIA attributes.
+7. **Enterprise Banner** — Dark section with radial gradient, for multi-branch / custom pricing.
+
+### Files Modified
+- `frontend/web/src/routes/PlansPage.tsx` — Full rewrite.
+- `docs/ai-usage/kavindu.md` — This entry.
+
+### Architectural Decisions
+- Re-used existing design tokens (text-commerce, text-memory, text-visual, text-lavender) for per-tier colour theming.
+- Re-used Blossom component with animateCounter and staggered counterDuration per tier.
+- Re-used AuroraField, Reveal, CtaArrow, Button, SitePage — no new abstractions introduced.
+- Annual pricing shown as approximate monthly equivalent (10 months price / 12 months service), consistent with pricing_plan.md.
+- Feature values typed as boolean or string literals with colour-coded badges in the comparison table.
+
+### Verification Performed
+- bunx tsc --noEmit: Only pre-existing baseUrl deprecation warning; zero errors in PlansPage.tsx.
+- File written successfully, 827 lines.
+
+## Session 2026-09-06
+
+**Task:** Create an implementation plan to overhaul the documentation page (`/docs`) to use markdown-based documentation, modelled after the motion.dev/docs reference design (three-column layout: left sidebar navigation, centre markdown content, right table-of-contents). Work is to be tracked via a feature branch and a GitHub Issue.
+**Tool used:** Antigravity AI Assistant
+
+### Summary of Activities
+
+- Read project rules, user information, design system (`DESIGN.md`), existing `DocsPage.tsx`, `App.tsx`, `SiteNav.tsx`, `SitePage.tsx`, installed shadcn/ui components, `package.json`, and GitHub issue templates.
+- Identified the current state: `DocsPage.tsx` was a static hardcoded card list with no markdown support or sidebar navigation.
+- Produced and received user approval on `implementation_plan.md`.
+- Created GitHub Feature Request Issue [#65](https://github.com/KavinduNirmal/aveline/issues/65) tracking the overhaul.
+- Created Git Flow feature branch `feature/65-docs-markdown-overhaul`.
+- Installed dependencies: `react-markdown`, `remark-gfm`, `rehype-slug`, `rehype-autolink-headings`.
+- Authored markdown documentation pages under `src/docs/`:
+  - `getting-started.md`
+  - `roles-permissions.md`
+  - `ava.md`
+  - `elle.md`
+  - `lina.md`
+  - `admin-access.md`
+  - `privacy-security.md`
+- Created `src/docs/config.ts` for declarative section and page categorization.
+- Created `src/types/markdown.d.ts` for Vite raw markdown imports.
+- Created modular documentation components in `src/components/docs/`:
+  - `DocsLayout.tsx`: 3-column responsive layout (sticky sidebar, main content, sticky table of contents, mobile menu drawer).
+  - `DocsSidebar.tsx`: Categorized page navigation with active indicators and badges.
+  - `DocsContent.tsx`: Markdown prose renderer with custom styled code blocks, links, tables, and pagination.
+  - `DocsToc.tsx`: On-this-page table of contents with scrollspy active heading tracking.
+- Added `.aveline-prose` typography tokens to `src/index.css`.
+- Updated `src/App.tsx` routes: `/docs` redirect to `/docs/getting-started` and dynamic route `/docs/:slug`.
+- Updated `src/components/site/SiteNav.tsx` tabs to link directly to `/docs/getting-started` with prefix-aware active highlights.
+
+### Files Created or Modified
+
+- `frontend/web/package.json` & `bun.lock` — Added markdown dependencies (`react-markdown`, `remark-gfm`, `rehype-slug`, `rehype-autolink-headings`, `mermaid`, `rehype-highlight`).
+- `frontend/web/src/typeset.css` — Created standalone shadcn Typeset system with rhythm controls (`--typeset-size`, `--typeset-leading`, `--typeset-flow`) and `.typeset-docs` preset tailored to Aveline tokens.
+- `frontend/web/src/docs/config.ts` — Documentation metadata & section registry.
+- `frontend/web/src/docs/*.md` — 7 markdown topic documents, including readable top-down (`flowchart TD`) Mermaid flowcharts with clear branching in `roles-permissions.md` and `lina.md`.
+- `frontend/web/src/types/markdown.d.ts` — Raw markdown module declarations.
+- `frontend/web/src/components/docs/DocsLayout.tsx` — 3-column layout shell.
+- `frontend/web/src/components/docs/DocsSidebar.tsx` — Categorized navigation sidebar.
+- `frontend/web/src/components/docs/DocsContent.tsx` — Markdown renderer with Typeset integration, custom code block extraction, Mermaid diagram dispatch, and full-width responsive pagination cards.
+- `frontend/web/src/components/docs/Mermaid.tsx` — Dynamic client-side Mermaid diagram rendering component with Aveline Quiet Luxury theme tokens, enhanced font sizing (14px), white node surfaces with wine-rose borders, and error boundaries.
+- `frontend/web/src/components/docs/CodeBlock.tsx` — Fixed newline and indentation collapse by wrapping code content in `<pre>` with `whitespace-pre` and `leading-relaxed`. Styled container and header with warm espresso atelier palette (`#161213`).
+- `frontend/web/index.html` — Added `Geist+Mono:wght@100..900` to Google Fonts link.
+- `frontend/web/public/favicon.svg` — Replaced generic template favicon with dynamic Aveline Blossom SVG that adapts to light and dark browser tab themes.
+- `frontend/web/src/components/docs/DocsToc.tsx` — Scrollspy Table of Contents.
+- `frontend/web/src/routes/DocsPage.tsx` — Route container parsing slugs and headings.
+- `frontend/web/src/App.tsx` — Redirect and route additions.
+- `frontend/web/src/components/site/SiteNav.tsx` — Nav link updates.
+- `frontend/web/src/components/site/PhoneMockup.tsx` — Complete overhaul into an interactive scroll-synchronized 6-stage lifecycle slideshow:
+  1. Aveline 2.0 Aura Startup Screen with chromatic glowing Orb, subagent status badges (Ava, Elle, Lina), and greeting.
+  2. Inventory arrival signal (`#AVL-902` with image) + incoming embedded WhatsApp inquiry from Sarah.
+  3. Ava (Memory) analysis recalling Sarah's sister's Galle wedding in 3 weeks and past preferences.
+  4. Elle (Visual Intelligence) discrepancy analysis between store stock and Sarah's moodboard photo, initiating supplier sourcing.
+  5. Lina (Commerce & Margin) recommendation of 3 matching suppliers with a 40% margin, order proposal, and interactive Approve/Reject controls.
+  6. Final clienteling WhatsApp conversation between associate and Sarah, closing the deposit reservation.
+  Includes scroll-tracking viewport observer, manual pill & dot controls, and keyboard navigation.
+- `frontend/web/src/components/site/PhoneMockup.tsx` (Scroll Behavior, Alignment & Light Theme Conversion):
+  - Replaced passive window scroll listener with non-passive container `wheel` interception (`{ passive: false }`) and gesture debounce.
+  - Prevents native window scroll (`e.preventDefault()`) when scrolling inside the slideshow (steps 0 to 5), advancing slides sequentially.
+  - Naturally allows browser page scrolling when boundaries are reached (scrolling down at step 5 or scrolling up at step 0).
+  - Fixed content alignment from `justify-center` to `justify-start pt-1 pb-3`, sticking conversation cards directly under the iPhone status bar / Dynamic Island without artificial vertical dead space.
+  - Refined Slide 0 startup screen: replaced hard circular orb ring with borderless pulsating atmospheric gradient glow, set Blossom to rotate continuously while pulsing in scale without counterwise petal rotation (`animateCounter={false}`), and structured the slide with `justify-between` so the header sticks to the top, the action button sticks to the bottom, and the presentation fills the entire viewport height.
+  - Converted the entire phone screen interface to a luxury atelier light theme: warm ivory background (`#faf6f5`), dark status bar typography (`text-neutral-800`), crisp white conversation and operational cards with subtle borders (`border-neutral-200/80`), soft pastel agent accents (Ava rose, Elle amber, Lina commerce), accessible contrast text, and light-theme bottom indicator bar.
+  - Slimmed down the hardware chassis bezel: reduced border thickness from `10px` to `3px` and chassis bezel padding from `14px` (`p-3.5`) to `6px` (`p-1.5`), creating modern edge-to-edge micro-bezels.
+  - Adjusted overall mockup width from `max-w-[360px]` down to `max-w-[325px]` to eliminate wide tablet aesthetics and achieve authentic, slender 19.5:9 smartphone ergonomics.
+  - Added touch swipe handling (`onTouchStart`/`onTouchEnd`) for mobile screen interaction.
+  - Added keyboard arrow controls (`ArrowDown`/`ArrowUp`/`ArrowLeft`/`ArrowRight`) and interactive mouse scroll hint badge.
+- `frontend/web/src/routes/LandingPage.tsx` (Concept of Blossoms Gradient Styling):
+  - Applied the signature luxury brand gradient (`bg-gradient-to-r from-primary via-[#b0566b] to-amber-700 bg-clip-text text-transparent`) to the **Blossoms** keyword in the section title, kicker tag, and body narrative.
+- `docs/architecture/pricing_plan.md` — Aligned documentation nomenclature across the architecture guide, migrating all legacy "Flower" terms to "Blossom" credits.
+- `agnet-service/requirements-dev.txt` — Added `pytest-cov` alongside existing `pytest-asyncio`, `pytest`, `respx`, and `ruff`.
+- `.github/workflows/ci.yml` — Updated `test-python` job to install `-r agnet-service/requirements-dev.txt` alongside `requirements.txt`, ensuring `pytest-asyncio` is available to execute async test functions and satisfy `asyncio_mode = "auto"`.
+- `docs/ai-usage/kavindu.md` — This log entry.
+
+### Issues Resolved
+
+- Closes #63: Brighten primary colour palette and update frontend themes
+- Closes #64: Landing page redesign with whimsical atelier aesthetic and interactive concierge mockup
+- Closes #65: Markdown-based documentation page overhaul
+
+### Verification Performed
+
+- `bun run build`: TypeScript (`tsc -b`) and Vite production bundle succeeded with 0 errors.
+- `bun run lint`: Oxlint ran across 76 files with 0 errors.
+- `bun run test`: Vitest test suite executed and passed 35/35 tests across 4 test files.
+- `pytest tests/ --cov=app --cov-report=term --cov-fail-under=90`: Executed in isolated Python environment with `requirements-dev.txt` dependencies — 9 passed, 97.14% coverage (exceeding the 90% threshold).

@@ -109,7 +109,7 @@ export function AuroraField({ className }: { className?: string }) {
               ease: 'easeInOut',
             }}
           >
-            <Blossom className="size-full drop-shadow-[0_4px_12px_rgba(176,86,107,0.25)]" />
+            <Blossom animateCounter counterDuration={14 + (i % 8) * 2} className="size-full drop-shadow-[0_4px_12px_rgba(176,86,107,0.25)]" />
           </motion.div>
         ))}
     </div>

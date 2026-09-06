@@ -5,6 +5,7 @@ namespace Aveline.Api.Modules.Organizations.Repositories;
 public interface IOrganizationRepository
 {
     Task<Organization?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<Organization?> GetByOwnerUserIdAsync(Guid ownerUserId, CancellationToken cancellationToken = default);
     Task<Organization?> GetBySlugAsync(string slug, CancellationToken cancellationToken = default);
     Task<bool> ExistsBySlugAsync(string slug, CancellationToken cancellationToken = default);
     Task<Organization> CreateAsync(Organization organization, CancellationToken cancellationToken = default);

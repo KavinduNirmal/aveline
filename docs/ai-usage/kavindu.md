@@ -997,3 +997,22 @@ Design feedback round on the landing page:
 - Verified EF Core migration skip as requested (database not running locally; migrations will be generated when database is accessible).
 - Formatted Python import blocks across `agnet-service/app/services/usage_reporter.py` and `agnet-service/tests/test_usage_reporter.py` to satisfy ruff rule `I001`.
 
+## Session 2026-09-07 (Session 2)
+
+**Task:** Owner Account Creation Flow Implementation (6-step Onboarding)
+**Tool used:** Antigravity AI Assistant
+
+### Intended Work
+
+- Implement the end-to-end Owner Account Creation Flow:
+  - Step 1: Sign In (Clerk authentication & redirect handling)
+  - Step 2: Account Type Selection (Boutique Owner vs Staff with invitation code)
+  - Step 3: Boutique Details (`POST /api/onboarding/owner` or `/api/v1/onboarding/owner`)
+  - Step 4: Plan Selection (`POST /api/onboarding/plan`) in Demo Mode (no payment)
+  - Step 5: Customize AI Context (`POST /api/onboarding/customize`) with tiered feature unlocking per `pricing_plan.md`
+  - Step 6: Create Boutique & Agent Warmup (`POST /api/onboarding/complete`) with success celebration
+- Implement backend application service, domain models, and endpoints in `Aveline.Api`.
+- Implement agent warmup endpoint (`POST /agents/warmup`) in `agnet-service`.
+- Implement React luxury onboarding wizard with shadcn/ui components in `frontend/web`.
+- Verify with unit and integration tests across backend, frontend, and Python agent service.
+

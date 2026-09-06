@@ -18,6 +18,7 @@ public class UserDto
     public string OrganizationRole { get; set; } = string.Empty;
     public string OrganizationId { get; set; } = string.Empty;
     public bool HasCompletedOnboarding { get; set; }
+    public AccountState AccountState { get; set; }
     public ContactPreferences ContactPreference { get; set; }
     public bool PushNotificationsEnabled { get; set; }
     public bool IsActive { get; set; }
@@ -42,6 +43,7 @@ public class UserDto
             OrganizationRole = user.OrganizationRole,
             OrganizationId = user.OrganizationId,
             HasCompletedOnboarding = user.HasCompletedOnboarding,
+            AccountState = user.AccountState,
             ContactPreference = user.ContactPreference,
             PushNotificationsEnabled = user.PushNotificationsEnabled,
             IsActive = user.IsActive,

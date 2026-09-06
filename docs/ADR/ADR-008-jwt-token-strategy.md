@@ -18,7 +18,8 @@ ASP.NET Core API with the same identity. The API needs role claims
 ## Decision
 Use a Clerk **custom JWT template** (`jwt-aveline-v1`) minting:
 - `user_role` = `{{user.public_metadata.role}}` (team role)
-- `org_role` = `{{org.role}}` (per-store role: `org:owner`, `org:manager`, `org:admin`, …)
+- `org_role` = `{{org.role}}` (per-boutique role: `org:boutique_staff`,
+  `org:boutique_manager`, `org:boutique_supervisor`, or `org:boutique_owner`)
 - `org_id` / `org_slug` = current organization context
 
 The API validates tokens with JwtBearer against the Clerk **JWKS** endpoint:

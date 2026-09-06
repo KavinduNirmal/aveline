@@ -31,6 +31,17 @@ public static class AuthPolicyDemoEndpoints
         group.MapGet("/payments/refund", () => Results.Ok(new { message = "Requires the payments:refund permission." }))
             .RequireAuthorization(Permissions.PaymentsRefund);
 
+        // Organization-scoped demo: the caller must hold an active membership in the
+        // organization named in the route (enforced server-side, see
+        // OrganizationScopeAuthorizationHandler). Cross-organization calls are denied.
+        group.MapGet("/orgs/{organizationId:guid}/catalog", (Guid organizationId) =>
+                Results.Ok(new { message = "Active boutique member can view this catalog.", organizationId }))
+            .RequireAuthorization(AuthorizationConfiguration.BoutiqueAccessPolicy);
+
+        // Deliberately unannotated: proves the fallback policy requires authentication.
+        group.MapGet("/fallback/authed-by-default", () =>
+            Results.Ok(new { message = "Requires authentication via the fallback policy." }));
+
         return endpoints;
     }
 }

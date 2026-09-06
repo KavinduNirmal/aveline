@@ -67,8 +67,8 @@ export function OnboardingPage() {
         contactPreference,
         pushNotificationsEnabled,
       })
-      await refreshUser()
-      navigate('/', { replace: true })
+      const me = await refreshUser()
+      navigate(me?.accountState === 'Active' ? '/app' : '/org-setup', { replace: true })
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Unable to complete onboarding. Please try again.'
       setFormError(msg)
@@ -89,7 +89,7 @@ export function OnboardingPage() {
         {/* Header branding */}
         <div className="text-center flex flex-col gap-2">
           <span className="text-xs uppercase tracking-[0.25em] font-semibold text-muted-foreground">
-            Aveline Boutique Concierge
+            Aveline Assistant
           </span>
           <h1 className="text-3xl sm:text-4xl font-serif font-medium text-foreground tracking-tight">
             Complete Your Profile

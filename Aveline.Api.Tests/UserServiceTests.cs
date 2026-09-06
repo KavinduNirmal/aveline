@@ -1,6 +1,10 @@
 using System.Security.Claims;
+using Aveline.Api.Authorization;
 using Aveline.Api.Infrastructure.Caching;
 using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Modules.Organizations.Models;
+using Aveline.Api.Modules.Organizations.Repositories;
+using Aveline.Api.Modules.Organizations.Services;
 using Aveline.Api.Modules.Shared.DTOs;
 using Aveline.Api.Modules.Shared.Models;
 using Aveline.Api.Modules.Shared.Repositories;
@@ -18,6 +22,7 @@ public class UserServiceTests
     private readonly AppDbContext _dbContext;
     private readonly IUserRepository _userRepository;
     private readonly IUserCacheService _cacheService;
+    private readonly IOrganizationService _organizationService;
     private readonly UserService _sut;
 
     public UserServiceTests()
@@ -32,7 +37,13 @@ public class UserServiceTests
         var distCache = new MemoryDistributedCache(memCacheOptions);
         _cacheService = new UserCacheService(distCache, NullLogger<UserCacheService>.Instance);
 
-        _sut = new UserService(_userRepository, _cacheService, NullLogger<UserService>.Instance);
+        var orgRepository = new OrganizationRepository(_dbContext);
+        var invitationRepository = new InvitationRepository(_dbContext);
+        _organizationService = new OrganizationService(
+            orgRepository, invitationRepository, _userRepository, _cacheService,
+            NullLogger<OrganizationService>.Instance);
+
+        _sut = new UserService(_userRepository, _cacheService, _organizationService, NullLogger<UserService>.Instance);
     }
 
     [Fact]
@@ -299,5 +310,149 @@ public class UserServiceTests
         Assert.Equal("Dual Cache Completed", profileCache.DisplayName);
         Assert.Equal("+94771122334", profileCache.PhoneNumber);
         Assert.Equal(ContactPreferences.WhatsApp, profileCache.ContactPreference);
+    }
+
+    [Fact]
+    public async Task CompleteOnboardingAsync_WhenMembershipExists_ButNoOrgClaims_ActivatesAccount()
+    {
+        var user = new User
+        {
+            Id = Guid.CreateVersion7(),
+            ClerkId = "clerk_member_profile_last",
+            Email = "member.last@aveline.lk",
+            FirstName = "Member",
+            LastName = "ProfileLast",
+            Username = "member_profile_last",
+            UserRole = Roles.Staff,
+            HasCompletedOnboarding = false,
+        };
+        await _userRepository.CreateAsync(user);
+
+        // Staff accepted an invite first: canonical membership exists, legacy org fields are empty.
+        var organization = await _organizationService.CreateOrganizationAsync(
+            Guid.CreateVersion7(), "Membership First Boutique", null, cancellationToken: CancellationToken.None);
+        var invitation = await _organizationService.InviteMemberAsync(
+            organization.Id, organization.OwnerUserId,
+            new InviteMemberRequest(Roles.BoutiqueManager, RecipientUserId: user.Id),
+            CancellationToken.None);
+        await _organizationService.AcceptInvitationAsync(
+            invitation.Code, user.Id, user.Email, CancellationToken.None);
+
+        var request = new CompleteOnboardingRequest
+        {
+            DisplayName = "Member ProfileLast",
+            PhoneNumber = "+94770001122",
+            Address = "Colombo 05",
+            ContactPreference = ContactPreferences.Email,
+            PushNotificationsEnabled = true,
+        };
+
+        var dto = await _sut.CompleteOnboardingAsync("clerk_member_profile_last", request);
+
+        Assert.True(dto.HasCompletedOnboarding);
+        Assert.Equal(AccountState.Active, dto.AccountState);
+
+        var dbUser = await _userRepository.GetByClerkIdAsync("clerk_member_profile_last");
+        Assert.NotNull(dbUser);
+        Assert.Equal(AccountState.Active, dbUser.AccountState);
+    }
+
+    [Fact]
+    public async Task GetOrSynchronizeUserAsync_ExistingPendingUser_WhenMembershipAdded_PromotesToActive()
+    {
+        var user = new User
+        {
+            Id = Guid.CreateVersion7(),
+            ClerkId = "clerk_pending_membership",
+            Email = "pending.member@aveline.lk",
+            FirstName = "Pending",
+            LastName = "Member",
+            Username = "pending_member",
+            UserRole = Roles.Staff,
+            HasCompletedOnboarding = true,
+            AccountState = AccountState.OnboardingPending,
+        };
+        await _userRepository.CreateAsync(user);
+
+        var organization = await _organizationService.CreateOrganizationAsync(
+            Guid.CreateVersion7(), "Promotion Boutique", null, cancellationToken: CancellationToken.None);
+
+        // Canonical record: an active membership is created (invite accepted out-of-band).
+        var repo = new OrganizationRepository(_dbContext);
+        await repo.AddMembershipAsync(new OrganizationMembership
+        {
+            OrganizationId = organization.Id,
+            UserId = user.Id,
+            BoutiqueRole = Roles.BoutiqueStaff,
+            Status = MembershipStatus.Active,
+        }, CancellationToken.None);
+
+        var claimsPrincipal = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("sub", "clerk_pending_membership"),
+            new Claim("email", "pending.member@aveline.lk"),
+        }, "TestAuth"));
+
+        var result = await _sut.GetOrSynchronizeUserAsync("clerk_pending_membership", claimsPrincipal);
+
+        Assert.Equal(AccountState.Active, result.AccountState);
+
+        var dbUser = await _userRepository.GetByClerkIdAsync("clerk_pending_membership");
+        Assert.NotNull(dbUser);
+        Assert.Equal(AccountState.Active, dbUser.AccountState);
+    }
+
+    [Fact]
+    public async Task GetOrSynchronizeUserAsync_CachedUser_WhenRefreshedClaimsCarryOrgContext_SyncsReadModel()
+    {
+        var user = new User
+        {
+            Id = Guid.CreateVersion7(),
+            ClerkId = "clerk_org_switch",
+            Email = "org.switch@aveline.lk",
+            FirstName = "Org",
+            LastName = "Switch",
+            Username = "org_switch",
+            UserRole = Roles.Staff,
+            OrganizationRole = string.Empty,
+            HasCompletedOnboarding = true,
+            AccountState = AccountState.OnboardingPending,
+        };
+        await _userRepository.CreateAsync(user);
+
+        // Warm cache holds the pre-refresh snapshot (no org context yet).
+        var cached = new UserOnboardingCacheItem
+        {
+            Id = user.Id,
+            ClerkId = user.ClerkId,
+            HasCompletedOnboarding = true,
+            Email = user.Email,
+            FirstName = user.FirstName,
+            LastName = user.LastName,
+            UserRole = Roles.Staff,
+            OrganizationRole = string.Empty,
+            AccountState = AccountState.OnboardingPending,
+        };
+        await _cacheService.SetUserAsync(user.ClerkId, cached);
+
+        var claimsPrincipal = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("sub", "clerk_org_switch"),
+            new Claim("email", "org.switch@aveline.lk"),
+            new Claim("user_role", Roles.Staff),
+            new Claim("org_role", Roles.BoutiqueManager),
+            new Claim("org_id", "org_switch_boutique"),
+        }, "TestAuth"));
+
+        var result = await _sut.GetOrSynchronizeUserAsync("clerk_org_switch", claimsPrincipal);
+
+        Assert.Equal(Roles.BoutiqueManager, result.OrganizationRole);
+        Assert.Equal(AccountState.Active, result.AccountState);
+
+        var dbUser = await _userRepository.GetByClerkIdAsync("clerk_org_switch");
+        Assert.NotNull(dbUser);
+        Assert.Equal(Roles.BoutiqueManager, dbUser.OrganizationRole);
+        Assert.Equal("org_switch_boutique", dbUser.OrganizationId);
+        Assert.Equal(AccountState.Active, dbUser.AccountState);
     }
 }

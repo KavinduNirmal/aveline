@@ -1,3 +1,4 @@
+import type { AccountState } from '@/types/user'
 import axios, { type AxiosInstance } from 'axios'
 
 import { toApiError } from './api-error'
@@ -10,6 +11,7 @@ let tokenGetter: TokenGetter | null = null
 let onUnauthorized: (() => void) | null = null
 let onForbidden: ((error: unknown) => void) | null = null
 let onOnboardingStatusChanged: ((isOnboarded: boolean) => void) | null = null
+let onAccountStateChanged: ((accountState: AccountState) => void) | null = null
 
 /** Registers the Clerk token getter (mounted inside the ClerkProvider). */
 export function registerAuthTokenGetter(getter: TokenGetter | null): void {
@@ -35,6 +37,19 @@ export function registerOnboardingStatusHandler(
   onOnboardingStatusChanged = handler
 }
 
+/** Registers the handler invoked when the X-Account-State header is detected. */
+export function registerAccountStateHandler(
+  handler: ((accountState: AccountState) => void) | null,
+): void {
+  onAccountStateChanged = handler
+}
+
+const ACCOUNT_STATES: AccountState[] = ['OnboardingPending', 'Active', 'Suspended']
+
+function isAccountState(value: string | undefined): value is AccountState {
+  return value != null && ACCOUNT_STATES.includes(value as AccountState)
+}
+
 export function createApiClient(baseUrl: string): AxiosInstance {
   const client = axios.create({
     baseURL: baseUrl,
@@ -52,7 +67,7 @@ export function createApiClient(baseUrl: string): AxiosInstance {
     return config
   })
 
-  // Surface typed errors, extract onboarding header, and react to 401 / 403.
+  // Surface typed errors, extract onboarding headers, and react to 401 / 403.
   client.interceptors.response.use(
     (response) => {
       const onboardingHeader =
@@ -60,6 +75,13 @@ export function createApiClient(baseUrl: string): AxiosInstance {
         response.headers['X-Completed-Onboarding']
       if (typeof onboardingHeader === 'string') {
         onOnboardingStatusChanged?.(onboardingHeader.toLowerCase() === 'true')
+      }
+
+      const accountStateHeader =
+        response.headers['x-account-state'] ??
+        response.headers['X-Account-State']
+      if (isAccountState(accountStateHeader)) {
+        onAccountStateChanged?.(accountStateHeader)
       }
       return response
     },

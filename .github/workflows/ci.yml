@@ -132,7 +132,7 @@ jobs:
       - name: Install dependencies & linter
         run: |
           python -m pip install --upgrade pip
-          pip install ruff pytest pytest-cov -r agnet-service/requirements.txt
+          pip install -r agnet-service/requirements.txt -r agnet-service/requirements-dev.txt
 
       - name: Run Ruff Lint
         run: ruff check agnet-service/app/

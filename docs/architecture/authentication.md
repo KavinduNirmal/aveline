@@ -162,8 +162,8 @@ sequenceDiagram
 
 | Claim | Source | Semantics |
 |---|---|---|
-| `user_role` | `{{user.public_metadata.role}}` | Aveline **team-level** role (e.g., platform admin) |
-| `org_role` | `{{org.role}}` | **Per-store** role (e.g., `owner`, `manager`, `associate`) |
+| `user_role` | `{{user.public_metadata.role}}` | Aveline **team-level** role (`staff`, `customer_relations`, `moderator`, `admin`, `owner`) |
+| `org_role` | `{{org.role}}` | **Per-boutique** role (`org:boutique_staff`, `org:boutique_manager`, `org:boutique_supervisor`, `org:boutique_owner`) |
 | `org_id` / `org_slug` | `{{org.id}}` / `{{org.slug}}` | Current organization context |
 
-Authorization policies in the backend consume `user_role` / `org_role`; see [ADR-007](../ADR/ADR-007-clerk-authentication.md).
+Authorization policies in the backend consume `user_role` / `org_role`; see [the authorization model](authorization.md) and [ADR-007](../ADR/ADR-007-clerk-authentication.md).

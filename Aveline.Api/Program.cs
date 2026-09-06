@@ -2,6 +2,10 @@ using Aveline.Api.Common.Middleware;
 using Aveline.Api.Configurations;
 using Aveline.Api.Endpoints;
 using Aveline.Api.Infrastructure.Caching;
+using Aveline.Api.Modules.Admin.Repositories;
+using Aveline.Api.Modules.Admin.Services;
+using Aveline.Api.Modules.Organizations.Repositories;
+using Aveline.Api.Modules.Organizations.Services;
 using Aveline.Api.Modules.Shared.Repositories;
 using Aveline.Api.Modules.Shared.Services;
 
@@ -19,16 +23,24 @@ builder.Services.AddAvelineAuthentication(builder.Configuration);
 builder.Services.AddAvelineAuthorization();
 builder.Services.AddAvelineCors(builder.Configuration);
 builder.Services.AddAgentServiceClient(builder.Configuration);
+builder.Services.AddClerkAdminClient();
 
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IUserCacheService, UserCacheService>();
 builder.Services.AddScoped<IUserService, UserService>();
 
+builder.Services.AddScoped<IOrganizationRepository, OrganizationRepository>();
+builder.Services.AddScoped<IInvitationRepository, InvitationRepository>();
+builder.Services.AddScoped<IOrganizationService, OrganizationService>();
+
+builder.Services.AddScoped<IAdminApprovalRepository, AdminApprovalRepository>();
+builder.Services.AddScoped<IAdminApprovalService, AdminApprovalService>();
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
+    app.MapOpenApi().AllowAnonymous();
 }
 
 app.UseHttpsRedirection();
@@ -44,6 +56,8 @@ v1.MapAuthEndpoints();
 v1.MapAuthPolicyDemoEndpoints();
 v1.MapAgentEndpoints();
 v1.MapUserEndpoints();
+v1.MapAdminEndpoints();
+v1.MapOrganizationEndpoints();
 
 app.Run();
 

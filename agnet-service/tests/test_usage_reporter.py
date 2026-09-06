@@ -1,7 +1,8 @@
 import os
+
+import httpx
 import pytest
 import respx
-import httpx
 
 from app.core.config import get_settings
 from app.services.usage_reporter import report_usage

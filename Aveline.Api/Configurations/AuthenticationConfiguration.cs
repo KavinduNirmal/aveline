@@ -31,6 +31,8 @@ public static class AuthenticationConfiguration
 
         services
             .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+            .AddScheme<Aveline.Api.Infrastructure.Integrations.InternalTokenAuthenticationOptions, Aveline.Api.Infrastructure.Integrations.InternalTokenAuthenticationHandler>(
+                Aveline.Api.Infrastructure.Integrations.InternalTokenAuthenticationHandler.SchemeName, _ => { })
             .AddJwtBearer(options =>
             {
                 options.Authority = authority;

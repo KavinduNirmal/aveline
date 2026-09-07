@@ -49,13 +49,14 @@ public class OrganizationEndpointsIntegrationTests : IAsyncLifetime
         await _authServer.DisposeAsync();
     }
 
-    private string CreateToken(string userId, string? email = null, string? firstName = null, string? lastName = null, string? userRole = null)
+    private string CreateToken(string userId, string? email = null, string? firstName = null, string? lastName = null, string? userRole = null, string? orgId = null)
     {
         var claims = new List<Claim> { new("sub", userId) };
         if (email != null) claims.Add(new Claim("email", email));
         if (firstName != null) claims.Add(new Claim("first_name", firstName));
         if (lastName != null) claims.Add(new Claim("last_name", lastName));
         if (userRole != null) claims.Add(new Claim("user_role", userRole));
+        if (orgId != null) claims.Add(new Claim("org_id", orgId));
 
         var handler = new JsonWebTokenHandler();
         var descriptor = new SecurityTokenDescriptor
@@ -96,45 +97,97 @@ public class OrganizationEndpointsIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Owner_CreatesOrganization_BecomesActive_AndHasMembership()
+    public async Task OnboardingPendingUser_CannotCreateOrganization_Returns403()
     {
+        // A pending (not-yet-onboarded) account must not be able to create an organization
+        // to short-circuit onboarding into an Active state.
         var token = CreateToken("user_owner_flow", "owner.flow@aveline.lk", "Nimal", "Perera", "staff");
 
-        // Onboarding profile step first (leaves the account OnboardingPending: no org context yet).
         var onboard = await _client.SendAsync(AuthorizedJson(
             HttpMethod.Post, "/api/v1/users/onboarding", token,
             new { displayName = "Nimal Perera", phoneNumber = "+94771234567", address = "1 Galle Road, Colombo 03" }));
         Assert.Equal(HttpStatusCode.OK, onboard.StatusCode);
 
-        // Business endpoints are still blocked while pending.
-        var before = await _client.SendAsync(Authorized(HttpMethod.Get, "/api/v1/policies/associate", token));
-        Assert.Equal(HttpStatusCode.Forbidden, before.StatusCode);
-        Assert.Contains("onboarding-required", await before.Content.ReadAsStringAsync());
-
-        // Owner creates the boutique -> account becomes active.
         var createResponse = await _client.SendAsync(AuthorizedJson(
             HttpMethod.Post, "/api/v1/orgs", token,
-            new { name = "Aveline Boutique Colombo", clerkOrgId = "org_flow_1" }));
+            new { name = "Aveline Boutique Colombo" }));
+
+        Assert.Equal(HttpStatusCode.Forbidden, createResponse.StatusCode);
+        Assert.Contains("onboarding-required", await createResponse.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task ActiveOwner_CreatesAdditionalBoutique_StaysActive_AndDerivesClerkOrgIdFromClaim()
+    {
+        // Seed an already-Active owner (multi-boutique scenario) whose JWT carries an org claim.
+        await using var seed = CreateSeedContext();
+        var owner = new User
+        {
+            Id = Guid.CreateVersion7(),
+            ClerkId = "user_active_multi",
+            Email = "active.multi@aveline.lk",
+            FirstName = "Active",
+            LastName = "Owner",
+            Username = "user_active_multi",
+            UserRole = Roles.Staff,
+            OrganizationRole = string.Empty,
+            HasCompletedOnboarding = true,
+            AccountState = AccountState.Active,
+        };
+        seed.Users.Add(owner);
+        await seed.SaveChangesAsync();
+
+        var token = CreateToken("user_active_multi", "active.multi@aveline.lk", "Active", "Owner", "staff", orgId: "org_claim_x");
+
+        var createResponse = await _client.SendAsync(AuthorizedJson(
+            HttpMethod.Post, "/api/v1/orgs", token,
+            new { name = "Aveline Boutique Colombo" }));
 
         Assert.Equal(HttpStatusCode.OK, createResponse.StatusCode);
         var createBody = JsonDocument.Parse(await createResponse.Content.ReadAsStringAsync()).RootElement;
         Assert.Equal("Aveline Boutique Colombo", createBody.GetProperty("organization").GetProperty("name").GetString());
         Assert.Equal("Active", createBody.GetProperty("accountState").GetString());
+        // ClerkOrgId must come from the JWT org claim, never the client body.
+        Assert.Equal("org_claim_x", createBody.GetProperty("organization").GetProperty("clerkOrgId").GetString());
 
-        // Active account can now reach business endpoints.
-        var after = await _client.SendAsync(Authorized(HttpMethod.Get, "/api/v1/policies/associate", token));
-        Assert.Equal(HttpStatusCode.OK, after.StatusCode);
-
-        // /orgs/my lists the owner membership.
+        // /orgs/my lists the owner membership for the newly created boutique.
         var my = await _client.SendAsync(Authorized(HttpMethod.Get, "/api/v1/orgs/my", token));
         Assert.Equal(HttpStatusCode.OK, my.StatusCode);
         var myDoc = JsonDocument.Parse(await my.Content.ReadAsStringAsync()).RootElement;
         Assert.Equal(1, myDoc.GetArrayLength());
         Assert.Equal(Roles.BoutiqueOwner, myDoc[0].GetProperty("boutiqueRole").GetString());
+    }
 
-        // Account state header reflects Active.
-        var me = await _client.SendAsync(Authorized(HttpMethod.Get, "/api/v1/users/me", token));
-        Assert.Equal("Active", me.Headers.GetValues("X-Account-State").Single());
+    [Fact]
+    public async Task ActiveOwner_CreatesBoutique_WithoutOrgClaim_LeavesClerkOrgIdNull()
+    {
+        await using var seed = CreateSeedContext();
+        var owner = new User
+        {
+            Id = Guid.CreateVersion7(),
+            ClerkId = "user_active_noclaim",
+            Email = "active.noclaim@aveline.lk",
+            FirstName = "No",
+            LastName = "Claim",
+            Username = "user_active_noclaim",
+            UserRole = Roles.Staff,
+            OrganizationRole = string.Empty,
+            HasCompletedOnboarding = true,
+            AccountState = AccountState.Active,
+        };
+        seed.Users.Add(owner);
+        await seed.SaveChangesAsync();
+
+        // Even if the body tried to smuggle a clerkOrgId, the DTO no longer accepts it.
+        var token = CreateToken("user_active_noclaim", "active.noclaim@aveline.lk", "No", "Claim", "staff");
+
+        var createResponse = await _client.SendAsync(AuthorizedJson(
+            HttpMethod.Post, "/api/v1/orgs", token,
+            new { name = "Second Boutique", clerkOrgId = "org_should_be_ignored" }));
+
+        Assert.Equal(HttpStatusCode.OK, createResponse.StatusCode);
+        var createBody = JsonDocument.Parse(await createResponse.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal(JsonValueKind.Null, createBody.GetProperty("organization").GetProperty("clerkOrgId").ValueKind);
     }
 
     [Fact]
@@ -255,10 +308,10 @@ public class OrganizationEndpointsIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, accept.StatusCode);
         Assert.Contains("expired", await accept.Content.ReadAsStringAsync());
 
-        // Account remains pending: no memberships and business endpoints stay blocked.
+        // Account remains pending: the raw /orgs endpoints are now gated off for pending
+        // accounts (so they cannot create an org to bypass onboarding).
         var my = await _client.SendAsync(Authorized(HttpMethod.Get, "/api/v1/orgs/my", token));
-        var myDoc = JsonDocument.Parse(await my.Content.ReadAsStringAsync()).RootElement;
-        Assert.Equal(0, myDoc.GetArrayLength());
+        Assert.Equal(HttpStatusCode.Forbidden, my.StatusCode);
 
         var business = await _client.SendAsync(Authorized(HttpMethod.Get, "/api/v1/policies/associate", token));
         Assert.Equal(HttpStatusCode.Forbidden, business.StatusCode);

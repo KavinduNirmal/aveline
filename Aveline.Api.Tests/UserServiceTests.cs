@@ -40,7 +40,7 @@ public class UserServiceTests
         var orgRepository = new OrganizationRepository(_dbContext);
         var invitationRepository = new InvitationRepository(_dbContext);
         _organizationService = new OrganizationService(
-            orgRepository, invitationRepository, _userRepository, _cacheService,
+            orgRepository, invitationRepository, new FakeInvitationCodeStore(), _userRepository, _cacheService,
             NullLogger<OrganizationService>.Instance);
 
         _sut = new UserService(_userRepository, _cacheService, _organizationService, NullLogger<UserService>.Instance);

@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Aveline.Api.Authorization;
 using Aveline.Api.Infrastructure.Caching;
+using Aveline.Api.Modules.Organizations.DTOs;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Organizations.Repositories;
 using Aveline.Api.Modules.Shared.Repositories;
@@ -15,10 +16,12 @@ namespace Aveline.Api.Modules.Organizations.Services;
 /// </summary>
 public partial class OrganizationService : IOrganizationService
 {
-    private static readonly TimeSpan DefaultInviteValidity = TimeSpan.FromDays(7);
+    /// <summary>Default life of an invitation. Mirrors the code-store TTL so they never drift.</summary>
+    private static readonly TimeSpan DefaultInviteValidity = TimeSpan.FromHours(24);
 
     private readonly IOrganizationRepository _organizationRepository;
     private readonly IInvitationRepository _invitationRepository;
+    private readonly IInvitationCodeStore _codeStore;
     private readonly IUserRepository _userRepository;
     private readonly IUserCacheService _userCacheService;
     private readonly ILogger<OrganizationService> _logger;
@@ -26,12 +29,14 @@ public partial class OrganizationService : IOrganizationService
     public OrganizationService(
         IOrganizationRepository organizationRepository,
         IInvitationRepository invitationRepository,
+        IInvitationCodeStore codeStore,
         IUserRepository userRepository,
         IUserCacheService userCacheService,
         ILogger<OrganizationService> logger)
     {
         _organizationRepository = organizationRepository;
         _invitationRepository = invitationRepository;
+        _codeStore = codeStore;
         _userRepository = userRepository;
         _userCacheService = userCacheService;
         _logger = logger;
@@ -61,7 +66,13 @@ public partial class OrganizationService : IOrganizationService
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
-        slug = string.IsNullOrWhiteSpace(slug) ? ToSlug(name) : slug.Trim();
+        var requested = string.IsNullOrWhiteSpace(slug) ? name : slug;
+        slug = OrgSlug.From(requested);
+        if (string.IsNullOrEmpty(slug))
+        {
+            throw new ArgumentException("The boutique slug must contain letters or numbers.");
+        }
+
         if (await _organizationRepository.ExistsBySlugAsync(slug, cancellationToken))
         {
             throw new OrganizationSlugAlreadyInUseException(slug);
@@ -113,6 +124,7 @@ public partial class OrganizationService : IOrganizationService
             ?? throw new KeyNotFoundException($"Organization '{organizationId}' not found.");
 
         var code = InvitationTokens.GenerateCode();
+        var validity = request.ValidFor ?? DefaultInviteValidity;
         var invitation = new OrganizationInvitation
         {
             OrganizationId = organization.Id,
@@ -121,14 +133,28 @@ public partial class OrganizationService : IOrganizationService
                 ? null
                 : request.RecipientEmail.Trim().ToLowerInvariant(),
             RecipientUserId = request.RecipientUserId,
+            // Hash kept in Postgres as a durable fallback so the code remains redeemable if
+            // the code store is flushed before the Redis TTL expires.
             TokenHash = InvitationTokens.Hash(code),
             BoutiqueRole = request.BoutiqueRole,
-            ExpiresAt = DateTime.UtcNow.Add(request.ValidFor ?? DefaultInviteValidity),
+            ExpiresAt = DateTime.UtcNow.Add(validity),
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow,
         };
 
         invitation = await _invitationRepository.CreateAsync(invitation, cancellationToken);
+
+        // Write the code -> invitationId mapping to the transient store. This is the primary
+        // accept path; fail fast (and compensate the just-inserted log row) if it is down.
+        try
+        {
+            await _codeStore.StoreAsync(code, invitation.Id, validity, cancellationToken);
+        }
+        catch (Exception)
+        {
+            await _invitationRepository.DeleteAsync(invitation.Id, cancellationToken);
+            throw new InvitationCodeStoreUnavailableException();
+        }
 
         _logger.LogInformation(
             "Invitation created. invitationId={InvitationId} organizationId={OrganizationId} role={Role} recipientEmail={RecipientEmail}",
@@ -145,8 +171,11 @@ public partial class OrganizationService : IOrganizationService
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(code);
 
-        var invitation = await _invitationRepository.GetByTokenHashAsync(
-            InvitationTokens.Hash(code), cancellationToken)
+        var normalized = code.Trim();
+
+        // Primary path: resolve via the transient code store; fall back to the durable
+        // Postgres hash when the store misses (e.g. after a Redis flush).
+        var invitation = await ResolveInvitationByCodeAsync(normalized, cancellationToken)
             ?? throw new InvitationNotFoundException();
 
         var now = DateTime.UtcNow;
@@ -197,6 +226,9 @@ public partial class OrganizationService : IOrganizationService
         // Atomically activate the membership and mark the invitation accepted.
         await _invitationRepository.AcceptAsync(invitation, membership, now, cancellationToken);
 
+        // One-time use: best-effort remove the transient code mapping.
+        await RemoveCodeAsync(normalized, cancellationToken);
+
         var organization = await _organizationRepository.GetByIdAsync(
             invitation.OrganizationId, cancellationToken);
 
@@ -218,6 +250,89 @@ public partial class OrganizationService : IOrganizationService
         CancellationToken cancellationToken = default)
     {
         return await _organizationRepository.ListMembershipsForUserAsync(userId, cancellationToken);
+    }
+
+    public async Task<OrganizationProfileWithMembershipDto?> GetOrganizationProfileBySlugAsync(
+        string slug,
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        var organization = await _organizationRepository.GetBySlugAsync(slug, cancellationToken);
+        if (organization is null)
+        {
+            return null;
+        }
+
+        var membership = await _organizationRepository.GetMembershipAsync(
+            organization.Id, userId, cancellationToken);
+
+        return new OrganizationProfileWithMembershipDto(
+            Organization: MapProfile(organization),
+            Membership: membership is null ? null : MapMembership(organization, membership));
+    }
+
+    public async Task<OrganizationProfileDto?> GetOrganizationProfileAsync(
+        Guid organizationId,
+        CancellationToken cancellationToken = default)
+    {
+        var organization = await _organizationRepository.GetByIdAsync(organizationId, cancellationToken);
+        return organization is null ? null : MapProfile(organization);
+    }
+
+    private static OrganizationProfileDto MapProfile(Organization org) => new(
+        org.Id,
+        org.Name,
+        org.Slug,
+        org.ClerkOrgId,
+        org.OwnerUserId,
+        org.Address,
+        org.PhoneNumber,
+        org.Description,
+        org.LogoUrl,
+        org.PlanTier,
+        org.HasCompletedOnboarding,
+        org.CreatedAt);
+
+    private static OrganizationMembershipView MapMembership(Organization org, OrganizationMembership m) => new(
+        m.OrganizationId,
+        org.Name,
+        org.Slug,
+        m.BoutiqueRole,
+        m.Status.ToString());
+
+    public async Task<IReadOnlyList<OrganizationInvitation>> ListPendingInvitationsAsync(
+        Guid organizationId,
+        CancellationToken cancellationToken = default)
+    {
+        return await _invitationRepository.ListPendingByOrganizationAsync(organizationId, cancellationToken);
+    }
+
+    public async Task RevokeInvitationAsync(
+        Guid organizationId,
+        Guid invitationId,
+        Guid revokingUserId,
+        CancellationToken cancellationToken = default)
+    {
+        var invitation = await _invitationRepository.GetByIdAsync(invitationId, cancellationToken)
+            ?? throw new InvitationNotFoundException();
+
+        if (invitation.OrganizationId != organizationId)
+        {
+            throw new InvitationNotFoundException();
+        }
+
+        if (invitation.AcceptedAt is not null)
+        {
+            throw new CannotRevokeAcceptedInvitationException();
+        }
+
+        invitation.RevokedAt = DateTime.UtcNow;
+        invitation.RevokedByUserId = revokingUserId;
+        await _invitationRepository.UpdateAsync(invitation, cancellationToken);
+
+        _logger.LogInformation(
+            "Invitation revoked. invitationId={InvitationId} organizationId={OrganizationId} revokedBy={RevokedBy}",
+            invitation.Id, organizationId, revokingUserId);
     }
 
     public async Task<bool> HasActiveMembershipAsync(
@@ -308,12 +423,32 @@ public partial class OrganizationService : IOrganizationService
         return membership;
     }
 
-    [GeneratedRegex("[^a-z0-9]+")]
-    private static partial Regex NonAlphanumericRegex();
-
-    private static string ToSlug(string name)
+    /// <summary>Resolves an invitation from a code via the transient store, falling back to the durable hash.</summary>
+    private async Task<OrganizationInvitation?> ResolveInvitationByCodeAsync(
+        string code,
+        CancellationToken cancellationToken)
     {
-        var slug = NonAlphanumericRegex().Replace(name.ToLowerInvariant(), "-");
-        return slug.Trim('-');
+        var invitationId = await _codeStore.GetAsync(code, cancellationToken);
+        if (invitationId is not null)
+        {
+            return await _invitationRepository.GetByIdAsync(invitationId.Value, cancellationToken);
+        }
+
+        return await _invitationRepository.GetByTokenHashAsync(
+            InvitationTokens.Hash(code), cancellationToken);
+    }
+
+    /// <summary>Best-effort removal of a redeemed code's transient mapping.</summary>
+    private async Task RemoveCodeAsync(string code, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _codeStore.RemoveAsync(code, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            // The Postgres log is authoritative; a leftover code is harmless and TTL-expires.
+            _logger.LogWarning(ex, "Could not remove redeemed invitation code from the store. It will TTL-expire.");
+        }
     }
 }

@@ -93,7 +93,7 @@ dotnet run
 
 - Swagger / OpenAPI endpoint:
   - `dotnet run` (local): `http://localhost:5091/openapi/v1.json`
-  - `docker compose up api` (host-mapped): `http://localhost:5000/openapi/v1.json`
+  - `docker compose up api` (host-mapped): `http://localhost:5091/openapi/v1.json`
 
 ### Python Agentic AI Service (`agnet-service/`)
 

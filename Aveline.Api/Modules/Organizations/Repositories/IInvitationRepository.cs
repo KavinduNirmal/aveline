@@ -18,6 +18,11 @@ public interface IInvitationRepository
         OrganizationInvitation invitation,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Deletes an invitation row (compensation when the code store write fails).</summary>
+    Task<bool> DeleteAsync(
+        Guid invitationId,
+        CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<OrganizationInvitation>> ListPendingByOrganizationAsync(
         Guid organizationId,
         CancellationToken cancellationToken = default);

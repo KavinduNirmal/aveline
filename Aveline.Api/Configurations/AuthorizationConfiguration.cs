@@ -30,6 +30,11 @@ public static class AuthorizationConfiguration
     /// </summary>
     public const string BoutiqueMembershipManagePolicy = "BoutiqueMembershipManage";
 
+    /// <summary>
+    /// Policy for internal service-to-service calls using X-Internal-Token header (ADR-009).
+    /// </summary>
+    public const string InternalServicePolicy = "InternalServicePolicy";
+
     public static IServiceCollection AddAvelineAuthorization(this IServiceCollection services)
     {
         services.AddHttpContextAccessor();
@@ -38,6 +43,14 @@ public static class AuthorizationConfiguration
 
         services.AddAuthorization(options =>
         {
+            // Internal service-to-service policy
+            options.AddPolicy(InternalServicePolicy, p =>
+            {
+                p.AddAuthenticationSchemes(Aveline.Api.Infrastructure.Integrations.InternalTokenAuthenticationHandler.SchemeName);
+                p.RequireAuthenticatedUser();
+                p.RequireRole("InternalService");
+            });
+
             // Role-based policies.
             options.AddPolicy(AssociatesPolicy, p => p.RequireRole(Roles.StaffAccess));
 

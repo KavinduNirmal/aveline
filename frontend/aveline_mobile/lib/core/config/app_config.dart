@@ -39,11 +39,11 @@ class AppConfig {
 
     return AppConfig(
       clerkPublishableKey: clerkPublishableKey,
-      apiBaseUrl: String.fromEnvironment(
+      apiBaseUrl: const String.fromEnvironment(
         'API_BASE_URL',
         defaultValue: _defaultApiBaseUrl,
       ),
-      jwtTemplateName: String.fromEnvironment(
+      jwtTemplateName: const String.fromEnvironment(
         'JWT_TEMPLATE_NAME',
         defaultValue: _defaultJwtTemplateName,
       ),

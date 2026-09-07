@@ -7,38 +7,96 @@ void main() {
       expect(RouteGuards.redirectForAuth('/', isSignedIn: false), '/auth');
       expect(RouteGuards.redirectForAuth('/onboarding', isSignedIn: false), '/auth');
       expect(RouteGuards.redirectForAuth('/org-setup', isSignedIn: false), '/auth');
+      expect(
+        RouteGuards.redirectForAuth('/account-type', isSignedIn: false),
+        '/auth',
+      );
     });
 
     test('leaves unauthenticated users on the auth screen', () {
       expect(RouteGuards.redirectForAuth('/auth', isSignedIn: false), isNull);
     });
 
-    test('redirects authenticated user to /onboarding if profile not completed', () {
+    test('leaves unauthenticated users on the invite deep link', () {
+      expect(RouteGuards.redirectForAuth('/invite', isSignedIn: false), isNull);
+    });
+
+    test('routes a pending user without a profile to account-type first', () {
       expect(
         RouteGuards.redirectForAuth('/', isSignedIn: true, hasCompletedOnboarding: false),
-        '/onboarding',
+        '/account-type',
       );
       expect(
-        RouteGuards.redirectForAuth('/auth', isSignedIn: true, hasCompletedOnboarding: false),
-        '/onboarding',
-      );
-      expect(
-        RouteGuards.redirectForAuth('/org-setup', isSignedIn: true, hasCompletedOnboarding: false),
-        '/onboarding',
-      );
-      expect(
-        RouteGuards.redirectForAuth('/onboarding', isSignedIn: true, hasCompletedOnboarding: false),
+        RouteGuards.redirectForAuth(
+          '/account-type',
+          isSignedIn: true,
+          hasCompletedOnboarding: false,
+        ),
         isNull,
       );
     });
 
-    test('redirects a pending user with a completed profile to /org-setup', () {
+    test('routes a pending user with a chosen type to the profile step', () {
+      expect(
+        RouteGuards.redirectForAuth(
+          '/',
+          isSignedIn: true,
+          hasCompletedOnboarding: false,
+          accountType: 'owner',
+        ),
+        '/onboarding',
+      );
+      expect(
+        RouteGuards.redirectForAuth(
+          '/',
+          isSignedIn: true,
+          hasCompletedOnboarding: false,
+          accountType: 'staff',
+        ),
+        '/onboarding',
+      );
+      expect(
+        RouteGuards.redirectForAuth(
+          '/onboarding',
+          isSignedIn: true,
+          hasCompletedOnboarding: false,
+          accountType: 'owner',
+        ),
+        isNull,
+      );
+    });
+
+    test('routes a pending owner with a completed profile to the owner wizard', () {
       expect(
         RouteGuards.redirectForAuth(
           '/',
           isSignedIn: true,
           hasCompletedOnboarding: true,
           accountState: 'OnboardingPending',
+          accountType: 'owner',
+        ),
+        '/owner-onboarding',
+      );
+      expect(
+        RouteGuards.redirectForAuth(
+          '/owner-onboarding',
+          isSignedIn: true,
+          hasCompletedOnboarding: true,
+          accountState: 'OnboardingPending',
+          accountType: 'owner',
+        ),
+        isNull,
+      );
+    });
+
+    test('routes a pending staff member to the invite-code step', () {
+      expect(
+        RouteGuards.redirectForAuth(
+          '/',
+          isSignedIn: true,
+          hasCompletedOnboarding: true,
+          accountState: 'OnboardingPending',
+          accountType: 'staff',
         ),
         '/org-setup',
       );
@@ -48,8 +106,21 @@ void main() {
           isSignedIn: true,
           hasCompletedOnboarding: true,
           accountState: 'OnboardingPending',
+          accountType: 'staff',
         ),
         isNull,
+      );
+    });
+
+    test('defaults a pending user with an unknown type to the invite-code step', () {
+      expect(
+        RouteGuards.redirectForAuth(
+          '/',
+          isSignedIn: true,
+          hasCompletedOnboarding: true,
+          accountState: 'OnboardingPending',
+        ),
+        '/org-setup',
       );
     });
 
@@ -77,9 +148,15 @@ void main() {
         '/',
       );
       expect(
-        RouteGuards.redirectForAuth('/auth', isSignedIn: true, accountState: 'Active'),
+        RouteGuards.redirectForAuth(
+          '/owner-onboarding',
+          isSignedIn: true,
+          hasCompletedOnboarding: true,
+          accountState: 'Active',
+        ),
         '/',
       );
+      expect(RouteGuards.redirectForAuth('/auth', isSignedIn: true, accountState: 'Active'), '/');
     });
 
     test('redirects a suspended user to /suspended and leaves them there', () {

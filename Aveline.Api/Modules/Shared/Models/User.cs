@@ -46,6 +46,9 @@ public class User
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? DeletedAt { get; set; }
+
+    /// <summary>Staff clock-in/clock-out sessions for this user (see Attendance).</summary>
+    public ICollection<Aveline.Api.Modules.Attendance.Models.TimeEntry> TimeEntries { get; set; } = [];
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter))]

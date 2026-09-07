@@ -83,6 +83,11 @@ public static class OrganizationEndpoints
                 ? $"/invite?code={result.Code}"
                 : $"{baseUrl.TrimEnd('/')}/invite?code={result.Code}";
 
+            // Mobile deep link (custom scheme) that opens the Flutter app directly
+            // into the invite-code step, skipping manual entry.
+            var mobileScheme = configuration["App:MobileScheme"] ?? "aveline";
+            var mobileLink = $"{mobileScheme.TrimEnd('/')}://invite?code={result.Code}";
+
             if (recipientEmail is not null)
             {
                 await emailService.SendStaffInvitationAsync(
@@ -93,6 +98,7 @@ public static class OrganizationEndpoints
                 result.Invitation.Id,
                 result.Code,
                 link,
+                mobileLink,
                 request.BoutiqueRole,
                 result.Invitation.RecipientEmail,
                 result.Invitation.ExpiresAt));

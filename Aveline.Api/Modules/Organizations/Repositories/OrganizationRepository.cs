@@ -127,4 +127,16 @@ public class OrganizationRepository : IOrganizationRepository
             .OrderBy(m => m.CreatedAt)
             .ToListAsync(cancellationToken);
     }
+
+    public async Task<IReadOnlyList<OrganizationMembership>> GetActiveMembersAsync(
+        Guid organizationId,
+        CancellationToken cancellationToken = default)
+    {
+        return await _context.OrganizationMemberships
+            .AsNoTracking()
+            .Include(m => m.User)
+            .Where(m => m.OrganizationId == organizationId && m.Status == MembershipStatus.Active)
+            .OrderBy(m => m.CreatedAt)
+            .ToListAsync(cancellationToken);
+    }
 }

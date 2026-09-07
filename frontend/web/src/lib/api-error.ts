@@ -2,6 +2,8 @@
 export class ApiError extends Error {
   readonly status: number
   readonly code?: string
+  /** RFC 7807 `type` (e.g. `https://aveline.app/errors/onboarding-required`) when present. */
+  readonly type?: string
   readonly details?: unknown
 
   constructor(
@@ -9,13 +11,23 @@ export class ApiError extends Error {
     message: string,
     code?: string,
     details?: unknown,
+    type?: string,
   ) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.code = code
     this.details = details
+    this.type = type
   }
+}
+
+function extractProblemType(data: unknown): string | undefined {
+  if (typeof data === 'object' && data !== null) {
+    const record = data as Record<string, unknown>
+    return typeof record.type === 'string' ? record.type : undefined
+  }
+  return undefined
 }
 
 function extractMessage(status: number, data: unknown): string {
@@ -55,11 +67,13 @@ export function toApiError(error: unknown): ApiError {
       message?: string
     }
     const status = axiosError.response?.status ?? 0
+    const data = axiosError.response?.data
     return new ApiError(
       status,
-      extractMessage(status, axiosError.response?.data),
+      extractMessage(status, data),
       axiosError.code,
-      axiosError.response?.data,
+      data,
+      extractProblemType(data),
     )
   }
   return new ApiError(

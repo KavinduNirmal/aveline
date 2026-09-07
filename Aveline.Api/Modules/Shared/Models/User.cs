@@ -39,12 +39,16 @@ public class User
     public string? DisplayName { get; set; }
     public string? Address { get; set; }
     public bool HasCompletedOnboarding { get; set; } = false;
+    public AccountState AccountState { get; set; } = AccountState.OnboardingPending;
     public ContactPreferences ContactPreference { get; set; } = ContactPreferences.None;
     public bool PushNotificationsEnabled { get; set; } = false;
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? DeletedAt { get; set; }
+
+    /// <summary>Staff clock-in/clock-out sessions for this user (see Attendance).</summary>
+    public ICollection<Aveline.Api.Modules.Attendance.Models.TimeEntry> TimeEntries { get; set; } = [];
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter))]

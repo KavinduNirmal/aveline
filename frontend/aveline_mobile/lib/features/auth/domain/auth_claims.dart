@@ -8,10 +8,10 @@ class AuthClaims {
     this.orgSlug,
   });
 
-  /// Team-level role (e.g. platform admin).
+  /// Team-level role (e.g. `staff`, `customer_relations`, or `admin`).
   final String? userRole;
 
-  /// Per-store role (e.g. `owner`, `manager`, `associate`).
+  /// Per-boutique role (e.g. `org:boutique_manager`).
   final String? orgRole;
 
   /// Current organization id.

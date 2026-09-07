@@ -1,7 +1,7 @@
 namespace Aveline.Api.Authorization;
 
 /// <summary>
-/// Permission names and the role->permission catalog used by permission policies.
+/// Permission names and the canonical role-to-permission grant catalog.
 /// </summary>
 public static class Permissions
 {
@@ -13,39 +13,37 @@ public static class Permissions
     public const string ReportsView = "reports:view";
     public const string SettingsManage = "settings:manage";
 
-    /// <summary>Permission -> roles allowed to perform it.</summary>
-    public static readonly IReadOnlyDictionary<string, string[]> PermissionRoles =
-        new Dictionary<string, string[]>
+    public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
+    {
+        CatalogView,
+        CustomersView,
+        CatalogManage,
+        ApprovalsApprove,
+        PaymentsRefund,
+        ReportsView,
+        SettingsManage,
+    };
+
+    private static readonly IReadOnlyDictionary<string, IReadOnlySet<string>> RolePermissions =
+        new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal)
         {
-            [CatalogView] = new[]
-            {
-                Roles.Associate, Roles.Manager, Roles.Owner,
-                Roles.OrgAssociate, Roles.OrgManager, Roles.OrgOwner, Roles.OrgAdmin, Roles.OrgMember,
-            },
-            [CustomersView] = new[]
-            {
-                Roles.Associate, Roles.Manager, Roles.Owner,
-                Roles.OrgAssociate, Roles.OrgManager, Roles.OrgOwner, Roles.OrgAdmin,
-            },
-            [CatalogManage] = new[]
-            {
-                Roles.Manager, Roles.Owner, Roles.OrgManager, Roles.OrgOwner, Roles.OrgAdmin,
-            },
-            [ApprovalsApprove] = new[]
-            {
-                Roles.Manager, Roles.Owner, Roles.OrgManager, Roles.OrgOwner, Roles.OrgAdmin,
-            },
-            [PaymentsRefund] = new[]
-            {
-                Roles.Owner, Roles.OrgOwner,
-            },
-            [ReportsView] = new[]
-            {
-                Roles.Manager, Roles.Owner, Roles.OrgManager, Roles.OrgOwner, Roles.OrgAdmin,
-            },
-            [SettingsManage] = new[]
-            {
-                Roles.Owner, Roles.OrgOwner,
-            },
+            [Roles.Staff] = Grant(CatalogView),
+            [Roles.CustomerRelations] = Grant(CatalogView, CustomersView),
+            [Roles.Moderator] = Grant(CatalogView, CustomersView, ApprovalsApprove),
+            [Roles.Admin] = All,
+            [Roles.Owner] = All,
+
+            [Roles.BoutiqueStaff] = Grant(CatalogView, CustomersView),
+            [Roles.BoutiqueManager] = Grant(CatalogView, CustomersView, CatalogManage, ReportsView),
+            [Roles.BoutiqueSupervisor] = Grant(
+                CatalogView, CustomersView, CatalogManage, ApprovalsApprove, ReportsView),
+            [Roles.BoutiqueOwner] = All,
         };
+
+    /// <summary>Returns whether a canonical role has the requested permission.</summary>
+    public static bool IsGranted(string role, string permission) =>
+        RolePermissions.TryGetValue(role, out var grants) && grants.Contains(permission);
+
+    private static IReadOnlySet<string> Grant(params string[] permissions) =>
+        new HashSet<string>(permissions, StringComparer.Ordinal);
 }

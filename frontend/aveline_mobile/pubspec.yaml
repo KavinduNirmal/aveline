@@ -46,6 +46,8 @@ dependencies:
   provider: ^6.1.0
   # Brand fonts (Playfair Display, Hanken Grotesk).
   google_fonts: ^8.2.1
+  shared_preferences: ^2.5.5
+  app_links: ^7.2.1
 
 dev_dependencies:
   flutter_test:

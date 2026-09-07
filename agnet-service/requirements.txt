@@ -1,6 +1,6 @@
 # Core runtime
 fastapi
-uvicorn[standard]
+uvicorn
 
 # LangGraph & LangChain
 langgraph
@@ -24,11 +24,3 @@ httpx
 
 # LLM provider
 openai
-
-# Testing
-pytest
-pytest-asyncio
-respx
-
-# Linting (dev)
-ruff

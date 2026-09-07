@@ -1,28 +1,48 @@
 using System.Security.Claims;
+using Aveline.Api.Modules.Shared.Models;
 using Aveline.Api.Modules.Shared.Services;
 using Microsoft.AspNetCore.Http;
 
 namespace Aveline.Api.Common.Middleware;
 
+/// <summary>
+/// Enforces the account lifecycle state (replaces the boolean onboarding gate).
+/// Only <see cref="AccountState.Active"/> accounts reach business endpoints;
+/// <see cref="AccountState.OnboardingPending"/> accounts are limited to profile,
+/// onboarding-wizard, and invitation endpoints; <see cref="AccountState.Suspended"/>
+/// accounts get no authenticated API access. Raw <c>/orgs</c> endpoints are excluded for
+/// pending accounts so a caller cannot create an organization to bypass onboarding.
+/// </summary>
 public class OnboardingMiddleware
 {
     private readonly RequestDelegate _next;
 
-    private static readonly string[] AllowedPaths = new[]
+    private static readonly string[] AllowedPathsForOnboardingPending = new[]
     {
         "/api/v1/users/me",
         "/api/v1/users/onboarding",
         "/api/v1/auth/claims",
+        "/api/v1/admin",
+        "/api/v1/invitations",
+        "/api/v1/onboarding",
         "/openapi",
     };
 
-    public OnboardingMiddleware(RequestDelegate _next)
+    public OnboardingMiddleware(RequestDelegate next)
     {
-        this._next = _next;
+        _next = next;
     }
 
     public async Task InvokeAsync(HttpContext context, IUserService userService)
     {
+        // Internal service calls (e.g. /internal/usage) do not have Clerk user accounts
+        if (context.Request.Path.StartsWithSegments("/internal") ||
+            context.User.IsInRole("InternalService"))
+        {
+            await _next(context);
+            return;
+        }
+
         if (context.User.Identity?.IsAuthenticated != true)
         {
             await _next(context);
@@ -43,35 +63,69 @@ public class OnboardingMiddleware
         // Attach user info to HttpContext items for downstream use
         context.Items["CurrentUser"] = userStatus;
 
-        // Set response header
         context.Response.OnStarting(() =>
         {
             context.Response.Headers["X-Completed-Onboarding"] = userStatus.HasCompletedOnboarding ? "true" : "false";
+            context.Response.Headers["X-Account-State"] = userStatus.AccountState.ToString();
             return Task.CompletedTask;
         });
 
-        if (!userStatus.HasCompletedOnboarding)
+        switch (userStatus.AccountState)
         {
-            var path = context.Request.Path.Value?.TrimEnd('/') ?? string.Empty;
-            var isAllowed = AllowedPaths.Any(p => path.Equals(p, StringComparison.OrdinalIgnoreCase)
-                                               || path.StartsWith(p + "/", StringComparison.OrdinalIgnoreCase));
-
-            if (!isAllowed)
-            {
-                context.Response.StatusCode = StatusCodes.Status403Forbidden;
-                context.Response.ContentType = "application/problem+json";
-                await context.Response.WriteAsJsonAsync(new
-                {
-                    type = "https://aveline.app/errors/onboarding-required",
-                    title = "Onboarding Required",
-                    status = StatusCodes.Status403Forbidden,
-                    detail = "You must complete profile onboarding before accessing this resource."
-                });
+            case AccountState.Active:
+                await _next(context);
                 return;
-            }
-        }
 
-        await _next(context);
+            case AccountState.Suspended:
+                await WriteProblemAsync(
+                    context,
+                    "https://aveline.app/errors/account-suspended",
+                    "Account Suspended",
+                    StatusCodes.Status403Forbidden,
+                    "This account is suspended and cannot access the API.");
+                return;
+
+            default:
+                // OnboardingPending: profile, onboarding-wizard, and invitation endpoints only.
+                // Raw /orgs endpoints are intentionally excluded so a caller cannot create an
+                // organization to short-circuit onboarding into an Active state.
+                var path = context.Request.Path.Value?.TrimEnd('/') ?? string.Empty;
+                var isAllowed = AllowedPathsForOnboardingPending.Any(p =>
+                    path.Equals(p, StringComparison.OrdinalIgnoreCase)
+                    || path.StartsWith(p + "/", StringComparison.OrdinalIgnoreCase));
+
+                if (!isAllowed)
+                {
+                    await WriteProblemAsync(
+                        context,
+                        "https://aveline.app/errors/onboarding-required",
+                        "Onboarding Required",
+                        StatusCodes.Status403Forbidden,
+                        "Your account is not active yet. Complete your profile and join an organization before accessing this resource.");
+                    return;
+                }
+
+                await _next(context);
+                return;
+        }
+    }
+
+    private static Task WriteProblemAsync(
+        HttpContext context,
+        string type,
+        string title,
+        int status,
+        string detail)
+    {
+        context.Response.StatusCode = status;
+        context.Response.ContentType = "application/problem+json";
+        return context.Response.WriteAsJsonAsync(new
+        {
+            type,
+            title,
+            status,
+            detail,
+        });
     }
 }
 

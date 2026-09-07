@@ -516,3 +516,548 @@ First CI run on PR #31 failed 4 jobs; all fixed:
 
 
 
+
+## Session 2026-09-05
+
+**Task:** Issue #50 — Add organization membership and invitation entities (branch `feature/50-organization-membership`, branched from `feature/49-role-permission-catalog`)
+**Tool used:** opencode (Claude) AI coding agent
+**Status:** Implemented & verified (not committed)
+
+### Work Performed
+
+1. **New module `Aveline.Api/Modules/Organizations/`** with domain models, exceptions, repositories, and services:
+   - `Models/Organization.cs` — boutique org: unique `Slug`, **unique `ClerkOrgId`** (external key for the Clerk `org_...` id carried by the JWT `org_id` claim and the legacy `User.OrganizationId` string — added per user feedback that the org entity must FK the Clerk org id), `OwnerUserId`, lifecycle fields, memberships/invitations collections.
+   - `Models/OrganizationMembership.cs` — canonical membership: user/org, canonical `BoutiqueRole` (`org:boutique_*`), `MembershipStatus`, unique `(OrganizationId, UserId)`.
+   - `Models/OrganizationInvitation.cs` — SHA-256 `TokenHash` only (never plaintext), expiry, revocation (`RevokedAt`/`RevokedByUserId`), inviter, intended recipient (`RecipientUserId` and/or `RecipientEmail`), one-time `AcceptedAt`.
+   - `Models/MembershipStatus.cs`, `Models/OrganizationDomainExceptions.cs`, `Services/InvitationTokens.cs` (RNGCryptoServiceProvider code + SHA-256 hash).
+2. **Persistence**: EF configs (`OrganizationConfiguration`, `OrganizationMembershipConfiguration`, `OrganizationInvitationConfiguration`) with FKs (Restrict to Users, Cascade to Organizations), unique indexes (`Slug`, `ClerkOrgId`, `TokenHash`, `(OrgId, UserId)`), DbSets in `AppDbContext`. Relationships declared once to avoid EF shadow-FK duplication (initial generation produced a bogus `UserId1` shadow — fixed by declaring each relationship in a single configuration and using navigation selectors).
+3. **Generated first EF migration** `AddOrganizationDomain` (via `dotnet ef` using `dotnet exec` on the tool DLL because the global-tool shim was broken: net8-targeted tool would not resolve under only runtime 10). Because no baseline existed, this migration captures the entire current model (incl. the pre-existing `Users` table) — it is the repo's migration baseline and must be coordinated with #47.
+4. **Repositories/services**: `IOrganizationRepository`/`OrganizationRepository`, `IInvitationRepository`/`InvitationRepository` (with an **atomic `AcceptAsync`** that adds the membership and marks the invite accepted in a single `SaveChanges` for one-time acceptance), `IOrganizationService`/`OrganizationService` (create org + owner membership, invite returning the one-time code, accept with recipient/expiry/revoked/one-time validation, list memberships). Wired in `Program.cs`.
+5. **Tests** (`OrganizationRepositoryTests`, `OrganizationServiceTests`, InMemory) — 16 new tests: org persistence/slug/ClerkOrgId, owner membership, invite code-hash separation, one-time acceptance, expired/revoked/unknown-code rejection, recipient email case-insensitivity + user-scoped invites, already-member rejection, and **new staff user with no membership/org_id can accept**.
+6. Documented backfill behavior for legacy `User.OrganizationId`/`OrganizationRole` in the module README (one-time reconcile from Clerk org data keyed on `ClerkOrgId`; legacy strings kept until then; new users need no `org_id`).
+
+### Verification
+
+- `dotnet test Aveline.Api/Aveline.Api.sln -c Release` → **107 passed, 0 failed** (91 pre-existing + 16 new).
+- `dotnet build -c Release` clean; migration generation succeeds with no shadow-FK warning.
+- No changes committed; #50 pending review. Suggested follow-ups: HTTP endpoints (create org / invite / accept / my orgs) and the #47-coordinated backfill.
+
+### Follow-up (branch `feature/custom-clerk-auth`): auth screen polish + account-type & admin sign-up
+
+Refined the custom Clerk auth work from user feedback:
+- **Branding**: tagline changed from "Boutique Concierge" to **"Atelier Concierge"** (web AuthShell, mobile AuthScreen, onboarding eyebrow).
+- **Layout/spacing**: bigger label-to-input gap, compact card (smaller paddings/headline, removed marketing blurb, max-w 400px), inputs shortened to `h-11` and **fully rounded (pill)**; all shadcn buttons now **rounded-full** globally (button.tsx cva base); cards reduced from `rounded-3xl` to `rounded-2xl`.
+- **Account type**: `/sign-up` now starts with an account-type picker (boutique owner vs staff member); chosen type is echoed in the form with a "Change" control and stored as `unsafeMetadata.accountType`.
+- **Quiet admin sign-up**: new `/sign-up/admin` route — plain, unassuming light screen (no aurora art) noting admin access is provisioned by the team; email/password + verification code; linked via a muted "Administrator sign-up" footer link on the auth card.
+- Verified: web `tsc`, oxlint, Vitest 31, `vite build`; Flutter `analyze` clean + 20 tests.
+
+### Follow-up (branch `feature/custom-clerk-auth`): auth split-layout redesign (web)
+
+Per user direction, replaced the card-in-center auth screens with a two-panel layout:
+- **Left panel**: flower/aurora art + Aveline brand story, big serif statement, dashed-border perk tiles (Next.js landing style).
+- **Right panel**: full-height, card removed — edge-to-edge form column (kicker/title/children), docked footer with dashed top border.
+- **Footer (sign-up)**: required **Terms & Conditions / Privacy** checkbox that gates account creation (`canSubmit`), plus Administrator sign-up link and switch-to-sign-in. Sign-in footer has switch-to-sign-up + admin link.
+- **Dashed, evident borders** throughout (panel divider, footer top, perk tiles, account-type tiles, pill inputs `border-dashed`).
+- New public `/terms` page (dashed section cards). Verified web `tsc`, oxlint, Vitest 31, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #58): auth redesign completion + admin screen polish
+
+Finished the auth redesign tracked as issue **#58** (split-panel layout, "assistant that remembers" branding, dashed-divider-only borders, account-type + terms gate, compact footer):
+- Compacted footers (quick links + copyright), moved terms block under the sign-up form, removed per-input/per-tile dashed borders so dashed = dividers only; left-panel perks are now an icon list with dashed row separators.
+- Larger typography across panels/forms; pill inputs/buttons; removed now-unused `AuthShell`.
+- Tagline/brand copy changed from "boutique/concierge" to "The assistant that remembers" / "Aveline remembers" (web + mobile label + onboarding eyebrow).
+- **AdminSignUpPage** touch-up (quiet light): dashed accents, pill inputs `h-11`, bigger type, refined header/back link.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #59): admin verification backend
+
+Admin access-request backend (review/approve/reject + Clerk BAPI role grant):
+- `IClerkAdminClient`/`ClerkAdminClient` (typed HttpClient) with `Clerk:SecretKey` + optional `Clerk:BackendApiUrl`; `PATCH /v1/users/{id}` sets `public_metadata.role=admin`.
+- `Modules/Admin`: `AdminApprovalRequest` entity + EF config + migration `AddAdminApprovalRequests`; repo + `AdminApprovalService` (idempotent submit; list pending; approve grants role via Clerk first, updates local `User.UserRole=admin` + cache invalidation; reject).
+- `AdminEndpoints`: `POST /api/v1/admin/requests` (auth), `GET`/`approve`/`reject` guarded by new `AdminReviewPolicy` (moderator/admin/owner). `/api/v1/admin` added to the onboarding pending allow-list so a just-signed-up requester can submit.
+- Tests (5, fake `IClerkAdminClient`): submit idempotency, non-reviewer 403, approve → role granted, reject → approve-after-reject conflict, Clerk failure → 502 and stays Pending. Full .NET suite **112 passing**.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #59): admin verification web
+
+- `lib/admin.ts` helpers: submit/list/approve/reject admin requests.
+- `AdminSignUpPage`: after email verification the flow finalizes, submits the request (`POST /api/v1/admin/requests`), and shows a **"Request received" pending** state (no app entry) with sign-out; failed submissions show retry.
+- `Dashboard`: when the signed-in role is a team reviewer (`moderator`/`admin`/`owner`), renders an **"Administrator access requests"** card listing pending requests with Approve/Reject wired to the API (row removed on success).
+- Verified web `tsc`, oxlint, Vitest 31, `vite build`.
+### Follow-up (same session, branch `feature/51-org-onboarding`): Issue #51 — organization-aware onboarding (backend increment)
+
+Started #51 (depends on #49/#50): replaced the boolean onboarding gate with explicit account lifecycle states and added the owner-creation + staff-join flows (authoritative API side).
+
+- **`AccountState`** enum (`OnboardingPending` / `Active` / `Suspended`) added to `User` (stored string column, migration `AddUserAccountState`). `HasCompletedOnboarding`/`IsActive` retained for compatibility/profile + suspension.
+- **`UserService`**: stub creation → `OnboardingPending`; `CompleteOnboardingAsync` resolves state from org context (`OrganizationRole`/`OrganizationId` set → `Active`, else stays `OnboardingPending`); new `SetAccountStateAsync` updates the row + Redis caches.
+- **`OnboardingMiddleware`** now gates on `AccountState`: `Suspended` → 403 `account-suspended` problem for everything; `OnboardingPending` → allowed only profile/org/invitation endpoints, else 403 `onboarding-required` problem; `Active` → pass. Adds `X-Account-State` header.
+- **New endpoints** (`OrganizationEndpoints`): `POST /api/v1/orgs` (owner creates boutique → account `Active`), `POST /api/v1/invitations/accept` (staff joins by code → `Active`), `GET /api/v1/orgs/my`.
+- **Tests**: updated `OnboardingMiddlewareTests` to the state model + added a suspended-case test; new `OrganizationEndpointsIntegrationTests` (pending user 403 onboarding-required; owner creates org → active + membership + business access; staff accepts seeded invite → active + membership). Full suite **111 passed**.
+- Notes: `OnboardingMiddleware` runs after `UseAuthorization`, so policy 403s surface before the onboarding gate; org-context resolution currently uses the legacy `OrganizationRole`/`OrganizationId` fields (canonical memberships come next). Remaining #51 work (deferred): Clerk claim/session refresh after org changes, matching React/Flutter routing/UI, and E2E tests.
+
+### Follow-up (same session, branch `feature/51-org-onboarding`): #51 item 5 (backend read-model sync)
+
+Kept #51 open per user choice; continued with the next checklist item ("refresh Clerk claims/session after org changes and synchronize the local read model"). The Clerk session refresh itself is client-driven (Clerk SDK re-mints a `jwt-aveline-v1` token after the org context changes); the authoritative API side implemented here keeps the local read model correct:
+
+- **Canonical membership lookup**: `IOrganizationRepository.UserHasActiveMembershipAsync` + `IOrganizationService.HasActiveMembershipAsync` (repo + service tests).
+- **Membership-aware account state**: `UserService` now resolves `AccountState` against canonical active memberships when the legacy `OrganizationRole`/`OrganizationId` snapshot is empty, so a staff account that accepted an invite (or an owner who created a boutique) is `Active` even before Clerk session claims carry the org context. Fixes the "profile completed after invite acceptance" downgrade.
+- **Claim-context adoption on sync**: `GetOrSynchronizeUserAsync` adopts refreshed-session claims (`user_role`/`org_role`/`org_id`) into the read model whenever they drift from the cached/DB snapshot, recomputes state, persists, and refreshes both caches. Tokens without org claims never clear an existing context.
+- **Tests** (+4): membership-aware activation when profile is completed after invite; pending user promoted to Active when a membership appears (cold cache); cached user synced when refreshed claims carry a new org context; active-membership existence query ignores pending/suspended. Full suite **115 passed**.
+- Remaining #51 items (deferred): #5 leaves Clerk-side refresh mechanics to the clients; #6 React + Flutter routing/UI states; #7 E2E tests (incl. replayed/expired invite, suspended access).
+
+### Follow-up (same session, branch `feature/51-org-onboarding`): #51 item 6 — React + Flutter account-state routing/UI
+
+Implemented matching onboarding/account-state UX in both frontends keyed on the API `AccountState` (not just the legacy boolean):
+
+- **React web (`frontend/web`)**: `UserDto` gains `accountState`; new `types/organization.ts` + `lib/organizations.ts` (`createOrganization`, `fetchMyOrganizations`, `acceptInvitation`); axios interceptor now reads the `X-Account-State` header and surfaces RFC 7807 `type` on `ApiError`. `UserContext` tracks `accountState`. New `RequireAccountState` guard (Suspended→`/suspended`, pending w/o profile→`/onboarding`, pending w/ profile→`/org-setup`, Active→app). New `OrgSetupPage` (owner create-boutique + staff join-by-code), `SuspendedPage`; `AuthApiBridge` routes 403 by problem type. `OnboardingPage` continues to `/org-setup` when the account is still pending. Vitest **35 pass**, coverage thresholds green.
+- **Flutter mobile (`frontend/aveline_mobile`)**: `AvelineAccountState` enum added to `AvelineUser` (parse + wire round-trip, fallback derivation when payload omits it); `UserProvider` exposes `accountState`, `isAccountActive`, and `acceptInvitationCode` (POST `/api/v1/invitations/accept` + profile refresh). `RouteGuards`/`AppRoutes` grow `/org-setup` + `/suspended` with pure rules keyed on state; `app.dart` routes them; `OnboardingScreen` continues to `/org-setup` when pending; new `OrgSetupScreen` (invite code) + `SuspendedScreen`. `flutter analyze` clean; **24 tests pass**.
+- Note: Clerk-side session/claim refresh after org changes (create/activate the Clerk org so the token carries `org_id`/`org_role`) remains client-integration work that needs live Clerk credentials; the API/DB is authoritative meanwhile. Remaining #51 item #7 (E2E tests incl. replayed/expired invite) is the next chunk.
+
+### Follow-up (same session, branch `feature/51-org-onboarding`): #51 item 7 — HTTP end-to-end tests
+
+Added the missing E2E (HTTP-level, via WebApplicationFactory) coverage in `OrganizationEndpointsIntegrationTests` (3 new):
+- **Replayed invite**: second accept of the same code → 400 "already accepted", membership count stays 1.
+- **Expired invite**: accept of a past-`ExpiresAt` code → 400 "expired"; account stays pending (no memberships, business endpoints still 403 `onboarding-required`).
+- **Suspended access**: a suspended account is rejected with 403 `account-suspended` on business endpoints AND on `/users/me` (no authenticated access at all).
+Full .NET suite now **118 passed**. Combined with the earlier integration tests this closes issue #51 item 7's checklist (owner creation, staff pending, invite acceptance, activation, replayed/expired, suspended access) at the API level, matching the repo's E2E convention (no browser harness in the monorepo).
+
+### New session (branch `feature/52-account-org-authorization`): Issue #52 — enforce account state + org scope in authorization (slice 1)
+
+Opened PR #55 for the #51 work, then started #52 on a fresh branch. Slice 1 delivered server-side enforcement:
+
+- **Fallback policy (item 4)**: `AuthorizationConfiguration` sets `FallbackPolicy = DefaultPolicy` so new endpoints require authentication unless marked anonymous; dev OpenAPI is `AllowAnonymous`. Verified by a deliberately unannotated demo endpoint (401 without token, 200 with an active account).
+- **Tenant scope (items 2/3/6)**: new `OrganizationScopeRequirement` + `OrganizationScopeAuthorizationHandler` resolve the caller via `sub` and the target org via the `organizationId` route value, requiring an `Active` canonical `OrganizationMembership` whose `BoutiqueRole` grants the permission (`BoutiqueAccessPolicy` = `catalog:view`). `IHttpContextAccessor` + handler registered; demo endpoint `GET /api/v1/policies/orgs/{organizationId}/catalog`. Cross-org calls with a valid JWT are denied (test).
+- **Suspended pre-execution denial (item 1)**: verified at the scoped endpoint (active membership + suspended account → 403 `account-suspended` before the handler runs), on top of the #51 middleware gate.
+- **Cache invalidation (item 5)**: `OrganizationService` now depends on `IUserRepository` + `IUserCacheService` and invalidates the user's cached authorization snapshot after org creation and invitation acceptance (service-level stale-cache test).
+- **`/auth/claims` (item 7)**: returns authoritative `AccountState`/`UserRole`/`OrganizationRole` from the middleware read model in an `Account` object.
+- **Docs**: `docs/architecture/authorization.md` gained an Enforcement model section. Full .NET suite **124 passing**.
+- Remaining for #52 (later slices): membership removal/suspend endpoints + revocation invalidation, converting demo scoped policy usage into real feature endpoints, and deeper resource handlers/tests.
+
+### Follow-up (branch `feature/52-account-org-authorization`): #52 slice 2 — membership management + revocation invalidation
+
+Continued #52. Added canonical membership management with immediate revocation and invalidation:
+
+- **Repo/service**: `OrganizationRepository.UpdateMembershipAsync`/`RemoveMembershipAsync`; `IOrganizationService.SetMembershipStatusAsync` (suspend/reactivate) + `RemoveMembershipAsync`, both invalidating the member's cached authorization snapshot; owner-membership guard (`CannotManageOwnerMembershipException`); new `MembershipNotFoundException`.
+- **Endpoints** (real org-module endpoints, not demo): `POST /api/v1/orgs/{organizationId}/members/{userId}/suspend|activate` and `DELETE /api/v1/orgs/{organizationId}/members/{userId}`, authorized via new `BoutiqueMembershipManagePolicy` (`OrganizationScopeRequirement` with `settings:manage` = boutique owners only).
+- **Tests**: 3 service tests (suspend+invalidate, remove+invalidate, owner-guard) and 5 integration tests (owner suspends → member org-scoped access denied → activate restores; staff member denied managing in own org; foreign org owner denied; owner removes member → denied; owner cannot manage own owner membership). Full .NET suite **132 passing**.
+- Docs: `docs/architecture/authorization.md` gained the membership-management bullet.
+- Remaining for #52 (later): finishing `/auth/claims`/error/docs polish already partly done in slice 1; nothing else outstanding beyond converting scoped policy usage as real boutique feature endpoints appear.
+
+### New session (branch `feature/custom-clerk-auth`, issue #61): marketing landing page
+
+Elegant public landing page + supporting pages (web only):
+- **Routing**: `/` → public `LandingPage`; signed-in dashboard moved to `/app`; post-auth landings (finalize, onboarding, org-setup, SSO callbacks) retarget `/app`; `*` → `/`.
+- **Design tokens**: added lavender/lilac + coral (+ blush) accents and agent colors (`--color-memory` rose, `--color-visual` gold, `--color-commerce` maroon) in `index.css`.
+- **Landing** (`LandingPage.tsx`): hero with animated aurora + petals and Create account / Download app CTAs; persona pull-quote; **Features** (`#features`); **the three agents Ava / Elle / Lina** in rose/gold/maroon cards; how-it-works steps; enterprise band ("Contact sales"); final CTA band.
+- **Nav/Footer** (`SiteNav`, `SiteFooter`, `SitePage`, `Reveal`/`AuroraField`): sticky glass nav with Features anchor + Contact/Plans/Docs routes and Sign in / Create account / Download app; dashed-border footer.
+- **Pages**: `PlansPage` (Starter/Boutique/Atelier placeholders), `ContactPage` (mailto/WhatsApp/location, enterprise sales), `DocsPage` (hand-written guide), `DownloadPage` (iOS coming soon; Android APK → GitHub Releases latest).
+- Verified web: `tsc`, oxlint clean, Vitest 35, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #61): landing design pass
+
+Design feedback round on the landing page:
+- **Animated backgrounds**: new `AuroraField` — richer gradient aurora blobs (rose/lavender/coral/gold radial meshes) drifting with motion, plus 14 floating `Blossom` SVGs; used behind hero, features, agents, how-it-works, enterprise and CTA sections (reduced-motion safe).
+- **Three specialists joined**: Ava/Elle/Lina now render as one connected band — single container with only outer corners rounded (`rounded-[2.5rem]`, overflow hidden), dashed dividers between cells, per-agent pastel gradient tint + bigger serif names (`text-3xl/4xl`), icons (Heart/Eye/Coins) in tinted chips, larger statements/bullets.
+- **How it works**: each step now has an illustrated "image" panel (gradient art with drifting blossoms + step number + icon medallion) and per-step staggered scroll animations; hero/CTA button heights normalised.
+- Verified web `tsc`, oxlint, Vitest 35, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #61): landing polish round 2
+
+- Reduced card roundness (`rounded-[2.5rem]` → `rounded-3xl` band/enterprise; product cards `rounded-2xl`).
+- Enterprise "Aveline for groups" card given breathing room (`pt-4 pb-24`) so it no longer sits flush against the neighboring aurora sections.
+- **Features** are now soft white cards (rounded, dashed-free border, soft shadow, hover lift, icon chip) instead of bare text on the aurora.
+- **How it works** rebuilt as product-style cards: image top as a shorter rectangle (`h-44`), text in a joined white body panel; plus an animated gradient "comet" that travels left→right along a dashed rail across the three step images on desktop.
+- Hero/CTA headings: added a soft radial veil behind the text and a faint white text-shadow to lift contrast against the busy aurora; gradient headline colors deepened.
+- Verified web `tsc`, oxlint, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #61): landing polish round 3
+
+- **"The three of her" is now a diagram**: an animated Aveline hub (blossom orb with rotating conic gradient ring + breathing glow) sits on top, with three flowing connector paths (Ava rose / Elle gold / Lina maroon) branching down to the three agent cards (marching-dash animation, reduced-motion safe).
+- Enterprise "Aveline for groups" spacing balanced (`py-20` around the card).
+- How-it-works connector width reduced ~20% (from `3%` insets to `12%` each side) so it no longer overflows past the cards.
+- Verified web `tsc`, oxlint, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #61): landing uniqueness + contrast pass
+
+- **Asymmetric hero**: two-column on desktop — editorial left-aligned headline ("She remembers, so you don’t have to.") + CTAs, and a floating **live conversation preview** (WhatsApp-style thread where Ava/Elle/Lina respond to a real boutique query, with agent chips + typing indicator).
+- **Message marquee**: a scrolling strip of authentic customer questions ("Wedding on Saturday — anything blush?") between hero and persona (CSS marquee, reduced-motion safe).
+- **Contrast**: body/description copy bumped `neutral-500 → neutral-600`; hero veil strengthened behind the headline; darker gradient stops.
+- New `marquee` keyframes + `.marquee-track` utility in `index.css`.
+- Verified web `tsc`, oxlint, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #61): three-agents redesign + bento features
+
+- **"The three of her" redesigned** as an editorial vertical timeline: a dashed rail with an animated rose→gold→maroon gradient comet connecting numbered nodes; each agent is a wide row card (tinted gradient wash + blossom watermark) with a large serif name/statement, capability pills, and an "In action" mini preview bubble showing a real moment (Ava remembers a size, Elle matches outfits, Lina holds an order for approval).
+- **Features** turned into a **bento grid** (3/3/2/2/2/6 spans) with per-card gradient tints, colored icon chips, wide cards with flourish watermark + "always on" kicker.
+- **Persona** split into an editorial two-column (big quote + the three agents as a divided list); **enterprise** gained a multi-store benefit checklist; **final CTA** gained the "Ava · Elle · Lina" flourish + "no card required" line.
+- Subpages (Plans/Contact/Docs/Download) got a matching aurora header treatment; fixed a transient JSX wrapper imbalance.
+- Verified web `tsc`, oxlint, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #61): three-of-her as a powered workflow
+
+- Rebuilt "the three of her" as a **hub-and-spoke workflow diagram**: an animated Aveline hub on top (rotating conic ring + breathing glow) labeled "Aveline — powers the three", with three connector paths flowing downward to the agent cards, each carrying an animated marching-dash pulse and an italic verb label ("remembers" rose / "sees" gold / "closes" maroon).
+- Agent cards slimmed to icon + name/tag + statement + copy + capability pills (content re-balanced), footer line "One Aveline · three specialists · one workflow".
+- Verified web `tsc`, oxlint, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #61): workflow lines polish
+
+- Connector lines now **orthogonal** (straight with 90° bends) instead of curves, running from the flower hub to each agent card.
+- "Aveline" label moved **on top of the flower** orb; lines connect to the orb's bottom edge.
+- Added **gradient pulses** along each line: a colored dashed stroke animating (marching gradient) plus two glowing comet dots traveling the full path in a staggered trail (reduced-motion safe).
+- Verified web `tsc`, oxlint, `vite build`.
+
+### Follow-up (branch `feature/custom-clerk-auth`, issue #61): how-it-works redesign
+
+- Redesigned "How it works" into a **horizontal journey**: centered header, three numbered medallion steps (Step 01/02/03) on a white section with aurora, each with a gradient-tinted icon medallion (breathing pulse) + serif title + copy.
+- Animated **journey track** behind the medallions (dashed rail + traveling rose gradient comet, reduced-motion safe).
+- Added a **journey ribbon** below: "Customer messages → Ava · Elle · Lina act → You approve" with arrow separators.
+- Removed the old product-card/`StepImage` implementation.
+- Verified web `tsc`, oxlint, `vite build`.
+
+## Session 2026-09-06
+
+**Task:** Brighten primary colour palette and switch body typography to DM Sans (Issue #63)
+**Tool used:** Antigravity AI Assistant
+
+### Summary of Activities
+
+- Created GitHub Issue [#63](https://github.com/KavinduNirmal/aveline/issues/63) ("Brighten primary colour palette and update frontend themes").
+- Shifted the brand primary palette across design tokens and themes:
+  - `primary`: `#5D1A29` → `#8B2E42` (vivid wine-rose, +13 lightness)
+  - `primary-container`: `#7A303F` → `#A84056`
+  - `on-primary-container`: `#FF9CAB` → `#FFBBC6`
+  - `inverse-primary`: `#FFB2BC` → `#FFCDD5`
+  - `surface-tint`: `#954554` → `#B3556A`
+  - `primary-fixed`: `#FFD9DD` → `#FFE0E5`
+  - `primary-fixed-dim`: `#FFB2BC` → `#FFCDD5`
+  - `on-primary-fixed-variant`: `#772E3D` → `#8B2E42`
+  - Dark theme primary / ring / sidebar-primary: `#FFB2BC` → `#FFCDD5`
+- Updated body & UI typography from `Hanken Grotesk` to `DM Sans` (gently rounded terminals for warmer, contemporary feel):
+  - `.agents/brain/DESIGN.md`: Updated `title-lg`, `body-lg`, `body-md`, `label-md`, `label-sm` tokens and design narrative.
+  - `frontend/web/index.html`: Updated Google Fonts stylesheet link to import `DM Sans` alongside `Playfair Display`.
+  - `frontend/web/src/index.css`: Updated `--font-sans` to `'DM Sans'`.
+  - `frontend/aveline_mobile/lib/core/theme/app_theme.dart`: Migrated all `GoogleFonts.hankenGrotesk` calls to `GoogleFonts.dmSans`.
+- **Verification performed**:
+  - `cd frontend/web && bun run build` passed cleanly (`tsc -b` and Vite production build).
+  - `cd frontend/aveline_mobile && dart analyze` passed with 0 issues.
+
+### Follow-up (same session): Issue #64 — Landing Page Redesign: Staff Concierge Mockup, Boutique Hero Slideshow, Whimsical Problem & Testimonial Cards, and Dual-Layer Blossom
+
+**Task:** Complete landing page overhaul to reflect Aveline's staff-facing concierge model with animated phone mockup, boutique photography slideshow, social proof, whimsical problem statement, testimonials, and 8-petaled counter-rotating blossom.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed & Verified
+
+#### Work Performed
+- Created GitHub Issue [#64](https://github.com/KavinduNirmal/aveline/issues/64) tracking the landing page overhaul.
+- **8-Petaled Dual-Layer Blossom (`Blossom.tsx`)**:
+  - Re-architected Blossom into two 4-petal layers (base at 0°, 90°, 180°, 270°; top at 45°, 135°, 225°, 315°).
+  - Added `animateCounter` and `counterDuration` props to rotate the base and top layers in opposite directions for a blooming kaleidoscope effect.
+  - Retained the legacy 5-petal SVG implementation commented out at the top of the file as requested.
+- **Staff-Facing Phone Mockup (`PhoneMockup.tsx`)**:
+  - Implemented realistic phone frame with curved bezel, iOS status bar, and dynamic island.
+  - Embedded incoming WhatsApp customer inquiry bubble with customer profile badge (tier, spend, preferences).
+  - Sequenced collaboration stream for specialist agents (Ava memory note, Elle visual gown match, Lina deposit & margin lock).
+  - Staff decision controls: "Approve & Send to WhatsApp" and "Decline" with live state transition feedback and multi-scenario inquiry toggling.
+- **Hero Boutique Slideshow (`HeroSlideshow.tsx`)**:
+  - Embedded curated Pexels boutique atelier imagery with cross-fade transitions and ambient overlays.
+  - Hovering glassmorphic Aveline specialist update badges with active blossom indicators.
+- **Social Proof Bar (`SocialProofBar.tsx`)**:
+  - Featured renowned boutiques (*The Galle Fort Atelier*, *Cinnamon Row Tailors*, *Studio 9 Colombo*, etc.) with operational trust metrics (40+ ateliers, 100% staff sign-off, LKR 45M+ volume, 4.9/5 rating).
+- **Problem Statement Section (`ProblemSection.tsx`)**:
+  - "Your customers are slipping through the cracks" diagnosing memory gaps, 3 AM response drift, stock search black holes, and margin leakage in whimsical dashed-border cards with symmetric rounded corners.
+- **Testimonials Section (`TestimonialsSection.tsx`)**:
+  - Editorial quotes from boutique directors and head stylists with 5-star ratings, metric badges, and atelier verification marks.
+- **Refinements & Flow Adjustments**:
+  - Reordered landing page flow: 1. Hero → 2. Sample Messages Carousel → 3. Image Slideshow with Aveline Messages → 4. Trusted Shops with Bigger Statistics → 5. Problem Statement (2x2 grid) → Persona & Remaining Sections.
+  - Moved `HeroSlideshow` out of the hero header column into a dedicated expansive showroom section.
+  - Made trust statistics significantly larger and more prominent in `SocialProofBar`.
+  - Converted `ProblemSection` cards to a 2 by 2 grid (`md:grid-cols-2`), reduced border radius to `rounded-2xl`, and increased typography size.
+  - Re-aligned the animated journey gradient pulse in "How it works" to run precisely through the center of the step circles (`top-[86px]`).
+  - Added asymmetric delay and non-overlapping bloom keyframes to `Blossom.tsx` so rotating petal layers never eclipse into 4 petals.
+  - Replaced agent icons (Ava, Elle, Lina) with colored Blossom icons (rose, amber, wine).
+  - Staggered chat components in `PhoneMockup.tsx` with sequenced delays (customer inquiry → Ava → Elle → Lina → reservation card) to visually demonstrate the workflow progression.
+  - Redesigned the **Blossoms Concept** section in `LandingPage.tsx`:
+    - Converted from a boxed card (`border-2 border-dashed ... rounded-2xl`) into a unique, open editorial vignette.
+    - Removed cost estimations ("1 Blossom", "2 Blossoms") and removed the three agent mini-boxes.
+    - Added an ethereal centered counter-rotating Blossom medallion with ambient glow, delicate gradient divider rules, and editorial narrative.
+    - Added direct call-to-action: *"Check pricing for detailed information"* linking to `/plans`.
+  - Fixed **How It Works** animated pulse overflowing:
+    - Encapsulated the rail in an `overflow-hidden rounded-full` container (`h-[12px]`, concentric center at `top-[86px]`).
+    - Reduced pulse thickness to a sleek `2.5px` (down from `9px`), aligning precisely with the dashed rail border.
+    - Extended the tail length to `w-64` (256px) with an atelier directional gradient (`from-transparent via-memory/35 via-visual/65 to-commerce`) and a luminous leading comet head (`size-1.5` wine-rose with drop-glow).
+    - Clamped traversal keyframes (`left: ['-40%', '100%']`) to smoothly enter and exit within the clipped rail bounds without overflowing beyond the section or into page margins.
+    - Added `reduceMotion` guard to prevent animation for users with motion sensitivity.
+
+  - Added **Icon Library Integration & Horizontal Hover Animations**:
+    - Installed official `simple-icons` (`bun add simple-icons`) for brand marks.
+    - Updated `frontend/web/src/components/site/Icons.tsx`:
+      - Used `siGoogleplay` and `siApple` from `simple-icons` for `PlayStoreIcon` and `AppleIcon`.
+      - Used `ArrowRight` from `lucide-react` for `CtaArrow` / `CurvedArrow`.
+      - Configured on-hover animation to be **purely horizontal** (`transition-transform duration-300 ease-out group-hover:translate-x-1.5`) without any vertical or popover displacement.
+    - Integrated across all CTAs and download buttons on `LandingPage.tsx`, `SiteNav.tsx`, and `DownloadPage.tsx`.
+
+#### Verification Performed
+- `bun run build`: `tsc -b && vite build` completed with zero TypeScript errors.
+- `bun test`: All 35 tests across 4 test suites passed cleanly.
+- `bun run lint`: oxlint verified with zero errors.
+
+
+
+## Session 2026-09-07
+
+**Task:** Complete overhaul of the `/plans` pricing page (`PlansPage.tsx`)
+**Tool used:** Antigravity AI Assistant
+
+### Work Planned / Performed
+
+- Read `docs/architecture/pricing_plan.md` in full to map the four tiers (Seed, Bloom, Orchid, Rose), the Blossom credit system, Flower Pack top-ups, billing rules, and brand positioning guidelines.
+- Reviewed current `PlansPage.tsx` (old placeholder with three outdated, USD-priced tiers).
+- Completely rewrote `frontend/web/src/routes/PlansPage.tsx` (827 lines) with the following structure:
+
+**New sections:**
+1. **Hero** — Updated copy from pricing_plan.md ("Every boutique starts as a seed"), monthly/annual billing toggle with animated switch (2 months free label).
+2. **Tier Cards** — Four cards: Seed (Free), Bloom (LKR 3,500/mo), Orchid (LKR 9,000/mo), Rose (LKR 20,000/mo). Each card has an animated `Blossom` medallion with per-tier colour, scale limits (Blossoms/Staff/Customers), and feature list.
+3. **Blossom System Explainer** — Editorial two-column layout: animated large Blossom medallion + copy explaining the abstraction concept. Includes a visual mini workflow diagram ("Find something for Maya" → approx 3.7 Blossoms).
+4. **Comparison Table** — Full feature matrix for all four tiers (13 rows covering all features).
+5. **Blossom Packs** — Three top-up packs (100/500/1,000 Blossoms) in a decorative bordered panel.
+6. **FAQ Accordion** — 12 questions with AnimatePresence height animations, accessible ARIA attributes.
+7. **Enterprise Banner** — Dark section with radial gradient, for multi-branch / custom pricing.
+
+### Files Modified
+- `frontend/web/src/routes/PlansPage.tsx` — Full rewrite.
+- `docs/ai-usage/kavindu.md` — This entry.
+
+### Architectural Decisions
+- Re-used existing design tokens (text-commerce, text-memory, text-visual, text-lavender) for per-tier colour theming.
+- Re-used Blossom component with animateCounter and staggered counterDuration per tier.
+- Re-used AuroraField, Reveal, CtaArrow, Button, SitePage — no new abstractions introduced.
+- Annual pricing shown as approximate monthly equivalent (10 months price / 12 months service), consistent with pricing_plan.md.
+- Feature values typed as boolean or string literals with colour-coded badges in the comparison table.
+
+### Verification Performed
+- bunx tsc --noEmit: Only pre-existing baseUrl deprecation warning; zero errors in PlansPage.tsx.
+- File written successfully, 827 lines.
+
+## Session 2026-09-06
+
+**Task:** Create an implementation plan to overhaul the documentation page (`/docs`) to use markdown-based documentation, modelled after the motion.dev/docs reference design (three-column layout: left sidebar navigation, centre markdown content, right table-of-contents). Work is to be tracked via a feature branch and a GitHub Issue.
+**Tool used:** Antigravity AI Assistant
+
+### Summary of Activities
+
+- Read project rules, user information, design system (`DESIGN.md`), existing `DocsPage.tsx`, `App.tsx`, `SiteNav.tsx`, `SitePage.tsx`, installed shadcn/ui components, `package.json`, and GitHub issue templates.
+- Identified the current state: `DocsPage.tsx` was a static hardcoded card list with no markdown support or sidebar navigation.
+- Produced and received user approval on `implementation_plan.md`.
+- Created GitHub Feature Request Issue [#65](https://github.com/KavinduNirmal/aveline/issues/65) tracking the overhaul.
+- Created Git Flow feature branch `feature/65-docs-markdown-overhaul`.
+- Installed dependencies: `react-markdown`, `remark-gfm`, `rehype-slug`, `rehype-autolink-headings`.
+- Authored markdown documentation pages under `src/docs/`:
+  - `getting-started.md`
+  - `roles-permissions.md`
+  - `ava.md`
+  - `elle.md`
+  - `lina.md`
+  - `admin-access.md`
+  - `privacy-security.md`
+- Created `src/docs/config.ts` for declarative section and page categorization.
+- Created `src/types/markdown.d.ts` for Vite raw markdown imports.
+- Created modular documentation components in `src/components/docs/`:
+  - `DocsLayout.tsx`: 3-column responsive layout (sticky sidebar, main content, sticky table of contents, mobile menu drawer).
+  - `DocsSidebar.tsx`: Categorized page navigation with active indicators and badges.
+  - `DocsContent.tsx`: Markdown prose renderer with custom styled code blocks, links, tables, and pagination.
+  - `DocsToc.tsx`: On-this-page table of contents with scrollspy active heading tracking.
+- Added `.aveline-prose` typography tokens to `src/index.css`.
+- Updated `src/App.tsx` routes: `/docs` redirect to `/docs/getting-started` and dynamic route `/docs/:slug`.
+- Updated `src/components/site/SiteNav.tsx` tabs to link directly to `/docs/getting-started` with prefix-aware active highlights.
+
+### Files Created or Modified
+
+- `frontend/web/package.json` & `bun.lock` — Added markdown dependencies (`react-markdown`, `remark-gfm`, `rehype-slug`, `rehype-autolink-headings`, `mermaid`, `rehype-highlight`).
+- `frontend/web/src/typeset.css` — Created standalone shadcn Typeset system with rhythm controls (`--typeset-size`, `--typeset-leading`, `--typeset-flow`) and `.typeset-docs` preset tailored to Aveline tokens.
+- `frontend/web/src/docs/config.ts` — Documentation metadata & section registry.
+- `frontend/web/src/docs/*.md` — 7 markdown topic documents, including readable top-down (`flowchart TD`) Mermaid flowcharts with clear branching in `roles-permissions.md` and `lina.md`.
+- `frontend/web/src/types/markdown.d.ts` — Raw markdown module declarations.
+- `frontend/web/src/components/docs/DocsLayout.tsx` — 3-column layout shell.
+- `frontend/web/src/components/docs/DocsSidebar.tsx` — Categorized navigation sidebar.
+- `frontend/web/src/components/docs/DocsContent.tsx` — Markdown renderer with Typeset integration, custom code block extraction, Mermaid diagram dispatch, and full-width responsive pagination cards.
+- `frontend/web/src/components/docs/Mermaid.tsx` — Dynamic client-side Mermaid diagram rendering component with Aveline Quiet Luxury theme tokens, enhanced font sizing (14px), white node surfaces with wine-rose borders, and error boundaries.
+- `frontend/web/src/components/docs/CodeBlock.tsx` — Fixed newline and indentation collapse by wrapping code content in `<pre>` with `whitespace-pre` and `leading-relaxed`. Styled container and header with warm espresso atelier palette (`#161213`).
+- `frontend/web/index.html` — Added `Geist+Mono:wght@100..900` to Google Fonts link.
+- `frontend/web/public/favicon.svg` — Replaced generic template favicon with dynamic Aveline Blossom SVG that adapts to light and dark browser tab themes.
+- `frontend/web/src/components/docs/DocsToc.tsx` — Scrollspy Table of Contents.
+- `frontend/web/src/routes/DocsPage.tsx` — Route container parsing slugs and headings.
+- `frontend/web/src/App.tsx` — Redirect and route additions.
+- `frontend/web/src/components/site/SiteNav.tsx` — Nav link updates.
+- `frontend/web/src/components/site/PhoneMockup.tsx` — Complete overhaul into an interactive scroll-synchronized 6-stage lifecycle slideshow:
+  1. Aveline 2.0 Aura Startup Screen with chromatic glowing Orb, subagent status badges (Ava, Elle, Lina), and greeting.
+  2. Inventory arrival signal (`#AVL-902` with image) + incoming embedded WhatsApp inquiry from Sarah.
+  3. Ava (Memory) analysis recalling Sarah's sister's Galle wedding in 3 weeks and past preferences.
+  4. Elle (Visual Intelligence) discrepancy analysis between store stock and Sarah's moodboard photo, initiating supplier sourcing.
+  5. Lina (Commerce & Margin) recommendation of 3 matching suppliers with a 40% margin, order proposal, and interactive Approve/Reject controls.
+  6. Final clienteling WhatsApp conversation between associate and Sarah, closing the deposit reservation.
+  Includes scroll-tracking viewport observer, manual pill & dot controls, and keyboard navigation.
+- `frontend/web/src/components/site/PhoneMockup.tsx` (Scroll Behavior, Alignment & Light Theme Conversion):
+  - Replaced passive window scroll listener with non-passive container `wheel` interception (`{ passive: false }`) and gesture debounce.
+  - Prevents native window scroll (`e.preventDefault()`) when scrolling inside the slideshow (steps 0 to 5), advancing slides sequentially.
+  - Naturally allows browser page scrolling when boundaries are reached (scrolling down at step 5 or scrolling up at step 0).
+  - Fixed content alignment from `justify-center` to `justify-start pt-1 pb-3`, sticking conversation cards directly under the iPhone status bar / Dynamic Island without artificial vertical dead space.
+  - Refined Slide 0 startup screen: replaced hard circular orb ring with borderless pulsating atmospheric gradient glow, set Blossom to rotate continuously while pulsing in scale without counterwise petal rotation (`animateCounter={false}`), and structured the slide with `justify-between` so the header sticks to the top, the action button sticks to the bottom, and the presentation fills the entire viewport height.
+  - Converted the entire phone screen interface to a luxury atelier light theme: warm ivory background (`#faf6f5`), dark status bar typography (`text-neutral-800`), crisp white conversation and operational cards with subtle borders (`border-neutral-200/80`), soft pastel agent accents (Ava rose, Elle amber, Lina commerce), accessible contrast text, and light-theme bottom indicator bar.
+  - Slimmed down the hardware chassis bezel: reduced border thickness from `10px` to `3px` and chassis bezel padding from `14px` (`p-3.5`) to `6px` (`p-1.5`), creating modern edge-to-edge micro-bezels.
+  - Adjusted overall mockup width from `max-w-[360px]` down to `max-w-[325px]` to eliminate wide tablet aesthetics and achieve authentic, slender 19.5:9 smartphone ergonomics.
+  - Added touch swipe handling (`onTouchStart`/`onTouchEnd`) for mobile screen interaction.
+  - Added keyboard arrow controls (`ArrowDown`/`ArrowUp`/`ArrowLeft`/`ArrowRight`) and interactive mouse scroll hint badge.
+- `frontend/web/src/routes/LandingPage.tsx` (Concept of Blossoms Gradient Styling):
+  - Applied the signature luxury brand gradient (`bg-gradient-to-r from-primary via-[#b0566b] to-amber-700 bg-clip-text text-transparent`) to the **Blossoms** keyword in the section title, kicker tag, and body narrative.
+- `docs/architecture/pricing_plan.md` — Aligned documentation nomenclature across the architecture guide, migrating all legacy "Flower" terms to "Blossom" credits.
+- `agnet-service/requirements-dev.txt` — Added `pytest-cov` alongside existing `pytest-asyncio`, `pytest`, `respx`, and `ruff`.
+- `.github/workflows/ci.yml` — Updated `test-python` job to install `-r agnet-service/requirements-dev.txt` alongside `requirements.txt`, ensuring `pytest-asyncio` is available to execute async test functions and satisfy `asyncio_mode = "auto"`.
+- `docs/ai-usage/kavindu.md` — This log entry.
+
+### Issues Resolved
+
+- Closes #63: Brighten primary colour palette and update frontend themes
+- Closes #64: Landing page redesign with whimsical atelier aesthetic and interactive concierge mockup
+- Closes #65: Markdown-based documentation page overhaul
+
+### Verification Performed
+
+- `bun run build`: TypeScript (`tsc -b`) and Vite production bundle succeeded with 0 errors.
+- `bun run lint`: Oxlint ran across 76 files with 0 errors.
+- `bun run test`: Vitest test suite executed and passed 35/35 tests across 4 test files.
+- `pytest tests/ --cov=app --cov-report=term --cov-fail-under=90`: Executed in isolated Python environment with `requirements-dev.txt` dependencies — 9 passed, 97.14% coverage (exceeding the 90% threshold).
+
+## Session 2026-09-07
+
+**Task:** Blossom Usage Tracking & Recording Infrastructure (Issue #67, branch `feature/67-blossom-usage-tracking`)
+**Tool used:** Antigravity AI Assistant
+
+### Summary of Activities
+
+- Architected and implemented the recording, monitoring, and auditing infrastructure for the Blossom credit system based on `docs/architecture/pricing_plan.md`.
+- Documented key architectural decisions in `docs/ADR/ADR-010-usage-tracking-architecture.md`:
+  - Two-table persistence pattern: append-only `ai_usage_records` audit log and mutable `usage_accounts` period ledger.
+  - Usage recording strictly owned by .NET API (source of truth), communicating via `httpx` async calls with `X-Internal-Token` header (inter-service auth per ADR-009) until future gRPC migration.
+  - Blossom normalization formula: `ceil((input + output + cached) / 1000, 1 dp)`, minimum `0.1` Blossom.
+  - Active customer definition: 90-day interaction window.
+  - Enforcement explicitly deferred to future subscription/payment slice.
+- Implemented `Aveline.Api/Modules/Billing/`:
+  - `PlanTier.cs`: String-serialized enum defining subscription tiers (`Seed`, `Bloom`, `Orchid`, `Rose`, `Enterprise`) via `JsonStringEnumConverter`.
+  - `AiUsageRecord.cs`: Immutable entity capturing workflow token usage, provider, model, USD cost, and server-calculated Blossom units.
+  - `UsageAccount.cs`: Mutable billing period ledger tracking `MonthlyBlossomLimit`, `BlossomUsed`, and `BlossomRemaining`.
+  - `BillingDomainExceptions.cs`: Domain-level validation exceptions.
+  - `IUsageRepository.cs` and `UsageRepository.cs`: Persistence abstraction executing atomic record persistence and ledger increment (with relational and in-memory test compatibility).
+  - `IUsageTrackerService.cs` and `UsageTrackerService.cs`: Domain service encapsulating the Blossom normalization formula, validation, structured logging, and configurable abnormal cost alerting (`[ABNORMAL_USAGE]`).
+  - `UsageEndpoints.cs`: Minimal API endpoints (`/internal/usage/record`, `/internal/usage/summary/{orgId}`, `/internal/usage/records/{orgId}`).
+  - `BillingModule.cs`: DI and routing module registration.
+- Configured EF Core in `Aveline.Api`:
+  - Added `DbSet<AiUsageRecord>` and `DbSet<UsageAccount>` to `AppDbContext.cs`.
+  - Added `BillingConfigurations.cs` configuring precision, indexes, and unique constraints.
+  - Created `InternalTokenAuthenticationHandler.cs` and registered `InternalServicePolicy` in `AuthorizationConfiguration.cs` and `AuthenticationConfiguration.cs`.
+  - Updated `OnboardingMiddleware.cs` to bypass internal `/internal/` service routes.
+  - Registered `BillingModule` in `Program.cs`.
+- Implemented in `agnet-service/`:
+  - Added `api_base_url` to `app/core/config.py`.
+  - Created `app/services/usage_reporter.py` async client reporting token usage to `/internal/usage/record` with `X-Internal-Token`.
+  - Authored `tests/test_usage_reporter.py` covering successful submission, custom client injection, HTTP status errors, and network errors using `respx`.
+- Created unit and integration test suite in `Aveline.Api.Tests`:
+  - `UsageTrackerServiceTests.cs`: Verified Blossom calculation formula across edge cases, invalid request validation, abnormal cost alerting log verification, and summary retrieval.
+  - `UsageEndpointsIntegrationTests.cs`: Verified unauthorized responses on missing/invalid internal tokens, successful record creation, ledger decrement, summary query, and paginated records query.
+
+### Files Created or Modified
+
+- `docs/ADR/ADR-010-usage-tracking-architecture.md` [NEW]
+- `docs/ADR/README.md` [MODIFY]
+- `Aveline.Api/Modules/Billing/Models/PlanTier.cs` [NEW]
+- `Aveline.Api/Modules/Billing/Models/AiUsageRecord.cs` [NEW]
+- `Aveline.Api/Modules/Billing/Models/UsageAccount.cs` [NEW]
+- `Aveline.Api/Modules/Billing/Models/BillingDomainExceptions.cs` [NEW]
+- `Aveline.Api/Modules/Billing/Services/IUsageTrackerService.cs` [NEW]
+- `Aveline.Api/Modules/Billing/Services/UsageTrackerService.cs` [NEW]
+- `Aveline.Api/Modules/Billing/Repositories/IUsageRepository.cs` [NEW]
+- `Aveline.Api/Modules/Billing/Repositories/UsageRepository.cs` [NEW]
+- `Aveline.Api/Modules/Billing/Endpoints/UsageEndpoints.cs` [NEW]
+- `Aveline.Api/Modules/Billing/BillingModule.cs` [NEW]
+- `Aveline.Api/Infrastructure/Data/Configurations/BillingConfigurations.cs` [NEW]
+- `Aveline.Api/Infrastructure/Integrations/InternalTokenAuthenticationHandler.cs` [NEW]
+- `Aveline.Api/Infrastructure/Data/AppDbContext.cs` [MODIFY]
+- `Aveline.Api/Configurations/AuthenticationConfiguration.cs` [MODIFY]
+- `Aveline.Api/Configurations/AuthorizationConfiguration.cs` [MODIFY]
+- `Aveline.Api/Common/Middleware/OnboardingMiddleware.cs` [MODIFY]
+- `Aveline.Api/Program.cs` [MODIFY]
+- `agnet-service/app/core/config.py` [MODIFY]
+- `agnet-service/app/services/usage_reporter.py` [NEW]
+- `agnet-service/tests/test_usage_reporter.py` [NEW]
+- `Aveline.Api.Tests/UsageTrackerServiceTests.cs` [NEW]
+- `Aveline.Api.Tests/UsageEndpointsIntegrationTests.cs` [NEW]
+- `docs/ai-usage/kavindu.md` [MODIFY]
+
+### Verification Performed
+
+- `dotnet build Aveline.Api`: Succeeded with 0 warnings, 0 errors.
+- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj`: All 153 tests passed (16 new billing unit and integration tests + 137 existing tests).
+- Verified EF Core migration skip as requested (database not running locally; migrations will be generated when database is accessible).
+- Formatted Python import blocks across `agnet-service/app/services/usage_reporter.py` and `agnet-service/tests/test_usage_reporter.py` to satisfy ruff rule `I001`.
+
+## Session 2026-09-07 (Session 2)
+
+**Task:** Owner Account Creation Flow Implementation (6-step Onboarding)
+**Tool used:** Antigravity AI Assistant
+
+### Intended Work
+
+- Implement the end-to-end Owner Account Creation Flow:
+  - Step 1: Sign In (Clerk authentication & redirect handling)
+  - Step 2: Account Type Selection (Boutique Owner vs Staff with invitation code)
+  - Step 3: Boutique Details (`POST /api/onboarding/owner` or `/api/v1/onboarding/owner`)
+  - Step 4: Plan Selection (`POST /api/onboarding/plan`) in Demo Mode (no payment)
+  - Step 5: Customize AI Context (`POST /api/onboarding/customize`) with tiered feature unlocking per `pricing_plan.md`
+  - Step 6: Create Boutique & Agent Warmup (`POST /api/onboarding/complete`) with success celebration
+- Implement backend application service, domain models, and endpoints in `Aveline.Api`.
+- Implement agent warmup endpoint (`POST /agents/warmup`) in `agnet-service`.
+- Implement React luxury onboarding wizard with shadcn/ui components in `frontend/web`.
+- Verify with unit and integration tests across backend, frontend, and Python agent service.
+
+### Summary of Activities
+
+- Audited the partially implemented Owner Account Creation Flow against `owner_onboarding.ignore.md` across all three layers:
+  - **Backend**: Verified `Organization` onboarding fields + EF config, `OnboardingDtos`, `IOnboardingService`/`OnboardingService`, `/api/v1/onboarding/{status,owner,plan,customize,complete}` endpoints, middleware allow-list, DI wiring, and tier-aware AI context validation (Seed locked / Bloom basic / Orchid+ full).
+  - **Agent service**: Confirmed `POST /agents/warmup` guarded by `require_internal_token` with structured `agent_warmup` logging.
+  - **Frontend**: Confirmed onboarding API client, wizard, and route wiring.
+- Added Python tests in `agnet-service/tests/test_agents_warmup.py` for warmup auth (missing/invalid/valid token) and the structured log event.
+- **Frontend refactor**: Split the 920-line `OwnerOnboardingWizard.tsx` into a modular multi-page structure:
+  - `wizard-context.tsx` (shared state + all submission handlers + status hydration)
+  - `plans.ts` (shared plan data + labels)
+  - `steps/` — `AccountTypeStep`, `BoutiqueDetailsStep`, `PlanSelectionStep`, `AiCustomizationStep`, `ReviewStep`, `SuccessStep`
+  - `OwnerOnboardingWizard.tsx` as a slim shell (provider + shared header/stepper/error + step routing)
+- Added the marketing site's `AuroraField` animated background (aurora blobs + drifting blossoms) plus a soft radial vignette to the onboarding screen, replacing the old static orbs.
+- Committed and pushed `feature/69-owner-account-creation-flow`, then opened PR #70 (Closes #69).
+
+### Verification Performed
+
+- `dotnet build Aveline.Api`: Succeeded (0 warnings, 0 errors).
+- `dotnet test Aveline.Api.Tests`: All 161 tests passed (incl. onboarding service + endpoint integration + middleware).
+- Frontend: `tsc -b` clean, `oxlint` warnings-only, `vitest run` 40/40, `vite build` succeeded.
+- Python warmup tests authored but not executed locally (no Python env); mirrored the passing `test_internal_auth.py` pattern.
+
+## Session 2026-09-07 (Session 3)
+
+**Task:** Tenant-scoped boutique dashboard at `/app/b/{slug}` (Issue #74) + security hardening, local docker/db bring-up, onboarding validation, dashboard UI redesign
+**Tool used:** opencode (Claude) AI coding agent
+
+### Summary of Activities
+
+- **Planned** the tenant dashboard via codebase research and confirmed scope with the user (admin-only access; Overview page + placeholder sections; `/app` kept as a slug resolver; org-scoped usage endpoint).
+- **Backend (`Aveline.Api`)**:
+  - New `OrganizationDtos` (`OrganizationProfileDto`, `OrganizationMembershipView`, `OrganizationProfileWithMembershipDto`); `OrganizationService` profile-by-slug/by-id lookups.
+  - Endpoints: `GET /orgs/by-slug/{slug}`, `GET /orgs/{organizationId:guid}`, enriched `GET /orgs/my` (slug/name); new `OrgUsageEndpoints` `GET /orgs/{organizationId:guid}/usage` (org-scoped Blossom summary).
+- **Frontend (`frontend/web`)**: typed clients (`fetchOrganizationBySlug`, `fetchOrganizationUsage`); routing `/app` → `DashboardRedirect`, `/app/b/:slug` → `TenantDashboard`; new `DashboardShell`, `Overview`, `SectionPlaceholder`; permission-gated nav mirroring `Permissions.cs`; org switcher; profile/plan/blossom/user-menu UI using the Aveline `Blossom` component.
+- **Security hardening** (acted on the security review I produced): gated `/orgs/by-slug` to active members (404 for non-members) to stop boutique/PII enumeration; centralized slug normalization in `OrgSlug` (lowercase, `[a-z0-9-]`, truncate to 100) applied to onboarding + org create; removed client-supplied `clerkOrgId` (now derived from the JWT `org_id` claim); removed raw `/orgs` from the pending-account allow-list to close the onboarding bypass; bound AES-256-GCM ciphertext to org+type via associated data.
+- **Local bring-up debugging**: aligned docker API host port to the frontend default (5091), set `ASPNETCORE_URLS=http://+:8080`, exposed `X-Account-State` in CORS, added a Development-only guarded EF migration on startup, applied all pending migrations to the first-boot Postgres, and reconnected a Postgres container left off the compose network after a port conflict (host Postgres on 5432 → docker on 5433).
+- **Onboarding validation**: numeric-only, 9-digit Sri Lankan phone auto-formatted to `+94 77 12 12 123` (`lib/boutique.ts`), string length limits + counters, description cap; mirrored submit-time checks.
+- **Dashboard redesign**: fixed the oval avatar, plan pill, gradient blossom-count pill, sidebar user popover (settings/billing/sign-out), top-up + notifications controls; corrected not-found fallback to route back to `/app`.
+
+### Verification Performed
+
+- `dotnet test Aveline.Api.Tests`: all backend tests pass (225).
+- Frontend: `tsc -b` clean, `oxlint` exit 0, `vitest` 69 passed, `vite build` success.
+- Manual: docker services healthy (postgres/redis/agent/api on 5091); migrations applied; CORS preflight from `http://localhost:5173` returns 204; OpenAPI 200 on 5091.
+

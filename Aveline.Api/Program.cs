@@ -42,7 +42,7 @@ builder.Services.AddSignalR()
         // ReceiveNotification payload matches the documented client contract.
         options.PayloadSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
     });
-builder.Services.AddNotificationsModule();
+builder.Services.AddNotificationsModule(builder.Configuration);
 
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IUserCacheService, UserCacheService>();
@@ -81,6 +81,7 @@ v1.MapAuthEndpoints();
 v1.MapAuthPolicyDemoEndpoints();
 v1.MapAgentEndpoints();
 v1.MapUserEndpoints();
+v1.MapDeviceTokenEndpoints();
 v1.MapAdminEndpoints();
 v1.MapOrganizationEndpoints();
 v1.MapOnboardingEndpoints();

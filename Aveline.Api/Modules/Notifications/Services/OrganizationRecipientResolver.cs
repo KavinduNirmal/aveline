@@ -1,4 +1,5 @@
 using Aveline.Api.Modules.Notifications.Models;
+using Aveline.Api.Modules.Notifications.Repositories;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Organizations.Repositories;
 using Aveline.Api.Modules.Shared.Models;
@@ -8,17 +9,24 @@ namespace Aveline.Api.Modules.Notifications.Services;
 
 /// <summary>
 /// Resolves <see cref="NotificationTarget"/> intents against the organization membership
-/// tables. Only <see cref="MembershipStatus.Active"/> memberships are considered.
+/// tables. Only <see cref="MembershipStatus.Active"/> memberships are considered. Each
+/// resolved recipient carries its active device tokens so the channel router can decide
+/// push eligibility.
 /// </summary>
 public sealed class OrganizationRecipientResolver : IRecipientResolver
 {
     private readonly IOrganizationRepository _organizations;
     private readonly IUserRepository _users;
+    private readonly IDeviceTokenRepository _deviceTokens;
 
-    public OrganizationRecipientResolver(IOrganizationRepository organizations, IUserRepository users)
+    public OrganizationRecipientResolver(
+        IOrganizationRepository organizations,
+        IUserRepository users,
+        IDeviceTokenRepository deviceTokens)
     {
         _organizations = organizations;
         _users = users;
+        _deviceTokens = deviceTokens;
     }
 
     public async Task<IReadOnlyList<ResolvedRecipient>> ResolveAsync(
@@ -37,7 +45,7 @@ public sealed class OrganizationRecipientResolver : IRecipientResolver
             }
 
             var user = await _users.GetByIdAsync(userId, cancellationToken);
-            return user is null ? [] : [ToRecipient(user)];
+            return user is null ? [] : [await ToRecipientAsync(user, cancellationToken)];
         }
 
         var members = await _organizations.GetActiveMembersAsync(target.OrganizationId, cancellationToken);
@@ -50,17 +58,21 @@ public sealed class OrganizationRecipientResolver : IRecipientResolver
         {
             if (member.User is not null)
             {
-                recipients.Add(ToRecipient(member.User));
+                recipients.Add(await ToRecipientAsync(member.User, cancellationToken));
             }
         }
 
         return recipients;
     }
 
-    private static ResolvedRecipient ToRecipient(User user) => new(
-        user.Id,
-        user.Email,
-        user.PushNotificationsEnabled,
-        user.ContactPreference,
-        []);
+    private async Task<ResolvedRecipient> ToRecipientAsync(User user, CancellationToken cancellationToken)
+    {
+        var tokens = await _deviceTokens.ListActiveTokensAsync(user.Id, cancellationToken);
+        return new ResolvedRecipient(
+            user.Id,
+            user.Email,
+            user.PushNotificationsEnabled,
+            user.ContactPreference,
+            tokens);
+    }
 }

@@ -67,7 +67,16 @@ services:
       App__BaseUrl: ${APP_BASE_URL:-http://localhost:5173}
       # Browser origin allowed to call the API. Defaults to the Vite dev server.
       Cors__AllowedOrigins__0: ${CORS_ORIGIN:-http://localhost:5173}
+      # Firebase Cloud Messaging (push). ProjectId is also in appsettings.json; the
+      # credentials path points at the mounted service-account key (see volumes below).
+      Firebase__ProjectId: ${FIREBASE_PROJECT_ID:-aveline-e35a5}
+      Firebase__CredentialsPath: /run/secrets/firebase-service-account.json
       # Add other env vars here (Clerk, WhatsApp, payment gateway keys, etc.)
+    volumes:
+      # Service-account key for FCM push. Create it in the Firebase console
+      # (Project settings > Service accounts > Generate new private key) and save it as
+      # ./firebase-service-account.json (gitignored).
+      - ./firebase-service-account.json:/run/secrets/firebase-service-account.json:ro
     depends_on:
       postgres:
         condition: service_healthy

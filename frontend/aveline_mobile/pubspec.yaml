@@ -45,7 +45,7 @@ dependencies:
   # DI + ChangeNotifier state management.
   provider: ^6.1.0
   # Brand fonts (Playfair Display, Hanken Grotesk).
-  google_fonts: ^6.2.1
+  google_fonts: ^8.2.1
 
 dev_dependencies:
   flutter_test:

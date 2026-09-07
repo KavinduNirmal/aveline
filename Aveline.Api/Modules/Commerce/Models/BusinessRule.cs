@@ -1,13 +1,18 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using Aveline.Api.Common.MultiTenancy;
+using Aveline.Api.Modules.Organizations.Models;
 
 namespace Aveline.Api.Modules.Commerce.Models;
 
 [Table("Business_Rules")]
-public class BusinessRule
+public class BusinessRule : ITenantEntity
 {
     [Key]
     public Guid Id { get; set; } = Guid.NewGuid();
+
+    [Required]
+    public Guid OrganizationId { get; set; }
 
     [Required]
     [MaxLength(100)]
@@ -28,4 +33,7 @@ public class BusinessRule
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
+
+    // Navigation property
+    public Organization? Organization { get; set; }
 }

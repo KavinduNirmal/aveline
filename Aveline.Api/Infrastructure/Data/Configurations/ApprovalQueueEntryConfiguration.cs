@@ -12,6 +12,17 @@ public class ApprovalQueueEntryConfiguration : IEntityTypeConfiguration<Approval
 
         builder.HasKey(a => a.Id);
 
+        // Multi-tenancy
+        builder.Property(a => a.OrganizationId)
+            .IsRequired();
+
+        builder.HasIndex(a => a.OrganizationId);
+
+        builder.HasOne(a => a.Organization)
+            .WithMany()
+            .HasForeignKey(a => a.OrganizationId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         builder.Property(a => a.OrderId)
             .IsRequired();
 

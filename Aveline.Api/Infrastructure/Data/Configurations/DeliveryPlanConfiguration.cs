@@ -12,6 +12,17 @@ public class DeliveryPlanConfiguration : IEntityTypeConfiguration<DeliveryPlan>
 
         builder.HasKey(d => d.Id);
 
+        // Multi-tenancy
+        builder.Property(d => d.OrganizationId)
+            .IsRequired();
+
+        builder.HasIndex(d => d.OrganizationId);
+
+        builder.HasOne(d => d.Organization)
+            .WithMany()
+            .HasForeignKey(d => d.OrganizationId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         builder.Property(d => d.OrderId)
             .IsRequired();
 

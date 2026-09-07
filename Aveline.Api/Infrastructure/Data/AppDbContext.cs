@@ -2,6 +2,7 @@ using Aveline.Api.Modules.Admin.Models;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Shared.Models;
 using Microsoft.EntityFrameworkCore;
+using Aveline.Api.Modules.Commerce.Models;
 
 namespace Aveline.Api.Infrastructure.Data;
 

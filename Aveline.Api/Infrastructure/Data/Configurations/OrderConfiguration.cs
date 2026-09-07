@@ -12,6 +12,17 @@ public class OrderConfiguration : IEntityTypeConfiguration<Order>
 
         builder.HasKey(o => o.Id);
 
+        // Multi-tenancy
+        builder.Property(o => o.OrganizationId)
+            .IsRequired();
+
+        builder.HasIndex(o => o.OrganizationId);
+
+        builder.HasOne(o => o.Organization)
+            .WithMany()
+            .HasForeignKey(o => o.OrganizationId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         builder.Property(o => o.CustomerId)
             .IsRequired();
 

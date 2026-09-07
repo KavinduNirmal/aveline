@@ -12,6 +12,17 @@ public class PaymentConfiguration : IEntityTypeConfiguration<Payment>
 
         builder.HasKey(p => p.Id);
 
+        // Multi-tenancy
+        builder.Property(p => p.OrganizationId)
+            .IsRequired();
+
+        builder.HasIndex(p => p.OrganizationId);
+
+        builder.HasOne(p => p.Organization)
+            .WithMany()
+            .HasForeignKey(p => p.OrganizationId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         builder.Property(p => p.OrderId)
             .IsRequired();
 

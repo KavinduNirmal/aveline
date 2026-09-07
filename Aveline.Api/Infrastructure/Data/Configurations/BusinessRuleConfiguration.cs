@@ -12,6 +12,17 @@ public class BusinessRuleConfiguration : IEntityTypeConfiguration<BusinessRule>
 
         builder.HasKey(b => b.Id);
 
+        // Multi-tenancy
+        builder.Property(b => b.OrganizationId)
+            .IsRequired();
+
+        builder.HasIndex(b => b.OrganizationId);
+
+        builder.HasOne(b => b.Organization)
+            .WithMany()
+            .HasForeignKey(b => b.OrganizationId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         builder.Property(b => b.RuleName)
             .IsRequired()
             .HasMaxLength(100);

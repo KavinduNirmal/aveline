@@ -4,6 +4,15 @@ export type BoutiqueStaffRole = 'org:boutique_supervisor' | 'org:boutique_manage
 export interface CreateInvitationRequest {
   boutiqueRole: BoutiqueStaffRole
   recipientEmail?: string
+  validityHours?: number
+  sendSummaryToOwner?: boolean
+}
+
+export interface BulkCreateInvitationRequest {
+  boutiqueRole: BoutiqueStaffRole
+  count: number
+  validityHours?: number
+  sendSummaryToOwner?: boolean
 }
 
 export interface CreateInvitationResponse {
@@ -28,3 +37,15 @@ export const INVITABLE_ROLES: { value: BoutiqueStaffRole; label: string }[] = [
   { value: 'org:boutique_manager', label: 'Manager' },
   { value: 'org:boutique_staff', label: 'Staff' },
 ]
+
+export interface ExpirationOption {
+  hours: number
+  label: string
+}
+
+export const EXPIRATION_OPTIONS: ExpirationOption[] = [
+  { hours: 24, label: '24 Hours (Standard)' },
+  { hours: 168, label: '7 Days' },
+  { hours: 720, label: '30 Days' },
+]
+

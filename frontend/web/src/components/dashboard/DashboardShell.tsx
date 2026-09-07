@@ -22,6 +22,8 @@ import { toast } from 'sonner'
 import { Blossom } from '@/components/auth/Blossom'
 import { Overview } from '@/components/dashboard/Overview'
 import { SectionPlaceholder } from '@/components/dashboard/SectionPlaceholder'
+import { TeamManagement } from '@/components/dashboard/TeamManagement'
+
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -352,6 +354,8 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
         <main className="flex-1 px-6 py-8">
           {activeSection === 'overview' ? (
             <Overview organization={organization} usage={usage} role={role} />
+          ) : activeSection === 'team' ? (
+            <TeamManagement organization={organization} role={role} />
           ) : (
             (() => {
               const def = allowedSections.find((s) => s.id === activeSection)
@@ -365,6 +369,7 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
             })()
           )}
         </main>
+
       </div>
     </div>
   )

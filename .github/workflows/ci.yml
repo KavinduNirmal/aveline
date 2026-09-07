@@ -23,7 +23,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Verify only bun lockfile exists
         run: |
@@ -57,10 +57,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup .NET SDK
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: "10.0.x"
 
@@ -98,7 +98,7 @@ jobs:
         run: reportgenerator -reports:TestResults/**/coverage.cobertura.xml -targetdir:coverage-report -reporttypes:Html
 
       - name: Upload API coverage report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aveline-api-coverage
           path: coverage-report
@@ -107,7 +107,7 @@ jobs:
         run: dotnet publish Aveline.Api/Aveline.Api.csproj -c Release --no-restore -o api-publish
 
       - name: Upload API artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aveline-api
           path: api-publish
@@ -122,10 +122,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
@@ -142,7 +142,7 @@ jobs:
         working-directory: agnet-service
 
       - name: Upload agent coverage report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aveline-agent-coverage
           path: agnet-service/coverage.xml
@@ -157,7 +157,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -175,7 +175,7 @@ jobs:
         working-directory: frontend/web
 
       - name: Upload web coverage report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aveline-web-coverage
           path: frontend/web/coverage
@@ -188,7 +188,7 @@ jobs:
         working-directory: frontend/web
 
       - name: Upload web artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aveline-web
           path: frontend/web/dist
@@ -203,7 +203,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
@@ -224,7 +224,7 @@ jobs:
         working-directory: frontend/aveline_mobile
 
       - name: Upload Flutter coverage report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aveline-mobile-coverage
           path: frontend/aveline_mobile/coverage/lcov.info
@@ -234,7 +234,7 @@ jobs:
         working-directory: frontend/aveline_mobile
 
       - name: Upload APK artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aveline-mobile-apk
           path: frontend/aveline_mobile/build/app/outputs/flutter-apk
@@ -253,10 +253,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup .NET SDK
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: "10.0.x"
 
@@ -294,7 +294,7 @@ jobs:
           exit-code: "1"
 
       - name: Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@a35ac6e6798d72df5475948b28efb89edc2e19ca # v4.37.9
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         # Best effort: requires "Code scanning" to be enabled in repo settings.
         if: always()
         continue-on-error: true
@@ -312,10 +312,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup .NET SDK
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: "10.0.x"
 
@@ -356,8 +356,61 @@ jobs:
           cmd_options: "-J results.json"
 
       - name: Upload ZAP report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: aveline-zap-baseline
           path: results.json
+
+  # ---------------------------------------------------------------------------
+  # Job 8: Publish versioned Android APK GitHub Release (master pushes only)
+  # ---------------------------------------------------------------------------
+  release-android:
+    name: Publish Android APK Release
+    # Only real pushes to the stable branch produce a release; PRs never do.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    needs: test-flutter
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download APK artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: aveline-mobile-apk
+          path: apk
+
+      - name: Derive app version from pubspec
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(sed -n 's/^version: *\(.*\)/\1/p' frontend/aveline_mobile/pubspec.yaml | head -1)"
+          if [ -z "$VERSION" ]; then
+            echo "::error::Unable to read version from frontend/aveline_mobile/pubspec.yaml"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "safe=${VERSION//+/.}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          SAFE="${{ steps.version.outputs.safe }}"
+          RUN_NUMBER="${{ github.run_number }}"
+          TAG="v${SAFE}-build.${RUN_NUMBER}"
+          APK="$(find apk -name '*.apk' -type f | head -1)"
+          if [ -z "$APK" ]; then
+            echo "::error::No APK found in the aveline-mobile-apk artifact."
+            exit 1
+          fi
+          gh release create "$TAG" "$APK#aveline-mobile-${SAFE}-build.${RUN_NUMBER}.apk" \
+            --repo "${{ github.repository }}" \
+            --title "Aveline Mobile v${VERSION} (build #${RUN_NUMBER})" \
+            --notes "Automated release from \`master\` at ${{ github.sha }}." \
+            --target master

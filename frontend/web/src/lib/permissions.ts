@@ -55,21 +55,24 @@ export function hasPermission(
 }
 
 /**
- * Roles admitted to the tenant dashboard (owner / manager / supervisor — matching the
- * backend's management access). This is evaluated against the authoritative boutique
- * membership role returned by the API, not the Clerk JWT role claims.
+ * Roles admitted to the tenant dashboard (matching active boutique memberships).
+ * Evaluated against the authoritative boutique membership role returned by the API.
  */
 const TENANT_ADMIN_ROLES = new Set([
   'org:boutique_owner',
   'org:boutique_manager',
   'org:boutique_supervisor',
+  'org:boutique_staff',
   'org:principal',
   'owner',
   'admin',
   'moderator',
+  'staff',
+  'customer_relations',
 ])
 
 /** Whether a boutique membership role may open the tenant dashboard. */
 export function isTenantAdmin(role: string | undefined | null): boolean {
   return !!role && TENANT_ADMIN_ROLES.has(role)
 }
+

@@ -27,4 +27,14 @@ public static class ServiceClientsConfiguration
 
         return services;
     }
+
+    /// <summary>
+    /// Registers the Clerk Backend API client used to grant roles on admin approval.
+    /// Requires <c>Clerk:SecretKey</c> at call time (enforced inside the client).
+    /// </summary>
+    public static IServiceCollection AddClerkAdminClient(this IServiceCollection services)
+    {
+        services.AddHttpClient<IClerkAdminClient, ClerkAdminClient>();
+        return services;
+    }
 }

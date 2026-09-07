@@ -23,7 +23,7 @@ public static class RoleClaimNormalizer
             var value = principal.FindFirst(roleClaimType)?.Value;
             if (!string.IsNullOrEmpty(value))
             {
-                identity.AddClaim(new Claim(ClaimTypes.Role, value));
+                identity.AddClaim(new Claim(ClaimTypes.Role, value.ToLowerInvariant()));
             }
         }
     }

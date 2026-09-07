@@ -34,7 +34,7 @@ public static class CorsConfiguration
                 policy.WithOrigins(allowedOrigins)
                       .AllowAnyHeader()
                       .AllowAnyMethod()
-                      .WithExposedHeaders("X-Completed-Onboarding"));
+                      .WithExposedHeaders("X-Completed-Onboarding", "X-Account-State"));
         });
 
         return services;

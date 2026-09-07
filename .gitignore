@@ -248,6 +248,7 @@ temp/
 *.tmp
 *.bak
 *.swp
+*.ignore.*
 
 # Agent Information
 .agents/skills/

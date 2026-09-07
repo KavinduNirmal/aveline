@@ -13,8 +13,8 @@ function makeToken(claims: Record<string, unknown>): string {
 describe('decodeJwtPayload', () => {
   it('decodes a JWT payload', () => {
     const claims = {
-      user_role: 'associate',
-      org_role: 'org:manager',
+      user_role: 'staff',
+      org_role: 'org:boutique_manager',
       org_id: 'org_1',
     }
 
@@ -28,28 +28,29 @@ describe('decodeJwtPayload', () => {
 
 describe('hasAdminRole', () => {
   it.each([
-    ['org:owner', true],
-    ['org:manager', true],
-    ['org:admin', true],
-    ['manager', true],
+    ['org:boutique_owner', true],
+    ['org:boutique_supervisor', true],
+    ['org:boutique_manager', true],
+    ['moderator', true],
+    ['admin', true],
     ['owner', true],
-    ['associate', false],
-    ['org:associate', false],
-    ['org:member', false],
+    ['staff', false],
+    ['customer_relations', false],
+    ['org:boutique_staff', false],
   ])('org_role %s -> %s', (orgRole, expected) => {
-    expect(hasAdminRole({ user_role: 'associate', org_role: orgRole })).toBe(
+    expect(hasAdminRole({ user_role: 'staff', org_role: orgRole })).toBe(
       expected,
     )
   })
 
   it('grants access via user_role too', () => {
-    expect(hasAdminRole({ user_role: 'manager', org_role: 'associate' })).toBe(
+    expect(hasAdminRole({ user_role: 'admin', org_role: 'org:boutique_staff' })).toBe(
       true,
     )
   })
 
   it('is case-insensitive', () => {
-    expect(hasAdminRole({ user_role: 'associate', org_role: 'ORG:OWNER' })).toBe(
+    expect(hasAdminRole({ user_role: 'staff', org_role: 'ORG:BOUTIQUE_OWNER' })).toBe(
       true,
     )
   })

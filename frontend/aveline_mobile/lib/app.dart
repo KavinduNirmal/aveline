@@ -12,9 +12,12 @@ import 'core/router/route_guards.dart';
 import 'core/theme/app_theme.dart';
 import 'features/auth/data/clerk_auth_repository.dart';
 import 'features/auth/domain/auth_repository.dart';
+import 'features/auth/domain/aveline_user.dart';
 import 'features/auth/presentation/screens/auth_screen.dart';
 import 'features/home/presentation/screens/home_screen.dart';
 import 'features/onboarding/presentation/screens/onboarding_screen.dart';
+import 'features/onboarding/presentation/screens/org_setup_screen.dart';
+import 'features/onboarding/presentation/screens/suspended_screen.dart';
 
 /// Root widget: wraps the app in Clerk, wires DI, and configures routing.
 class AvelineApp extends StatelessWidget {
@@ -94,17 +97,35 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
     super.dispose();
   }
 
+  String _initialLocation() {
+    if (!_authRepository.isSignedIn) {
+      return AppRoutes.auth;
+    }
+    final state = _userProvider.accountState;
+    if (state == AvelineAccountState.suspended) {
+      return AppRoutes.suspended;
+    }
+    if (state == AvelineAccountState.active) {
+      return AppRoutes.home;
+    }
+    if (!_userProvider.hasCompletedOnboarding) {
+      return AppRoutes.onboarding;
+    }
+    return AppRoutes.orgSetup;
+  }
+
   GoRouter _buildRouter() {
     return GoRouter(
-      initialLocation: _authRepository.isSignedIn
-          ? (_userProvider.hasCompletedOnboarding ? AppRoutes.home : AppRoutes.onboarding)
-          : AppRoutes.auth,
+      initialLocation: _initialLocation(),
       refreshListenable: Listenable.merge([widget.clerkAuthState, _userProvider]),
       redirect: (context, state) => RouteGuards.redirectForAuth(
         state.matchedLocation,
         isSignedIn: _authRepository.isSignedIn,
         hasCompletedOnboarding: _authRepository.isSignedIn
             ? _userProvider.hasCompletedOnboarding
+            : null,
+        accountState: _authRepository.isSignedIn
+            ? _userProvider.accountState?.wireValue
             : null,
       ),
       routes: [
@@ -122,6 +143,16 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
           path: AppRoutes.onboarding,
           name: 'onboarding',
           builder: (context, state) => const OnboardingScreen(),
+        ),
+        GoRoute(
+          path: AppRoutes.orgSetup,
+          name: 'orgSetup',
+          builder: (context, state) => const OrgSetupScreen(),
+        ),
+        GoRoute(
+          path: AppRoutes.suspended,
+          name: 'suspended',
+          builder: (context, state) => const SuspendedScreen(),
         ),
       ],
     );

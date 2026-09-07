@@ -5,14 +5,14 @@ void main() {
   group('AuthClaims.fromBody', () {
     test('extracts user_role, org_role, org_id and org_slug', () {
       final claims = AuthClaims.fromBody({
-        'user_role': 'associate',
-        'org_role': 'admin',
+        'user_role': 'staff',
+        'org_role': 'org:boutique_manager',
         'org_id': 'org_123',
         'org_slug': 'aveline-colombo',
       });
 
-      expect(claims.userRole, 'associate');
-      expect(claims.orgRole, 'admin');
+      expect(claims.userRole, 'staff');
+      expect(claims.orgRole, 'org:boutique_manager');
       expect(claims.orgId, 'org_123');
       expect(claims.orgSlug, 'aveline-colombo');
     });

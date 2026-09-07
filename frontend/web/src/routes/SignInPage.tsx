@@ -1,31 +1,47 @@
-import { SignIn } from '@clerk/react'
+import { Link } from 'react-router-dom'
 
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+import { SignInForm } from '@/components/auth/SignInForm'
+import { AuthSplitLayout } from '@/components/auth/AuthSplitLayout'
 
-/** Clerk prebuilt sign-in page. */
+/** Custom Clerk sign-in page — split layout with brand panel. */
 export function SignInPage() {
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
-      <Card className="w-full max-w-md shadow-[0_4px_20px_rgba(122,48,63,0.06)]">
-        <CardHeader className="text-center">
-          <p className="text-sm font-medium uppercase tracking-[0.15em] text-muted-foreground">
-            Aveline
+    <AuthSplitLayout
+      mode="signin"
+      footer={
+        <div className="flex flex-col gap-1.5">
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[13px]">
+            <Link
+              to="/sign-up"
+              className="text-white/55 transition-colors hover:text-white/90"
+            >
+              New to Aveline?{' '}
+              <span className="font-medium text-rose-200/90">Create an account</span>
+            </Link>
+            <span className="flex items-center gap-2.5 text-white/40">
+              <Link
+                to="/sign-up/admin"
+                className="transition-colors hover:text-white"
+              >
+                Admin sign-up
+              </Link>
+              <span className="text-white/20">·</span>
+              <Link to="/terms" className="transition-colors hover:text-white">
+                Terms
+              </Link>
+              <span className="text-white/20">·</span>
+              <Link to="/terms#privacy" className="transition-colors hover:text-white">
+                Privacy
+              </Link>
+            </span>
+          </div>
+          <p className="text-[11px] text-white/30">
+            © 2026 Aveline · contact@aveline.lk · Colombo, Sri Lanka
           </p>
-          <CardTitle className="font-serif text-2xl font-medium">
-            Welcome back
-          </CardTitle>
-          <CardDescription>Sign in to the owner dashboard</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <SignIn fallbackRedirectUrl="/" />
-        </CardContent>
-      </Card>
-    </div>
+        </div>
+      }
+    >
+      <SignInForm />
+    </AuthSplitLayout>
   )
 }

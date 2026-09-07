@@ -17,8 +17,7 @@ public sealed class PermissionAuthorizationHandler : AuthorizationHandler<Permis
             .FindAll(ClaimTypes.Role)
             .Select(c => c.Value);
 
-        var granted = Permissions.PermissionRoles.TryGetValue(requirement.Permission, out var allowedRoles)
-            && userRoles.Any(role => allowedRoles.Contains(role));
+        var granted = userRoles.Any(role => Permissions.IsGranted(role, requirement.Permission));
 
         if (granted)
         {

@@ -43,6 +43,22 @@ public static class AuthenticationConfiguration
 
                 options.Events = new JwtBearerEvents
                 {
+                    // SignalR clients pass the JWT via the ?access_token= query string
+                    // (the framework's convention for non-WebSocket transports). JwtBearer
+                    // only reads the Authorization header by default, so forward the query
+                    // token for hub requests when no header is present.
+                    OnMessageReceived = context =>
+                    {
+                        var accessToken = context.Request.Query["access_token"];
+                        var path = context.HttpContext.Request.Path;
+                        if (!string.IsNullOrEmpty(accessToken)
+                            && path.StartsWithSegments("/hubs")
+                            && string.IsNullOrEmpty(context.Token))
+                        {
+                            context.Token = accessToken;
+                        }
+                        return Task.CompletedTask;
+                    },
                     OnTokenValidated = context =>
                     {
                         RoleClaimNormalizer.PromoteRoleClaims(context.Principal);

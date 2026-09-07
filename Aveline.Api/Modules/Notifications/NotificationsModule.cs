@@ -5,9 +5,9 @@ using Aveline.Api.Modules.Notifications.Services;
 namespace Aveline.Api.Modules.Notifications;
 
 /// <summary>
-/// Dependency-injection registration for the Notifications module. Channels are
-/// registered as scoped logging demo implementations for now; real SignalR/FCM adapters
-/// replace them in later slices without changing the dispatcher.
+/// Dependency-injection registration for the Notifications module. The realtime channel
+/// is backed by SignalR; push/email remain logging demo implementations until the FCM
+/// adapter lands in a later slice. Channel swaps never change the dispatcher.
 /// </summary>
 public static class NotificationsModule
 {
@@ -20,7 +20,7 @@ public static class NotificationsModule
         services.AddScoped<INotificationDispatcher, NotificationDispatcher>();
 
         services.AddScoped<IPushChannel, LoggingPushChannel>();
-        services.AddScoped<IRealtimeChannel, LoggingRealtimeChannel>();
+        services.AddScoped<IRealtimeChannel, SignalRRealtimeChannel>();
         services.AddScoped<IEmailChannel, LoggingEmailChannel>();
 
         return services;

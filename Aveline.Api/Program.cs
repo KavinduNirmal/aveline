@@ -12,6 +12,7 @@ using Aveline.Api.Modules.Billing;
 using Aveline.Api.Modules.Billing.Endpoints;
 using Aveline.Api.Modules.Integrations;
 using Aveline.Api.Modules.Notifications;
+using Aveline.Api.Modules.Notifications.Hubs;
 using Aveline.Api.Modules.Organizations.Repositories;
 using Aveline.Api.Modules.Organizations.Services;
 using Aveline.Api.Modules.Shared.Repositories;
@@ -34,6 +35,13 @@ builder.Services.AddAgentServiceClient(builder.Configuration);
 builder.Services.AddClerkAdminClient();
 builder.Services.AddBillingModule();
 builder.Services.AddIntegrationsModule();
+builder.Services.AddSignalR()
+    .AddJsonProtocol(options =>
+    {
+        // Serialize NotificationType as its name (e.g. "PaymentConfirmed") so the
+        // ReceiveNotification payload matches the documented client contract.
+        options.PayloadSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+    });
 builder.Services.AddNotificationsModule();
 
 builder.Services.AddScoped<IUserRepository, UserRepository>();
@@ -65,6 +73,8 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.UseAvelineAuthAudit();
 app.UseAvelineOnboarding();
+
+app.MapHub<NotificationHub>("/hubs/notifications");
 
 var v1 = app.MapGroup("/api/v1");
 v1.MapAuthEndpoints();

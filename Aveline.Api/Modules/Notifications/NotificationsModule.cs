@@ -19,6 +19,7 @@ public static class NotificationsModule
     {
         services.AddScoped<INotificationRepository, NotificationRepository>();
         services.AddScoped<IDeviceTokenRepository, DeviceTokenRepository>();
+        services.AddScoped<IUserNotificationRepository, UserNotificationRepository>();
 
         services.AddScoped<IRecipientResolver, OrganizationRecipientResolver>();
         services.AddScoped<IChannelRouter, ChannelRouter>();

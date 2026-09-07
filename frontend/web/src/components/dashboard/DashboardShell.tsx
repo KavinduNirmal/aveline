@@ -1,6 +1,5 @@
 import { useClerk, useUser } from '@clerk/react'
 import {
-  Bell,
   ChevronsUpDown,
   ClipboardCheck,
   CreditCard,
@@ -23,6 +22,7 @@ import { Blossom } from '@/components/auth/Blossom'
 import { Overview } from '@/components/dashboard/Overview'
 import { SectionPlaceholder } from '@/components/dashboard/SectionPlaceholder'
 import { TeamManagement } from '@/components/dashboard/TeamManagement'
+import { NotificationBell } from '@/components/dashboard/NotificationBell'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -331,23 +331,7 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
               Top up
             </Button>
 
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" aria-label="Notifications">
-                  <Bell className="size-5" aria-hidden />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-80">
-                <DropdownMenuLabel>Notifications</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <div className="px-3 py-8 text-center text-sm text-muted-foreground">
-                  <p>You're all caught up.</p>
-                  <p className="mt-1 text-xs">
-                    Approvals, Blossom usage, and team activity will appear here.
-                  </p>
-                </div>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <NotificationBell />
           </div>
         </header>
 

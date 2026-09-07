@@ -17,6 +17,7 @@ public sealed class NotificationDispatcher : INotificationDispatcher
     private readonly IRecipientResolver _resolver;
     private readonly IChannelRouter _router;
     private readonly INotificationRepository _repository;
+    private readonly IUserNotificationRepository _inbox;
     private readonly IPushChannel _push;
     private readonly IRealtimeChannel _realtime;
     private readonly IEmailChannel _email;
@@ -26,6 +27,7 @@ public sealed class NotificationDispatcher : INotificationDispatcher
         IRecipientResolver resolver,
         IChannelRouter router,
         INotificationRepository repository,
+        IUserNotificationRepository inbox,
         IPushChannel push,
         IRealtimeChannel realtime,
         IEmailChannel email,
@@ -34,6 +36,7 @@ public sealed class NotificationDispatcher : INotificationDispatcher
         _resolver = resolver;
         _router = router;
         _repository = repository;
+        _inbox = inbox;
         _push = push;
         _realtime = realtime;
         _email = email;
@@ -62,14 +65,22 @@ public sealed class NotificationDispatcher : INotificationDispatcher
         {
             var allowed = _router.AllowedChannels(recipient, notification.Channels);
 
-            await TrySendAsync(record, recipient, notification, allowed, NotificationChannel.Realtime, _realtime, cancellationToken);
-            await TrySendAsync(record, recipient, notification, allowed, NotificationChannel.Push, _push, cancellationToken);
-            await TrySendAsync(record, recipient, notification, allowed, NotificationChannel.Email, _email, cancellationToken);
+            // Create the per-user inbox item so the recipient can list/read/dismiss it.
+            var inboxItem = await _inbox.AddAsync(new UserNotification
+            {
+                UserId = recipient.UserId,
+                NotificationRecordId = record.Id,
+            }, cancellationToken);
+
+            await TrySendAsync(record, inboxItem, recipient, notification, allowed, NotificationChannel.Realtime, _realtime, cancellationToken);
+            await TrySendAsync(record, inboxItem, recipient, notification, allowed, NotificationChannel.Push, _push, cancellationToken);
+            await TrySendAsync(record, inboxItem, recipient, notification, allowed, NotificationChannel.Email, _email, cancellationToken);
         }
     }
 
     private async Task TrySendAsync(
         NotificationRecord record,
+        UserNotification inboxItem,
         ResolvedRecipient recipient,
         Notification notification,
         NotificationChannel allowed,
@@ -94,6 +105,7 @@ public sealed class NotificationDispatcher : INotificationDispatcher
         {
             await SendAsync(channelService, recipient, notification, cancellationToken);
             delivery.Status = DeliveryStatus.Delivered;
+            await _inbox.SetDeliveredAsync(inboxItem.Id, recipient.UserId, cancellationToken);
         }
         catch (Exception ex)
         {

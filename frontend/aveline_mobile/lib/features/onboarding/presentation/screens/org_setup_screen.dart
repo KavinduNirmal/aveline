@@ -1,5 +1,7 @@
+import 'package:aveline_mobile/core/providers/onboarding_provider.dart';
 import 'package:aveline_mobile/core/providers/user_provider.dart';
 import 'package:aveline_mobile/core/router/route_guards.dart';
+import 'package:aveline_mobile/shared/widgets/aurora_field.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -23,6 +25,22 @@ class _OrgSetupScreenState extends State<OrgSetupScreen> {
   void initState() {
     super.initState();
     _codeController = TextEditingController();
+    _prefillFromDeepLink();
+  }
+
+  /// If the user arrived via an invitation deep link, prefill the code and
+  /// auto-submit so they don't have to type it.
+  void _prefillFromDeepLink() {
+    final onboarding = context.read<OnboardingProvider>();
+    final code = onboarding.pendingInviteCode;
+    if (code == null || code.trim().isEmpty) {
+      return;
+    }
+    _codeController.text = code.trim();
+    onboarding.setPendingInviteCode(null);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _handleSubmit();
+    });
   }
 
   @override
@@ -45,10 +63,7 @@ class _OrgSetupScreenState extends State<OrgSetupScreen> {
       final dio = context.read<Dio>();
       final userProvider = context.read<UserProvider>();
 
-      await userProvider.acceptInvitationCode(
-        dio,
-        code: _codeController.text,
-      );
+      await userProvider.acceptInvitationCode(dio, code: _codeController.text);
 
       if (mounted) {
         context.go(AppRoutes.home);
@@ -89,92 +104,100 @@ class _OrgSetupScreenState extends State<OrgSetupScreen> {
         ),
         centerTitle: true,
       ),
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 480),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      'Join Your Boutique',
-                      style: theme.textTheme.headlineMedium?.copyWith(
-                        color: scheme.onSurface,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Enter the invitation code shared by your boutique owner to activate your account.',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 24),
-                    if (_errorMessage != null) ...[
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: scheme.errorContainer,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: scheme.error),
+      body: Stack(
+        children: [
+          const Positioned.fill(child: AuroraField()),
+          SafeArea(
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24.0,
+                  vertical: 16.0,
+                ),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 480),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          'Join Your Boutique',
+                          style: theme.textTheme.headlineMedium?.copyWith(
+                            color: scheme.onSurface,
+                          ),
+                          textAlign: TextAlign.center,
                         ),
-                        child: Text(
-                          _errorMessage!,
+                        const SizedBox(height: 8),
+                        Text(
+                          'Enter the invitation code shared by your boutique owner to activate your account.',
                           style: theme.textTheme.bodyMedium?.copyWith(
-                            color: scheme.onErrorContainer,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 24),
+                        if (_errorMessage != null) ...[
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: scheme.errorContainer,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: scheme.error),
+                            ),
+                            child: Text(
+                              _errorMessage!,
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: scheme.onErrorContainer,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                        ],
+                        TextFormField(
+                          controller: _codeController,
+                          textCapitalization: TextCapitalization.characters,
+                          style: theme.textTheme.bodyLarge?.copyWith(
+                            fontFamily: 'monospace',
+                            letterSpacing: 2,
+                          ),
+                          decoration: const InputDecoration(
+                            labelText: 'Invitation code *',
+                            hintText: 'e.g. AB-7F3K9',
+                            prefixIcon: Icon(Icons.key_outlined),
+                          ),
+                          validator: (value) {
+                            if (value == null || value.trim().isEmpty) {
+                              return 'Please enter the invitation code';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 28),
+                        FilledButton(
+                          onPressed: _isSubmitting ? null : _handleSubmit,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 14.0),
+                            child: _isSubmitting
+                                ? const SizedBox(
+                                    height: 20,
+                                    width: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Text('Join Boutique'),
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 16),
-                    ],
-                    TextFormField(
-                      controller: _codeController,
-                      textCapitalization: TextCapitalization.characters,
-                      style: theme.textTheme.bodyLarge?.copyWith(
-                        fontFamily: 'monospace',
-                        letterSpacing: 2,
-                      ),
-                      decoration: const InputDecoration(
-                        labelText: 'Invitation code *',
-                        hintText: 'e.g. AB-7F3K9',
-                        prefixIcon: Icon(Icons.key_outlined),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Please enter the invitation code';
-                        }
-                        return null;
-                      },
+                      ],
                     ),
-                    const SizedBox(height: 28),
-                    FilledButton(
-                      onPressed: _isSubmitting ? null : _handleSubmit,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 14.0),
-                        child: _isSubmitting
-                            ? const SizedBox(
-                                height: 20,
-                                width: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Text('Join Boutique'),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }

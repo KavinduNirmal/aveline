@@ -27,19 +27,20 @@ describe('permissions (mirror of Aveline.Api Permissions.cs)', () => {
 })
 
 describe('isTenantAdmin', () => {
-  it('admits owner, manager, supervisor and team admin roles', () => {
+  it('admits owner, manager, supervisor, staff and team roles', () => {
     expect(isTenantAdmin('org:boutique_owner')).toBe(true)
     expect(isTenantAdmin('org:boutique_manager')).toBe(true)
     expect(isTenantAdmin('org:boutique_supervisor')).toBe(true)
+    expect(isTenantAdmin('org:boutique_staff')).toBe(true)
+    expect(isTenantAdmin('staff')).toBe(true)
     expect(isTenantAdmin('owner')).toBe(true)
     expect(isTenantAdmin('admin')).toBe(true)
   })
 
-  it('excludes staff and unknown/empty roles', () => {
-    expect(isTenantAdmin('org:boutique_staff')).toBe(false)
-    expect(isTenantAdmin('staff')).toBe(false)
+  it('excludes unknown/empty roles', () => {
     expect(isTenantAdmin('')).toBe(false)
     expect(isTenantAdmin(null)).toBe(false)
     expect(isTenantAdmin(undefined)).toBe(false)
   })
 })
+

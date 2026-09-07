@@ -70,6 +70,48 @@ namespace Aveline.Api.Migrations
                     b.ToTable("AdminApprovalRequests");
                 });
 
+            modelBuilder.Entity("Aveline.Api.Modules.Attendance.Models.TimeEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("ClockInAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ClockOutAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("UserId")
+                        .IsUnique()
+                        .HasFilter("\"ClockOutAt\" IS NULL");
+
+                    b.HasIndex("UserId", "ClockInAt");
+
+                    b.ToTable("TimeEntries", (string)null);
+                });
+
             modelBuilder.Entity("Aveline.Api.Modules.Billing.Models.AiUsageRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -515,6 +557,25 @@ namespace Aveline.Api.Migrations
                     b.ToTable("Users", (string)null);
                 });
 
+            modelBuilder.Entity("Aveline.Api.Modules.Attendance.Models.TimeEntry", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Aveline.Api.Modules.Shared.Models.User", "User")
+                        .WithMany("TimeEntries")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Organization");
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("Aveline.Api.Modules.Organizations.Models.Organization", b =>
                 {
                     b.HasOne("Aveline.Api.Modules.Shared.Models.User", null)
@@ -573,6 +634,11 @@ namespace Aveline.Api.Migrations
                     b.Navigation("Invitations");
 
                     b.Navigation("Memberships");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Shared.Models.User", b =>
+                {
+                    b.Navigation("TimeEntries");
                 });
 #pragma warning restore 612, 618
         }

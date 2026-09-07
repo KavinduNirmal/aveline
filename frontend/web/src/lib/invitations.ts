@@ -1,5 +1,6 @@
 import { apiClient } from '@/lib/api'
 import type {
+  BulkCreateInvitationRequest,
   CreateInvitationRequest,
   CreateInvitationResponse,
   PendingInvitationDto,
@@ -14,6 +15,18 @@ export async function createInvitation(
 ): Promise<CreateInvitationResponse> {
   const response = await apiClient.post<CreateInvitationResponse>(
     invitationsBase(organizationId),
+    payload,
+  )
+  return response.data
+}
+
+/** Creates multiple staff invitations in bulk for batch onboarding. */
+export async function createBulkInvitations(
+  organizationId: string,
+  payload: BulkCreateInvitationRequest,
+): Promise<CreateInvitationResponse[]> {
+  const response = await apiClient.post<CreateInvitationResponse[]>(
+    `${invitationsBase(organizationId)}/bulk`,
     payload,
   )
   return response.data
@@ -34,3 +47,4 @@ export async function revokeInvitation(
 ): Promise<void> {
   await apiClient.post(`${invitationsBase(organizationId)}/${invitationId}/revoke`)
 }
+

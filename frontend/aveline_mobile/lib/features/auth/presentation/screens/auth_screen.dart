@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../../shared/widgets/aurora_field.dart';
+import '../../../../shared/widgets/blossom.dart';
 import '../widgets/sign_in_form.dart';
 import '../widgets/sign_up_form.dart';
 
@@ -28,17 +30,8 @@ class _AuthScreenState extends State<AuthScreen> {
     return Scaffold(
       body: Stack(
         children: [
-          // Soft aurora-ish tint inspired by the web auth art.
-          const Positioned(
-            top: -90,
-            right: -90,
-            child: _GlowOrb(color: Color(0x44B0566B), size: 260),
-          ),
-          const Positioned(
-            bottom: -110,
-            left: -90,
-            child: _GlowOrb(color: Color(0x337A303F), size: 300),
-          ),
+          // Animated aurora + drifting blossoms (mirrors the web AuroraField).
+          const Positioned.fill(child: AuroraField()),
           SafeArea(
             child: Center(
               child: SingleChildScrollView(
@@ -62,8 +55,7 @@ class _AuthScreenState extends State<AuthScreen> {
                             color: scheme.primaryContainer.withValues(alpha: 0.35),
                           ),
                         ),
-                        child: Icon(
-                          Icons.local_florist_outlined,
+                        child: Blossom(
                           size: 38,
                           color: scheme.primaryContainer,
                         ),
@@ -132,29 +124,6 @@ class _AuthScreenState extends State<AuthScreen> {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _GlowOrb extends StatelessWidget {
-  const _GlowOrb({required this.color, required this.size});
-
-  final Color color;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    return IgnorePointer(
-      child: Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: RadialGradient(
-            colors: [color, color.withValues(alpha: 0.0)],
-          ),
-        ),
       ),
     );
   }

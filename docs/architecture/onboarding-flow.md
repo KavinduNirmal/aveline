@@ -223,7 +223,9 @@ redemption. `POST /invitations/accept` is rate-limited per client IP (default 10
 exceeded). Email delivery is behind an `IEmailService` abstraction whose demo
 `LoggingEmailService` records dispatch **without** logging the one-time code — the link's
 `code` query parameter is stripped from log output. The link points to `/invite?code=…`
-(`InvitePage`), which accepts the invitation and routes the new member to the app.
+(`InvitePage`), which accepts the invitation and routes the new member to the app. The response
+also carries a `mobileLink` (`{App:MobileScheme}://invite?code=…`, scheme defaults to `aveline`)
+that opens the Flutter mobile app directly into the invite-code step, skipping manual entry.
 
 ### 4.7 Integration credentials (secure tenant secrets)
 

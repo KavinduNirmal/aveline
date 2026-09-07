@@ -14,8 +14,10 @@ public class CompleteOnboardingRequest
     [Phone]
     public string PhoneNumber { get; set; } = string.Empty;
 
-    [Required]
-    public string Address { get; set; } = string.Empty;
+    // Address is optional: staff do not provide one during onboarding. Owners
+    // capture their boutique address at the organization level instead.
+    [MaxLength(500)]
+    public string? Address { get; set; }
 
     public string? ProfileImageUrl { get; set; }
 

@@ -138,6 +138,7 @@ public class InvitationManagementEndpointsIntegrationTests : IAsyncLifetime
         var code = body.GetProperty("code").GetString();
         Assert.False(string.IsNullOrEmpty(code));
         Assert.Contains("/invite?code=", body.GetProperty("link").GetString());
+        Assert.StartsWith("aveline://invite?code=", body.GetProperty("mobileLink").GetString());
 
         var list = await _client.SendAsync(Authorized(HttpMethod.Get, $"/api/v1/orgs/{org.Id}/invitations", token));
         Assert.Equal(HttpStatusCode.OK, list.StatusCode);

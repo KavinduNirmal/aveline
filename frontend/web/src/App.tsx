@@ -2,6 +2,7 @@ import { AuthenticateWithRedirectCallback } from '@clerk/react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 
 import { ProtectedRoute } from './components/ProtectedRoute'
+import { RedirectIfAuthenticated } from './components/RedirectIfAuthenticated'
 import { RequireAccountState } from './components/RequireAccountState'
 import { UserProvider } from './contexts/UserContext'
 import { AuthApiBridge } from './lib/AuthApiBridge'
@@ -53,9 +54,11 @@ export default function App() {
 
           <Route path="/sso-callback" element={<AuthenticateWithRedirectCallback signInFallbackRedirectUrl="/app" signUpFallbackRedirectUrl="/app" />} />
           <Route path="/suspended" element={<SuspendedPage />} />
-          <Route path="/sign-in/*" element={<SignInPage />} />
-          <Route path="/sign-up/*" element={<SignUpPage />} />
-          <Route path="/sign-up/admin" element={<AdminSignUpPage />} />
+          <Route element={<RedirectIfAuthenticated />}>
+            <Route path="/sign-in/*" element={<SignInPage />} />
+            <Route path="/sign-up/*" element={<SignUpPage />} />
+            <Route path="/sign-up/admin" element={<AdminSignUpPage />} />
+          </Route>
           <Route path="/terms" element={<TermsPage />} />
 
           <Route path="*" element={<Navigate to="/" replace />} />

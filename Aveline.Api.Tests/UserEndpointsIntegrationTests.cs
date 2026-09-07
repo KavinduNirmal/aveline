@@ -128,11 +128,47 @@ public class UserEndpointsIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task CompleteOnboarding_WithoutAddress_ReturnsUpdatedUser()
+    {
+        var token = CreateToken("user_clerk_no_address", "staff@aveline.lk", "Nimali", "Perera", "staff");
+
+        // 1. Initial hit creates stub
+        var meRequest = new HttpRequestMessage(HttpMethod.Get, "/api/v1/users/me");
+        meRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var meResponse = await _client.SendAsync(meRequest);
+        Assert.Equal(HttpStatusCode.OK, meResponse.StatusCode);
+
+        // 2. Submit Onboarding Form with no address (staff do not provide one)
+        var onboardingPayload = new
+        {
+            displayName = "Nimali Perera",
+            phoneNumber = "+94771234567",
+            contactPreference = "WhatsApp",
+            pushNotificationsEnabled = true
+        };
+
+        var postRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/users/onboarding")
+        {
+            Content = new StringContent(JsonSerializer.Serialize(onboardingPayload), Encoding.UTF8, "application/json")
+        };
+        postRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var postResponse = await _client.SendAsync(postRequest);
+
+        Assert.Equal(HttpStatusCode.OK, postResponse.StatusCode);
+
+        var body = JsonDocument.Parse(await postResponse.Content.ReadAsStringAsync()).RootElement;
+        Assert.True(body.GetProperty("hasCompletedOnboarding").GetBoolean());
+        Assert.Equal("Nimali Perera", body.GetProperty("displayName").GetString());
+        Assert.Equal("+94771234567", body.GetProperty("phoneNumber").GetString());
+    }
+
+    [Fact]
     public async Task CompleteOnboarding_InvalidPayload_Returns400BadRequest()
     {
         var token = CreateToken("user_clerk_invalid_test", "invalid@aveline.lk");
 
-        // Missing DisplayName, PhoneNumber, Address
+        // Missing required DisplayName / PhoneNumber (Address is now optional).
         var invalidPayload = new
         {
             displayName = ""

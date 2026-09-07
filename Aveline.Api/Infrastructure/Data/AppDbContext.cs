@@ -1,4 +1,5 @@
 using Aveline.Api.Modules.Admin.Models;
+using Aveline.Api.Modules.Attendance.Models;
 using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Integrations.Models;
 using Aveline.Api.Modules.Organizations.Models;
@@ -36,6 +37,8 @@ public class AppDbContext : DbContext
     public DbSet<UsageAccount> UsageAccounts => Set<UsageAccount>();
 
     public DbSet<IntegrationCredential> IntegrationCredentials => Set<IntegrationCredential>();
+
+    public DbSet<TimeEntry> TimeEntries => Set<TimeEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

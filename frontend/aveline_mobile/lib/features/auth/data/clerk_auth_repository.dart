@@ -23,6 +23,9 @@ class ClerkAuthRepository implements AuthRepository {
   bool get isSignedIn => _authState.isSignedIn;
 
   @override
+  bool get needsSecondFactor => _authState.signIn?.needsSecondFactor ?? false;
+
+  @override
   AuthUser? get currentUser {
     final user = _authState.user;
     if (user == null) {
@@ -64,6 +67,34 @@ class ClerkAuthRepository implements AuthRepository {
             identifier: identifier,
             password: password,
           ));
+
+  @override
+  String? get secondFactorStrategy {
+    final factors = _authState.signIn?.supportedSecondFactors ?? const [];
+    return factors.isNotEmpty ? factors.first.strategy.name : null;
+  }
+
+  /// The [clerk.Strategy] Clerk is requesting for the second factor, falling
+  /// back to TOTP when the supported factors are not exposed.
+  clerk.Strategy get _secondFactorStrategy {
+    final factors = _authState.signIn?.supportedSecondFactors ?? const [];
+    return factors.isNotEmpty ? factors.first.strategy : clerk.Strategy.totp;
+  }
+
+  @override
+  Future<String?> sendSecondFactorCode() {
+    // For code-based factors (email/phone) calling attemptSignIn without a code
+    // triggers Clerk's prepare step, which dispatches the one-time code.
+    return _run(() => _authState.attemptSignIn(strategy: _secondFactorStrategy));
+  }
+
+  @override
+  Future<String?> verifySecondFactorCode({required String code}) {
+    return _run(() => _authState.attemptSignIn(
+          strategy: _secondFactorStrategy,
+          code: code,
+        ));
+  }
 
   @override
   Future<String?> signUpWithPassword({

@@ -5,6 +5,7 @@ import { BrowserRouter } from 'react-router-dom'
 
 import App from './App'
 import './index.css'
+import 'sonner/dist/styles.css'
 import { clerkPublishableKey } from './lib/env'
 
 createRoot(document.getElementById('root')!).render(

@@ -19,6 +19,7 @@ public class OrganizationServiceTests
     private readonly AppDbContext _context;
     private readonly OrganizationService _sut;
     private readonly IUserCacheService _cacheService;
+    private readonly FakeInvitationCodeStore _codeStore;
 
     public OrganizationServiceTests()
     {
@@ -30,9 +31,11 @@ public class OrganizationServiceTests
         var memCacheOptions = Options.Create(new MemoryDistributedCacheOptions());
         var distCache = new MemoryDistributedCache(memCacheOptions);
         _cacheService = new UserCacheService(distCache, NullLogger<UserCacheService>.Instance);
+        _codeStore = new FakeInvitationCodeStore();
         _sut = new OrganizationService(
             new OrganizationRepository(_context),
             new InvitationRepository(_context),
+            _codeStore,
             new UserRepository(_context),
             _cacheService,
             NullLogger<OrganizationService>.Instance);
@@ -366,5 +369,94 @@ public class OrganizationServiceTests
             _sut.SetMembershipStatusAsync(organization.Id, owner.Id, MembershipStatus.Suspended));
         await Assert.ThrowsAsync<CannotManageOwnerMembershipException>(() =>
             _sut.RemoveMembershipAsync(organization.Id, owner.Id));
+    }
+
+    [Fact]
+    public async Task GetOrganizationProfileBySlugAsync_Member_ReturnsProfileAndMembership()
+    {
+        var owner = await AddUserAsync("clerk_profile_owner", "profile.owner@aveline.lk");
+        var organization = await _sut.CreateOrganizationAsync(owner.Id, "Profile Boutique", null);
+
+        var result = await _sut.GetOrganizationProfileBySlugAsync(organization.Slug, owner.Id);
+
+        Assert.NotNull(result);
+        Assert.Equal(organization.Name, result!.Organization.Name);
+        Assert.Equal(organization.Slug, result.Organization.Slug);
+        Assert.NotNull(result.Membership);
+        Assert.Equal(Roles.BoutiqueOwner, result.Membership!.BoutiqueRole);
+    }
+
+    [Fact]
+    public async Task GetOrganizationProfileBySlugAsync_NonMember_ReturnsProfileWithNullMembership()
+    {
+        var owner = await AddUserAsync("clerk_profile_owner2", "profile.owner2@aveline.lk");
+        var outsider = await AddUserAsync("clerk_profile_outsider", "profile.outsider@aveline.lk");
+        var organization = await _sut.CreateOrganizationAsync(owner.Id, "Profile Boutique 2", null);
+
+        var result = await _sut.GetOrganizationProfileBySlugAsync(organization.Slug, outsider.Id);
+
+        Assert.NotNull(result);
+        Assert.Equal(organization.Slug, result!.Organization.Slug);
+        Assert.Null(result.Membership);
+    }
+
+    [Fact]
+    public async Task GetOrganizationProfileBySlugAsync_UnknownSlug_ReturnsNull()
+    {
+        var owner = await AddUserAsync("clerk_profile_owner3", "profile.owner3@aveline.lk");
+        await _sut.CreateOrganizationAsync(owner.Id, "Profile Boutique 3", null);
+
+        var result = await _sut.GetOrganizationProfileBySlugAsync("no-such-slug", owner.Id);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task GetOrganizationProfileAsync_ReturnsProfile_OrNullWhenMissing()
+    {
+        var owner = await AddUserAsync("clerk_profile_owner4", "profile.owner4@aveline.lk");
+        var organization = await _sut.CreateOrganizationAsync(owner.Id, "Profile Boutique 4", null);
+
+        var found = await _sut.GetOrganizationProfileAsync(organization.Id);
+        Assert.NotNull(found);
+        Assert.Equal(organization.Name, found!.Name);
+
+        var missing = await _sut.GetOrganizationProfileAsync(Guid.NewGuid());
+        Assert.Null(missing);
+    }
+
+    [Fact]
+    public async Task CreateOrganizationAsync_NormalizesProvidedSlug()
+    {
+        var owner = await AddUserAsync("clerk_slug_norm_owner", "slug.norm.owner@aveline.lk");
+
+        // Mixed case + illegal characters are normalized to a lowercase, hyphenated slug.
+        var organization = await _sut.CreateOrganizationAsync(
+            owner.Id, "Aveline Boutique", null, "  My Shop!! BLOOM  ");
+
+        Assert.Equal("my-shop-bloom", organization.Slug);
+
+        // The normalized slug is the one matched by case-sensitive by-slug lookups.
+        var bySlug = await _sut.GetOrganizationProfileBySlugAsync("my-shop-bloom", owner.Id);
+        Assert.NotNull(bySlug);
+    }
+
+    [Fact]
+    public async Task CreateOrganizationAsync_SlugDerivedFromName_IsNormalized()
+    {
+        var owner = await AddUserAsync("clerk_slug_name_owner", "slug.name.owner@aveline.lk");
+
+        var organization = await _sut.CreateOrganizationAsync(owner.Id, "House of Fashions — Colombo", null);
+
+        Assert.Equal("house-of-fashions-colombo", organization.Slug);
+    }
+
+    [Fact]
+    public async Task CreateOrganizationAsync_SymbolOnlySlug_ThrowsArgumentException()
+    {
+        var owner = await AddUserAsync("clerk_slug_symbol_owner", "slug.symbol.owner@aveline.lk");
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            _sut.CreateOrganizationAsync(owner.Id, "Aveline", null, "!!!"));
     }
 }

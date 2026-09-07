@@ -2,8 +2,15 @@ using Aveline.Api.Common.Middleware;
 using Aveline.Api.Configurations;
 using Aveline.Api.Endpoints;
 using Aveline.Api.Infrastructure.Caching;
+using Aveline.Api.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
+using Aveline.Api.Infrastructure.Notifications;
+using Aveline.Api.Infrastructure.RateLimiting;
 using Aveline.Api.Modules.Admin.Repositories;
 using Aveline.Api.Modules.Admin.Services;
+using Aveline.Api.Modules.Billing;
+using Aveline.Api.Modules.Billing.Endpoints;
+using Aveline.Api.Modules.Integrations;
 using Aveline.Api.Modules.Organizations.Repositories;
 using Aveline.Api.Modules.Organizations.Services;
 using Aveline.Api.Modules.Shared.Repositories;
@@ -24,6 +31,8 @@ builder.Services.AddAvelineAuthorization();
 builder.Services.AddAvelineCors(builder.Configuration);
 builder.Services.AddAgentServiceClient(builder.Configuration);
 builder.Services.AddClerkAdminClient();
+builder.Services.AddBillingModule();
+builder.Services.AddIntegrationsModule();
 
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IUserCacheService, UserCacheService>();
@@ -32,9 +41,13 @@ builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IOrganizationRepository, OrganizationRepository>();
 builder.Services.AddScoped<IInvitationRepository, InvitationRepository>();
 builder.Services.AddScoped<IOrganizationService, OrganizationService>();
+builder.Services.AddScoped<IInvitationCodeStore, DistributedInvitationCodeStore>();
+builder.Services.AddScoped<IEmailService, LoggingEmailService>();
+builder.Services.AddScoped<IRateLimiter, DistributedRateLimiter>();
 
 builder.Services.AddScoped<IAdminApprovalRepository, AdminApprovalRepository>();
 builder.Services.AddScoped<IAdminApprovalService, AdminApprovalService>();
+builder.Services.AddScoped<IOnboardingService, OnboardingService>();
 
 var app = builder.Build();
 
@@ -58,6 +71,24 @@ v1.MapAgentEndpoints();
 v1.MapUserEndpoints();
 v1.MapAdminEndpoints();
 v1.MapOrganizationEndpoints();
+v1.MapOnboardingEndpoints();
+v1.MapIntegrationEndpoints();
+v1.MapOrgUsageEndpoints();
+
+app.MapBillingEndpoints();
+
+// Apply EF Core migrations on startup for a fresh/local database. Guarded to the
+// relational (PostgreSQL) provider so the in-memory contexts used by the test suite are
+// skipped, and to the Development environment to avoid unexpected migrations in prod.
+if (app.Environment.IsDevelopment())
+{
+    using var scope = app.Services.CreateScope();
+    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    if (dbContext.Database.IsRelational())
+    {
+        await dbContext.Database.MigrateAsync();
+    }
+}
 
 app.Run();
 

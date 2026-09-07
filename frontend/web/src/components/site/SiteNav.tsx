@@ -69,15 +69,6 @@ export function SiteNav() {
         </nav>
 
         <div className="hidden items-center gap-2 md:flex">
-          {isLoaded && isSignedIn ? (
-            <Button asChild variant="ghost" size="sm" className="text-neutral-700">
-              <Link to="/app">Open dashboard</Link>
-            </Button>
-          ) : (
-            <Button asChild variant="ghost" size="sm" className="text-neutral-700">
-              <Link to="/sign-in">Sign in</Link>
-            </Button>
-          )}
           <Button asChild variant="outline" size="sm" className="group">
             <Link to="/download" className="inline-flex items-center gap-1.5">
               <span className="flex items-center gap-1 text-neutral-500 transition-colors group-hover:text-neutral-900">
@@ -87,12 +78,26 @@ export function SiteNav() {
               <span>Download app</span>
             </Link>
           </Button>
-          <Button asChild size="sm" className="group">
-            <Link to="/sign-up" className="inline-flex items-center gap-1.5">
-              <span>Create account</span>
-              <CurvedArrow className="size-3.5 text-white" />
-            </Link>
-          </Button>
+          {isLoaded && isSignedIn ? (
+            <Button asChild size="sm" className="group">
+              <Link to="/app" className="inline-flex items-center gap-1.5">
+                <span>Open dashboard</span>
+                <CurvedArrow className="size-3.5 text-white" />
+              </Link>
+            </Button>
+          ) : (
+            <>
+              <Button asChild variant="ghost" size="sm" className="text-neutral-700">
+                <Link to="/sign-in">Sign in</Link>
+              </Button>
+              <Button asChild size="sm" className="group">
+                <Link to="/sign-up" className="inline-flex items-center gap-1.5">
+                  <span>Create account</span>
+                  <CurvedArrow className="size-3.5 text-white" />
+                </Link>
+              </Button>
+            </>
+          )}
         </div>
 
         <button
@@ -120,15 +125,6 @@ export function SiteNav() {
             ))}
           </div>
           <div className="mt-3 flex flex-col gap-2 border-t border-dashed border-neutral-200 pt-3">
-            {isLoaded && isSignedIn ? (
-              <Button asChild variant="outline">
-                <Link to="/app">Open dashboard</Link>
-              </Button>
-            ) : (
-              <Button asChild variant="outline">
-                <Link to="/sign-in">Sign in</Link>
-              </Button>
-            )}
             <Button asChild variant="outline" className="group">
               <Link to="/download" className="inline-flex items-center justify-center gap-1.5">
                 <span className="flex items-center gap-1 text-neutral-500">
@@ -138,12 +134,26 @@ export function SiteNav() {
                 <span>Download app</span>
               </Link>
             </Button>
-            <Button asChild className="group">
-              <Link to="/sign-up" className="inline-flex items-center justify-center gap-1.5">
-                <span>Create account</span>
-                <CurvedArrow className="size-3.5 text-white" />
-              </Link>
-            </Button>
+            {isLoaded && isSignedIn ? (
+              <Button asChild className="group">
+                <Link to="/app" className="inline-flex items-center justify-center gap-1.5">
+                  <span>Open dashboard</span>
+                  <CurvedArrow className="size-3.5 text-white" />
+                </Link>
+              </Button>
+            ) : (
+              <>
+                <Button asChild variant="outline">
+                  <Link to="/sign-in">Sign in</Link>
+                </Button>
+                <Button asChild className="group">
+                  <Link to="/sign-up" className="inline-flex items-center justify-center gap-1.5">
+                    <span>Create account</span>
+                    <CurvedArrow className="size-3.5 text-white" />
+                  </Link>
+                </Button>
+              </>
+            )}
           </div>
         </div>
       )}

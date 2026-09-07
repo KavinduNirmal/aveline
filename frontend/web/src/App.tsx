@@ -2,16 +2,18 @@ import { AuthenticateWithRedirectCallback } from '@clerk/react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 
 import { ProtectedRoute } from './components/ProtectedRoute'
+import { RedirectIfAuthenticated } from './components/RedirectIfAuthenticated'
 import { RequireAccountState } from './components/RequireAccountState'
-import { RequireAdmin } from './components/RequireAdmin'
 import { UserProvider } from './contexts/UserContext'
 import { AuthApiBridge } from './lib/AuthApiBridge'
+import { Toaster } from './components/ui/sonner'
 import { AdminSignUpPage } from './routes/AdminSignUpPage'
 import { ContactPage } from './routes/ContactPage'
-import { Dashboard } from './routes/Dashboard'
+import { DashboardRedirect } from './routes/Dashboard'
 import { DocsPage } from './routes/DocsPage'
 import { DownloadPage } from './routes/DownloadPage'
 import { ForbiddenPage } from './routes/ForbiddenPage'
+import { InvitePage } from './routes/InvitePage'
 import { LandingPage } from './routes/LandingPage'
 import { OnboardingPage } from './routes/OnboardingPage'
 import { OrgSetupPage } from './routes/OrgSetupPage'
@@ -20,6 +22,7 @@ import { RootLayout } from './routes/RootLayout'
 import { SignInPage } from './routes/SignInPage'
 import { SignUpPage } from './routes/SignUpPage'
 import { SuspendedPage } from './routes/SuspendedPage'
+import { TenantDashboard } from './routes/TenantDashboard'
 import { TermsPage } from './routes/TermsPage'
 
 export default function App() {
@@ -39,11 +42,11 @@ export default function App() {
           <Route element={<ProtectedRoute />}>
             <Route path="/onboarding" element={<OnboardingPage />} />
             <Route path="/org-setup" element={<OrgSetupPage />} />
+            <Route path="/invite" element={<InvitePage />} />
             <Route element={<RequireAccountState />}>
+              <Route path="/app" element={<DashboardRedirect />} />
+              <Route path="/app/b/:slug" element={<TenantDashboard />} />
               <Route element={<RootLayout />}>
-                <Route element={<RequireAdmin />}>
-                  <Route path="/app" element={<Dashboard />} />
-                </Route>
                 <Route path="/forbidden" element={<ForbiddenPage />} />
               </Route>
             </Route>
@@ -51,13 +54,17 @@ export default function App() {
 
           <Route path="/sso-callback" element={<AuthenticateWithRedirectCallback signInFallbackRedirectUrl="/app" signUpFallbackRedirectUrl="/app" />} />
           <Route path="/suspended" element={<SuspendedPage />} />
-          <Route path="/sign-in/*" element={<SignInPage />} />
-          <Route path="/sign-up/*" element={<SignUpPage />} />
-          <Route path="/sign-up/admin" element={<AdminSignUpPage />} />
+          <Route element={<RedirectIfAuthenticated />}>
+            <Route path="/sign-in/*" element={<SignInPage />} />
+            <Route path="/sign-up/*" element={<SignUpPage />} />
+            <Route path="/sign-up/admin" element={<AdminSignUpPage />} />
+          </Route>
           <Route path="/terms" element={<TermsPage />} />
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+
+        <Toaster />
       </UserProvider>
     </>
   )

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../../../shared/widgets/app_toast.dart';
 import '../../domain/auth_repository.dart';
 
 /// Custom Clerk sign-up form (first/last name, username, email + password),
@@ -23,7 +24,6 @@ class _SignUpFormState extends State<SignUpForm> {
 
   bool _busy = false;
   bool _verifying = false;
-  String? _error;
 
   @override
   void dispose() {
@@ -37,75 +37,87 @@ class _SignUpFormState extends State<SignUpForm> {
   }
 
   Future<void> _create() async {
+    if (_busy) {
+      return;
+    }
     if (!(_formKey.currentState?.validate() ?? false)) {
       return;
     }
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
+    setState(() => _busy = true);
 
-    final auth = context.read<AuthRepository>();
-    final error = await auth.signUpWithPassword(
-      emailAddress: _emailController.text.trim(),
-      username: _usernameController.text.trim(),
-      firstName: _firstNameController.text.trim(),
-      lastName: _lastNameController.text.trim(),
-      password: _passwordController.text,
-    );
+    try {
+      final auth = context.read<AuthRepository>();
+      final error = await auth.signUpWithPassword(
+        emailAddress: _emailController.text.trim(),
+        username: _usernameController.text.trim(),
+        firstName: _firstNameController.text.trim(),
+        lastName: _lastNameController.text.trim(),
+        password: _passwordController.text,
+      );
 
-    if (!mounted) return;
-
-    if (error == null && !auth.isSignedIn) {
-      // Email verification required by the instance — start the code step.
-      final sendError = await auth.sendEmailVerificationCode();
       if (!mounted) return;
-      if (sendError == null) {
-        setState(() {
-          _busy = false;
-          _verifying = true;
-        });
+
+      if (error == null && !auth.isSignedIn) {
+        // Email verification required by the instance — start the code step.
+        final sendError = await auth.sendEmailVerificationCode();
+        if (!mounted) return;
+        if (sendError == null) {
+          setState(() {
+            _busy = false;
+            _verifying = true;
+          });
+          return;
+        }
+        AppToast.show(context, sendError, error: true);
         return;
       }
-      setState(() {
-        _busy = false;
-        _error = sendError;
-      });
-      return;
-    }
 
-    setState(() {
-      _busy = false;
-      _error = error;
-    });
+      if (error != null) {
+        AppToast.show(context, error, error: true);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
   }
 
   Future<void> _resend() async {
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    final auth = context.read<AuthRepository>();
-    final error = await auth.sendEmailVerificationCode();
-    if (!mounted) return;
-    setState(() {
-      _busy = false;
-      _error = error;
-    });
+    if (_busy) {
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final auth = context.read<AuthRepository>();
+      final error = await auth.sendEmailVerificationCode();
+      if (!mounted) return;
+      if (error != null) {
+        AppToast.show(context, error, error: true);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
   }
 
   Future<void> _verify() async {
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    final auth = context.read<AuthRepository>();
-    final error = await auth.verifyEmailCode(code: _codeController.text.trim());
-    if (!mounted) return;
-    setState(() {
-      _busy = false;
-      _error = error;
-    });
+    if (_busy) {
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final auth = context.read<AuthRepository>();
+      final error = await auth.verifyEmailCode(code: _codeController.text.trim());
+      if (!mounted) return;
+      if (error != null) {
+        AppToast.show(context, error, error: true);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
   }
 
   @override
@@ -133,22 +145,6 @@ class _SignUpFormState extends State<SignUpForm> {
               ),
             ),
             const SizedBox(height: 24),
-            if (_error != null) ...[
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: scheme.errorContainer,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  _error!,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: scheme.onErrorContainer,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-            ],
             TextField(
               controller: _codeController,
               autofocus: true,
@@ -192,22 +188,6 @@ class _SignUpFormState extends State<SignUpForm> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (_error != null) ...[
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: scheme.errorContainer,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                _error!,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: scheme.onErrorContainer,
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-          ],
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [

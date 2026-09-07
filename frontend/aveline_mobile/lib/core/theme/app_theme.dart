@@ -18,7 +18,7 @@ abstract final class AppTheme {
         secondary: Color(0xFF625D5D),
         onSecondary: Color(0xFFFFFFFF),
         secondaryContainer: Color(0xFFE6DEDD),
-        onSecondaryContainer: Color(0xFF666161),
+        onSecondaryContainer: Color(0xFF4A4645),
         tertiary: Color(0xFF3B3030),
         onTertiary: Color(0xFFFFFFFF),
         tertiaryContainer: Color(0xFF534646),
@@ -46,57 +46,57 @@ abstract final class AppTheme {
       );
 
   /// Brand typography: Playfair Display for display/headlines,
-  /// DM Sans for UI and body.
+  /// DM Sans for UI and body. Sizes are tuned for phone screens.
   static TextTheme get textTheme => TextTheme(
         displayLarge: GoogleFonts.playfairDisplay(
-          fontSize: 40,
+          fontSize: 34,
           fontWeight: FontWeight.w500,
           height: 1.2,
           letterSpacing: -0.5,
         ),
         displaySmall: GoogleFonts.playfairDisplay(
-          fontSize: 32,
+          fontSize: 28,
           fontWeight: FontWeight.w500,
           height: 1.2,
         ),
         headlineMedium: GoogleFonts.playfairDisplay(
-          fontSize: 28,
-          fontWeight: FontWeight.w500,
-          height: 1.3,
-        ),
-        headlineSmall: GoogleFonts.playfairDisplay(
           fontSize: 24,
           fontWeight: FontWeight.w500,
           height: 1.3,
         ),
+        headlineSmall: GoogleFonts.playfairDisplay(
+          fontSize: 21,
+          fontWeight: FontWeight.w500,
+          height: 1.3,
+        ),
         titleLarge: GoogleFonts.dmSans(
-          fontSize: 20,
+          fontSize: 18,
           fontWeight: FontWeight.w600,
           height: 1.4,
         ),
         titleMedium: GoogleFonts.dmSans(
-          fontSize: 16,
+          fontSize: 15,
           fontWeight: FontWeight.w600,
           height: 1.4,
         ),
         bodyLarge: GoogleFonts.dmSans(
-          fontSize: 18,
-          fontWeight: FontWeight.w400,
-          height: 1.6,
-        ),
-        bodyMedium: GoogleFonts.dmSans(
           fontSize: 16,
           fontWeight: FontWeight.w400,
-          height: 1.6,
+          height: 1.5,
+        ),
+        bodyMedium: GoogleFonts.dmSans(
+          fontSize: 14,
+          fontWeight: FontWeight.w400,
+          height: 1.5,
         ),
         labelMedium: GoogleFonts.dmSans(
-          fontSize: 14,
+          fontSize: 13,
           fontWeight: FontWeight.w500,
           height: 1.2,
-          letterSpacing: 0.7,
+          letterSpacing: 0.5,
         ),
         labelSmall: GoogleFonts.dmSans(
-          fontSize: 12,
+          fontSize: 11,
           fontWeight: FontWeight.w600,
           height: 1.2,
         ),
@@ -104,10 +104,8 @@ abstract final class AppTheme {
 
   static ThemeData get light {
     final scheme = colorScheme;
-    const radius = 12.0;
-    const inputShape = RoundedRectangleBorder(
-      borderRadius: BorderRadius.all(Radius.circular(radius)),
-    );
+    // Fully rounded (pill) shapes for buttons and inputs.
+    const buttonShape = StadiumBorder();
 
     return ThemeData(
       useMaterial3: true,
@@ -120,7 +118,7 @@ abstract final class AppTheme {
         elevation: 0,
       ),
       cardTheme: CardThemeData(
-        color: scheme.surfaceContainerLow,
+        color: scheme.surfaceContainerLowest,
         elevation: 0,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.all(Radius.circular(16)),
@@ -130,22 +128,31 @@ abstract final class AppTheme {
         style: FilledButton.styleFrom(
           backgroundColor: scheme.primaryContainer,
           foregroundColor: scheme.onPrimary,
-          shape: inputShape,
+          shape: buttonShape,
         ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(shape: buttonShape),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(shape: buttonShape),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: scheme.surfaceContainerLow,
+        // Compact vertical padding keeps inputs from feeling oversized on phones.
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        // Large radius produces a fully rounded (pill) input.
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(radius),
+          borderRadius: BorderRadius.circular(100),
           borderSide: BorderSide(color: scheme.outlineVariant),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(radius),
+          borderRadius: BorderRadius.circular(100),
           borderSide: BorderSide(color: scheme.outlineVariant),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(radius),
+          borderRadius: BorderRadius.circular(100),
           borderSide: BorderSide(color: scheme.primary, width: 1.5),
         ),
       ),

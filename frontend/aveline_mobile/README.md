@@ -33,6 +33,18 @@ flutter run \
   out on 401 (`core/network/auth_interceptor.dart`).
 - `AuthUser` + `AuthClaims` expose the Aveline role claims to role-aware screens.
 
+## Onboarding & invitation deep links
+
+- New accounts first choose an **account type** (owner vs staff), persisted per
+  Clerk user via `shared_preferences` (`core/providers/onboarding_provider.dart`).
+  Owners continue the boutique wizard; staff join with an invitation code.
+- Invitation links use the custom scheme `aveline://invite?code=…` (registered in
+  `android/app/src/main/AndroidManifest.xml` and `ios/Runner/Info.plist`). The app
+  listens via `app_links` (`app.dart`) and auto-accepts the code, skipping manual
+  entry. The API returns this link as `mobileLink` on invitation creation.
+- HTTPS App Links / Universal Links are a deferred follow-up (issue #85): they
+  require a real domain plus `assetlinks.json` / `apple-app-site-association`.
+
 ## Structure
 
 ```

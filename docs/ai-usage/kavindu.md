@@ -924,3 +924,140 @@ Design feedback round on the landing page:
 - `bun run lint`: Oxlint ran across 76 files with 0 errors.
 - `bun run test`: Vitest test suite executed and passed 35/35 tests across 4 test files.
 - `pytest tests/ --cov=app --cov-report=term --cov-fail-under=90`: Executed in isolated Python environment with `requirements-dev.txt` dependencies — 9 passed, 97.14% coverage (exceeding the 90% threshold).
+
+## Session 2026-09-07
+
+**Task:** Blossom Usage Tracking & Recording Infrastructure (Issue #67, branch `feature/67-blossom-usage-tracking`)
+**Tool used:** Antigravity AI Assistant
+
+### Summary of Activities
+
+- Architected and implemented the recording, monitoring, and auditing infrastructure for the Blossom credit system based on `docs/architecture/pricing_plan.md`.
+- Documented key architectural decisions in `docs/ADR/ADR-010-usage-tracking-architecture.md`:
+  - Two-table persistence pattern: append-only `ai_usage_records` audit log and mutable `usage_accounts` period ledger.
+  - Usage recording strictly owned by .NET API (source of truth), communicating via `httpx` async calls with `X-Internal-Token` header (inter-service auth per ADR-009) until future gRPC migration.
+  - Blossom normalization formula: `ceil((input + output + cached) / 1000, 1 dp)`, minimum `0.1` Blossom.
+  - Active customer definition: 90-day interaction window.
+  - Enforcement explicitly deferred to future subscription/payment slice.
+- Implemented `Aveline.Api/Modules/Billing/`:
+  - `PlanTier.cs`: String-serialized enum defining subscription tiers (`Seed`, `Bloom`, `Orchid`, `Rose`, `Enterprise`) via `JsonStringEnumConverter`.
+  - `AiUsageRecord.cs`: Immutable entity capturing workflow token usage, provider, model, USD cost, and server-calculated Blossom units.
+  - `UsageAccount.cs`: Mutable billing period ledger tracking `MonthlyBlossomLimit`, `BlossomUsed`, and `BlossomRemaining`.
+  - `BillingDomainExceptions.cs`: Domain-level validation exceptions.
+  - `IUsageRepository.cs` and `UsageRepository.cs`: Persistence abstraction executing atomic record persistence and ledger increment (with relational and in-memory test compatibility).
+  - `IUsageTrackerService.cs` and `UsageTrackerService.cs`: Domain service encapsulating the Blossom normalization formula, validation, structured logging, and configurable abnormal cost alerting (`[ABNORMAL_USAGE]`).
+  - `UsageEndpoints.cs`: Minimal API endpoints (`/internal/usage/record`, `/internal/usage/summary/{orgId}`, `/internal/usage/records/{orgId}`).
+  - `BillingModule.cs`: DI and routing module registration.
+- Configured EF Core in `Aveline.Api`:
+  - Added `DbSet<AiUsageRecord>` and `DbSet<UsageAccount>` to `AppDbContext.cs`.
+  - Added `BillingConfigurations.cs` configuring precision, indexes, and unique constraints.
+  - Created `InternalTokenAuthenticationHandler.cs` and registered `InternalServicePolicy` in `AuthorizationConfiguration.cs` and `AuthenticationConfiguration.cs`.
+  - Updated `OnboardingMiddleware.cs` to bypass internal `/internal/` service routes.
+  - Registered `BillingModule` in `Program.cs`.
+- Implemented in `agnet-service/`:
+  - Added `api_base_url` to `app/core/config.py`.
+  - Created `app/services/usage_reporter.py` async client reporting token usage to `/internal/usage/record` with `X-Internal-Token`.
+  - Authored `tests/test_usage_reporter.py` covering successful submission, custom client injection, HTTP status errors, and network errors using `respx`.
+- Created unit and integration test suite in `Aveline.Api.Tests`:
+  - `UsageTrackerServiceTests.cs`: Verified Blossom calculation formula across edge cases, invalid request validation, abnormal cost alerting log verification, and summary retrieval.
+  - `UsageEndpointsIntegrationTests.cs`: Verified unauthorized responses on missing/invalid internal tokens, successful record creation, ledger decrement, summary query, and paginated records query.
+
+### Files Created or Modified
+
+- `docs/ADR/ADR-010-usage-tracking-architecture.md` [NEW]
+- `docs/ADR/README.md` [MODIFY]
+- `Aveline.Api/Modules/Billing/Models/PlanTier.cs` [NEW]
+- `Aveline.Api/Modules/Billing/Models/AiUsageRecord.cs` [NEW]
+- `Aveline.Api/Modules/Billing/Models/UsageAccount.cs` [NEW]
+- `Aveline.Api/Modules/Billing/Models/BillingDomainExceptions.cs` [NEW]
+- `Aveline.Api/Modules/Billing/Services/IUsageTrackerService.cs` [NEW]
+- `Aveline.Api/Modules/Billing/Services/UsageTrackerService.cs` [NEW]
+- `Aveline.Api/Modules/Billing/Repositories/IUsageRepository.cs` [NEW]
+- `Aveline.Api/Modules/Billing/Repositories/UsageRepository.cs` [NEW]
+- `Aveline.Api/Modules/Billing/Endpoints/UsageEndpoints.cs` [NEW]
+- `Aveline.Api/Modules/Billing/BillingModule.cs` [NEW]
+- `Aveline.Api/Infrastructure/Data/Configurations/BillingConfigurations.cs` [NEW]
+- `Aveline.Api/Infrastructure/Integrations/InternalTokenAuthenticationHandler.cs` [NEW]
+- `Aveline.Api/Infrastructure/Data/AppDbContext.cs` [MODIFY]
+- `Aveline.Api/Configurations/AuthenticationConfiguration.cs` [MODIFY]
+- `Aveline.Api/Configurations/AuthorizationConfiguration.cs` [MODIFY]
+- `Aveline.Api/Common/Middleware/OnboardingMiddleware.cs` [MODIFY]
+- `Aveline.Api/Program.cs` [MODIFY]
+- `agnet-service/app/core/config.py` [MODIFY]
+- `agnet-service/app/services/usage_reporter.py` [NEW]
+- `agnet-service/tests/test_usage_reporter.py` [NEW]
+- `Aveline.Api.Tests/UsageTrackerServiceTests.cs` [NEW]
+- `Aveline.Api.Tests/UsageEndpointsIntegrationTests.cs` [NEW]
+- `docs/ai-usage/kavindu.md` [MODIFY]
+
+### Verification Performed
+
+- `dotnet build Aveline.Api`: Succeeded with 0 warnings, 0 errors.
+- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj`: All 153 tests passed (16 new billing unit and integration tests + 137 existing tests).
+- Verified EF Core migration skip as requested (database not running locally; migrations will be generated when database is accessible).
+- Formatted Python import blocks across `agnet-service/app/services/usage_reporter.py` and `agnet-service/tests/test_usage_reporter.py` to satisfy ruff rule `I001`.
+
+## Session 2026-09-07 (Session 2)
+
+**Task:** Owner Account Creation Flow Implementation (6-step Onboarding)
+**Tool used:** Antigravity AI Assistant
+
+### Intended Work
+
+- Implement the end-to-end Owner Account Creation Flow:
+  - Step 1: Sign In (Clerk authentication & redirect handling)
+  - Step 2: Account Type Selection (Boutique Owner vs Staff with invitation code)
+  - Step 3: Boutique Details (`POST /api/onboarding/owner` or `/api/v1/onboarding/owner`)
+  - Step 4: Plan Selection (`POST /api/onboarding/plan`) in Demo Mode (no payment)
+  - Step 5: Customize AI Context (`POST /api/onboarding/customize`) with tiered feature unlocking per `pricing_plan.md`
+  - Step 6: Create Boutique & Agent Warmup (`POST /api/onboarding/complete`) with success celebration
+- Implement backend application service, domain models, and endpoints in `Aveline.Api`.
+- Implement agent warmup endpoint (`POST /agents/warmup`) in `agnet-service`.
+- Implement React luxury onboarding wizard with shadcn/ui components in `frontend/web`.
+- Verify with unit and integration tests across backend, frontend, and Python agent service.
+
+### Summary of Activities
+
+- Audited the partially implemented Owner Account Creation Flow against `owner_onboarding.ignore.md` across all three layers:
+  - **Backend**: Verified `Organization` onboarding fields + EF config, `OnboardingDtos`, `IOnboardingService`/`OnboardingService`, `/api/v1/onboarding/{status,owner,plan,customize,complete}` endpoints, middleware allow-list, DI wiring, and tier-aware AI context validation (Seed locked / Bloom basic / Orchid+ full).
+  - **Agent service**: Confirmed `POST /agents/warmup` guarded by `require_internal_token` with structured `agent_warmup` logging.
+  - **Frontend**: Confirmed onboarding API client, wizard, and route wiring.
+- Added Python tests in `agnet-service/tests/test_agents_warmup.py` for warmup auth (missing/invalid/valid token) and the structured log event.
+- **Frontend refactor**: Split the 920-line `OwnerOnboardingWizard.tsx` into a modular multi-page structure:
+  - `wizard-context.tsx` (shared state + all submission handlers + status hydration)
+  - `plans.ts` (shared plan data + labels)
+  - `steps/` — `AccountTypeStep`, `BoutiqueDetailsStep`, `PlanSelectionStep`, `AiCustomizationStep`, `ReviewStep`, `SuccessStep`
+  - `OwnerOnboardingWizard.tsx` as a slim shell (provider + shared header/stepper/error + step routing)
+- Added the marketing site's `AuroraField` animated background (aurora blobs + drifting blossoms) plus a soft radial vignette to the onboarding screen, replacing the old static orbs.
+- Committed and pushed `feature/69-owner-account-creation-flow`, then opened PR #70 (Closes #69).
+
+### Verification Performed
+
+- `dotnet build Aveline.Api`: Succeeded (0 warnings, 0 errors).
+- `dotnet test Aveline.Api.Tests`: All 161 tests passed (incl. onboarding service + endpoint integration + middleware).
+- Frontend: `tsc -b` clean, `oxlint` warnings-only, `vitest run` 40/40, `vite build` succeeded.
+- Python warmup tests authored but not executed locally (no Python env); mirrored the passing `test_internal_auth.py` pattern.
+
+## Session 2026-09-07 (Session 3)
+
+**Task:** Tenant-scoped boutique dashboard at `/app/b/{slug}` (Issue #74) + security hardening, local docker/db bring-up, onboarding validation, dashboard UI redesign
+**Tool used:** opencode (Claude) AI coding agent
+
+### Summary of Activities
+
+- **Planned** the tenant dashboard via codebase research and confirmed scope with the user (admin-only access; Overview page + placeholder sections; `/app` kept as a slug resolver; org-scoped usage endpoint).
+- **Backend (`Aveline.Api`)**:
+  - New `OrganizationDtos` (`OrganizationProfileDto`, `OrganizationMembershipView`, `OrganizationProfileWithMembershipDto`); `OrganizationService` profile-by-slug/by-id lookups.
+  - Endpoints: `GET /orgs/by-slug/{slug}`, `GET /orgs/{organizationId:guid}`, enriched `GET /orgs/my` (slug/name); new `OrgUsageEndpoints` `GET /orgs/{organizationId:guid}/usage` (org-scoped Blossom summary).
+- **Frontend (`frontend/web`)**: typed clients (`fetchOrganizationBySlug`, `fetchOrganizationUsage`); routing `/app` → `DashboardRedirect`, `/app/b/:slug` → `TenantDashboard`; new `DashboardShell`, `Overview`, `SectionPlaceholder`; permission-gated nav mirroring `Permissions.cs`; org switcher; profile/plan/blossom/user-menu UI using the Aveline `Blossom` component.
+- **Security hardening** (acted on the security review I produced): gated `/orgs/by-slug` to active members (404 for non-members) to stop boutique/PII enumeration; centralized slug normalization in `OrgSlug` (lowercase, `[a-z0-9-]`, truncate to 100) applied to onboarding + org create; removed client-supplied `clerkOrgId` (now derived from the JWT `org_id` claim); removed raw `/orgs` from the pending-account allow-list to close the onboarding bypass; bound AES-256-GCM ciphertext to org+type via associated data.
+- **Local bring-up debugging**: aligned docker API host port to the frontend default (5091), set `ASPNETCORE_URLS=http://+:8080`, exposed `X-Account-State` in CORS, added a Development-only guarded EF migration on startup, applied all pending migrations to the first-boot Postgres, and reconnected a Postgres container left off the compose network after a port conflict (host Postgres on 5432 → docker on 5433).
+- **Onboarding validation**: numeric-only, 9-digit Sri Lankan phone auto-formatted to `+94 77 12 12 123` (`lib/boutique.ts`), string length limits + counters, description cap; mirrored submit-time checks.
+- **Dashboard redesign**: fixed the oval avatar, plan pill, gradient blossom-count pill, sidebar user popover (settings/billing/sign-out), top-up + notifications controls; corrected not-found fallback to route back to `/app`.
+
+### Verification Performed
+
+- `dotnet test Aveline.Api.Tests`: all backend tests pass (225).
+- Frontend: `tsc -b` clean, `oxlint` exit 0, `vitest` 69 passed, `vite build` success.
+- Manual: docker services healthy (postgres/redis/agent/api on 5091); migrations applied; CORS preflight from `http://localhost:5173` returns 204; OpenAPI 200 on 5091.
+

@@ -1,3 +1,4 @@
+using Aveline.Api.Modules.Organizations.DTOs;
 using Aveline.Api.Modules.Organizations.Models;
 
 namespace Aveline.Api.Modules.Organizations.Services;
@@ -43,6 +44,18 @@ public interface IOrganizationService
         string? acceptingEmail,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Returns pending (unaccepted, unrevoked, unexpired) invitations for an organization.</summary>
+    Task<IReadOnlyList<OrganizationInvitation>> ListPendingInvitationsAsync(
+        Guid organizationId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Revokes a pending invitation so it can no longer be accepted.</summary>
+    Task RevokeInvitationAsync(
+        Guid organizationId,
+        Guid invitationId,
+        Guid revokingUserId,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Returns the user's active memberships.</summary>
     Task<IReadOnlyList<OrganizationMembership>> GetUserMembershipsAsync(
         Guid userId,
@@ -51,6 +64,24 @@ public interface IOrganizationService
     /// <summary>Returns whether the user holds at least one active organization membership.</summary>
     Task<bool> HasActiveMembershipAsync(
         Guid userId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Resolves a boutique by its <paramref name="slug"/> and pairs it with the
+    /// requesting user's membership (if any). Returns null when no boutique has the slug.
+    /// </summary>
+    Task<OrganizationProfileWithMembershipDto?> GetOrganizationProfileBySlugAsync(
+        string slug,
+        Guid userId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Returns the <see cref="OrganizationProfileDto"/> for a boutique by id, or null when
+    /// it does not exist. Callers are expected to be authorized for the organization first
+    /// (see the org-scoped <c>BoutiqueAccess</c> policy).
+    /// </summary>
+    Task<OrganizationProfileDto?> GetOrganizationProfileAsync(
+        Guid organizationId,
         CancellationToken cancellationToken = default);
 
     /// <summary>Changes a member's membership status (suspend/reactivate) and invalidates their cached state.</summary>

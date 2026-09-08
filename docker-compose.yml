@@ -59,6 +59,8 @@ services:
         Host=postgres;Port=5432;Database=${POSTGRES_DB:-aveline};
         Username=${POSTGRES_USER:-aveline};Password=${POSTGRES_PASSWORD}
       Redis__ConnectionString: redis:6379
+      # Event types the API consumes from the agent service (empty until a consumer lands).
+      Eventing__SubscribeEventTypes__0: ${EVENTING_SUBSCRIBE_EVENT_TYPES_0:-}
       AgentService__BaseUrl: http://agent:8000
       AgentService__InternalToken: ${INTERNAL_API_TOKEN:-change-me-internal-token}
       # AES-256-GCM key for tenant integration credentials (base64, 32 bytes).
@@ -102,9 +104,15 @@ services:
       DATABASE_URL: >-
         postgresql+asyncpg://${POSTGRES_USER:-aveline}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aveline}
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-change-me-internal-token}
+      # Redis Pub/Sub event bus (ADR-014). The agent subscribes to aveline:*:<event_type>.
+      REDIS_URL: redis://redis:6379/0
+      # Event types this service consumes from the API (empty until a consumer lands).
+      SUBSCRIBE_EVENT_TYPES: ${SUBSCRIBE_EVENT_TYPES:-}
       # Add other env vars here (OpenAI key, etc.)
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
 volumes:

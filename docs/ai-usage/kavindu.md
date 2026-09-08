@@ -1061,3 +1061,49 @@ Design feedback round on the landing page:
 - Frontend: `tsc -b` clean, `oxlint` exit 0, `vitest` 69 passed, `vite build` success.
 - Manual: docker services healthy (postgres/redis/agent/api on 5091); migrations applied; CORS preflight from `http://localhost:5173` returns 204; OpenAPI 200 on 5091.
 
+## Session 2026-09-08
+
+**Task:** Redis Pub/Sub event bus for API–agent decoupling (ADR-014) — infrastructure-first implementation on branch `feature/redis-pubsub-event-bus`
+**Tool used:** opencode (Claude) AI coding agent
+
+### Intended Work (session start)
+
+- Investigate the codebase and produce a plan for a seamless Redis Pub/Sub integration between the ASP.NET Core API and the Python agent service.
+- Implement by phase: reusable event bus abstraction, subscription host, agent eventing, monitoring (health + metrics logs), wiring/docs, and verification.
+- Create GitHub issues, develop on a feature branch, and write ADR-014 + docs.
+
+### Work Performed
+
+- **Planning**: mapped the existing architecture (Redis used only as `IDistributedCache`; SignalR notification gateway; internal HTTP agent client; ADR-001..013; git-flow; CI). Confirmed scope with the user: reusable `IEventBus` abstraction, infrastructure-only (no consumer yet), health checks + structured metrics logs, GitHub issues + branch `feature/redis-pubsub-event-bus`.
+- **Phase 0**: created branch `feature/redis-pubsub-event-bus` from `origin/development`; wrote `docs/ADR/ADR-014-redis-pubsub-event-bus.md`; indexed it in `docs/ADR/README.md`; created GitHub issues #107–#111.
+- **Phase 1 — API eventing core** (`Aveline.Api/Infrastructure/Eventing/`): `IEvent`, `EventEnvelope`, `EventChannel`, `IEventSerializer`/`SystemTextJsonEventSerializer`, `IEventBus`, `RedisEventBus`, `InMemoryEventBus`, `EventBusMetrics`; `Configurations/EventingConfiguration.cs`; added explicit `StackExchange.Redis` reference; refactored `CacheConfiguration` to register a single shared `IConnectionMultiplexer` reused by the cache and the bus.
+- **Phase 2 — API subscription host**: `RedisSubscriptionService` (`BackgroundService`) owning the `PSUBSCRIBE` connections, dispatching into `RedisEventBus`.
+- **Phase 3 — Agent eventing** (`agnet-service/app/events/`): `schemas.py` (Pydantic `EventEnvelope`), `bus.py` (async `redis.asyncio` pub/sub), lifespan wiring in `app/main.py`; added `redis` to `requirements.txt` and `fakeredis` to `requirements-dev.txt`; added `redis_url`/`subscribe_event_types` to `app/core/config.py`.
+- **Phase 4 — Monitoring**: API `RedisHealthCheck` + `MapHealthChecks("/health")`; `EventingMetricsExporter` (MeterListener → JSON logs); agent `/health` reports Redis status via a new `RedisEventBus.ping()`.
+- **Phase 5 — Wiring & docs**: docker-compose env (`REDIS_URL`, `SUBSCRIBE_EVENT_TYPES`, `Eventing__SubscribeEventTypes__0`); `.env.example` (root + agent); `appsettings.json` `Eventing` section; `docs/architecture/eventing.md`; README tech-stack + diagram + docs index.
+- **Contract fix**: discovered the C# `OrganizationId` property snake_cased to `organization_id`, not the agreed `org_id`; added `[JsonPropertyName("org_id")]` so the C# and Pydantic wire formats match.
+- **Testability**: added `Moq` to the test project to mock the large `IConnectionMultiplexer`/`ISubscriber` interfaces for the Redis-dependent paths (`RedisEventBus.PublishAsync`, `RedisSubscriptionService`, `RedisHealthCheck`). Refactored `EventBusMetrics` to track running totals + `Snapshot()` and `EventingMetricsExporter` to read it directly (simpler and deterministic than a `MeterListener`).
+- **Health endpoint fix**: the API's fallback authorization policy requires auth by default, so `/health` returned 401; added `.AllowAnonymous()` to `MapHealthChecks("/health")`.
+
+### Files Created or Modified
+
+- **API**: `Infrastructure/Eventing/{IEvent,EventEnvelope,EventChannel,IEventSerializer,SystemTextJsonEventSerializer,IEventBus,RedisEventBus,InMemoryEventBus,EventBusMetrics,RedisSubscriptionService,RedisHealthCheck,EventingMetricsExporter}.cs`; `Configurations/EventingConfiguration.cs`; `Configurations/CacheConfiguration.cs`; `Aveline.Api.csproj`; `Program.cs`; `appsettings.json`.
+- **Agent**: `app/events/{__init__,schemas,bus}.py`; `app/main.py`; `app/core/config.py`; `requirements.txt`; `requirements-dev.txt`; `.env.example`.
+- **Tests**: `Aveline.Api.Tests/EventingTests.cs`; `agnet-service/tests/test_event_bus.py`.
+- **Docs**: `docs/ADR/ADR-014-redis-pubsub-event-bus.md`; `docs/ADR/README.md`; `docs/architecture/eventing.md`; `README.md`; `.env.example`; `docker-compose.yml`.
+
+### Verification Performed
+
+- `dotnet build Aveline.Api/Aveline.Api.sln` — 0 errors.
+- `dotnet test Aveline.Api.Tests` — **308 passed, 0 failed** (Release).
+- .NET line coverage — **30.3%** (above the 30% CI gate).
+- `ruff check app/ tests/` (agent) — clean.
+- `pytest tests/ --cov=app --cov-fail-under=90` (agent) — **26 passed**, 91% coverage (above the 90% gate).
+- Cross-language envelope contract verified: C# and Pydantic both emit `event_id/event_type/timestamp/org_id/trace_id/payload`.
+- Smoke test: API booted with Redis configured; `GET /health` returned **200 Healthy** (Redis check passed); `RedisSubscriptionService` started idle.
+
+### Notes / Remaining Work
+
+- No changes committed; awaiting user review before committing and opening a PR to `development`.
+- Concrete business triggers (WhatsApp webhook, agent workflow completion) are intentionally deferred — the bus is infrastructure-first per the agreed scope.
+

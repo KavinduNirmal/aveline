@@ -18,6 +18,9 @@
         <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.11" />
         <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.11" />
         <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.11" />
+        <!-- Explicit reference so the event bus can use IConnectionMultiplexer/ISubscriber directly
+             (already a transitive dependency of Microsoft.Extensions.Caching.StackExchangeRedis). -->
+        <PackageReference Include="StackExchange.Redis" Version="2.7.27" />
         <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     </ItemGroup>
 

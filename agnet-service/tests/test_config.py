@@ -68,3 +68,18 @@ def test_validate_startup_settings_rejects_weak_default_token():
     settings = Settings(internal_api_token="change-me-internal-token")
     with pytest.raises(RuntimeError):
         validate_startup_settings(settings)
+
+
+def test_subscribe_event_types_empty_env_is_tolerated(monkeypatch):
+    monkeypatch.setenv("SUBSCRIBE_EVENT_TYPES", "")
+    assert Settings().subscribe_event_types == []
+
+
+def test_subscribe_event_types_json_array(monkeypatch):
+    monkeypatch.setenv("SUBSCRIBE_EVENT_TYPES", '["message.received"]')
+    assert Settings().subscribe_event_types == ["message.received"]
+
+
+def test_subscribe_event_types_comma_separated(monkeypatch):
+    monkeypatch.setenv("SUBSCRIBE_EVENT_TYPES", "message.received,workflow.completed")
+    assert Settings().subscribe_event_types == ["message.received", "workflow.completed"]

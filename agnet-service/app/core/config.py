@@ -1,6 +1,9 @@
+import json
 from functools import lru_cache
+from typing import Annotated
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Defaults that are never acceptable for a shared service-to-service secret.
 _WEAK_INTERNAL_TOKENS = {"", "change-me", "change-me-internal-token"}
@@ -14,8 +17,9 @@ class Settings(BaseSettings):
     internal_api_token: str = ""
     api_base_url: str = "http://localhost:5000"
     redis_url: str = "redis://localhost:6379/0"
-    # Event types this service subscribes to (Redis Pub/Sub, ADR-014).
-    subscribe_event_types: list[str] = []
+    # Event types this service subscribes to (Redis Pub/Sub, ADR-014). NoDecode stops
+    # pydantic-settings from JSON-parsing the env value so an empty string is tolerated.
+    subscribe_event_types: Annotated[list[str], NoDecode] = []
 
     # --- LLM provider (OpenAI or DeepSeek, switched at runtime) ---
     llm_provider: str = "openai"
@@ -33,6 +37,26 @@ class Settings(BaseSettings):
     otel_trace_content: bool = True
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @field_validator("subscribe_event_types", mode="before")
+    @classmethod
+    def _parse_event_types(cls, value: object) -> object:
+        """Tolerate an empty/whitespace env value (e.g. ``SUBSCRIBE_EVENT_TYPES=""``).
+
+        An empty value simply means "subscribe to nothing". A non-empty value may be a
+        JSON array (e.g. ``["message.received"]``) or a comma-separated list.
+        """
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return []
+            if stripped.startswith("["):
+                try:
+                    return json.loads(stripped)
+                except json.JSONDecodeError:
+                    return []
+            return [item.strip() for item in stripped.split(",") if item.strip()]
+        return value
 
 
 def validate_startup_settings(settings: Settings) -> None:

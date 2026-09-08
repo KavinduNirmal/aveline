@@ -26,6 +26,7 @@ control as an audit trail.
 | `ADR-012-invitation-code-lifecycle.md` | One-time staff invitation code lifecycle |
 | `ADR-013-notification-service-architecture.md` | Notification gateway + channel adapters (SignalR realtime, FCM push, email) |
 | `ADR-014-redis-pubsub-event-bus.md` | Redis Pub/Sub event bus for API–agent decoupling (reusable `IEventBus` abstraction) |
+| `ADR-015-whatsapp-integration-gateway.md` | WhatsApp integration gateway — additive status lifecycle, `IWhatsAppService` provider, HMAC-verified webhook, health service |
 
 ## ADR Template
 

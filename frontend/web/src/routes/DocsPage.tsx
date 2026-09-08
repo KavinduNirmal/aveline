@@ -13,6 +13,7 @@ import elleMd from '@/docs/elle.md?raw'
 import linaMd from '@/docs/lina.md?raw'
 import adminAccessMd from '@/docs/admin-access.md?raw'
 import privacySecurityMd from '@/docs/privacy-security.md?raw'
+import integrationsMd from '@/docs/integrations.md?raw'
 
 const DOC_CONTENTS: Record<string, string> = {
   'getting-started': gettingStartedMd,
@@ -22,6 +23,7 @@ const DOC_CONTENTS: Record<string, string> = {
   lina: linaMd,
   'admin-access': adminAccessMd,
   'privacy-security': privacySecurityMd,
+  integrations: integrationsMd,
 }
 
 function parseHeadings(markdown: string): TocItem[] {

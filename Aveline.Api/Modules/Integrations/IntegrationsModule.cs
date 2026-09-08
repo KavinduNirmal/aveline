@@ -1,5 +1,6 @@
 using Aveline.Api.Modules.Integrations.Repositories;
 using Aveline.Api.Modules.Integrations.Services;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Aveline.Api.Modules.Integrations;
 
@@ -14,6 +15,7 @@ public static class IntegrationsModule
         services.AddSingleton<ICredentialEncryptionService, CredentialEncryptionService>();
         services.AddScoped<IIntegrationCredentialRepository, IntegrationCredentialRepository>();
         services.AddScoped<IIntegrationService, IntegrationService>();
+        services.AddHostedService<IntegrationHealthService>();
 
         return services;
     }

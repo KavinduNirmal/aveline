@@ -40,6 +40,8 @@ public class AppDbContext : DbContext
 
     public DbSet<IntegrationCredential> IntegrationCredentials => Set<IntegrationCredential>();
 
+    public DbSet<InboundMessageLog> InboundMessageLogs => Set<InboundMessageLog>();
+
     public DbSet<TimeEntry> TimeEntries => Set<TimeEntry>();
 
     public DbSet<NotificationRecord> NotificationRecords => Set<NotificationRecord>();

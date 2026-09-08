@@ -65,6 +65,11 @@ services:
       AgentService__InternalToken: ${INTERNAL_API_TOKEN:-change-me-internal-token}
       # AES-256-GCM key for tenant integration credentials (base64, 32 bytes).
       Credentials__EncryptionKey: ${CREDENTIALS_ENCRYPTION_KEY:?CREDENTIALS_ENCRYPTION_KEY is required}
+      # WhatsApp (Meta) integration gateway — base URL + API version (defaults used if unset).
+      WhatsApp__BaseUrl: ${WHATSAPP_BASE_URL:-https://graph.facebook.com}
+      WhatsApp__ApiVersion: ${WHATSAPP_API_VERSION:-v21.0}
+      # Optional Meta webhook IP allow-list (comma-separated). Empty = any IP (HMAC still enforced).
+      Webhook__AllowedIps: ${WEBHOOK_ALLOWED_IPS:-}
       # Public base URL used to build staff-invitation links.
       App__BaseUrl: ${APP_BASE_URL:-http://localhost:5173}
       # Browser origin allowed to call the API. Defaults to the Vite dev server.

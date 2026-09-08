@@ -3,6 +3,7 @@ using System;
 using Aveline.Api.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Aveline.Api.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260908162621_AddIntegrationStatus")]
+    partial class AddIntegrationStatus
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -264,8 +267,6 @@ namespace Aveline.Api.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("DecidedBy");
-
                     b.HasIndex("OrderId");
 
                     b.HasIndex("OrganizationId");
@@ -447,8 +448,6 @@ namespace Aveline.Api.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("CreatedBy");
-
                     b.HasIndex("CustomerId");
 
                     b.HasIndex("OrganizationId");
@@ -570,52 +569,6 @@ namespace Aveline.Api.Migrations
                     b.ToTable("Payments", (string)null);
                 });
 
-            modelBuilder.Entity("Aveline.Api.Modules.Integrations.Models.InboundMessageLog", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Channel")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<string>("Content")
-                        .HasColumnType("text");
-
-                    b.Property<string>("Direction")
-                        .IsRequired()
-                        .HasMaxLength(16)
-                        .HasColumnType("character varying(16)");
-
-                    b.Property<string>("ExternalId")
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
-
-                    b.Property<string>("From")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<Guid>("OrganizationId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("ReceivedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("To")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("OrganizationId");
-
-                    b.HasIndex("OrganizationId", "ReceivedAt");
-
-                    b.ToTable("InboundMessageLogs", (string)null);
-                });
-
             modelBuilder.Entity("Aveline.Api.Modules.Integrations.Models.IntegrationCredential", b =>
                 {
                     b.Property<Guid>("Id")
@@ -724,9 +677,7 @@ namespace Aveline.Api.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("OrganizationId");
-
-                    b.ToTable("NotificationRecords", (string)null);
+                    b.ToTable("NotificationRecords");
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Notifications.Models.UserDeviceToken", b =>
@@ -1122,35 +1073,8 @@ namespace Aveline.Api.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("Aveline.Api.Modules.Billing.Models.AiUsageRecord", b =>
-                {
-                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
-                        .WithMany()
-                        .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("Organization");
-                });
-
-            modelBuilder.Entity("Aveline.Api.Modules.Billing.Models.UsageAccount", b =>
-                {
-                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
-                        .WithMany()
-                        .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("Organization");
-                });
-
             modelBuilder.Entity("Aveline.Api.Modules.Commerce.Models.ApprovalQueueEntry", b =>
                 {
-                    b.HasOne("Aveline.Api.Modules.Shared.Models.User", "DecidedByUser")
-                        .WithMany()
-                        .HasForeignKey("DecidedBy")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.HasOne("Aveline.Api.Modules.Commerce.Models.Order", "Order")
                         .WithMany("Approvals")
                         .HasForeignKey("OrderId")
@@ -1162,8 +1086,6 @@ namespace Aveline.Api.Migrations
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
-
-                    b.Navigation("DecidedByUser");
 
                     b.Navigation("Order");
 
@@ -1202,18 +1124,11 @@ namespace Aveline.Api.Migrations
 
             modelBuilder.Entity("Aveline.Api.Modules.Commerce.Models.Order", b =>
                 {
-                    b.HasOne("Aveline.Api.Modules.Shared.Models.User", "CreatedByUser")
-                        .WithMany()
-                        .HasForeignKey("CreatedBy")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
                         .WithMany()
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
-
-                    b.Navigation("CreatedByUser");
 
                     b.Navigation("Organization");
                 });
@@ -1256,17 +1171,6 @@ namespace Aveline.Api.Migrations
                     b.Navigation("Organization");
                 });
 
-            modelBuilder.Entity("Aveline.Api.Modules.Integrations.Models.IntegrationCredential", b =>
-                {
-                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
-                        .WithMany()
-                        .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("Organization");
-                });
-
             modelBuilder.Entity("Aveline.Api.Modules.Notifications.Models.NotificationDelivery", b =>
                 {
                     b.HasOne("Aveline.Api.Modules.Notifications.Models.NotificationRecord", "Notification")
@@ -1276,17 +1180,6 @@ namespace Aveline.Api.Migrations
                         .IsRequired();
 
                     b.Navigation("Notification");
-                });
-
-            modelBuilder.Entity("Aveline.Api.Modules.Notifications.Models.NotificationRecord", b =>
-                {
-                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
-                        .WithMany()
-                        .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("Organization");
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Notifications.Models.UserNotification", b =>

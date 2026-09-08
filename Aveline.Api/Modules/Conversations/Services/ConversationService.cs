@@ -179,6 +179,35 @@ public class ConversationService : IConversationService
         return MessageDto.From(message);
     }
 
+    public async Task<MessageDto> RecordInboundClientMessageAsync(
+        Guid orgId,
+        string externalRef,
+        string from,
+        string text,
+        CancellationToken cancellationToken = default)
+    {
+        var threadId = Guid.NewGuid().ToString("N");
+        var conversation = await _conversations.GetOrCreateSalonByExternalRefAsync(orgId, externalRef, threadId, cancellationToken);
+
+        var message = new Message
+        {
+            ConversationId = conversation.Id,
+            AuthorKind = AuthorKind.System,
+            Kind = MessageKind.ClientMessage,
+            ContentBlocksJson = JsonSerializer.Serialize(new[]
+            {
+                new { type = "client_message", from, text },
+            }),
+            Status = MessageStatus.Published,
+        };
+        await _messages.SaveAsync(message, cancellationToken);
+
+        conversation.LastMessageAt = DateTime.UtcNow;
+        await _conversations.SaveAsync(conversation, cancellationToken);
+
+        return MessageDto.From(message);
+    }
+
     private async Task TriggerAgentAsync(Conversation conversation, string query, CancellationToken cancellationToken)
     {
         try

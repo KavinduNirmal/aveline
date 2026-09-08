@@ -105,6 +105,20 @@ public class ConversationRepositoryTests
     }
 
     [Fact]
+    public async Task GetOrCreateSalonByExternalRefAsync_IsIdempotent_PerExternalRef()
+    {
+        var orgId = Guid.NewGuid();
+        const string number = "+94771234567";
+
+        var first = await _sut.GetOrCreateSalonByExternalRefAsync(orgId, number, "thread-1");
+        var second = await _sut.GetOrCreateSalonByExternalRefAsync(orgId, number, "thread-2");
+
+        Assert.Equal(first.Id, second.Id);
+        Assert.Equal(1, await _context.Conversations.CountAsync());
+        Assert.Equal(number, second.ExternalRef);
+    }
+
+    [Fact]
     public async Task SaveAsync_UpdatesConversation()
     {
         var orgId = Guid.NewGuid();

@@ -48,6 +48,9 @@ public class ConversationEventSubscriberTests
 
         public Task<MessageDto> DecideSignOffAsync(Guid orgId, Guid userId, Guid conversationId, Guid messageId, bool approved, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
+
+        public Task<MessageDto> RecordInboundClientMessageAsync(Guid orgId, string externalRef, string from, string text, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
     }
 
     private sealed class FakeBroadcaster : IMessageBroadcaster

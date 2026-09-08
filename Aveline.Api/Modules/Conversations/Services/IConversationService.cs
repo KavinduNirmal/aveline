@@ -68,4 +68,15 @@ public interface IConversationService
         Guid messageId,
         bool approved,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Records an inbound customer message (e.g. WhatsApp) as a <see cref="MessageKind.ClientMessage"/>
+    /// in the customer's Salon, creating the Salon by external channel reference when needed.
+    /// </summary>
+    Task<MessageDto> RecordInboundClientMessageAsync(
+        Guid orgId,
+        string externalRef,
+        string from,
+        string text,
+        CancellationToken cancellationToken = default);
 }

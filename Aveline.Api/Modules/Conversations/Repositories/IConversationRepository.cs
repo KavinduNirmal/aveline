@@ -26,5 +26,16 @@ public interface IConversationRepository
         string threadId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Returns the existing <see cref="ConversationKind.Salon"/> for an org + external
+    /// channel reference (e.g. a WhatsApp number), or creates one. Idempotent per org +
+    /// external ref. Used for inbound messages where no Aveline customer id is known yet.
+    /// </summary>
+    Task<Conversation> GetOrCreateSalonByExternalRefAsync(
+        Guid orgId,
+        string externalRef,
+        string threadId,
+        CancellationToken cancellationToken = default);
+
     Task SaveAsync(Conversation conversation, CancellationToken cancellationToken = default);
 }

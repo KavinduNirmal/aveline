@@ -58,6 +58,27 @@ public class ConversationServiceTests
             return Task.FromResult(created);
         }
 
+        public Task<Conversation> GetOrCreateSalonByExternalRefAsync(Guid orgId, string externalRef, string threadId, CancellationToken ct)
+        {
+            var existing = _conversations.FirstOrDefault(c => c.OrganizationId == orgId && c.ExternalRef == externalRef && c.Kind == ConversationKind.Salon);
+            if (existing is not null)
+            {
+                return Task.FromResult(existing);
+            }
+
+            var created = new Conversation
+            {
+                Id = Guid.CreateVersion7(),
+                OrganizationId = orgId,
+                Kind = ConversationKind.Salon,
+                ExternalRef = externalRef,
+                ThreadId = threadId,
+                Status = ConversationStatus.Active,
+            };
+            _conversations.Add(created);
+            return Task.FromResult(created);
+        }
+
         public Task SaveAsync(Conversation conversation, CancellationToken ct)
         {
             SaveCount++;
@@ -261,5 +282,31 @@ public class ConversationServiceTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             _sut.DecideSignOffAsync(orgId, Guid.NewGuid(), salon.Id, note.Id, true, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task RecordInboundClientMessageAsync_CreatesSalon_AndClientMessage()
+    {
+        var orgId = Guid.NewGuid();
+
+        var message = await _sut.RecordInboundClientMessageAsync(orgId, "+94771234567", "+94771234567", "Do you have this in blue?", CancellationToken.None);
+
+        Assert.Equal(MessageKind.ClientMessage, message.Kind);
+        Assert.Equal("System", message.AuthorKind);
+        Assert.Equal(1, _messages.SaveCount);
+    }
+
+    [Fact]
+    public async Task RecordInboundClientMessageAsync_ReusesExistingSalon_ForSameExternalRef()
+    {
+        var orgId = Guid.NewGuid();
+        const string number = "+94771234567";
+
+        await _sut.RecordInboundClientMessageAsync(orgId, number, number, "first", CancellationToken.None);
+        await _sut.RecordInboundClientMessageAsync(orgId, number, number, "second", CancellationToken.None);
+
+        Assert.Equal(2, _messages.SaveCount);
+        var (items, _) = await _conversations.ListAsync(orgId, 1, 50, CancellationToken.None);
+        Assert.Single(items);
     }
 }

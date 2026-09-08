@@ -71,6 +71,37 @@ public class ConversationRepository : IConversationRepository
         return created;
     }
 
+    public async Task<Conversation> GetOrCreateSalonByExternalRefAsync(
+        Guid orgId,
+        string externalRef,
+        string threadId,
+        CancellationToken cancellationToken = default)
+    {
+        var existing = await _context.Conversations
+            .FirstOrDefaultAsync(
+                c => c.OrganizationId == orgId
+                     && c.ExternalRef == externalRef
+                     && c.Kind == ConversationKind.Salon,
+                cancellationToken);
+
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        var created = new Conversation
+        {
+            OrganizationId = orgId,
+            Kind = ConversationKind.Salon,
+            ExternalRef = externalRef,
+            ThreadId = threadId,
+            Status = ConversationStatus.Active,
+        };
+        _context.Conversations.Add(created);
+        await _context.SaveChangesAsync(cancellationToken);
+        return created;
+    }
+
     public async Task SaveAsync(Conversation conversation, CancellationToken cancellationToken = default)
     {
         conversation.UpdatedAt = DateTime.UtcNow;

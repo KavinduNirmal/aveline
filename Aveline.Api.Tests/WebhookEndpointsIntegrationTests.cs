@@ -235,6 +235,36 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Post_ValidSignature_CreatesClientMessageInSalon()
+    {
+        var orgId = await SeedOrgWithWhatsAppAsync("wh_owner_g", "webhook-g");
+        var body = MetaMessagePayload(messageId: "wamid.SALON1", from: "+94779998888");
+        var bytes = Encoding.UTF8.GetBytes(body);
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/webhooks/whatsapp/{orgId}")
+        {
+            Content = new ByteArrayContent(bytes),
+        };
+        request.Content.Headers.ContentType = new("application/json");
+        request.Headers.Add("X-Hub-Signature-256", Sign(bytes));
+
+        var response = await _client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var context = CreateContext();
+        var conversation = await context.Conversations
+            .FirstOrDefaultAsync(c => c.OrganizationId == orgId && c.ExternalRef == "+94779998888");
+        Assert.NotNull(conversation);
+
+        var message = await context.Messages
+            .FirstOrDefaultAsync(m => m.ConversationId == conversation.Id);
+        Assert.NotNull(message);
+        Assert.Equal("ClientMessage", message.Kind.ToString());
+        Assert.Equal("System", message.AuthorKind.ToString());
+        Assert.Contains("red", message.ContentBlocksJson);
+    }
+
+    [Fact]
     public async Task Post_NonMessageEvent_ReturnsIgnored()
     {
         var orgId = await SeedOrgWithWhatsAppAsync("wh_owner_f", "webhook-f");

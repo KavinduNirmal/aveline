@@ -11,6 +11,7 @@ using Aveline.Api.Modules.Admin.Services;
 using Aveline.Api.Modules.Billing;
 using Aveline.Api.Modules.Billing.Endpoints;
 using Aveline.Api.Modules.Conversations;
+using Aveline.Api.Modules.Conversations.Hubs;
 using Aveline.Api.Modules.Integrations;
 using Aveline.Api.Modules.Notifications;
 using Aveline.Api.Modules.Notifications.Hubs;
@@ -79,6 +80,7 @@ app.UseAvelineAuthAudit();
 app.UseAvelineOnboarding();
 
 app.MapHub<NotificationHub>("/hubs/notifications");
+app.MapHub<ConversationHub>("/hubs/conversations");
 // Health checks are public (the fallback authorization policy requires auth by default).
 app.MapHealthChecks("/health").AllowAnonymous();
 

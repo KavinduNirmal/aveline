@@ -50,6 +50,7 @@ public class NotificationDispatcherTests
 
     private readonly AppDbContext _context;
     private readonly NotificationRepository _repository;
+    private readonly UserNotificationRepository _inbox;
     private readonly CapturingLogger<NotificationDispatcher> _logger;
 
     public NotificationDispatcherTests()
@@ -59,6 +60,7 @@ public class NotificationDispatcherTests
             .Options;
         _context = new AppDbContext(options);
         _repository = new NotificationRepository(_context);
+        _inbox = new UserNotificationRepository(_context);
         _logger = new CapturingLogger<NotificationDispatcher>();
     }
 
@@ -86,6 +88,7 @@ public class NotificationDispatcherTests
             resolver,
             router,
             _repository,
+            _inbox,
             channel,
             channel,
             channel,
@@ -119,6 +122,13 @@ public class NotificationDispatcherTests
         var deliveries = await _context.NotificationDeliveries.ToListAsync();
         Assert.Equal(3, deliveries.Count);
         Assert.All(deliveries, d => Assert.Equal(DeliveryStatus.Delivered, d.Status));
+
+        // One inbox item created for the recipient and marked delivered.
+        var inbox = await _context.UserNotifications.SingleAsync();
+        Assert.Equal(recipient.UserId, inbox.UserId);
+        Assert.Equal(record.Id, inbox.NotificationRecordId);
+        Assert.NotNull(inbox.DeliveredAt);
+        Assert.Null(inbox.ReadAt);
     }
 
     [Fact]
@@ -141,6 +151,10 @@ public class NotificationDispatcherTests
         Assert.Equal(3, deliveries.Count);
         Assert.All(deliveries, d => Assert.Equal(DeliveryStatus.Failed, d.Status));
         Assert.All(deliveries, d => Assert.Contains("boom", d.ErrorMessage));
+
+        // Inbox item is created but not marked delivered when every channel fails.
+        var inbox = await _context.UserNotifications.SingleAsync();
+        Assert.Null(inbox.DeliveredAt);
     }
 
     [Fact]
@@ -158,6 +172,7 @@ public class NotificationDispatcherTests
         Assert.Empty(channel.Calls);
         Assert.False(await _context.NotificationRecords.AnyAsync());
         Assert.False(await _context.NotificationDeliveries.AnyAsync());
+        Assert.False(await _context.UserNotifications.AnyAsync());
     }
 
     [Fact]

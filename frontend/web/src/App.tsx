@@ -4,6 +4,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { RedirectIfAuthenticated } from './components/RedirectIfAuthenticated'
 import { RequireAccountState } from './components/RequireAccountState'
+import { NotificationsProvider } from './contexts/NotificationsContext'
 import { UserProvider } from './contexts/UserContext'
 import { AuthApiBridge } from './lib/AuthApiBridge'
 import { Toaster } from './components/ui/sonner'
@@ -30,7 +31,8 @@ export default function App() {
     <>
       <AuthApiBridge />
       <UserProvider>
-        <Routes>
+        <NotificationsProvider>
+          <Routes>
           {/* Public marketing + docs/pages */}
           <Route path="/" element={<LandingPage />} />
           <Route path="/plans" element={<PlansPage />} />
@@ -65,6 +67,7 @@ export default function App() {
         </Routes>
 
         <Toaster />
+        </NotificationsProvider>
       </UserProvider>
     </>
   )

@@ -82,6 +82,7 @@ v1.MapAuthPolicyDemoEndpoints();
 v1.MapAgentEndpoints();
 v1.MapUserEndpoints();
 v1.MapDeviceTokenEndpoints();
+v1.MapNotificationEndpoints();
 v1.MapAdminEndpoints();
 v1.MapOrganizationEndpoints();
 v1.MapOnboardingEndpoints();

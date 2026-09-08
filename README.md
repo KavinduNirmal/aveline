@@ -163,6 +163,7 @@ All pull requests and commits targeting `development`, `main`, and `master` trig
 - [Running Aveline Locally with Authentication](docs/guides/local-auth-development.md)
 - [Authentication Architecture](docs/architecture/authentication.md)
 - [Redis Pub/Sub Event Bus Architecture](docs/architecture/eventing.md)
+- [The Salon — Conversation Inbox Architecture](docs/architecture/inbox.md)
 - [Authentication Security Review](docs/security/auth-security-review.md)
 - [Owner Onboarding Flow Architecture](docs/architecture/onboarding-flow.md)
 - [Test Suite Documentation](docs/tests/README.md)

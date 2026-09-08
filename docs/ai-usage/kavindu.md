@@ -1215,3 +1215,35 @@ Investigated the existing `agnet-service/` (FastAPI + LangGraph skeleton with on
 - Used `git commit --no-verify` once: the pre-commit secret scanner flagged the fake test API keys (`sk-openai`/`sk-deepseek`) in `test_llm_factory.py` — these are test fixtures, not real secrets.
 - Real agent graphs (customer_memory, visual_insight, commerce) and their tools/schemas remain future slices; the stub graph currently backs `/agents/query*`.
 
+## Session 2026-09-09
+
+**Task:** Shared concierge infrastructure for the agent service (issues #128–#133, PR #134)
+**Tool used:** opencode (Claude) AI coding agent
+**Status:** Implemented, verified, committed (`4b21a47`), pushed, PR #134 opened to `development`
+
+### Work Performed
+
+Created the shared "Reasoning Engine" plumbing so the three slice agents can be built on top of it. No slice-specific business logic was implemented (left as placeholders for the slice owners).
+
+1. **GitHub issues** — created #128–#133 (slice = Cross-Cutting / Shared Infrastructure) before implementation.
+2. **Output schema** (`app/schemas/response.py`) — strict `AgentResponse` envelope: `status` ∈ `success | pending_approval | out_of_scope | error`, `output`, `metadata{duration_ms, model, tokens_used, blossoms_consumed}`; `AgentStatus` as `StrEnum`; `extra="forbid"`.
+3. **Prompt system** (`app/prompts/`) — universal `SYSTEM_PROMPT.md` (single source of truth, shipped inside the service at `agnet-service/app/prompts/`, **not** in `.agents/brain` which is reserved for coding-agent context) + `agent_prompts.py` (placeholders for memory/visual/commerce) + `context.py` (`build_customer_prompt`) + `assembly.py` (`assemble_system_prompt`) + `loader.py` (cached file read).
+4. **Intent Gate** (`app/gate.py`) — hybrid: deterministic keyword rules first (pricing checked before item words since they co-occur), optional async LLM fallback for ambiguous input; `IntentGateOutput` model.
+5. **Caching layers** (`app/services/`) — `semantic_cache.py` (LLM responses, keyed by hash of system+prompt+model), `profile_cache.py` (customer JSON), `tool_cache.py` (canonicalized criteria key).
+6. **Tool registry** (`app/tools/`) — `client.py` (`InternalApiClient`, attaches `X-Internal-Token`, targets `api_base_url`) + `registry.py` (`ToolRegistry` typed tool stubs over the backend internal contract). Backend internal controllers are a cross-slice dependency, not implemented here.
+7. **Concierge orchestrator** (`app/workflows/concierge_workflow.py`) — LangGraph workflow `intent_gate → memory → visual → commerce → formulate_response` with conditional routing (out-of-scope short-circuits); state kept JSON-serializable (intent/response stored as dicts) for checkpointing; `run_concierge` uses the Postgres checkpointer when a `thread_id` is supplied. Agent nodes are placeholder passthroughs (`TODO(Slice N)`).
+8. **Endpoint wiring** — `app/api/agents.py` `/agents/query` + `/agents/query/stream` now run the concierge workflow; `app/schemas/query.py` extended with `org_context` and a nested `AgentResponse`; removed the superseded `app/workflows/stub.py`.
+
+### Verification Performed
+
+- TDD throughout: tests written before each module.
+- `ruff check app/ tests/` — clean (fixed `StrEnum` UP042, import sort, unused vars).
+- `pytest tests/ --cov=app --cov-fail-under=90` — **143 passed, 2 skipped, 94.95% coverage** (≥ 90% gate).
+- Endpoint tests mock the Postgres checkpointer so no live DB is required.
+
+### Notes / Remaining Work
+
+- Committed `4b21a47` (25 files, +1675/−51) and pushed `feature/agent-service-infrastructure`; **PR #134** opened to `development` (closes #128–#133).
+- Agent-specific prompts (`app/prompts/agent_prompts.py`) and per-agent graph bodies (orchestrator `TODO(Slice N)` markers) are placeholders for the slice owners.
+- Backend internal endpoints (`/api/internal/...`) referenced by the tool registry are a cross-slice dependency to be implemented by the slice owners.
+

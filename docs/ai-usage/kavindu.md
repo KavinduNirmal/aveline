@@ -1339,3 +1339,7 @@ Implemented the conversation messaging slice test-first across the backend, agen
 - Salon list rows now show just the name (no "Aveline salon"/"Customer salon" suffix) plus an avatar: the blossom for Aveline, an initial chip for customers.
 - Tests: `AvelineAvatar.test.tsx`, `avelineStates.test.ts`.
 
+### Follow-up (same session): blossom avatar in message bubbles
+
+- `MessageBubble` now renders the animated blossom avatar for Aveline messages (instead of an "A" initial on a circle); Ava/Elle/Lina keep their accent-coloured initial avatars. Added tests asserting Aveline uses the blossom and other agents use initials.
+

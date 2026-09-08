@@ -1,5 +1,6 @@
 import { MessageSquarePlus } from 'lucide-react'
 
+import { AvelineAvatar } from '@/components/conversation/AvelineAvatar'
 import { Composer } from '@/components/conversation/Composer'
 import { MessageThread } from '@/components/conversation/MessageThread'
 import { Button } from '@/components/ui/button'
@@ -7,6 +8,24 @@ import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useConversations } from '@/contexts/ConversationsContext'
 import { cn } from '@/lib/utils'
+import type { ConversationDto } from '@/types/conversation'
+
+/** The display name for a salon: just the name, no "Salon" suffix. */
+function salonName(conversation: ConversationDto): string {
+  return conversation.customerId ? 'Customer' : 'Aveline'
+}
+
+/** The avatar shown for a salon row. Aveline uses the blossom; customers use an initial. */
+function SalonAvatar({ conversation }: { conversation: ConversationDto }) {
+  if (!conversation.customerId) {
+    return <AvelineAvatar className="size-9" blossomClassName="size-5" />
+  }
+  return (
+    <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-semibold text-muted-foreground">
+      C
+    </div>
+  )
+}
 
 /**
  * The full Salon view shown in the dashboard's Salon tab. A conversation list on the left
@@ -57,20 +76,21 @@ export function SalonPanel() {
                 type="button"
                 onClick={() => void openConversation(conversation.id)}
                 className={cn(
-                  'mb-1 w-full rounded-lg px-3 py-2.5 text-left transition-colors',
+                  'mb-1 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors',
                   activeConversationId === conversation.id
                     ? 'bg-primary/10 text-primary'
                     : 'hover:bg-muted',
                 )}
               >
-                <p className="truncate text-sm font-medium">
-                  {conversation.customerId ? 'Customer salon' : 'Aveline salon'}
-                </p>
-                <p className="truncate text-xs text-muted-foreground">
-                  {conversation.lastMessageAt
-                    ? new Date(conversation.lastMessageAt).toLocaleString()
-                    : 'No messages yet'}
-                </p>
+                <SalonAvatar conversation={conversation} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{salonName(conversation)}</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {conversation.lastMessageAt
+                      ? new Date(conversation.lastMessageAt).toLocaleString()
+                      : 'No messages yet'}
+                  </p>
+                </div>
               </button>
             ))
           )}

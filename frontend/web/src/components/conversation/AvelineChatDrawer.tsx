@@ -1,7 +1,7 @@
 import { X } from 'lucide-react'
 import { useEffect } from 'react'
 
-import { Blossom } from '@/components/auth/Blossom'
+import { AvelineAvatar } from '@/components/conversation/AvelineAvatar'
 import { Composer } from '@/components/conversation/Composer'
 import { MessageThread } from '@/components/conversation/MessageThread'
 import { Button } from '@/components/ui/button'
@@ -50,9 +50,11 @@ export function AvelineChatDrawer({ open, onClose }: AvelineChatDrawerProps) {
     >
       <header className="flex items-center justify-between border-b px-4 py-3">
         <div className="flex items-center gap-2.5">
-          <div className="flex size-8 items-center justify-center rounded-full bg-primary text-white">
-            <Blossom className="size-5" />
-          </div>
+          <AvelineAvatar
+            state={waiting ? 'thinking' : 'idle'}
+            className="size-8"
+            blossomClassName="size-5"
+          />
           <div>
             <p className="font-serif text-sm font-medium leading-tight">Aveline</p>
             <p className="text-[11px] text-muted-foreground">

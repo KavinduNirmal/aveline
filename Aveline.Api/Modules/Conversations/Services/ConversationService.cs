@@ -142,6 +142,43 @@ public class ConversationService : IConversationService
         return MessageDto.From(message);
     }
 
+    public async Task<MessageDto> DecideSignOffAsync(
+        Guid orgId,
+        Guid userId,
+        Guid conversationId,
+        Guid messageId,
+        bool approved,
+        CancellationToken cancellationToken = default)
+    {
+        var conversation = await _conversations.GetAsync(orgId, conversationId, cancellationToken)
+            ?? throw new InvalidOperationException("Conversation not found in this organization.");
+
+        var message = await _messages.GetAsync(conversationId, messageId, cancellationToken)
+            ?? throw new InvalidOperationException("Message not found in this conversation.");
+
+        if (message.Kind != MessageKind.SignOff)
+        {
+            throw new InvalidOperationException("Only a SignOff message can be decided.");
+        }
+        if (message.Status != MessageStatus.AwaitingSignOff)
+        {
+            throw new InvalidOperationException("This SignOff is not awaiting a decision.");
+        }
+
+        message.Status = approved ? MessageStatus.Published : MessageStatus.Cancelled;
+        await _messages.SaveAsync(message, cancellationToken);
+
+        conversation.Status = approved ? ConversationStatus.Active : ConversationStatus.Resolved;
+        conversation.LastMessageAt = DateTime.UtcNow;
+        await _conversations.SaveAsync(conversation, cancellationToken);
+
+        _logger.LogInformation(
+            "SignOff {MessageId} {Decision} by user {UserId} in conversation {ConversationId}.",
+            messageId, approved ? "approved" : "rejected", userId, conversationId);
+
+        return MessageDto.From(message);
+    }
+
     private async Task TriggerAgentAsync(Conversation conversation, string query, CancellationToken cancellationToken)
     {
         try

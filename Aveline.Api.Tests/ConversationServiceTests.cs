@@ -61,6 +61,12 @@ public class ConversationServiceTests
         public Task SaveAsync(Conversation conversation, CancellationToken ct)
         {
             SaveCount++;
+            var existing = _conversations.FirstOrDefault(c => c.Id == conversation.Id);
+            if (existing is not null)
+            {
+                existing.Status = conversation.Status;
+                existing.LastMessageAt = conversation.LastMessageAt;
+            }
             return Task.CompletedTask;
         }
     }
@@ -82,7 +88,16 @@ public class ConversationServiceTests
         public Task SaveAsync(Message message, CancellationToken ct)
         {
             SaveCount++;
-            _messages.Add(message);
+            var existing = _messages.FirstOrDefault(m => m.Id == message.Id);
+            if (existing is not null)
+            {
+                existing.Status = message.Status;
+                existing.ContentBlocksJson = message.ContentBlocksJson;
+            }
+            else
+            {
+                _messages.Add(message);
+            }
             return Task.CompletedTask;
         }
     }
@@ -191,5 +206,60 @@ public class ConversationServiceTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             _sut.ApplyAgentMessageAsync(evt, CancellationToken.None));
+    }
+
+    private async Task<(Guid orgId, Guid conversationId, Guid messageId)> SeedSignOffAsync()
+    {
+        var orgId = Guid.NewGuid();
+        var salon = await _sut.GetOrCreateSalonAsync(orgId, Guid.NewGuid(), null, CancellationToken.None);
+        var evt = new AgentMessageEvent(
+            salon.Id,
+            salon.ThreadId,
+            AgentKeys.Lina,
+            MessageKind.SignOff,
+            JsonSerializer.SerializeToElement(new[] { new { type = "sign_off", approvalId = "a-1", amount = 48000 } }),
+            null,
+            Guid.NewGuid());
+        var message = await _sut.ApplyAgentMessageAsync(evt, CancellationToken.None);
+        // The agent publishes SignOff as AwaitingSignOff; simulate by flipping status.
+        var stored = await _messages.GetAsync(salon.Id, message.Id, CancellationToken.None);
+        stored!.Status = MessageStatus.AwaitingSignOff;
+        await _messages.SaveAsync(stored, CancellationToken.None);
+        return (orgId, salon.Id, message.Id);
+    }
+
+    [Fact]
+    public async Task DecideSignOffAsync_Approve_PublishesMessage_AndActivatesConversation()
+    {
+        var (orgId, conversationId, messageId) = await SeedSignOffAsync();
+
+        var decided = await _sut.DecideSignOffAsync(orgId, Guid.NewGuid(), conversationId, messageId, true, CancellationToken.None);
+
+        Assert.Equal(MessageStatus.Published, decided.Status);
+        var conversation = await _conversations.GetAsync(orgId, conversationId, CancellationToken.None);
+        Assert.Equal(ConversationStatus.Active, conversation!.Status);
+    }
+
+    [Fact]
+    public async Task DecideSignOffAsync_Reject_CancelsMessage_AndResolvesConversation()
+    {
+        var (orgId, conversationId, messageId) = await SeedSignOffAsync();
+
+        var decided = await _sut.DecideSignOffAsync(orgId, Guid.NewGuid(), conversationId, messageId, false, CancellationToken.None);
+
+        Assert.Equal(MessageStatus.Cancelled, decided.Status);
+        var conversation = await _conversations.GetAsync(orgId, conversationId, CancellationToken.None);
+        Assert.Equal(ConversationStatus.Resolved, conversation!.Status);
+    }
+
+    [Fact]
+    public async Task DecideSignOffAsync_Throws_WhenMessageIsNotSignOff()
+    {
+        var orgId = Guid.NewGuid();
+        var salon = await _sut.GetOrCreateSalonAsync(orgId, Guid.NewGuid(), null, CancellationToken.None);
+        var note = await _sut.SendStaffNoteAsync(orgId, Guid.NewGuid(), salon.Id, "hello", CancellationToken.None);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _sut.DecideSignOffAsync(orgId, Guid.NewGuid(), salon.Id, note.Id, true, CancellationToken.None));
     }
 }

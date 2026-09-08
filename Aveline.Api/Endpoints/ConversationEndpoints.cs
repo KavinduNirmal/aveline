@@ -56,6 +56,14 @@ public static class ConversationEndpoints
             .Produces(StatusCodes.Status404NotFound)
             .Produces(StatusCodes.Status401Unauthorized);
 
+        group.MapPost("/{conversationId:guid}/messages/{messageId:guid}/sign-off", DecideSignOffAsync)
+            .WithName("DecideConversationSignOff")
+            .WithSummary("Approve or reject a SignOff message.")
+            .Produces<MessageDto>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized);
+
         return endpoints;
     }
 
@@ -147,6 +155,34 @@ public static class ConversationEndpoints
         catch (InvalidOperationException)
         {
             return Results.NotFound(new { message = "Conversation not found." });
+        }
+    }
+
+    private static async Task<IResult> DecideSignOffAsync(
+        Guid organizationId,
+        Guid conversationId,
+        Guid messageId,
+        SignOffDecisionRequest request,
+        ClaimsPrincipal user,
+        IConversationService conversations,
+        IUserRepository users,
+        CancellationToken cancellationToken = default)
+    {
+        var userId = await ResolveUserIdAsync(user, users, cancellationToken);
+        if (userId is null)
+        {
+            return Results.Unauthorized();
+        }
+
+        try
+        {
+            var message = await conversations.DecideSignOffAsync(
+                organizationId, userId.Value, conversationId, messageId, request.Approved, cancellationToken);
+            return Results.Ok(message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Results.BadRequest(new { message = ex.Message });
         }
     }
 

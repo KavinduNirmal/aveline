@@ -55,3 +55,6 @@ public sealed record MessagePage(
 
 /// <summary>Request to send a staff note (and trigger the agent).</summary>
 public sealed record SendMessageRequest(string Text);
+
+/// <summary>Request to decide a human-in-the-loop SignOff message.</summary>
+public sealed record SignOffDecisionRequest(bool Approved);

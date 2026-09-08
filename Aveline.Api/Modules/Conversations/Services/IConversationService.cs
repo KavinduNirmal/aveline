@@ -55,4 +55,17 @@ public interface IConversationService
     Task<MessageDto> ApplyAgentMessageAsync(
         AgentMessageEvent evt,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Decides a human-in-the-loop <see cref="MessageKind.SignOff"/> message: approves or
+    /// rejects it, transitions the message and conversation status, and (in a full system)
+    /// resumes the paused LangGraph workflow via the conversation's thread id.
+    /// </summary>
+    Task<MessageDto> DecideSignOffAsync(
+        Guid orgId,
+        Guid userId,
+        Guid conversationId,
+        Guid messageId,
+        bool approved,
+        CancellationToken cancellationToken = default);
 }

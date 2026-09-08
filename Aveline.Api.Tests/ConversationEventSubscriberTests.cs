@@ -45,6 +45,9 @@ public class ConversationEventSubscriberTests
                 Guid.NewGuid(), evt.ConversationId, "Agent", evt.AgentKey, null, evt.Kind,
                 evt.ContentBlocks, evt.ReplyToMessageId, MessageStatus.Published, DateTime.UtcNow));
         }
+
+        public Task<MessageDto> DecideSignOffAsync(Guid orgId, Guid userId, Guid conversationId, Guid messageId, bool approved, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
     }
 
     private sealed class FakeBroadcaster : IMessageBroadcaster

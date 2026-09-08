@@ -1327,3 +1327,8 @@ Implemented the conversation messaging slice test-first across the backend, agen
 - The header Aveline launcher (`AvelineChatLauncher`) is a primary CTA: the `Blossom` mark always rotates (framer-motion `rotate: 360`), counter-swings its petals when `waiting`, and cycles colour through the persona accents via the `aveline-waiting` keyframes.
 - The slide-in drawer (`AvelineChatDrawer`) is rendered at the shell root (outside the backdrop-blur header, which would otherwise become the `fixed` containing block) so it spans the full viewport height.
 
+### Follow-up (same session): Aveline greeting on new salon
+
+- When a new Salon is created, the backend now seeds a predefined Aveline welcome message (no LLM required). `IConversationRepository.GetOrCreateSalonAsync` now returns `(Conversation, bool Created)` so the service knows when to seed the greeting. The greeting is only seeded for the customer-id Aveline salon, not inbound external-ref salons.
+- Updated repository/service tests and integration tests for the extra greeting message; added tests verifying the greeting is seeded once on a new salon and not reseeded on an existing one.
+

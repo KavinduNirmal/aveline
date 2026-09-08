@@ -336,4 +336,19 @@
   color: #a49194;
 }
 
+/* Aveline "waiting" indicator: the blossom cycles through the persona accents
+   (primary wine-rose -> Ava memory rose -> Elle visual gold -> Lina commerce) to
+   signal that Aveline is processing a reply. */
+@keyframes aveline-waiting {
+  0%   { color: #8b2e42; }
+  25%  { color: #b0566b; }
+  50%  { color: #c9972b; }
+  75%  { color: #8b2e42; }
+  100% { color: #8b2e42; }
+}
+.aveline-waiting {
+  animation: aveline-waiting 2.4s ease-in-out infinite;
+}
+
+
 

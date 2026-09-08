@@ -28,6 +28,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 builder.Services.AddAvelineLogging(builder.Configuration);
 builder.Services.AddAvelineDatabase(builder.Configuration);
 builder.Services.AddAvelineCache(builder.Configuration);
+builder.Services.AddAvelineEventing(builder.Configuration);
 builder.Services.AddAvelineAuthentication(builder.Configuration);
 builder.Services.AddAvelineAuthorization();
 builder.Services.AddAvelineCors(builder.Configuration);
@@ -75,6 +76,8 @@ app.UseAvelineAuthAudit();
 app.UseAvelineOnboarding();
 
 app.MapHub<NotificationHub>("/hubs/notifications");
+// Health checks are public (the fallback authorization policy requires auth by default).
+app.MapHealthChecks("/health").AllowAnonymous();
 
 var v1 = app.MapGroup("/api/v1");
 v1.MapAuthEndpoints();

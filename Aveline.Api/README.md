@@ -29,6 +29,18 @@ The API binds `http://localhost:5091` in development (see
 | `AgentService:BaseUrl` (`AgentService__BaseUrl`) | yes | Base URL of the agent service (docker-compose: `http://agent:8000`). |
 | `AgentService:InternalToken` (`AgentService__InternalToken`) | yes | Shared secret sent as `X-Internal-Token`; must match the agent's `INTERNAL_API_TOKEN`. |
 | `Logging:UseJsonConsole` | no (default `false`) | Emit JSON structured logs (ELK / App Insights friendly). |
+| `Redis:ConnectionString` (`Redis__ConnectionString`) | no | Redis connection (shared by the distributed cache and the event bus). When unset, an in-memory cache and in-process event bus are used. |
+| `Eventing:SubscribeEventTypes` | no | Event types the API consumes from the agent service (e.g. `agent.status`). Empty until a consumer lands. |
+| `Eventing:MetricsLogIntervalSeconds` | no (default `30`) | How often event-bus metrics are logged as JSON. |
+
+## Redis Pub/Sub event bus
+
+The API publishes and consumes events over Redis Pub/Sub (ADR-014) via
+`Infrastructure/Eventing/`. Producers depend on `IEventBus` (not Redis directly); the
+default implementation is `RedisEventBus` over the shared `IConnectionMultiplexer`.
+`RedisSubscriptionService` owns the `PSUBSCRIBE` connections and dispatches received
+envelopes to registered handlers. Redis connectivity is surfaced at `GET /health`, and
+event counters are logged as structured JSON. See `docs/architecture/eventing.md`.
 
 ## Authentication & authorization
 

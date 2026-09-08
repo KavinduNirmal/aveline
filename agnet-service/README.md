@@ -27,6 +27,17 @@ Health check: `GET http://localhost:8000/health` (public).
 | `OPENAI_API_KEY` | no | LLM provider key for LangChain workflows. |
 | `LANGSMITH_API_KEY` / `LANGSMITH_PROJECT` | no | LangSmith tracing. |
 | `AVELINE_LOG_FORMAT` | no (default `json`) | `json` for structured logs, `text` for local dev. |
+| `REDIS_URL` | no | Redis connection URL for the Pub/Sub event bus (ADR-014). When unset the bus is disabled. |
+| `SUBSCRIBE_EVENT_TYPES` | no | Space-separated event types this service consumes from the API (e.g. `message.received`). Empty until a consumer lands. |
+
+## Redis Pub/Sub event bus
+
+The agent publishes and consumes events over Redis Pub/Sub (ADR-014) via
+`app/events/`. Channels are org-scoped (`aveline:<org_id>:<event_type>`); the agent
+subscribes to the `aveline:*:<event_type>` pattern for the event types in
+`SUBSCRIBE_EVENT_TYPES`. The subscriber is started/stopped on the FastAPI lifespan in
+`app/main.py`. Publishing is fire-and-forget — critical operations should use the internal
+HTTP path instead. See `docs/architecture/eventing.md`.
 
 ## Internal service authentication
 

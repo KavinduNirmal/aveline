@@ -22,5 +22,8 @@ python-dotenv
 # HTTP client
 httpx
 
+# Redis (event bus, ADR-014)
+redis
+
 # LLM provider
 openai

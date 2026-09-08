@@ -25,6 +25,7 @@ control as an audit trail.
 | `ADR-011-credential-encryption.md` | AES-256-GCM encryption of tenant integration credentials |
 | `ADR-012-invitation-code-lifecycle.md` | One-time staff invitation code lifecycle |
 | `ADR-013-notification-service-architecture.md` | Notification gateway + channel adapters (SignalR realtime, FCM push, email) |
+| `ADR-014-redis-pubsub-event-bus.md` | Redis Pub/Sub event bus for API–agent decoupling (reusable `IEventBus` abstraction) |
 
 ## ADR Template
 

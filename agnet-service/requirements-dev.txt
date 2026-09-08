@@ -4,3 +4,4 @@ pytest-asyncio
 pytest-cov
 respx
 ruff
+fakeredis

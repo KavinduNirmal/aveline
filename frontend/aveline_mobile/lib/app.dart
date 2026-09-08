@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:app_links/app_links.dart';
 import 'package:clerk_flutter/clerk_flutter.dart';
 import 'package:dio/dio.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -10,6 +12,12 @@ import 'package:provider/provider.dart';
 import 'core/config/app_config.dart';
 import 'core/network/api_client.dart';
 import 'core/network/auth_token_provider.dart';
+import 'core/notifications/device_token_api.dart';
+import 'core/notifications/firebase_push_token_source.dart';
+import 'core/notifications/notification_provider.dart';
+import 'core/notifications/push_notification_service.dart';
+import 'core/notifications/realtime_connection_factory.dart';
+import 'core/notifications/realtime_notification_service.dart';
 import 'core/providers/onboarding_provider.dart';
 import 'core/providers/owner_onboarding_provider.dart';
 import 'core/providers/user_provider.dart';
@@ -76,6 +84,9 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
   late final UserProvider _userProvider;
   late final OnboardingProvider _onboardingProvider;
   late final OwnerOnboardingProvider _ownerOnboardingProvider;
+  late final NotificationProvider _notificationProvider;
+  late final PushNotificationService _pushNotificationService;
+  late final RealtimeNotificationService _realtimeNotificationService;
   late final Dio _dio;
   late final GoRouter _router;
   final AppLinks _appLinks = AppLinks();
@@ -95,11 +106,21 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
       tokenProvider: _authRepository,
     );
     _ownerOnboardingProvider = OwnerOnboardingProvider(OwnerOnboardingApi(_dio));
+    _notificationProvider = NotificationProvider();
+    _pushNotificationService = PushNotificationService(
+      FirebasePushTokenSource(FirebaseMessaging.instance),
+      DioDeviceTokenApi(_dio),
+      Platform.isIOS ? 'IOS' : 'Android',
+    );
+    _realtimeNotificationService = RealtimeNotificationService(
+      defaultRealtimeConnectionFactory,
+    );
     _router = _buildRouter();
 
     _syncOnboardingContext();
     if (_authRepository.isSignedIn) {
       _userProvider.fetchUser(_dio);
+      _startNotifications();
     }
 
     widget.clerkAuthState.addListener(_onAuthChanged);
@@ -128,11 +149,30 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
     if (_authRepository.isSignedIn) {
       _userProvider.fetchUser(_dio);
       _syncOnboardingContext();
+      _startNotifications();
     } else {
       _userProvider.clear();
       _onboardingProvider.clear();
       _ownerOnboardingProvider.reset();
+      _stopNotifications();
     }
+  }
+
+  /// Starts push registration and the foreground realtime connection for the signed-in user.
+  void _startNotifications() {
+    _pushNotificationService.initialize();
+    _realtimeNotificationService.connect(
+      baseUrl: widget.config.apiBaseUrl,
+      getToken: _authRepository.getToken,
+      onNotification: _notificationProvider.push,
+    );
+  }
+
+  /// Stops the realtime connection and unregisters the push token on sign-out.
+  void _stopNotifications() {
+    _realtimeNotificationService.disconnect();
+    _pushNotificationService.unregister();
+    _notificationProvider.clear();
   }
 
   /// Loads the persisted onboarding account-type choice for the signed-in user.
@@ -150,6 +190,7 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
     _userProvider.dispose();
     _onboardingProvider.dispose();
     _ownerOnboardingProvider.dispose();
+    _notificationProvider.dispose();
     super.dispose();
   }
 
@@ -260,6 +301,9 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
         ),
         ChangeNotifierProvider<OwnerOnboardingProvider>.value(
           value: _ownerOnboardingProvider,
+        ),
+        ChangeNotifierProvider<NotificationProvider>.value(
+          value: _notificationProvider,
         ),
         Provider<Dio>.value(value: _dio),
       ],

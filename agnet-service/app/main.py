@@ -5,10 +5,12 @@ from contextlib import asynccontextmanager
 import redis.asyncio as aioredis
 from fastapi import FastAPI
 
-from app.api import agents
-from app.core.config import get_settings
+from app.api import agents, health
+from app.core.config import get_settings, validate_startup_settings
 from app.core.logging import configure_logging
 from app.events.bus import RedisEventBus
+from app.middleware.rate_limit import RateLimitMiddleware
+from app.observability.tracing import init_tracing
 
 logger = logging.getLogger("aveline.agent.main")
 
@@ -19,7 +21,9 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Start the Redis event bus subscriber on startup and stop it cleanly on shutdown."""
+    """Validate config, init tracing, start the Redis bus, and stop cleanly."""
+    validate_startup_settings(settings)
+    init_tracing(settings)
     event_bus: RedisEventBus | None = None
     if settings.redis_url:
         redis = aioredis.from_url(settings.redis_url, decode_responses=True)
@@ -45,8 +49,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Rate limiting on expensive agent endpoints requires Redis. When REDIS_URL is
+# configured we add the middleware; otherwise rate limiting is disabled (the
+# service still runs for local development without Redis).
+if settings.redis_url:
+    _rate_limit_redis = aioredis.from_url(settings.redis_url, decode_responses=True)
+    app.add_middleware(RateLimitMiddleware, redis=_rate_limit_redis)
+    logger.info("Rate limiting enabled on %s.", RateLimitMiddleware.__name__)
+
 # Routers under /agents require the internal service token (see app/core/security.py).
 app.include_router(agents.router)
+app.include_router(health.router)
 
 
 @app.get("/health", tags=["Health"])

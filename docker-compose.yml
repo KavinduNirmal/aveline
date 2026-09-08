@@ -1,3 +1,13 @@
+# =============================================================================
+# Aveline — local development infrastructure.
+#
+# PRODUCTION HARDENING: the `ports:` mappings on `postgres`, `redis` and the
+# `otel-collector`/`jaeger` services expose those containers to the host for
+# local development only. In production, remove the `ports:` blocks (or set them
+# to `[]`) so PostgreSQL/Redis are reachable only inside the compose network, and
+# front the API with a reverse proxy. The agent service is intentionally never
+# exposed to the host (it is reached only via http://agent:8000 internally).
+# =============================================================================
 services:
   # ---------------------------------------------------------------------------
   # PostgreSQL with pgvector extension
@@ -113,12 +123,49 @@ services:
       REDIS_URL: redis://redis:6379/0
       # Event types this service consumes from the API (empty until a consumer lands).
       SUBSCRIBE_EVENT_TYPES: ${SUBSCRIBE_EVENT_TYPES:-}
-      # Add other env vars here (OpenAI key, etc.)
+      # LLM provider (openai | deepseek), switched at runtime.
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      # Observability (OpenTelemetry) — export traces to the otel-collector.
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: aveline-agent-service
+      # Set to "false" in production to strip prompt/completion content from spans.
+      OTEL_TRACE_CONTENT: ${OTEL_TRACE_CONTENT:-true}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
+
+  # ---------------------------------------------------------------------------
+  # OpenTelemetry Collector — receives OTLP traces from the agent service.
+  # ---------------------------------------------------------------------------
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: aveline_otel_collector
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4318:4318" # OTLP HTTP receiver
+    depends_on:
+      - jaeger
+
+  # ---------------------------------------------------------------------------
+  # Jaeger — trace visualization UI (localhost:16686).
+  # ---------------------------------------------------------------------------
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: aveline_jaeger
+    restart: unless-stopped
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "4317:4317" # OTLP gRPC receiver (collector forwards here)
 
 volumes:
   postgres_data:

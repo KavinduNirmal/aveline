@@ -34,6 +34,7 @@ builder.Services.AddAvelineAuthorization();
 builder.Services.AddAvelineCors(builder.Configuration);
 builder.Services.AddAgentServiceClient(builder.Configuration);
 builder.Services.AddClerkAdminClient();
+builder.Services.AddWhatsAppProvider(builder.Configuration);
 builder.Services.AddBillingModule();
 builder.Services.AddIntegrationsModule();
 builder.Services.AddSignalR()
@@ -91,6 +92,7 @@ v1.MapOrganizationEndpoints();
 v1.MapOnboardingEndpoints();
 v1.MapIntegrationEndpoints();
 v1.MapOrgUsageEndpoints();
+v1.MapWebhookEndpoints();
 
 app.MapBillingEndpoints();
 

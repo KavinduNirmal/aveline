@@ -23,4 +23,7 @@ public enum NotificationType
 
     /// <summary>The Visual Agent finds a new customer-to-item match.</summary>
     NewMatch,
+
+    /// <summary>A connected integration's provider token has expired and needs reconnecting.</summary>
+    IntegrationExpired,
 }

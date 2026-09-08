@@ -3,6 +3,7 @@ using System;
 using Aveline.Api.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Aveline.Api.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260908163149_AddInboundMessageLog")]
+    partial class AddInboundMessageLog
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -264,8 +267,6 @@ namespace Aveline.Api.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("DecidedBy");
-
                     b.HasIndex("OrderId");
 
                     b.HasIndex("OrganizationId");
@@ -446,8 +447,6 @@ namespace Aveline.Api.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("CreatedBy");
 
                     b.HasIndex("CustomerId");
 
@@ -724,9 +723,7 @@ namespace Aveline.Api.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("OrganizationId");
-
-                    b.ToTable("NotificationRecords", (string)null);
+                    b.ToTable("NotificationRecords");
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Notifications.Models.UserDeviceToken", b =>
@@ -1122,35 +1119,8 @@ namespace Aveline.Api.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("Aveline.Api.Modules.Billing.Models.AiUsageRecord", b =>
-                {
-                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
-                        .WithMany()
-                        .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("Organization");
-                });
-
-            modelBuilder.Entity("Aveline.Api.Modules.Billing.Models.UsageAccount", b =>
-                {
-                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
-                        .WithMany()
-                        .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("Organization");
-                });
-
             modelBuilder.Entity("Aveline.Api.Modules.Commerce.Models.ApprovalQueueEntry", b =>
                 {
-                    b.HasOne("Aveline.Api.Modules.Shared.Models.User", "DecidedByUser")
-                        .WithMany()
-                        .HasForeignKey("DecidedBy")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.HasOne("Aveline.Api.Modules.Commerce.Models.Order", "Order")
                         .WithMany("Approvals")
                         .HasForeignKey("OrderId")
@@ -1162,8 +1132,6 @@ namespace Aveline.Api.Migrations
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
-
-                    b.Navigation("DecidedByUser");
 
                     b.Navigation("Order");
 
@@ -1202,18 +1170,11 @@ namespace Aveline.Api.Migrations
 
             modelBuilder.Entity("Aveline.Api.Modules.Commerce.Models.Order", b =>
                 {
-                    b.HasOne("Aveline.Api.Modules.Shared.Models.User", "CreatedByUser")
-                        .WithMany()
-                        .HasForeignKey("CreatedBy")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
                         .WithMany()
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
-
-                    b.Navigation("CreatedByUser");
 
                     b.Navigation("Organization");
                 });
@@ -1256,17 +1217,6 @@ namespace Aveline.Api.Migrations
                     b.Navigation("Organization");
                 });
 
-            modelBuilder.Entity("Aveline.Api.Modules.Integrations.Models.IntegrationCredential", b =>
-                {
-                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
-                        .WithMany()
-                        .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("Organization");
-                });
-
             modelBuilder.Entity("Aveline.Api.Modules.Notifications.Models.NotificationDelivery", b =>
                 {
                     b.HasOne("Aveline.Api.Modules.Notifications.Models.NotificationRecord", "Notification")
@@ -1276,17 +1226,6 @@ namespace Aveline.Api.Migrations
                         .IsRequired();
 
                     b.Navigation("Notification");
-                });
-
-            modelBuilder.Entity("Aveline.Api.Modules.Notifications.Models.NotificationRecord", b =>
-                {
-                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
-                        .WithMany()
-                        .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("Organization");
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Notifications.Models.UserNotification", b =>

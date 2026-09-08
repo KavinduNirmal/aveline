@@ -30,6 +30,37 @@ public interface IIntegrationService
         IntegrationType type,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Marks an integration as connected (records <c>LastConnectedAt</c>).</summary>
+    Task<IntegrationStatusDto> MarkConnectedAsync(
+        Guid organizationId,
+        IntegrationType type,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Marks an integration as failed with a non-secret error message.</summary>
+    Task<IntegrationStatusDto> MarkFailedAsync(
+        Guid organizationId,
+        IntegrationType type,
+        string error,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Marks an integration as expired (e.g. provider token expired).</summary>
+    Task<IntegrationStatusDto> MarkExpiredAsync(
+        Guid organizationId,
+        IntegrationType type,
+        string error,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Validates the stored credentials against the provider and transitions the integration
+    /// to <see cref="IntegrationStatus.Connected"/> or <see cref="IntegrationStatus.Error"/>.
+    /// Only WhatsApp is validated today; other types are reported as connected without a live
+    /// provider check.
+    /// </summary>
+    Task<IntegrationTestResultDto> TestConnectionAsync(
+        Guid organizationId,
+        IntegrationType type,
+        CancellationToken cancellationToken = default);
+
     Task DeleteAsync(
         Guid organizationId,
         IntegrationType type,

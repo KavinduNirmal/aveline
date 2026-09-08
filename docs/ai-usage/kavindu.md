@@ -1107,3 +1107,62 @@ Design feedback round on the landing page:
 - No changes committed; awaiting user review before committing and opening a PR to `development`.
 - Concrete business triggers (WhatsApp webhook, agent workflow completion) are intentionally deferred — the bus is infrastructure-first per the agreed scope.
 
+## Session 2026-09-08
+
+**Task:** WhatsApp Integration Gateway — status lifecycle, Meta provider, webhook, health service, Settings UI, docs (issues #113–#119)
+**Tool used:** opencode (Claude) AI coding agent
+**Branch:** `feature/slice1-whatsapp-integration-gateway` (branched from `feature/redis-pubsub-event-bus`)
+
+### Work Performed
+
+Investigated the existing integration implementation (ADR-011 credential encryption, ADR-014 event bus, `IntegrationEndpoints`, onboarding `IntegrationsStep`) and compared it against the integration architecture plan. Identified the gaps and implemented them additively without overwriting existing code.
+
+**#113 — Integration status lifecycle:**
+- New `IntegrationStatus` enum (`Pending/Connected/Error/Expired/Disconnected`).
+- Added `Status`, `LastConnectedAt`, `LastError` to `IntegrationCredential` + EF config.
+- Migration `AddIntegrationStatus` (backfills existing rows to `Pending`).
+- `IntegrationService`: `SaveAsync` → `Pending`; added `MarkConnectedAsync`/`MarkFailedAsync`/`MarkExpiredAsync`; `IntegrationStatusDto` extended with `status`/`lastConnectedAt`/`lastError` (kept `Connected` computed).
+- Updated React `IntegrationStatusDto` type + tests.
+
+**#114 — WhatsApp (Meta) provider:**
+- `IWhatsAppService`/`WhatsAppService` (typed `HttpClient`): `TestConnectionAsync`, `SendMessageAsync`, token validation; masked logging.
+- `WhatsAppProviderConfiguration` (`WhatsApp:BaseUrl`/`WhatsApp:ApiVersion`); registered in `Program.cs`.
+- Extended WhatsApp required keys to `accessToken`, `phoneNumberId`, `appSecret`, `webhookVerifyToken`.
+
+**#115 — Connect & test endpoints:**
+- `IntegrationService.TestConnectionAsync` (WhatsApp live check; others auto-connected).
+- `POST /orgs/{org}/integrations/{type}/test`; `PUT` now auto-connects WhatsApp.
+- Endpoint tests override `IWhatsAppService` with a fake so tests never hit Meta.
+
+**#116 — Webhook + audit log:**
+- `InboundMessageLog` model + config + migration `AddInboundMessageLog`.
+- `WebhookEndpoints` (public): GET Meta verification challenge; POST verifies `X-Hub-Signature-256` (constant-time HMAC), persists audit log, publishes `message.received` on the event bus, returns 200 immediately.
+- `WebhookSignatureVerifier` (constant-time).
+
+**#117 — Health service:**
+- `IntegrationHealthService` (BackgroundService, `IntegrationHealth:IntervalHours` default 6): validates connected WhatsApp tokens, marks `Expired`, dispatches `IntegrationExpired` notification (added `NotificationType.IntegrationExpired`).
+
+**#118 — React Settings → Integrations page:**
+- `IntegrationsPanel.tsx` wired into `DashboardShell` (replaced the `integrations` placeholder): status badges, Test & Connect, Disconnect, last-connected/error display; shadcn + brand theme.
+- Added `testIntegration` to `lib/integrations.ts`.
+
+**#119 — Security review + guardrails + docs:**
+- Webhook guardrails: optional Meta IP allow-list (`Webhook:AllowedIps`) + per-org/per-IP rate limiting.
+- `docs/ADR/ADR-015-whatsapp-integration-gateway.md` + ADR index update.
+- `docs/security/integration-security-review.md`.
+- `docs/architecture/integrations.md`.
+- `.env.example` updated with WhatsApp/health/webhook keys.
+
+### Verification Performed
+
+- `dotnet test Aveline.Api/Aveline.Api.sln` — all suites pass (integration + unit).
+- `bun run lint && bun test && bun run build` (frontend/web) — 85 tests pass, build succeeds.
+- Migrations generated with a dummy PostgreSQL connection string (design-time Npgsql provider).
+
+### Notes / Remaining Work
+
+- No changes committed; awaiting user review before committing and opening a PR to `development`.
+- Outbound send + draft/approval "outbox" deferred to a later slice (provider `SendMessageAsync` is in place).
+- Instagram/payment-gateway providers remain encrypt-only stubs (WhatsApp-first scope).
+
+

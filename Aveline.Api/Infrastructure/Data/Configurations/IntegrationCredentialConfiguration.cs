@@ -23,6 +23,13 @@ public class IntegrationCredentialConfiguration : IEntityTypeConfiguration<Integ
         builder.Property(c => c.Metadata)
             .HasColumnType("jsonb");
 
+        builder.Property(c => c.Status)
+            .HasConversion<string>()
+            .HasMaxLength(32);
+
+        builder.Property(c => c.LastError)
+            .HasColumnType("text");
+
         builder.Property(c => c.CreatedAt)
             .IsRequired();
 

@@ -22,6 +22,7 @@ import { Blossom } from '@/components/auth/Blossom'
 import { Overview } from '@/components/dashboard/Overview'
 import { SectionPlaceholder } from '@/components/dashboard/SectionPlaceholder'
 import { TeamManagement } from '@/components/dashboard/TeamManagement'
+import { IntegrationsPanel } from '@/components/dashboard/IntegrationsPanel'
 import { NotificationBell } from '@/components/dashboard/NotificationBell'
 
 import { Button } from '@/components/ui/button'
@@ -340,6 +341,8 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
             <Overview organization={organization} usage={usage} role={role} />
           ) : activeSection === 'team' ? (
             <TeamManagement organization={organization} role={role} />
+          ) : activeSection === 'integrations' ? (
+            <IntegrationsPanel organization={organization} />
           ) : (
             (() => {
               const def = allowedSections.find((s) => s.id === activeSection)

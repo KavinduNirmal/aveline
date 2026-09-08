@@ -7,6 +7,10 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <InternalsVisibleTo Include="Aveline.Api.Tests" />
+    </ItemGroup>
+
+    <ItemGroup>
         <PackageReference Include="FirebaseAdmin" Version="3.6.0" />
         <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.11" />
         <!-- 10.0.11+ pulls the patched Microsoft.OpenApi (>= 2.7.5), closing GHSA-v5pm-xwqc-g5wc. -->

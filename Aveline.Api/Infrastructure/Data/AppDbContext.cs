@@ -2,6 +2,7 @@ using Aveline.Api.Modules.Admin.Models;
 using Aveline.Api.Modules.Attendance.Models;
 using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Commerce.Models;
+using Aveline.Api.Modules.Conversations.Models;
 using Aveline.Api.Modules.Integrations.Models;
 using Aveline.Api.Modules.Notifications.Models;
 using Aveline.Api.Modules.Organizations.Models;
@@ -51,6 +52,10 @@ public class AppDbContext : DbContext
     public DbSet<UserDeviceToken> UserDeviceTokens => Set<UserDeviceToken>();
 
     public DbSet<UserNotification> UserNotifications => Set<UserNotification>();
+
+    public DbSet<Conversation> Conversations => Set<Conversation>();
+
+    public DbSet<Message> Messages => Set<Message>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

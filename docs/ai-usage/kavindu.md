@@ -1247,3 +1247,33 @@ Created the shared "Reasoning Engine" plumbing so the three slice agents can be 
 - Agent-specific prompts (`app/prompts/agent_prompts.py`) and per-agent graph bodies (orchestrator `TODO(Slice N)` markers) are placeholders for the slice owners.
 - Backend internal endpoints (`/api/internal/...`) referenced by the tool registry are a cross-slice dependency to be implemented by the slice owners.
 
+## Session 2026-09-09
+
+**Task:** Conversation Messaging ("The Salon") slice — ADR-016 + architecture docs + implementation plan, then GitHub issues, feature branch, and TDD implementation
+**Tool used:** opencode (Claude) AI coding agent
+
+### Intended Work (session start)
+
+- Design and document the unified agent-to-staff conversation inbox ("The Salon") per ADR-016.
+- Create GitHub issues for the slice phases.
+- Switch to a feature branch.
+- Implement the plan test-first (TDD), phase by phase.
+
+### Work Performed (design + docs)
+
+- Authored `docs/ADR/ADR-016-conversation-inbox.md` (Accepted): unified Salon model, sender set Staff/Agent/System (no Customer), rich `content_blocks`, `Conversation.threadId` == LangGraph checkpoint key, API as system of record, SignOff inline card, notification deep-links.
+- Authored `docs/architecture/inbox.md`: personas (Aveline/Ava/Elle/Lina), entities, message kinds (Note/Look/Piece/AtAGlance/ClientMessage/SignOff/Payment/Courier/Suggestion), content blocks, flows, realtime contract, design tokens.
+- Authored `conversation_messaging_implementation.ignore.md` (repo root): self-contained 7-phase build plan with data model, C# contracts, SignalR/event contracts, TDD order, quality gates.
+- Updated `docs/ADR/README.md` (ADR-016 row) and `README.md` (docs index).
+- Committed `2c727ba` on `feature/conversations-salon`.
+
+### Work Performed (issues + branch)
+
+- Created GitHub issues #135-#141 (one per phase): #135 backend core, #136 realtime, #137 agent service, #138 SignOff, #139 WhatsApp inbound, #140 React UI, #141 Flutter UI.
+- Created `conversations` label.
+- Switched to feature branch `feature/conversations-salon` (based on `feature/agent-service-infrastructure` HEAD so the agent concierge workflow is available for Phase 3).
+
+### Remaining Work
+
+- Implement phases 1-7 test-first (TDD), starting with Phase 1 backend core.
+

@@ -10,6 +10,7 @@ using Aveline.Api.Modules.Admin.Repositories;
 using Aveline.Api.Modules.Admin.Services;
 using Aveline.Api.Modules.Billing;
 using Aveline.Api.Modules.Billing.Endpoints;
+using Aveline.Api.Modules.Conversations;
 using Aveline.Api.Modules.Integrations;
 using Aveline.Api.Modules.Notifications;
 using Aveline.Api.Modules.Notifications.Hubs;
@@ -45,6 +46,7 @@ builder.Services.AddSignalR()
         options.PayloadSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
     });
 builder.Services.AddNotificationsModule(builder.Configuration);
+builder.Services.AddConversationsModule(builder.Configuration);
 
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IUserCacheService, UserCacheService>();
@@ -93,6 +95,7 @@ v1.MapOnboardingEndpoints();
 v1.MapIntegrationEndpoints();
 v1.MapOrgUsageEndpoints();
 v1.MapWebhookEndpoints();
+v1.MapConversationEndpoints();
 
 app.MapBillingEndpoints();
 

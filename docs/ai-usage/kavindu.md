@@ -1347,3 +1347,7 @@ Implemented the conversation messaging slice test-first across the backend, agen
 
 - The agent service failed to boot in Docker: `checkpointer.py` imports `psycopg` (v3) at module load, but the alpine runtime had no pq wrapper (`psycopg-binary` missing, pure-python fallback could not find `libpq`). Added `psycopg[binary]` to `agnet-service/requirements.txt` so the musllinux wheel bundles libpq. Requires a rebuild of the agent image.
 
+### Follow-up (same session): fix agent config parsing of empty event list
+
+- After the psycopg fix, the agent still failed to boot: pydantic-settings tried to JSON-parse the empty `SUBSCRIBE_EVENT_TYPES=""` env value into a `list[str]` and raised. Annotated `subscribe_event_types` with `NoDecode` and added a `mode="before"` validator that tolerates empty/whitespace, JSON arrays, and comma-separated values. Added config tests for all three forms.
+

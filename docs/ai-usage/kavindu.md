@@ -1343,3 +1343,7 @@ Implemented the conversation messaging slice test-first across the backend, agen
 
 - `MessageBubble` now renders the animated blossom avatar for Aveline messages (instead of an "A" initial on a circle); Ava/Elle/Lina keep their accent-coloured initial avatars. Added tests asserting Aveline uses the blossom and other agents use initials.
 
+### Follow-up (same session): fix agent Docker startup crash
+
+- The agent service failed to boot in Docker: `checkpointer.py` imports `psycopg` (v3) at module load, but the alpine runtime had no pq wrapper (`psycopg-binary` missing, pure-python fallback could not find `libpq`). Added `psycopg[binary]` to `agnet-service/requirements.txt` so the musllinux wheel bundles libpq. Requires a rebuild of the agent image.
+

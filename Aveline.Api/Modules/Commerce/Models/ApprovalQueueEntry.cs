@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using Aveline.Api.Common.MultiTenancy;
 using Aveline.Api.Modules.Organizations.Models;
+using Aveline.Api.Modules.Shared.Models;
 
 namespace Aveline.Api.Modules.Commerce.Models;
 
@@ -41,6 +42,7 @@ public class ApprovalQueueEntry : ITenantEntity
     // Navigation property
     // Navigation properties
     public Organization? Organization { get; set; }
+    public User? DecidedByUser { get; set; }
     [ForeignKey(nameof(OrderId))]
     public Order Order { get; set; } = null!;
 }

@@ -1,5 +1,7 @@
 namespace Aveline.Api.Modules.Notifications.Models;
 
+using Aveline.Api.Modules.Organizations.Models;
+
 /// <summary>
 /// Persisted record of a dispatched notification (audit trail / future inbox). The
 /// domain <see cref="Notification"/> is the transient dispatch contract; this entity
@@ -22,6 +24,8 @@ public class NotificationRecord
     public string DataJson { get; set; } = "{}";
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    public Organization? Organization { get; set; }
 
     public ICollection<NotificationDelivery> Deliveries { get; set; } = [];
 }

@@ -1,3 +1,5 @@
+using Aveline.Api.Modules.Organizations.Models;
+
 namespace Aveline.Api.Modules.Integrations.Models;
 
 /// <summary>
@@ -25,4 +27,7 @@ public class IntegrationCredential
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>Owning boutique.</summary>
+    public Organization? Organization { get; set; }
 }

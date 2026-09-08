@@ -1,3 +1,5 @@
+using Aveline.Api.Modules.Organizations.Models;
+
 namespace Aveline.Api.Modules.Billing.Models;
 
 /// <summary>
@@ -56,4 +58,7 @@ public class AiUsageRecord
     public decimal BlossomUnits { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>The organisation whose Blossom balance was consumed.</summary>
+    public Organization? Organization { get; set; }
 }

@@ -1,4 +1,5 @@
 using Aveline.Api.Modules.Commerce.Models;
+using Aveline.Api.Modules.Shared.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -51,5 +52,10 @@ public class ApprovalQueueEntryConfiguration : IEntityTypeConfiguration<Approval
 
         builder.Property(a => a.CreatedAt)
             .IsRequired();
+
+        builder.HasOne(a => a.DecidedByUser)
+            .WithMany()
+            .HasForeignKey(a => a.DecidedBy)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

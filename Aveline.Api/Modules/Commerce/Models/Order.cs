@@ -1,13 +1,18 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using Aveline.Api.Common.MultiTenancy;
+using Aveline.Api.Modules.Organizations.Models;
 
 namespace Aveline.Api.Modules.Commerce.Models;
 
 [Table("Orders")]
-public class Order
+public class Order : ITenantEntity
 {
     [Key]
     public Guid Id { get; set; } = Guid.NewGuid();
+
+    [Required]
+    public Guid OrganizationId { get; set; }
 
     [Required]
     public Guid CustomerId { get; set; }
@@ -47,6 +52,7 @@ public class Order
     public DateTime? UpdatedAt { get; set; }
 
     // Navigation properties
+    public Organization? Organization { get; set; }
     public ICollection<OrderItem> Items { get; set; } = new List<OrderItem>();
     public ICollection<Payment> Payments { get; set; } = new List<Payment>();
     public ICollection<ApprovalQueueEntry> Approvals { get; set; } = new List<ApprovalQueueEntry>();

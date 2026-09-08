@@ -1,13 +1,18 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using Aveline.Api.Common.MultiTenancy;
+using Aveline.Api.Modules.Organizations.Models;
 
 namespace Aveline.Api.Modules.Commerce.Models;
 
 [Table("Approval_Queue")]
-public class ApprovalQueueEntry
+public class ApprovalQueueEntry : ITenantEntity
 {
     [Key]
     public Guid Id { get; set; } = Guid.NewGuid();
+
+    [Required]
+    public Guid OrganizationId { get; set; }
 
     [Required]
     public Guid OrderId { get; set; }
@@ -34,6 +39,8 @@ public class ApprovalQueueEntry
     public DateTime? DecidedAt { get; set; }
 
     // Navigation property
+    // Navigation properties
+    public Organization? Organization { get; set; }
     [ForeignKey(nameof(OrderId))]
     public Order Order { get; set; } = null!;
 }

@@ -38,7 +38,7 @@ public class ConversationEventSubscriberTests
         public Task<MessageDto> SendStaffNoteAsync(Guid orgId, Guid userId, Guid conversationId, string text, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public Task<MessageDto> ApplyAgentMessageAsync(Guid orgId, AgentMessageEvent evt, CancellationToken cancellationToken = default)
+        public Task<MessageDto> ApplyAgentMessageAsync(AgentMessageEvent evt, CancellationToken cancellationToken = default)
         {
             Applied.Add(evt);
             return Task.FromResult(new MessageDto(
@@ -92,10 +92,8 @@ public class ConversationEventSubscriberTests
         await subscriber.StartAsync(CancellationToken.None);
 
         var orgId = Guid.NewGuid();
-        var conversationId = Guid.NewGuid();
         var payload = new
         {
-            conversation_id = conversationId,
             thread_id = "thread-1",
             author = new { agent_key = AgentKeys.Aveline },
             kind = "Note",
@@ -107,7 +105,7 @@ public class ConversationEventSubscriberTests
         await bus.PublishAsync(ConversationEvents.MessageCreated, orgId, payload);
 
         var applied = Assert.Single(service.Applied);
-        Assert.Equal(conversationId, applied.ConversationId);
+        Assert.Equal("thread-1", applied.ThreadId);
         Assert.Equal(AgentKeys.Aveline, applied.AgentKey);
         Assert.Equal(MessageKind.Note, applied.Kind);
         Assert.Single(broadcaster.Broadcast);

@@ -56,13 +56,6 @@ public sealed class ConversationEventSubscriber : IHostedService
 
     private async Task OnMessageCreatedAsync(EventEnvelope envelope, CancellationToken cancellationToken)
     {
-        var orgId = envelope.OrganizationId;
-        if (orgId is null)
-        {
-            _logger.LogWarning("message.created event without org_id; skipping.");
-            return;
-        }
-
         var evt = ParseMessageEvent(envelope);
         if (evt is null)
         {
@@ -73,7 +66,7 @@ public sealed class ConversationEventSubscriber : IHostedService
         var conversations = scope.ServiceProvider.GetRequiredService<IConversationService>();
         var broadcaster = scope.ServiceProvider.GetRequiredService<IMessageBroadcaster>();
 
-        var message = await conversations.ApplyAgentMessageAsync(orgId.Value, evt, cancellationToken);
+        var message = await conversations.ApplyAgentMessageAsync(evt, cancellationToken);
         await broadcaster.BroadcastMessageAsync(message, cancellationToken);
     }
 
@@ -117,7 +110,6 @@ public sealed class ConversationEventSubscriber : IHostedService
 
         try
         {
-            var conversationId = payload.GetProperty("conversation_id").GetGuid();
             var threadId = payload.GetProperty("thread_id").GetString() ?? string.Empty;
             var agentKey = payload.TryGetProperty("author", out var author)
                 && author.TryGetProperty("agent_key", out var key)
@@ -140,7 +132,7 @@ public sealed class ConversationEventSubscriber : IHostedService
                 : (Guid?)null;
 
             return new AgentMessageEvent(
-                conversationId,
+                Guid.Empty,
                 threadId,
                 agentKey ?? AgentKeys.Aveline,
                 kind,

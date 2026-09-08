@@ -27,6 +27,9 @@ public class ConversationServiceTests
         public Task<Conversation?> GetAsync(Guid orgId, Guid id, CancellationToken ct)
             => Task.FromResult(_conversations.FirstOrDefault(c => c.OrganizationId == orgId && c.Id == id));
 
+        public Task<Conversation?> GetByThreadIdAsync(string threadId, CancellationToken ct)
+            => Task.FromResult(_conversations.FirstOrDefault(c => c.ThreadId == threadId));
+
         public Task<(IReadOnlyList<Conversation> Items, int Total)> ListAsync(Guid orgId, int page, int pageSize, CancellationToken ct)
         {
             var scoped = _conversations.Where(c => c.OrganizationId == orgId).OrderByDescending(c => c.LastMessageAt).ToList();
@@ -165,7 +168,7 @@ public class ConversationServiceTests
             null,
             Guid.NewGuid());
 
-        var message = await _sut.ApplyAgentMessageAsync(orgId, evt, CancellationToken.None);
+        var message = await _sut.ApplyAgentMessageAsync(evt, CancellationToken.None);
 
         Assert.Equal("Agent", message.AuthorKind);
         Assert.Equal(AgentKeys.Aveline, message.AgentKey);
@@ -187,6 +190,6 @@ public class ConversationServiceTests
             Guid.NewGuid());
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            _sut.ApplyAgentMessageAsync(Guid.NewGuid(), evt, CancellationToken.None));
+            _sut.ApplyAgentMessageAsync(evt, CancellationToken.None));
     }
 }

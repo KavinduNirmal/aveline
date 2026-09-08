@@ -17,6 +17,10 @@ public class ConversationRepository : IConversationRepository
         => await _context.Conversations
             .FirstOrDefaultAsync(c => c.OrganizationId == orgId && c.Id == id, cancellationToken);
 
+    public async Task<Conversation?> GetByThreadIdAsync(string threadId, CancellationToken cancellationToken = default)
+        => await _context.Conversations
+            .FirstOrDefaultAsync(c => c.ThreadId == threadId, cancellationToken);
+
     public async Task<(IReadOnlyList<Conversation> Items, int Total)> ListAsync(
         Guid orgId,
         int page,

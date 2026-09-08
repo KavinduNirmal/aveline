@@ -108,11 +108,11 @@ public class ConversationService : IConversationService
     }
 
     public async Task<MessageDto> ApplyAgentMessageAsync(
-        Guid orgId,
         AgentMessageEvent evt,
         CancellationToken cancellationToken = default)
     {
-        var conversation = await _conversations.GetAsync(orgId, evt.ConversationId, cancellationToken);
+        var conversation = await _conversations.GetByThreadIdAsync(evt.ThreadId, cancellationToken)
+            ?? throw new InvalidOperationException($"Conversation for thread {evt.ThreadId} not found.");
         if (conversation is null)
         {
             // The event may arrive before the conversation is known to this instance; the

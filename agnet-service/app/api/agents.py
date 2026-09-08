@@ -1,11 +1,13 @@
 import json
 import logging
 from typing import Annotated
+from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from app.core.security import require_internal_token
+from app.events.message_publisher import publish_agent_messages
 from app.schemas.query import AgentQueryRequest, AgentQueryResponse
 from app.workflows.concierge_workflow import build_concierge_graph, run_concierge
 
@@ -63,12 +65,14 @@ async def agents_warmup(payload: Annotated[dict | None, Body()] = None) -> dict:
 
 
 @router.post("/query", response_model=AgentQueryResponse)
-async def agents_query(payload: AgentQueryRequest) -> AgentQueryResponse:
+async def agents_query(payload: AgentQueryRequest, request: Request) -> AgentQueryResponse:
     """Run the concierge workflow for the given query and return the result.
 
     The workflow runs the Intent Gate, delegates to the relevant agents, and
-    returns a structured ``AgentResponse`` envelope. Guarded by the internal
-    service token.
+    returns a structured ``AgentResponse`` envelope. When an event bus is available
+    and an organization id is present in ``org_context``, the result is published as
+    persona-attributed ``message.created`` events (ADR-016) so the API can persist and
+    broadcast them into the Salon. Guarded by the internal service token.
     """
     logger.info(
         "Agent query received: thread_id=%s",
@@ -80,11 +84,46 @@ async def agents_query(payload: AgentQueryRequest) -> AgentQueryResponse:
         org_context=payload.org_context,
         thread_id=payload.thread_id,
     )
+
+    await _publish_result(request, payload, result)
+
     return AgentQueryResponse(
         status="ok",
         result=result,
         thread_id=payload.thread_id,
     )
+
+
+async def _publish_result(request: Request, payload: AgentQueryRequest, result) -> None:
+    """Publish persona-attributed ``message.created`` events when possible.
+
+    Publishing is best-effort: if no event bus is configured, or the org id is
+    missing, the query still succeeds (the API may poll or the client may refresh).
+    """
+    event_bus = getattr(request.app.state, "event_bus", None)
+    if event_bus is None:
+        return
+
+    org_context = payload.org_context or {}
+    org_id_value = org_context.get("organization_id") or org_context.get("org_id")
+    if org_id_value is None:
+        return
+
+    try:
+        org_id = UUID(str(org_id_value))
+    except (ValueError, TypeError):
+        logger.warning("Invalid organization_id in org_context; skipping message publish.")
+        return
+
+    try:
+        await publish_agent_messages(
+            event_bus,
+            org_id,
+            payload.thread_id,
+            result,
+        )
+    except Exception:  # noqa: BLE001 - publishing must never fail the query
+        logger.exception("Failed to publish agent messages for thread %s.", payload.thread_id)
 
 
 @router.post("/query/stream")

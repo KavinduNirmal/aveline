@@ -6,6 +6,9 @@ public interface IConversationRepository
 {
     Task<Conversation?> GetAsync(Guid orgId, Guid id, CancellationToken cancellationToken = default);
 
+    /// <summary>Finds a conversation by its LangGraph checkpoint thread id.</summary>
+    Task<Conversation?> GetByThreadIdAsync(string threadId, CancellationToken cancellationToken = default);
+
     Task<(IReadOnlyList<Conversation> Items, int Total)> ListAsync(
         Guid orgId,
         int page,

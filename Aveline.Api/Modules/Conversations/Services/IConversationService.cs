@@ -53,7 +53,6 @@ public interface IConversationService
         CancellationToken cancellationToken = default);
 
     Task<MessageDto> ApplyAgentMessageAsync(
-        Guid orgId,
         AgentMessageEvent evt,
         CancellationToken cancellationToken = default);
 }

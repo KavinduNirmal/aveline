@@ -11,6 +11,7 @@ using Aveline.Api.Modules.Admin.Services;
 using Aveline.Api.Modules.Billing;
 using Aveline.Api.Modules.Billing.Endpoints;
 using Aveline.Api.Modules.Integrations;
+using Aveline.Api.Modules.Notifications;
 using Aveline.Api.Modules.Organizations.Repositories;
 using Aveline.Api.Modules.Organizations.Services;
 using Aveline.Api.Modules.Shared.Repositories;
@@ -33,6 +34,7 @@ builder.Services.AddAgentServiceClient(builder.Configuration);
 builder.Services.AddClerkAdminClient();
 builder.Services.AddBillingModule();
 builder.Services.AddIntegrationsModule();
+builder.Services.AddNotificationsModule();
 
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IUserCacheService, UserCacheService>();

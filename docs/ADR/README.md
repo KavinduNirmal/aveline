@@ -22,6 +22,9 @@ control as an audit trail.
 | `ADR-008-jwt-token-strategy.md` | JWT strategy — Clerk custom template `jwt-aveline-v1` and its role claims |
 | `ADR-009-internal-service-authentication.md` | Internal service-to-service auth via `X-Internal-Token` |
 | `ADR-010-usage-tracking-architecture.md` | Blossom usage tracking — two-table design, .NET API as recording owner, token-based normalization |
+| `ADR-011-credential-encryption.md` | AES-256-GCM encryption of tenant integration credentials |
+| `ADR-012-invitation-code-lifecycle.md` | One-time staff invitation code lifecycle |
+| `ADR-013-notification-service-architecture.md` | Notification gateway + channel adapters (SignalR realtime, FCM push, email) |
 
 ## ADR Template
 

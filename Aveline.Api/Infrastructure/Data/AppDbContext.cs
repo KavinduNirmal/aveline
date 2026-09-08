@@ -2,6 +2,7 @@ using Aveline.Api.Modules.Admin.Models;
 using Aveline.Api.Modules.Attendance.Models;
 using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Integrations.Models;
+using Aveline.Api.Modules.Notifications.Models;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Shared.Models;
 using Microsoft.EntityFrameworkCore;
@@ -31,6 +32,10 @@ public class AppDbContext : DbContext
     public DbSet<IntegrationCredential> IntegrationCredentials => Set<IntegrationCredential>();
 
     public DbSet<TimeEntry> TimeEntries => Set<TimeEntry>();
+
+    public DbSet<NotificationRecord> NotificationRecords => Set<NotificationRecord>();
+
+    public DbSet<NotificationDelivery> NotificationDeliveries => Set<NotificationDelivery>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

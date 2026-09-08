@@ -69,8 +69,10 @@ services:
         Host=postgres;Port=5432;Database=${POSTGRES_DB:-aveline};
         Username=${POSTGRES_USER:-aveline};Password=${POSTGRES_PASSWORD}
       Redis__ConnectionString: redis:6379
-      # Event types the API consumes from the agent service (empty until a consumer lands).
+      # Event types the API consumes from the agent service.
       Eventing__SubscribeEventTypes__0: ${EVENTING_SUBSCRIBE_EVENT_TYPES_0:-}
+      Eventing__SubscribeEventTypes__1: ${EVENTING_SUBSCRIBE_EVENT_TYPES_1:-}
+      Eventing__SubscribeEventTypes__2: ${EVENTING_SUBSCRIBE_EVENT_TYPES_2:-}
       AgentService__BaseUrl: http://agent:8000
       AgentService__InternalToken: ${INTERNAL_API_TOKEN:-change-me-internal-token}
       # AES-256-GCM key for tenant integration credentials (base64, 32 bytes).

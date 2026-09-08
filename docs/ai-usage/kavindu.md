@@ -1351,3 +1351,8 @@ Implemented the conversation messaging slice test-first across the backend, agen
 
 - After the psycopg fix, the agent still failed to boot: pydantic-settings tried to JSON-parse the empty `SUBSCRIBE_EVENT_TYPES=""` env value into a `list[str]` and raised. Annotated `subscribe_event_types` with `NoDecode` and added a `mode="before"` validator that tolerates empty/whitespace, JSON arrays, and comma-separated values. Added config tests for all three forms.
 
+### Follow-up (same session): wire event subscriptions + strong internal token
+
+- The agent then refused to start because `.env` had the weak `INTERNAL_API_TOKEN=change-me-internal-token`. Set a strong token in the local `.env` (gitignored).
+- Wired the event bus subscriptions: agent `SUBSCRIBE_EVENT_TYPES=message.received`; API `EVENTING_SUBSCRIBE_EVENT_TYPES_0..2` = `message.created`, `message.updated`, `conversation.created`. Updated `docker-compose.yml` to forward all three API event types (it previously only forwarded `_0`) and documented the values in `.env.example`.
+

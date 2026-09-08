@@ -201,7 +201,8 @@ public class ConversationEndpointsIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, list.StatusCode);
         var page = await list.Content.ReadFromJsonAsync<MessagePage>();
         Assert.NotNull(page);
-        Assert.Equal(1, page.Total);
+        // Aveline's greeting (seeded on salon creation) + the staff note.
+        Assert.Equal(2, page.Total);
     }
 
     [Fact]

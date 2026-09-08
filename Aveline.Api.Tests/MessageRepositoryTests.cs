@@ -23,7 +23,7 @@ public class MessageRepositoryTests
         _sut = new MessageRepository(_context);
         _conversations = new ConversationRepository(_context);
         _orgId = Guid.NewGuid();
-        _conversationId = _conversations.GetOrCreateSalonAsync(_orgId, null, "thread-1").GetAwaiter().GetResult().Id;
+        _conversationId = _conversations.GetOrCreateSalonAsync(_orgId, null, "thread-1").GetAwaiter().GetResult().Conversation.Id;
     }
 
     private Message CreateMessage(string text = "Hello", MessageKind kind = MessageKind.Note)
@@ -94,7 +94,7 @@ public class MessageRepositoryTests
     [Fact]
     public async Task ListAsync_DoesNotReturnMessages_FromOtherConversations()
     {
-        var otherConversation = await _conversations.GetOrCreateSalonAsync(_orgId, Guid.NewGuid(), "thread-2");
+        var (otherConversation, _) = await _conversations.GetOrCreateSalonAsync(_orgId, Guid.NewGuid(), "thread-2");
         await _sut.SaveAsync(new Message
         {
             ConversationId = otherConversation.Id,

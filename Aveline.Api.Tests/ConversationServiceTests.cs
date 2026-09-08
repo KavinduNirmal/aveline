@@ -37,12 +37,12 @@ public class ConversationServiceTests
             return Task.FromResult<(IReadOnlyList<Conversation>, int)>((items, scoped.Count));
         }
 
-        public Task<Conversation> GetOrCreateSalonAsync(Guid orgId, Guid? customerId, string threadId, CancellationToken ct)
+        public Task<(Conversation Conversation, bool Created)> GetOrCreateSalonAsync(Guid orgId, Guid? customerId, string threadId, CancellationToken ct)
         {
             var existing = _conversations.FirstOrDefault(c => c.OrganizationId == orgId && c.CustomerId == customerId && c.Kind == ConversationKind.Salon);
             if (existing is not null)
             {
-                return Task.FromResult(existing);
+                return Task.FromResult<(Conversation, bool)>((existing, false));
             }
 
             var created = new Conversation
@@ -55,7 +55,7 @@ public class ConversationServiceTests
                 Status = ConversationStatus.Active,
             };
             _conversations.Add(created);
-            return Task.FromResult(created);
+            return Task.FromResult<(Conversation, bool)>((created, true));
         }
 
         public Task<Conversation> GetOrCreateSalonByExternalRefAsync(Guid orgId, string externalRef, string threadId, CancellationToken ct)
@@ -162,6 +162,35 @@ public class ConversationServiceTests
     }
 
     [Fact]
+    public async Task GetOrCreateSalonAsync_SeedsAvelineGreeting_OnNewSalon()
+    {
+        var orgId = Guid.NewGuid();
+
+        var salon = await _sut.GetOrCreateSalonAsync(orgId, Guid.NewGuid(), null, CancellationToken.None);
+
+        var (items, _) = await _messages.ListAsync(salon.Id, 1, 50, null, CancellationToken.None);
+        var greeting = Assert.Single(items);
+        Assert.Equal(AuthorKind.Agent, greeting.AuthorKind);
+        Assert.Equal(AgentKeys.Aveline, greeting.AuthorAgentKey);
+        Assert.Equal(MessageKind.Note, greeting.Kind);
+        Assert.Contains("Aveline", greeting.ContentBlocksJson);
+    }
+
+    [Fact]
+    public async Task GetOrCreateSalonAsync_DoesNotReseedGreeting_OnExistingSalon()
+    {
+        var orgId = Guid.NewGuid();
+        await _sut.GetOrCreateSalonAsync(orgId, Guid.NewGuid(), null, CancellationToken.None);
+
+        await _sut.GetOrCreateSalonAsync(orgId, Guid.NewGuid(), null, CancellationToken.None);
+
+        var (items, _) = await _messages.ListAsync(
+            (await _conversations.ListAsync(orgId, 1, 50, CancellationToken.None)).Items.Single().Id,
+            1, 50, null, CancellationToken.None);
+        Assert.Single(items);
+    }
+
+    [Fact]
     public async Task SendStaffNoteAsync_PersistsNote_AndTriggersAgent()
     {
         var orgId = Guid.NewGuid();
@@ -174,7 +203,8 @@ public class ConversationServiceTests
         Assert.Equal("User", message.AuthorKind);
         Assert.Equal(userId, message.AuthorUserId);
         Assert.Equal(MessageStatus.Published, message.Status);
-        Assert.Equal(1, _messages.SaveCount);
+        // Greeting (seeded on salon creation) + the staff note.
+        Assert.Equal(2, _messages.SaveCount);
         Assert.Equal(1, _agent.PostCount);
         Assert.Equal("/agents/query", _agent.LastPath);
     }
@@ -210,7 +240,8 @@ public class ConversationServiceTests
         Assert.Equal(AgentKeys.Aveline, message.AgentKey);
         Assert.Equal(MessageKind.Note, message.Kind);
         Assert.Equal(MessageStatus.Published, message.Status);
-        Assert.Equal(1, _messages.SaveCount);
+        // Greeting (seeded on salon creation) + the agent message.
+        Assert.Equal(2, _messages.SaveCount);
     }
 
     [Fact]

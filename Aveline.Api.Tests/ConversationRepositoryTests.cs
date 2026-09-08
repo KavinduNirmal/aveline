@@ -25,8 +25,9 @@ public class ConversationRepositoryTests
         var orgId = Guid.NewGuid();
         var customerId = Guid.NewGuid();
 
-        var conversation = await _sut.GetOrCreateSalonAsync(orgId, customerId, "thread-1");
+        var (conversation, created) = await _sut.GetOrCreateSalonAsync(orgId, customerId, "thread-1");
 
+        Assert.True(created);
         Assert.Equal(ConversationKind.Salon, conversation.Kind);
         Assert.Equal(orgId, conversation.OrganizationId);
         Assert.Equal(customerId, conversation.CustomerId);
@@ -42,8 +43,9 @@ public class ConversationRepositoryTests
         var customerId = Guid.NewGuid();
         await _sut.GetOrCreateSalonAsync(orgId, customerId, "thread-1");
 
-        var second = await _sut.GetOrCreateSalonAsync(orgId, customerId, "thread-1");
+        var (second, created) = await _sut.GetOrCreateSalonAsync(orgId, customerId, "thread-1");
 
+        Assert.False(created);
         Assert.Equal(1, await _context.Conversations.CountAsync());
         Assert.Equal("thread-1", second.ThreadId);
     }
@@ -56,7 +58,7 @@ public class ConversationRepositoryTests
         var customerId = Guid.NewGuid();
 
         await _sut.GetOrCreateSalonAsync(orgA, customerId, "thread-a");
-        var orgBConversation = await _sut.GetOrCreateSalonAsync(orgB, customerId, "thread-b");
+        var (orgBConversation, _) = await _sut.GetOrCreateSalonAsync(orgB, customerId, "thread-b");
 
         Assert.Equal(2, await _context.Conversations.CountAsync());
         Assert.Equal(orgB, orgBConversation.OrganizationId);
@@ -67,7 +69,7 @@ public class ConversationRepositoryTests
     public async Task GetAsync_ReturnsConversation_ForMatchingOrg()
     {
         var orgId = Guid.NewGuid();
-        var created = await _sut.GetOrCreateSalonAsync(orgId, null, "thread-1");
+        var (created, _) = await _sut.GetOrCreateSalonAsync(orgId, null, "thread-1");
 
         var found = await _sut.GetAsync(orgId, created.Id);
 
@@ -79,7 +81,7 @@ public class ConversationRepositoryTests
     public async Task GetAsync_ReturnsNull_ForWrongOrg()
     {
         var orgId = Guid.NewGuid();
-        var created = await _sut.GetOrCreateSalonAsync(orgId, null, "thread-1");
+        var (created, _) = await _sut.GetOrCreateSalonAsync(orgId, null, "thread-1");
 
         var found = await _sut.GetAsync(Guid.NewGuid(), created.Id);
 
@@ -122,7 +124,7 @@ public class ConversationRepositoryTests
     public async Task SaveAsync_UpdatesConversation()
     {
         var orgId = Guid.NewGuid();
-        var created = await _sut.GetOrCreateSalonAsync(orgId, null, "thread-1");
+        var (created, _) = await _sut.GetOrCreateSalonAsync(orgId, null, "thread-1");
         created.Status = ConversationStatus.Resolved;
         created.LastMessageAt = DateTime.UtcNow;
 

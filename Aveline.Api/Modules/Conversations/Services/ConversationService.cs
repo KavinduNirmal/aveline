@@ -34,8 +34,45 @@ public class ConversationService : IConversationService
         CancellationToken cancellationToken = default)
     {
         var threadId = Guid.NewGuid().ToString("N");
-        var conversation = await _conversations.GetOrCreateSalonAsync(orgId, customerId, threadId, cancellationToken);
+        var (conversation, created) = await _conversations.GetOrCreateSalonAsync(orgId, customerId, threadId, cancellationToken);
+
+        // A brand-new Salon gets a predefined Aveline greeting so the user always has a
+        // warm first message (no LLM required).
+        if (created)
+        {
+            await SeedAvelineGreetingAsync(conversation, customerId, cancellationToken);
+        }
+
         return ConversationDto.From(conversation);
+    }
+
+    /// <summary>
+    /// Inserts Aveline's predefined welcome message into a freshly created Salon.
+    /// </summary>
+    private async Task SeedAvelineGreetingAsync(
+        Conversation conversation,
+        Guid? customerId,
+        CancellationToken cancellationToken)
+    {
+        var greeting = customerId is null
+            ? "Welcome to your Salon. I'm Aveline, your boutique concierge. Ask me about a customer, a piece in your catalogue, or a price - and I'll bring in Ava, Elle, or Lina when they can help."
+            : "Welcome. I'm Aveline, your boutique concierge. I'll help you look after this customer.";
+        var message = new Message
+        {
+            ConversationId = conversation.Id,
+            AuthorKind = AuthorKind.Agent,
+            AuthorAgentKey = AgentKeys.Aveline,
+            Kind = MessageKind.Note,
+            ContentBlocksJson = JsonSerializer.Serialize(new[]
+            {
+                new { type = "text", text = greeting },
+            }),
+            Status = MessageStatus.Published,
+        };
+        await _messages.SaveAsync(message, cancellationToken);
+
+        conversation.LastMessageAt = DateTime.UtcNow;
+        await _conversations.SaveAsync(conversation, cancellationToken);
     }
 
     public async Task<ConversationDto?> GetAsync(

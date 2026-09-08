@@ -40,7 +40,7 @@ public class ConversationRepository : IConversationRepository
         return (items, total);
     }
 
-    public async Task<Conversation> GetOrCreateSalonAsync(
+    public async Task<(Conversation Conversation, bool Created)> GetOrCreateSalonAsync(
         Guid orgId,
         Guid? customerId,
         string threadId,
@@ -55,7 +55,7 @@ public class ConversationRepository : IConversationRepository
 
         if (existing is not null)
         {
-            return existing;
+            return (existing, false);
         }
 
         var created = new Conversation
@@ -68,7 +68,7 @@ public class ConversationRepository : IConversationRepository
         };
         _context.Conversations.Add(created);
         await _context.SaveChangesAsync(cancellationToken);
-        return created;
+        return (created, true);
     }
 
     public async Task<Conversation> GetOrCreateSalonByExternalRefAsync(

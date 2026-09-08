@@ -18,9 +18,9 @@ public interface IConversationRepository
     /// <summary>
     /// Returns the existing <see cref="ConversationKind.Salon"/> for an org + optional
     /// customer, or creates one with the given <paramref name="threadId"/>. Idempotent per
-    /// org + customer.
+    /// org + customer. The returned bool is <c>true</c> when a new Salon was created.
     /// </summary>
-    Task<Conversation> GetOrCreateSalonAsync(
+    Task<(Conversation Conversation, bool Created)> GetOrCreateSalonAsync(
         Guid orgId,
         Guid? customerId,
         string threadId,

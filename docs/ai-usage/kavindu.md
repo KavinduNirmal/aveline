@@ -1332,3 +1332,10 @@ Implemented the conversation messaging slice test-first across the backend, agen
 - When a new Salon is created, the backend now seeds a predefined Aveline welcome message (no LLM required). `IConversationRepository.GetOrCreateSalonAsync` now returns `(Conversation, bool Created)` so the service knows when to seed the greeting. The greeting is only seeded for the customer-id Aveline salon, not inbound external-ref salons.
 - Updated repository/service tests and integration tests for the extra greeting message; added tests verifying the greeting is seeded once on a new salon and not reseeded on an existing one.
 
+### Follow-up (same session): Aveline blossom avatar + salon list polish
+
+- Created `AvelineAvatar.tsx` (the Blossom mark, always animated with colour cycle + slow rotation, no background circle) and `avelineStates.ts` (a stub mapping agentic-workflow states - idle/thinking/working/awaiting/error - to animation behaviour; only idle/thinking are wired today).
+- The animated blossom now appears in the header launcher, the chatroom (drawer) header, and the salon list.
+- Salon list rows now show just the name (no "Aveline salon"/"Customer salon" suffix) plus an avatar: the blossom for Aveline, an initial chip for customers.
+- Tests: `AvelineAvatar.test.tsx`, `avelineStates.test.ts`.
+

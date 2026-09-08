@@ -27,6 +27,20 @@ describe('MessageBubble', () => {
     expect(html).toContain('I have asked Ava and Elle.')
   })
 
+  it('renders the blossom avatar for Aveline (not a letter)', () => {
+    const html = renderToString(<MessageBubble message={makeMessage()} isOwn={false} />)
+    expect(html).toContain('aveline-waiting')
+    // Aveline's avatar is the blossom, not an "A" initial.
+    expect(html).not.toContain('>A</div>')
+  })
+
+  it('renders an initial avatar for a non-Aveline agent', () => {
+    const message = makeMessage({ agentKey: 'lina' })
+    const html = renderToString(<MessageBubble message={message} isOwn={false} />)
+    expect(html).toContain('Lina')
+    expect(html).toContain('>L</div>')
+  })
+
   it('renders a staff message right-aligned', () => {
     const message = makeMessage({
       authorKind: 'User',

@@ -1,5 +1,6 @@
 import { cn } from '@/lib/utils'
 import type { MessageDto } from '@/types/conversation'
+import { AvelineAvatar } from './AvelineAvatar'
 import { BlockList } from './blocks'
 import { personaForAuthor } from './persona'
 
@@ -16,6 +17,25 @@ function timeLabel(iso: string): string {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
+/** The avatar shown for an agent message. Aveline uses the blossom; others use an initial. */
+function AgentAvatar({ persona }: { persona: { name: string; bg: string; ring: string } }) {
+  if (persona.name === 'Aveline') {
+    return <AvelineAvatar className="size-8" blossomClassName="size-5" />
+  }
+  return (
+    <div
+      className={cn(
+        'flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white ring-2',
+        persona.bg,
+        persona.ring,
+      )}
+      title={persona.name}
+    >
+      {persona.name[0]}
+    </div>
+  )
+}
+
 /**
  * A single message bubble in the Salon. Agent messages are attributed to their persona
  * (Aveline/Ava/Elle/Lina) with the persona accent; staff messages align right.
@@ -26,18 +46,7 @@ export function MessageBubble({ message, isOwn, onSignOff }: MessageBubbleProps)
 
   return (
     <div className={cn('flex w-full gap-2.5', isOwn && 'flex-row-reverse')}>
-      {persona && (
-        <div
-          className={cn(
-            'flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white ring-2',
-            persona.bg,
-            persona.ring,
-          )}
-          title={persona.name}
-        >
-          {persona.name[0]}
-        </div>
-      )}
+      {persona && <AgentAvatar persona={persona} />}
 
       <div className={cn('flex max-w-[78%] flex-col gap-1', isOwn && 'items-end')}>
         {persona && (

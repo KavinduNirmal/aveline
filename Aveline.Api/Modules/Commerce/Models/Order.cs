@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using Aveline.Api.Common.MultiTenancy;
 using Aveline.Api.Modules.Organizations.Models;
+using Aveline.Api.Modules.Shared.Models;
 
 namespace Aveline.Api.Modules.Commerce.Models;
 
@@ -53,6 +54,7 @@ public class Order : ITenantEntity
 
     // Navigation properties
     public Organization? Organization { get; set; }
+    public User? CreatedByUser { get; set; }
     public ICollection<OrderItem> Items { get; set; } = new List<OrderItem>();
     public ICollection<Payment> Payments { get; set; } = new List<Payment>();
     public ICollection<ApprovalQueueEntry> Approvals { get; set; } = new List<ApprovalQueueEntry>();

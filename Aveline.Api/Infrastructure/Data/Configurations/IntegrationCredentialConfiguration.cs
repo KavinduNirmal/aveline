@@ -1,4 +1,5 @@
 using Aveline.Api.Modules.Integrations.Models;
+using Aveline.Api.Modules.Organizations.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -27,6 +28,11 @@ public class IntegrationCredentialConfiguration : IEntityTypeConfiguration<Integ
 
         builder.Property(c => c.UpdatedAt)
             .IsRequired();
+
+        builder.HasOne(c => c.Organization)
+            .WithMany()
+            .HasForeignKey(c => c.OrganizationId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         // One credential per organization per integration type.
         builder.HasIndex(c => new { c.OrganizationId, c.IntegrationType })

@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Aveline.Api.Modules.Organizations.Models;
 
 namespace Aveline.Api.Modules.Billing.Models;
 
@@ -72,4 +73,7 @@ public class UsageAccount
     public UsageAccountStatus Status { get; set; } = UsageAccountStatus.Active;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>The organisation that owns this usage ledger row.</summary>
+    public Organization? Organization { get; set; }
 }

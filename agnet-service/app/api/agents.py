@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 
 from app.core.security import require_internal_token
 from app.schemas.query import AgentQueryRequest, AgentQueryResponse
-from app.workflows.stub import build_stub_graph, run_stub
+from app.workflows.concierge_workflow import build_concierge_graph, run_concierge
 
 logger = logging.getLogger("aveline.agent.api")
 
@@ -64,20 +64,25 @@ async def agents_warmup(payload: Annotated[dict | None, Body()] = None) -> dict:
 
 @router.post("/query", response_model=AgentQueryResponse)
 async def agents_query(payload: AgentQueryRequest) -> AgentQueryResponse:
-    """Run an agent workflow for the given query and return the final result.
+    """Run the concierge workflow for the given query and return the result.
 
-    Currently backed by the stub graph; the real agent graphs replace it in later
-    slices. Guarded by the internal service token.
+    The workflow runs the Intent Gate, delegates to the relevant agents, and
+    returns a structured ``AgentResponse`` envelope. Guarded by the internal
+    service token.
     """
     logger.info(
         "Agent query received: thread_id=%s",
         payload.thread_id,
         extra={"action": "agent_query", "thread_id": payload.thread_id},
     )
-    result = run_stub(payload.query)
+    result = await run_concierge(
+        payload.query,
+        org_context=payload.org_context,
+        thread_id=payload.thread_id,
+    )
     return AgentQueryResponse(
         status="ok",
-        result=result.get("result", ""),
+        result=result,
         thread_id=payload.thread_id,
     )
 
@@ -97,9 +102,17 @@ async def agents_query_stream(payload: AgentQueryRequest) -> StreamingResponse:
     )
 
     async def event_source():
-        compiled = build_stub_graph()
+        compiled = build_concierge_graph()
         async for event in compiled.astream_events(
-            {"query": payload.query},
+            {
+                "message": payload.query,
+                "org_context": payload.org_context or {},
+                "intent": None,
+                "memory_output": None,
+                "visual_output": None,
+                "commerce_output": None,
+                "response": None,
+            },
             version="v2",
         ):
             kind = event.get("event")

@@ -83,25 +83,51 @@ export function ConversationsProvider({
     setConnectionState(state)
   }, [])
 
-  // Load the org's Salons once.
+  const openConversation = useCallback(
+    async (conversationId: string) => {
+      setActiveConversationId(conversationId)
+      setMessages([])
+      try {
+        const page = await fetchMessages(organizationId, conversationId, { pageSize: 100 })
+        setMessages(page.items)
+      } catch {
+        setMessages([])
+      }
+    },
+    [organizationId],
+  )
+
+  // Load the org's Salons once and auto-open the single Aveline salon (customerId = null).
   useEffect(() => {
     if (!organizationId) return
     let mounted = true
     setLoading(true)
-    fetchConversations(organizationId)
-      .then((page) => {
-        if (mounted) setConversations(page.items)
-      })
-      .catch(() => {
-        /* list is best-effort; the UI shows an empty state */
-      })
-      .finally(() => {
+    ;(async () => {
+      try {
+        const page = await fetchConversations(organizationId)
+        if (!mounted) return
+        setConversations(page.items)
+
+        // The user always has one Aveline salon to chat with directly. Get-or-create it
+        // (idempotent per org) and open it by default.
+        const avelineSalon =
+          page.items.find((c) => c.customerId === null) ??
+          (await getOrCreateConversation(organizationId, null))
+        if (!mounted) return
+        setConversations((prev) =>
+          prev.some((c) => c.id === avelineSalon.id) ? prev : [avelineSalon, ...prev],
+        )
+        await openConversation(avelineSalon.id)
+      } catch {
+        /* best-effort; the UI shows an empty state */
+      } finally {
         if (mounted) setLoading(false)
-      })
+      }
+    })()
     return () => {
       mounted = false
     }
-  }, [organizationId])
+  }, [openConversation, organizationId])
 
   // Establish the SignalR connection while signed in.
   useEffect(() => {
@@ -132,20 +158,6 @@ export function ConversationsProvider({
       cleanupRef.current = null
     }
   }, [getToken, handleStateChange, isLoaded, isSignedIn, organizationId])
-
-  const openConversation = useCallback(
-    async (conversationId: string) => {
-      setActiveConversationId(conversationId)
-      setMessages([])
-      try {
-        const page = await fetchMessages(organizationId, conversationId, { pageSize: 100 })
-        setMessages(page.items)
-      } catch {
-        setMessages([])
-      }
-    },
-    [organizationId],
-  )
 
   const openOrCreateSalon = useCallback(
     async (customerId?: string | null) => {

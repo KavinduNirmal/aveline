@@ -1,6 +1,7 @@
 using Aveline.Api.Authorization;
 using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Modules.Notifications.Models;
+using Aveline.Api.Modules.Notifications.Repositories;
 using Aveline.Api.Modules.Notifications.Services;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Organizations.Repositories;
@@ -23,7 +24,8 @@ public class OrganizationRecipientResolverTests
         _context = new AppDbContext(options);
         _sut = new OrganizationRecipientResolver(
             new OrganizationRepository(_context),
-            new UserRepository(_context));
+            new UserRepository(_context),
+            new DeviceTokenRepository(_context));
     }
 
     private static User NewUser(string clerkId, string email) => new()
@@ -128,5 +130,23 @@ public class OrganizationRecipientResolverTests
         var result = await _sut.ResolveAsync(NotificationFor(emptyOrgId, new NotificationTarget(emptyOrgId)));
 
         Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_PopulatesActiveDeviceTokens_ForResolvedUser()
+    {
+        var (orgId, _, _, staff, _) = await SeedAsync();
+
+        _context.UserDeviceTokens.AddRange(
+            new UserDeviceToken { UserId = staff.Id, Token = "active-tok", Platform = DevicePlatform.Android, IsActive = true },
+            new UserDeviceToken { UserId = staff.Id, Token = "inactive-tok", Platform = DevicePlatform.IOS, IsActive = false });
+        await _context.SaveChangesAsync();
+
+        var target = new NotificationTarget(orgId, SpecificUserId: staff.Id);
+        var result = await _sut.ResolveAsync(NotificationFor(orgId, target));
+
+        var recipient = Assert.Single(result);
+        var token = Assert.Single(recipient.DeviceTokens);
+        Assert.Equal("active-tok", token);
     }
 }

@@ -254,3 +254,6 @@ temp/
 .agents/skills/
 .claude/
 USER_INFORMATION_FOR_AGENT.md
+
+# Firebase service account key (never commit)
+firebase-service-account.json

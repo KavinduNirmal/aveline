@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
 
 import { MessageBubble } from './MessageBubble'
-import type { MessageDto } from '@/types/conversation'
+import type { ChatMessage } from '@/contexts/ConversationsContext'
 
-function makeMessage(overrides: Partial<MessageDto> = {}): MessageDto {
+function makeMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
   return {
     id: 'm1',
     conversationId: 'c1',
@@ -13,6 +13,7 @@ function makeMessage(overrides: Partial<MessageDto> = {}): MessageDto {
     authorUserId: null,
     kind: 'Note',
     contentBlocks: [{ type: 'text', text: 'I have asked Ava and Elle.' }],
+    contentHash: null,
     replyToMessageId: null,
     status: 'Published',
     createdAt: '2026-09-09T10:00:00Z',
@@ -77,5 +78,35 @@ describe('MessageBubble', () => {
     })
     const html = renderToString(<MessageBubble message={message} isOwn={false} />)
     expect(html).toContain('Customer')
+  })
+
+  it('shows a Sending… status for an optimistic staff message', () => {
+    const message = makeMessage({
+      authorKind: 'User',
+      agentKey: null,
+      authorUserId: 'u1',
+      contentBlocks: [{ type: 'text', text: 'Hello' }],
+      pending: 'sending',
+    })
+    const html = renderToString(<MessageBubble message={message} isOwn />)
+    expect(html).toContain('Sending…')
+  })
+
+  it('shows a failed status for a failed optimistic message', () => {
+    const message = makeMessage({
+      authorKind: 'User',
+      agentKey: null,
+      authorUserId: 'u1',
+      contentBlocks: [{ type: 'text', text: 'Hello' }],
+      pending: 'failed',
+    })
+    const html = renderToString(<MessageBubble message={message} isOwn />)
+    expect(html).toContain('Failed to send')
+  })
+
+  it('shows a Thought for Xs caption on an agent message', () => {
+    const message = makeMessage({ thoughtSeconds: 0.84 })
+    const html = renderToString(<MessageBubble message={message} isOwn={false} />)
+    expect(html).toContain('Thought for 0.84s')
   })
 })

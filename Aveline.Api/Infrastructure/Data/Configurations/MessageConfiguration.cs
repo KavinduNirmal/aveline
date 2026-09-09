@@ -30,6 +30,9 @@ public class MessageConfiguration : IEntityTypeConfiguration<Message>
             .HasColumnType("jsonb")
             .IsRequired();
 
+        builder.Property(m => m.ContentHash)
+            .HasMaxLength(64);
+
         builder.Property(m => m.Status)
             .HasConversion<string>()
             .IsRequired();

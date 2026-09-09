@@ -91,14 +91,14 @@ describe('conversations API client', () => {
     })
   })
 
-  it('decideSignOff posts the approval decision', async () => {
+  it('decideSignOff posts the approval decision with the content hash', async () => {
     postMock.mockResolvedValue({ data: { id: 'msg-1' } })
 
-    await decideSignOff(ORG, CONV, 'msg-1', true)
+    await decideSignOff(ORG, CONV, 'msg-1', true, 'abc123')
 
     expect(postMock).toHaveBeenCalledWith(
       `/api/v1/orgs/${ORG}/conversations/${CONV}/messages/msg-1/sign-off`,
-      { approved: true },
+      { approved: true, contentHash: 'abc123' },
     )
   })
 })

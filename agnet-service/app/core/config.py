@@ -26,6 +26,15 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_base_url: str = ""
     llm_model: str = ""
+    # When False, DeepSeek reasoner-capable models are asked not to emit a thinking
+    # (reasoning) pass. Only applied to the DeepSeek provider.
+    llm_thinking_enabled: bool = False
+
+    # --- Agent workflow pacing ---
+    # Artificial delay (ms) inserted between emitted lifecycle states so clients can
+    # visibly animate Aveline's blossom through each state during integration testing.
+    # 0 disables the delay (production-safe default).
+    agent_state_delay_ms: int = 0
 
     # --- Database (PostgreSQL + pgvector) ---
     database_url: str = ""

@@ -32,6 +32,8 @@ export interface MessageDto {
   authorUserId: string | null
   kind: string
   contentBlocks: unknown[]
+  /** Canonical hash of the content blocks; binds a SignOff decision to the exact payload. */
+  contentHash: string | null
   replyToMessageId: string | null
   status: string
   createdAt: string

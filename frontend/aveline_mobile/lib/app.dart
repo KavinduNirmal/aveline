@@ -27,7 +27,7 @@ import 'features/auth/data/clerk_auth_repository.dart';
 import 'features/auth/domain/auth_repository.dart';
 import 'features/auth/domain/aveline_user.dart';
 import 'features/auth/presentation/screens/auth_screen.dart';
-import 'features/home/presentation/screens/home_screen.dart';
+import 'features/home/presentation/screens/main_shell.dart';
 import 'features/onboarding/data/onboarding_preferences.dart';
 import 'features/onboarding/data/owner_onboarding_api.dart';
 import 'features/onboarding/presentation/screens/account_type_screen.dart';
@@ -247,7 +247,7 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
         GoRoute(
           path: AppRoutes.home,
           name: 'home',
-          builder: (context, state) => const HomeScreen(),
+          builder: (context, state) => const MainShell(),
         ),
         GoRoute(
           path: AppRoutes.auth,

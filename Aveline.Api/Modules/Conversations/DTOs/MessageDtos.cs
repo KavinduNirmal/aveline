@@ -4,7 +4,7 @@ using Aveline.Api.Modules.Conversations.Models;
 namespace Aveline.Api.Modules.Conversations.DTOs;
 
 /// <summary>A message as returned to clients. <see cref="ContentBlocks"/> is the parsed
-/// JSON block array.</summary>
+/// JSON block array; <see cref="ContentHash"/> binds a SignOff decision to the exact payload.</summary>
 public sealed record MessageDto(
     Guid Id,
     Guid ConversationId,
@@ -13,6 +13,7 @@ public sealed record MessageDto(
     Guid? AuthorUserId,
     MessageKind Kind,
     JsonElement ContentBlocks,
+    string? ContentHash,
     Guid? ReplyToMessageId,
     MessageStatus Status,
     DateTime CreatedAt)
@@ -40,6 +41,7 @@ public sealed record MessageDto(
             message.AuthorUserId,
             message.Kind,
             blocks,
+            message.ContentHash,
             message.ReplyToMessageId,
             message.Status,
             message.CreatedAt);
@@ -56,5 +58,9 @@ public sealed record MessagePage(
 /// <summary>Request to send a staff note (and trigger the agent).</summary>
 public sealed record SendMessageRequest(string Text);
 
-/// <summary>Request to decide a human-in-the-loop SignOff message.</summary>
-public sealed record SignOffDecisionRequest(bool Approved);
+/// <summary>
+/// Request to decide a human-in-the-loop SignOff message. <see cref="ContentHash"/> is the
+/// canonical hash of the content blocks the human saw; the server rejects the decision if the
+/// message content no longer hashes to this value (i.e. it changed after display).
+/// </summary>
+public sealed record SignOffDecisionRequest(bool Approved, string ContentHash);

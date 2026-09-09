@@ -648,6 +648,10 @@ namespace Aveline.Api.Migrations
                         .IsRequired()
                         .HasColumnType("jsonb");
 
+                    b.Property<string>("ContentHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<Guid>("ConversationId")
                         .HasColumnType("uuid");
 
@@ -676,6 +680,44 @@ namespace Aveline.Api.Migrations
                     b.HasIndex("ConversationId", "CreatedAt");
 
                     b.ToTable("Messages", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Conversations.Models.SignOffDecision", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("Approved")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("DecidedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("DecidedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("MessageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MessageId");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.ToTable("SignOff_Decisions", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Integrations.Models.InboundMessageLog", b =>

@@ -26,6 +26,13 @@ public class Message
     /// <summary>Ordered array of typed content blocks, serialized as JSON (jsonb).</summary>
     public string ContentBlocksJson { get; set; } = "[]";
 
+    /// <summary>
+    /// Canonical SHA-256 hash of the content blocks, set when a <see cref="MessageKind.SignOff"/>
+    /// is created. The human approves this exact payload; a decision is only valid if the hash
+    /// still matches, so a later edit to the message cannot retroactively change what was approved.
+    /// </summary>
+    public string? ContentHash { get; set; }
+
     /// <summary>Parent message id for threaded replies.</summary>
     public Guid? ReplyToMessageId { get; set; }
 

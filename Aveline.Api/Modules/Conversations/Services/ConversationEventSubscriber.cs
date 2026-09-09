@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Aveline.Api.Infrastructure.Eventing;
+using Aveline.Api.Modules.Conversations.DTOs;
 using Aveline.Api.Modules.Conversations.Models;
+using Aveline.Api.Modules.Conversations.Repositories;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -9,10 +11,11 @@ namespace Aveline.Api.Modules.Conversations.Services;
 
 /// <summary>
 /// Registers handlers on the <see cref="IEventBus"/> for the conversation event types
-/// (<c>message.created</c>, <c>message.updated</c>, <c>conversation.created</c>). When an
-/// agent publishes a content event, the handler persists it via
-/// <see cref="IConversationService.ApplyAgentMessageAsync"/> and broadcasts it. This is where
-/// the API becomes the system of record for messages.
+/// (<c>message.created</c>, <c>message.updated</c>, <c>conversation.created</c>,
+/// <c>agent.status</c>). When an agent publishes a content event, the handler persists it via
+/// <see cref="IConversationService.ApplyAgentMessageAsync"/> and broadcasts it. When an agent
+/// publishes a lifecycle state, the handler resolves the conversation from its thread id and
+/// broadcasts the state. This is where the API becomes the system of record for messages.
 ///
 /// <para>
 /// Works with both the Redis bus (handlers are invoked by <c>RedisSubscriptionService</c>)
@@ -42,6 +45,7 @@ public sealed class ConversationEventSubscriber : IHostedService
         ConversationEvents.MessageCreated,
         ConversationEvents.MessageUpdated,
         ConversationEvents.ConversationCreated,
+        ConversationEvents.AgentStatus,
     ];
 
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -49,6 +53,7 @@ public sealed class ConversationEventSubscriber : IHostedService
         await _bus.SubscribeAsync(ConversationEvents.MessageCreated, OnMessageCreatedAsync, cancellationToken);
         await _bus.SubscribeAsync(ConversationEvents.MessageUpdated, OnMessageUpdatedAsync, cancellationToken);
         await _bus.SubscribeAsync(ConversationEvents.ConversationCreated, OnConversationCreatedAsync, cancellationToken);
+        await _bus.SubscribeAsync(ConversationEvents.AgentStatus, OnAgentStatusAsync, cancellationToken);
         _logger.LogInformation("Conversation event subscriber registered handlers for {Count} event types.", RegisteredEventTypes.Count);
     }
 
@@ -68,6 +73,32 @@ public sealed class ConversationEventSubscriber : IHostedService
 
         var message = await conversations.ApplyAgentMessageAsync(evt, cancellationToken);
         await broadcaster.BroadcastMessageAsync(message, cancellationToken);
+    }
+
+    private async Task OnAgentStatusAsync(EventEnvelope envelope, CancellationToken cancellationToken)
+    {
+        var (threadId, state, agentKey, traceId) = ParseAgentStatusEvent(envelope);
+        if (threadId is null || state is null)
+        {
+            return;
+        }
+
+        using var scope = _scopeFactory.CreateScope();
+        var conversations = scope.ServiceProvider.GetRequiredService<IConversationRepository>();
+        var broadcaster = scope.ServiceProvider.GetRequiredService<IMessageBroadcaster>();
+
+        var conversation = await conversations.GetByThreadIdAsync(threadId, cancellationToken);
+        if (conversation is null)
+        {
+            // The state event may arrive before the conversation is known to this instance;
+            // drop it rather than fail the listener.
+            _logger.LogDebug("Agent status for unknown thread {ThreadId} skipped.", threadId);
+            return;
+        }
+
+        await broadcaster.BroadcastAgentStateAsync(
+            new AgentStateDto(conversation.Id, state, agentKey, traceId),
+            cancellationToken);
     }
 
     private Task OnMessageUpdatedAsync(EventEnvelope envelope, CancellationToken cancellationToken)
@@ -144,6 +175,56 @@ public sealed class ConversationEventSubscriber : IHostedService
         {
             // Malformed payload; log and skip rather than crash the listener.
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Parses an <c>agent.status</c> payload into its parts. Returns <c>null</c> thread/state
+    /// when the payload is malformed or missing required fields.
+    /// </summary>
+    private static (string? ThreadId, string? State, string? AgentKey, Guid? TraceId) ParseAgentStatusEvent(EventEnvelope envelope)
+    {
+        JsonElement payload;
+        if (envelope.Payload is JsonElement element)
+        {
+            payload = element;
+        }
+        else if (envelope.Payload is not null)
+        {
+            try
+            {
+                payload = JsonSerializer.SerializeToElement(envelope.Payload);
+            }
+            catch (JsonException)
+            {
+                return (null, null, null, null);
+            }
+        }
+        else
+        {
+            return (null, null, null, null);
+        }
+
+        try
+        {
+            var threadId = payload.TryGetProperty("thread_id", out var threadProp)
+                ? threadProp.GetString()
+                : null;
+            var state = payload.TryGetProperty("state", out var stateProp)
+                ? stateProp.GetString()
+                : null;
+            var agentKey = payload.TryGetProperty("agent_key", out var keyProp)
+                ? keyProp.GetString()
+                : null;
+            var traceId = payload.TryGetProperty("trace_id", out var traceProp)
+                && traceProp.ValueKind == JsonValueKind.String
+                ? traceProp.GetGuid()
+                : (Guid?)null;
+            return (threadId, state, agentKey, traceId);
+        }
+        catch (JsonException)
+        {
+            return (null, null, null, null);
         }
     }
 }

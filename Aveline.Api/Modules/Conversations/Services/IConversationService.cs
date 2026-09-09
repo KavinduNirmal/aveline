@@ -58,8 +58,8 @@ public interface IConversationService
 
     /// <summary>
     /// Decides a human-in-the-loop <see cref="MessageKind.SignOff"/> message: approves or
-    /// rejects it, transitions the message and conversation status, and (in a full system)
-    /// resumes the paused LangGraph workflow via the conversation's thread id.
+    /// rejects it, records the decision out of band bound to the exact content hash, and (in a
+    /// full system) resumes the paused LangGraph workflow via the conversation's thread id.
     /// </summary>
     Task<MessageDto> DecideSignOffAsync(
         Guid orgId,
@@ -67,6 +67,7 @@ public interface IConversationService
         Guid conversationId,
         Guid messageId,
         bool approved,
+        string contentHash,
         CancellationToken cancellationToken = default);
 
     /// <summary>

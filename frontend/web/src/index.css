@@ -350,5 +350,68 @@
   animation: aveline-waiting 2.4s ease-in-out infinite;
 }
 
+/* Aveline blossom animation primitives. Each state maps to one or more of these via
+   `avelineStates.ts`; the avatar nests a rotation wrapper around a transform wrapper so
+   spin and scale/sway/shake never fight over the same `transform`. */
+@keyframes aveline-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes aveline-spin-steps {
+  to { transform: rotate(360deg); }
+}
+@keyframes aveline-breathing {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.05); }
+}
+@keyframes aveline-pulse {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(0.92); }
+}
+@keyframes aveline-bloom {
+  0%   { transform: scale(0.7); }
+  60%  { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+@keyframes aveline-shake {
+  0%, 100% { transform: translateX(0); }
+  20%      { transform: translateX(-3px); }
+  40%      { transform: translateX(3px); }
+  60%      { transform: translateX(-2px); }
+  80%      { transform: translateX(2px); }
+}
+@keyframes aveline-ripple {
+  0%   { transform: scale(0.4); opacity: 0.6; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+.aveline-spin {
+  animation: aveline-spin var(--aveline-spin, 12s) linear infinite;
+}
+.aveline-spin-steps {
+  animation: aveline-spin-steps 3s steps(12) infinite;
+}
+.aveline-breathing {
+  animation: aveline-breathing 3s ease-in-out infinite;
+}
+.aveline-pulse {
+  animation: aveline-pulse 1.6s ease-in-out infinite;
+}
+.aveline-bloom {
+  animation: aveline-bloom 0.9s ease-out forwards;
+}
+.aveline-shake {
+  animation: aveline-shake 0.5s ease-in-out;
+}
+.aveline-ripple-ring {
+  transform-origin: 12px 12px;
+  animation: aveline-ripple 1.8s ease-out infinite;
+}
+.aveline-ripple-ring:nth-child(2) {
+  animation-delay: 0.6s;
+}
+.aveline-ripple-ring:nth-child(3) {
+  animation-delay: 1.2s;
+}
+
 
 

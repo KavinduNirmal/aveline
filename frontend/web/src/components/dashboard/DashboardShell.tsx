@@ -153,7 +153,7 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
       <div className="flex min-h-screen bg-background">
         <aside className="sticky top-0 flex h-screen w-64 shrink-0 flex-col border-r bg-background/60 backdrop-blur-sm">
         {/* Boutique identity */}
-        <div className="flex items-center gap-3 border-b px-4 py-5">
+        <div className="flex h-16 items-center gap-3 border-b px-4">
           <div className="relative size-10 shrink-0 overflow-hidden rounded-full ring-1 ring-primary/20">
             {organization.logoUrl ? (
               <img

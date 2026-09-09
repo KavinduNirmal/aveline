@@ -100,16 +100,19 @@ export async function sendMessage(
 
 /**
  * Approves or rejects a SignOff message. See POST /api/v1/orgs/{orgId}/conversations/{id}/messages/{messageId}/sign-off.
+ * The `contentHash` binds the decision to the exact payload the human saw; the server rejects
+ * the decision if the message content changed after display.
  */
 export async function decideSignOff(
   organizationId: string,
   conversationId: string,
   messageId: string,
   approved: boolean,
+  contentHash: string,
 ): Promise<MessageDto> {
   const response = await apiClient.post<MessageDto>(
     `${conversationsBase(organizationId)}/${conversationId}/messages/${messageId}/sign-off`,
-    { approved },
+    { approved, contentHash },
   )
   return response.data
 }

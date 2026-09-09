@@ -174,10 +174,15 @@ public static class ConversationEndpoints
             return Results.Unauthorized();
         }
 
+        if (string.IsNullOrWhiteSpace(request.ContentHash))
+        {
+            return Results.BadRequest(new { message = "A content hash is required to decide a SignOff." });
+        }
+
         try
         {
             var message = await conversations.DecideSignOffAsync(
-                organizationId, userId.Value, conversationId, messageId, request.Approved, cancellationToken);
+                organizationId, userId.Value, conversationId, messageId, request.Approved, request.ContentHash, cancellationToken);
             return Results.Ok(message);
         }
         catch (InvalidOperationException ex)

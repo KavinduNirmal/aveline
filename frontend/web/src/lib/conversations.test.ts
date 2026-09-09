@@ -131,6 +131,7 @@ describe('startConversations', () => {
       authorUserId: null,
       kind: 'Note',
       contentBlocks: [{ type: 'text', text: 'Hello' }],
+      contentHash: null,
       replyToMessageId: null,
       status: 'Published',
       createdAt: new Date().toISOString(),
@@ -150,5 +151,17 @@ describe('startConversations', () => {
     connection.stateHandlers.close?.()
 
     expect(onStateChange).toHaveBeenCalledWith('Disconnected')
+  })
+
+  it('invokes onConnected with the connection once started', async () => {
+    const connection = makeConnection()
+    const onMessage = vi.fn()
+    const onStateChange = vi.fn()
+    const onConnected = vi.fn()
+
+    startConversations(connection as never, { onMessage, onStateChange, onConnected })
+
+    await vi.waitFor(() => expect(onConnected).toHaveBeenCalled())
+    expect(onConnected).toHaveBeenCalledWith(connection)
   })
 })

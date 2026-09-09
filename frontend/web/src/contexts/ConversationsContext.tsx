@@ -1,5 +1,5 @@
 import { useAuth } from '@clerk/react'
-import { HubConnectionState } from '@microsoft/signalr'
+import { HubConnection, HubConnectionState } from '@microsoft/signalr'
 import {
   createContext,
   useCallback,
@@ -13,6 +13,7 @@ import {
 import {
   createConversationsConnection,
   startConversations,
+  type AgentStatePayload,
 } from '@/lib/conversations'
 import {
   decideSignOff,
@@ -22,9 +23,41 @@ import {
   sendMessage,
 } from '@/lib/conversations-api'
 import type { ConversationDto, MessageDto } from '@/types/conversation'
+import type { AvelineState } from '@/components/conversation/avelineStates'
 
 /** Clerk JWT template that mints the Aveline role claims (matches AuthApiBridge). */
 const JWT_TEMPLATE = 'jwt-aveline-v1'
+
+/** States that count as "Aveline is actively working on a reply". */
+const ACTIVE_STATES: ReadonlySet<string> = new Set([
+  'thinking',
+  'searching',
+  'processing',
+  'tool_call',
+])
+
+/** How long to hold a transient state (success/error/response) before settling to idle. */
+const TRANSIENT_TIMEOUT_MS = 2500
+
+/**
+ * A message as rendered in the thread. Extends the wire `MessageDto` with UI-only fields:
+ * `pending` marks an optimistic (not-yet-confirmed) staff message; `thoughtSeconds` records
+ * how long Aveline "thought" before producing an agent message.
+ */
+export type ChatMessage = MessageDto & {
+  pending?: 'sending' | 'failed'
+  thoughtSeconds?: number
+  /** True for agent messages that arrived live and should type out word by word. */
+  streamIn?: boolean
+}
+
+/** Aveline's in-progress reasoning, shown as a live activity bubble until a reply lands. */
+export interface AgentActivity {
+  /** Epoch ms when the activity began (used to compute "Thought for Xs"). */
+  startedAt: number
+  /** The most recent agentic-workflow state. */
+  currentState: AvelineState
+}
 
 interface ConversationsContextValue {
   /** The organization's Salons, newest first. */
@@ -32,17 +65,21 @@ interface ConversationsContextValue {
   /** The currently open Salon id, or null when none is selected. */
   activeConversationId: string | null
   /** Messages of the active Salon, oldest first. */
-  messages: MessageDto[]
+  messages: ChatMessage[]
   loading: boolean
   sending: boolean
-  /** True while Aveline is processing a reply (after a send until an agent message arrives). */
+  /** Aveline's current agentic-workflow state for the active Salon. */
+  agentState: AvelineState
+  /** True while Aveline is actively processing a reply (derived from `agentState`). */
   waiting: boolean
+  /** Aveline's in-progress reasoning, or null when idle / awaiting a reply. */
+  agentActivity: AgentActivity | null
   connectionState: HubConnectionState
   /** Selects a Salon and loads its messages. */
   openConversation: (conversationId: string) => Promise<void>
   /** Gets-or-creates the Salon for an optional customer and opens it. */
   openOrCreateSalon: (customerId?: string | null) => Promise<ConversationDto>
-  /** Sends a staff note and triggers the agent. */
+  /** Sends a staff note (optimistic) and triggers the agent. */
   send: (text: string) => Promise<void>
   /** Approves or rejects a SignOff message. */
   decide: (messageId: string, approved: boolean) => Promise<void>
@@ -68,25 +105,47 @@ export function ConversationsProvider({
   const { isLoaded, isSignedIn, getToken } = useAuth()
   const [conversations, setConversations] = useState<ConversationDto[]>([])
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
-  const [messages, setMessages] = useState<MessageDto[]>([])
+  const [messages, setMessages] = useState<ChatMessage[]>([])
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
-  const [waiting, setWaiting] = useState(false)
+  const [agentState, setAgentState] = useState<AvelineState>('idle')
+  const [agentActivity, setAgentActivity] = useState<AgentActivity | null>(null)
   const [connectionState, setConnectionState] = useState<HubConnectionState>(
     HubConnectionState.Disconnected,
   )
   const cleanupRef = useRef<(() => void) | null>(null)
+  const connectionRef = useRef<HubConnection | null>(null)
   const activeRef = useRef<string | null>(null)
   activeRef.current = activeConversationId
+  const messagesRef = useRef<ChatMessage[]>([])
+  messagesRef.current = messages
+  const agentActivityRef = useRef<AgentActivity | null>(null)
+  agentActivityRef.current = agentActivity
+  const transientTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const handleStateChange = useCallback((state: HubConnectionState) => {
     setConnectionState(state)
   }, [])
 
+  // Applies an incoming agent state, scheduling a settle-to-idle for transient states.
+  const applyAgentState = useCallback((state: AvelineState) => {
+    setAgentState(state)
+    if (transientTimerRef.current) {
+      clearTimeout(transientTimerRef.current)
+      transientTimerRef.current = null
+    }
+    if (state === 'success' || state === 'error' || state === 'response') {
+      transientTimerRef.current = setTimeout(() => setAgentState('idle'), TRANSIENT_TIMEOUT_MS)
+    }
+  }, [])
+
+  const waiting = ACTIVE_STATES.has(agentState)
+
   const openConversation = useCallback(
     async (conversationId: string) => {
       setActiveConversationId(conversationId)
       setMessages([])
+      setAgentActivity(null)
       try {
         const page = await fetchMessages(organizationId, conversationId, { pageSize: 100 })
         setMessages(page.items)
@@ -136,28 +195,68 @@ export function ConversationsProvider({
     const connection = createConversationsConnection(() =>
       getToken({ template: JWT_TEMPLATE }),
     )
+    connectionRef.current = connection
     cleanupRef.current = startConversations(connection, {
       onMessage: (payload) => {
         // Only surface messages for the currently open Salon.
-        if (payload.conversationId === activeRef.current) {
-          setMessages((prev) => {
-            if (prev.some((m) => m.id === payload.id)) return prev
-            return [...prev, payload]
-          })
-          // An agent/system reply means Aveline is no longer waiting.
-          if (payload.authorKind !== 'User') {
-            setWaiting(false)
-          }
+        if (payload.conversationId !== activeRef.current) return
+
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === payload.id)) return prev
+          // When an agent reply lands, collapse the live activity into a "Thought for Xs"
+          // caption on the incoming message and stream the text in word by word.
+          const isAgent = payload.authorKind === 'Agent'
+          const activity = agentActivityRef.current
+          const thoughtSeconds =
+            isAgent && activity ? Math.max(0, (Date.now() - activity.startedAt) / 1000) : undefined
+          return [...prev, { ...payload, thoughtSeconds, streamIn: isAgent }]
+        })
+
+        if (payload.authorKind === 'Agent') {
+          setAgentActivity(null)
         }
       },
+      onAgentState: (payload: AgentStatePayload) => {
+        // Only reflect states for the currently open Salon.
+        if (payload.conversationId !== activeRef.current) return
+        const state = payload.state as AvelineState
+        applyAgentState(state)
+        setAgentActivity((prev) =>
+          prev
+            ? { ...prev, currentState: state }
+            : { startedAt: Date.now(), currentState: state },
+        )
+      },
       onStateChange: handleStateChange,
+      onConnected: (conn) => {
+        // Join the Salon group so this client receives ReceiveMessage / ReceiveAgentState.
+        // Note: `invoke` is variadic (methodName, ...args); pass args separately, not as an array.
+        const conversationId = activeRef.current
+        if (conversationId) {
+          void conn.invoke('JoinSalon', organizationId, conversationId)
+        }
+      },
     })
 
     return () => {
       cleanupRef.current?.()
       cleanupRef.current = null
+      connectionRef.current = null
+      if (transientTimerRef.current) {
+        clearTimeout(transientTimerRef.current)
+        transientTimerRef.current = null
+      }
     }
-  }, [getToken, handleStateChange, isLoaded, isSignedIn, organizationId])
+  }, [applyAgentState, getToken, handleStateChange, isLoaded, isSignedIn, organizationId])
+
+  // Re-join the Salon group whenever the active conversation changes so the client keeps
+  // receiving live messages/states for the conversation currently on screen.
+  useEffect(() => {
+    const connection = connectionRef.current
+    if (!connection || connection.state !== HubConnectionState.Connected) return
+    if (!activeConversationId) return
+    void connection.invoke('JoinSalon', organizationId, activeConversationId)
+  }, [activeConversationId, connectionState, organizationId])
 
   const openOrCreateSalon = useCallback(
     async (customerId?: string | null) => {
@@ -176,23 +275,60 @@ export function ConversationsProvider({
   const send = useCallback(
     async (text: string) => {
       if (!activeConversationId || !text.trim()) return
+      const trimmed = text.trim()
+      const optimistic: ChatMessage = {
+        id: `local-${Date.now()}`,
+        conversationId: activeConversationId,
+        authorKind: 'User',
+        agentKey: null,
+        authorUserId: null,
+        kind: 'Note',
+        contentBlocks: [{ type: 'text', text: trimmed }],
+        contentHash: null,
+        replyToMessageId: null,
+        status: 'Published',
+        createdAt: new Date().toISOString(),
+        pending: 'sending',
+      }
+
       setSending(true)
+      // Optimistic: show the staff message immediately.
+      setMessages((prev) => [...prev, optimistic])
+
       try {
-        const message = await sendMessage(organizationId, activeConversationId, text.trim())
-        setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]))
-        // Aveline is now processing; the waiting state clears when an agent reply arrives.
-        setWaiting(true)
+        const message = await sendMessage(organizationId, activeConversationId, trimmed)
+        // Replace the optimistic bubble with the confirmed message (real id + timestamp).
+        setMessages((prev) =>
+          prev.map((m) => (m.id === optimistic.id ? { ...message } : m)),
+        )
+        // Only once the user message is confirmed does Aveline's activity bubble appear.
+        setAgentActivity({ startedAt: Date.now(), currentState: 'thinking' })
+        applyAgentState('thinking')
+      } catch {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === optimistic.id ? { ...m, pending: 'failed' } : m)),
+        )
       } finally {
         setSending(false)
       }
     },
-    [activeConversationId, organizationId],
+    [activeConversationId, applyAgentState, organizationId],
   )
 
   const decide = useCallback(
     async (messageId: string, approved: boolean) => {
       if (!activeConversationId) return
-      const updated = await decideSignOff(organizationId, activeConversationId, messageId, approved)
+      const message = messagesRef.current.find((m) => m.id === messageId)
+      if (!message) return
+      // Bind the decision to the exact payload the human saw.
+      const contentHash = message.contentHash ?? ''
+      const updated = await decideSignOff(
+        organizationId,
+        activeConversationId,
+        messageId,
+        approved,
+        contentHash,
+      )
       setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)))
     },
     [activeConversationId, organizationId],
@@ -206,7 +342,9 @@ export function ConversationsProvider({
         messages,
         loading,
         sending,
+        agentState,
         waiting,
+        agentActivity,
         connectionState,
         openConversation,
         openOrCreateSalon,

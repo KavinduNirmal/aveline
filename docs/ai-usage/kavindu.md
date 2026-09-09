@@ -1356,3 +1356,33 @@ Implemented the conversation messaging slice test-first across the backend, agen
 - The agent then refused to start because `.env` had the weak `INTERNAL_API_TOKEN=change-me-internal-token`. Set a strong token in the local `.env` (gitignored).
 - Wired the event bus subscriptions: agent `SUBSCRIBE_EVENT_TYPES=message.received`; API `EVENTING_SUBSCRIBE_EVENT_TYPES_0..2` = `message.created`, `message.updated`, `conversation.created`. Updated `docker-compose.yml` to forward all three API event types (it previously only forwarded `_0`) and documented the values in `.env.example`.
 
+
+## Session 2026-09-09 (Flutter Salon UI + Floating Dock)
+
+**Task:** Design the Flutter UI per `conversation_messaging_implementation.ignore.md` (Phase 7, first pass)
+**Tool used:** opencode (deepseek-v4-flash)
+**Status:** Completed
+
+### Work Performed
+
+1. **Floating dock navigation**: Built `lib/shared/widgets/floating_dock.dart` - a floating pill dock with four line-icon tabs (Home, Customers, Catalog, Profile) flanking a raised center launcher carrying the Blossom mark that opens the full-screen Salon.
+2. **Main shell**: `lib/features/home/presentation/screens/main_shell.dart` hosts the dock and swaps tab bodies; the Salon is pushed full-screen (dock hidden).
+3. **Home tab**: rewrote `home_screen.dart` as a quiet-luxury greeting + overview cards mirroring the web Overview.
+4. **Placeholder tabs**: Customers and Catalog render a shared `SectionPlaceholder` (mirrors web SectionPlaceholder).
+5. **Profile tab**: shows the signed-in user's identity, role chips, and sign-out.
+6. **Salon feature**: full-screen static Salon (`features/salon/`) with persona-attributed message bubbles (Aveline blossom / Ava / Elle / Lina accents), a seeded thread, and a local composer. Realtime + data layer deferred to a later pass.
+7. **Routing**: `app.dart` now routes the signed-in landing to `MainShell`.
+
+### Files Created or Modified
+
+- `lib/shared/widgets/floating_dock.dart`, `lib/shared/widgets/section_placeholder.dart`
+- `lib/features/home/presentation/screens/main_shell.dart`, `home_screen.dart`
+- `lib/features/salon/` (domain model, screen, message bubble, composer, persona)
+- `lib/features/catalog/`, `lib/features/profile/`, `lib/features/customers/` screens
+- `lib/app.dart`, feature READMEs
+- Tests: `test/shared/widgets/floating_dock_test.dart`, `test/features/salon/salon_screen_test.dart`, `test/features/home/main_shell_test.dart`
+
+### Verification Performed
+
+- `flutter analyze` — No issues found.
+- `flutter test` — 58 tests passed (50 existing + 8 new).

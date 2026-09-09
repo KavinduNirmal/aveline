@@ -13,9 +13,20 @@ export type TokenGetter = () => Promise<string | null>
 /** The `ReceiveMessage` payload contract shared with the conversation hub. */
 export type ConversationMessagePayload = MessageDto
 
+/** The `ReceiveAgentState` payload contract shared with the conversation hub. */
+export interface AgentStatePayload {
+  conversationId: string
+  state: string
+  agentKey: string | null
+  traceId: string | null
+}
+
 export interface ConversationHandlers {
   onMessage: (payload: ConversationMessagePayload) => void
+  onAgentState?: (payload: AgentStatePayload) => void
   onStateChange: (state: HubConnectionState) => void
+  /** Invoked once the connection has started, so the caller can join the Salon group. */
+  onConnected?: (connection: HubConnection) => void
 }
 
 /**
@@ -40,10 +51,13 @@ export function startConversations(
   connection: HubConnection,
   handlers: ConversationHandlers,
 ): () => void {
-  const { onMessage, onStateChange } = handlers
+  const { onMessage, onAgentState, onStateChange, onConnected } = handlers
 
   connection.on('ReceiveMessage', (payload: ConversationMessagePayload) => {
     onMessage(payload)
+  })
+  connection.on('ReceiveAgentState', (payload: AgentStatePayload) => {
+    onAgentState?.(payload)
   })
   connection.onreconnecting(() => onStateChange(connection.state))
   connection.onreconnected(() => onStateChange(connection.state))
@@ -51,12 +65,16 @@ export function startConversations(
 
   onStateChange(connection.state)
   void connection.start().then(
-    () => onStateChange(connection.state),
+    () => {
+      onStateChange(connection.state)
+      onConnected?.(connection)
+    },
     () => onStateChange(HubConnectionState.Disconnected),
   )
 
   return () => {
     connection.off('ReceiveMessage')
+    connection.off('ReceiveAgentState')
     void connection.stop()
   }
 }

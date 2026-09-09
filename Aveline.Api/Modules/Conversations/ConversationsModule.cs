@@ -18,6 +18,7 @@ public static class ConversationsModule
     {
         services.AddScoped<IConversationRepository, ConversationRepository>();
         services.AddScoped<IMessageRepository, MessageRepository>();
+        services.AddScoped<ISignOffDecisionRepository, SignOffDecisionRepository>();
         services.AddScoped<IConversationService, ConversationService>();
         services.AddScoped<IMessageBroadcaster, SignalRMessageBroadcaster>();
         services.AddHostedService<ConversationEventSubscriber>();

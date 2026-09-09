@@ -1,30 +1,41 @@
+import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useRef } from 'react'
 
 import { Skeleton } from '@/components/ui/skeleton'
-import type { MessageDto } from '@/types/conversation'
+import type { AgentActivity, ChatMessage } from '@/contexts/ConversationsContext'
+import { AgentActivityBubble } from './AgentActivityBubble'
 import { MessageBubble } from './MessageBubble'
 
 interface MessageThreadProps {
-  messages: MessageDto[]
+  messages: ChatMessage[]
   loading?: boolean
+  /** Aveline's in-progress reasoning, rendered as a live bubble while non-null. */
+  agentActivity?: AgentActivity | null
   onSignOff?: (messageId: string, approved: boolean) => void
 }
 
 /**
  * The scrollable message list for a Salon. Auto-scrolls to the newest message on change.
  * Staff-authored messages (the current user composing) align right; agent and system
- * messages align left with their persona accent.
+ * messages align left with their persona accent. New bubbles fade + slide in; a live
+ * "Aveline is working" bubble appears while a reply is being produced.
  */
 export function MessageThread({
   messages,
   loading,
+  agentActivity,
   onSignOff,
 }: MessageThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages.length])
+  }, [messages.length, agentActivity?.currentState])
+
+  // Keep the newest streamed text in view as it types out word by word.
+  const handleStreamProgress = () => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
 
   if (loading) {
     return (
@@ -39,7 +50,7 @@ export function MessageThread({
     )
   }
 
-  if (messages.length === 0) {
+  if (messages.length === 0 && !agentActivity) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
         <p className="font-serif text-lg text-muted-foreground">The Salon is quiet</p>
@@ -53,17 +64,39 @@ export function MessageThread({
   return (
     <div className="flex flex-col gap-3 p-4">
       {messages.map((message) => (
-        <MessageBubble
+        <motion.div
           key={message.id}
-          message={message}
-          isOwn={message.authorKind === 'User'}
-          onSignOff={
-            message.kind === 'SignOff' && message.status === 'AwaitingSignOff'
-              ? (approved) => onSignOff?.(message.id, approved)
-              : undefined
-          }
-        />
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.25, ease: 'easeOut' }}
+        >
+          <MessageBubble
+            message={message}
+            isOwn={message.authorKind === 'User'}
+            onStreamProgress={handleStreamProgress}
+            onSignOff={
+              message.kind === 'SignOff' && message.status === 'AwaitingSignOff'
+                ? (approved) => onSignOff?.(message.id, approved)
+                : undefined
+            }
+          />
+        </motion.div>
       ))}
+
+      <AnimatePresence>
+        {agentActivity && (
+          <motion.div
+            key="agent-activity"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 6 }}
+            transition={{ duration: 0.2 }}
+          >
+            <AgentActivityBubble state={agentActivity.currentState} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div ref={bottomRef} />
     </div>
   )

@@ -139,14 +139,29 @@ public class ConversationServiceTests
             => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK));
     }
 
+    private sealed class FakeSignOffDecisionRepository : ISignOffDecisionRepository
+    {
+        private readonly List<SignOffDecision> _decisions = [];
+
+        public Task<SignOffDecision?> GetByMessageIdAsync(Guid messageId, CancellationToken ct)
+            => Task.FromResult(_decisions.LastOrDefault(d => d.MessageId == messageId));
+
+        public Task SaveAsync(SignOffDecision decision, CancellationToken ct)
+        {
+            _decisions.Add(decision);
+            return Task.CompletedTask;
+        }
+    }
+
     private readonly FakeConversationRepository _conversations = new();
     private readonly FakeMessageRepository _messages = new();
     private readonly FakeAgentClient _agent = new();
+    private readonly FakeSignOffDecisionRepository _signOffDecisions = new();
     private readonly ConversationService _sut;
 
     public ConversationServiceTests()
     {
-        _sut = new ConversationService(_conversations, _messages, _agent, new CapturingLogger<ConversationService>());
+        _sut = new ConversationService(_conversations, _messages, _signOffDecisions, _agent, new CapturingLogger<ConversationService>());
     }
 
     [Fact]
@@ -245,6 +260,30 @@ public class ConversationServiceTests
     }
 
     [Fact]
+    public async Task ApplyAgentMessageAsync_ResolvesConversationByThreadId_WhenEventHasEmptyConversationId()
+    {
+        // The agent's message.created payload only carries a thread_id (no conversation_id),
+        // so the parsed event has Guid.Empty. The message must be persisted against the
+        // conversation resolved from the thread id, not the empty event id.
+        var orgId = Guid.NewGuid();
+        var salon = await _sut.GetOrCreateSalonAsync(orgId, Guid.NewGuid(), null, CancellationToken.None);
+        var evt = new AgentMessageEvent(
+            Guid.Empty,
+            salon.ThreadId,
+            AgentKeys.Aveline,
+            MessageKind.Note,
+            JsonSerializer.SerializeToElement(new[] { new { type = "text", text = "I have looked into this." } }),
+            null,
+            Guid.NewGuid());
+
+        var message = await _sut.ApplyAgentMessageAsync(evt, CancellationToken.None);
+
+        Assert.Equal(salon.Id, message.ConversationId);
+        // Greeting (seeded on salon creation) + the agent message.
+        Assert.Equal(2, _messages.SaveCount);
+    }
+
+    [Fact]
     public async Task ApplyAgentMessageAsync_Throws_WhenConversationNotFound()
     {
         var evt = new AgentMessageEvent(
@@ -260,7 +299,7 @@ public class ConversationServiceTests
             _sut.ApplyAgentMessageAsync(evt, CancellationToken.None));
     }
 
-    private async Task<(Guid orgId, Guid conversationId, Guid messageId)> SeedSignOffAsync()
+    private async Task<(Guid orgId, Guid conversationId, Guid messageId, string contentHash)> SeedSignOffAsync()
     {
         var orgId = Guid.NewGuid();
         var salon = await _sut.GetOrCreateSalonAsync(orgId, Guid.NewGuid(), null, CancellationToken.None);
@@ -277,15 +316,15 @@ public class ConversationServiceTests
         var stored = await _messages.GetAsync(salon.Id, message.Id, CancellationToken.None);
         stored!.Status = MessageStatus.AwaitingSignOff;
         await _messages.SaveAsync(stored, CancellationToken.None);
-        return (orgId, salon.Id, message.Id);
+        return (orgId, salon.Id, message.Id, stored.ContentHash!);
     }
 
     [Fact]
     public async Task DecideSignOffAsync_Approve_PublishesMessage_AndActivatesConversation()
     {
-        var (orgId, conversationId, messageId) = await SeedSignOffAsync();
+        var (orgId, conversationId, messageId, contentHash) = await SeedSignOffAsync();
 
-        var decided = await _sut.DecideSignOffAsync(orgId, Guid.NewGuid(), conversationId, messageId, true, CancellationToken.None);
+        var decided = await _sut.DecideSignOffAsync(orgId, Guid.NewGuid(), conversationId, messageId, true, contentHash, CancellationToken.None);
 
         Assert.Equal(MessageStatus.Published, decided.Status);
         var conversation = await _conversations.GetAsync(orgId, conversationId, CancellationToken.None);
@@ -295,9 +334,9 @@ public class ConversationServiceTests
     [Fact]
     public async Task DecideSignOffAsync_Reject_CancelsMessage_AndResolvesConversation()
     {
-        var (orgId, conversationId, messageId) = await SeedSignOffAsync();
+        var (orgId, conversationId, messageId, contentHash) = await SeedSignOffAsync();
 
-        var decided = await _sut.DecideSignOffAsync(orgId, Guid.NewGuid(), conversationId, messageId, false, CancellationToken.None);
+        var decided = await _sut.DecideSignOffAsync(orgId, Guid.NewGuid(), conversationId, messageId, false, contentHash, CancellationToken.None);
 
         Assert.Equal(MessageStatus.Cancelled, decided.Status);
         var conversation = await _conversations.GetAsync(orgId, conversationId, CancellationToken.None);
@@ -312,7 +351,37 @@ public class ConversationServiceTests
         var note = await _sut.SendStaffNoteAsync(orgId, Guid.NewGuid(), salon.Id, "hello", CancellationToken.None);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            _sut.DecideSignOffAsync(orgId, Guid.NewGuid(), salon.Id, note.Id, true, CancellationToken.None));
+            _sut.DecideSignOffAsync(orgId, Guid.NewGuid(), salon.Id, note.Id, true, "hash", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task DecideSignOffAsync_Throws_WhenContentHashDoesNotMatch()
+    {
+        var (orgId, conversationId, messageId, _) = await SeedSignOffAsync();
+
+        // A stale/wrong hash means the payload changed after display; the decision is void.
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _sut.DecideSignOffAsync(orgId, Guid.NewGuid(), conversationId, messageId, true, "stale-hash", CancellationToken.None));
+
+        // The message must remain awaiting a decision.
+        var stored = await _messages.GetAsync(conversationId, messageId, CancellationToken.None);
+        Assert.Equal(MessageStatus.AwaitingSignOff, stored!.Status);
+    }
+
+    [Fact]
+    public async Task DecideSignOffAsync_RecordsDecisionOutOfBand()
+    {
+        var (orgId, conversationId, messageId, contentHash) = await SeedSignOffAsync();
+        var userId = Guid.NewGuid();
+
+        await _sut.DecideSignOffAsync(orgId, userId, conversationId, messageId, true, contentHash, CancellationToken.None);
+
+        var decision = await _signOffDecisions.GetByMessageIdAsync(messageId, CancellationToken.None);
+        Assert.NotNull(decision);
+        Assert.Equal(messageId, decision!.MessageId);
+        Assert.Equal(contentHash, decision.ContentHash);
+        Assert.True(decision.Approved);
+        Assert.Equal(userId, decision.DecidedBy);
     }
 
     [Fact]

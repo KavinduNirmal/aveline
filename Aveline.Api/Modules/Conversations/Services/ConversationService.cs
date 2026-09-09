@@ -12,17 +12,20 @@ public class ConversationService : IConversationService
 {
     private readonly IConversationRepository _conversations;
     private readonly IMessageRepository _messages;
+    private readonly ISignOffDecisionRepository _signOffDecisions;
     private readonly IAgentServiceClient _agentClient;
     private readonly ILogger<ConversationService> _logger;
 
     public ConversationService(
         IConversationRepository conversations,
         IMessageRepository messages,
+        ISignOffDecisionRepository signOffDecisions,
         IAgentServiceClient agentClient,
         ILogger<ConversationService> logger)
     {
         _conversations = conversations;
         _messages = messages;
+        _signOffDecisions = signOffDecisions;
         _agentClient = agentClient;
         _logger = logger;
     }
@@ -158,15 +161,23 @@ public class ConversationService : IConversationService
             throw new InvalidOperationException($"Conversation {evt.ConversationId} not found.");
         }
 
+        var contentBlocksJson = evt.ContentBlocks.ValueKind == JsonValueKind.Undefined
+            ? "[]"
+            : evt.ContentBlocks.GetRawText();
+
         var message = new Message
         {
-            ConversationId = evt.ConversationId,
+            // The agent's message.created payload only carries a thread_id, so the
+            // conversation is resolved above by thread id. Use its real id here rather
+            // than evt.ConversationId (which is Guid.Empty for agent events).
+            ConversationId = conversation.Id,
             AuthorKind = AuthorKind.Agent,
             AuthorAgentKey = evt.AgentKey,
             Kind = evt.Kind,
-            ContentBlocksJson = evt.ContentBlocks.ValueKind == JsonValueKind.Undefined
-                ? "[]"
-                : evt.ContentBlocks.GetRawText(),
+            ContentBlocksJson = contentBlocksJson,
+            // Bind a SignOff to the exact payload the human will approve, so a later edit
+            // to the message cannot change what was approved.
+            ContentHash = evt.Kind == MessageKind.SignOff ? ContentHash.Compute(contentBlocksJson) : null,
             ReplyToMessageId = evt.ReplyToMessageId,
             WorkflowRunId = evt.WorkflowRunId,
             Status = MessageStatus.Published,
@@ -185,6 +196,7 @@ public class ConversationService : IConversationService
         Guid conversationId,
         Guid messageId,
         bool approved,
+        string contentHash,
         CancellationToken cancellationToken = default)
     {
         var conversation = await _conversations.GetAsync(orgId, conversationId, cancellationToken)
@@ -202,6 +214,28 @@ public class ConversationService : IConversationService
             throw new InvalidOperationException("This SignOff is not awaiting a decision.");
         }
 
+        // Bind the decision to the exact payload the human saw. If the message content was
+        // rewritten after display, the hash no longer matches and the approval is void.
+        var currentHash = ContentHash.Compute(message.ContentBlocksJson);
+        if (!string.Equals(currentHash, contentHash, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "This SignOff has changed since it was displayed. Please review the latest version before deciding.");
+        }
+
+        // Record the decision out of band (immutable, separate from the mutable message row)
+        // so a later edit to the message cannot retroactively change what was approved.
+        await _signOffDecisions.SaveAsync(new SignOffDecision
+        {
+            OrganizationId = orgId,
+            ConversationId = conversationId,
+            MessageId = messageId,
+            ContentHash = currentHash,
+            Approved = approved,
+            DecidedBy = userId,
+            DecidedAt = DateTime.UtcNow,
+        }, cancellationToken);
+
         message.Status = approved ? MessageStatus.Published : MessageStatus.Cancelled;
         await _messages.SaveAsync(message, cancellationToken);
 
@@ -210,8 +244,8 @@ public class ConversationService : IConversationService
         await _conversations.SaveAsync(conversation, cancellationToken);
 
         _logger.LogInformation(
-            "SignOff {MessageId} {Decision} by user {UserId} in conversation {ConversationId}.",
-            messageId, approved ? "approved" : "rejected", userId, conversationId);
+            "SignOff {MessageId} {Decision} by user {UserId} in conversation {ConversationId} (hash {ContentHash}).",
+            messageId, approved ? "approved" : "rejected", userId, conversationId, currentHash);
 
         return MessageDto.From(message);
     }

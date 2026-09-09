@@ -44,7 +44,15 @@ def create_chat_model(settings: Settings) -> BaseChatModel:
         logger.info("Creating OpenAI chat model (model=%s).", settings.llm_model)
         return ChatOpenAI(**kwargs)
     if provider == _PROVIDER_DEEPSEEK:
-        logger.info("Creating DeepSeek chat model (model=%s).", settings.llm_model)
+        if not settings.llm_thinking_enabled:
+            # Ask reasoner-capable DeepSeek models to skip the thinking pass so the
+            # response is a single, clean completion (no reasoning_content streamed).
+            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+        logger.info(
+            "Creating DeepSeek chat model (model=%s, thinking=%s).",
+            settings.llm_model,
+            settings.llm_thinking_enabled,
+        )
         return ChatDeepSeek(**kwargs)
 
     raise ValueError(f"Unsupported LLM provider: {settings.llm_provider!r}")

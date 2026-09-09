@@ -13,5 +13,36 @@ describe('AvelineAvatar', () => {
   it('applies the colour-cycle class in the idle state', () => {
     const html = renderToString(<AvelineAvatar state="idle" />)
     expect(html).toContain('aveline-waiting')
+    expect(html).toContain('aveline-breathing')
+  })
+
+  it('thinking applies the pulse animation', () => {
+    const html = renderToString(<AvelineAvatar state="thinking" />)
+    expect(html).toContain('aveline-pulse')
+  })
+
+  it('searching renders ripple rings', () => {
+    const html = renderToString(<AvelineAvatar state="searching" />)
+    expect(html).toContain('aveline-ripple-ring')
+  })
+
+  it('processing spins', () => {
+    const html = renderToString(<AvelineAvatar state="processing" />)
+    expect(html).toContain('aveline-spin')
+  })
+
+  it('tool_call uses stepped rotation', () => {
+    const html = renderToString(<AvelineAvatar state="tool_call" />)
+    expect(html).toContain('aveline-spin-steps')
+  })
+
+  it('error applies the shake animation', () => {
+    const html = renderToString(<AvelineAvatar state="error" />)
+    expect(html).toContain('aveline-shake')
+  })
+
+  it('success applies the bloom animation', () => {
+    const html = renderToString(<AvelineAvatar state="success" />)
+    expect(html).toContain('aveline-bloom')
   })
 })

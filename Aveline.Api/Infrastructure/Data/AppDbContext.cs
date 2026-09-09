@@ -57,6 +57,8 @@ public class AppDbContext : DbContext
 
     public DbSet<Message> Messages => Set<Message>();
 
+    public DbSet<SignOffDecision> SignOffDecisions => Set<SignOffDecision>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

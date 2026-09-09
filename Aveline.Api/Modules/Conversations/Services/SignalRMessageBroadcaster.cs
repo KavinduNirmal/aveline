@@ -22,4 +22,11 @@ public class SignalRMessageBroadcaster : IMessageBroadcaster
             .Group(GroupName.ForSalon(message.ConversationId))
             .SendAsync("ReceiveMessage", message, cancellationToken);
     }
+
+    public async Task BroadcastAgentStateAsync(AgentStateDto state, CancellationToken cancellationToken = default)
+    {
+        await _hubContext.Clients
+            .Group(GroupName.ForSalon(state.ConversationId))
+            .SendAsync("ReceiveAgentState", state, cancellationToken);
+    }
 }

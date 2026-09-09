@@ -14,7 +14,7 @@ interface AvelineChatLauncherProps {
  * processing a reply (`waiting`) the blossom visibly "thinks".
  */
 export function AvelineChatLauncher({ open, onOpen }: AvelineChatLauncherProps) {
-  const { waiting } = useConversations()
+  const { agentState } = useConversations()
 
   return (
     <Button
@@ -29,7 +29,7 @@ export function AvelineChatLauncher({ open, onOpen }: AvelineChatLauncherProps) 
       )}
     >
       <AvelineAvatar
-        state={waiting ? 'thinking' : 'idle'}
+        state={agentState}
         className="size-9"
         blossomClassName="size-5"
       />

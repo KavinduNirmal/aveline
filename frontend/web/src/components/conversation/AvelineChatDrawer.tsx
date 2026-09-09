@@ -7,6 +7,7 @@ import { MessageThread } from '@/components/conversation/MessageThread'
 import { Button } from '@/components/ui/button'
 import { useConversations } from '@/contexts/ConversationsContext'
 import { cn } from '@/lib/utils'
+import { avelineStateConfig } from './avelineStates'
 
 interface AvelineChatDrawerProps {
   open: boolean
@@ -25,7 +26,8 @@ export function AvelineChatDrawer({ open, onClose }: AvelineChatDrawerProps) {
     messages,
     loading,
     sending,
-    waiting,
+    agentState,
+    agentActivity,
     openOrCreateSalon,
     send,
     decide,
@@ -37,6 +39,8 @@ export function AvelineChatDrawer({ open, onClose }: AvelineChatDrawerProps) {
       void openOrCreateSalon(null)
     }
   }, [activeConversationId, open, openOrCreateSalon])
+
+  const stateConfig = avelineStateConfig(agentState)
 
   return (
     <div
@@ -51,15 +55,13 @@ export function AvelineChatDrawer({ open, onClose }: AvelineChatDrawerProps) {
       <header className="flex items-center justify-between border-b px-4 py-3">
         <div className="flex items-center gap-2.5">
           <AvelineAvatar
-            state={waiting ? 'thinking' : 'idle'}
+            state={agentState}
             className="size-8"
             blossomClassName="size-5"
           />
           <div>
             <p className="font-serif text-sm font-medium leading-tight">Aveline</p>
-            <p className="text-[11px] text-muted-foreground">
-              {waiting ? 'Thinking…' : 'Your boutique concierge'}
-            </p>
+            <p className="text-[11px] text-muted-foreground">{stateConfig.label}</p>
           </div>
         </div>
         <Button size="icon" variant="ghost" onClick={onClose} aria-label="Close chat">
@@ -71,6 +73,7 @@ export function AvelineChatDrawer({ open, onClose }: AvelineChatDrawerProps) {
         <MessageThread
           messages={messages}
           loading={loading && !activeConversationId}
+          agentActivity={agentActivity}
           onSignOff={(messageId, approved) => void decide(messageId, approved)}
         />
       </div>

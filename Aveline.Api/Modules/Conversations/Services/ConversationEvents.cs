@@ -15,4 +15,7 @@ public static class ConversationEvents
 
     /// <summary>An existing message changed (status, blocks).</summary>
     public const string MessageUpdated = "message.updated";
+
+    /// <summary>Aveline's agentic-workflow state changed (thinking, searching, ...).</summary>
+    public const string AgentStatus = "agent.status";
 }

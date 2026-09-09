@@ -57,12 +57,28 @@ public class SignalRMessageBroadcasterTests
             MessageKind.Note,
             default,
             null,
+            null,
             MessageStatus.Published,
             DateTime.UtcNow);
 
         await broadcaster.BroadcastMessageAsync(dto);
 
         Assert.Equal("ReceiveMessage", hubContext.Clients.SalonGroup.Method);
+        var sent = Assert.Single(hubContext.Clients.SalonGroup.Arguments!);
+        Assert.Same(dto, sent);
+    }
+
+    [Fact]
+    public async Task BroadcastAgentStateAsync_SendsReceiveAgentState_ToSalonGroup()
+    {
+        var hubContext = new TestableHubContext();
+        var broadcaster = new SignalRMessageBroadcaster(hubContext);
+        var conversationId = Guid.NewGuid();
+        var dto = new AgentStateDto(conversationId, "searching", AgentKeys.Aveline, null);
+
+        await broadcaster.BroadcastAgentStateAsync(dto);
+
+        Assert.Equal("ReceiveAgentState", hubContext.Clients.SalonGroup.Method);
         var sent = Assert.Single(hubContext.Clients.SalonGroup.Arguments!);
         Assert.Same(dto, sent);
     }

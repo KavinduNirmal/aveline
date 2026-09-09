@@ -53,6 +53,7 @@ export function Blossom({
   petalClassName,
   animateCounter = false,
   counterDuration = 18,
+  ripple = false,
 }: {
   className?: string
   style?: CSSProperties
@@ -61,6 +62,8 @@ export function Blossom({
   animateCounter?: boolean
   /** Duration in seconds for one full sway cycle */
   counterDuration?: number
+  /** If true, renders expanding ripple rings around the petals (searching state). */
+  ripple?: boolean
 }) {
   const baseAngles = [0, 90, 180, 270]
   const topAngles = [45, 135, 225, 315]
@@ -103,6 +106,21 @@ export function Blossom({
           `}</style>
         )}
       </defs>
+
+      {/* Ripple rings (searching): concentric expanding circles behind the petals. */}
+      {ripple && (
+        <g fill="none" stroke="currentColor" strokeWidth="0.6">
+          {[0, 1, 2].map((i) => (
+            <circle
+              key={i}
+              className="aveline-ripple-ring"
+              cx="12"
+              cy="12"
+              r="7"
+            />
+          ))}
+        </g>
+      )}
 
       {/* Base 4 petals */}
       <g className={animateCounter ? 'aveline-petal-layer-base' : undefined} opacity="0.92">

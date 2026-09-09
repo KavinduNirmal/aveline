@@ -23,6 +23,7 @@ from langgraph.graph import END, START, StateGraph
 from app.agents.customer_memory.graph import build_memory_graph
 from app.agents.customer_memory.parsing import parse_message
 from app.core.config import get_settings
+from app.customer_resolution import resolve_customer
 from app.gate import classify_by_rules
 from app.schemas.response import AgentResponse, AgentStatus
 from app.schemas.state import AgentState
@@ -39,6 +40,8 @@ class ConciergeState(TypedDict, total=False):
     message: str
     org_context: dict[str, Any]
     intent: dict[str, Any] | None
+    # Shared customer resolution (Issue #161): a serialized CustomerResolution.
+    resolution: dict[str, Any] | None
     memory_output: dict[str, Any] | None
     visual_output: dict[str, Any] | None
     commerce_output: dict[str, Any] | None
@@ -61,6 +64,30 @@ def run_intent_gate(state: ConciergeState) -> dict[str, Any]:
     return {"intent": intent.model_dump()}
 
 
+async def run_resolve_customer(state: ConciergeState) -> dict[str, Any]:
+    """Resolve the customer once so every specialist can consume it (Issue #161).
+
+    Uses explicit context (``customer_id``/``phone_number`` in ``org_context``) when present,
+    otherwise derives a phone/name from the raw message via the shared resolver. The result is
+    stored as a serialized ``CustomerResolution`` in state; ambiguous/not-found results
+    short-circuit to a clarification before any specialist runs.
+    """
+    org_context = state.get("org_context") or {}
+    org_id = org_context.get("organization_id") or org_context.get("org_id")
+    if not org_id:
+        return {"resolution": None}
+
+    resolution = await resolve_customer(
+        str(org_id),
+        state.get("message", ""),
+        registry=ToolRegistry(),
+        customer_id=org_context.get("customer_id"),
+        phone=org_context.get("phone_number"),
+    )
+    logger.debug("Customer resolution: %s.", resolution.kind)
+    return {"resolution": resolution.model_dump()}
+
+
 async def run_memory_agent(state: ConciergeState) -> dict[str, Any]:
     """Run the Customer Memory Agent (``app/agents/customer_memory/graph.py``).
 
@@ -75,6 +102,13 @@ async def run_memory_agent(state: ConciergeState) -> dict[str, Any]:
     phone = org_context.get("phone_number")
     customer_name = org_context.get("customer_name")
     message = state.get("message", "")
+
+    # The orchestrator's resolve node may have already resolved a customer from the message.
+    resolution = state.get("resolution") or {}
+    if resolution.get("kind") == "resolved":
+        customer_id = customer_id or resolution.get("customer_id")
+        profile = resolution.get("profile") or {}
+        customer_name = customer_name or profile.get("fullName")
 
     if not org_id or (not customer_id and not phone):
         # No customer context: message-level parse only (no backend calls).
@@ -96,6 +130,7 @@ async def run_memory_agent(state: ConciergeState) -> dict[str, Any]:
         "customer_id": str(customer_id) if customer_id else None,
         "phone_number": str(phone) if phone else None,
         "customer_name": customer_name,
+        "profile": profile if resolution.get("kind") == "resolved" else None,
         "message": message,
         "intent_type": (state.get("intent") or {}).get("intent_type"),
         "channel": org_context.get("channel", "whatsapp"),
@@ -168,14 +203,22 @@ def formulate_response(state: ConciergeState) -> dict[str, Any]:
             output={"reason": "Request is outside the boutique domain."},
         )
     else:
+        resolution = state.get("resolution") or {}
+        output: dict[str, Any] = {
+            "intent": intent.get("intent_type", "general_inquiry"),
+        }
+        if resolution.get("kind") in ("ambiguous", "not_found"):
+            # No specialist produced content; the clarification is rendered by Aveline.
+            output["clarification"] = resolution
+        else:
+            output.update(
+                memory=state.get("memory_output"),
+                visual=state.get("visual_output"),
+                commerce=state.get("commerce_output"),
+            )
         response = AgentResponse(
             status=AgentStatus.success,
-            output={
-                "intent": intent.get("intent_type", "general_inquiry"),
-                "memory": state.get("memory_output"),
-                "visual": state.get("visual_output"),
-                "commerce": state.get("commerce_output"),
-            },
+            output=output,
         )
     return {"response": response.model_dump()}
 
@@ -188,6 +231,14 @@ def formulate_response(state: ConciergeState) -> dict[str, Any]:
 def _route_after_intent(state: ConciergeState) -> str:
     intent = state.get("intent") or {}
     if intent.get("is_relevant", True) is False:
+        return "formulate_response"
+    return "resolve_customer"
+
+
+def _route_after_resolve(state: ConciergeState) -> str:
+    # Ambiguous/not-found resolution short-circuits to a clarification before any specialist.
+    resolution = state.get("resolution") or {}
+    if resolution.get("kind") in ("ambiguous", "not_found"):
         return "formulate_response"
     return "memory_agent"
 
@@ -220,6 +271,7 @@ def build_concierge_graph():
     graph = StateGraph(ConciergeState)
 
     graph.add_node("intent_gate", run_intent_gate)
+    graph.add_node("resolve_customer", run_resolve_customer)
     graph.add_node("memory_agent", run_memory_agent)
     graph.add_node("visual_agent", run_visual_agent)
     graph.add_node("commerce_agent", run_commerce_agent)
@@ -227,6 +279,7 @@ def build_concierge_graph():
 
     graph.add_edge(START, "intent_gate")
     graph.add_conditional_edges("intent_gate", _route_after_intent)
+    graph.add_conditional_edges("resolve_customer", _route_after_resolve)
     graph.add_conditional_edges("memory_agent", _route_after_memory)
     graph.add_conditional_edges("visual_agent", _route_after_visual)
     graph.add_edge("commerce_agent", "formulate_response")
@@ -260,6 +313,7 @@ async def run_concierge(
         "message": message,
         "org_context": org_context or {},
         "intent": None,
+        "resolution": None,
         "memory_output": None,
         "visual_output": None,
         "commerce_output": None,

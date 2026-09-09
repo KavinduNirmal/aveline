@@ -181,6 +181,7 @@ async def agents_query_stream(payload: AgentQueryRequest) -> StreamingResponse:
                 "message": payload.query,
                 "org_context": payload.org_context or {},
                 "intent": None,
+                "resolution": None,
                 "memory_output": None,
                 "visual_output": None,
                 "commerce_output": None,

@@ -126,6 +126,36 @@ async def test_registry_identify_customer(client):
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_registry_lookup_customers_by_name(client):
+    route = respx.post(f"{BASE_URL}/internal/customers/lookup").respond(
+        status_code=200, json={"matches": [{"customerId": "c1"}], "isExact": True, "total": 1}
+    )
+    registry = ToolRegistry(client)
+    result = await registry.lookup_customers("org-1", name="Samantha Arias")
+    assert route.called
+    body = route.calls.last.request.content
+    assert b"organizationId" in body
+    assert b"name" in body
+    assert b"phoneNumber" not in body
+    assert result["isExact"] is True
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_registry_lookup_customers_by_phone(client):
+    route = respx.post(f"{BASE_URL}/internal/customers/lookup").respond(
+        status_code=200, json={"matches": [], "isExact": False, "total": 0}
+    )
+    registry = ToolRegistry(client)
+    await registry.lookup_customers("org-1", phone="0771234567")
+    assert route.called
+    body = route.calls.last.request.content
+    assert b"phoneNumber" in body
+    assert b"0771234567" in body
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_registry_save_customer_memory(client):
     route = respx.post(f"{BASE_URL}/internal/customers/cust-1/memories").respond(
         status_code=201, json={"id": "mem-1"}

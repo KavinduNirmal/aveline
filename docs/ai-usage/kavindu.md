@@ -1652,3 +1652,57 @@ orchestrator). Working on branch `feature/slice1-customer-resolution`.
 - Docs updated (customer-memory.md, inbox.md §5.1.1 choice block). No new ADR (additive block
   type + existing `IDistributedCache`). Follow-ups: Postgres `ILIKE` for name match; optional
   write-side phone normalization in `identify`; optional LLM name extraction layer.
+
+## Session 2026-09-09
+
+**Task:** Finalize AVA — Customer Memory Agent (Slice 1) end-to-end: wire the LLM, usage reporting,
+interactions, structured events + real brief, runtime schema validation, email lookup, loyalty
+progression, event reminders, and stale-doc cleanup.
+**Tool used:** opencode (Claude) AI coding agent
+**Branch:** `feature/slice1-ava-finalize` (based on `feature/slice1-customer-resolution`)
+
+### Summary of Activities
+
+Created 8 GitHub issues (#163–#170) and implemented each test-first:
+
+- **#163 Wire LLM** — `AGENT_LLM_ENABLED` setting + `app/llm/runtime.py:memory_llm_or_none` gate
+  (requires key + model); `CustomerMemoryAgent`/`build_memory_graph` accept an optional chat
+  model; `compose_output` drafts via the LLM (assemble prompt, read langchain `usage_metadata`)
+  with a deterministic-template fallback; `run_memory_agent` threads the LLM + usage through.
+- **#164 Record interactions** — `record_customer_interaction` sends `parsedIntentJson`; the
+  `persist` node logs each inbound interaction with the extracted intent.
+- **#165 Always-on usage reporting** — `AgentMetadata` gains input/output tokens; `formulate_response`
+  attaches model + token split (or `rule-based` sentinel); `agents_query` calls `report_usage`
+  best-effort (workflow_id = thread_id) after every `/agents/query`.
+- **#166 Structured events + backend brief** — `ToolRegistry.add_customer_event`/`get_customer_events`;
+  `persist` creates a `Customer_Event` row per dated event; `compose_output` enriches the brief
+  from the backend `GenerateBriefAsync` (real events/tags/status) while keeping semantic context.
+- **#167 Runtime schema validation** — `coerce_output` validates against `MemoryAgentOutput`
+  (extra forbidden) in the running path with a graceful error fallback; only dated events are
+  emitted as structured events; `CustomerProfileSummary.phone_number` made optional (agent can know
+  a customer by id/name without a phone).
+- **#168 Email + intent + docs** — .NET lookup matches by email; `ToolRegistry.lookup_customers`
+  surfaces email; removed the never-produced `order_status` literal; rewrote stale agent READMEs.
+- **#169 Loyalty** — deterministic `CustomerLoyaltyService` (new → returning → vip → dormant) +
+  `POST /internal/customers/{id}/status` recompute/override (spend/visit data arrives via Slice 3).
+- **#170 Event reminders** — `ICustomerEventRepository.FindDueForReminderAsync` +
+  `MarkReminderSentAsync`; `EventReminderService` dispatches `NotificationType.EventReminder` to
+  org staff via `INotificationDispatcher` and marks reminded; `EventReminderWorker` (daily).
+- Docs: `docs/architecture/customer-memory.md`, `ADR-017` follow-up section.
+
+### Verification Performed
+
+- Python: `pytest tests/` green (268 passed, 2 skipped), `ruff check app/ tests/` clean, coverage
+  94%+ (gate ≥ 90).
+- .NET: `dotnet build` clean; new `CustomerLoyaltyServiceTests`, `EventReminderServiceTests`,
+  lookup/email, and endpoint integration tests pass (line coverage gate ≥ 30% verified by CI).
+- Committed across 8 logical commits, one per issue (#163–#170); Husky pre-commit gates pass.
+
+### Notes
+- Found that EF turns the required `Include(Customer)` into an INNER JOIN (soft-delete query
+  filter on `Customer`), which dropped orphan events in tests — seeded matching customers.
+- `report_usage` failure is swallowed (logged) so usage accounting never fails a query; rule-based
+  runs report the `rule-based` sentinel (0 tokens → 0.1 Blossom minimum per ADR-010).
+- Branched from `feature/slice1-customer-resolution` (the AVA Slice 1 tip incl. shared customer
+  resolution #161/#162), not `development`, so it inherits the full slice state.
+

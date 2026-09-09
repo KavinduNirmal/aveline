@@ -34,7 +34,7 @@ Customer Memory Agent sub-graph (agnet-service/app/agents/customer_memory/)
 |---|---|
 | Entities, EF config, migrations, pgvector column | `Aveline.Api/Modules/CustomerConcierge/Models` + `Infrastructure/Data` |
 | Repositories (data access, incl. cosine search) | `Aveline.Api/Modules/CustomerConcierge/Repositories` |
-| Services (identify, memory, consent, interactions, events, brief) | `Aveline.Api/Modules/CustomerConcierge/Services` |
+| Services (identify, memory, consent, interactions, events, brief, loyalty, reminders) | `Aveline.Api/Modules/CustomerConcierge/Services` |
 | Embedding generation (`IEmbeddingService`) | `Aveline.Api/Modules/CustomerConcierge/Services` |
 | Internal endpoints (`/internal/customers/*`) | `Aveline.Api/Endpoints/CustomerConciergeEndpoints.cs` |
 | Typed I/O schemas | `agnet-service/app/schemas/customer_memory.py` |
@@ -67,18 +67,19 @@ Routed under `/internal/customers`, all require the `InternalServicePolicy`
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/identify` | Look up a customer by phone, creating a `new` profile when absent |
-| POST | `/lookup` | Read-only lookup by name and/or phone (never creates) - used to resolve a customer from free text |
+| POST | `/lookup` | Read-only lookup by name and/or phone/email (never creates) - used to resolve a customer from free text |
 | GET | `/{id}/profile` | Full profile (preferences, tags, consent) |
 | POST | `/{id}/memories` | Persist a semantic memory (embeds content) |
 | POST | `/memories/search` | pgvector cosine search over a customer's memories |
-| GET | `/{id}/brief` | Staff-facing interaction brief |
-| POST | `/{id}/interactions` | Record an interaction |
+| GET | `/{id}/brief` | Staff-facing interaction brief (real events/tags/preferences) |
+| POST | `/{id}/interactions` | Record an interaction (with parsed-intent JSON) |
 | GET/POST | `/{id}/consent` | Read / update consent |
 | GET/POST | `/{id}/events` | List / add customer events |
+| POST | `/{id}/status` | Recompute/override the customer's loyalty tier |
 
 The `/lookup` result is cached for 60s via `IDistributedCache` so repeat lookups skip the
 database. Phones are matched in exact and E.164-normalised form; names use a case-insensitive
-fragment match.
+fragment match and emails an exact case-insensitive match.
 
 ## Agent sub-graph flow
 
@@ -88,9 +89,34 @@ fragment match.
 3. **parse** — deterministic rule parsing extracts intent (occasion/colour/size/budget), explicit
    preferences ("I like/prefer/love/hate …"), and event signals.
 4. **retrieve** — semantic search over prior memories for context.
-5. **persist** — saves explicit preferences and detected events as `Customer_Memory` rows.
-6. **compose_output** — builds a concise `interaction_brief` and a draft reply for staff approval
-   (never auto-sent).
+5. **persist** — saves explicit preferences and detected events as `Customer_Memory` rows, records
+   the inbound interaction with its parsed intent (`Customer_Interactions`), and creates a
+   **structured `Customer_Event` row** for each dated event (undated signals stay text-only).
+6. **compose_output** — enriches the `interaction_brief` from the backend
+   `CustomerMemoryService.GenerateBriefAsync` (real events/tags/status) plus semantic context,
+   generates a draft reply via the LLM (falling back to a deterministic template when no LLM/key
+   is configured or the provider fails), and validates the result against `MemoryAgentOutput`
+   before returning it.
+
+### LLM, usage and runtime validation
+
+- **LLM (Issue #163).** Draft generation uses `create_chat_model` when `AGENT_LLM_ENABLED` and an
+  `LLM_API_KEY`/`LLM_MODEL` are set (`app/llm/runtime.py`). Without them, or on provider failure,
+  the agent is fully deterministic — CI and keyless dev never require a live model.
+- **Usage (Issue #165).** Every completed `/agents/query` run reports usage to
+  `/internal/usage/record` (ADR-010) — real provider/model + token split when the LLM ran, else a
+  `rule-based` sentinel with zero tokens. Reporting is best-effort and never fails a query.
+- **Schema validation (Issue #167).** The composed output is validated against
+  `MemoryAgentOutput` (extra fields forbidden); drift yields a safe `error` status.
+
+### Loyalty & reminders (Issue #169/#170)
+
+- **Loyalty.** `CustomerLoyaltyService` derives `Customer.Status` from `TotalSpent`/`VisitCount`/
+  `LastVisitAt` (new → returning → vip → dormant), exposed via `POST /internal/customers/{id}/status`
+  for recompute or owner override. Spend/visit data is populated by purchase activity (Slice 3).
+- **Reminders.** `EventReminderService` + `EventReminderWorker` (daily) dispatch a
+  `NotificationType.EventReminder` to the boutique's staff for each active, un-reminded event
+  within a rolling 30-day horizon, then set `ReminderSentAt` so each event is reminded once.
 
 ### Message-level customer resolution (shared, Issue #161)
 

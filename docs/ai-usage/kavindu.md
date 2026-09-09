@@ -1588,3 +1588,27 @@ streaming) and the deferred SignOff LangGraph resume. On branch `feature/154-rea
 
 - Commit, push, open the PR for #154. This completes the realtime conversation workflow
   finalisation plan (Issues #150-#154).
+
+## Session 2026-09-09 — Issue #161 Shared customer resolution (General Salon)
+
+**Task:** Implement shared, agent-agnostic message-level customer resolution so any
+specialist (Ava now; Elle/Lina later) can resolve a customer from free text typed into the
+General Salon. Adapting the earlier concierge-lookup design to the existing codebase
+(no new controller/tool class; extends existing `CustomerConcierge` + `ToolRegistry` +
+orchestrator). Working on branch `feature/slice1-customer-resolution`.
+**Tool used:** opencode (AI coding agent)
+
+### Intended work (tests-first)
+
+- .NET: `PhoneNormalizer`, `CustomerLookupRequest/Match/Response` DTOs, `LookupAsync`
+  (repository `ListMatchesAsync` + `IDistributedCache` short-TTL caching),
+  `POST /internal/customers/lookup`, `POST /orgs/{org}/conversations/{id}/select-customer`.
+- Python: shared `app/customer_resolution/` (extract + resolver), `lookup_customers` tool,
+  orchestrator `resolve_customer`/`clarify` nodes, `choice` block builder (Aveline-attributed).
+- Frontend: `choice` block renderer + `selectCustomer` (web + Flutter).
+- Docs: customer-memory.md, inbox.md §5, OpenApi.
+
+### Created
+
+- GitHub issue #161: https://github.com/KavinduNirmal/aveline/issues/161
+- Branch `feature/slice1-customer-resolution` (from origin/development @ 2d55785).

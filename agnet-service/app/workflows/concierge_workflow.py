@@ -112,21 +112,47 @@ async def run_memory_agent(state: ConciergeState) -> dict[str, Any]:
 
 
 def run_visual_agent(state: ConciergeState) -> dict[str, Any]:
-    """Placeholder Visual Insight Agent node.
+    """Stub Visual Insight Agent node.
 
     TODO(Slice 2): replace with the real ``app/agents/visual_insight/graph.py``
-    sub-graph.
+    sub-graph, which fills ``items``/``looks``/``suggestion`` and sets ``status``
+    to ``success``/``pending``. Until then this stub declares the structured output
+    shape with ``status == "stub"`` and no content, so the Salon sees no fabricated
+    product data.
     """
-    return {"visual_output": {"agent": "visual", "ran": True}}
+    return {
+        "visual_output": {
+            "agent": "visual",
+            "ran": True,
+            "status": "stub",
+            "note": "Visual sourcing and outfit composition are not wired yet (Slice 2).",
+            "items": [],
+            "looks": [],
+            "suggestion": None,
+        }
+    }
 
 
 def run_commerce_agent(state: ConciergeState) -> dict[str, Any]:
-    """Placeholder Commerce Agent node.
+    """Stub Commerce Agent node.
 
-    TODO(Slice 3): replace with the real ``app/agents/commerce/graph.py``
-    sub-graph, which may interrupt for human approval.
+    TODO(Slice 3): replace with the real ``app/agents/commerce/graph.py`` sub-graph, which
+    fills ``summary``/``payment``/``courier`` and, when approval is required, pauses for
+    human-in-the-loop sign-off. Until then this stub declares the structured output shape
+    with ``status == "stub"`` and no fabricated payment or approval data.
     """
-    return {"commerce_output": {"agent": "commerce", "ran": True}}
+    return {
+        "commerce_output": {
+            "agent": "commerce",
+            "ran": True,
+            "status": "stub",
+            "note": "Commerce validation is not wired yet (Slice 3).",
+            "needs_approval": False,
+            "summary": None,
+            "payment": None,
+            "courier": None,
+        }
+    }
 
 
 def formulate_response(state: ConciergeState) -> dict[str, Any]:

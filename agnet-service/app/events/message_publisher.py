@@ -17,6 +17,12 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from app.events.block_builders import (
+    build_ava_blocks,
+    build_aveline_blocks,
+    build_elle_blocks,
+    build_lina_blocks,
+)
 from app.events.block_builders import build_ava_blocks, build_aveline_blocks
 from app.schemas.response import AgentResponse, AgentStatus
 
@@ -27,6 +33,8 @@ MESSAGE_CREATED = "message.created"
 #: persona key -> workflow output field -> block builder.
 _SPECIALISTS = (
     ("ava", "memory", build_ava_blocks),
+    ("elle", "visual", build_elle_blocks),
+    ("lina", "commerce", build_lina_blocks),
     # Elle (visual) and Lina (commerce) are added by Issue #151 once their stub nodes
     # emit structured output fields for their builders to consume.
 )

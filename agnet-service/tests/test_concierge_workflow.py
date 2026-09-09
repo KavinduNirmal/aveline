@@ -43,6 +43,31 @@ async def test_pricing_query_routes_through_memory_and_commerce():
     assert result["commerce_output"] is not None
 
 
+async def test_visual_stub_emits_structured_output():
+    result = await _invoke("Do you have a blue saree for a wedding?")
+    visual = result["visual_output"]
+
+    assert visual is not None
+    assert visual["ran"] is True
+    # The stub declares its structured output shape so it is machine-checkable; the real
+    # Slice 2 graph replaces "stub" with "success"/"pending" and fills items/looks.
+    assert visual["status"] == "stub"
+    assert "note" in visual
+    assert visual["items"] == []
+    assert visual["looks"] == []
+
+
+async def test_commerce_stub_emits_structured_output():
+    result = await _invoke("How much is this dress?")
+    commerce = result["commerce_output"]
+
+    assert commerce is not None
+    assert commerce["ran"] is True
+    assert commerce["status"] == "stub"
+    assert "note" in commerce
+    assert commerce["needs_approval"] is False
+
+
 async def test_out_of_scope_short_circuits():
     result = await _invoke("Write me a python script to sort a list")
     assert result["intent"]["intent_type"] == "out_of_scope"

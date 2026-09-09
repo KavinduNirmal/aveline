@@ -27,10 +27,20 @@ class FakeLookupRegistry:
     def __init__(self, response: dict) -> None:
         self.response = response
         self.calls: list[tuple[str, str | None, str | None]] = []
+        self.identify_calls: list[tuple[str, str, str | None]] = []
 
     async def lookup_customers(self, org_id, name=None, phone=None):
         self.calls.append((org_id, name, phone))
         return self.response
+
+    async def identify_customer(self, org_id, phone_number, full_name=None):
+        self.identify_calls.append((org_id, phone_number, full_name))
+        return {
+            "customerId": f"cust-{phone_number}",
+            "fullName": full_name or "New Customer",
+            "phoneNumber": phone_number,
+            "status": "new",
+        }
 
 
 def _exact(match: dict) -> dict:
@@ -162,6 +172,31 @@ async def test_resolve_hash_phone_mention_looks_up_by_phone():
 
     assert res.kind == "resolved"
     assert registry.calls == [("org-1", None, "0771234567")]
+    assert registry.identify_calls == []
+
+
+async def test_resolve_new_customer_with_name_and_phone_onboards():
+    """A staff note naming a brand-new customer with a #phone should onboard them, not ask again."""
+    registry = FakeLookupRegistry({"matches": [], "isExact": False, "total": 0})
+    res = await resolve_customer(
+        "org-1", "A new customer dropped by, @Jason smith, #0751234567. he will come by tomorrow",
+        registry=registry,
+    )
+
+    assert res.kind == "resolved"
+    # Phone (strongest identity) was looked up first, then onboarded via identify with the name.
+    assert registry.calls == [("org-1", None, "0751234567")]
+    assert registry.identify_calls == [("org-1", "0751234567", "Jason smith")]
+    assert res.customer_id == "cust-0751234567"
+
+
+async def test_resolve_phone_mention_existing_customer_does_not_onboard():
+    registry = FakeLookupRegistry(_exact(MATCH_SARAH))
+    res = await resolve_customer("org-1", "reach #0771234567 for @Samantha Arias", registry=registry)
+
+    assert res.kind == "resolved"
+    assert res.customer_id == "cust-sarah"
+    assert registry.identify_calls == []
 
 
 def test_resolution_shapes():

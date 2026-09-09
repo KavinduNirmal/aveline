@@ -39,10 +39,19 @@ async def resolve_customer(
         return CustomerResolution(kind="resolved", customer_id=str(customer_id), message=message)
 
     mentions = extract_mentions(message)
+
+    # An explicit #phone is the strongest identity signal. When the read-only lookup finds no
+    # such customer, the note is declaring a brand-new customer (often with an @name) -> onboard
+    # them via identify (create) rather than asking for a number they already gave.
+    if mentions.phone:
+        lookup = _from_lookup(await registry.lookup_customers(org_id, phone=mentions.phone), message)
+        if lookup.kind != "not_found":
+            return lookup
+        return await _identify_resolution(
+            registry, org_id, message, phone=mentions.phone, name=mentions.customer)
+
     if mentions.customer:
         return _from_lookup(await registry.lookup_customers(org_id, name=mentions.customer), message)
-    if mentions.phone:
-        return _from_lookup(await registry.lookup_customers(org_id, phone=mentions.phone), message)
 
     search_phone = phone or extract_phone(message)
     if search_phone:
@@ -53,6 +62,20 @@ async def resolve_customer(
         return _from_lookup(await registry.lookup_customers(org_id, name=name), message)
 
     return CustomerResolution(kind="no_signal", message=message)
+
+
+async def _identify_resolution(
+    registry: Any,
+    org_id: str,
+    message: str,
+    *,
+    phone: str,
+    name: str | None,
+) -> CustomerResolution:
+    """Create-or-fetch a customer by phone (with an optional display name) and resolve to it."""
+    profile = await registry.identify_customer(org_id, phone, name)
+    customer_id = str(profile.get("customerId") or profile.get("id") or "")
+    return CustomerResolution(kind="resolved", customer_id=customer_id, profile=profile, message=message)
 
 
 def _from_lookup(payload: dict[str, Any] | None, message: str) -> CustomerResolution:

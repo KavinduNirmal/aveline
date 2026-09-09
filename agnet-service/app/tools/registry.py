@@ -116,6 +116,23 @@ class ToolRegistry:
             "GET", f"/api/internal/inventory/{item_id}/matches"
         )
 
+    async def check_stock(self, item_id: str, org_id: str | None = None) -> dict[str, Any]:
+        """Check stock availability for an inventory item."""
+        url = f"/api/internal/inventory/{item_id}/stock"
+        if org_id:
+            url += f"?organizationId={org_id}"
+        return await self._client.request("GET", url)
+
+    async def create_sourcing_request(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Submit a sourcing request for unavailable pieces."""
+        return await self._client.request("POST", "/api/internal/sourcing/requests", json=payload)
+
+    async def search_supplier_catalog(self, query: str, org_id: str | None = None) -> dict[str, Any]:
+        """Query supplier catalogs for material/garment sourcing."""
+        return await self._client.request(
+            "POST", "/api/internal/suppliers/search", json={"query": query, "organizationId": org_id}
+        )
+
     # ============================== COMMERCE AGENT ==============================
 
     async def calculate_margin(self, order_id: str) -> dict[str, Any]:

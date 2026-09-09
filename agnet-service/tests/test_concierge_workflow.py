@@ -43,18 +43,17 @@ async def test_pricing_query_routes_through_memory_and_commerce():
     assert result["commerce_output"] is not None
 
 
-async def test_visual_stub_emits_structured_output():
+async def test_visual_agent_emits_structured_output():
     result = await _invoke("Do you have a blue saree for a wedding?")
     visual = result["visual_output"]
 
     assert visual is not None
     assert visual["ran"] is True
-    # The stub declares its structured output shape so it is machine-checkable; the real
-    # Slice 2 graph replaces "stub" with "success"/"pending" and fills items/looks.
-    assert visual["status"] == "stub"
-    assert "note" in visual
-    assert visual["items"] == []
-    assert visual["looks"] == []
+    assert visual["agent"] == "visual"
+    assert visual["status"] in ("success", "pending")
+    assert isinstance(visual["items"], list)
+    assert isinstance(visual["looks"], list)
+
 
 
 async def test_commerce_stub_emits_structured_output():
@@ -161,3 +160,67 @@ async def test_run_concierge_preserves_state_order_with_delay(monkeypatch):
 
     assert response.status == AgentStatus.success
     assert states == ["thinking", "searching", "searching", "processing"]
+
+
+# ---------------------------------------------------------------------------
+# Workflow Path End-to-End Tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_workflow_product_search_path():
+    """Product Search Path: Intent Gate -> Memory Agent -> Visual Agent -> Formulate Response."""
+    result = await _invoke("Do you have an emerald silk saree for a reception?")
+
+    # 1. Intent Gate
+    assert result["intent"]["intent_type"] == "item_search"
+    # 2. Memory Agent
+    assert result["memory_output"] is not None
+    assert result["memory_output"]["ran"] is True
+    # 3. Visual Agent
+    assert result["visual_output"] is not None
+    assert result["visual_output"]["ran"] is True
+    # 4. Commerce Agent skipped
+    assert result["commerce_output"] is None
+    # 5. Formulate Response
+    assert result["response"]["status"] == AgentStatus.success
+
+
+@pytest.mark.asyncio
+async def test_workflow_purchase_request_path():
+    """Purchase-Related Request Path: Intent Gate -> Memory Agent -> Visual Agent -> Commerce Agent -> Formulate Response."""
+    result = await _invoke("I want to purchase this emerald silk saree")
+
+    # 1. Intent Gate
+    assert result["intent"]["intent_type"] == "order_placement"
+    # 2. Memory Agent
+    assert result["memory_output"] is not None
+    # 3. Visual Agent
+    assert result["visual_output"] is not None
+    # 4. Commerce Agent
+    assert result["commerce_output"] is not None
+    assert result["commerce_output"]["ran"] is True
+    # 5. Formulate Response
+    assert result["response"]["status"] == AgentStatus.success
+
+
+@pytest.mark.asyncio
+async def test_workflow_reference_image_path():
+    """Reference Image Path: Intent Gate -> Memory Agent -> Visual Agent (Image Analysis -> Inventory Search -> Possible Sourcing) -> Formulate Response."""
+    result = await _invoke(
+        "Find me something matching this photo",
+        org_context={"image_url": "https://images.aveline.luxury/evening-dress.jpg"},
+    )
+
+    # 1. Intent Gate
+    assert result["intent"]["intent_type"] in ("item_search", "general_inquiry")
+    # 2. Memory Agent
+    assert result["memory_output"] is not None
+    # 3. Visual Agent executed with image attributes & inventory search / looks / sourcing
+    assert result["visual_output"] is not None
+    assert result["visual_output"]["ran"] is True
+    assert "items" in result["visual_output"]
+    assert "looks" in result["visual_output"]
+    # 4. Formulate Response
+    assert result["response"]["status"] == AgentStatus.success
+

@@ -102,36 +102,77 @@ class ToolRegistry:
 
     async def search_inventory(self, criteria: dict[str, Any]) -> dict[str, Any]:
         """Search inventory by structured criteria via the backend."""
-        return await self._client.request("POST", "/api/internal/inventory/search", json=criteria)
+        payload = dict(criteria)
+        if "org_id" in payload and "organizationId" not in payload:
+            payload["organizationId"] = payload["org_id"]
+        return await self._client.request("POST", "/internal/visual/inventory/search", json=payload)
 
-    async def analyze_product_image(self, image_url: str) -> dict[str, Any]:
-        """Analyze a product image and return extracted attributes."""
-        return await self._client.request(
-            "POST", "/api/internal/analyze-image", json={"image_url": image_url}
-        )
-
-    async def match_customers_to_item(self, item_id: str) -> dict[str, Any]:
-        """Find customers whose preferences match an item."""
-        return await self._client.request(
-            "GET", f"/api/internal/inventory/{item_id}/matches"
-        )
-
-    async def check_stock(self, item_id: str, org_id: str | None = None) -> dict[str, Any]:
-        """Check stock availability for an inventory item."""
-        url = f"/api/internal/inventory/{item_id}/stock"
+    async def get_inventory_item(self, item_id: str, org_id: str | None = None) -> dict[str, Any]:
+        """Fetch inventory item details."""
+        url = f"/internal/visual/inventory/{item_id}"
         if org_id:
             url += f"?organizationId={org_id}"
         return await self._client.request("GET", url)
 
+    async def analyze_product_image(self, image_url: str, org_id: str | None = None) -> dict[str, Any]:
+        """Analyze a product image and return extracted attributes."""
+        body = {
+            "imageUrl": image_url,
+            "organizationId": org_id or "00000000-0000-0000-0000-000000000000",
+        }
+        return await self._client.request("POST", "/internal/visual/analyze-image", json=body)
+
+    async def match_customers_to_item(self, item_id: str, org_id: str | None = None) -> dict[str, Any]:
+        """Find customers whose preferences match an item."""
+        url = f"/internal/visual/customer-matches/{item_id}"
+        if org_id:
+            url += f"?organizationId={org_id}"
+        return await self._client.request("GET", url)
+
+    async def check_stock(self, item_id: str, org_id: str | None = None) -> dict[str, Any]:
+        """Check stock availability for an inventory item."""
+        url = f"/internal/visual/inventory/{item_id}"
+        if org_id:
+            url += f"?organizationId={org_id}"
+        return await self._client.request("GET", url)
+
+    async def compose_outfit(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Compose a harmonized outfit look."""
+        body = dict(payload)
+        if "org_id" in body and "organizationId" not in body:
+            body["organizationId"] = body["org_id"]
+        if "primary_item_id" in body and "primaryItemId" not in body:
+            body["primaryItemId"] = body["primary_item_id"]
+        return await self._client.request("POST", "/internal/visual/outfits/compose", json=body)
+
     async def create_sourcing_request(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Submit a sourcing request for unavailable pieces."""
-        return await self._client.request("POST", "/api/internal/sourcing/requests", json=payload)
+        body = dict(payload)
+        if "org_id" in body and "organizationId" not in body:
+            body["organizationId"] = body["org_id"]
+        if "customer_id" in body and "customerId" not in body:
+            body["customerId"] = body["customer_id"]
+        return await self._client.request("POST", "/internal/visual/sourcing-requests", json=body)
 
-    async def search_supplier_catalog(self, query: str, org_id: str | None = None) -> dict[str, Any]:
+    async def search_supplier_catalog(
+        self,
+        query: str | None = None,
+        org_id: str | None = None,
+        supplier_id: str | None = None,
+        category: str | None = None,
+        color: str | None = None,
+        max_price: float | None = None,
+    ) -> dict[str, Any]:
         """Query supplier catalogs for material/garment sourcing."""
-        return await self._client.request(
-            "POST", "/api/internal/suppliers/search", json={"query": query, "organizationId": org_id}
-        )
+        sup_id = supplier_id or "00000000-0000-0000-0000-000000000001"
+        url = f"/internal/visual/suppliers/{sup_id}/catalog?organizationId={org_id or ''}"
+        if category:
+            url += f"&category={category}"
+        if color:
+            url += f"&color={color}"
+        if max_price is not None:
+            url += f"&maxPrice={max_price}"
+        return await self._client.request("GET", url)
 
     # ============================== COMMERCE AGENT ==============================
 

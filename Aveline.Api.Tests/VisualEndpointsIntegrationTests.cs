@@ -1,9 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
-using Aveline.Application.DTOs.Inventory;
-using Aveline.Application.DTOs.Visual;
-using Aveline.Domain.Entities;
-using Aveline.Infrastructure.Persistence;
+using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Modules.VisualIntelligence.DTOs;
+using Aveline.Api.Modules.VisualIntelligence.Models;
 using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -59,7 +58,7 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
         {
             Content = JsonContent.Create(new { })
         };
-        request.Headers.Add("X-Internal-Key", "wrong-secret-key");
+        request.Headers.Add("X-Internal-Token", "wrong-secret-key");
 
         var response = await _client.SendAsync(request);
 
@@ -81,7 +80,7 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
         {
             Content = JsonContent.Create(body)
         };
-        request.Headers.Add("X-Internal-Key", InternalKey);
+        request.Headers.Add("X-Internal-Token", InternalKey);
 
         var response = await _client.SendAsync(request);
 
@@ -133,7 +132,7 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
         var orgId = Guid.NewGuid();
 
         using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/internal/visual/inventory/{itemId}?orgId={orgId}");
-        request.Headers.Add("X-Internal-Key", InternalKey);
+        request.Headers.Add("X-Internal-Token", InternalKey);
 
         var response = await _client.SendAsync(request);
 
@@ -160,13 +159,13 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
         // Seed item in DB context
         using (var scope = _factory.Services.CreateScope())
         {
-            var db = scope.ServiceProvider.GetRequiredService<AvelineDbContext>();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             await db.InventoryItems.AddAsync(item);
             await db.SaveChangesAsync();
         }
 
         using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/internal/visual/inventory/{item.Id}?orgId={orgId}");
-        request.Headers.Add("X-Internal-Key", InternalKey);
+        request.Headers.Add("X-Internal-Token", InternalKey);
 
         var response = await _client.SendAsync(request);
 
@@ -225,7 +224,7 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
         {
             Content = JsonContent.Create(body)
         };
-        request.Headers.Add("X-Internal-Key", InternalKey);
+        request.Headers.Add("X-Internal-Token", InternalKey);
 
         var response = await _client.SendAsync(request);
 
@@ -278,7 +277,7 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
         {
             Content = JsonContent.Create(body)
         };
-        request.Headers.Add("X-Internal-Key", InternalKey);
+        request.Headers.Add("X-Internal-Token", InternalKey);
 
         var response = await _client.SendAsync(request);
 
@@ -304,7 +303,7 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
 
         using (var scope = _factory.Services.CreateScope())
         {
-            var db = scope.ServiceProvider.GetRequiredService<AvelineDbContext>();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             await db.InventoryItems.AddAsync(item);
             await db.SaveChangesAsync();
         }
@@ -325,7 +324,7 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
         {
             Content = JsonContent.Create(updateBody)
         };
-        request.Headers.Add("X-Internal-Key", InternalKey);
+        request.Headers.Add("X-Internal-Token", InternalKey);
 
         var response = await _client.SendAsync(request);
 
@@ -369,7 +368,7 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
         {
             Content = JsonContent.Create(body)
         };
-        request.Headers.Add("X-Internal-Key", InternalKey);
+        request.Headers.Add("X-Internal-Token", InternalKey);
 
         var response = await _client.SendAsync(request);
 
@@ -395,7 +394,7 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
 
         using (var scope = _factory.Services.CreateScope())
         {
-            var db = scope.ServiceProvider.GetRequiredService<AvelineDbContext>();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             await db.InventoryItems.AddAsync(item);
             await db.SaveChangesAsync();
         }
@@ -410,7 +409,7 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
         {
             Content = JsonContent.Create(statusBody)
         };
-        request.Headers.Add("X-Internal-Key", InternalKey);
+        request.Headers.Add("X-Internal-Token", InternalKey);
 
         var response = await _client.SendAsync(request);
 
@@ -467,13 +466,13 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
 
         using (var scope = _factory.Services.CreateScope())
         {
-            var db = scope.ServiceProvider.GetRequiredService<AvelineDbContext>();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             await db.InventoryItems.AddRangeAsync(lowStockItem, highStockItem);
             await db.SaveChangesAsync();
         }
 
         using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/internal/visual/inventory/low-stock?orgId={orgId}&threshold=5");
-        request.Headers.Add("X-Internal-Key", InternalKey);
+        request.Headers.Add("X-Internal-Token", InternalKey);
 
         var response = await _client.SendAsync(request);
 
@@ -519,7 +518,7 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
         {
             Content = JsonContent.Create(body)
         };
-        request.Headers.Add("X-Internal-Key", InternalKey);
+        request.Headers.Add("X-Internal-Token", InternalKey);
 
         var response = await _client.SendAsync(request);
 
@@ -555,7 +554,7 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
         var itemId = Guid.NewGuid();
 
         using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/internal/visual/customer-matches/{itemId}?orgId={orgId}&minScore=0.7");
-        request.Headers.Add("X-Internal-Key", InternalKey);
+        request.Headers.Add("X-Internal-Token", InternalKey);
 
         var response = await _client.SendAsync(request);
 
@@ -600,7 +599,7 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
         {
             Content = JsonContent.Create(body)
         };
-        request.Headers.Add("X-Internal-Key", InternalKey);
+        request.Headers.Add("X-Internal-Token", InternalKey);
 
         var response = await _client.SendAsync(request);
 
@@ -665,7 +664,7 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
 
         using (var scope = _factory.Services.CreateScope())
         {
-            var db = scope.ServiceProvider.GetRequiredService<AvelineDbContext>();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             await db.InventoryItems.AddRangeAsync(primaryItem, blouseItem);
             await db.SaveChangesAsync();
         }
@@ -682,7 +681,7 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
         {
             Content = JsonContent.Create(body)
         };
-        request.Headers.Add("X-Internal-Key", InternalKey);
+        request.Headers.Add("X-Internal-Token", InternalKey);
 
         var response = await _client.SendAsync(request);
 
@@ -739,7 +738,7 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
         {
             Content = JsonContent.Create(body)
         };
-        request.Headers.Add("X-Internal-Key", InternalKey);
+        request.Headers.Add("X-Internal-Token", InternalKey);
 
         var response = await _client.SendAsync(request);
 
@@ -775,7 +774,7 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
         var orgId = Guid.NewGuid();
 
         using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/internal/visual/suppliers/{supplierId}/catalog?orgId={orgId}&category=saree&color=emerald");
-        request.Headers.Add("X-Internal-Key", InternalKey);
+        request.Headers.Add("X-Internal-Token", InternalKey);
 
         var response = await _client.SendAsync(request);
 

@@ -1,5 +1,4 @@
 using Aveline.Api.Infrastructure.Data;
-using Aveline.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -22,10 +21,6 @@ public static class DatabaseConfiguration
             {
                 options.UseInMemoryDatabase("AvelineInMemoryDb");
             });
-            services.AddDbContext<AvelineDbContext>(options =>
-            {
-                options.UseInMemoryDatabase("AvelineInMemoryDb");
-            });
             return services;
         }
 
@@ -34,14 +29,6 @@ public static class DatabaseConfiguration
             options.UseNpgsql(connectionString, npgsqlOptions =>
             {
                 npgsqlOptions.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName);
-            });
-        });
-
-        services.AddDbContext<AvelineDbContext>(options =>
-        {
-            options.UseNpgsql(connectionString, npgsqlOptions =>
-            {
-                npgsqlOptions.MigrationsAssembly(typeof(AvelineDbContext).Assembly.FullName);
             });
         });
 

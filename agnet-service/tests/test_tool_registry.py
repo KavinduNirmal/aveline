@@ -177,7 +177,7 @@ async def test_registry_get_customer_consent(client):
 @pytest.mark.asyncio
 @respx.mock
 async def test_registry_search_inventory(client):
-    route = respx.post(f"{BASE_URL}/api/internal/inventory/search").respond(
+    route = respx.post(f"{BASE_URL}/internal/visual/inventory/search").respond(
         status_code=200, json={"items": []}
     )
     registry = ToolRegistry(client)

@@ -998,4 +998,54 @@
 
 ### Verification Performed
 - `git branch` confirmed active branch: `* feature/visual-insight-agent`.
+
+## Session 2026-09-10 (Refactoring: Merge backend into unified Aveline.Api Modular Monolith)
+
+**Task:** Merge the separate `backend/` directory (`Aveline.Domain`, `Aveline.Application`, `Aveline.Infrastructure`, and `Aveline.Tests`) directly into the existing, unified `Aveline.Api` modular monolith and `Aveline.Api.Tests` test project.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed (All tests passing)
+
+### Work Performed
+1. Authored and approved implementation plan for merging `backend/` into `Aveline.Api`.
+2. Created Models under `Aveline.Api/Modules/VisualIntelligence/Models/`:
+   - `InventoryItem.cs`, `InventoryImage.cs`, `CustomerMatch.cs`, `OutfitComposition.cs`, `SourcingRequest.cs`.
+3. Created DTOs under `Aveline.Api/Modules/VisualIntelligence/DTOs/`:
+   - `InventoryItemDto.cs`, `CreateInventoryItemDto.cs`, `UpdateInventoryItemDto.cs`, `UpdateInventoryStatusDto.cs`, `SearchInventoryDto.cs`, `AnalyzeImageDto.cs`, `ImageAnalysisResultDto.cs`, `ComposeOutfitDto.cs`, `ComposedOutfitDto.cs`, `CreateSourcingRequestDto.cs`, `SourcingRequestDto.cs`, `SupplierCatalogItemDto.cs`, `CustomerMatchDto.cs`, `GenerateCustomerMatchesDto.cs`.
+4. Created Repositories under `Aveline.Api/Modules/VisualIntelligence/Repositories/`:
+   - `IInventoryRepository.cs`, `InventoryRepository.cs` (configured against `AppDbContext`).
+5. Created Services under `Aveline.Api/Modules/VisualIntelligence/Services/`:
+   - `IInventoryService.cs`, `InventoryService.cs`, `IVisualService.cs`, `VisualService.cs`.
+6. Created `VisualIntelligenceModule.cs` with `AddVisualIntelligenceModule` extension method and wired into `Aveline.Api/Program.cs`.
+7. Created EF Core entity configuration `InventoryItemConfiguration.cs` in `Aveline.Api/Infrastructure/Data/Configurations/` and registered Visual Intelligence `DbSet` properties in `AppDbContext.cs`.
+8. Updated `VisualController.cs` and `VisualEndpoints.cs` to reference `Aveline.Api.Modules.VisualIntelligence` namespaces.
+9. Migrated unit & integration test suites to `Aveline.Api.Tests/`:
+   - `InventoryServiceTests.cs`, `InventoryRepositoryTests.cs`, updated `VisualEndpointsIntegrationTests.cs`.
+10. Removed redundant `backend/` directory and references in `Aveline.Api.csproj`.
+11. Executed complete regression test suites:
+    - `dotnet test Aveline.Api.Tests\Aveline.Api.Tests.csproj`: 484/484 passed (0 failures).
+    - `pytest` in `agnet-service`: 292 passed, 2 skipped (0 failures).
+
+### Files Created or Modified
+- `docs/ai-usage/Dilud.md`
+- `Aveline.Api/Modules/VisualIntelligence/Models/*`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/*`
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/*`
+- `Aveline.Api/Modules/VisualIntelligence/Services/*`
+- `Aveline.Api/Modules/VisualIntelligence/VisualIntelligenceModule.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Controllers/VisualController.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/InventoryItemConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/AppDbContext.cs`
+- `Aveline.Api/Configurations/DatabaseConfiguration.cs`
+- `Aveline.Api/Endpoints/VisualEndpoints.cs`
+- `Aveline.Api/Program.cs`
+- `Aveline.Api/Aveline.Api.csproj`
+- `Aveline.Api.Tests/InventoryServiceTests.cs`
+- `Aveline.Api.Tests/InventoryRepositoryTests.cs`
+- `Aveline.Api.Tests/VisualEndpointsIntegrationTests.cs`
+- Deleted `backend/` directory
+
+### Verification Performed
+- `dotnet test Aveline.Api.Tests\Aveline.Api.Tests.csproj`: 484/484 passed in 1m 36s (100% success).
+- `.\.venv\Scripts\pytest` (in `agnet-service`): 292 passed, 2 skipped in 145.61s (100% success).
+
 

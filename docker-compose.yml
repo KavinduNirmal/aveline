@@ -75,6 +75,10 @@ services:
       Eventing__SubscribeEventTypes__2: ${EVENTING_SUBSCRIBE_EVENT_TYPES_2:-}
       AgentService__BaseUrl: http://agent:8000
       AgentService__InternalToken: ${INTERNAL_API_TOKEN:-change-me-internal-token}
+      # OpenAI-compatible embeddings used by the Customer Memory agent (pgvector retrieval).
+      Embeddings__ApiKey: ${EMBEDDINGS_API_KEY:-}
+      Embeddings__BaseUrl: ${EMBEDDINGS_BASE_URL:-https://api.openai.com/v1}
+      Embeddings__Model: ${EMBEDDINGS_MODEL:-text-embedding-3-small}
       # AES-256-GCM key for tenant integration credentials (base64, 32 bytes).
       Credentials__EncryptionKey: ${CREDENTIALS_ENCRYPTION_KEY:?CREDENTIALS_ENCRYPTION_KEY is required}
       # WhatsApp (Meta) integration gateway — base URL + API version (defaults used if unset).
@@ -121,6 +125,9 @@ services:
       DATABASE_URL: >-
         postgresql+asyncpg://${POSTGRES_USER:-aveline}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aveline}
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-change-me-internal-token}
+      # Base URL of the ASP.NET Core API so agent tool calls hit the internal endpoints
+      # (identify customer, memories, consent) used by the Customer Memory agent.
+      API_BASE_URL: http://api:8080
       # Redis Pub/Sub event bus (ADR-014). The agent subscribes to aveline:*:<event_type>.
       REDIS_URL: redis://redis:6379/0
       # Event types this service consumes from the API (empty until a consumer lands).

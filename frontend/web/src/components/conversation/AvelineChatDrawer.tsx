@@ -31,6 +31,7 @@ export function AvelineChatDrawer({ open, onClose }: AvelineChatDrawerProps) {
     openOrCreateSalon,
     send,
     decide,
+    selectCustomer,
   } = useConversations()
 
   // Ensure a Salon is open so the drawer has somewhere to send.
@@ -75,6 +76,7 @@ export function AvelineChatDrawer({ open, onClose }: AvelineChatDrawerProps) {
           loading={loading && !activeConversationId}
           agentActivity={agentActivity}
           onSignOff={(messageId, approved) => void decide(messageId, approved)}
+          onSelectCustomer={(customerId) => void selectCustomer(customerId)}
         />
       </div>
 

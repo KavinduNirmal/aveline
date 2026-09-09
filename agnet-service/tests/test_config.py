@@ -18,6 +18,7 @@ def test_defaults_are_sane():
     assert settings.llm_base_url == ""
     assert settings.llm_model == ""
     assert settings.llm_thinking_enabled is False
+    assert settings.agent_llm_enabled is True
     assert settings.agent_state_delay_ms == 0
     assert settings.database_url == ""
     assert settings.otel_service_name == "aveline-agent-service"
@@ -47,6 +48,7 @@ def test_env_vars_map_to_settings(monkeypatch):
     assert settings.database_url == "postgresql+asyncpg://u:p@localhost:5432/db"
     assert settings.otel_exporter_otlp_endpoint == "http://collector:4317"
     assert settings.otel_service_name == "aveline-agent-service"
+    assert settings.otel_trace_content is False
     assert settings.otel_trace_content is False
 
 

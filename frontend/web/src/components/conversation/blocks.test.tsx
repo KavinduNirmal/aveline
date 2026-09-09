@@ -48,6 +48,27 @@ describe('BlockRenderer', () => {
     const html = renderToString(<BlockRenderer block={{ type: 'unknown' }} />)
     expect(html).toBe('')
   })
+
+  it('renders a choice block with candidate options', () => {
+    const block: ContentBlock = {
+      type: 'choice',
+      prompt: 'Which one did you mean?',
+      options: [
+        { customerId: 'c1', fullName: 'Samantha Arias', status: 'vip', lastVisitAt: '2026-08-20' },
+        { customerId: 'c2', fullName: 'Samantha Ranaweera', status: 'returning' },
+      ],
+    }
+    const html = renderToString(<BlockRenderer block={block} />)
+    expect(html).toContain('Which one did you mean?')
+    expect(html).toContain('Samantha Arias')
+    expect(html).toContain('Samantha Ranaweera')
+    expect(html).toContain('vip')
+  })
+
+  it('does not render an empty choice block list', () => {
+    const html = renderToString(<BlockRenderer block={{ type: 'choice', options: [] }} />)
+    expect(html).toBe('')
+  })
 })
 
 describe('BlockList', () => {

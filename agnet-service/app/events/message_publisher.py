@@ -23,7 +23,6 @@ from app.events.block_builders import (
     build_elle_blocks,
     build_lina_blocks,
 )
-from app.events.block_builders import build_ava_blocks, build_aveline_blocks
 from app.schemas.response import AgentResponse, AgentStatus
 
 logger = logging.getLogger("aveline.agent.events")

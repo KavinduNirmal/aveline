@@ -19,6 +19,39 @@ public class ConversationServiceTests
             => Messages.Add(formatter(state, exception));
     }
 
+    [Fact]
+    public async Task SelectCustomerAsync_BindsCustomer_AndReTriggersAgentWithContext()
+    {
+        var orgId = Guid.NewGuid();
+        var salon = await _sut.GetOrCreateSalonAsync(orgId, Guid.NewGuid(), null, CancellationToken.None);
+        var customerId = Guid.NewGuid();
+
+        var selected = await _sut.SelectCustomerAsync(orgId, salon.Id, customerId, "Any events for Samantha?", CancellationToken.None);
+
+        Assert.NotNull(selected);
+        Assert.Equal(customerId, selected!.CustomerId);
+
+        // The re-triggered agent call carries the resolved customer id.
+        Assert.Equal("/agents/query", _agent.LastPath);
+        Assert.Contains("\"query\":\"Any events for Samantha?\"", _agent.LastBody);
+        Assert.Contains("\"customer_id\":\"" + customerId + "\"", _agent.LastBody);
+
+        // The binding persisted on the conversation row.
+        var reloaded = await _conversations.GetAsync(orgId, salon.Id, CancellationToken.None);
+        Assert.Equal(customerId, reloaded!.CustomerId);
+    }
+
+    [Fact]
+    public async Task SelectCustomerAsync_ReturnsNull_WhenConversationMissing()
+    {
+        var orgId = Guid.NewGuid();
+
+        var result = await _sut.SelectCustomerAsync(orgId, Guid.NewGuid(), Guid.NewGuid(), null, CancellationToken.None);
+
+        Assert.Null(result);
+        Assert.Equal(0, _agent.PostCount);
+    }
+
     private sealed class FakeConversationRepository : IConversationRepository
     {
         private readonly List<Conversation> _conversations = [];
@@ -86,6 +119,7 @@ public class ConversationServiceTests
             if (existing is not null)
             {
                 existing.Status = conversation.Status;
+                existing.CustomerId = conversation.CustomerId;
                 existing.LastMessageAt = conversation.LastMessageAt;
             }
             return Task.CompletedTask;

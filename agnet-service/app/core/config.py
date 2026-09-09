@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     # When False, DeepSeek reasoner-capable models are asked not to emit a thinking
     # (reasoning) pass. Only applied to the DeepSeek provider.
     llm_thinking_enabled: bool = False
+    # Master switch for invoking an LLM in the running agent workflow. When True the
+    # workflow uses an LLM only if LLM_API_KEY and LLM_MODEL are also configured; otherwise
+    # it stays fully deterministic (rule-based), keeping CI/dev green without keys.
+    agent_llm_enabled: bool = True
 
     # --- Agent workflow pacing ---
     # Artificial delay (ms) inserted between emitted lifecycle states so clients can

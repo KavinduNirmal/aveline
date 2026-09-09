@@ -8,6 +8,7 @@ so the Salon renders real content instead of placeholder text (Issues #150 and #
 from app.events.block_builders import (
     build_ava_blocks,
     build_aveline_blocks,
+    build_clarification_blocks,
     build_elle_blocks,
     build_lina_blocks,
 )
@@ -134,6 +135,49 @@ def test_aveline_summary_does_not_duplicate_ava_content_when_no_customer():
 
     assert text  # non-empty, still an acknowledgement
     assert "Michael" not in text
+
+
+# ------------------------------------------------------------------ Clarification (Aveline)
+
+
+def _ambiguous_clarification() -> dict:
+    return {
+        "kind": "ambiguous",
+        "candidates": [
+            {"customer_id": "c1", "full_name": "Samantha Arias", "status": "vip", "last_visit_at": "2026-08-20"},
+            {"customer_id": "c2", "full_name": "Samantha Ranaweera", "status": "returning", "last_visit_at": None},
+        ],
+    }
+
+
+def test_aveline_renders_ambiguous_as_a_choice_block():
+    output = {"intent": "event_query", "clarification": _ambiguous_clarification()}
+    blocks = build_aveline_blocks(output)
+
+    choice = next(b for b in blocks if b["type"] == "choice")
+    assert len(choice["options"]) == 2
+    assert choice["options"][0]["customerId"] == "c1"
+    assert choice["options"][0]["fullName"] == "Samantha Arias"
+    assert choice["options"][0]["status"] == "vip"
+    assert choice["options"][0]["lastVisitAt"] == "2026-08-20"
+
+
+def test_clarification_ambiguous_without_candidates_renders_nothing():
+    assert build_clarification_blocks({"kind": "ambiguous", "candidates": []}) == []
+
+
+def test_aveline_renders_not_found_as_an_ask_for_phone_text_block():
+    output = {"intent": "event_query", "clarification": {"kind": "not_found"}}
+    blocks = build_aveline_blocks(output)
+
+    text = next(b for b in blocks if b["type"] == "text")
+    assert "phone number" in text["text"]
+
+
+def test_clarification_ignores_other_kinds():
+    assert build_clarification_blocks({"kind": "resolved", "customer_id": "c1"}) == []
+    assert build_clarification_blocks(None) == []
+    assert build_clarification_blocks({}) == []
 
 
 # ----------------------------------------------------------------------- Elle (visual)

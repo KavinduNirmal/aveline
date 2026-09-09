@@ -64,5 +64,30 @@ void main() {
       expect(confirmed.deliveryStatus, isNull);
       expect(confirmed.text, 'Hi');
     });
+
+    test('parses a choice content block into options', () {
+      final message = SalonMessage.fromJson({
+        'id': 'm3',
+        'authorKind': 'Agent',
+        'agentKey': 'aveline',
+        'contentBlocks': [
+          {
+            'type': 'choice',
+            'prompt': 'Which one did you mean?',
+            'options': [
+              {'customerId': 'c1', 'fullName': 'Samantha Arias', 'status': 'vip'},
+              {'customerId': 'c2', 'fullName': 'Samantha Ranaweera'},
+            ],
+          },
+        ],
+        'createdAt': '2026-09-09T10:00:00Z',
+      });
+
+      expect(message.choicePrompt, 'Which one did you mean?');
+      expect(message.choiceOptions, hasLength(2));
+      expect(message.choiceOptions.first.customerId, 'c1');
+      expect(message.choiceOptions.first.fullName, 'Samantha Arias');
+      expect(message.choiceOptions.last.status, isNull);
+    });
   });
 }

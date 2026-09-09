@@ -87,6 +87,35 @@ public class ConversationService : IConversationService
         return conversation is null ? null : ConversationDto.From(conversation);
     }
 
+    public async Task<ConversationDto?> SelectCustomerAsync(
+        Guid orgId,
+        Guid conversationId,
+        Guid customerId,
+        string? query,
+        CancellationToken cancellationToken = default)
+    {
+        var conversation = await _conversations.GetAsync(orgId, conversationId, cancellationToken);
+        if (conversation is null)
+        {
+            return null;
+        }
+
+        // Bind the Salon to the customer the staff picked so later messages carry the context.
+        if (conversation.CustomerId != customerId)
+        {
+            conversation.CustomerId = customerId;
+            await _conversations.SaveAsync(conversation, cancellationToken);
+        }
+
+        // Re-run the original question (or a fallback) with the resolved customer in context so
+        // Ava retrieves their profile/events. Best-effort like the other agent triggers.
+        await TriggerAgentAsync(conversation, string.IsNullOrWhiteSpace(query)
+            ? "Summarise recent activity for this customer."
+            : query, customerId, cancellationToken);
+
+        return ConversationDto.From(conversation);
+    }
+
     public async Task<(IReadOnlyList<ConversationDto> Items, int Total)> ListAsync(
         Guid orgId,
         int page,
@@ -142,7 +171,7 @@ public class ConversationService : IConversationService
         conversation.LastMessageAt = DateTime.UtcNow;
         await _conversations.SaveAsync(conversation, cancellationToken);
 
-        await TriggerAgentAsync(conversation, text, cancellationToken);
+        await TriggerAgentAsync(conversation, text, cancellationToken: cancellationToken);
 
         return MessageDto.From(message);
     }
@@ -366,7 +395,11 @@ public class ConversationService : IConversationService
         }
     }
 
-    private async Task TriggerAgentAsync(Conversation conversation, string query, CancellationToken cancellationToken)
+    private async Task TriggerAgentAsync(
+        Conversation conversation,
+        string query,
+        Guid? customerId = null,
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -374,7 +407,7 @@ public class ConversationService : IConversationService
             {
                 query,
                 thread_id = conversation.ThreadId,
-                org_context = new { organization_id = conversation.OrganizationId },
+                org_context = new { organization_id = conversation.OrganizationId, customer_id = customerId },
             };
             using var content = JsonContent.Create(payload);
             // Best-effort: a failure to reach the agent must not fail the staff note. The

@@ -35,6 +35,13 @@ public static class CustomerConciergeEndpoints
             .Produces(StatusCodes.Status404NotFound)
             .Produces(StatusCodes.Status401Unauthorized);
 
+        group.MapPost("/lookup", LookupAsync)
+            .WithName("LookupCustomers")
+            .WithSummary("Read-only customer lookup by name and/or phone (no auto-create).")
+            .Produces<CustomerLookupResponse>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized);
+
         group.MapPost("/{customerId:guid}/memories", SaveMemoryAsync)
             .WithName("SaveCustomerMemory")
             .WithSummary("Persist a semantic memory for a customer (embeds content).")
@@ -89,6 +96,14 @@ public static class CustomerConciergeEndpoints
             .Produces<IReadOnlyList<CustomerEventDto>>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status401Unauthorized);
 
+        group.MapPost("/{customerId:guid}/status", RecomputeStatusAsync)
+            .WithName("RecomputeCustomerStatus")
+            .WithSummary("Recompute a customer's loyalty tier from spend/visits, or override it.")
+            .Produces<CustomerStatusDto>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized);
+
         return endpoints;
     }
 
@@ -117,6 +132,21 @@ public static class CustomerConciergeEndpoints
         return profile is null
             ? Results.NotFound(new { message = "Customer not found." })
             : Results.Ok(profile);
+    }
+
+    private static async Task<IResult> LookupAsync(
+        CustomerLookupRequest request,
+        ICustomerService customers,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name) && string.IsNullOrWhiteSpace(request.PhoneNumber)
+            && string.IsNullOrWhiteSpace(request.Email))
+        {
+            return Results.BadRequest(new { message = "Provide a name, phone number and/or email." });
+        }
+
+        var result = await customers.LookupAsync(request, cancellationToken);
+        return Results.Ok(result);
     }
 
     private static async Task<IResult> SaveMemoryAsync(
@@ -220,5 +250,25 @@ public static class CustomerConciergeEndpoints
     {
         var list = await events.ListAsync(organizationId, customerId, cancellationToken);
         return Results.Ok(list);
+    }
+
+    private static async Task<IResult> RecomputeStatusAsync(
+        Guid customerId,
+        RecomputeStatusRequest request,
+        ICustomerLoyaltyService loyalty,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var status = await loyalty.RecomputeAsync(
+                request.OrganizationId, customerId, request.Status, cancellationToken);
+            return status is null
+                ? Results.NotFound(new { message = "Customer not found." })
+                : Results.Ok(status);
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new { message = ex.Message });
+        }
     }
 }

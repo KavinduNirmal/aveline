@@ -25,6 +25,8 @@ def test_metadata_defaults():
     assert metadata.model is None
     assert metadata.tokens_used is None
     assert metadata.blossoms_consumed is None
+    assert metadata.input_tokens is None
+    assert metadata.output_tokens is None
 
 
 def test_metadata_full():
@@ -33,11 +35,15 @@ def test_metadata_full():
         model="deepseek-v4-flash",
         tokens_used=800,
         blossoms_consumed=1,
+        input_tokens=600,
+        output_tokens=200,
     )
     assert metadata.duration_ms == 1234
     assert metadata.model == "deepseek-v4-flash"
     assert metadata.tokens_used == 800
     assert metadata.blossoms_consumed == 1
+    assert metadata.input_tokens == 600
+    assert metadata.output_tokens == 200
 
 
 def test_agent_output_success():

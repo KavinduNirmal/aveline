@@ -57,6 +57,9 @@ public class ConversationEventSubscriberTests
         public Task<(IReadOnlyList<ConversationDto> Items, int Total)> ListAsync(Guid orgId, int page, int pageSize, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
+        public Task<ConversationDto?> SelectCustomerAsync(Guid orgId, Guid conversationId, Guid customerId, string? query, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
         public Task<(IReadOnlyList<MessageDto> Items, int Total)> ListMessagesAsync(Guid orgId, Guid conversationId, int page, int pageSize, Guid? around = null, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 

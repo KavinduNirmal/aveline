@@ -38,7 +38,7 @@ class SalonScreen extends StatefulWidget {
 }
 
 class _SalonScreenState extends State<SalonScreen> {
-  final List<SalonMessage> _messages = _seedMessages();
+  final List<SalonMessage> _messages = [];
   final ScrollController _scrollController = ScrollController();
   final AgentStateProvider _agentStateProvider = AgentStateProvider();
   ConversationRealtimeService? _realtimeService;
@@ -110,6 +110,23 @@ class _SalonScreenState extends State<SalonScreen> {
       _conversationApi = api;
       _organizationId = organizationId;
       _conversationId = conversation.id;
+
+      // Load the persisted history so the thread survives a refresh/restart instead of
+      // resetting to placeholder messages. Best-effort: fall back to the demo seed offline.
+      try {
+        final history = await api.fetchMessages(
+          organizationId: organizationId,
+          conversationId: conversation.id,
+        );
+        if (!mounted) return;
+        setState(() {
+          _messages
+            ..clear()
+            ..addAll(history);
+        });
+      } catch (_) {
+        if (mounted) setState(() => _messages.addAll(_seedMessages()));
+      }
 
       final service = ConversationRealtimeService(defaultRealtimeConnectionFactory);
       _realtimeService = service;
@@ -231,6 +248,46 @@ class _SalonScreenState extends State<SalonScreen> {
     });
   }
 
+  /// Binds the Salon to a customer picked from a resolution `choice` block and re-triggers
+  /// the agent with that customer in context (Issue #161).
+  Future<void> _selectCustomer(String customerId) async {
+    final organizationId = _organizationId;
+    final conversationId = _conversationId;
+    final api = _conversationApi;
+    if (organizationId == null || conversationId == null || api == null) return;
+
+    // Re-run the last staff question (or none) against the resolved customer; the backend
+    // falls back to a summary prompt when no query is supplied.
+    final lastStaff = _messages.lastWhere(
+      (m) => m.authorKind == 'User' && !m.isFailed,
+      orElse: () => SalonMessage(
+        id: '',
+        authorKind: 'User',
+        text: '',
+        createdAt: DateTime.now(),
+      ),
+    );
+
+    try {
+      await api.selectCustomer(
+        organizationId: organizationId,
+        conversationId: conversationId,
+        customerId: customerId,
+        query: lastStaff.text.isEmpty ? null : lastStaff.text,
+      );
+      if (!mounted) return;
+      setState(() {
+        _agentActivity = _AgentActivity(
+          startedAt: DateTime.now(),
+          currentState: AgentState.thinking,
+        );
+      });
+      _agentStateProvider.apply(AgentState.thinking);
+    } catch (_) {
+      // Best-effort; the agent reply (or lack of one) surfaces over the realtime channel.
+    }
+  }
+
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
@@ -328,6 +385,7 @@ class _SalonScreenState extends State<SalonScreen> {
                           child: MessageBubble(
                             message: message,
                             onStreamProgress: _scrollToBottom,
+                            onSelectCustomer: _selectCustomer,
                           ),
                         ),
                       );

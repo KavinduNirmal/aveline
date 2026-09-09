@@ -8,8 +8,13 @@ deterministic and testable without an LLM or a live database.
 import pytest
 
 from app.core.config import get_settings
+from app.customer_resolution import CustomerCandidate, CustomerResolution
 from app.schemas.response import AgentStatus
-from app.workflows.concierge_workflow import build_concierge_graph, run_concierge
+from app.workflows.concierge_workflow import (
+    build_concierge_graph,
+    run_concierge,
+    run_resolve_customer,
+)
 
 
 async def _invoke(message: str, org_context: dict | None = None) -> dict:
@@ -103,6 +108,17 @@ async def test_run_concierge_returns_response():
 
 
 @pytest.mark.asyncio
+async def test_run_concierge_metadata_is_rule_based_when_no_llm():
+    """Without an LLM every completed run carries rule-based usage metadata (Issue #165)."""
+    response = await run_concierge("Do you have a blue saree for a wedding?")
+    assert response.metadata is not None
+    assert response.metadata.model == "rule-based"
+    assert response.metadata.input_tokens == 0
+    assert response.metadata.output_tokens == 0
+    assert response.metadata.tokens_used == 0
+
+
+@pytest.mark.asyncio
 async def test_run_concierge_out_of_scope():
     response = await run_concierge("Tell me a joke")
     assert response.status == AgentStatus.out_of_scope
@@ -161,3 +177,72 @@ async def test_run_concierge_preserves_state_order_with_delay(monkeypatch):
 
     assert response.status == AgentStatus.success
     assert states == ["thinking", "searching", "searching", "processing"]
+
+
+# ---------------------------------------------------------------------------
+# Shared customer resolution (Issue #161)
+# ---------------------------------------------------------------------------
+
+
+def _make_resolver(*, kind, **kwargs):
+    """Return an async resolver double producing a fixed CustomerResolution."""
+
+    async def fake(org_id, message, *, registry, customer_id=None, phone=None):
+        return CustomerResolution(kind=kind, message=message, **kwargs)
+
+    return fake
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_resolution_short_circuits_to_clarification(monkeypatch):
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.resolve_customer",
+        _make_resolver(
+            kind="ambiguous",
+            candidates=[
+                CustomerCandidate(customer_id="c1", full_name="Samantha Arias", status="vip"),
+                CustomerCandidate(customer_id="c2", full_name="Samantha R", status="returning"),
+            ],
+        ),
+    )
+
+    result = await _invoke("Any events for Samantha Arias?", {"organization_id": "org-1"})
+
+    assert result["resolution"]["kind"] == "ambiguous"
+    # No specialist should run while we are still deciding which customer.
+    assert result["memory_output"] is None
+    assert result["visual_output"] is None
+    assert result["commerce_output"] is None
+    assert result["response"]["output"]["clarification"]["kind"] == "ambiguous"
+
+
+@pytest.mark.asyncio
+async def test_not_found_resolution_asks_for_phone(monkeypatch):
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.resolve_customer",
+        _make_resolver(kind="not_found"),
+    )
+
+    result = await _invoke("Any events for Zara Nobody?", {"organization_id": "org-1"})
+
+    assert result["resolution"]["kind"] == "not_found"
+    assert result["memory_output"] is None
+    assert result["response"]["output"]["clarification"]["kind"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_resolve_node_records_explicit_customer(monkeypatch):
+    calls: list[tuple[str, str | None, str | None]] = []
+
+    async def fake(org_id, message, *, registry, customer_id=None, phone=None):
+        calls.append((org_id, customer_id, phone))
+        return CustomerResolution(kind="resolved", customer_id="c1", profile={"fullName": "Samantha"})
+
+    monkeypatch.setattr("app.workflows.concierge_workflow.resolve_customer", fake)
+
+    out = await run_resolve_customer(
+        {"message": "Any events for Samantha?", "org_context": {"organization_id": "org-1", "customer_id": "c1"}}
+    )
+
+    assert out["resolution"]["kind"] == "resolved"
+    assert calls == [("org-1", "c1", None)]

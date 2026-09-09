@@ -32,6 +32,27 @@ class ToolRegistry:
             body["fullName"] = full_name
         return await self._client.request("POST", "/internal/customers/identify", json=body)
 
+    async def lookup_customers(
+        self,
+        org_id: str,
+        name: str | None = None,
+        phone: str | None = None,
+        email: str | None = None,
+    ) -> dict[str, Any]:
+        """Read-only customer lookup by name, phone and/or email (no auto-create).
+
+        Returns the backend ``{matches, isExact, total}`` envelope. Used by the shared
+        customer-resolution step so any specialist can resolve a customer from free text.
+        """
+        body: dict[str, Any] = {"organizationId": org_id}
+        if name:
+            body["name"] = name
+        if phone:
+            body["phoneNumber"] = phone
+        if email:
+            body["email"] = email
+        return await self._client.request("POST", "/internal/customers/lookup", json=body)
+
     async def search_customer_profile(self, org_id: str, customer_id: str) -> dict[str, Any]:
         """Fetch a customer record plus preferences from the backend."""
         return await self._client.request(
@@ -79,17 +100,53 @@ class ToolRegistry:
         channel: str,
         direction: str,
         message_content: str,
+        parsed_intent_json: str | None = None,
     ) -> dict[str, Any]:
-        """Record a customer interaction via the backend."""
+        """Record a customer interaction via the backend.
+
+        ``parsed_intent_json`` (when provided) stores the structured intent extracted from the
+        message so the interaction history carries what the agent understood.
+        """
+        body: dict[str, Any] = {
+            "organizationId": org_id,
+            "channel": channel,
+            "direction": direction,
+            "messageContent": message_content,
+        }
+        if parsed_intent_json is not None:
+            body["parsedIntentJson"] = parsed_intent_json
         return await self._client.request(
             "POST",
             f"/internal/customers/{customer_id}/interactions",
-            json={
-                "organizationId": org_id,
-                "channel": channel,
-                "direction": direction,
-                "messageContent": message_content,
-            },
+            json=body,
+        )
+
+    async def add_customer_event(
+        self,
+        org_id: str,
+        customer_id: str,
+        event_type: str,
+        event_date: str,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist a structured customer event (wedding, birthday, ...) via the backend."""
+        body: dict[str, Any] = {
+            "organizationId": org_id,
+            "eventType": event_type,
+            "eventDate": event_date,
+        }
+        if description:
+            body["description"] = description
+        return await self._client.request(
+            "POST",
+            f"/internal/customers/{customer_id}/events",
+            json=body,
+        )
+
+    async def get_customer_events(self, org_id: str, customer_id: str) -> dict[str, Any]:
+        """List a customer's structured events (upcoming first) via the backend."""
+        return await self._client.request(
+            "GET", f"/internal/customers/{customer_id}/events?organizationId={org_id}"
         )
 
     async def get_customer_consent(self, org_id: str, customer_id: str) -> dict[str, Any]:

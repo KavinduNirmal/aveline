@@ -21,6 +21,9 @@ class MemoryAgentState(TypedDict, total=False):
     direction: str
     # Intent hint from the upstream gate (optional)
     intent_type: str | None
+    # True when this request is a STAFF query (no inbound customer message). Staff queries are
+    # answered directly; only genuine inbound customer messages get a customer-facing draft.
+    staff_query: bool | None
     # Working results
     consent_status: str | None
     profile: dict[str, Any] | None
@@ -30,6 +33,8 @@ class MemoryAgentState(TypedDict, total=False):
     detected_events: list[dict[str, Any]]
     # Transient parse signals consumed by the persist node (declared so LangGraph can route it).
     _preference_signals: list[dict[str, Any]]
+    # Token usage captured when an LLM generated the draft (input/output tokens), else None.
+    usage: dict[str, Any] | None
     # Output
     output: dict[str, Any] | None
     status: str | None

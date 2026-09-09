@@ -46,6 +46,7 @@ export function SalonPanel() {
     openOrCreateSalon,
     send,
     decide,
+    selectCustomer,
   } = useConversations()
 
   const activeConversation = conversations.find((c) => c.id === activeConversationId)
@@ -106,7 +107,7 @@ export function SalonPanel() {
 
       {/* Thread */}
       <section className="flex min-h-0 min-w-0 flex-col">
-        <Card className="flex h-full flex-col overflow-hidden rounded-none border-0 shadow-none">
+        <Card className="flex h-full flex-col overflow-hidden rounded-none border-0 py-0 shadow-none">
           {/* Chatroom header */}
           <header className="flex h-14 items-center gap-2.5 border-b px-4">
             <AvelineAvatar
@@ -128,6 +129,7 @@ export function SalonPanel() {
               loading={loading && !activeConversationId}
               agentActivity={agentActivity}
               onSignOff={(messageId, approved) => void decide(messageId, approved)}
+              onSelectCustomer={(customerId) => void selectCustomer(customerId)}
             />
           </div>
           <Composer

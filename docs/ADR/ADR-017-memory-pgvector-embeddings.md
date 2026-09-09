@@ -67,3 +67,20 @@ in-memory provider cannot exercise the vector column.
 - [ADR-002](ADR-002-agent-framework.md) — LangGraph agent layer consuming these endpoints.
 - [ADR-003](ADR-003-database-strategy.md) — PostgreSQL + pgvector single datastore.
 - [ADR-009](ADR-009-internal-service-authentication.md) — internal endpoints use `X-Internal-Token`.
+
+## Follow-up (Slice 1 finalization, Issues #163–#167)
+
+The LLM is now live in the running path (previously the memory agent was rule-based scaffolding
+and `create_chat_model` was dead code):
+
+- **Draft generation** uses `create_chat_model` when `AGENT_LLM_ENABLED` and an `LLM_API_KEY` +
+  `LLM_MODEL` are configured (`agnet-service/app/llm/runtime.py`). A deterministic template is the
+  fallback whenever no model/key is present or the provider call fails, so CI and keyless local
+  dev stay green and production degrades gracefully.
+- **Usage / Blossoms** are reported for every completed workflow run to `/internal/usage/record`
+  (ADR-010): real provider/model + langchain `usage_metadata` token split when the LLM ran, else a
+  `rule-based` sentinel with zero tokens. Reporting is best-effort and never fails a query.
+- **Agent outputs** are validated against the `MemoryAgentOutput` Pydantic schema in the running
+  path (`app/schemas/customer_memory.py`), so contract drift between the graph's dicts and the
+  typed schema fails loudly instead of silently.
+

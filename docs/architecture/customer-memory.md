@@ -67,6 +67,7 @@ Routed under `/internal/customers`, all require the `InternalServicePolicy`
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/identify` | Look up a customer by phone, creating a `new` profile when absent |
+| POST | `/lookup` | Read-only lookup by name and/or phone (never creates) - used to resolve a customer from free text |
 | GET | `/{id}/profile` | Full profile (preferences, tags, consent) |
 | POST | `/{id}/memories` | Persist a semantic memory (embeds content) |
 | POST | `/memories/search` | pgvector cosine search over a customer's memories |
@@ -74,6 +75,10 @@ Routed under `/internal/customers`, all require the `InternalServicePolicy`
 | POST | `/{id}/interactions` | Record an interaction |
 | GET/POST | `/{id}/consent` | Read / update consent |
 | GET/POST | `/{id}/events` | List / add customer events |
+
+The `/lookup` result is cached for 60s via `IDistributedCache` so repeat lookups skip the
+database. Phones are matched in exact and E.164-normalised form; names use a case-insensitive
+fragment match.
 
 ## Agent sub-graph flow
 
@@ -86,6 +91,27 @@ Routed under `/internal/customers`, all require the `InternalServicePolicy`
 5. **persist** — saves explicit preferences and detected events as `Customer_Memory` rows.
 6. **compose_output** — builds a concise `interaction_brief` and a draft reply for staff approval
    (never auto-sent).
+
+### Message-level customer resolution (shared, Issue #161)
+
+When staff type natural language into the **General Salon** (e.g. "Any events for Samantha
+Arias?") there is no `customer_id`/phone in context. The concierge orchestrator resolves the
+customer **once** before dispatching specialists via the shared module
+`agnet-service/app/customer_resolution/`:
+
+- Deterministic extraction (`extract_phone`, `extract_customer_name`) finds a phone or a
+  capitalized proper-name phrase in the message.
+- `resolve_customer` calls `ToolRegistry.lookup_customers` (the `/lookup` endpoint) and returns
+  a `CustomerResolution`: `resolved` | `ambiguous` | `not_found` | `no_signal`.
+- `resolved`/`no_signal` proceed to the specialists, which read the resolved `customer_id` from
+  shared state; `ambiguous`/`not_found` short-circuit to Aveline, who posts a `choice` block
+  (tap a candidate) or an ask-for-phone `text` block. Tapping a candidate calls
+  `POST /orgs/{org}/conversations/{id}/select-customer`, binding the Salon's `CustomerId` and
+  re-triggering the agent with that customer in context.
+
+Because resolution lives in the orchestrator and the shared state carries the result, the
+capability is agent-agnostic - Ava uses it today and Elle/Lina can consume it later without
+their own lookup logic.
 
 The graph is a dependency-injected `ToolRegistry` consumer, so it is fully testable with a stub
 (no LLM, no live backend).

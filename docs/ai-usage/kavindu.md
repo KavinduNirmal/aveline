@@ -1612,3 +1612,43 @@ orchestrator). Working on branch `feature/slice1-customer-resolution`.
 
 - GitHub issue #161: https://github.com/KavinduNirmal/aveline/issues/161
 - Branch `feature/slice1-customer-resolution` (from origin/development @ 2d55785).
+
+### Work performed (tests-first, TDD)
+
+- .NET: `PhoneNormalizer` (E.164, lookup-only); `CustomerLookupRequest/Match/Response` DTOs;
+  `CustomerRepository.ListMatchesAsync` (org-scoped, soft-delete aware, case-insensitive name +
+  exact/E.164 phone); `CustomerService.LookupAsync` cached via `IDistributedCache` (60s TTL,
+  cache-miss on failure); `POST /internal/customers/lookup`; DTO + endpoint for
+  `POST /orgs/{org}/conversations/{id}/select-customer` (binds `Conversation.CustomerId`,
+  re-triggers agent with `customer_id` in `org_context`).
+- Python: shared `app/customer_resolution/` (deterministic `extract_phone`/`extract_customer_name`,
+  `resolve_customer` -> `CustomerResolution` resolved/ambiguous/not_found/no_signal, models);
+  `ToolRegistry.lookup_customers`; orchestrator `run_resolve_customer` node runs the shared
+  resolver once after the intent gate and stores it in `ConciergeState`; ambiguous/not-found
+  short-circuit to `formulate_response` (no specialists); `build_clarification_blocks`
+  (Aveline `choice` / ask-for-phone text).
+- Web (React): `choice` block renderer + tap; `conversations-api.selectConversationCustomer`;
+  context `selectCustomer` re-triggers with last staff query; plumbed through
+  MessageThread/MessageBubble/BlockList in SalonPanel + AvelineChatDrawer. Fixed the SalonPanel
+  thread Card default `py-6` that pushed the conversation header down (border misalignment).
+- Flutter: parse `choice` content blocks into `SalonMessage`; `MessageBubble` renders tappable
+  candidates; `ConversationApi.selectCustomer`; `SalonScreen` selection handler re-triggers agent.
+
+### Tests added
+- .NET: `PhoneNormalizerTests` (13), `CustomerConciergeLookupRepositoryTests` (9),
+  `CustomerConciergeLookupServiceTests` (6, incl. cache-hit skips repo), lookup endpoint
+  integration cases, `select-customer` service tests (+ stubs). Full suite 480 passed.
+- Python: `tests/test_customer_resolution.py` (16), block-builder clarification, workflow
+  resolve/clarify routing, tool-registry lookup. Full suite 238 passed; ruff clean.
+- Web: blocks.test choice cases; conversation tests (61 passed), tsc clean, oxlint no errors.
+- Flutter: salon choice parse + bubble tap tests (21 passed), analyze clean.
+
+### Verification performed
+- `dotnet test` 480 passed; `pytest tests/ -v` 238 passed, ruff clean; web vitest + `tsc -b`
+  clean; `flutter analyze` clean + `flutter test test/features/salon` 21 passed.
+- Committed across 4 logical commits on `feature/slice1-customer-resolution` (Husky gates pass).
+
+### Remaining work / notes
+- Docs updated (customer-memory.md, inbox.md §5.1.1 choice block). No new ADR (additive block
+  type + existing `IDistributedCache`). Follow-ups: Postgres `ILIKE` for name match; optional
+  write-side phone normalization in `identify`; optional LLM name extraction layer.

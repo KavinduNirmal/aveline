@@ -250,6 +250,59 @@ public class CustomerConciergeEndpointsIntegrationTests : IAsyncLifetime
         Assert.Equal("whatsapp", interaction!.Channel);
     }
 
+    [Fact]
+    public async Task Status_WithoutToken_ReturnsUnauthorized()
+    {
+        var response = await _client.PostAsJsonAsync($"/internal/customers/{Guid.NewGuid()}/status",
+            new RecomputeStatusRequest { OrganizationId = Guid.NewGuid() });
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Status_OwnerOverride_ReturnsResolvedStatus()
+    {
+        var orgId = Guid.NewGuid();
+        var identify = await InternalPostAsync("/internal/customers/identify",
+            new IdentifyCustomerRequest { OrganizationId = orgId, PhoneNumber = "+94771234567" });
+        var profile = await identify.Content.ReadFromJsonAsync<CustomerProfileDto>();
+        Assert.Equal("new", profile!.Status);
+
+        var response = await InternalPostAsync($"/internal/customers/{profile.CustomerId}/status",
+            new RecomputeStatusRequest { OrganizationId = orgId, Status = "vip" });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var dto = await response.Content.ReadFromJsonAsync<CustomerStatusDto>();
+        Assert.Equal(profile.CustomerId, dto!.CustomerId);
+        Assert.Equal("vip", dto.Status);
+    }
+
+    [Fact]
+    public async Task Status_RecomputeFromData_PromotesToReturning()
+    {
+        var orgId = Guid.NewGuid();
+        var identify = await InternalPostAsync("/internal/customers/identify",
+            new IdentifyCustomerRequest { OrganizationId = orgId, PhoneNumber = "+94771234567" });
+        var profile = await identify.Content.ReadFromJsonAsync<CustomerProfileDto>();
+
+        // Simulate a returning customer's data (two visits, no spend) directly in the store.
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<Aveline.Api.Infrastructure.Data.AppDbContext>();
+            var customer = await context.Customers.FindAsync(profile!.CustomerId);
+            Assert.NotNull(customer);
+            customer!.VisitCount = 2;
+            customer.LastVisitAt = DateTime.UtcNow.AddDays(-1);
+            await context.SaveChangesAsync();
+        }
+
+        var response = await InternalPostAsync($"/internal/customers/{profile.CustomerId}/status",
+            new RecomputeStatusRequest { OrganizationId = orgId });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var dto = await response.Content.ReadFromJsonAsync<CustomerStatusDto>();
+        Assert.Equal("returning", dto!.Status);
+    }
+
     private sealed class StubEmbeddingService : IEmbeddingService
     {
         private static readonly float[] Vector = Enumerable.Range(0, 1536).Select(i => (float)i).ToArray();

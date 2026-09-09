@@ -37,6 +37,7 @@ public static class CustomerConciergeModule
         services.AddScoped<ICustomerInteractionService, CustomerInteractionService>();
         services.AddScoped<ICustomerConsentService, CustomerConsentService>();
         services.AddScoped<ICustomerEventService, CustomerEventService>();
+        services.AddScoped<ICustomerLoyaltyService, CustomerLoyaltyService>();
 
         return services;
     }

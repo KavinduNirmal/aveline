@@ -227,6 +227,23 @@ public sealed record RecordInteractionRequest
     public Guid? StaffMemberId { get; init; }
 }
 
+/// <summary>A customer's resolved lifecycle status (Issue #169).</summary>
+public sealed record CustomerStatusDto(Guid CustomerId, string Status);
+
+/// <summary>Request to recompute/override a customer's loyalty status.</summary>
+public sealed record RecomputeStatusRequest
+{
+    [Required]
+    public Guid OrganizationId { get; init; }
+
+    /// <summary>
+    /// Optional owner override. When supplied the status is set as-is; when omitted the status is
+    /// recomputed from <c>TotalSpent</c>/<c>VisitCount</c>/<c>LastVisitAt</c>.
+    /// </summary>
+    [MaxLength(16)]
+    public string? Status { get; init; }
+}
+
 /// <summary>Request to update a customer's consent.</summary>
 public sealed record UpdateConsentRequest
 {

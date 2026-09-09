@@ -96,6 +96,14 @@ public static class CustomerConciergeEndpoints
             .Produces<IReadOnlyList<CustomerEventDto>>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status401Unauthorized);
 
+        group.MapPost("/{customerId:guid}/status", RecomputeStatusAsync)
+            .WithName("RecomputeCustomerStatus")
+            .WithSummary("Recompute a customer's loyalty tier from spend/visits, or override it.")
+            .Produces<CustomerStatusDto>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized);
+
         return endpoints;
     }
 
@@ -242,5 +250,25 @@ public static class CustomerConciergeEndpoints
     {
         var list = await events.ListAsync(organizationId, customerId, cancellationToken);
         return Results.Ok(list);
+    }
+
+    private static async Task<IResult> RecomputeStatusAsync(
+        Guid customerId,
+        RecomputeStatusRequest request,
+        ICustomerLoyaltyService loyalty,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var status = await loyalty.RecomputeAsync(
+                request.OrganizationId, customerId, request.Status, cancellationToken);
+            return status is null
+                ? Results.NotFound(new { message = "Customer not found." })
+                : Results.Ok(status);
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new { message = ex.Message });
+        }
     }
 }

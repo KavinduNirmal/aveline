@@ -337,17 +337,37 @@ class CustomerMemoryAgent:
     ) -> str:
         """Answer a STAFF query directly (no customer-facing draft).
 
-        Event-style queries are answered from the real backend events; other staff queries fall
-        back to the standard digest brief.
+        Uses the real backend facts (status, preferences, upcoming events, tags) so the answer is
+        grounded. Event-style queries answer about events; a brand-new customer is announced; other
+        queries summarise what is known, or state when nothing is on file yet.
         """
         display_name = backend.get("customerName") or name
+        status = backend.get("status") or profile.get("status") or "new"
         intent_type = (state.get("parsed_intent") or {}).get("intent_type")
+        events = backend.get("upcomingEvents")
+        prefs = backend.get("preferenceSummary")
+        tags = backend.get("tags") if isinstance(backend.get("tags"), list) else []
+
         if intent_type == "event_query":
-            events = backend.get("upcomingEvents")
             if events:
                 return f"Upcoming events for {display_name}: {events}."
             return f"No upcoming events on file for {display_name}."
-        return self._format_brief(state, name, profile, backend)
+
+        # General staff query: give the staff a readable, grounded summary.
+        if status == "new" and not events and not prefs and not tags:
+            return f"{display_name} is a new customer - nothing on file yet."
+        if not events and not prefs and not tags:
+            return f"{display_name} ({status}) has no preferences or events on file yet."
+
+        details: list[str] = []
+        if prefs:
+            details.append(f"preferences: {prefs}")
+        if events:
+            details.append(f"upcoming events: {events}")
+        if tags:
+            details.append(f"tags: {', '.join(tags)}")
+        summary = "; ".join(details)
+        return f"{display_name} ({status}) - {summary}."
 
     async def _generate_draft(
         self,

@@ -319,6 +319,50 @@ async def test_staff_event_query_no_events_reports_none():
     assert "no upcoming events" in result["output"]["interaction_brief"].lower()
 
 
+async def test_staff_new_customer_note_is_answer_announces_new_customer():
+    """A general staff note onboarding a brand-new customer yields a helpful direct answer."""
+    registry = FakeRegistry()
+    async def brief(org_id, customer_id):
+        return {"customerName": "Jason smith", "status": "new", "upcomingEvents": None, "preferenceSummary": None, "tags": []}
+    registry.generate_interaction_brief = brief
+    graph = build_memory_graph(registry)
+    state = {
+        "org_id": "org-1", "customer_id": "cust-jason", "customer_name": "Jason smith",
+        "message": "A new customer dropped by, @Jason smith, #0751234567 he will come by tomorrow",
+        "intent_type": "general_inquiry", "channel": "whatsapp", "direction": None, "staff_query": True,
+    }
+    result = await graph.ainvoke(state)
+    assert result["status"] == "success"
+    out = result["output"]
+    assert out["draft_response"] is None
+    text = out["interaction_brief"].lower()
+    assert "new customer" in text
+    assert "jason smith" in text
+    assert "on file" in text
+
+
+async def test_staff_general_query_summarizes_known_facts():
+    registry = FakeRegistry()
+    async def brief(org_id, customer_id):
+        return {
+            "customerName": "Sarah Perera", "status": "returning",
+            "preferenceSummary": "colour: emerald", "upcomingEvents": "wedding on 2026-12-01", "tags": ["vip"],
+        }
+    registry.generate_interaction_brief = brief
+    graph = build_memory_graph(registry)
+    state = {
+        "org_id": "org-1", "customer_id": "cust-sarah", "customer_name": "Sarah Perera",
+        "message": "what do we know about @sarah?", "intent_type": "general_inquiry",
+        "channel": "whatsapp", "direction": None, "staff_query": True,
+    }
+    result = await graph.ainvoke(state)
+    assert result["status"] == "success"
+    text = result["output"]["interaction_brief"].lower()
+    assert "sarah perera" in text
+    assert "emerald" in text
+    assert "wedding" in text
+
+
 async def test_staff_query_does_not_record_customer_interaction():
     registry = FakeRegistry()
     graph = build_memory_graph(registry)

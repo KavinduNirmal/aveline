@@ -346,6 +346,25 @@ async def test_customer_inbound_still_produces_draft():
     assert len(registry.recorded_interactions) == 1
 
 
+async def test_persist_memory_failure_does_not_fail_run():
+    """A failed memory save (e.g. embedding provider down) must not fail the inbound run."""
+    registry = FakeRegistry()
+
+    async def boom(org_id, customer_id, content, category):
+        raise RuntimeError("embedding provider down")
+
+    registry.save_customer_memory = boom
+    graph = build_memory_graph(registry)
+    state = {
+        "org_id": "org-1", "customer_id": "cust-sarah", "customer_name": "Sarah Perera",
+        "message": "I have a wedding on 2026-12-01 - I love silk sarees", "intent_type": "item_search",
+        "channel": "whatsapp", "direction": "inbound", "staff_query": False,
+    }
+    result = await graph.ainvoke(state)
+    assert result["status"] == "success"
+    assert result["output"]["draft_response"]
+
+
 # ---------------------------------------------------------------------------
 # Structured events + backend brief (Issue #166)
 # ---------------------------------------------------------------------------

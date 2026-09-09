@@ -154,7 +154,11 @@ class CustomerMemoryAgent:
             return {"semantic_context": []}
 
     async def persist(self, state: MemoryAgentState) -> dict[str, Any]:
-        """Save explicit preferences and detected events as memories (consent-granted only)."""
+        """Save explicit preferences and detected events as memories (consent-granted only).
+
+        Backend writes are best-effort: a failure (e.g. the embedding provider is down) is logged
+        and never fails the run, so inbound messages still produce a brief + draft.
+        """
         if state.get("consent_status") == "revoked":
             return {}
 
@@ -169,48 +173,63 @@ class CustomerMemoryAgent:
                 content = f"{name} dislikes {signal['preference_value']}"
             else:
                 content = f"{name} prefers {signal['preference_value']}"
-            await self.registry.save_customer_memory(org_id, customer_id, content, "preference")
-            extracted.append(
-                {
-                    "content": content,
-                    "category": "preference",
-                    "is_explicit": True,
-                    "confidence": 0.9,
-                }
-            )
+            if await self._try_save_memory(org_id, customer_id, content, "preference"):
+                extracted.append(
+                    {
+                        "content": content,
+                        "category": "preference",
+                        "is_explicit": True,
+                        "confidence": 0.9,
+                    }
+                )
 
         for event in state.get("detected_events", []):
             on_date = f" on {event['event_date']}" if event.get("event_date") else ""
             content = f"{name} has a {event['event_type']}{on_date}"
-            await self.registry.save_customer_memory(org_id, customer_id, content, "event")
-            extracted.append(
-                {"content": content, "category": "event", "is_explicit": True, "confidence": 0.9}
-            )
+            if await self._try_save_memory(org_id, customer_id, content, "event"):
+                extracted.append(
+                    {"content": content, "category": "event", "is_explicit": True, "confidence": 0.9}
+                )
             # Persist a structured Customer_Event row when a concrete date is known, so event
             # queries and reminders answer from real data (not just free-text memories).
             if event.get("event_date"):
-                await self.registry.add_customer_event(
-                    org_id,
-                    customer_id,
-                    event["event_type"],
-                    event["event_date"],
-                    description=event.get("description"),
-                )
+                try:
+                    await self.registry.add_customer_event(
+                        org_id,
+                        customer_id,
+                        event["event_type"],
+                        event["event_date"],
+                        description=event.get("description"),
+                    )
+                except Exception:  # noqa: BLE001 - best-effort event persistence
+                    logger.warning("Failed to persist customer event (event_type=%s).", event["event_type"])
 
         # Log the inbound interaction with the structured intent the agent extracted (ADR-016).
         # Staff queries are not customer interactions, so only genuine inbound messages are logged.
         if not state.get("staff_query"):
             parsed_intent = state.get("parsed_intent") or {}
-            await self.registry.record_customer_interaction(
-                org_id,
-                customer_id,
-                channel=state.get("channel", "whatsapp"),
-                direction=state.get("direction", "inbound"),
-                message_content=state.get("message", ""),
-                parsed_intent_json=json.dumps(parsed_intent) if parsed_intent else None,
-            )
+            try:
+                await self.registry.record_customer_interaction(
+                    org_id,
+                    customer_id,
+                    channel=state.get("channel", "whatsapp"),
+                    direction=state.get("direction", "inbound"),
+                    message_content=state.get("message", ""),
+                    parsed_intent_json=json.dumps(parsed_intent) if parsed_intent else None,
+                )
+            except Exception:  # noqa: BLE001 - best-effort interaction logging
+                logger.warning("Failed to record customer interaction (customer %s).", customer_id)
 
         return {"extracted_memories": extracted}
+
+    async def _try_save_memory(self, org_id: str, customer_id: str, content: str, category: str) -> bool:
+        """Attempt to persist a memory; returns True on success (best-effort)."""
+        try:
+            await self.registry.save_customer_memory(org_id, customer_id, content, category)
+            return True
+        except Exception:  # noqa: BLE001 - best-effort memory save
+            logger.warning("Failed to save customer memory (category=%s).", category)
+            return False
 
     async def compose_output(self, state: MemoryAgentState) -> dict[str, Any]:
         """Assemble the final output.

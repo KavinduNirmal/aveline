@@ -19,10 +19,10 @@ function salonName(conversation: ConversationDto): string {
 /** The avatar shown for a salon row. Aveline uses the blossom; customers use an initial. */
 function SalonAvatar({ conversation }: { conversation: ConversationDto }) {
   if (!conversation.customerId) {
-    return <AvelineAvatar className="size-9" blossomClassName="size-5" />
+    return <AvelineAvatar className="size-10" blossomClassName="size-8" />
   }
   return (
-    <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-semibold text-muted-foreground">
+    <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-semibold text-muted-foreground">
       C
     </div>
   )
@@ -111,8 +111,8 @@ export function SalonPanel() {
           <header className="flex h-14 items-center gap-2.5 border-b px-4">
             <AvelineAvatar
               state={agentState}
-              className="size-8"
-              blossomClassName="size-5"
+              className="size-10"
+              blossomClassName="size-8"
             />
             <div className="min-w-0">
               <p className="truncate font-serif text-sm font-medium leading-tight">

@@ -24,14 +24,14 @@ export function AvelineChatLauncher({ open, onOpen }: AvelineChatLauncherProps) 
       aria-label={open ? 'Aveline chat is open' : 'Open Aveline chat'}
       title="Aveline"
       className={cn(
-        'relative size-9 rounded-full',
+        'relative size-12 rounded-full',
         open && 'bg-primary/10',
       )}
     >
       <AvelineAvatar
         state={agentState}
-        className="size-9"
-        blossomClassName="size-5"
+        className="size-12"
+        blossomClassName="size-8"
       />
     </Button>
   )

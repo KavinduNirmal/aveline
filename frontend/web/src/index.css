@@ -385,7 +385,7 @@
 }
 
 .aveline-spin {
-  animation: aveline-spin var(--aveline-spin, 12s) linear infinite;
+  animation: aveline-spin var(--aveline-spin, 12s) ease-in-out infinite;
 }
 .aveline-spin-steps {
   animation: aveline-spin-steps 3s steps(12) infinite;

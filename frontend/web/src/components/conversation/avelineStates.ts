@@ -57,11 +57,11 @@ export interface AvelineStateConfig {
 }
 
 export const AVELINE_STATES: Record<AvelineState, AvelineStateConfig> = {
-  idle: { mode: 'breathing', sway: false, colourCycle: true, spinSeconds: 12, looping: true, label: 'Your boutique concierge' },
-  thinking: { mode: 'pulse', sway: true, colourCycle: true, spinSeconds: 6, looping: true, label: 'Thinking…' },
+  idle: { mode: 'breathing', sway: false, colourCycle: true, spinSeconds: 20, looping: true, label: 'Your boutique concierge' },
+  thinking: { mode: 'pulse', sway: true, colourCycle: true, spinSeconds: 10, looping: true, label: 'Thinking…' },
   searching: { mode: 'ripple', sway: false, colourCycle: true, spinSeconds: Infinity, looping: true, label: 'Searching…' },
-  processing: { mode: 'rotation', sway: false, colourCycle: true, spinSeconds: 4, looping: true, label: 'Working…' },
-  tool_call: { mode: 'rotationPulse', sway: false, colourCycle: true, spinSeconds: 3, looping: true, label: 'Using a tool…' },
+  processing: { mode: 'rotation', sway: false, colourCycle: true, spinSeconds: 7, looping: true, label: 'Working…' },
+  tool_call: { mode: 'rotationPulse', sway: false, colourCycle: true, spinSeconds: 5, looping: true, label: 'Using a tool…' },
   waiting: { mode: 'sway', sway: true, colourCycle: false, spinSeconds: Infinity, looping: true, label: 'Awaiting your decision…' },
   success: { mode: 'bloom', sway: false, colourCycle: false, spinSeconds: Infinity, looping: false, label: 'Done' },
   error: { mode: 'shake', sway: false, colourCycle: false, spinSeconds: Infinity, looping: false, label: 'Something went wrong' },

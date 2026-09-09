@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react'
 
-import { Blossom } from '@/components/auth/Blossom'
 import { cn } from '@/lib/utils'
+import { AvelineBlossom } from './AvelineBlossom'
 import { avelineStateConfig, type AvelineState } from './avelineStates'
 
 interface AvelineAvatarProps {
@@ -62,13 +62,13 @@ export function AvelineAvatar({
     <div className={cn('flex items-center justify-center', className)}>
       <div className={spin.className} style={spin.style}>
         <div className={cn('flex items-center justify-center', transform)}>
-          <Blossom
+          <AvelineBlossom
             className={cn(
               config.colourCycle && 'aveline-waiting',
               blossomClassName,
             )}
             animateCounter={config.sway}
-            counterDuration={2.4}
+            counterDuration={6}
             ripple={config.mode === 'ripple'}
           />
         </div>

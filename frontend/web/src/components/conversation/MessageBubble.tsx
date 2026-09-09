@@ -1,6 +1,7 @@
 import { cn } from '@/lib/utils'
 import type { ChatMessage } from '@/contexts/ConversationsContext'
 import { AvelineAvatar } from './AvelineAvatar'
+import { AvelineBlossom } from './AvelineBlossom'
 import { BlockList } from './blocks'
 import { personaForAuthor } from './persona'
 import { TypewriterText } from './TypewriterText'
@@ -35,21 +36,21 @@ function primaryText(message: ChatMessage): string | null {
   return null
 }
 
-/** The avatar shown for an agent message. Aveline uses the blossom; others use an initial. */
-function AgentAvatar({ persona }: { persona: { name: string; bg: string; ring: string } }) {
+/** The avatar shown for an agent message. Every agent is represented by a blossom in their persona colour. */
+function AgentAvatar({ persona }: { persona: { name: string; text: string; bgSoft: string; ring: string } }) {
   if (persona.name === 'Aveline') {
     return <AvelineAvatar className="size-8" blossomClassName="size-5" />
   }
   return (
     <div
       className={cn(
-        'flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white ring-2',
-        persona.bg,
+        'flex size-8 shrink-0 items-center justify-center rounded-full ring-2',
+        persona.bgSoft,
         persona.ring,
       )}
       title={persona.name}
     >
-      {persona.name[0]}
+      <AvelineBlossom className={cn('size-5', persona.text)} />
     </div>
   )
 }

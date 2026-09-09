@@ -35,11 +35,13 @@ describe('MessageBubble', () => {
     expect(html).not.toContain('>A</div>')
   })
 
-  it('renders an initial avatar for a non-Aveline agent', () => {
+  it('renders a blossom avatar for a non-Aveline agent (not a letter)', () => {
     const message = makeMessage({ agentKey: 'lina' })
     const html = renderToString(<MessageBubble message={message} isOwn={false} />)
     expect(html).toContain('Lina')
-    expect(html).toContain('>L</div>')
+    // Lina's avatar is a blossom in her persona colour, not an "L" initial.
+    expect(html).not.toContain('>L</div>')
+    expect(html).toContain('text-commerce')
   })
 
   it('renders a staff message right-aligned', () => {

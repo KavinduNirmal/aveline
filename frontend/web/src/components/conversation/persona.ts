@@ -8,6 +8,8 @@ export interface Persona {
   text: string
   /** Tailwind background color class for the persona accent. */
   bg: string
+  /** Tailwind soft (tinted) background color class for avatar chips. */
+  bgSoft: string
   /** Tailwind ring/border color class. */
   ring: string
   /** Short descriptor shown under the name. */
@@ -20,6 +22,7 @@ const AGENT_PERSONAS: Record<AgentKey, Persona> = {
     name: 'Aveline',
     text: 'text-primary',
     bg: 'bg-primary',
+    bgSoft: 'bg-primary/10',
     ring: 'ring-primary/20',
     role: 'Your concierge',
   },
@@ -28,6 +31,7 @@ const AGENT_PERSONAS: Record<AgentKey, Persona> = {
     name: 'Ava',
     text: 'text-memory',
     bg: 'bg-memory',
+    bgSoft: 'bg-memory/10',
     ring: 'ring-memory/20',
     role: 'Memory',
   },
@@ -36,6 +40,7 @@ const AGENT_PERSONAS: Record<AgentKey, Persona> = {
     name: 'Elle',
     text: 'text-visual',
     bg: 'bg-visual',
+    bgSoft: 'bg-visual/10',
     ring: 'ring-visual/20',
     role: 'Visual sourcing',
   },
@@ -44,6 +49,7 @@ const AGENT_PERSONAS: Record<AgentKey, Persona> = {
     name: 'Lina',
     text: 'text-commerce',
     bg: 'bg-commerce',
+    bgSoft: 'bg-commerce/10',
     ring: 'ring-commerce/20',
     role: 'Commerce',
   },

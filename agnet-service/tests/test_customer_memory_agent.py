@@ -16,6 +16,8 @@ class FakeRegistry:
 
     def __init__(self) -> None:
         self.saved_memories: list[tuple[str, str, str]] = []
+        self.recorded_interactions: list[tuple[str, str, str, str, str | None]] = []
+        self.added_events: list[tuple[str, str, str, str | None]] = []
         self.consent_status = "granted"
         self.profile = {
             "customerId": "cust-sarah",
@@ -41,6 +43,14 @@ class FakeRegistry:
     async def save_customer_memory(self, org_id, customer_id, content, category):
         self.saved_memories.append((customer_id, content, category))
         return {"id": f"mem-{len(self.saved_memories)}"}
+
+    async def record_customer_interaction(
+        self, org_id, customer_id, channel, direction, message_content, parsed_intent_json=None
+    ):
+        self.recorded_interactions.append(
+            (customer_id, channel, direction, message_content, parsed_intent_json)
+        )
+        return {"id": f"int-{len(self.recorded_interactions)}"}
 
 
 WEDDING_MESSAGE = "Hi! I have a wedding on Saturday. Do you have anything bluish in my size?"
@@ -78,6 +88,31 @@ async def test_wedding_inquiry_success_with_consenting_customer():
     assert "emerald silk" in result["output"]["interaction_brief"]
     assert result["output"]["draft_response"].startswith("Hi Sarah Perera!")
     assert result["output"]["action_required"] == "send_whatsapp"
+
+
+async def test_inbound_interaction_is_recorded_with_parsed_intent():
+    """The persist node logs the inbound message with its parsed intent (Issue #164)."""
+    registry = FakeRegistry()
+    result = await _run(registry)
+
+    assert result["status"] == "success"
+    assert len(registry.recorded_interactions) == 1
+    customer_id, channel, direction, content, intent_json = registry.recorded_interactions[0]
+    assert customer_id == "cust-sarah"
+    assert channel == "whatsapp"
+    assert direction == "inbound"
+    assert "wedding" in content
+    assert intent_json is not None
+    assert '"intent_type": "item_search"' in intent_json
+
+
+async def test_revoked_consent_does_not_record_interaction():
+    registry = FakeRegistry()
+    registry.consent_status = "revoked"
+    await _run(registry)
+
+    assert registry.recorded_interactions == []
+    assert registry.saved_memories == []
 
 
 async def test_revoked_consent_short_circuits():

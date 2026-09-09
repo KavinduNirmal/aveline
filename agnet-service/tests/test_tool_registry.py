@@ -186,10 +186,26 @@ async def test_registry_record_customer_interaction(client):
     )
     registry = ToolRegistry(client)
     result = await registry.record_customer_interaction(
-        "org-1", "cust-1", "whatsapp", "inbound", "I need a blue saree"
+        "org-1", "cust-1", "whatsapp", "inbound", "I need a blue saree",
+        parsed_intent_json='{"intent_type":"item_search"}',
     )
     assert route.called
+    body = route.calls.last.request.content
+    assert b"parsedIntentJson" in body
     assert result == {"id": "int-1"}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_registry_record_customer_interaction_omits_intent_when_none(client):
+    route = respx.post(f"{BASE_URL}/internal/customers/cust-1/interactions").respond(
+        status_code=201, json={"id": "int-1"}
+    )
+    registry = ToolRegistry(client)
+    await registry.record_customer_interaction("org-1", "cust-1", "whatsapp", "inbound", "hi")
+    assert route.called
+    body = route.calls.last.request.content
+    assert b"parsedIntentJson" not in body
 
 
 @pytest.mark.asyncio

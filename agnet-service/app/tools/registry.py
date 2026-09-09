@@ -97,17 +97,25 @@ class ToolRegistry:
         channel: str,
         direction: str,
         message_content: str,
+        parsed_intent_json: str | None = None,
     ) -> dict[str, Any]:
-        """Record a customer interaction via the backend."""
+        """Record a customer interaction via the backend.
+
+        ``parsed_intent_json`` (when provided) stores the structured intent extracted from the
+        message so the interaction history carries what the agent understood.
+        """
+        body: dict[str, Any] = {
+            "organizationId": org_id,
+            "channel": channel,
+            "direction": direction,
+            "messageContent": message_content,
+        }
+        if parsed_intent_json is not None:
+            body["parsedIntentJson"] = parsed_intent_json
         return await self._client.request(
             "POST",
             f"/internal/customers/{customer_id}/interactions",
-            json={
-                "organizationId": org_id,
-                "channel": channel,
-                "direction": direction,
-                "messageContent": message_content,
-            },
+            json=body,
         )
 
     async def get_customer_consent(self, org_id: str, customer_id: str) -> dict[str, Any]:

@@ -124,6 +124,17 @@ class CustomerMemoryAgent:
                 {"content": content, "category": "event", "is_explicit": True, "confidence": 0.9}
             )
 
+        # Log the inbound interaction with the structured intent the agent extracted (ADR-016).
+        parsed_intent = state.get("parsed_intent") or {}
+        await self.registry.record_customer_interaction(
+            org_id,
+            customer_id,
+            channel=state.get("channel", "whatsapp"),
+            direction=state.get("direction", "inbound"),
+            message_content=state.get("message", ""),
+            parsed_intent_json=json.dumps(parsed_intent) if parsed_intent else None,
+        )
+
         return {"extracted_memories": extracted}
 
     async def compose_output(self, state: MemoryAgentState) -> dict[str, Any]:

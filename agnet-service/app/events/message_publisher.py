@@ -1,12 +1,13 @@
 """Persona-attributed message publishing for the Salon (ADR-016).
 
 The concierge workflow produces an ``AgentResponse``. This module turns it into one or
-more ``message.created`` events attributed to the personas that participated:
+more ``message.created`` events attributed to the personas that produced real content:
 
 - **Aveline** (the orchestrator) always emits a summary ``Note``.
-- **Ava** (memory) emits when the memory agent ran.
-- **Elle** (visual) emits when the visual agent ran.
-- **Lina** (commerce) emits when the commerce agent ran.
+- **Ava** (memory) emits when the memory agent produced real customer content
+  (brief, memories, draft response).
+- **Elle** (visual) and **Lina** (commerce) emit when their sub-output carries content;
+  their stubs are wired by Issue #151.
 
 The API consumes these events and becomes the system of record; the agent service never
 writes message rows directly (ADR-016).
@@ -16,18 +17,19 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from app.events.block_builders import build_ava_blocks, build_aveline_blocks
 from app.schemas.response import AgentResponse, AgentStatus
 
 logger = logging.getLogger("aveline.agent.events")
 
 MESSAGE_CREATED = "message.created"
 
-# persona key -> the workflow output field that indicates that agent ran.
-_SPECIALIST_FIELDS = {
-    "ava": "memory",
-    "elle": "visual",
-    "lina": "commerce",
-}
+#: persona key -> workflow output field -> block builder.
+_SPECIALISTS = (
+    ("ava", "memory", build_ava_blocks),
+    # Elle (visual) and Lina (commerce) are added by Issue #151 once their stub nodes
+    # emit structured output fields for their builders to consume.
+)
 
 
 def _text_block(text: str) -> list[dict[str, Any]]:
@@ -39,7 +41,7 @@ def build_agent_messages(
     thread_id: str | None = None,
     workflow_run_id: UUID | None = None,
 ) -> list[dict[str, Any]]:
-    """Build ``message.created`` payloads attributed to the personas that participated.
+    """Build ``message.created`` payloads attributed to the personas that produced content.
 
     Args:
         result: The concierge ``AgentResponse``.
@@ -57,17 +59,17 @@ def build_agent_messages(
         messages.append(_message("aveline", "Note", _text_block(str(reason)), thread_id, workflow_run_id))
         return messages
 
-    # Aveline (orchestrator) summarizes the outcome.
-    intent = output.get("intent", "general_inquiry") if isinstance(output, dict) else "general_inquiry"
-    summary = f"I have looked into this for you. Intent: {intent}."
-    messages.append(_message("aveline", "Note", _text_block(summary), thread_id, workflow_run_id))
+    # Aveline (orchestrator) always summarizes the outcome.
+    aveline_blocks = build_aveline_blocks(output)
+    if aveline_blocks:
+        messages.append(_message("aveline", "Note", aveline_blocks, thread_id, workflow_run_id))
 
-    # Each specialist that ran gets its own attributed message.
-    for agent_key, field in _SPECIALIST_FIELDS.items():
-        if isinstance(output, dict) and output.get(field) is not None:
-            messages.append(
-                _message(agent_key, "Note", _text_block(f"{agent_key} has reviewed this request."), thread_id, workflow_run_id)
-            )
+    # Each specialist that produced real content gets its own attributed message.
+    for agent_key, field, builder in _SPECIALISTS:
+        sub_output = output.get(field) if isinstance(output, dict) else None
+        blocks = builder(sub_output)
+        if blocks:
+            messages.append(_message(agent_key, "Note", blocks, thread_id, workflow_run_id))
 
     return messages
 

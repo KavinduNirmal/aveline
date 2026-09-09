@@ -48,6 +48,18 @@ public interface IConversationService
         int pageSize,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Binds a Salon to a customer chosen from a resolution <c>choice</c> block (Issue #161)
+    /// and re-triggers the agent with that customer in context. Returns <c>null</c> when the
+    /// conversation does not exist in the org.
+    /// </summary>
+    Task<ConversationDto?> SelectCustomerAsync(
+        Guid orgId,
+        Guid conversationId,
+        Guid customerId,
+        string? query,
+        CancellationToken cancellationToken = default);
+
     Task<(IReadOnlyList<MessageDto> Items, int Total)> ListMessagesAsync(
         Guid orgId,
         Guid conversationId,

@@ -4,6 +4,40 @@ using Aveline.Api.Modules.CustomerConcierge.Repositories;
 
 namespace Aveline.Api.Modules.CustomerConcierge.DTOs;
 
+/// <summary>A concise customer match returned from the read-only lookup path.</summary>
+public sealed record CustomerMatchDto(
+    Guid CustomerId,
+    string? FullName,
+    string PhoneNumber,
+    string Status,
+    DateTime? LastVisitAt)
+{
+    public static CustomerMatchDto From(Customer c) => new(
+        c.Id, c.FullName, c.PhoneNumber, c.Status, c.LastVisitAt);
+}
+
+/// <summary>Request to look up customers by name and/or phone. At least one is required.</summary>
+public sealed record CustomerLookupRequest
+{
+    [Required]
+    public Guid OrganizationId { get; init; }
+
+    [MaxLength(200)]
+    public string? Name { get; init; }
+
+    [MaxLength(50)]
+    public string? PhoneNumber { get; init; }
+}
+
+/// <summary>Response to a customer lookup. <see cref="IsExact"/> is true only when one match.</summary>
+public sealed record CustomerLookupResponse(
+    IReadOnlyList<CustomerMatchDto> Matches,
+    bool IsExact,
+    int Total)
+{
+    public static CustomerLookupResponse Empty => new([], false, 0);
+}
+
 /// <summary>A customer preference as returned to callers.</summary>
 public sealed record CustomerPreferenceDto(
     Guid Id,

@@ -35,6 +35,13 @@ public static class CustomerConciergeEndpoints
             .Produces(StatusCodes.Status404NotFound)
             .Produces(StatusCodes.Status401Unauthorized);
 
+        group.MapPost("/lookup", LookupAsync)
+            .WithName("LookupCustomers")
+            .WithSummary("Read-only customer lookup by name and/or phone (no auto-create).")
+            .Produces<CustomerLookupResponse>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized);
+
         group.MapPost("/{customerId:guid}/memories", SaveMemoryAsync)
             .WithName("SaveCustomerMemory")
             .WithSummary("Persist a semantic memory for a customer (embeds content).")
@@ -117,6 +124,20 @@ public static class CustomerConciergeEndpoints
         return profile is null
             ? Results.NotFound(new { message = "Customer not found." })
             : Results.Ok(profile);
+    }
+
+    private static async Task<IResult> LookupAsync(
+        CustomerLookupRequest request,
+        ICustomerService customers,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name) && string.IsNullOrWhiteSpace(request.PhoneNumber))
+        {
+            return Results.BadRequest(new { message = "Provide a name and/or phone number." });
+        }
+
+        var result = await customers.LookupAsync(request, cancellationToken);
+        return Results.Ok(result);
     }
 
     private static async Task<IResult> SaveMemoryAsync(

@@ -94,6 +94,73 @@ public class CustomerConciergeEndpointsIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Lookup_WithoutToken_ReturnsUnauthorized()
+    {
+        var response = await _client.PostAsJsonAsync("/internal/customers/lookup",
+            new CustomerLookupRequest { OrganizationId = Guid.NewGuid(), Name = "Samantha" });
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Lookup_ByPhone_ReturnsExactMatch()
+    {
+        var orgId = Guid.NewGuid();
+        var identify = await InternalPostAsync("/internal/customers/identify",
+            new IdentifyCustomerRequest { OrganizationId = orgId, PhoneNumber = "+94771234567", FullName = "Samantha Arias" });
+        await identify.Content.ReadFromJsonAsync<CustomerProfileDto>();
+
+        var response = await InternalPostAsync("/internal/customers/lookup",
+            new CustomerLookupRequest { OrganizationId = orgId, PhoneNumber = "+94771234567" });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var lookup = await response.Content.ReadFromJsonAsync<CustomerLookupResponse>();
+        Assert.NotNull(lookup);
+        Assert.True(lookup!.IsExact);
+        Assert.Single(lookup.Matches);
+        Assert.Equal("Samantha Arias", lookup.Matches[0].FullName);
+    }
+
+    [Fact]
+    public async Task Lookup_ByName_MultipleMatches_IsNotExact()
+    {
+        var orgId = Guid.NewGuid();
+        await InternalPostAsync("/internal/customers/identify",
+            new IdentifyCustomerRequest { OrganizationId = orgId, PhoneNumber = "+94770000001", FullName = "Samantha Arias" });
+        await InternalPostAsync("/internal/customers/identify",
+            new IdentifyCustomerRequest { OrganizationId = orgId, PhoneNumber = "+94770000002", FullName = "Samantha Ranaweera" });
+
+        var response = await InternalPostAsync("/internal/customers/lookup",
+            new CustomerLookupRequest { OrganizationId = orgId, Name = "Samantha" });
+
+        var lookup = await response.Content.ReadFromJsonAsync<CustomerLookupResponse>();
+        Assert.NotNull(lookup);
+        Assert.False(lookup!.IsExact);
+        Assert.Equal(2, lookup.Total);
+    }
+
+    [Fact]
+    public async Task Lookup_NoMatch_ReturnsEmpty()
+    {
+        var orgId = Guid.NewGuid();
+        var response = await InternalPostAsync("/internal/customers/lookup",
+            new CustomerLookupRequest { OrganizationId = orgId, Name = "Zara Nobody" });
+
+        var lookup = await response.Content.ReadFromJsonAsync<CustomerLookupResponse>();
+        Assert.NotNull(lookup);
+        Assert.Empty(lookup!.Matches);
+        Assert.False(lookup.IsExact);
+    }
+
+    [Fact]
+    public async Task Lookup_NoCriteria_ReturnsBadRequest()
+    {
+        var response = await InternalPostAsync("/internal/customers/lookup",
+            new CustomerLookupRequest { OrganizationId = Guid.NewGuid() });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
     public async Task SaveMemory_WithValidToken_ReturnsCreated()
     {
         var orgId = Guid.NewGuid();

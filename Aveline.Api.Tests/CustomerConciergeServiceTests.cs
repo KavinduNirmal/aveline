@@ -3,6 +3,7 @@ using Aveline.Api.Modules.CustomerConcierge.DTOs;
 using Aveline.Api.Modules.CustomerConcierge.Repositories;
 using Aveline.Api.Modules.CustomerConcierge.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Aveline.Api.Tests;
 
@@ -36,7 +37,9 @@ public class CustomerConciergeServiceTests
         var customers = new CustomerService(
             new CustomerRepository(_context),
             new CustomerConsentRepository(_context),
-            new CustomerTagRepository(_context));
+            new CustomerTagRepository(_context),
+            new TestDistributedCache(),
+            NullLogger<CustomerService>.Instance);
         var memories = new CustomerMemoryService(
             new CustomerMemoryRepository(_context),
             new CustomerRepository(_context),

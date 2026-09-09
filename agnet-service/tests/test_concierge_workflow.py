@@ -108,6 +108,17 @@ async def test_run_concierge_returns_response():
 
 
 @pytest.mark.asyncio
+async def test_run_concierge_metadata_is_rule_based_when_no_llm():
+    """Without an LLM every completed run carries rule-based usage metadata (Issue #165)."""
+    response = await run_concierge("Do you have a blue saree for a wedding?")
+    assert response.metadata is not None
+    assert response.metadata.model == "rule-based"
+    assert response.metadata.input_tokens == 0
+    assert response.metadata.output_tokens == 0
+    assert response.metadata.tokens_used == 0
+
+
+@pytest.mark.asyncio
 async def test_run_concierge_out_of_scope():
     response = await run_concierge("Tell me a joke")
     assert response.status == AgentStatus.out_of_scope

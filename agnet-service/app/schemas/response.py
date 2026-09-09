@@ -26,8 +26,10 @@ class AgentMetadata(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     duration_ms: int | None = Field(default=None, description="Workflow duration in milliseconds.")
-    model: str | None = Field(default=None, description="LLM model used.")
+    model: str | None = Field(default=None, description="LLM model used (or 'rule-based').")
     tokens_used: int | None = Field(default=None, description="Total tokens consumed.")
+    input_tokens: int | None = Field(default=None, description="Prompt tokens consumed.")
+    output_tokens: int | None = Field(default=None, description="Completion tokens generated.")
     blossoms_consumed: int | None = Field(
         default=None,
         description="Blossom units consumed (determined by the backend, ADR-010).",

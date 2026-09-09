@@ -26,7 +26,7 @@ from app.core.config import get_settings
 from app.customer_resolution import resolve_customer
 from app.gate import classify_by_rules
 from app.llm.runtime import memory_llm_or_none
-from app.schemas.response import AgentResponse, AgentStatus
+from app.schemas.response import AgentMetadata, AgentResponse, AgentStatus
 from app.schemas.state import AgentState
 from app.tools.registry import ToolRegistry
 from app.workflows.checkpointer import create_checkpointer
@@ -199,14 +199,20 @@ def run_commerce_agent(state: ConciergeState) -> dict[str, Any]:
 def formulate_response(state: ConciergeState) -> dict[str, Any]:
     """Build the final ``AgentResponse`` envelope from the collected outputs.
 
+    Usage is reported on every completed run (ADR-010): when the memory agent used an LLM the
+    captured token split is attached; otherwise a ``rule-based`` sentinel with zero tokens is
+    attached so the caller always reports a run. Blossom units are decided server-side.
+
     The response is stored as a plain dict so the state stays JSON-serializable
     for checkpointing (ADR-002).
     """
+    metadata = _build_usage_metadata(state.get("usage"))
     intent = state.get("intent") or {}
     if intent.get("intent_type") == "out_of_scope":
         response = AgentResponse(
             status=AgentStatus.out_of_scope,
             output={"reason": "Request is outside the boutique domain."},
+            metadata=metadata,
         )
     else:
         resolution = state.get("resolution") or {}
@@ -225,8 +231,32 @@ def formulate_response(state: ConciergeState) -> dict[str, Any]:
         response = AgentResponse(
             status=AgentStatus.success,
             output=output,
+            metadata=metadata,
         )
     return {"response": response.model_dump()}
+
+
+def _build_usage_metadata(usage: dict[str, Any] | None) -> AgentMetadata:
+    """Map captured LLM token usage (or its absence) onto response usage metadata.
+
+    Args:
+        usage: ``{input_tokens, output_tokens}`` captured when the memory agent drafted with an
+            LLM, else ``None`` (rule-based run).
+
+    Returns:
+        An ``AgentMetadata`` carrying the model and token split, or the ``rule-based`` sentinel.
+    """
+    settings = get_settings()
+    if usage:
+        input_tokens = int(usage.get("input_tokens") or 0)
+        output_tokens = int(usage.get("output_tokens") or 0)
+        return AgentMetadata(
+            model=settings.llm_model or "rule-based",
+            tokens_used=input_tokens + output_tokens,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+    return AgentMetadata(model="rule-based", tokens_used=0, input_tokens=0, output_tokens=0)
 
 
 # ---------------------------------------------------------------------------

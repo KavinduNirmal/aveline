@@ -1,16 +1,19 @@
 import json
 import logging
 from typing import Annotated
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Body, Depends, Request
 from fastapi.responses import StreamingResponse
 
+from app.core.config import get_settings
 from app.core.security import require_internal_token
 from app.events.message_publisher import publish_agent_messages
 from app.events.state_publisher import publish_agent_state
 from app.schemas.query import AgentQueryRequest, AgentQueryResponse
+from app.schemas.response import AgentResponse
 from app.schemas.state import AgentState
+from app.services.usage_reporter import report_usage
 from app.workflows.concierge_workflow import build_concierge_graph, run_concierge
 
 logger = logging.getLogger("aveline.agent.api")
@@ -86,6 +89,8 @@ async def agents_query(payload: AgentQueryRequest, request: Request) -> AgentQue
 
     event_bus = getattr(request.app.state, "event_bus", None)
     org_id = _resolve_org_id(payload)
+    # Correlation id tracing this workflow invocation (stored on the usage record, ADR-010).
+    request_id = str(uuid4())
 
     async def on_state(state: AgentState) -> None:
         if event_bus is not None and org_id is not None:
@@ -111,6 +116,15 @@ async def agents_query(payload: AgentQueryRequest, request: Request) -> AgentQue
 
     await _publish_result(request, payload, result)
 
+    # Usage / Blossom reporting is always-on and best-effort (never fails the query).
+    if org_id is not None:
+        await _report_usage_best_effort(
+            result,
+            organization_id=str(org_id),
+            workflow_id=payload.thread_id or request_id,
+            request_id=request_id,
+        )
+
     # The workflow completed successfully; broadcast the terminal bloom state.
     if event_bus is not None and org_id is not None:
         await publish_agent_state(event_bus, org_id, payload.thread_id, AgentState.success)
@@ -133,6 +147,42 @@ def _resolve_org_id(payload: AgentQueryRequest) -> UUID | None:
     except (ValueError, TypeError):
         logger.warning("Invalid organization_id in org_context; skipping state publish.")
         return None
+
+
+async def _report_usage_best_effort(
+    response: AgentResponse,
+    organization_id: str,
+    workflow_id: str,
+    request_id: str,
+) -> None:
+    """Report AI usage for a completed workflow to the backend, swallowing failures.
+
+    Rule-based runs (no LLM) carry a ``rule-based`` sentinel in ``response.metadata`` and report
+    zero tokens; LLM runs report the configured provider/model and the captured token split.
+    A reporting failure is logged and never raised, so usage accounting cannot break a query.
+    """
+    metadata = response.metadata
+    if metadata is None or metadata.model is None:
+        return
+
+    settings = get_settings()
+    is_rule_based = metadata.model == "rule-based"
+    provider = "rule-based" if is_rule_based else settings.llm_provider
+    try:
+        await report_usage(
+            organization_id=organization_id,
+            request_id=request_id,
+            workflow_id=workflow_id,
+            provider=provider,
+            model=metadata.model,
+            input_tokens=int(metadata.input_tokens or 0),
+            output_tokens=int(metadata.output_tokens or 0),
+        )
+    except Exception:  # noqa: BLE001 - usage reporting must never fail the agent query
+        logger.exception(
+            "Failed to report usage for workflow %s (best-effort).", workflow_id,
+            extra={"action": "report_usage", "workflow_id": workflow_id},
+        )
 
 
 async def _publish_result(request: Request, payload: AgentQueryRequest, result) -> None:

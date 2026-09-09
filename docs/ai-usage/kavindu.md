@@ -1563,3 +1563,28 @@ flow. No new agent bus handler.
 ### Remaining work / notes
 
 - Commit, push, and open the PR for #153 once confirmed.
+## Session 2026-09-09 (cont.) — Issue #154 ADR for deferred resume + delivery model
+
+**Task:** Document the realtime conversation delivery decisions (batched cards vs token
+streaming) and the deferred SignOff LangGraph resume. On branch `feature/154-realtime-adr`
+(stacked on feature/153).
+**Tool used:** opencode (AI coding agent)
+
+### Work performed
+
+- Authored `docs/ADR/ADR-018-realtime-conversation-delivery.md` and registered it in
+  `docs/ADR/README.md` - batched `message.created` cards + `agent.status` lifecycle (token
+  streaming deferred), SignOff resume deferred, real specialist sub-graphs deferred.
+- Added an explicit "resume deferred" log note in
+  `ConversationService.DecideSignOffAsync` (no fake interrupt).
+- Updated `docs/ADR/ADR-016-conversation-inbox.md` consequences and `docs/architecture/inbox.md`
+  §6.3 to reflect the deferred SignOff resume.
+
+### Verification performed
+
+- `dotnet build` clean; conversation test suite still passes (decision paths unchanged).
+
+### Remaining work / notes
+
+- Commit, push, open the PR for #154. This completes the realtime conversation workflow
+  finalisation plan (Issues #150-#154).

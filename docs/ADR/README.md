@@ -28,6 +28,7 @@ control as an audit trail.
 | `ADR-014-redis-pubsub-event-bus.md` | Redis Pub/Sub event bus for API–agent decoupling (reusable `IEventBus` abstraction) |
 | `ADR-015-whatsapp-integration-gateway.md` | WhatsApp integration gateway — additive status lifecycle, `IWhatsAppService` provider, HMAC-verified webhook, health service |
 | `ADR-016-conversation-inbox.md` | The Salon — unified agent-to-staff conversation inbox with typed rich messages, persona authors, threaded replies, and LangGraph `threadId` linkage |
+| `ADR-017-memory-pgvector-embeddings.md` | Customer memory semantics — OpenAI `text-embedding-3-small` 1536-d embeddings, pgvector column kept outside the EF model, cosine search in the .NET API via raw SQL + Testcontainers |
 
 ## ADR Template
 

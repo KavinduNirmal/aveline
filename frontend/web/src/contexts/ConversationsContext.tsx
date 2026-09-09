@@ -170,7 +170,19 @@ export function ConversationsProvider({
       setAgentActivity(null)
       try {
         const page = await fetchMessages(organizationId, conversationId, { pageSize: 100 })
-        setMessages(page.items)
+        // History is served oldest-first, so page 1 is the OLDEST 100 messages. Once a Salon
+        // grows past a single page, a reload would otherwise drop the newest messages. Fetch
+        // the last (newest) page instead so the recent thread survives a refresh.
+        let items = page.items
+        if (page.total > items.length && page.pageSize > 0) {
+          const lastPage = Math.max(1, Math.ceil(page.total / page.pageSize))
+          const newest = await fetchMessages(organizationId, conversationId, {
+            page: lastPage,
+            pageSize: page.pageSize,
+          })
+          items = newest.items
+        }
+        setMessages(items)
       } catch {
         setMessages([])
       }

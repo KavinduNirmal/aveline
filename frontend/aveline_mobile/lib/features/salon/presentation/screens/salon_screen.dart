@@ -38,7 +38,7 @@ class SalonScreen extends StatefulWidget {
 }
 
 class _SalonScreenState extends State<SalonScreen> {
-  final List<SalonMessage> _messages = _seedMessages();
+  final List<SalonMessage> _messages = [];
   final ScrollController _scrollController = ScrollController();
   final AgentStateProvider _agentStateProvider = AgentStateProvider();
   ConversationRealtimeService? _realtimeService;
@@ -110,6 +110,23 @@ class _SalonScreenState extends State<SalonScreen> {
       _conversationApi = api;
       _organizationId = organizationId;
       _conversationId = conversation.id;
+
+      // Load the persisted history so the thread survives a refresh/restart instead of
+      // resetting to placeholder messages. Best-effort: fall back to the demo seed offline.
+      try {
+        final history = await api.fetchMessages(
+          organizationId: organizationId,
+          conversationId: conversation.id,
+        );
+        if (!mounted) return;
+        setState(() {
+          _messages
+            ..clear()
+            ..addAll(history);
+        });
+      } catch (_) {
+        if (mounted) setState(() => _messages.addAll(_seedMessages()));
+      }
 
       final service = ConversationRealtimeService(defaultRealtimeConnectionFactory);
       _realtimeService = service;

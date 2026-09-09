@@ -1,5 +1,6 @@
 import { useClerk, useUser } from '@clerk/react'
 import {
+  BarChart3,
   ChevronsUpDown,
   ClipboardCheck,
   CreditCard,
@@ -28,6 +29,7 @@ import { SectionPlaceholder } from '@/components/dashboard/SectionPlaceholder'
 import { TeamManagement } from '@/components/dashboard/TeamManagement'
 import { IntegrationsPanel } from '@/components/dashboard/IntegrationsPanel'
 import { NotificationBell } from '@/components/dashboard/NotificationBell'
+import { UsagePanel } from '@/components/dashboard/UsagePanel'
 import { ConversationsProvider } from '@/contexts/ConversationsContext'
 
 import { Button } from '@/components/ui/button'
@@ -56,6 +58,8 @@ type SectionId =
   | 'approvals'
   | 'integrations'
   | 'team'
+  | 'usage'
+  | 'billing'
   | 'settings'
 
 interface SectionDef {
@@ -75,6 +79,8 @@ const SECTIONS: SectionDef[] = [
   { id: 'approvals', label: 'Approvals', icon: ClipboardCheck, placeholder: 'Commerce approvals', permission: 'approvals:approve' },
   { id: 'integrations', label: 'Integrations', icon: Share2, placeholder: 'Channel connections', permission: 'settings:manage' },
   { id: 'team', label: 'Team', icon: UserPlus, placeholder: 'Staff & invitations', permission: 'settings:manage' },
+  { id: 'usage', label: 'Usage', icon: BarChart3 },
+  { id: 'billing', label: 'Billing', icon: CreditCard, placeholder: 'Plan, invoices & payment methods' },
   { id: 'settings', label: 'Settings', icon: Settings, placeholder: 'Boutique & plan settings', permission: 'settings:manage' },
 ]
 
@@ -171,9 +177,10 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
             <p className="truncate font-serif text-lg font-medium leading-tight">
               {organization.name}
             </p>
-            <p className="truncate text-xs text-muted-foreground">
-              aveline.app/b/{organization.slug}
-            </p>
+            <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-primary/15 bg-primary/5 px-2 py-0.5 text-[11px] font-medium text-primary">
+              <Sparkles className="size-3" aria-hidden />
+              {organization.planTier} · Blossom plan
+            </span>
           </div>
         </div>
 
@@ -303,12 +310,6 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
                 </select>
               </label>
             )}
-
-            {/* Plan information as a pill */}
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/15 bg-primary/5 px-3 py-1 text-xs font-medium text-primary">
-              <Sparkles className="size-3.5" aria-hidden />
-              {organization.planTier} · Blossom plan
-            </span>
           </div>
 
           {/* Blossom balance + top up + notifications */}
@@ -357,6 +358,8 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
             <TeamManagement organization={organization} role={role} />
           ) : activeSection === 'integrations' ? (
             <IntegrationsPanel organization={organization} />
+          ) : activeSection === 'usage' ? (
+            <UsagePanel organization={organization} usage={usage} />
           ) : (
             (() => {
               const def = allowedSections.find((s) => s.id === activeSection)

@@ -20,15 +20,15 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from app.agents.customer_memory.graph import build_memory_graph
+from app.agents.customer_memory.parsing import parse_message
 from app.core.config import get_settings
 from app.gate import classify_by_rules
 from app.schemas.response import AgentResponse, AgentStatus
 from app.schemas.state import AgentState
+from app.tools.registry import ToolRegistry
 from app.workflows.checkpointer import create_checkpointer
 from app.workflows.state_events import run_graph_with_states
-from app.gate import classify_by_rules
-from app.schemas.response import AgentResponse, AgentStatus
-from app.workflows.checkpointer import create_checkpointer
 
 logger = logging.getLogger("aveline.agent.concierge")
 
@@ -61,13 +61,54 @@ def run_intent_gate(state: ConciergeState) -> dict[str, Any]:
     return {"intent": intent.model_dump()}
 
 
-def run_memory_agent(state: ConciergeState) -> dict[str, Any]:
-    """Placeholder Customer Memory Agent node.
+async def run_memory_agent(state: ConciergeState) -> dict[str, Any]:
+    """Run the Customer Memory Agent (``app/agents/customer_memory/graph.py``).
 
-    TODO(Slice 1): replace with the real ``app/agents/customer_memory/graph.py``
-    sub-graph. For now it records participation so the workflow is testable.
+    Resolves customer context from ``org_context`` (organization_id + phone_number/customer_id).
+    When a customer can be resolved the real sub-graph runs (identify -> consent -> parse ->
+    retrieve -> persist -> compose). Otherwise the agent falls back to a message-level parse so
+    the workflow remains testable without a backend.
     """
-    return {"memory_output": {"agent": "memory", "ran": True}}
+    org_context = state.get("org_context") or {}
+    org_id = org_context.get("organization_id") or org_context.get("org_id")
+    customer_id = org_context.get("customer_id")
+    phone = org_context.get("phone_number")
+    customer_name = org_context.get("customer_name")
+    message = state.get("message", "")
+
+    if not org_id or (not customer_id and not phone):
+        # No customer context: message-level parse only (no backend calls).
+        parsed = parse_message(message, intent_hint=(state.get("intent") or {}).get("intent_type"))
+        return {
+            "memory_output": {
+                "agent": "memory",
+                "ran": True,
+                "status": "skipped",
+                "reason": "no customer context available",
+                "parsed_intent": parsed["parsed_intent"],
+            }
+        }
+
+    registry = ToolRegistry()
+    graph = build_memory_graph(registry)
+    mem_state = {
+        "org_id": str(org_id),
+        "customer_id": str(customer_id) if customer_id else None,
+        "phone_number": str(phone) if phone else None,
+        "customer_name": customer_name,
+        "message": message,
+        "intent_type": (state.get("intent") or {}).get("intent_type"),
+        "channel": org_context.get("channel", "whatsapp"),
+        "direction": org_context.get("direction", "inbound"),
+    }
+    result = await graph.ainvoke(mem_state)
+    output = result.get("output") or {
+        "status": result.get("status") or "skipped",
+        "reason": result.get("reason"),
+        "extracted_memories": [],
+        "detected_events": [],
+    }
+    return {"memory_output": {"agent": "memory", "ran": True, **output}}
 
 
 def run_visual_agent(state: ConciergeState) -> dict[str, Any]:

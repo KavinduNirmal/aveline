@@ -96,14 +96,27 @@ class CustomerMemoryAgent:
         }
 
     async def retrieve(self, state: MemoryAgentState) -> dict[str, Any]:
-        """Semantically search the customer's memory for context on this message."""
+        """Semantically search the customer's memory for context on this message.
+
+        Semantic search depends on the backend embedding provider; when it is unavailable the agent
+        degrades gracefully (empty context) rather than failing the whole run, so resolution and
+        brief/draft composition still happen.
+        """
         org_id = state.get("org_id")
         customer_id = state.get("customer_id")
-        results = await self.registry.get_customer_memories(
-            str(org_id), str(customer_id), state.get("message", ""), top_k=5
-        )
-        memories = results if isinstance(results, list) else results.get("results", [])
-        return {"semantic_context": memories}
+        try:
+            results = await self.registry.get_customer_memories(
+                str(org_id), str(customer_id), state.get("message", ""), top_k=5
+            )
+            memories = results if isinstance(results, list) else results.get("results", [])
+            return {"semantic_context": memories}
+        except Exception:  # noqa: BLE001 - retrieval must not fail personalization
+            logger.warning(
+                "Semantic memory retrieval failed; continuing without context (customer %s).",
+                customer_id,
+                exc_info=True,
+            )
+            return {"semantic_context": []}
 
     async def persist(self, state: MemoryAgentState) -> dict[str, Any]:
         """Save explicit preferences and detected events as memories (consent-granted only)."""

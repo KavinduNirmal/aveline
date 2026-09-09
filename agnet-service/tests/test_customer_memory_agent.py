@@ -29,6 +29,7 @@ class FakeRegistry:
         self.identify_calls = 0
         self.search_calls = 0
         self.brief_calls = 0
+        self.memories_raise = False
 
     async def identify_customer(self, org_id, phone_number, full_name=None):
         self.identify_calls += 1
@@ -38,6 +39,8 @@ class FakeRegistry:
         return {"consentStatus": self.consent_status}
 
     async def get_customer_memories(self, org_id, customer_id, query, top_k=5):
+        if self.memories_raise:
+            raise RuntimeError("semantic search backend unavailable")
         self.search_calls += 1
         return [{"id": "mem-old", "content": "Prefers emerald silk", "category": "preference", "similarity": 0.98}]
 
@@ -324,6 +327,18 @@ async def test_output_brief_falls_back_when_backend_fails():
     assert result["status"] == "success"
     # Still has a usable brief (name + status + semantic context) and no raise.
     assert result["output"]["interaction_brief"]
+
+
+async def test_semantic_search_failure_degrades_gracefully():
+    """A semantic-search (embedding) failure must not fail the whole agent run (retrieve fallback)."""
+    registry = FakeRegistry()
+    registry.memories_raise = True
+    result = await _run(registry)
+
+    assert result["status"] == "success"
+    # No semantic context but the run still composes a brief and draft.
+    assert result["output"]["interaction_brief"]
+    assert result["output"]["draft_response"].startswith("Hi Sarah Perera!")
 
 
 async def test_output_is_schema_consistent_and_excludes_undated_events():

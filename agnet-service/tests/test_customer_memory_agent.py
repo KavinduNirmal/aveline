@@ -326,6 +326,17 @@ async def test_output_brief_falls_back_when_backend_fails():
     assert result["output"]["interaction_brief"]
 
 
+async def test_output_is_schema_consistent_and_excludes_undated_events():
+    """The assembled output validates against MemoryAgentOutput (Issue #167)."""
+    registry = FakeRegistry()
+    result = await _run(registry, message="I have a wedding on Saturday — any bluish sarees?")
+    assert result["status"] == "success"
+    # The undated "wedding on Saturday" event is saved as a memory but not emitted as a
+    # structured DetectedEvent (which requires a date), keeping the output schema-valid.
+    assert result["output"]["detected_events"] == []
+    assert any(m[2] == "event" for m in registry.saved_memories)
+
+
 # ---------------------------------------------------------------------------
 # Pure parsing unit tests (rule-based)
 # ---------------------------------------------------------------------------

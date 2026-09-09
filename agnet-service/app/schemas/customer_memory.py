@@ -60,7 +60,10 @@ class CustomerProfileSummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     customer_id: str
-    phone_number: str
+    # The agent can know a customer by id/name without their phone number (e.g. resolved by
+    # name), so the phone is optional in the agent's projection even though the backend record
+    # always has one.
+    phone_number: str | None = None
     full_name: str | None = None
     status: str
     consent_status: str = "pending"

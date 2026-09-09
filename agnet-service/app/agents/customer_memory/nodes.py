@@ -15,6 +15,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.agents.customer_memory.parsing import parse_message
 from app.agents.customer_memory.state import MemoryAgentState
 from app.prompts.assembly import assemble_system_prompt
+from app.schemas.customer_memory import MemoryAgentOutput
 from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger("aveline.agent.customer_memory")
@@ -22,6 +23,20 @@ logger = logging.getLogger("aveline.agent.customer_memory")
 SKIPPED = "skipped"
 SUCCESS = "success"
 OUT_OF_SCOPE = "out_of_scope"
+
+
+def coerce_output(output: dict[str, Any]) -> MemoryAgentOutput | None:
+    """Validate an assembled ``MemoryAgentOutput``-shaped dict in the running path.
+
+    The Pydantic models forbid extra fields, so any contract drift between the graph's plain
+    dict and the typed output schema is caught here rather than silently escaping to the caller.
+    Returns ``None`` when the dict does not conform.
+    """
+    try:
+        return MemoryAgentOutput.model_validate(output)
+    except Exception:  # noqa: BLE001 - a malformed output must degrade gracefully
+        logger.error("Memory agent output failed schema validation; emitting error.", exc_info=True)
+        return None
 
 
 class CustomerMemoryAgent:
@@ -159,6 +174,10 @@ class CustomerMemoryAgent:
         draft, usage = await self._generate_draft(state, profile, intent, name)
         action = "send_whatsapp" if intent.get("intent_type") == "item_search" else None
 
+        # Only dateable events are emitted as structured DetectedEvents (the schema requires a
+        # date); undated signals remain as free-text memories so the output stays schema-valid.
+        structured_events = [e for e in (state.get("detected_events") or []) if e.get("event_date")]
+
         output = {
             "status": SUCCESS,
             "parsed_intent": intent,
@@ -170,11 +189,23 @@ class CustomerMemoryAgent:
                 "consent_status": state.get("consent_status") or "pending",
             },
             "extracted_memories": state.get("extracted_memories", []),
-            "detected_events": state.get("detected_events", []),
+            "detected_events": structured_events,
             "interaction_brief": brief,
             "draft_response": draft,
             "action_required": action,
         }
+
+        # Validate against the typed schema in the running path (Issue #167). On failure emit a
+        # safe error fallback so a malformed output never escapes the graph un-validated.
+        if coerce_output(output) is None:
+            fallback = {
+                "status": "error",
+                "reason": "memory output failed schema validation",
+                "extracted_memories": [],
+                "detected_events": [],
+            }
+            return {"output": fallback, "status": "error", "usage": usage}
+
         return {"output": output, "status": SUCCESS, "usage": usage}
 
     # ------------------------------------------------------------------ helpers

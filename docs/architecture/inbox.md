@@ -170,9 +170,13 @@ customer. Both steps are best-effort and never delay the webhook `200`.
 ### 6.3 Human-in-the-loop sign-off
 Commerce agent issues an interrupt (`pause_for_approval`, `agnet-service/app/agents/commerce/README.md`)
 → agent emits a `SignOff` content event → API persists a `Message` of kind `SignOff`
-(`AwaitingSignOff`), writes `ApprovalQueueEntry` with `threadId` + `conversationId`, and
-dispatches an `ApprovalNeeded` notification that deep-links to the message. Staff approve
-or reject inline → API resumes LangGraph via `threadId`.
+(`AwaitingSignOff`) → staff approve or reject inline; the API records the decision (bound to a
+content hash) and updates the message/conversation status.
+
+> **Deferred (ADR-018):** resuming the paused LangGraph workflow via `threadId`, writing
+> `ApprovalQueueEntry` (`threadId` + `conversationId`), and dispatching an `ApprovalNeeded`
+> notification deep-linking to the message all land with the Commerce approval flow, which
+> must add a real `pause_for_approval` interrupt first. No fake resume is used today.
 
 ### 6.4 Notification deep-link
 `Notification.Data` = `{ "conversationId": "…", "messageId": "…" }`. Tapping a

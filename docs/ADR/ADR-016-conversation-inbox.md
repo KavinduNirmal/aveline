@@ -84,6 +84,9 @@ Give Ava, Elle, and Lina separate inboxes.
   asks the agent to draft a response into the same thread (API-initiated, `threadId`-scoped).
 - Quiet-luxury naming is applied throughout: Salon, Note, Look, Piece, AtAGlance,
   ClientMessage, SignOff, Payment, Courier, Suggestion.
+- SignOff resume (resuming the paused LangGraph workflow via `threadId`) is deferred until the
+  Commerce approval flow adds a real `pause_for_approval` interrupt - see
+  [ADR-018](ADR-018-realtime-conversation-delivery.md).
 
 ## Related
 

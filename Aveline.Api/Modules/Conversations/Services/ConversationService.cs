@@ -282,6 +282,14 @@ public class ConversationService : IConversationService
             "SignOff {MessageId} {Decision} by user {UserId} in conversation {ConversationId} (hash {ContentHash}).",
             messageId, approved ? "approved" : "rejected", userId, conversationId, currentHash);
 
+        // NOTE (ADR-018): resuming the paused LangGraph workflow via the conversation's
+        // thread_id is intentionally deferred. The decision is recorded and the message/
+        // conversation statuses are updated here; wiring the actual resume is future work and
+        // must not be faked with a pretend interrupt.
+        _logger.LogInformation(
+            "SignOff resume for thread {ThreadId} is deferred (no LangGraph resume wired, ADR-018).",
+            conversation.ThreadId);
+
         return MessageDto.From(message);
     }
 

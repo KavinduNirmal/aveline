@@ -29,6 +29,7 @@ control as an audit trail.
 | `ADR-015-whatsapp-integration-gateway.md` | WhatsApp integration gateway — additive status lifecycle, `IWhatsAppService` provider, HMAC-verified webhook, health service |
 | `ADR-016-conversation-inbox.md` | The Salon — unified agent-to-staff conversation inbox with typed rich messages, persona authors, threaded replies, and LangGraph `threadId` linkage |
 | `ADR-017-memory-pgvector-embeddings.md` | Customer memory semantics — OpenAI `text-embedding-3-small` 1536-d embeddings, pgvector column kept outside the EF model, cosine search in the .NET API via raw SQL + Testcontainers |
+| `ADR-018-realtime-conversation-delivery.md` | The Salon realtime delivery model — batched `message.created` cards + `agent.status` lifecycle (no token streaming yet); SignOff LangGraph resume and real specialist sub-graphs deferred |
 
 ## ADR Template
 

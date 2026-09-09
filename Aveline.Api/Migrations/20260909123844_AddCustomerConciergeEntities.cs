@@ -186,6 +186,7 @@ namespace Aveline.Api.Migrations
             // ships pgvector). See ADR-017.
             migrationBuilder.Sql(
                 """
+                CREATE EXTENSION IF NOT EXISTS vector;
                 ALTER TABLE "Customer_Memory" ADD COLUMN embedding vector(1536);
                 CREATE INDEX "IX_Customer_Memory_Embedding"
                     ON "Customer_Memory" USING hnsw (embedding vector_cosine_ops);

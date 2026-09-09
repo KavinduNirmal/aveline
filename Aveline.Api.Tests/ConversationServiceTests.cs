@@ -127,12 +127,14 @@ public class ConversationServiceTests
     {
         public int PostCount { get; private set; }
         public string? LastPath { get; private set; }
+        public string? LastBody { get; private set; }
 
-        public Task<HttpResponseMessage> PostAsync(string path, HttpContent content, CancellationToken cancellationToken = default)
+        public async Task<HttpResponseMessage> PostAsync(string path, HttpContent content, CancellationToken cancellationToken = default)
         {
             PostCount++;
             LastPath = path;
-            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK));
+            LastBody = await content.ReadAsStringAsync(cancellationToken);
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK);
         }
 
         public Task<HttpResponseMessage> GetAsync(string path, CancellationToken cancellationToken = default)
@@ -408,5 +410,22 @@ public class ConversationServiceTests
         Assert.Equal(2, _messages.SaveCount);
         var (items, _) = await _conversations.ListAsync(orgId, 1, 50, CancellationToken.None);
         Assert.Single(items);
+    }
+
+    [Fact]
+    public async Task RecordInboundClientMessageAsync_TriggersInboundDraft_WithPhoneContext()
+    {
+        var orgId = Guid.NewGuid();
+        const string from = "+94771234567";
+
+        await _sut.RecordInboundClientMessageAsync(orgId, from, from, "Do you have this in blue?", CancellationToken.None);
+
+        // The inbound message must trigger an agent draft into the Salon (Issue #152), carrying
+        // the client's phone so the memory agent can identify them.
+        Assert.Equal(1, _agent.PostCount);
+        Assert.Equal("/agents/query", _agent.LastPath);
+        Assert.Contains("thread_id", _agent.LastBody);
+        Assert.Contains("phone_number", _agent.LastBody);
+        Assert.Contains("inbound", _agent.LastBody);
     }
 }

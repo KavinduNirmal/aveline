@@ -50,6 +50,11 @@ public class ApprovalQueueEntryConfiguration : IEntityTypeConfiguration<Approval
         builder.Property(a => a.DecisionComment)
             .HasMaxLength(1000);
 
+        builder.Property(a => a.ThreadId)
+            .HasMaxLength(64);
+
+        builder.Property(a => a.ConversationId);
+
         builder.Property(a => a.CreatedAt)
             .IsRequired();
 

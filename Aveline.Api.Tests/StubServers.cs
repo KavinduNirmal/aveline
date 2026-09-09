@@ -90,6 +90,14 @@ public sealed class StubAgentServer : IAsyncDisposable
             ReceivedBody = await reader.ReadToEndAsync();
             return Results.Text(ReceivedBody, "application/json", statusCode: StatusCodes.Status200OK);
         });
+
+        _app.MapPost("/agents/query", async (HttpContext context) =>
+        {
+            ReceivedInternalToken = context.Request.Headers[InternalTokenHeaderName].FirstOrDefault();
+            using var reader = new StreamReader(context.Request.Body);
+            ReceivedBody = await reader.ReadToEndAsync();
+            return Results.Json(new { status = "ok", thread_id = "stub" }, statusCode: StatusCodes.Status200OK);
+        });
     }
 
     public const string InternalTokenHeaderName = "X-Internal-Token";

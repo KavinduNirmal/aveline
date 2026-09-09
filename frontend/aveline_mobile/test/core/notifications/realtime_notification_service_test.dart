@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 class FakeRealtimeConnection implements RealtimeConnection {
   final handlers = <String, void Function(List<Object?>?)>{};
+  final invokedMethods = <String>[];
   bool started = false;
   bool stopped = false;
   String? url;
@@ -13,6 +14,11 @@ class FakeRealtimeConnection implements RealtimeConnection {
   @override
   void on(String method, void Function(List<Object?>? arguments) handler) {
     handlers[method] = handler;
+  }
+
+  @override
+  Future<void> invoke(String method, List<Object?> arguments) async {
+    invokedMethods.add(method);
   }
 
   @override

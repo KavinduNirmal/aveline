@@ -31,6 +31,10 @@ class SignalRRealtimeConnection implements RealtimeConnection {
   }
 
   @override
+  Future<void> invoke(String method, List<Object?> arguments) =>
+      _connection.invoke(method, args: arguments.cast<Object>());
+
+  @override
   Future<void> start() async {
     await _connection.start();
   }

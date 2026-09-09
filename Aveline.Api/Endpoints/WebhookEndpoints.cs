@@ -64,6 +64,7 @@ public static class WebhookEndpoints
             IRateLimiter rateLimiter,
             IConfiguration configuration,
             ILoggerFactory loggerFactory,
+            Aveline.Api.Modules.Conversations.Services.IConversationService conversations,
             CancellationToken ct) =>
         {
             var logger = loggerFactory.CreateLogger("Aveline.Webhooks.WhatsApp");
@@ -164,6 +165,23 @@ public static class WebhookEndpoints
                 },
                 traceId: null,
                 ct);
+
+            // Surface the inbound message in the Salon as a ClientMessage so staff see it
+            // immediately (ADR-016). Best-effort: a failure here must not fail the webhook.
+            if (!string.IsNullOrWhiteSpace(message.From) && !string.IsNullOrWhiteSpace(message.Text))
+            {
+                try
+                {
+                    await conversations.RecordInboundClientMessageAsync(
+                        organizationId, message.From, message.From, message.Text, ct);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex,
+                        "Failed to record inbound ClientMessage. organizationId={OrganizationId}",
+                        organizationId);
+                }
+            }
 
             logger.LogInformation(
                 "Processed inbound WhatsApp message. organizationId={OrganizationId} messageId={MessageId}",

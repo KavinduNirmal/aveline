@@ -15,10 +15,17 @@ checkpointer when a ``thread_id`` is supplied.
 """
 
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from app.core.config import get_settings
+from app.gate import classify_by_rules
+from app.schemas.response import AgentResponse, AgentStatus
+from app.schemas.state import AgentState
+from app.workflows.checkpointer import create_checkpointer
+from app.workflows.state_events import run_graph_with_states
 from app.gate import classify_by_rules
 from app.schemas.response import AgentResponse, AgentStatus
 from app.workflows.checkpointer import create_checkpointer
@@ -165,6 +172,7 @@ async def run_concierge(
     message: str,
     org_context: dict[str, Any] | None = None,
     thread_id: str | None = None,
+    on_state: Callable[[AgentState], Awaitable[None]] | None = None,
 ) -> AgentResponse:
     """Run the concierge workflow for ``message`` and return the final response.
 
@@ -173,6 +181,9 @@ async def run_concierge(
         org_context: Optional organization context (reserved for prompt injection).
         thread_id: Optional checkpoint thread id. When supplied the workflow is
             checkpointed to Postgres so it can pause/resume (ADR-002).
+        on_state: Optional async callback invoked with each lifecycle state as the
+            workflow progresses (e.g. to publish ``agent.status`` events). When omitted
+            the workflow runs with plain ``ainvoke`` and no state events are emitted.
 
     Returns:
         The final ``AgentResponse`` envelope.
@@ -188,7 +199,29 @@ async def run_concierge(
         "response": None,
     }
 
-    if thread_id is not None:
+    if on_state is not None:
+        # Stream node boundaries so the caller can publish lifecycle states.
+        config = {"configurable": {"thread_id": thread_id}} if thread_id is not None else None
+        state_delay_ms = get_settings().agent_state_delay_ms
+        if thread_id is not None:
+            async with create_checkpointer() as checkpointer:
+                result = await run_graph_with_states(
+                    graph,
+                    initial,
+                    config,
+                    on_state,
+                    checkpointer=checkpointer,
+                    state_delay_ms=state_delay_ms,
+                )
+        else:
+            result = await run_graph_with_states(
+                graph,
+                initial,
+                config,
+                on_state,
+                state_delay_ms=state_delay_ms,
+            )
+    elif thread_id is not None:
         async with create_checkpointer() as checkpointer:
             result = await graph.ainvoke(
                 initial,

@@ -11,6 +11,7 @@ langchain-deepseek
 langchain-community
 
 # Database
+psycopg[binary]
 psycopg2-binary
 pgvector
 sqlalchemy[asyncio]

@@ -5,6 +5,7 @@ import {
   CreditCard,
   LayoutDashboard,
   LogOut,
+  MessageSquare,
   Plus,
   Settings,
   Share2,
@@ -19,11 +20,15 @@ import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { Blossom } from '@/components/auth/Blossom'
+import { AvelineChatDrawer } from '@/components/conversation/AvelineChatDrawer'
+import { AvelineChatLauncher } from '@/components/conversation/AvelineChatLauncher'
+import { SalonPanel } from '@/components/conversation/SalonPanel'
 import { Overview } from '@/components/dashboard/Overview'
 import { SectionPlaceholder } from '@/components/dashboard/SectionPlaceholder'
 import { TeamManagement } from '@/components/dashboard/TeamManagement'
 import { IntegrationsPanel } from '@/components/dashboard/IntegrationsPanel'
 import { NotificationBell } from '@/components/dashboard/NotificationBell'
+import { ConversationsProvider } from '@/contexts/ConversationsContext'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -45,6 +50,7 @@ import type {
 
 type SectionId =
   | 'overview'
+  | 'salon'
   | 'customers'
   | 'catalog'
   | 'approvals'
@@ -63,6 +69,7 @@ interface SectionDef {
 
 const SECTIONS: SectionDef[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { id: 'salon', label: 'Salon', icon: MessageSquare },
   { id: 'customers', label: 'Customers', icon: Users, placeholder: 'Customer concierge & memory', permission: 'customers:view' },
   { id: 'catalog', label: 'Catalog', icon: Shirt, placeholder: 'Visual intelligence & sourcing', permission: 'catalog:view' },
   { id: 'approvals', label: 'Approvals', icon: ClipboardCheck, placeholder: 'Commerce approvals', permission: 'approvals:approve' },
@@ -101,6 +108,7 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
   const { signOut } = useClerk()
   const [section, setSection] = useState<SectionId>('overview')
   const [boutiques, setBoutiques] = useState<OrganizationMembership[]>([])
+  const [chatOpen, setChatOpen] = useState(false)
 
   const allowedSections = SECTIONS.filter(
     (item) => !item.permission || hasPermission(role, item.permission),
@@ -141,10 +149,11 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
   const handleSignOut = () => signOut(() => navigate('/sign-in'))
 
   return (
-    <div className="flex min-h-screen bg-background">
-      <aside className="sticky top-0 flex h-screen w-64 shrink-0 flex-col border-r bg-background/60 backdrop-blur-sm">
+    <ConversationsProvider organizationId={organization.id}>
+      <div className="flex min-h-screen bg-background">
+        <aside className="sticky top-0 flex h-screen w-64 shrink-0 flex-col border-r bg-background/60 backdrop-blur-sm">
         {/* Boutique identity */}
-        <div className="flex items-center gap-3 border-b px-4 py-5">
+        <div className="flex h-16 items-center gap-3 border-b px-4">
           <div className="relative size-10 shrink-0 overflow-hidden rounded-full ring-1 ring-primary/20">
             {organization.logoUrl ? (
               <img
@@ -333,12 +342,17 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
             </Button>
 
             <NotificationBell />
+
+            {/* Always-available Aveline chat launcher (header). */}
+            <AvelineChatLauncher open={chatOpen} onOpen={() => setChatOpen(true)} />
           </div>
         </header>
 
         <main className="flex-1 px-6 py-8">
           {activeSection === 'overview' ? (
             <Overview organization={organization} usage={usage} role={role} />
+          ) : activeSection === 'salon' ? (
+            <SalonPanel />
           ) : activeSection === 'team' ? (
             <TeamManagement organization={organization} role={role} />
           ) : activeSection === 'integrations' ? (
@@ -358,6 +372,10 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
         </main>
 
       </div>
-    </div>
+      </div>
+
+      {/* Slide-in Aveline chat panel, rendered at the shell root so it spans full height. */}
+      <AvelineChatDrawer open={chatOpen} onClose={() => setChatOpen(false)} />
+    </ConversationsProvider>
   )
 }

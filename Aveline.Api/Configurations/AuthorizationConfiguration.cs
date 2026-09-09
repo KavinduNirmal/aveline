@@ -31,6 +31,13 @@ public static class AuthorizationConfiguration
     public const string BoutiqueMembershipManagePolicy = "BoutiqueMembershipManage";
 
     /// <summary>
+    /// Org-scoped policy for the conversation inbox ("The Salon"): requires an active
+    /// membership in the target organization whose role grants <c>conversations:view</c>
+    /// (all boutique staff roles).
+    /// </summary>
+    public const string BoutiqueConversationAccessPolicy = "BoutiqueConversationAccess";
+
+    /// <summary>
     /// Policy for internal service-to-service calls using X-Internal-Token header (ADR-009).
     /// </summary>
     public const string InternalServicePolicy = "InternalServicePolicy";
@@ -73,6 +80,12 @@ public static class AuthorizationConfiguration
             {
                 p.RequireAuthenticatedUser();
                 p.AddRequirements(new OrganizationScopeRequirement(Permissions.SettingsManage));
+            });
+
+            options.AddPolicy(BoutiqueConversationAccessPolicy, p =>
+            {
+                p.RequireAuthenticatedUser();
+                p.AddRequirements(new OrganizationScopeRequirement(Permissions.ConversationsView));
             });
 
             // Permission-based policies (one per permission in the catalog).

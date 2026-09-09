@@ -27,6 +27,8 @@ Health check: `GET http://localhost:8000/health` (public).
 | `LLM_API_KEY` | no | API key for the selected LLM provider. |
 | `LLM_BASE_URL` | no | Optional base URL override for the LLM provider. |
 | `LLM_MODEL` | no | Default model name (e.g. `gpt-4o`, `deepseek-v4-flash`). |
+| `LLM_THINKING_ENABLED` | no (default `false`) | When `false`, reasoner-capable DeepSeek models are asked to skip the thinking pass. |
+| `AGENT_STATE_DELAY_MS` | no (default `0`) | Artificial delay (ms) between emitted lifecycle states so clients can visibly animate Aveline's blossom during integration testing. `0` disables it. |
 | `DATABASE_URL` | yes | Async SQLAlchemy connection string (PostgreSQL 16 + pgvector). |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | no | OTLP exporter endpoint for traces. |
 | `OTEL_SERVICE_NAME` | no (default `aveline-agent-service`) | Resource attribute identifying this service in traces. |

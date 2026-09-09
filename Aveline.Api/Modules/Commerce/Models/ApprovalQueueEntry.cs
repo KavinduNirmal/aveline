@@ -36,6 +36,12 @@ public class ApprovalQueueEntry : ITenantEntity
 
     public Guid? DecidedBy { get; set; } // Owner / Manager User ID
 
+    /// <summary>LangGraph checkpoint thread id for resuming the paused workflow (ADR-016).</summary>
+    public string? ThreadId { get; set; }
+
+    /// <summary>The Salon conversation this approval surfaces in (ADR-016).</summary>
+    public Guid? ConversationId { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? DecidedAt { get; set; }
 

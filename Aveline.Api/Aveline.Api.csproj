@@ -28,4 +28,10 @@
         <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     </ItemGroup>
 
+    <ItemGroup>
+        <ProjectReference Include="..\backend\Aveline.Domain\Aveline.Domain.csproj" />
+        <ProjectReference Include="..\backend\Aveline.Application\Aveline.Application.csproj" />
+        <ProjectReference Include="..\backend\Aveline.Infrastructure\Aveline.Infrastructure.csproj" />
+    </ItemGroup>
+
 </Project>

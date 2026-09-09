@@ -112,7 +112,9 @@ CodeCoverage/
 ScaffoldingReadMe.txt
 
 # Misc
+.dotnet/
 ~$*
+
 
 # =============================================================================
 # PYTHON

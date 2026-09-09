@@ -82,6 +82,9 @@ services:
       # the /memories/search + /memories endpoints. Defaults to OpenAI text-embedding-3-small.
       Embeddings__ApiKey: ${EMBEDDINGS_API_KEY:?EMBEDDINGS_API_KEY is required}
       Embeddings__BaseUrl: ${EMBEDDINGS_BASE_URL:-https://api.openai.com}
+      # OpenAI-compatible embeddings used by the Customer Memory agent (pgvector retrieval).
+      Embeddings__ApiKey: ${EMBEDDINGS_API_KEY:-}
+      Embeddings__BaseUrl: ${EMBEDDINGS_BASE_URL:-https://api.openai.com/v1}
       Embeddings__Model: ${EMBEDDINGS_MODEL:-text-embedding-3-small}
       # AES-256-GCM key for tenant integration credentials (base64, 32 bytes).
       Credentials__EncryptionKey: ${CREDENTIALS_ENCRYPTION_KEY:?CREDENTIALS_ENCRYPTION_KEY is required}
@@ -131,6 +134,8 @@ services:
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-change-me-internal-token}
       # ASP.NET Core internal endpoints the agent calls (ADR-009). The API service listens on
       # 8080 inside the compose network (ASPNETCORE_URLS=http://+:8080) — NOT localhost.
+      # Base URL of the ASP.NET Core API so agent tool calls hit the internal endpoints
+      # (identify customer, memories, consent) used by the Customer Memory agent.
       API_BASE_URL: http://api:8080
       # Redis Pub/Sub event bus (ADR-014). The agent subscribes to aveline:*:<event_type>.
       REDIS_URL: redis://redis:6379/0

@@ -1706,3 +1706,38 @@ Created 8 GitHub issues (#163–#170) and implemented each test-first:
 - Branched from `feature/slice1-customer-resolution` (the AVA Slice 1 tip incl. shared customer
   resolution #161/#162), not `development`, so it inherits the full slice state.
 
+## Session 2026-09-09 (cont.) — Gemini embeddings adapter for Ava
+
+**Task:** Enable the Customer Memory agent (Ava) to use `gemini-embedding-2` for pgvector
+retrieval/persistence, and get the local full workflow (owner chat -> agent -> Ava -> Salon)
+running end to end. Branch: stacked on feature/154.
+**Tool used:** opencode (AI coding agent)
+
+### Findings
+
+- Gemini embeddings are NOT OpenAI-compatible: no OpenAI-style `/v1/embeddings` route exists
+  (404s verified); only the native `POST /v1beta/models/{model}:embedContent` endpoint works.
+  Aveline's EmbeddingService only spoke the OpenAI shape, so a URL change alone was insufficient.
+- The agent service's `api_base_url` defaulted to `localhost:5000` (wrong in docker), so Ava's
+  tool calls to the API's `/internal/customers/*` endpoints would have failed.
+
+### Work performed
+
+- Wired `Embeddings__ApiKey/BaseUrl/Model` into docker-compose `api` (from `.env`), and added
+  `API_BASE_URL: http://api:8080` to the `agent` service.
+- Added a Gemini adapter branch in `EmbeddingService.cs`: when the base URL host is
+  `generativelanguage.googleapis.com`, POSTs to `v1beta/models/{model}:embedContent` with the
+  Gemini body + `X-Goog-Api-Key` header and `outputDimensionality: 1536` (matches pgvector
+  `vector(1536)`); otherwise keeps the OpenAI path. Added `EmbeddingServiceTests.cs` (5 tests).
+- Rebuilt the `api` image; recreated `api` + `agent`; drove a phone-context query.
+- Verified end to end: Ava identified a customer, saved a memory with a **1536-dim** Gemini
+  embedding, and posted a real rich message (brief + at_a_glance + suggestion) into the Salon.
+
+### Verification performed
+
+- `dotnet test` - 450 passed (445 + 5 new embedding tests).
+- Local run: API healthy; agent -> API internal calls succeed; Gemini embedding stored as 1536 dims.
+
+### Remaining work / notes
+
+- Changes not yet in any merged branch; commit/PR follows.

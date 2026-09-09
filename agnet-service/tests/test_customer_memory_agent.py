@@ -246,6 +246,20 @@ async def test_llm_failure_falls_back_to_template():
     assert result["usage"] is None
 
 
+async def test_llm_json_envelope_is_unwrapped_to_plain_reply():
+    """The universal prompt can make the LLM return a JSON envelope; the draft must be plain text."""
+    registry = FakeRegistry()
+    enveloped = (
+        '```json\n{"status": "success", "output": {"assistant_reply": "A plain warm reply."}}\n```'
+    )
+    graph = build_memory_graph(registry, llm=FakeChatModel(draft=enveloped))
+    result = await graph.ainvoke(await _llm_state())
+
+    assert result["status"] == "success"
+    assert result["output"]["draft_response"] == "A plain warm reply."
+    assert result["output"]["draft_response"].startswith("```") is False
+
+
 async def test_no_llm_defaults_to_template_without_usage():
     registry = FakeRegistry()
     graph = build_memory_graph(registry)  # llm defaults to None

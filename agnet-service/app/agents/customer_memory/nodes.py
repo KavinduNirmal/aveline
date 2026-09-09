@@ -39,6 +39,41 @@ def coerce_output(output: dict[str, Any]) -> MemoryAgentOutput | None:
         return None
 
 
+def _unwrap_reply(content: str) -> str:
+    """Extract a plain-text reply from an LLM completion.
+
+    The universal system prompt tells the model to emit a JSON envelope, so a draft call may
+    return fenced JSON (``{status, output: {assistant_reply: ...}}``). This unwraps code fences and
+    any envelope to keep the staff-facing ``draft_response`` plain text. Non-JSON text is returned
+    unchanged.
+    """
+    text = content.strip()
+
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].strip().startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+
+    try:
+        parsed = json.loads(text)
+    except (ValueError, TypeError):
+        return text
+
+    if not isinstance(parsed, dict):
+        return text
+
+    output = parsed.get("output")
+    candidates = output if isinstance(output, dict) else parsed
+    for key in ("assistant_reply", "draft_response", "reply", "text"):
+        value = candidates.get(key) if isinstance(candidates, dict) else None
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return text
+
+
 class CustomerMemoryAgent:
     """LangGraph node set for the Customer Memory Agent, bound to a ``ToolRegistry``."""
 
@@ -287,6 +322,7 @@ class CustomerMemoryAgent:
             context_lines.append(f"Detected intent: {json.dumps(intent)}")
         context_lines.append(
             "Write a short, warm, staff-facing DRAFT customer reply (2-4 sentences). "
+            "Reply with ONLY the plain text of that draft - no JSON, no code fences, no labels. "
             "Do not auto-send; it is reviewed by a human associate."
         )
 
@@ -299,7 +335,7 @@ class CustomerMemoryAgent:
             logger.warning("LLM draft generation failed; falling back to template.", exc_info=True)
             return self._draft(name, intent), None
 
-        draft = (getattr(result, "content", None) or "").strip()
+        draft = _unwrap_reply(getattr(result, "content", None) or "")
         if not draft:
             return self._draft(name, intent), None
 

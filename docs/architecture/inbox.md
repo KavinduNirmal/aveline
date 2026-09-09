@@ -201,6 +201,11 @@ Lina:   Message 5  (reply to Message 3)
   persist `Message` → SignalR broadcast. Clients never open SSE directly.
 - **New event types** (ADR-014): `conversation.created`, `message.created`,
   `message.updated`. Existing `agent.status` drives the "thinking" indicator.
+- **`message.updated` handling**: when an agent revises a message, the API subscriber
+  (`ConversationEventSubscriber.OnMessageUpdatedAsync`) applies the new `status` and/or
+  `blocks` to the persisted message and rebroadcasts it. Editing a SignOff's payload
+  re-binds its `contentHash` to the revised content. Unknown messages are skipped without
+  failing the listener.
 
 ---
 

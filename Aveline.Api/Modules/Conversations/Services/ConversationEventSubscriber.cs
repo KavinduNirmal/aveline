@@ -101,11 +101,30 @@ public sealed class ConversationEventSubscriber : IHostedService
             cancellationToken);
     }
 
-    private Task OnMessageUpdatedAsync(EventEnvelope envelope, CancellationToken cancellationToken)
+    private async Task OnMessageUpdatedAsync(EventEnvelope envelope, CancellationToken cancellationToken)
     {
-        // Status/block updates are handled in a later slice (SignOff). Log for now.
-        _logger.LogDebug("Received message.updated event (eventId={EventId}).", envelope.EventId);
-        return Task.CompletedTask;
+        var evt = ParseMessageUpdateEvent(envelope);
+        if (evt is null)
+        {
+            return;
+        }
+
+        using var scope = _scopeFactory.CreateScope();
+        var conversations = scope.ServiceProvider.GetRequiredService<IConversationService>();
+        var broadcaster = scope.ServiceProvider.GetRequiredService<IMessageBroadcaster>();
+
+        var updated = await conversations.ApplyAgentMessageUpdateAsync(evt, cancellationToken);
+        if (updated is null)
+        {
+            // The message does not exist (or was for a conversation this instance does not
+            // know yet); skip rather than fail the listener.
+            _logger.LogDebug(
+                "message.updated for unknown message {MessageId} skipped.",
+                evt.MessageId);
+            return;
+        }
+
+        await broadcaster.BroadcastMessageAsync(updated, cancellationToken);
     }
 
     private Task OnConversationCreatedAsync(EventEnvelope envelope, CancellationToken cancellationToken)
@@ -170,6 +189,71 @@ public sealed class ConversationEventSubscriber : IHostedService
                 blocks,
                 replyTo,
                 workflowRunId);
+        }
+        catch (JsonException)
+        {
+            // Malformed payload; log and skip rather than crash the listener.
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Parses a <c>message.updated</c> payload into an <see cref="AgentMessageUpdateEvent"/>.
+    /// Requires <c>conversation_id</c> and <c>message_id</c>; <c>status</c> and <c>blocks</c> are
+    /// optional. Returns <c>null</c> when the payload is malformed or missing required fields.
+    /// </summary>
+    private static AgentMessageUpdateEvent? ParseMessageUpdateEvent(EventEnvelope envelope)
+    {
+        JsonElement payload;
+        if (envelope.Payload is JsonElement element)
+        {
+            payload = element;
+        }
+        else if (envelope.Payload is not null)
+        {
+            try
+            {
+                payload = JsonSerializer.SerializeToElement(envelope.Payload);
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+        else
+        {
+            return null;
+        }
+
+        try
+        {
+            if (!payload.TryGetProperty("conversation_id", out var conversationProp)
+                || conversationProp.ValueKind != JsonValueKind.String)
+            {
+                return null;
+            }
+            if (!payload.TryGetProperty("message_id", out var messageProp)
+                || messageProp.ValueKind != JsonValueKind.String)
+            {
+                return null;
+            }
+
+            var conversationId = conversationProp.GetGuid();
+            var messageId = messageProp.GetGuid();
+
+            MessageStatus? status = null;
+            if (payload.TryGetProperty("status", out var statusProp)
+                && statusProp.ValueKind == JsonValueKind.String
+                && Enum.TryParse<MessageStatus>(statusProp.GetString(), ignoreCase: true, out var parsedStatus))
+            {
+                status = parsedStatus;
+            }
+
+            var blocks = payload.TryGetProperty("blocks", out var blocksProp)
+                ? blocksProp
+                : default;
+
+            return new AgentMessageUpdateEvent(conversationId, messageId, status, blocks);
         }
         catch (JsonException)
         {

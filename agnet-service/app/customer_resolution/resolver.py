@@ -12,6 +12,7 @@ import logging
 from typing import Any
 
 from app.customer_resolution.extract import extract_customer_name, extract_phone
+from app.customer_resolution.mentions import extract_mentions
 from app.customer_resolution.models import CustomerCandidate, CustomerResolution
 
 logger = logging.getLogger("aveline.agent.customer_resolution")
@@ -27,14 +28,21 @@ async def resolve_customer(
 ) -> CustomerResolution:
     """Resolve a customer from explicit context or ``message``.
 
-    Precedence:
+    Precedence (ADR-019):
       1. An explicit ``customer_id`` (fast path, no backend call).
-      2. A phone number, from ``phone`` or extracted from ``message``.
-      3. A name extracted from ``message``.
-      4. ``no_signal`` when the message does not mention a customer.
+      2. An explicit mention in ``message``: ``@<name>`` (customer) or ``#<phone>``.
+      3. A phone number, from ``phone`` or extracted from ``message``.
+      4. A name extracted from ``message``.
+      5. ``no_signal`` when the message does not mention a customer.
     """
     if customer_id:
         return CustomerResolution(kind="resolved", customer_id=str(customer_id), message=message)
+
+    mentions = extract_mentions(message)
+    if mentions.customer:
+        return _from_lookup(await registry.lookup_customers(org_id, name=mentions.customer), message)
+    if mentions.phone:
+        return _from_lookup(await registry.lookup_customers(org_id, phone=mentions.phone), message)
 
     search_phone = phone or extract_phone(message)
     if search_phone:

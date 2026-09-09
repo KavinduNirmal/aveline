@@ -138,6 +138,32 @@ async def test_resolve_no_signal_when_no_customer_mentioned():
     assert registry.calls == []
 
 
+async def test_resolve_lowercase_at_mention_resolves_by_name():
+    """A lower-case @mention resolves even though free-text extraction requires title-case (ADR-019)."""
+    registry = FakeLookupRegistry(_exact(MATCH_SARAH))
+    res = await resolve_customer("org-1", "any events for @samantha arias?", registry=registry)
+
+    assert res.kind == "resolved"
+    assert res.customer_id == "cust-sarah"
+    assert registry.calls == [("org-1", "samantha arias", None)]
+
+
+async def test_resolve_at_mention_stops_at_prose():
+    registry = FakeLookupRegistry(_exact(MATCH_SARAH))
+    res = await resolve_customer("org-1", "@samantha arias dropped by next week", registry=registry)
+
+    assert res.kind == "resolved"
+    assert registry.calls == [("org-1", "samantha arias", None)]
+
+
+async def test_resolve_hash_phone_mention_looks_up_by_phone():
+    registry = FakeLookupRegistry(_exact(MATCH_SARAH))
+    res = await resolve_customer("org-1", "reach #0771234567 please", registry=registry)
+
+    assert res.kind == "resolved"
+    assert registry.calls == [("org-1", None, "0771234567")]
+
+
 def test_resolution_shapes():
     assert CustomerResolution(kind="resolved", customer_id="c").is_resolved
     assert not CustomerResolution(kind="no_signal").is_resolved

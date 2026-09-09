@@ -271,6 +271,82 @@ async def test_no_llm_defaults_to_template_without_usage():
 
 
 # ---------------------------------------------------------------------------
+# Staff query vs inbound customer (ADR-019 two modes)
+# ---------------------------------------------------------------------------
+
+
+async def test_staff_event_query_answers_directly_with_no_suggestion():
+    """A STAFF question ('any events for @x?') is answered directly, with no customer draft."""
+    registry = FakeRegistry()
+    registry.consent_status = "granted"
+    graph = build_memory_graph(registry)
+    state = {
+        "org_id": "org-1",
+        "customer_id": "cust-sarah",
+        "customer_name": "Sarah Perera",
+        "message": "any upcoming events for @sarah perera?",
+        "intent_type": "event_query",
+        "channel": "whatsapp",
+        "direction": None,          # no inbound direction -> staff query
+        "staff_query": True,
+    }
+    result = await graph.ainvoke(state)
+
+    assert result["status"] == "success"
+    out = result["output"]
+    # No customer-facing draft / Suggestion for a staff query.
+    assert out["draft_response"] is None
+    assert out["action_required"] is None
+    assert out["interaction_brief"]  # Ava still answers
+    # FakeRegistry backend reports an upcoming event, so the direct answer reflects it.
+    assert "Upcoming events" in out["interaction_brief"]
+
+
+async def test_staff_event_query_no_events_reports_none():
+    registry = FakeRegistry()
+    async def brief(org_id, customer_id):
+        return {"customerName": "Sarah Perera", "status": "vip", "upcomingEvents": None, "tags": []}
+    registry.generate_interaction_brief = brief
+    graph = build_memory_graph(registry)
+    state = {
+        "org_id": "org-1", "customer_id": "cust-sarah", "customer_name": "Sarah Perera",
+        "message": "any events for @sarah?", "intent_type": "event_query",
+        "channel": "whatsapp", "direction": None, "staff_query": True,
+    }
+    result = await graph.ainvoke(state)
+    assert result["status"] == "success"
+    assert result["output"]["draft_response"] is None
+    assert "no upcoming events" in result["output"]["interaction_brief"].lower()
+
+
+async def test_staff_query_does_not_record_customer_interaction():
+    registry = FakeRegistry()
+    graph = build_memory_graph(registry)
+    state = {
+        "org_id": "org-1", "customer_id": "cust-sarah", "customer_name": "Sarah Perera",
+        "message": "any events for @sarah?", "intent_type": "event_query",
+        "channel": "whatsapp", "direction": None, "staff_query": True,
+    }
+    await graph.ainvoke(state)
+    assert registry.recorded_interactions == []
+
+
+async def test_customer_inbound_still_produces_draft():
+    """An inbound customer message (direction present) still gets a customer-facing draft."""
+    registry = FakeRegistry()
+    graph = build_memory_graph(registry)
+    state = {
+        "org_id": "org-1", "customer_id": "cust-sarah", "customer_name": "Sarah Perera",
+        "message": "Hi, do you have a blue saree?", "intent_type": "item_search",
+        "channel": "whatsapp", "direction": "inbound", "staff_query": False,
+    }
+    result = await graph.ainvoke(state)
+    assert result["status"] == "success"
+    assert result["output"]["draft_response"].startswith("Hi Sarah Perera!")
+    assert len(registry.recorded_interactions) == 1
+
+
+# ---------------------------------------------------------------------------
 # Structured events + backend brief (Issue #166)
 # ---------------------------------------------------------------------------
 

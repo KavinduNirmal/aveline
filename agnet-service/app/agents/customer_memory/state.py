@@ -21,6 +21,9 @@ class MemoryAgentState(TypedDict, total=False):
     direction: str
     # Intent hint from the upstream gate (optional)
     intent_type: str | None
+    # True when this request is a STAFF query (no inbound customer message). Staff queries are
+    # answered directly; only genuine inbound customer messages get a customer-facing draft.
+    staff_query: bool | None
     # Working results
     consent_status: str | None
     profile: dict[str, Any] | None

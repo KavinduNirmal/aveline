@@ -198,29 +198,44 @@ class CustomerMemoryAgent:
                 )
 
         # Log the inbound interaction with the structured intent the agent extracted (ADR-016).
-        parsed_intent = state.get("parsed_intent") or {}
-        await self.registry.record_customer_interaction(
-            org_id,
-            customer_id,
-            channel=state.get("channel", "whatsapp"),
-            direction=state.get("direction", "inbound"),
-            message_content=state.get("message", ""),
-            parsed_intent_json=json.dumps(parsed_intent) if parsed_intent else None,
-        )
+        # Staff queries are not customer interactions, so only genuine inbound messages are logged.
+        if not state.get("staff_query"):
+            parsed_intent = state.get("parsed_intent") or {}
+            await self.registry.record_customer_interaction(
+                org_id,
+                customer_id,
+                channel=state.get("channel", "whatsapp"),
+                direction=state.get("direction", "inbound"),
+                message_content=state.get("message", ""),
+                parsed_intent_json=json.dumps(parsed_intent) if parsed_intent else None,
+            )
 
         return {"extracted_memories": extracted}
 
     async def compose_output(self, state: MemoryAgentState) -> dict[str, Any]:
-        """Assemble the final output: brief + a staff-review draft response."""
+        """Assemble the final output.
+
+        Two audiences (ADR-019):
+        - Inbound CUSTOMER message: a staff-facing ``interaction_brief`` plus a customer-facing
+          draft (``draft_response``, surfaced as a Suggestion for staff to approve/send).
+        - STAFF query (no inbound direction): Ava answers the staff directly as text and produces
+          NO customer-facing draft / Suggestion.
+        """
         profile = state.get("profile") or {}
         intent = state.get("parsed_intent") or {}
         name = self._customer_name(state)
-        tags = profile.get("tags") or []
+        staff = bool(state.get("staff_query"))
+        backend = await self._backend_brief(state)
 
-        brief = await self._interaction_brief(state, name, profile, tags)
-
-        draft, usage = await self._generate_draft(state, profile, intent, name)
-        action = "send_whatsapp" if intent.get("intent_type") == "item_search" else None
+        if staff:
+            interaction_brief = self._staff_text(state, name, profile, backend)
+            draft = None
+            usage = None
+            action = None
+        else:
+            interaction_brief = self._format_brief(state, name, profile, backend)
+            draft, usage = await self._generate_draft(state, profile, intent, name)
+            action = "send_whatsapp" if intent.get("intent_type") == "item_search" else None
 
         # Only dateable events are emitted as structured DetectedEvents (the schema requires a
         # date); undated signals remain as free-text memories so the output stays schema-valid.
@@ -238,7 +253,7 @@ class CustomerMemoryAgent:
             },
             "extracted_memories": state.get("extracted_memories", []),
             "detected_events": structured_events,
-            "interaction_brief": brief,
+            "interaction_brief": interaction_brief,
             "draft_response": draft,
             "action_required": action,
         }
@@ -258,30 +273,28 @@ class CustomerMemoryAgent:
 
     # ------------------------------------------------------------------ helpers
 
-    async def _interaction_brief(
+    async def _backend_brief(self, state: MemoryAgentState) -> dict[str, Any]:
+        """Fetch the backend interaction brief (real events/tags/preferences), or {} on failure."""
+        org_id = state.get("org_id")
+        customer_id = state.get("customer_id")
+        if not org_id or not customer_id:
+            return {}
+        try:
+            return (await self.registry.generate_interaction_brief(str(org_id), str(customer_id))) or {}
+        except Exception:  # noqa: BLE001 - brief failure must not break compose
+            logger.warning("Interaction brief backend call failed; using local brief.", exc_info=True)
+            return {}
+
+    def _format_brief(
         self,
         state: MemoryAgentState,
         name: str,
         profile: dict[str, Any],
-        tags: list[str],
+        backend: dict[str, Any],
     ) -> str:
-        """Assemble a staff-facing brief, enriched from the backend's real events/tags.
-
-        Uses the backend ``/brief`` result (CustomerMemoryService.GenerateBriefAsync) so event
-        queries answer from actual ``Customer_Event`` rows. Falls back to the local semantic
-        context when the backend is unavailable.
-        """
+        """Assemble the staff-facing digest (name/status + semantic context + events/tags)."""
         semantic_context = state.get("semantic_context") or []
-        org_id = state.get("org_id")
-        customer_id = state.get("customer_id")
-
-        backend: dict[str, Any] = {}
-        if org_id and customer_id:
-            try:
-                backend = (await self.registry.generate_interaction_brief(str(org_id), str(customer_id))) or {}
-            except Exception:  # noqa: BLE001 - brief failure must not break compose
-                logger.warning("Interaction brief backend call failed; using local brief.", exc_info=True)
-
+        tags = profile.get("tags") or []
         status = backend.get("status") or profile.get("status") or "new"
         display_name = backend.get("customerName") or name
 
@@ -295,6 +308,27 @@ class CustomerMemoryAgent:
         if merged_tags:
             parts.append(f"Tags: {', '.join(merged_tags)}")
         return " | ".join(parts)
+
+    def _staff_text(
+        self,
+        state: MemoryAgentState,
+        name: str,
+        profile: dict[str, Any],
+        backend: dict[str, Any],
+    ) -> str:
+        """Answer a STAFF query directly (no customer-facing draft).
+
+        Event-style queries are answered from the real backend events; other staff queries fall
+        back to the standard digest brief.
+        """
+        display_name = backend.get("customerName") or name
+        intent_type = (state.get("parsed_intent") or {}).get("intent_type")
+        if intent_type == "event_query":
+            events = backend.get("upcomingEvents")
+            if events:
+                return f"Upcoming events for {display_name}: {events}."
+            return f"No upcoming events on file for {display_name}."
+        return self._format_brief(state, name, profile, backend)
 
     async def _generate_draft(
         self,

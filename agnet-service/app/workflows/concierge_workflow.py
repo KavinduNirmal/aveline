@@ -113,6 +113,11 @@ async def run_memory_agent(state: ConciergeState) -> dict[str, Any]:
         profile = resolution.get("profile") or {}
         customer_name = customer_name or profile.get("fullName")
 
+    # A genuine inbound customer message is one the API tagged with a direction (ADR-016);
+    # everything else staff type in the Salon is a staff query answered directly (no customer draft).
+    channel = org_context.get("channel")
+    direction = org_context.get("direction")
+    staff_query = not direction
     if not org_id or (not customer_id and not phone):
         # No customer context: message-level parse only (no backend calls).
         parsed = parse_message(message, intent_hint=(state.get("intent") or {}).get("intent_type"))
@@ -137,8 +142,9 @@ async def run_memory_agent(state: ConciergeState) -> dict[str, Any]:
         "profile": profile if resolution.get("kind") == "resolved" else None,
         "message": message,
         "intent_type": (state.get("intent") or {}).get("intent_type"),
-        "channel": org_context.get("channel", "whatsapp"),
-        "direction": org_context.get("direction", "inbound"),
+        "channel": channel or "whatsapp",
+        "direction": direction,
+        "staff_query": staff_query,
     }
     result = await graph.ainvoke(mem_state)
     output = result.get("output") or {

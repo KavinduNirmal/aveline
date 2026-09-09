@@ -104,6 +104,32 @@ def test_build_agent_messages_specialist_without_content_is_silent():
     assert "elle" not in keys
 
 
+def test_build_agent_messages_attributes_elle_when_visual_produced_content():
+    result = AgentResponse(
+        status=AgentStatus.success,
+        output={
+            "intent": "item_search",
+            "memory": None,
+            "visual": {
+                "agent": "visual",
+                "ran": True,
+                "status": "success",
+                "suggestion": "These pieces match the request.",
+                "items": [
+                    {"itemId": "i1", "name": "Silk Slip Dress", "price": 24000, "size": "M", "stock": 2}
+                ],
+            },
+            "commerce": None,
+        },
+    )
+    messages = build_agent_messages(result)
+
+    elle = [m for m in messages if m["author"]["agent_key"] == "elle"]
+    assert len(elle) == 1
+    assert any(b["type"] == "piece" for b in elle[0]["blocks"])
+    assert any(b["type"] == "suggestion" for b in elle[0]["blocks"])
+
+
 def test_build_agent_messages_memory_skipped_does_not_emit_ava():
     messages = build_agent_messages(_result_memory_skipped())
     keys = {m["author"]["agent_key"] for m in messages}

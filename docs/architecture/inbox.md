@@ -140,8 +140,14 @@ produces real content (no placeholder text).
   2. `at_a_glance` - one `Category`/`Content` row per `extracted_memories` entry.
   3. `suggestion` - the customer-facing `draft_response`.
   When the memory agent skipped (no customer context), no Ava message is emitted.
-- **Elle / Lina** are emitted once their stub nodes carry structured output (Issue #151);
-  a bare `{"ran": true}` produces no message.
+- **Elle / visual** (`build_elle_blocks`): emits `suggestion`, `piece` (per `items`), and
+  `look` (per `looks`) blocks when the visual output carries content.
+- **Lina / commerce** (`build_lina_blocks`): emits `text` (summary), `payment`, and
+  `courier` blocks when the commerce output carries content.
+- **Stub discipline (Issues #150/#151)**: the pre-Slice 2/3 stub nodes set
+  `status: "stub"` with no content, so Elle/Lina stay silent and the Salon never shows
+  fabricated product/payment data. A `sign_off` card is never emitted from these generic
+  builders - a SignOff is a first-class HITL message (`kind == SignOff`).
 
 ---
 

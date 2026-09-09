@@ -70,6 +70,102 @@ def build_ava_blocks(memory_output: Any) -> list[dict[str, Any]]:
     return blocks
 
 
+# ----------------------------------------------------------------------- Elle (visual)
+
+
+def build_elle_blocks(visual_output: Any) -> list[dict[str, Any]]:
+    """Map the Visual Insight Agent's ``visual`` output into content blocks.
+
+    A ``status == "stub"`` output (the pre-Slice 2 placeholder) has no real content and
+    yields no blocks. Once the real graph emits items/looks/a suggestion, they are rendered
+    as ``piece``, ``look``, and ``suggestion`` blocks respectively.
+    """
+    visual = _as_dict(visual_output)
+    if visual.get("status") == "stub":
+        return []
+
+    blocks: list[dict[str, Any]] = []
+
+    suggestion = visual.get("suggestion")
+    if suggestion:
+        blocks.append({"type": "suggestion", "text": str(suggestion)})
+
+    for item in visual.get("items") or []:
+        item = _as_dict(item)
+        block: dict[str, Any] = {"type": "piece", "name": item.get("name") or "Piece"}
+        if item.get("itemId"):
+            block["itemId"] = item["itemId"]
+        if item.get("price") is not None:
+            block["price"] = item["price"]
+        if item.get("size"):
+            block["size"] = item["size"]
+        if item.get("stock") is not None:
+            block["stock"] = item["stock"]
+        if item.get("imageUrl"):
+            block["imageUrl"] = item["imageUrl"]
+        blocks.append(block)
+
+    for look in visual.get("looks") or []:
+        look = _as_dict(look)
+        block = {"type": "look"}
+        if look.get("imageUrl"):
+            block["imageUrl"] = look["imageUrl"]
+        if look.get("name"):
+            block["name"] = look["name"]
+        if look.get("text"):
+            block["text"] = look["text"]
+        blocks.append(block)
+
+    return blocks
+
+
+# ----------------------------------------------------------------------- Lina (commerce)
+
+
+def build_lina_blocks(commerce_output: Any) -> list[dict[str, Any]]:
+    """Map the Commerce Agent's ``commerce`` output into content blocks.
+
+    A ``status == "stub"`` output (the pre-Slice 3 placeholder) has no real content and
+    yields no blocks. A ``summary`` becomes a ``text`` block, a ``payment`` becomes a
+    ``payment`` block, and a ``courier`` becomes a ``courier`` block.
+
+    ``sign_off`` is deliberately never emitted here: a SignOff is a first-class
+    human-in-the-loop message (``kind == SignOff``) created by the commerce approval flow,
+    not a generic persona message.
+    """
+    commerce = _as_dict(commerce_output)
+    if commerce.get("status") == "stub":
+        return []
+
+    blocks: list[dict[str, Any]] = []
+
+    summary = commerce.get("summary")
+    if summary:
+        blocks.append({"type": "text", "text": str(summary)})
+
+    payment = _as_dict(commerce.get("payment"))
+    if payment:
+        block: dict[str, Any] = {"type": "payment"}
+        if payment.get("amount") is not None:
+            block["amount"] = payment["amount"]
+        if payment.get("status"):
+            block["status"] = payment["status"]
+        if payment.get("url"):
+            block["url"] = payment["url"]
+        blocks.append(block)
+
+    courier = _as_dict(commerce.get("courier"))
+    if courier:
+        block = {"type": "courier"}
+        if courier.get("status"):
+            block["status"] = courier["status"]
+        if courier.get("carrier"):
+            block["carrier"] = courier["carrier"]
+        blocks.append(block)
+
+    return blocks
+
+
 # ----------------------------------------------------------------------- Aveline (summary)
 
 

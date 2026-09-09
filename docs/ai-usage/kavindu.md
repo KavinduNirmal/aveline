@@ -1462,3 +1462,36 @@ Verified against the codebase on `development`:
 
 - Implementation of Issues #150-#154 to follow in their own feature branches/PRs targeting `development`.
 
+## Session 2026-09-09 (cont.) — Issues #150/#151 realtime conversation workflow
+
+**Task:** Implement Issue #150 (real agent output -> Salon blocks; PR #155) and Issue #151 (specialist stubs emit structured output) on the feature/150 and feature/151 branches.
+**Tool used:** opencode (AI coding agent)
+
+### Issue #150 (branch `feature/150-agent-response-rich-blocks`, PR #155)
+
+- Wrote failing tests first, then added `agnet-service/app/events/block_builders.py`
+  (`build_aveline_blocks`, `build_ava_blocks`) and refactored `message_publisher.py` to
+  drive content through the builders. Removed the stub "has reviewed this request." text;
+  a persona posts only when it produced real content.
+- Tests: new `tests/test_block_builders.py`; rewritten `tests/test_message_publisher.py`.
+- Verified: `pytest` 198 passed / 2 skips; `ruff` clean. Updated `docs/architecture/inbox.md` §5.1.
+- Committed `840708b`; opened PR #155 (Closes #150).
+
+### Issue #151 (branch `feature/151-specialist-stubs`, based on the #150 branch)
+
+- Wrote failing tests first, then extended `block_builders.py` with `build_elle_blocks`
+  (suggestion/piece/look) and `build_lina_blocks` (text/payment/courier); registered both
+  in `message_publisher._SPECIALISTS`; updated `run_visual_agent`/`run_commerce_agent`
+  stubs to declare structured output with `status == "stub"` (no fabricated data).
+- Design decision: a `sign_off` card is NEVER emitted by the generic Lina builder - a
+  SignOff is a first-class HITL message (`kind == SignOff`) created by the commerce
+  approval flow.
+- Tests: extended `test_block_builders.py`, `test_concierge_workflow.py`,
+  `test_message_publisher.py`. Verified: `pytest` 213 passed / 2 skips; `ruff` clean.
+- Docs: updated `app/agents/visual_insight/README.md`, `app/agents/commerce/README.md`,
+  `docs/architecture/inbox.md` §5.1.
+
+### Remaining work / notes
+
+- Issue #151 changes to commit and PR once confirmed (this branch carries both #150 and #151).
+- Issues #152-#154 still to implement on their own branches.

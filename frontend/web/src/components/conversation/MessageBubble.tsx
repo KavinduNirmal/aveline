@@ -38,6 +38,25 @@ function primaryText(message: ChatMessage): string | null {
   return null
 }
 
+/**
+ * True when a live agent message should be shown with the word-by-word typewriter instead of the
+ * full rich `BlockList`. Streaming collapses content to the first `text` block, so it is only safe
+ * for messages whose content is purely text blocks (e.g. Aveline's summary). Rich/multi-block
+ * messages (Ava's brief + at_a_glance + suggestion) must render the full block list, or their
+ * cards would be hidden until a manual reload.
+ */
+export function shouldStreamContent(message: ChatMessage): boolean {
+  if (!message.streamIn) return false
+  const blocks = message.contentBlocks ?? []
+  if (blocks.length === 0) return false
+  return blocks.every(
+    (block) =>
+      block &&
+      typeof block === 'object' &&
+      (block as { type?: string }).type === 'text',
+  )
+}
+
 /** The avatar shown for an agent message. Every agent is represented by a blossom in their persona colour. */
 function AgentAvatar({ persona }: { persona: { name: string; text: string; bgSoft: string; ring: string } }) {
   if (persona.name === 'Aveline') {
@@ -79,7 +98,7 @@ export function MessageBubble({
   const isAgent = message.authorKind === 'Agent'
   const isSending = message.pending === 'sending'
   const isFailed = message.pending === 'failed'
-  const streamText = message.streamIn ? primaryText(message) : null
+  const streamText = shouldStreamContent(message) ? primaryText(message) : null
 
   return (
     <div className={cn('flex w-full gap-2.5', isOwn && 'flex-row-reverse')}>

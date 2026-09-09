@@ -14,6 +14,7 @@ The graph is dependency-injected over a ``ToolRegistry`` so it is fully testable
 from collections.abc import Callable
 from typing import Any
 
+from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.customer_memory.nodes import CustomerMemoryAgent
@@ -22,17 +23,25 @@ from app.agents.customer_memory.state import MemoryAgentState
 END_NODE = "end"
 
 
-def build_memory_graph(registry: Any) -> Callable[[MemoryAgentState], dict[str, Any]]:
+def build_memory_graph(
+    registry: Any,
+    llm: BaseChatModel | None = None,
+    org_context: dict[str, Any] | None = None,
+) -> Callable[[MemoryAgentState], dict[str, Any]]:
     """Compile and return the Customer Memory Agent graph bound to ``registry``.
 
     Args:
         registry: A ``ToolRegistry`` (or a test double with the same async methods) used for all
             backend calls.
+        llm: An optional chat model used to generate the draft reply. When omitted (or when the
+            provider call fails) the agent falls back to its deterministic template.
+        org_context: Optional organization context (plan tier, brand voice, rules) injected into
+            the memory agent's system prompt.
 
     Returns:
         A compiled LangGraph ``StateGraph``.
     """
-    agent = CustomerMemoryAgent(registry)
+    agent = CustomerMemoryAgent(registry, llm=llm, org_context=org_context)
 
     graph = StateGraph(MemoryAgentState)
 

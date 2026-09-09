@@ -25,6 +25,7 @@ from app.agents.customer_memory.parsing import parse_message
 from app.core.config import get_settings
 from app.customer_resolution import resolve_customer
 from app.gate import classify_by_rules
+from app.llm.runtime import memory_llm_or_none
 from app.schemas.response import AgentResponse, AgentStatus
 from app.schemas.state import AgentState
 from app.tools.registry import ToolRegistry
@@ -45,6 +46,8 @@ class ConciergeState(TypedDict, total=False):
     memory_output: dict[str, Any] | None
     visual_output: dict[str, Any] | None
     commerce_output: dict[str, Any] | None
+    # LLM token usage captured by the memory agent when the LLM generated the draft.
+    usage: dict[str, Any] | None
     response: dict[str, Any] | None
 
 
@@ -124,7 +127,8 @@ async def run_memory_agent(state: ConciergeState) -> dict[str, Any]:
         }
 
     registry = ToolRegistry()
-    graph = build_memory_graph(registry)
+    llm = memory_llm_or_none(get_settings())
+    graph = build_memory_graph(registry, llm=llm, org_context=org_context)
     mem_state = {
         "org_id": str(org_id),
         "customer_id": str(customer_id) if customer_id else None,
@@ -143,7 +147,9 @@ async def run_memory_agent(state: ConciergeState) -> dict[str, Any]:
         "extracted_memories": [],
         "detected_events": [],
     }
-    return {"memory_output": {"agent": "memory", "ran": True, **output}}
+    # Surface LLM token usage (when the draft was LLM-generated) for billing (ADR-010).
+    usage = result.get("usage")
+    return {"memory_output": {"agent": "memory", "ran": True, **output}, "usage": usage}
 
 
 def run_visual_agent(state: ConciergeState) -> dict[str, Any]:
@@ -317,6 +323,7 @@ async def run_concierge(
         "memory_output": None,
         "visual_output": None,
         "commerce_output": None,
+        "usage": None,
         "response": None,
     }
 

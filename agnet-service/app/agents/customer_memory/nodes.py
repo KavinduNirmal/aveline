@@ -5,11 +5,16 @@ the ASP.NET Core internal endpoints). All business decisions are deterministic (
 template drafting) so the graph is testable without an LLM or a live backend.
 """
 
+import json
 import logging
 from typing import Any
 
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import HumanMessage, SystemMessage
+
 from app.agents.customer_memory.parsing import parse_message
 from app.agents.customer_memory.state import MemoryAgentState
+from app.prompts.assembly import assemble_system_prompt
 from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger("aveline.agent.customer_memory")
@@ -22,8 +27,15 @@ OUT_OF_SCOPE = "out_of_scope"
 class CustomerMemoryAgent:
     """LangGraph node set for the Customer Memory Agent, bound to a ``ToolRegistry``."""
 
-    def __init__(self, registry: ToolRegistry) -> None:
+    def __init__(
+        self,
+        registry: ToolRegistry,
+        llm: BaseChatModel | None = None,
+        org_context: dict[str, Any] | None = None,
+    ) -> None:
         self.registry = registry
+        self.llm = llm
+        self.org_context = org_context
 
     async def resolve_customer(self, state: MemoryAgentState) -> dict[str, Any]:
         """Resolve the customer id from explicit id or phone; short-circuit if unavailable."""
@@ -123,7 +135,7 @@ class CustomerMemoryAgent:
 
         brief = self._build_brief(name, profile, state.get("semantic_context", []), tags)
 
-        draft = self._draft(name, intent)
+        draft, usage = await self._generate_draft(state, profile, intent, name)
         action = "send_whatsapp" if intent.get("intent_type") == "item_search" else None
 
         output = {
@@ -142,9 +154,58 @@ class CustomerMemoryAgent:
             "draft_response": draft,
             "action_required": action,
         }
-        return {"output": output, "status": SUCCESS}
+        return {"output": output, "status": SUCCESS, "usage": usage}
 
     # ------------------------------------------------------------------ helpers
+
+    async def _generate_draft(
+        self,
+        state: MemoryAgentState,
+        profile: dict[str, Any],
+        intent: dict[str, Any],
+        name: str,
+    ) -> tuple[str, dict[str, Any] | None]:
+        """Return ``(draft_response, usage)`` using the injected LLM when available.
+
+        The deterministic ``_draft`` template is the fallback whenever no LLM is configured or
+        the provider call fails, so a live LLM is never a hard dependency of the graph. When an
+        LLM successfully produces a draft, the langchain ``usage_metadata`` token counts are
+        returned for usage reporting (ADR-010); ``usage`` is ``None`` otherwise.
+        """
+        if self.llm is None:
+            return self._draft(name, intent), None
+
+        context_lines = [f"Customer message: {state.get('message', '')}"]
+        semantic = state.get("semantic_context") or []
+        if semantic:
+            top = semantic[0]
+            context_lines.append(f"Relevant memory: {top.get('content')}")
+        if intent:
+            context_lines.append(f"Detected intent: {json.dumps(intent)}")
+        context_lines.append(
+            "Write a short, warm, staff-facing DRAFT customer reply (2-4 sentences). "
+            "Do not auto-send; it is reviewed by a human associate."
+        )
+
+        system = assemble_system_prompt("memory", self.org_context)
+        try:
+            result = await self.llm.ainvoke(
+                [SystemMessage(content=system), HumanMessage(content="\n".join(context_lines))]
+            )
+        except Exception:  # noqa: BLE001 - provider failure must not break the graph
+            logger.warning("LLM draft generation failed; falling back to template.", exc_info=True)
+            return self._draft(name, intent), None
+
+        draft = (getattr(result, "content", None) or "").strip()
+        if not draft:
+            return self._draft(name, intent), None
+
+        meta = getattr(result, "usage_metadata", None) or {}
+        usage: dict[str, Any] | None = {
+            "input_tokens": int(meta.get("input_tokens") or 0),
+            "output_tokens": int(meta.get("output_tokens") or 0),
+        }
+        return draft, usage
 
     @staticmethod
     def _skip(reason: str) -> dict[str, Any]:

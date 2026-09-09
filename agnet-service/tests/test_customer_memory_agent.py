@@ -131,6 +131,75 @@ async def test_negative_preference_saved_as_dislikes():
 
 
 # ---------------------------------------------------------------------------
+# LLM draft generation (Issue #163) — an injected chat model drives the draft.
+# ---------------------------------------------------------------------------
+
+
+class _Msg:
+    def __init__(self, content, input_tokens=12, output_tokens=6):
+        self.content = content
+        self.usage_metadata = {"input_tokens": input_tokens, "output_tokens": output_tokens}
+
+
+class FakeChatModel:
+    """Minimal chat-model double exposing only ``ainvoke``."""
+
+    def __init__(self, draft="LLM-generated draft for Sarah.", fail=False):
+        self.draft = draft
+        self.fail = fail
+
+    async def ainvoke(self, messages):
+        if self.fail:
+            raise RuntimeError("provider unavailable")
+        return _Msg(self.draft)
+
+
+async def _llm_state():
+    return {
+        "org_id": "org-1",
+        "customer_id": "cust-sarah",
+        "customer_name": "Sarah Perera",
+        "message": WEDDING_MESSAGE,
+        "intent_type": "item_search",
+        "channel": "whatsapp",
+        "direction": "inbound",
+    }
+
+
+async def test_llm_produces_draft_and_usage_when_injected():
+    registry = FakeRegistry()
+    llm = FakeChatModel(draft="Ava LLM draft.")
+    graph = build_memory_graph(registry, llm=llm)
+    result = await graph.ainvoke(await _llm_state())
+
+    assert result["status"] == "success"
+    assert result["output"]["draft_response"] == "Ava LLM draft."
+    # Token usage captured from the LLM response (surfaced on state, not the schema output).
+    assert result["usage"] == {"input_tokens": 12, "output_tokens": 6}
+
+
+async def test_llm_failure_falls_back_to_template():
+    registry = FakeRegistry()
+    graph = build_memory_graph(registry, llm=FakeChatModel(fail=True))
+    result = await graph.ainvoke(await _llm_state())
+
+    assert result["status"] == "success"
+    assert result["output"]["draft_response"].startswith("Hi Sarah Perera!")
+    # No LLM usage recorded when the fallback ran.
+    assert result["usage"] is None
+
+
+async def test_no_llm_defaults_to_template_without_usage():
+    registry = FakeRegistry()
+    graph = build_memory_graph(registry)  # llm defaults to None
+    result = await graph.ainvoke(await _llm_state())
+
+    assert result["status"] == "success"
+    assert result["output"]["draft_response"].startswith("Hi Sarah Perera!")
+    assert result.get("usage") is None
+
+
+# ---------------------------------------------------------------------------
 # Pure parsing unit tests (rule-based)
 # ---------------------------------------------------------------------------
 

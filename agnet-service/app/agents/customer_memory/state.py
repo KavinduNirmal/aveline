@@ -30,6 +30,8 @@ class MemoryAgentState(TypedDict, total=False):
     detected_events: list[dict[str, Any]]
     # Transient parse signals consumed by the persist node (declared so LangGraph can route it).
     _preference_signals: list[dict[str, Any]]
+    # Token usage captured when an LLM generated the draft (input/output tokens), else None.
+    usage: dict[str, Any] | None
     # Output
     output: dict[str, Any] | None
     status: str | None

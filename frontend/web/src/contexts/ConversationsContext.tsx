@@ -25,6 +25,7 @@ import {
 } from '@/lib/conversations-api'
 import type { ConversationDto, MessageDto } from '@/types/conversation'
 import type { AvelineState } from '@/components/conversation/avelineStates'
+import { isTerminalState } from '@/components/conversation/avelineStates'
 
 /** Clerk JWT template that mints the Aveline role claims (matches AuthApiBridge). */
 const JWT_TEMPLATE = 'jwt-aveline-v1'
@@ -242,11 +243,18 @@ export function ConversationsProvider({
         if (payload.conversationId !== activeRef.current) return
         const state = payload.state as AvelineState
         applyAgentState(state)
-        setAgentActivity((prev) =>
-          prev
-            ? { ...prev, currentState: state }
-            : { startedAt: Date.now(), currentState: state },
-        )
+        // Terminal states (success/error/response) mean the workflow finished: collapse the
+        // live activity bubble so it can't hang as a stale 'Done' card. In-progress states
+        // (thinking/searching/…) keep the "Aveline is working" bubble.
+        if (isTerminalState(state)) {
+          setAgentActivity(null)
+        } else {
+          setAgentActivity((prev) =>
+            prev
+              ? { ...prev, currentState: state }
+              : { startedAt: Date.now(), currentState: state },
+          )
+        }
       },
       onStateChange: handleStateChange,
       onConnected: (conn) => {

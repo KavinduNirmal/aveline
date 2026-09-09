@@ -1430,3 +1430,35 @@ Implemented the conversation messaging slice test-first across the backend, agen
 
 - Postgres Testcontainers tests require Docker in CI (ubuntu `build-api` runner has it); confirm on the PR.
 - `Embeddings:ApiKey/BaseUrl/Model` must be configured before the memory search/save endpoints call a real embedding provider.
+
+## Session 2026-09-09 — Finalize the Realtime Conversation Workflow (Salon)
+
+**Task:** Close the gap between real agent responses and the Salon, and finalize the realtime conversation infrastructure. This session plans and creates the tracking issues for the realtime conversation workflow finalization and begins implementation.
+**Tool used:** opencode (AI coding agent)
+**Branch:** `feature/150-agent-response-rich-blocks` (off `development`)
+
+### Intended work (session start)
+
+- Investigate the "Salon" (ADR-016) realtime conversation workflow end-to-end and identify the gap between real agent output and what reaches the thread.
+- Produce a comprehensive plan (TDD + GitHub issues + ADRs/docs + AI usage logs) and, on approval, create the GitHub issues and begin implementation.
+
+### Investigation findings
+
+Verified against the codebase on `development`:
+- Transport is largely built: `Aveline.Api/Modules/Conversations` (models, repos, service, `ConversationHub`, `SignalRMessageBroadcaster`, `ConversationEventSubscriber`), endpoints in `Aveline.Api/Endpoints/ConversationEndpoints.cs`, Redis event bus both sides, event types configured, and the agent `/agents/query` publishes `agent.status` + `message.created`.
+- React Salon UI and Flutter Salon UI both exist.
+- **The core gap**: `agnet-service/app/events/message_publisher.py` emits stub text ("Ava has reviewed this request.", "Intent: X") and discards the Customer Memory Agent's real output (`interaction_brief`, `draft_response`, `extracted_memories`, `detected_events`, `customer`).
+- Secondary gaps: Visual/Commerce agents are README-only placeholders; SignOff never resumes LangGraph; WhatsApp inbound is not wired to `RecordInboundClientMessageAsync`; the agent subscribes to `message.received` with no handler; `message.updated` is a no-op; no token-level streaming bridge.
+
+### Work performed
+
+- Investigated the whole realtime conversation workflow and documented the gap analysis.
+- Confirmed scoping decisions with the team: wire specialist stubs (defer real Slice 2/3 sub-graphs); batched message cards only (no token streaming); formally defer SignOff resume; AI log under `kavindu.md`.
+- Created GitHub issues: #150 (real agent output → rich blocks), #151 (specialist stubs emit structured output), #152 (close inbound loop), #153 (apply `message.updated`), #154 (ADR for deferred resume + realtime delivery model).
+- Created feature branch `feature/150-agent-response-rich-blocks` off `development` for Issue #150.
+- Began Issue #150 implementation (TDD) — this entry updated as work progresses.
+
+### Remaining work / notes
+
+- Implementation of Issues #150-#154 to follow in their own feature branches/PRs targeting `development`.
+

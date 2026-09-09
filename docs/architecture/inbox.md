@@ -126,6 +126,23 @@ fields. A message may carry a single block or a composite (e.g. a `Note` plus se
 Block types: `text`, `piece`, `look`, `at_a_glance`, `sign_off`, `payment`, `courier`,
 `suggestion`, `client_message`.
 
+### 5.1 Emitted blocks from real agent output
+
+The agent service maps the concierge `AgentResponse.output` into blocks in
+`agnet-service/app/events/block_builders.py`. A persona posts a message only when it
+produces real content (no placeholder text).
+
+- **Aveline summary** (`build_aveline_blocks`): a single `text` block that is intent-aware
+  and names the resolved customer when the memory agent found one. It never duplicates
+  Ava's rich detail.
+- **Ava / memory** (`build_ava_blocks`), in order:
+  1. `text` - the `interaction_brief`.
+  2. `at_a_glance` - one `Category`/`Content` row per `extracted_memories` entry.
+  3. `suggestion` - the customer-facing `draft_response`.
+  When the memory agent skipped (no customer context), no Ava message is emitted.
+- **Elle / Lina** are emitted once their stub nodes carry structured output (Issue #151);
+  a bare `{"ran": true}` produces no message.
+
 ---
 
 ## 6. Flows

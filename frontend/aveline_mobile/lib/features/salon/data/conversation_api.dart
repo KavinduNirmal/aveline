@@ -47,4 +47,20 @@ class ConversationApi {
     );
     return SalonMessage.fromJson(response.data ?? const {});
   }
+
+  /// Binds the Salon to a customer chosen from a resolution `choice` block and re-triggers
+  /// the agent with that customer in context (Issue #161). [query] is the original staff text
+  /// that triggered the lookup, when available.
+  Future<Conversation> selectCustomer({
+    required String organizationId,
+    required String conversationId,
+    required String customerId,
+    String? query,
+  }) async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/api/v1/orgs/$organizationId/conversations/$conversationId/select-customer',
+      data: {'customerId': customerId, 'query': ?query},
+    );
+    return Conversation.fromJson(response.data ?? const {});
+  }
 }

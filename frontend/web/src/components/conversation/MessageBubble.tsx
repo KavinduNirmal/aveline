@@ -11,6 +11,8 @@ interface MessageBubbleProps {
   /** Whether this message is from the current staff user (right-aligned). */
   isOwn: boolean
   onSignOff?: (approved: boolean) => void
+  /** Called when the staff picks a customer from a resolution `choice` block. */
+  onSelectCustomer?: (customerId: string) => void
   /** Called as a streamed message types out, so the thread can keep the tail in view. */
   onStreamProgress?: () => void
 }
@@ -70,6 +72,7 @@ export function MessageBubble({
   message,
   isOwn,
   onSignOff,
+  onSelectCustomer,
   onStreamProgress,
 }: MessageBubbleProps) {
   const persona = personaForAuthor(message.authorKind, message.agentKey)
@@ -102,7 +105,11 @@ export function MessageBubble({
           {streamText !== null ? (
             <TypewriterText text={streamText} onProgress={onStreamProgress} />
           ) : (
-            <BlockList blocks={message.contentBlocks} onSignOff={onSignOff} />
+            <BlockList
+              blocks={message.contentBlocks}
+              onSignOff={onSignOff}
+              onSelectCustomer={onSelectCustomer}
+            />
           )}
         </div>
 

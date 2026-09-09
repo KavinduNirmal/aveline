@@ -20,6 +20,7 @@ import {
   fetchConversations,
   fetchMessages,
   getOrCreateConversation,
+  selectConversationCustomer,
   sendMessage,
 } from '@/lib/conversations-api'
 import type { ConversationDto, MessageDto } from '@/types/conversation'
@@ -49,6 +50,21 @@ export type ChatMessage = MessageDto & {
   thoughtSeconds?: number
   /** True for agent messages that arrived live and should type out word by word. */
   streamIn?: boolean
+}
+
+/** The first `text` block of a message, or undefined when it has none. */
+function lastStaffPrimaryText(message: MessageDto): string | undefined {
+  for (const block of message.contentBlocks ?? []) {
+    if (
+      block &&
+      typeof block === 'object' &&
+      (block as { type?: string }).type === 'text' &&
+      typeof (block as { text?: unknown }).text === 'string'
+    ) {
+      return (block as { text: string }).text
+    }
+  }
+  return undefined
 }
 
 /** Aveline's in-progress reasoning, shown as a live activity bubble until a reply lands. */
@@ -83,6 +99,11 @@ interface ConversationsContextValue {
   send: (text: string) => Promise<void>
   /** Approves or rejects a SignOff message. */
   decide: (messageId: string, approved: boolean) => Promise<void>
+  /**
+   * Binds the active Salon to a customer chosen from a resolution `choice` block and
+   * re-triggers the agent with that customer in context.
+   */
+  selectCustomer: (customerId: string) => Promise<void>
 }
 
 const ConversationsContext = createContext<ConversationsContextValue | undefined>(undefined)
@@ -334,6 +355,30 @@ export function ConversationsProvider({
     [activeConversationId, organizationId],
   )
 
+  const selectCustomer = useCallback(
+    async (customerId: string) => {
+      if (!activeConversationId) return
+      // Re-run the last staff question against the resolved customer (falls back to a
+      // server-side summary prompt when there is no prior staff text).
+      const lastStaff = [...messagesRef.current]
+        .reverse()
+        .find((m) => m.authorKind === 'User' && m.pending !== 'failed')
+      const query = lastStaff ? lastStaffPrimaryText(lastStaff) : undefined
+      const conversation = await selectConversationCustomer(
+        organizationId,
+        activeConversationId,
+        customerId,
+        query,
+      )
+      setConversations((prev) =>
+        prev.map((c) => (c.id === conversation.id ? conversation : c)),
+      )
+      setAgentActivity({ startedAt: Date.now(), currentState: 'thinking' })
+      applyAgentState('thinking')
+    },
+    [activeConversationId, applyAgentState, organizationId],
+  )
+
   return (
     <ConversationsContext.Provider
       value={{
@@ -350,6 +395,7 @@ export function ConversationsProvider({
         openOrCreateSalon,
         send,
         decide,
+        selectCustomer,
       }}
     >
       {children}

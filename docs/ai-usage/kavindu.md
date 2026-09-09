@@ -1386,3 +1386,47 @@ Implemented the conversation messaging slice test-first across the backend, agen
 
 - `flutter analyze` — No issues found.
 - `flutter test` — 58 tests passed (50 existing + 8 new).
+
+## Session 2026-09-09 — Customer Memory Agent (AVA, Slice 1) implementation
+
+**Task:** Implement the Customer Memory Agent end-to-end (Issues #143–#148) on branch `feature/slice1-customer-memory-agent`.
+**Tool used:** opencode (AI coding agent)
+
+### Intended work (session start)
+
+- Research the existing concierge infra and produce a codebase-aware implementation plan (`Ava_implementation.ignore.md`).
+- Implement the slice in six issues with tests-first (TDD), rule-based assertions, per project rules.
+
+### Work performed
+
+**Planning & issues**
+- Wrote `Ava_implementation.ignore.md` and created 6 GitHub issues: #143 (DB entities/EF config/migration), #144 (repositories), #145 (services/DTOs/internal endpoints), #146 (agent schemas + tools), #147 (LangGraph sub-graph + wiring), #148 (docs/ADR).
+
+**Issue #143 — DB layer**: Added 7 entities (`Customer`, `CustomerPreference`, `CustomerEvent`, `CustomerMemory`, `CustomerInteraction`, `CustomerConsent`, `CustomerTag`) in `Modules/CustomerConcierge/Models`, EF `IEntityTypeConfiguration`s, `AppDbContext` DbSets, and the `AddCustomerConciergeEntities` migration. **Key decision**: the pgvector `embedding vector(1536)` column + HNSW index are created via raw SQL in the migration (not in the EF model) because the in-memory test provider cannot map the pgvector `vector` type (confirmed empirically — it broke model validation for the whole suite). 17 entity-config tests pass.
+
+**Issue #144 — Repositories**: `CustomerRepository`, `CustomerMemoryRepository` (pgvector cosine search + embedding writes via raw SQL), `CustomerInteractionRepository`, `CustomerConsentRepository`, `CustomerTagRepository`. Added `Testcontainers.PostgreSql`; a Postgres-backed test class (`CustomerMemoryRepositoryPostgresTests`) verifies the real `vector(1536)` column, HNSW index and cosine ordering against `pgvector/pgvector:pg16`. 10 in-memory + 3 Postgres tests pass.
+
+**Issue #145 — Services/DTOs/internal endpoints**: Added services (`CustomerService`, `CustomerMemoryService`, `CustomerConsentService`, `CustomerInteractionService`, `CustomerEventService`) with an injectable `IEmbeddingService` (OpenAI-compatible `EmbeddingService`), DTO records, `CustomerConciergeModule` DI, and minimal-API internal endpoints under `/internal/customers/*` guarded by `InternalServicePolicy` (ADR-009). Wired into `Program.cs`. 8 service unit + 7 endpoint integration + 1 Postgres end-to-end semantic search test pass.
+
+**Issue #146 — Agent schemas + tools**: Added `app/schemas/customer_memory.py` (Pydantic, `extra="forbid"`) and aligned the shared `ToolRegistry` memory methods to the real `/internal/customers/*` endpoints (renamed `search_customer_profile(customer_id)` → org-scoped; added identify/save/brief/record/consent). Schema + registry tests (23 passing).
+
+**Issue #147 — LangGraph sub-graph + wiring**: Added `app/agents/customer_memory/{state,parsing,nodes,graph}.py` — a deterministic, dependency-injected sub-graph: resolve_customer → check_consent → parse → retrieve (pgvector) → persist → compose (brief + draft). Replaced the memory `AGENT_PROMPTS` placeholder, fixed pre-existing duplicate imports in `concierge_workflow.py`, and wired `run_memory_agent` to invoke the sub-graph when customer context is present (fallback: message-level parse). Concierge tests converted to async. 9 sub-graph/parsing tests + golden cases pass.
+
+**Issue #148 — Docs + AI log**: Added `docs/architecture/customer-memory.md`, `docs/ADR/ADR-017-memory-pgvector-embeddings.md` (+ index entry + README link), updated `docs/tests/README.md`, and this AI usage log.
+
+### Key architectural decisions
+
+- Business logic/persistence in the .NET API; the Python agent orchestrates via internal endpoints (ADR-009).
+- pgvector column external to the EF model; searched via raw SQL; real-DB behaviour verified with Testcontainers Postgres in CI.
+- Agent sub-graph is deterministic (rule parsing + template drafting) → meaningful, rule-based tests without LLM-as-judge.
+
+### Verification performed
+
+- .NET: full suite **438 passed** (Release build clean); Postgres Testcontainers tests pass locally with Docker.
+- Python: **186 passed** (includes new schema/registry/sub-graph tests); `ruff check app/ tests/` clean.
+- Committed all six issues on `feature/slice1-customer-memory-agent`.
+
+### Remaining work / notes
+
+- Postgres Testcontainers tests require Docker in CI (ubuntu `build-api` runner has it); confirm on the PR.
+- `Embeddings:ApiKey/BaseUrl/Model` must be configured before the memory search/save endpoints call a real embedding provider.

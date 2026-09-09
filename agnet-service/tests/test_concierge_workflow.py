@@ -12,7 +12,7 @@ from app.schemas.response import AgentStatus
 from app.workflows.concierge_workflow import build_concierge_graph, run_concierge
 
 
-def _invoke(message: str, org_context: dict | None = None) -> dict:
+async def _invoke(message: str, org_context: dict | None = None) -> dict:
     graph = build_concierge_graph()
     initial = {
         "message": message,
@@ -23,11 +23,11 @@ def _invoke(message: str, org_context: dict | None = None) -> dict:
         "commerce_output": None,
         "response": None,
     }
-    return graph.invoke(initial)
+    return await graph.ainvoke(initial)
 
 
-def test_item_search_routes_through_memory_and_visual():
-    result = _invoke("Do you have a blue saree for a wedding?")
+async def test_item_search_routes_through_memory_and_visual():
+    result = await _invoke("Do you have a blue saree for a wedding?")
     assert result["intent"]["intent_type"] == "item_search"
     assert result["memory_output"] is not None
     assert result["visual_output"] is not None
@@ -35,16 +35,16 @@ def test_item_search_routes_through_memory_and_visual():
     assert result["response"]["status"] == AgentStatus.success
 
 
-def test_pricing_query_routes_through_memory_and_commerce():
-    result = _invoke("How much is this dress?")
+async def test_pricing_query_routes_through_memory_and_commerce():
+    result = await _invoke("How much is this dress?")
     assert result["intent"]["intent_type"] == "pricing_query"
     assert result["memory_output"] is not None
     assert result["visual_output"] is None
     assert result["commerce_output"] is not None
 
 
-def test_out_of_scope_short_circuits():
-    result = _invoke("Write me a python script to sort a list")
+async def test_out_of_scope_short_circuits():
+    result = await _invoke("Write me a python script to sort a list")
     assert result["intent"]["intent_type"] == "out_of_scope"
     assert result["intent"]["is_relevant"] is False
     # No agent should run for out-of-scope input.
@@ -54,12 +54,20 @@ def test_out_of_scope_short_circuits():
     assert result["response"]["status"] == AgentStatus.out_of_scope
 
 
-def test_general_inquiry_runs_memory_only():
-    result = _invoke("Hello, how are you?")
+async def test_general_inquiry_runs_memory_only():
+    result = await _invoke("Hello, how are you?")
     assert result["intent"]["intent_type"] == "general_inquiry"
     assert result["memory_output"] is not None
     assert result["visual_output"] is None
     assert result["commerce_output"] is None
+
+
+async def test_memory_agent_parses_message_without_customer_context():
+    result = await _invoke("Do you have a blue saree for a wedding?")
+    parsed = result["memory_output"]["parsed_intent"]
+    assert parsed["intent_type"] == "item_search"
+    assert parsed.get("occasion") == "wedding"
+    assert parsed.get("color") == "blue"
 
 
 @pytest.mark.asyncio

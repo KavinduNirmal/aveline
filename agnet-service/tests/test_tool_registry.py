@@ -87,11 +87,11 @@ async def test_client_raises_on_http_error(client):
 @pytest.mark.asyncio
 @respx.mock
 async def test_registry_search_customer_profile(client):
-    route = respx.get(f"{BASE_URL}/api/internal/customers/cust-1").respond(
+    route = respx.get(f"{BASE_URL}/internal/customers/cust-1/profile?organizationId=org-1").respond(
         status_code=200, json={"id": "cust-1"}
     )
     registry = ToolRegistry(client)
-    result = await registry.search_customer_profile("cust-1")
+    result = await registry.search_customer_profile("org-1", "cust-1")
     assert route.called
     assert result == {"id": "cust-1"}
 
@@ -99,15 +99,79 @@ async def test_registry_search_customer_profile(client):
 @pytest.mark.asyncio
 @respx.mock
 async def test_registry_get_customer_memories(client):
-    route = respx.post(f"{BASE_URL}/api/internal/vector-search").respond(
+    route = respx.post(f"{BASE_URL}/internal/customers/memories/search").respond(
         status_code=200, json={"results": [{"content": "likes silk"}]}
     )
     registry = ToolRegistry(client)
-    result = await registry.get_customer_memories("cust-1", "what does she like?", top_k=5)
+    result = await registry.get_customer_memories("org-1", "cust-1", "what does she like?", top_k=5)
     assert route.called
     body = route.calls.last.request.content
     assert b"cust-1" in body
     assert result == {"results": [{"content": "likes silk"}]}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_registry_identify_customer(client):
+    route = respx.post(f"{BASE_URL}/internal/customers/identify").respond(
+        status_code=200, json={"id": "cust-1", "status": "new"}
+    )
+    registry = ToolRegistry(client)
+    result = await registry.identify_customer("org-1", "+94771234567")
+    assert route.called
+    body = route.calls.last.request.content
+    assert b"+94771234567" in body
+    assert result["status"] == "new"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_registry_save_customer_memory(client):
+    route = respx.post(f"{BASE_URL}/internal/customers/cust-1/memories").respond(
+        status_code=201, json={"id": "mem-1"}
+    )
+    registry = ToolRegistry(client)
+    result = await registry.save_customer_memory("org-1", "cust-1", "Prefers silk", "preference")
+    assert route.called
+    assert result == {"id": "mem-1"}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_registry_generate_interaction_brief(client):
+    route = respx.get(f"{BASE_URL}/internal/customers/cust-1/brief?organizationId=org-1").respond(
+        status_code=200, json={"customerName": "Sarah"}
+    )
+    registry = ToolRegistry(client)
+    result = await registry.generate_interaction_brief("org-1", "cust-1")
+    assert route.called
+    assert result == {"customerName": "Sarah"}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_registry_record_customer_interaction(client):
+    route = respx.post(f"{BASE_URL}/internal/customers/cust-1/interactions").respond(
+        status_code=201, json={"id": "int-1"}
+    )
+    registry = ToolRegistry(client)
+    result = await registry.record_customer_interaction(
+        "org-1", "cust-1", "whatsapp", "inbound", "I need a blue saree"
+    )
+    assert route.called
+    assert result == {"id": "int-1"}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_registry_get_customer_consent(client):
+    route = respx.get(f"{BASE_URL}/internal/customers/cust-1/consent?organizationId=org-1").respond(
+        status_code=200, json={"consentStatus": "revoked"}
+    )
+    registry = ToolRegistry(client)
+    result = await registry.get_customer_consent("org-1", "cust-1")
+    assert route.called
+    assert result == {"consentStatus": "revoked"}
 
 
 @pytest.mark.asyncio

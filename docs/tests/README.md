@@ -44,6 +44,12 @@ Shared test infrastructure:
 dotnet test Aveline.Api/Aveline.Api.sln
 ```
 
+Two of the Customer Concierge test classes (`CustomerMemoryRepositoryPostgresTests`,
+`CustomerConciergeSearchPostgresTests`) spin up a disposable **pgvector PostgreSQL container**
+via `Testcontainers` and run the real migrations — the in-memory provider cannot exercise the
+pgvector `vector(1536)` column. These require a Docker daemon (present on CI's
+`build-api` ubuntu runners).
+
 ### Coverage
 
 ```bash
@@ -61,6 +67,7 @@ Reports are written to `Aveline.Api.Tests/TestResults/` (gitignored).
 | **Onboarding** | `OnboardingServiceTests`, `OnboardingMiddlewareTests`, `OnboardingEndpointsIntegrationTests` |
 | **Users** | `UserServiceTests`, `UserRepositoryTests`, `UserCacheServiceTests`, `UserEndpointsIntegrationTests` |
 | **Commerce / Approvals** | `AdminApprovalFlowIntegrationTests` |
+| **Customer Concierge & Memory (Slice 1)** | `CustomerConciergeEntityConfigurationTests`, `CustomerConciergeRepositoryTests`, `CustomerConciergeServiceTests`, `CustomerConciergeEndpointsIntegrationTests`, `CustomerMemoryRepositoryPostgresTests` (Testcontainers), `CustomerConciergeSearchPostgresTests` (Testcontainers) |
 | **Notifications** | `NotificationDispatcherTests`, `NotificationRepositoryTests`, `UserNotificationRepositoryTests`, `ChannelRouterTests`, `EmailServiceTests`, `FcmPushChannelTests`, `LoggingNotificationChannelsTests`, `NotificationHubTests`, `SignalRRealtimeChannelTests`, `NotificationEndpointsIntegrationTests`, `NotificationHubIntegrationTests`, `DeviceTokenEndpointsIntegrationTests`, `DeviceTokenRepositoryTests` |
 | **Eventing** | `EventingTests`, `EventingRedisTests` |
 | **Integrations** | `IntegrationServiceTests`, `IntegrationEndpointsIntegrationTests` |
@@ -71,9 +78,10 @@ Reports are written to `Aveline.Api.Tests/TestResults/` (gitignored).
 
 ## 3. Python Tests (`agnet-service/tests/`)
 
-26 test functions across 4 top-level files. The `agents/` and `tools/` subfolders
-describe the intended graph/tool test layout (see their `README.md` files) but are
-not yet populated.
+186 test functions across the top-level files plus the Customer Memory Agent suite. The
+`agents/` and `tools/` subfolders describe the intended graph/tool test layout (see their
+`README.md` files); the Customer Memory Agent (Slice 1) sub-graph is tested in
+`test_customer_memory_agent.py`.
 
 Approach:
 
@@ -100,6 +108,9 @@ Configuration lives in `agnet-service/pyproject.toml` (`[tool.pytest.ini_options
 | `test_agents_warmup.py` | `/agents/warmup` internal-token enforcement (missing/invalid → 401, valid → 200) |
 | `test_event_bus.py` | `channel_for`/`pattern_for` channel naming, `EventEnvelope` defaults + snake_case JSON serialization, publish/subscribe over fake Redis |
 | `test_usage_reporter.py` | `report_usage` success path and error handling with `respx`-mocked HTTP |
+| `test_customer_memory_schemas.py` | Memory-agent Pydantic I/O schemas (intent, memories, events, output) + extra-field rejection |
+| `test_customer_memory_agent.py` | Memory sub-graph golden cases against a fake `ToolRegistry` (wedding, revoked consent, missing context, preference extraction) + rule parsing |
+| `test_tool_registry.py` | Shared `ToolRegistry`/`InternalApiClient` routing for memory endpoints against a mocked HTTP client |
 
 ---
 

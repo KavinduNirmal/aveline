@@ -25,12 +25,22 @@ class ToolRegistry:
 
     # ============================== MEMORY AGENT ==============================
 
-    async def search_customer_profile(self, customer_id: str) -> dict[str, Any]:
+    async def identify_customer(self, org_id: str, phone_number: str, full_name: str | None = None) -> dict[str, Any]:
+        """Look up a customer by phone number, creating a 'new' profile when absent."""
+        body: dict[str, Any] = {"organizationId": org_id, "phoneNumber": phone_number}
+        if full_name:
+            body["fullName"] = full_name
+        return await self._client.request("POST", "/internal/customers/identify", json=body)
+
+    async def search_customer_profile(self, org_id: str, customer_id: str) -> dict[str, Any]:
         """Fetch a customer record plus preferences from the backend."""
-        return await self._client.request("GET", f"/api/internal/customers/{customer_id}")
+        return await self._client.request(
+            "GET", f"/internal/customers/{customer_id}/profile?organizationId={org_id}"
+        )
 
     async def get_customer_memories(
         self,
+        org_id: str,
         customer_id: str,
         query: str,
         top_k: int = 5,
@@ -38,12 +48,13 @@ class ToolRegistry:
         """Semantic search over a customer's memories (pgvector via backend)."""
         return await self._client.request(
             "POST",
-            "/api/internal/vector-search",
-            json={"customer_id": customer_id, "query": query, "top_k": top_k},
+            "/internal/customers/memories/search",
+            json={"organizationId": org_id, "customerId": customer_id, "query": query, "topK": top_k},
         )
 
     async def save_customer_memory(
         self,
+        org_id: str,
         customer_id: str,
         content: str,
         category: str,
@@ -51,14 +62,40 @@ class ToolRegistry:
         """Persist a new customer memory via the backend."""
         return await self._client.request(
             "POST",
-            "/api/internal/customer-memory",
-            json={"customer_id": customer_id, "content": content, "category": category},
+            f"/internal/customers/{customer_id}/memories",
+            json={"organizationId": org_id, "content": content, "category": category},
         )
 
-    async def generate_interaction_brief(self, customer_id: str) -> dict[str, Any]:
+    async def generate_interaction_brief(self, org_id: str, customer_id: str) -> dict[str, Any]:
         """Generate a staff-facing interaction brief for a customer."""
         return await self._client.request(
-            "GET", f"/api/internal/customers/{customer_id}/brief"
+            "GET", f"/internal/customers/{customer_id}/brief?organizationId={org_id}"
+        )
+
+    async def record_customer_interaction(
+        self,
+        org_id: str,
+        customer_id: str,
+        channel: str,
+        direction: str,
+        message_content: str,
+    ) -> dict[str, Any]:
+        """Record a customer interaction via the backend."""
+        return await self._client.request(
+            "POST",
+            f"/internal/customers/{customer_id}/interactions",
+            json={
+                "organizationId": org_id,
+                "channel": channel,
+                "direction": direction,
+                "messageContent": message_content,
+            },
+        )
+
+    async def get_customer_consent(self, org_id: str, customer_id: str) -> dict[str, Any]:
+        """Check a customer's consent status via the backend."""
+        return await self._client.request(
+            "GET", f"/internal/customers/{customer_id}/consent?organizationId={org_id}"
         )
 
     # ============================== VISUAL AGENT ==============================

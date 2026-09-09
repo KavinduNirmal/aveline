@@ -12,6 +12,7 @@ using Aveline.Api.Modules.Billing;
 using Aveline.Api.Modules.Billing.Endpoints;
 using Aveline.Api.Modules.Conversations;
 using Aveline.Api.Modules.Conversations.Hubs;
+using Aveline.Api.Modules.CustomerConcierge;
 using Aveline.Api.Modules.Integrations;
 using Aveline.Api.Modules.Notifications;
 using Aveline.Api.Modules.Notifications.Hubs;
@@ -48,6 +49,7 @@ builder.Services.AddSignalR()
     });
 builder.Services.AddNotificationsModule(builder.Configuration);
 builder.Services.AddConversationsModule(builder.Configuration);
+builder.Services.AddCustomerConciergeModule();
 
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IUserCacheService, UserCacheService>();
@@ -100,6 +102,7 @@ v1.MapWebhookEndpoints();
 v1.MapConversationEndpoints();
 
 app.MapBillingEndpoints();
+app.MapCustomerConciergeEndpoints();
 
 // Apply EF Core migrations on startup for a fresh/local database. Guarded to the
 // relational (PostgreSQL) provider so the in-memory contexts used by the test suite are

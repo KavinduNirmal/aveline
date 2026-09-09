@@ -27,6 +27,10 @@ public sealed record CustomerLookupRequest
 
     [MaxLength(50)]
     public string? PhoneNumber { get; init; }
+
+    [MaxLength(200)]
+    [EmailAddress]
+    public string? Email { get; init; }
 }
 
 /// <summary>Response to a customer lookup. <see cref="IsExact"/> is true only when one match.</summary>

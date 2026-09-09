@@ -168,10 +168,10 @@ public class CustomerConciergeLookupServiceTests
             => _inner.SaveAsync(customer, cancellationToken);
 
         public async Task<IReadOnlyList<Customer>> ListMatchesAsync(
-            Guid orgId, string? name, string? phoneNumber, int limit, CancellationToken cancellationToken = default)
+            Guid orgId, string? name, string? phoneNumber, int limit, CancellationToken cancellationToken = default, string? email = null)
         {
             LookupCalls++;
-            return await _inner.ListMatchesAsync(orgId, name, phoneNumber, limit, cancellationToken);
+            return await _inner.ListMatchesAsync(orgId, name, phoneNumber, limit, cancellationToken, email);
         }
     }
 }

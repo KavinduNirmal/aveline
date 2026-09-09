@@ -131,9 +131,10 @@ public static class CustomerConciergeEndpoints
         ICustomerService customers,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(request.Name) && string.IsNullOrWhiteSpace(request.PhoneNumber))
+        if (string.IsNullOrWhiteSpace(request.Name) && string.IsNullOrWhiteSpace(request.PhoneNumber)
+            && string.IsNullOrWhiteSpace(request.Email))
         {
-            return Results.BadRequest(new { message = "Provide a name and/or phone number." });
+            return Results.BadRequest(new { message = "Provide a name, phone number and/or email." });
         }
 
         var result = await customers.LookupAsync(request, cancellationToken);

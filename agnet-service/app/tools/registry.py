@@ -37,8 +37,9 @@ class ToolRegistry:
         org_id: str,
         name: str | None = None,
         phone: str | None = None,
+        email: str | None = None,
     ) -> dict[str, Any]:
-        """Read-only customer lookup by name and/or phone (no auto-create).
+        """Read-only customer lookup by name, phone and/or email (no auto-create).
 
         Returns the backend ``{matches, isExact, total}`` envelope. Used by the shared
         customer-resolution step so any specialist can resolve a customer from free text.
@@ -48,6 +49,8 @@ class ToolRegistry:
             body["name"] = name
         if phone:
             body["phoneNumber"] = phone
+        if email:
+            body["email"] = email
         return await self._client.request("POST", "/internal/customers/lookup", json=body)
 
     async def search_customer_profile(self, org_id: str, customer_id: str) -> dict[str, Any]:

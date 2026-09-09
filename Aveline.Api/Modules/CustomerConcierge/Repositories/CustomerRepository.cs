@@ -30,7 +30,8 @@ public class CustomerRepository : ICustomerRepository
         string? name,
         string? phoneNumber,
         int limit,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? email = null)
     {
         IQueryable<Customer> query = _context.Customers.Where(c => c.OrganizationId == orgId);
 
@@ -46,8 +47,14 @@ public class CustomerRepository : ICustomerRepository
             query = query.Where(c => candidates.Contains(c.PhoneNumber));
         }
 
+        if (!string.IsNullOrWhiteSpace(email))
+        {
+            var lowerEmail = email.Trim().ToLowerInvariant();
+            query = query.Where(c => c.Email != null && c.Email.ToLower() == lowerEmail);
+        }
+
         // No criteria (or only whitespace) -> nothing to search for; do not scan the org.
-        if (string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(phoneNumber))
+        if (string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(phoneNumber) && string.IsNullOrWhiteSpace(email))
         {
             return [];
         }

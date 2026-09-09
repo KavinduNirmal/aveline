@@ -91,7 +91,8 @@ public class CustomerService : ICustomerService
         }
 
         var matches = await _customers.ListMatchesAsync(
-            request.OrganizationId, request.Name, request.PhoneNumber, MaxLookupResults, cancellationToken);
+            request.OrganizationId, request.Name, request.PhoneNumber, MaxLookupResults,
+            cancellationToken, email: request.Email);
 
         var dto = new CustomerLookupResponse(
             matches.Select(CustomerMatchDto.From).ToList(),
@@ -134,7 +135,7 @@ public class CustomerService : ICustomerService
     }
 
     private static string BuildLookupKey(CustomerLookupRequest request)
-        => $"customer:lookup:{request.OrganizationId}:{request.Name?.Trim().ToLowerInvariant() ?? ""}:{request.PhoneNumber?.Trim() ?? ""}";
+        => $"customer:lookup:{request.OrganizationId}:{request.Name?.Trim().ToLowerInvariant() ?? ""}:{request.PhoneNumber?.Trim() ?? ""}:{request.Email?.Trim().ToLowerInvariant() ?? ""}";
 
     private async Task<CustomerProfileDto> BuildProfileAsync(
         Guid orgId,

@@ -24,13 +24,15 @@ public class CustomerConciergeLookupRepositoryTests
         _context = new AppDbContext(options);
     }
 
-    private async Task<Customer> SeedAsync(Guid org, string phone, string? name = "Samantha Arias")
+    private async Task<Customer> SeedAsync(
+        Guid org, string phone, string? name = "Samantha Arias", string? email = null)
     {
         var created = await _context.Customers.AddAsync(new Customer
         {
             OrganizationId = org,
             PhoneNumber = phone,
             FullName = name,
+            Email = email,
             Status = "new",
         });
         await _context.SaveChangesAsync();
@@ -136,6 +138,33 @@ public class CustomerConciergeLookupRepositoryTests
         var matches = await sut.ListMatchesAsync(_orgA, "Samantha", null, 3);
 
         Assert.Equal(3, matches.Count);
+    }
+
+    [Fact]
+    public async Task ListMatches_ByEmail_CaseInsensitiveExactMatch()
+    {
+        var sut = Sut();
+        var seeded = await SeedAsync(_orgA, "+94771234567", "Samantha Arias", "samantha@example.com");
+
+        // Email matching is case-insensitive and exact (no partial contains).
+        var matches = await sut.ListMatchesAsync(_orgA, null, null, 5, email: "Samantha@example.com");
+
+        Assert.Single(matches);
+        Assert.Equal(seeded.Id, matches[0].Id);
+    }
+
+    [Fact]
+    public async Task ListMatches_ByEmail_IsScopedPerOrganizationAndExcludesSoftDeleted()
+    {
+        var sut = Sut();
+        await SeedAsync(_orgB, "+94771234567", "Samantha Arias", "samantha@example.com");
+        var seeded = await SeedAsync(_orgA, "+94770000001", "Samantha Arias", "samantha@example.com");
+        seeded.DeletedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        var matches = await sut.ListMatchesAsync(_orgA, null, null, 5, email: "samantha@example.com");
+
+        Assert.Empty(matches);
     }
 
     [Fact]

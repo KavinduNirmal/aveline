@@ -23,7 +23,7 @@ class ParsedIntent(BaseModel):
 
     intent_type: Literal[
         "item_search", "pricing_query", "customer_preference",
-        "event_query", "order_status", "general_inquiry",
+        "event_query", "general_inquiry",
     ]
     occasion: str | None = None
     color: str | None = None

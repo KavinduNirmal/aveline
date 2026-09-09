@@ -16,15 +16,16 @@ public interface ICustomerRepository
 
     /// <summary>
     /// Returns up to <paramref name="limit"/> active customers in the org matching an optional
-    /// case-insensitive name fragment and/or phone number (compared in exact and E.164 form).
-    /// At least one of <paramref name="name"/> or <paramref name="phoneNumber"/> must be set.
+    /// case-insensitive name fragment, phone number (compared in exact and E.164 form), and/or
+    /// email. At least one of name / phone / email must be set.
     /// </summary>
     Task<IReadOnlyList<Customer>> ListMatchesAsync(
         Guid orgId,
         string? name,
         string? phoneNumber,
         int limit,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string? email = null);
 
     /// <summary>Creates a new customer with <c>status = new</c>.</summary>
     Task<Customer> AddAsync(Customer customer, CancellationToken cancellationToken = default);

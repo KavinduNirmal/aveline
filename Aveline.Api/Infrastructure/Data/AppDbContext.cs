@@ -3,6 +3,7 @@ using Aveline.Api.Modules.Attendance.Models;
 using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Commerce.Models;
 using Aveline.Api.Modules.Conversations.Models;
+using Aveline.Api.Modules.CustomerConcierge.Models;
 using Aveline.Api.Modules.Integrations.Models;
 using Aveline.Api.Modules.Notifications.Models;
 using Aveline.Api.Modules.Organizations.Models;
@@ -58,6 +59,15 @@ public class AppDbContext : DbContext
     public DbSet<Message> Messages => Set<Message>();
 
     public DbSet<SignOffDecision> SignOffDecisions => Set<SignOffDecision>();
+
+    // Customer Concierge Module (Slice 1)
+    public DbSet<Customer> Customers => Set<Customer>();
+    public DbSet<CustomerPreference> CustomerPreferences => Set<CustomerPreference>();
+    public DbSet<CustomerEvent> CustomerEvents => Set<CustomerEvent>();
+    public DbSet<CustomerMemory> CustomerMemories => Set<CustomerMemory>();
+    public DbSet<CustomerInteraction> CustomerInteractions => Set<CustomerInteraction>();
+    public DbSet<CustomerConsent> CustomerConsents => Set<CustomerConsent>();
+    public DbSet<CustomerTag> CustomerTags => Set<CustomerTag>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

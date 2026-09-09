@@ -46,6 +46,7 @@ public class ConversationEventSubscriberTests
     private sealed class FakeConversationService : IConversationService
     {
         public List<AgentMessageEvent> Applied { get; } = [];
+        public List<AgentMessageUpdateEvent> AppliedUpdates { get; } = [];
 
         public Task<ConversationDto> GetOrCreateSalonAsync(Guid orgId, Guid userId, Guid? customerId, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
@@ -68,6 +69,14 @@ public class ConversationEventSubscriberTests
             return Task.FromResult(new MessageDto(
                 Guid.NewGuid(), evt.ConversationId, "Agent", evt.AgentKey, null, evt.Kind,
                 evt.ContentBlocks, null, evt.ReplyToMessageId, MessageStatus.Published, DateTime.UtcNow));
+        }
+
+        public Task<MessageDto?> ApplyAgentMessageUpdateAsync(AgentMessageUpdateEvent evt, CancellationToken cancellationToken = default)
+        {
+            AppliedUpdates.Add(evt);
+            return Task.FromResult<MessageDto?>(new MessageDto(
+                evt.MessageId, evt.ConversationId, "Agent", null, null, MessageKind.Note,
+                evt.ContentBlocks, null, null, evt.Status ?? MessageStatus.Published, DateTime.UtcNow));
         }
 
         public Task<MessageDto> DecideSignOffAsync(Guid orgId, Guid userId, Guid conversationId, Guid messageId, bool approved, string contentHash, CancellationToken cancellationToken = default)
@@ -198,5 +207,50 @@ public class ConversationEventSubscriberTests
         await bus.PublishAsync(ConversationEvents.AgentStatus, orgId, payload);
 
         Assert.Empty(broadcaster.StateBroadcast);
+    }
+
+    [Fact]
+    public async Task MessageUpdatedEvent_DispatchesToApplyUpdate_AndBroadcasts()
+    {
+        var bus = new InMemoryEventBus();
+        var service = new FakeConversationService();
+        var broadcaster = new FakeBroadcaster();
+        var subscriber = CreateSubscriber(bus, service, broadcaster);
+        await subscriber.StartAsync(CancellationToken.None);
+
+        var orgId = Guid.NewGuid();
+        var conversationId = Guid.NewGuid();
+        var messageId = Guid.NewGuid();
+        var payload = new
+        {
+            conversation_id = conversationId,
+            message_id = messageId,
+            status = "Sent",
+            blocks = new[] { new { type = "text", text = "Revised" } },
+        };
+
+        await bus.PublishAsync(ConversationEvents.MessageUpdated, orgId, payload);
+
+        var updated = Assert.Single(service.AppliedUpdates);
+        Assert.Equal(conversationId, updated.ConversationId);
+        Assert.Equal(messageId, updated.MessageId);
+        Assert.Equal(MessageStatus.Sent, updated.Status);
+        Assert.Single(broadcaster.Broadcast);
+    }
+
+    [Fact]
+    public async Task MessageUpdatedEvent_MalformedPayload_IsIgnored()
+    {
+        var bus = new InMemoryEventBus();
+        var service = new FakeConversationService();
+        var broadcaster = new FakeBroadcaster();
+        var subscriber = CreateSubscriber(bus, service, broadcaster);
+        await subscriber.StartAsync(CancellationToken.None);
+
+        // Missing conversation_id / message_id -> ignored without dispatching or crashing.
+        await bus.PublishAsync(ConversationEvents.MessageUpdated, Guid.NewGuid(), new { status = "Sent" });
+
+        Assert.Empty(service.AppliedUpdates);
+        Assert.Empty(broadcaster.Broadcast);
     }
 }

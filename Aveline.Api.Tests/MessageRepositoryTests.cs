@@ -125,4 +125,25 @@ public class MessageRepositoryTests
 
         Assert.Contains(items, m => m.Id == target.Id);
     }
+
+    [Fact]
+    public async Task UpdateAsync_PersistsStatusAndBlocks_ForExistingMessage()
+    {
+        var message = CreateMessage("Original");
+        await _sut.SaveAsync(message);
+
+        var loaded = await _sut.GetAsync(_conversationId, message.Id);
+        loaded!.Status = MessageStatus.Sent;
+        loaded.ContentBlocksJson = JsonSerializer.Serialize(new[]
+        {
+            new { type = "text", text = "Revised" },
+        });
+
+        await _sut.UpdateAsync(loaded);
+
+        var reloaded = await _sut.GetAsync(_conversationId, message.Id);
+        Assert.Equal(MessageStatus.Sent, reloaded!.Status);
+        Assert.Contains("Revised", reloaded.ContentBlocksJson);
+        Assert.Equal(1, await _context.Messages.CountAsync());
+    }
 }

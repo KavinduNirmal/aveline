@@ -1533,3 +1533,33 @@ flow. No new agent bus handler.
 ### Remaining work / notes
 
 - Run full API + agent test suites, then commit docs and open the PR for #152.
+## Session 2026-09-09 (cont.) — Issue #153 apply message.updated
+
+**Task:** Make the API apply agent `message.updated` events to persisted Salon messages
+(status and/or blocks) and rebroadcast, instead of the previous no-op handler. On branch
+`feature/153-message-updated` (stacked on feature/152).
+**Tool used:** opencode (AI coding agent)
+
+### Work performed
+
+- Added `AgentMessageUpdateEvent` and `IConversationService.ApplyAgentMessageUpdateAsync`
+  (returns `null` for an unknown message) in `IConversationService.cs`.
+- `ConversationService.ApplyAgentMessageUpdateAsync` loads the message, applies an optional
+  new status and/or content blocks, and recomputes the `contentHash` when a SignOff's blocks
+  change (re-binding to the revised payload). Unknown messages return null.
+- Added `IMessageRepository.UpdateAsync` (real EF `Update` + `SaveChanges`) and its fake.
+- `ConversationEventSubscriber.OnMessageUpdatedAsync` now parses the payload and dispatches
+  to the service, rebroadcasting via `IMessageBroadcaster`; unknown/malformed payloads are
+  skipped without failing the listener. Added `ParseMessageUpdateEvent`.
+- Tests (new behaviour): subscriber dispatch + malformed-skip, service status/blocks update +
+  SignOff hash recompute + unknown-returns-null, repository update persistence.
+- Docs: `docs/architecture/inbox.md` §7.
+
+### Verification performed
+
+- `dotnet build` - 0 errors.
+- Full API test suite - **445 passed** (was 439; +6 new across subscriber/service/repo).
+
+### Remaining work / notes
+
+- Commit, push, and open the PR for #153 once confirmed.

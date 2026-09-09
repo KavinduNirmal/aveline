@@ -190,6 +190,41 @@ public class ConversationService : IConversationService
         return MessageDto.From(message);
     }
 
+    public async Task<MessageDto?> ApplyAgentMessageUpdateAsync(
+        AgentMessageUpdateEvent evt,
+        CancellationToken cancellationToken = default)
+    {
+        var message = await _messages.GetAsync(evt.ConversationId, evt.MessageId, cancellationToken);
+        if (message is null)
+        {
+            // Unknown update target; the listener treats this as a benign skip.
+            return null;
+        }
+
+        if (evt.Status is not null)
+        {
+            message.Status = evt.Status.Value;
+        }
+
+        if (evt.ContentBlocks.ValueKind != JsonValueKind.Undefined)
+        {
+            message.ContentBlocksJson = evt.ContentBlocks.GetRawText();
+            // Re-bind a SignOff to the revised payload so a later decision reflects exactly
+            // what the human will see.
+            message.ContentHash = message.Kind == MessageKind.SignOff
+                ? ContentHash.Compute(message.ContentBlocksJson)
+                : null;
+        }
+
+        await _messages.UpdateAsync(message, cancellationToken);
+
+        _logger.LogInformation(
+            "Applied agent update to message {MessageId} in conversation {ConversationId}.",
+            evt.MessageId, evt.ConversationId);
+
+        return MessageDto.From(message);
+    }
+
     public async Task<MessageDto> DecideSignOffAsync(
         Guid orgId,
         Guid userId,

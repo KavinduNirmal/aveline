@@ -14,4 +14,7 @@ public interface IMessageRepository
         CancellationToken cancellationToken = default);
 
     Task SaveAsync(Message message, CancellationToken cancellationToken = default);
+
+    /// <summary>Persists changes to an existing message (loaded via <see cref="GetAsync"/>).</summary>
+    Task UpdateAsync(Message message, CancellationToken cancellationToken = default);
 }

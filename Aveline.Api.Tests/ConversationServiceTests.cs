@@ -114,6 +114,7 @@ public class ConversationServiceTests
             {
                 existing.Status = message.Status;
                 existing.ContentBlocksJson = message.ContentBlocksJson;
+                existing.ContentHash = message.ContentHash;
             }
             else
             {
@@ -121,6 +122,9 @@ public class ConversationServiceTests
             }
             return Task.CompletedTask;
         }
+
+        public Task UpdateAsync(Message message, CancellationToken ct)
+            => SaveAsync(message, ct);
     }
 
     private sealed class FakeAgentClient : IAgentServiceClient
@@ -427,5 +431,58 @@ public class ConversationServiceTests
         Assert.Contains("thread_id", _agent.LastBody);
         Assert.Contains("phone_number", _agent.LastBody);
         Assert.Contains("inbound", _agent.LastBody);
+    }
+
+    [Fact]
+    public async Task ApplyAgentMessageUpdateAsync_UpdatesStatusAndBlocks()
+    {
+        var orgId = Guid.NewGuid();
+        var salon = await _sut.GetOrCreateSalonAsync(orgId, Guid.NewGuid(), null, CancellationToken.None);
+        var created = await _sut.ApplyAgentMessageAsync(new AgentMessageEvent(
+            salon.Id, salon.ThreadId, AgentKeys.Aveline, MessageKind.Note,
+            JsonSerializer.SerializeToElement(new[] { new { type = "text", text = "Original" } }),
+            null, Guid.NewGuid()), CancellationToken.None);
+
+        var updated = await _sut.ApplyAgentMessageUpdateAsync(new AgentMessageUpdateEvent(
+            salon.Id, created.Id, MessageStatus.Sent,
+            JsonSerializer.SerializeToElement(new[] { new { type = "text", text = "Revised" } })),
+            CancellationToken.None);
+
+        Assert.NotNull(updated);
+        Assert.Equal(MessageStatus.Sent, updated!.Status);
+
+        // The change is persisted, not just returned.
+        var stored = await _messages.GetAsync(salon.Id, created.Id, CancellationToken.None);
+        Assert.Equal(MessageStatus.Sent, stored!.Status);
+        Assert.Contains("Revised", stored.ContentBlocksJson);
+    }
+
+    [Fact]
+    public async Task ApplyAgentMessageUpdateAsync_RecomputesContentHash_ForSignOff()
+    {
+        var (orgId, conversationId, messageId, originalHash) = await SeedSignOffAsync();
+
+        var updated = await _sut.ApplyAgentMessageUpdateAsync(new AgentMessageUpdateEvent(
+            conversationId, messageId, null,
+            JsonSerializer.SerializeToElement(new[] { new { type = "sign_off", approvalId = "a-1", amount = 99999 } })),
+            CancellationToken.None);
+
+        Assert.NotNull(updated);
+        Assert.NotNull(updated!.ContentHash);
+        // Editing a SignOff's payload re-binds it to a fresh hash so a later decision matches
+        // exactly what the human sees.
+        Assert.NotEqual(originalHash, updated.ContentHash);
+    }
+
+    [Fact]
+    public async Task ApplyAgentMessageUpdateAsync_ReturnsNull_ForUnknownMessage()
+    {
+        var orgId = Guid.NewGuid();
+        var salon = await _sut.GetOrCreateSalonAsync(orgId, Guid.NewGuid(), null, CancellationToken.None);
+
+        var result = await _sut.ApplyAgentMessageUpdateAsync(new AgentMessageUpdateEvent(
+            salon.Id, Guid.NewGuid(), MessageStatus.Published, default), CancellationToken.None);
+
+        Assert.Null(result);
     }
 }

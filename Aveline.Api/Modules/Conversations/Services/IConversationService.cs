@@ -18,6 +18,17 @@ public sealed record AgentMessageEvent(
     Guid? ReplyToMessageId,
     Guid? WorkflowRunId);
 
+/// <summary>
+/// An agent event revising an existing message (status and/or content blocks). Either
+/// <see cref="Status"/> or <see cref="ContentBlocks"/> may be present; absent fields are left
+/// unchanged on the persisted message.
+/// </summary>
+public sealed record AgentMessageUpdateEvent(
+    Guid ConversationId,
+    Guid MessageId,
+    MessageStatus? Status,
+    JsonElement ContentBlocks);
+
 public interface IConversationService
 {
     Task<ConversationDto> GetOrCreateSalonAsync(
@@ -54,6 +65,14 @@ public interface IConversationService
 
     Task<MessageDto> ApplyAgentMessageAsync(
         AgentMessageEvent evt,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Applies an agent revision to an existing message (status and/or content blocks) and
+    /// returns the updated DTO, or <c>null</c> when the message does not exist.
+    /// </summary>
+    Task<MessageDto?> ApplyAgentMessageUpdateAsync(
+        AgentMessageUpdateEvent evt,
         CancellationToken cancellationToken = default);
 
     /// <summary>

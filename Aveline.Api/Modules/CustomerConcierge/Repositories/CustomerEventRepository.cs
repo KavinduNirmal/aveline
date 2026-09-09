@@ -25,4 +25,30 @@ public class CustomerEventRepository : ICustomerEventRepository
             .Where(e => e.OrganizationId == orgId && e.CustomerId == customerId && e.IsActive)
             .OrderBy(e => e.EventDate)
             .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<CustomerEvent>> FindDueForReminderAsync(
+        DateTime from,
+        DateTime to,
+        CancellationToken cancellationToken = default)
+        => await _context.CustomerEvents
+            .Include(e => e.Customer)
+            .Where(e => e.IsActive && e.ReminderSentAt == null && e.EventDate >= from && e.EventDate <= to)
+            .OrderBy(e => e.EventDate)
+            .ToListAsync(cancellationToken);
+
+    public async Task MarkReminderSentAsync(
+        Guid eventId,
+        DateTime sentAt,
+        CancellationToken cancellationToken = default)
+    {
+        var customerEvent = await _context.CustomerEvents.FindAsync([eventId], cancellationToken);
+        if (customerEvent is null)
+        {
+            return;
+        }
+
+        customerEvent.ReminderSentAt = sentAt;
+        customerEvent.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync(cancellationToken);
+    }
 }

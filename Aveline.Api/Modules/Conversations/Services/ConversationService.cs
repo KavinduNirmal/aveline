@@ -276,7 +276,51 @@ public class ConversationService : IConversationService
         conversation.LastMessageAt = DateTime.UtcNow;
         await _conversations.SaveAsync(conversation, cancellationToken);
 
+        // Best-effort: ask the agent to draft a response to this inbound client message into
+        // the Salon (ADR-016). The client's phone is forwarded so the memory agent can attempt
+        // to identify the customer and personalize the draft. Replies arrive later as
+        // message.created events.
+        await TriggerInboundDraftAsync(conversation, from, text, cancellationToken);
+
         return MessageDto.From(message);
+    }
+
+    private async Task TriggerInboundDraftAsync(
+        Conversation conversation,
+        string from,
+        string text,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var payload = new
+            {
+                query = text,
+                thread_id = conversation.ThreadId,
+                org_context = new
+                {
+                    organization_id = conversation.OrganizationId,
+                    phone_number = from,
+                    channel = "whatsapp",
+                    direction = "inbound",
+                },
+            };
+            using var content = JsonContent.Create(payload);
+            // Best-effort: a failure to reach the agent must not fail the webhook. The agent
+            // replies arrive later as message.created events.
+            var response = await _agentClient.PostAsync("/agents/query", content, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning(
+                    "Agent inbound draft returned {StatusCode} for conversation {ConversationId}.",
+                    (int)response.StatusCode,
+                    conversation.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to trigger inbound draft for conversation {ConversationId}.", conversation.Id);
+        }
     }
 
     private async Task TriggerAgentAsync(Conversation conversation, string query, CancellationToken cancellationToken)

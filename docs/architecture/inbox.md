@@ -162,7 +162,10 @@ client so the reply types in live. `WorkflowRunId`/`TraceId` are recorded for au
 ### 6.2 WhatsApp inbound
 Webhook (`/api/v1/webhooks/whatsapp/{orgId}`, ADR-015) → persist `InboundMessageLog` →
 publish `message.received` → API creates a `Message` of kind `ClientMessage` in the
-Salon (so staff see it immediately) → agent reacts and drafts a response.
+customer's Salon (so staff see it immediately) → the API then asks the agent service to
+draft a response into the same thread (`/agents/query` with the conversation's `threadId`
+and the client's phone in `org_context`), so the memory agent can try to identify the
+customer. Both steps are best-effort and never delay the webhook `200`.
 
 ### 6.3 Human-in-the-loop sign-off
 Commerce agent issues an interrupt (`pause_for_approval`, `agnet-service/app/agents/commerce/README.md`)

@@ -80,7 +80,8 @@ Give Ava, Elle, and Lina separate inboxes.
 - A new SignalR group `salon:{conversationId}` plus new bus event types
   `message.created`, `message.updated`, and `conversation.created` (ADR-014).
 - `ApprovalQueueEntry` gains `threadId` and `conversationId` for resume and deep-link.
-- The inbound webhook path now also creates a `ClientMessage` in the Salon.
+- The inbound webhook path now also creates a `ClientMessage` in the Salon and, best-effort,
+  asks the agent to draft a response into the same thread (API-initiated, `threadId`-scoped).
 - Quiet-luxury naming is applied throughout: Salon, Note, Look, Piece, AtAGlance,
   ClientMessage, SignOff, Payment, Courier, Suggestion.
 

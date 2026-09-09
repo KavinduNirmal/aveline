@@ -1495,3 +1495,41 @@ Verified against the codebase on `development`:
 
 - Issue #151 changes to commit and PR once confirmed (this branch carries both #150 and #151).
 - Issues #152-#154 still to implement on their own branches.
+## Session 2026-09-09 (cont.) — Issue #152 close the inbound loop
+
+**Task:** Close the inbound loop for the realtime conversation workflow: inbound WhatsApp should surface as a `ClientMessage` in the Salon and trigger an Aveline auto-draft. On branch `feature/152-close-inbound-loop`.
+**Tool used:** opencode (AI coding agent)
+
+### Findings
+
+- The API webhook (`Aveline.Api/Endpoints/WebhookEndpoints.cs`) ALREADY records the inbound
+  `ClientMessage` in the Salon (best-effort) and is covered by
+  `WebhookEndpointsIntegrationTests.Post_ValidSignature_CreatesClientMessageInSalon`.
+- The agent service subscribes to `message.received` but registers no handler, and the event
+  carries no `thread_id`, so a pure agent bus handler cannot route a reply to the right Salon.
+
+### Scoping decision (team)
+
+Chose the API-initiated trigger: after recording the `ClientMessage`, the API asks the agent
+service to draft into the same thread via `/agents/query`, mirroring the existing staff-note
+flow. No new agent bus handler.
+
+### Work performed
+
+- Implemented `ConversationService.RecordInboundClientMessageAsync` to trigger an inbound draft
+  (`TriggerInboundDraftAsync`) with the conversation `thread_id` and the client's phone in
+  `org_context` (`channel=whatsapp`, `direction=inbound`) so the memory agent can identify the
+  customer. Best-effort / non-blocking.
+- Extended `FakeAgentClient` in `ConversationServiceTests` to capture the request body; added a
+  failing-first test asserting the inbound message posts to `/agents/query` with phone context.
+- Docs: `docs/architecture/inbox.md` §6.2 and `docs/ADR/ADR-016-conversation-inbox.md` consequences.
+- Rebased the branch onto the updated `development` (which now includes merged PRs #155/#156).
+
+### Verification performed
+
+- `dotnet build Aveline.Api/Aveline.Api.sln` - 0 errors.
+- Conversation service + webhook + conversation-endpoints integration tests pass (28 total).
+
+### Remaining work / notes
+
+- Run full API + agent test suites, then commit docs and open the PR for #152.

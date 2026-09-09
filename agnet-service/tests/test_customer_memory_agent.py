@@ -28,6 +28,7 @@ class FakeRegistry:
         }
         self.identify_calls = 0
         self.search_calls = 0
+        self.brief_calls = 0
 
     async def identify_customer(self, org_id, phone_number, full_name=None):
         self.identify_calls += 1
@@ -51,6 +52,24 @@ class FakeRegistry:
             (customer_id, channel, direction, message_content, parsed_intent_json)
         )
         return {"id": f"int-{len(self.recorded_interactions)}"}
+
+    async def add_customer_event(self, org_id, customer_id, event_type, event_date, description=None):
+        self.added_events.append((customer_id, event_type, event_date, description))
+        return {"id": f"evt-{len(self.added_events)}"}
+
+    async def get_customer_events(self, org_id, customer_id):
+        return [{"id": "evt-1", "eventType": "wedding", "eventDate": "2026-12-01"}]
+
+    async def generate_interaction_brief(self, org_id, customer_id):
+        self.brief_calls += 1
+        return {
+            "customerId": customer_id,
+            "customerName": "Sarah Perera",
+            "status": "vip",
+            "preferenceSummary": None,
+            "upcomingEvents": "wedding on 2026-12-01",
+            "tags": ["vip"],
+        }
 
 
 WEDDING_MESSAGE = "Hi! I have a wedding on Saturday. Do you have anything bluish in my size?"
@@ -232,6 +251,79 @@ async def test_no_llm_defaults_to_template_without_usage():
     assert result["status"] == "success"
     assert result["output"]["draft_response"].startswith("Hi Sarah Perera!")
     assert result.get("usage") is None
+
+
+# ---------------------------------------------------------------------------
+# Structured events + backend brief (Issue #166)
+# ---------------------------------------------------------------------------
+
+
+async def test_dated_detected_event_creates_structured_customer_event():
+    registry = FakeRegistry()
+    state = {
+        "org_id": "org-1",
+        "customer_id": "cust-sarah",
+        "customer_name": "Sarah Perera",
+        "message": "I have a wedding on 2026-12-01, do you have any bluish sarees?",
+        "intent_type": "item_search",
+        "channel": "whatsapp",
+        "direction": "inbound",
+    }
+    result = await build_memory_graph(registry).ainvoke(state)
+
+    assert result["status"] == "success"
+    # A structured Customer_Event row is created when a date is present.
+    assert len(registry.added_events) == 1
+    customer_id, event_type, event_date, _description = registry.added_events[0]
+    assert customer_id == "cust-sarah"
+    assert event_type == "wedding"
+    assert event_date == "2026-12-01"
+    assert result["output"]["detected_events"][0]["event_type"] == "wedding"
+
+
+async def test_undated_event_falls_back_to_text_memory_only():
+    registry = FakeRegistry()
+    state = {
+        "org_id": "org-1",
+        "customer_id": "cust-sarah",
+        "customer_name": "Sarah Perera",
+        "message": WEDDING_MESSAGE,  # "wedding on Saturday" — no ISO date
+        "intent_type": "item_search",
+        "channel": "whatsapp",
+        "direction": "inbound",
+    }
+    result = await build_memory_graph(registry).ainvoke(state)
+
+    assert result["status"] == "success"
+    # No structured event (no date) — but an event text memory is still saved.
+    assert registry.added_events == []
+    assert any(m[2] == "event" for m in registry.saved_memories)
+
+
+async def test_output_brief_uses_backend_events_and_semantic_context():
+    registry = FakeRegistry()
+    result = await _run(registry)
+
+    assert result["status"] == "success"
+    assert registry.brief_calls == 1
+    brief = result["output"]["interaction_brief"]
+    assert "wedding on 2026-12-01" in brief  # real events from the backend brief
+    assert "emerald silk" in brief  # semantic context is preserved
+    assert "vip" in brief
+
+
+async def test_output_brief_falls_back_when_backend_fails():
+    registry = FakeRegistry()
+
+    async def boom(org_id, customer_id):
+        raise RuntimeError("brief backend down")
+
+    registry.generate_interaction_brief = boom
+    result = await _run(registry)
+
+    assert result["status"] == "success"
+    # Still has a usable brief (name + status + semantic context) and no raise.
+    assert result["output"]["interaction_brief"]
 
 
 # ---------------------------------------------------------------------------

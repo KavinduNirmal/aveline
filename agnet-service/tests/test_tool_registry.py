@@ -222,6 +222,34 @@ async def test_registry_get_customer_consent(client):
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_registry_add_customer_event(client):
+    route = respx.post(f"{BASE_URL}/internal/customers/cust-1/events").respond(
+        status_code=201, json={"id": "evt-1", "eventType": "wedding"}
+    )
+    registry = ToolRegistry(client)
+    result = await registry.add_customer_event("org-1", "cust-1", "wedding", "2026-12-01", "Sister's wedding")
+    assert route.called
+    body = route.calls.last.request.content
+    assert b"eventType" in body
+    assert b"eventDate" in body
+    assert b"2026-12-01" in body
+    assert result["eventType"] == "wedding"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_registry_get_customer_events(client):
+    route = respx.get(f"{BASE_URL}/internal/customers/cust-1/events?organizationId=org-1").respond(
+        status_code=200, json=[{"id": "evt-1", "eventType": "wedding"}]
+    )
+    registry = ToolRegistry(client)
+    result = await registry.get_customer_events("org-1", "cust-1")
+    assert route.called
+    assert result == [{"id": "evt-1", "eventType": "wedding"}]
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_registry_search_inventory(client):
     route = respx.post(f"{BASE_URL}/api/internal/inventory/search").respond(
         status_code=200, json={"items": []}

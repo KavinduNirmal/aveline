@@ -118,6 +118,34 @@ class ToolRegistry:
             json=body,
         )
 
+    async def add_customer_event(
+        self,
+        org_id: str,
+        customer_id: str,
+        event_type: str,
+        event_date: str,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist a structured customer event (wedding, birthday, ...) via the backend."""
+        body: dict[str, Any] = {
+            "organizationId": org_id,
+            "eventType": event_type,
+            "eventDate": event_date,
+        }
+        if description:
+            body["description"] = description
+        return await self._client.request(
+            "POST",
+            f"/internal/customers/{customer_id}/events",
+            json=body,
+        )
+
+    async def get_customer_events(self, org_id: str, customer_id: str) -> dict[str, Any]:
+        """List a customer's structured events (upcoming first) via the backend."""
+        return await self._client.request(
+            "GET", f"/internal/customers/{customer_id}/events?organizationId={org_id}"
+        )
+
     async def get_customer_consent(self, org_id: str, customer_id: str) -> dict[str, Any]:
         """Check a customer's consent status via the backend."""
         return await self._client.request(

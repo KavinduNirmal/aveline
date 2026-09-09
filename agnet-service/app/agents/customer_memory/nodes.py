@@ -123,6 +123,16 @@ class CustomerMemoryAgent:
             extracted.append(
                 {"content": content, "category": "event", "is_explicit": True, "confidence": 0.9}
             )
+            # Persist a structured Customer_Event row when a concrete date is known, so event
+            # queries and reminders answer from real data (not just free-text memories).
+            if event.get("event_date"):
+                await self.registry.add_customer_event(
+                    org_id,
+                    customer_id,
+                    event["event_type"],
+                    event["event_date"],
+                    description=event.get("description"),
+                )
 
         # Log the inbound interaction with the structured intent the agent extracted (ADR-016).
         parsed_intent = state.get("parsed_intent") or {}
@@ -144,7 +154,7 @@ class CustomerMemoryAgent:
         name = self._customer_name(state)
         tags = profile.get("tags") or []
 
-        brief = self._build_brief(name, profile, state.get("semantic_context", []), tags)
+        brief = await self._interaction_brief(state, name, profile, tags)
 
         draft, usage = await self._generate_draft(state, profile, intent, name)
         action = "send_whatsapp" if intent.get("intent_type") == "item_search" else None
@@ -168,6 +178,44 @@ class CustomerMemoryAgent:
         return {"output": output, "status": SUCCESS, "usage": usage}
 
     # ------------------------------------------------------------------ helpers
+
+    async def _interaction_brief(
+        self,
+        state: MemoryAgentState,
+        name: str,
+        profile: dict[str, Any],
+        tags: list[str],
+    ) -> str:
+        """Assemble a staff-facing brief, enriched from the backend's real events/tags.
+
+        Uses the backend ``/brief`` result (CustomerMemoryService.GenerateBriefAsync) so event
+        queries answer from actual ``Customer_Event`` rows. Falls back to the local semantic
+        context when the backend is unavailable.
+        """
+        semantic_context = state.get("semantic_context") or []
+        org_id = state.get("org_id")
+        customer_id = state.get("customer_id")
+
+        backend: dict[str, Any] = {}
+        if org_id and customer_id:
+            try:
+                backend = (await self.registry.generate_interaction_brief(str(org_id), str(customer_id))) or {}
+            except Exception:  # noqa: BLE001 - brief failure must not break compose
+                logger.warning("Interaction brief backend call failed; using local brief.", exc_info=True)
+
+        status = backend.get("status") or profile.get("status") or "new"
+        display_name = backend.get("customerName") or name
+
+        parts = [f"{display_name} ({status})"]
+        if semantic_context:
+            parts.append(f"Context: {semantic_context[0].get('content')}")
+        if backend.get("upcomingEvents"):
+            parts.append(f"Upcoming: {backend['upcomingEvents']}")
+        backend_tags = backend.get("tags")
+        merged_tags = backend_tags if isinstance(backend_tags, list) and backend_tags else tags
+        if merged_tags:
+            parts.append(f"Tags: {', '.join(merged_tags)}")
+        return " | ".join(parts)
 
     async def _generate_draft(
         self,
@@ -230,16 +278,6 @@ class CustomerMemoryAgent:
     def _customer_name(state: MemoryAgentState) -> str:
         profile = state.get("profile") or {}
         return profile.get("fullName") or state.get("customer_name") or "The customer"
-
-    @staticmethod
-    def _build_brief(name: str, profile: dict[str, Any], context: list[dict[str, Any]], tags: list[str]) -> str:
-        parts = [f"{name} ({profile.get('status', 'new')})"]
-        if context:
-            top = context[0]
-            parts.append(f"Context: {top.get('content')}")
-        if tags:
-            parts.append(f"Tags: {', '.join(tags)}")
-        return " | ".join(parts)
 
     @staticmethod
     def _draft(name: str, intent: dict[str, Any]) -> str:

@@ -8,9 +8,14 @@ public class SourcingRequestConfiguration : IEntityTypeConfiguration<SourcingReq
 {
     public void Configure(EntityTypeBuilder<SourcingRequest> builder)
     {
-        builder.ToTable("Sourcing_Requests");
+        builder.ToTable("sourcing_requests");
 
         builder.HasKey(x => x.Id);
+
+        builder.Ignore(x => x.Category);
+        builder.Ignore(x => x.Color);
+        builder.Ignore(x => x.Description);
+        builder.Ignore(x => x.TargetPrice);
 
         builder.Property(x => x.OrgId)
             .IsRequired();
@@ -20,23 +25,34 @@ public class SourcingRequestConfiguration : IEntityTypeConfiguration<SourcingReq
         builder.Property(x => x.ReferenceImageUrl)
             .HasMaxLength(500);
 
-        builder.Property(x => x.Description)
-            .IsRequired()
+        builder.Property(x => x.ItemDescription)
             .HasMaxLength(2000);
 
-        builder.Property(x => x.TargetPrice)
-            .HasPrecision(18, 2);
+        builder.Property(x => x.SupplierId);
+
+        builder.Property(x => x.EstimatedCost)
+            .HasPrecision(12, 2);
+
+        builder.Property(x => x.ProposedMarkup)
+            .HasPrecision(5, 2);
+
+        builder.Property(x => x.ProposedPrice)
+            .HasPrecision(12, 2);
 
         builder.Property(x => x.Status)
             .IsRequired()
             .HasMaxLength(50)
             .HasDefaultValue("pending");
 
+        builder.Property(x => x.CreatedBy);
+
         builder.Property(x => x.CreatedAtUtc)
             .IsRequired();
 
         builder.Property(x => x.UpdatedAtUtc);
 
-        builder.HasIndex(x => new { x.OrgId, x.Status });
+        builder.HasIndex(x => x.OrgId).HasDatabaseName("idx_sourcing_org");
+        builder.HasIndex(x => x.CustomerId).HasDatabaseName("idx_sourcing_customer");
+        builder.HasIndex(x => x.Status).HasDatabaseName("idx_sourcing_status");
     }
 }

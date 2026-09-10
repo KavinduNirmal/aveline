@@ -25,7 +25,7 @@ public class SupplierRepository : ISupplierRepository
         return await _db.Suppliers
             .AsNoTracking()
             .Where(x => x.OrgId == orgId && x.IsActive)
-            .OrderBy(x => x.Name)
+            .OrderBy(x => x.SupplierName)
             .ToListAsync(cancellationToken);
     }
 

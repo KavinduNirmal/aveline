@@ -53,7 +53,7 @@ public class InventoryRepository : IInventoryRepository
 
         if (inStockOnly)
         {
-            query = query.Where(x => x.Quantity > 0);
+            query = query.Where(x => x.StockQuantity > 0);
         }
 
         var results = await query
@@ -89,8 +89,8 @@ public class InventoryRepository : IInventoryRepository
                 x.OrgId == orgId &&
                 x.DeletedAt == null &&
                 x.Status == "available" &&
-                x.Quantity <= threshold)
-            .OrderBy(x => x.Quantity)
+                x.StockQuantity <= threshold)
+            .OrderBy(x => x.StockQuantity)
             .ToListAsync(cancellationToken);
 
         return items;

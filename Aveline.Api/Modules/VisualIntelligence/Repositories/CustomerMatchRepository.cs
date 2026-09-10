@@ -15,10 +15,11 @@ public class CustomerMatchRepository : ICustomerMatchRepository
 
     public async Task<IReadOnlyList<CustomerMatch>> GetByItemIdAsync(Guid itemId, Guid orgId, double minScore = 0.7, CancellationToken cancellationToken = default)
     {
+        var minConfidence = (decimal)minScore;
         return await _db.CustomerMatches
             .AsNoTracking()
-            .Where(x => x.OrgId == orgId && x.ItemId == itemId && x.MatchScore >= minScore)
-            .OrderByDescending(x => x.MatchScore)
+            .Where(x => x.OrgId == orgId && x.ItemId == itemId && x.MatchConfidence >= minConfidence)
+            .OrderByDescending(x => x.MatchConfidence)
             .ToListAsync(cancellationToken);
     }
 

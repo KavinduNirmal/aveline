@@ -1048,4 +1048,59 @@
 - `dotnet test Aveline.Api.Tests\Aveline.Api.Tests.csproj`: 484/484 passed in 1m 36s (100% success).
 - `.\.venv\Scripts\pytest` (in `agnet-service`): 292 passed, 2 skipped in 145.61s (100% success).
 
-
+## Session 2026-09-10 (Visual Insight Agent Slice 2 TDD Implementation)
+
+**Task:** Complete TDD implementation of Visual Insight Agent (Slice 2) - Database entities & migration, .NET API endpoints/services, and Python agent tools/graphs.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed (100% Tests Passing & Migration Scaffolded)
+
+### Work Performed
+1. **TDD RED Phase:**
+   - Created `Aveline.Api.Tests/VisualIntelligenceEntityConfigurationTests.cs` (13 test cases) validating exact table names, column mappings, data types, indexes, and foreign keys for all 7 Visual Intelligence entities.
+   - Created `agnet-service/tests/test_visual_agent.py` and `agnet-service/tests/golden_cases_visual.py` covering visual tool execution and golden test cases.
+2. **TDD GREEN Phase - C# Models & EF Core Configuration:**
+   - Updated C# entity models in `Aveline.Api/Modules/VisualIntelligence/Models/`: `InventoryItem.cs`, `InventoryImage.cs`, `CustomerMatch.cs`, `OutfitComposition.cs`, `OutfitItem.cs`, `SourcingRequest.cs`, and `Supplier.cs`.
+   - Updated/Created EF Core configurations in `Aveline.Api/Infrastructure/Data/Configurations/`: `InventoryItemConfiguration.cs`, `InventoryImageConfiguration.cs`, `CustomerMatchConfiguration.cs`, `OutfitCompositionConfiguration.cs`, `OutfitItemConfiguration.cs`, `SourcingRequestConfiguration.cs`, and `SupplierConfiguration.cs`.
+   - Configured `AppDbContextFactory` implementing `IDesignTimeDbContextFactory<AppDbContext>` for design-time EF migrations.
+   - Generated clean, pristine migration `20260910064834_AddVisualIntelligenceEntities.cs` and updated snapshot.
+3. **Repository & Service Refinements:**
+   - Updated `InventoryRepository.cs`, `CustomerMatchRepository.cs`, and `SupplierRepository.cs` LINQ expressions to target mapped entity columns (`StockQuantity`, `MatchConfidence`, `SupplierName`).
+   - Wired endpoint routing aliases in `VisualEndpoints.cs`.
+4. **Python Agent & Tools Verification:**
+   - Verified Python visual tools (`image_tools.py`, `inventory_tools.py`, `matching_tools.py`, `outfit_tools.py`, `sourcing_tools.py`, `supplier_tools.py`), caching layers (`ProductAnalysisCache`, `InventorySearchCache`), and LangGraph sub-graph.
+
+### Files Created or Modified
+- `Aveline.Api/Infrastructure/Data/AppDbContextFactory.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/CustomerMatchConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/InventoryImageConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/InventoryItemConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/OutfitCompositionConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/OutfitItemConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/SourcingRequestConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/SupplierConfiguration.cs`
+- `Aveline.Api/Migrations/20260910064834_AddVisualIntelligenceEntities.cs`
+- `Aveline.Api/Migrations/20260910064834_AddVisualIntelligenceEntities.Designer.cs`
+- `Aveline.Api/Migrations/AppDbContextModelSnapshot.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Models/CustomerMatch.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Models/InventoryImage.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Models/InventoryItem.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Models/OutfitComposition.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Models/OutfitItem.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Models/SourcingRequest.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Models/Supplier.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/InventoryRepository.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/CustomerMatchRepository.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/SupplierRepository.cs`
+- `Aveline.Api.Tests/VisualIntelligenceEntityConfigurationTests.cs`
+- `agnet-service/tests/golden_cases_visual.py`
+- `agnet-service/tests/test_visual_agent.py`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~Visual"`: 42/42 tests passed in 51s (100% success).
+- `pytest tests/test_visual_agent.py tests/test_visual_insight_schemas.py tests/test_visual_routing.py tests/test_product_analysis_cache.py tests/test_inventory_search_cache.py`: 33/33 tests passed in 8.65s (100% success).
+- `pytest tests/`: 294 passed, 2 skipped in 146.53s (100% success).
+
+
+
+

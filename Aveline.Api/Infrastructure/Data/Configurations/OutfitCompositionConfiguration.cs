@@ -8,23 +8,26 @@ public class OutfitCompositionConfiguration : IEntityTypeConfiguration<OutfitCom
 {
     public void Configure(EntityTypeBuilder<OutfitComposition> builder)
     {
-        builder.ToTable("Outfit_Compositions");
+        builder.ToTable("outfit_compositions");
 
         builder.HasKey(x => x.Id);
 
         builder.Property(x => x.OrgId)
             .IsRequired();
 
-        builder.Property(x => x.CustomerId)
-            .IsRequired();
+        builder.Property(x => x.Name)
+            .IsRequired()
+            .HasMaxLength(200);
 
         builder.Property(x => x.Occasion)
             .IsRequired()
             .HasMaxLength(100);
 
         builder.Property(x => x.TotalPrice)
-            .HasPrecision(18, 2)
+            .HasPrecision(12, 2)
             .IsRequired();
+
+        builder.Property(x => x.CustomerId);
 
         builder.Property(x => x.StyleNotes)
             .HasMaxLength(2000);
@@ -33,10 +36,10 @@ public class OutfitCompositionConfiguration : IEntityTypeConfiguration<OutfitCom
             .IsRequired();
 
         builder.HasMany(x => x.Items)
-            .WithOne()
-            .HasForeignKey(i => i.OutfitCompositionId)
+            .WithOne(i => i.Outfit)
+            .HasForeignKey(i => i.OutfitId)
             .OnDelete(DeleteBehavior.Cascade);
 
-        builder.HasIndex(x => new { x.OrgId, x.CustomerId });
+        builder.HasIndex(x => x.OrgId).HasDatabaseName("idx_outfits_org");
     }
 }

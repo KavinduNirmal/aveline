@@ -22,6 +22,15 @@ control as an audit trail.
 | `ADR-008-jwt-token-strategy.md` | JWT strategy — Clerk custom template `jwt-aveline-v1` and its role claims |
 | `ADR-009-internal-service-authentication.md` | Internal service-to-service auth via `X-Internal-Token` |
 | `ADR-010-usage-tracking-architecture.md` | Blossom usage tracking — two-table design, .NET API as recording owner, token-based normalization |
+| `ADR-011-credential-encryption.md` | AES-256-GCM encryption of tenant integration credentials |
+| `ADR-012-invitation-code-lifecycle.md` | One-time staff invitation code lifecycle |
+| `ADR-013-notification-service-architecture.md` | Notification gateway + channel adapters (SignalR realtime, FCM push, email) |
+| `ADR-014-redis-pubsub-event-bus.md` | Redis Pub/Sub event bus for API–agent decoupling (reusable `IEventBus` abstraction) |
+| `ADR-015-whatsapp-integration-gateway.md` | WhatsApp integration gateway — additive status lifecycle, `IWhatsAppService` provider, HMAC-verified webhook, health service |
+| `ADR-016-conversation-inbox.md` | The Salon — unified agent-to-staff conversation inbox with typed rich messages, persona authors, threaded replies, and LangGraph `threadId` linkage |
+| `ADR-017-memory-pgvector-embeddings.md` | Customer memory semantics — OpenAI `text-embedding-3-small` 1536-d embeddings, pgvector column kept outside the EF model, cosine search in the .NET API via raw SQL + Testcontainers |
+| `ADR-018-realtime-conversation-delivery.md` | The Salon realtime delivery model — batched `message.created` cards + `agent.status` lifecycle (no token streaming yet); SignOff LangGraph resume and real specialist sub-graphs deferred |
+| `ADR-019-entity-mentions.md` | Explicit entity mentions (`@name`, `#phone`, …) for deterministic customer resolution; free-text extraction kept as fallback |
 
 ## ADR Template
 

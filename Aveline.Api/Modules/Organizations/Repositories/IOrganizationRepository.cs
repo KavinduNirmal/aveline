@@ -40,4 +40,12 @@ public interface IOrganizationRepository
     Task<IReadOnlyList<OrganizationMembership>> ListMembershipsForOrganizationAsync(
         Guid organizationId,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Returns the <see cref="MembershipStatus.Active"/> memberships of an organization,
+    /// with the <see cref="OrganizationMembership.User"/> navigation populated.
+    /// </summary>
+    Task<IReadOnlyList<OrganizationMembership>> GetActiveMembersAsync(
+        Guid organizationId,
+        CancellationToken cancellationToken = default);
 }

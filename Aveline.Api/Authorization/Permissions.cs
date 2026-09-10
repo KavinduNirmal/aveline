@@ -12,6 +12,7 @@ public static class Permissions
     public const string PaymentsRefund = "payments:refund";
     public const string ReportsView = "reports:view";
     public const string SettingsManage = "settings:manage";
+    public const string ConversationsView = "conversations:view";
 
     public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -22,21 +23,22 @@ public static class Permissions
         PaymentsRefund,
         ReportsView,
         SettingsManage,
+        ConversationsView,
     };
 
     private static readonly IReadOnlyDictionary<string, IReadOnlySet<string>> RolePermissions =
         new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal)
         {
-            [Roles.Staff] = Grant(CatalogView),
-            [Roles.CustomerRelations] = Grant(CatalogView, CustomersView),
-            [Roles.Moderator] = Grant(CatalogView, CustomersView, ApprovalsApprove),
+            [Roles.Staff] = Grant(CatalogView, ConversationsView),
+            [Roles.CustomerRelations] = Grant(CatalogView, CustomersView, ConversationsView),
+            [Roles.Moderator] = Grant(CatalogView, CustomersView, ApprovalsApprove, ConversationsView),
             [Roles.Admin] = All,
             [Roles.Owner] = All,
 
-            [Roles.BoutiqueStaff] = Grant(CatalogView, CustomersView),
-            [Roles.BoutiqueManager] = Grant(CatalogView, CustomersView, CatalogManage, ReportsView),
+            [Roles.BoutiqueStaff] = Grant(CatalogView, CustomersView, ConversationsView),
+            [Roles.BoutiqueManager] = Grant(CatalogView, CustomersView, CatalogManage, ReportsView, ConversationsView),
             [Roles.BoutiqueSupervisor] = Grant(
-                CatalogView, CustomersView, CatalogManage, ApprovalsApprove, ReportsView),
+                CatalogView, CustomersView, CatalogManage, ApprovalsApprove, ReportsView, ConversationsView),
             [Roles.BoutiqueOwner] = All,
         };
 

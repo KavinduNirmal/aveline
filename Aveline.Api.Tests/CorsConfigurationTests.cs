@@ -32,6 +32,10 @@ public class CorsConfigurationTests
         Assert.Equal(
             new[] { "http://localhost:5173", "https://app.aveline.dev" },
             policy!.Origins);
+
+        // SignalR's browser client sends credentials (cookies) by default
+        // (xhr.withCredentials = true), so the policy must allow credentials.
+        Assert.True(policy!.SupportsCredentials);
     }
 
     [Fact]

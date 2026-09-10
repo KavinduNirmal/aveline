@@ -49,6 +49,11 @@ export const DOCS_SECTIONS: DocSection[] = [
     heading: 'Platform & Security',
     pages: [
       {
+        slug: 'integrations',
+        title: 'Integrations',
+        description: 'Connect WhatsApp, Instagram, and your payment gateway.',
+      },
+      {
         slug: 'admin-access',
         title: 'Admin Access',
         description: 'Tenant administration, elevated access requests, and audits.',

@@ -10,7 +10,12 @@ using Aveline.Api.Modules.Admin.Repositories;
 using Aveline.Api.Modules.Admin.Services;
 using Aveline.Api.Modules.Billing;
 using Aveline.Api.Modules.Billing.Endpoints;
+using Aveline.Api.Modules.Conversations;
+using Aveline.Api.Modules.Conversations.Hubs;
+using Aveline.Api.Modules.CustomerConcierge;
 using Aveline.Api.Modules.Integrations;
+using Aveline.Api.Modules.Notifications;
+using Aveline.Api.Modules.Notifications.Hubs;
 using Aveline.Api.Modules.Organizations.Repositories;
 using Aveline.Api.Modules.Organizations.Services;
 using Aveline.Api.Modules.Shared.Repositories;
@@ -26,13 +31,25 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 builder.Services.AddAvelineLogging(builder.Configuration);
 builder.Services.AddAvelineDatabase(builder.Configuration);
 builder.Services.AddAvelineCache(builder.Configuration);
+builder.Services.AddAvelineEventing(builder.Configuration);
 builder.Services.AddAvelineAuthentication(builder.Configuration);
 builder.Services.AddAvelineAuthorization();
 builder.Services.AddAvelineCors(builder.Configuration);
 builder.Services.AddAgentServiceClient(builder.Configuration);
 builder.Services.AddClerkAdminClient();
+builder.Services.AddWhatsAppProvider(builder.Configuration);
 builder.Services.AddBillingModule();
 builder.Services.AddIntegrationsModule();
+builder.Services.AddSignalR()
+    .AddJsonProtocol(options =>
+    {
+        // Serialize NotificationType as its name (e.g. "PaymentConfirmed") so the
+        // ReceiveNotification payload matches the documented client contract.
+        options.PayloadSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+    });
+builder.Services.AddNotificationsModule(builder.Configuration);
+builder.Services.AddConversationsModule(builder.Configuration);
+builder.Services.AddCustomerConciergeModule();
 
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IUserCacheService, UserCacheService>();
@@ -51,6 +68,7 @@ builder.Services.AddScoped<IOnboardingService, OnboardingService>();
 
 // Commerce Module (Slice 3)
 builder.Services.AddScoped<Aveline.Api.Modules.Commerce.Repositories.IBusinessRulesRepository, Aveline.Api.Modules.Commerce.Repositories.BusinessRulesRepository>();
+builder.Services.AddScoped<Aveline.Api.Modules.Commerce.Services.IBusinessRulesService, Aveline.Api.Modules.Commerce.Services.BusinessRulesService>();
 
 var app = builder.Build();
 
@@ -67,18 +85,29 @@ app.UseAuthorization();
 app.UseAvelineAuthAudit();
 app.UseAvelineOnboarding();
 
+app.MapHub<NotificationHub>("/hubs/notifications");
+app.MapHub<ConversationHub>("/hubs/conversations");
+// Health checks are public (the fallback authorization policy requires auth by default).
+app.MapHealthChecks("/health").AllowAnonymous();
+
 var v1 = app.MapGroup("/api/v1");
 v1.MapAuthEndpoints();
 v1.MapAuthPolicyDemoEndpoints();
 v1.MapAgentEndpoints();
 v1.MapUserEndpoints();
+v1.MapDeviceTokenEndpoints();
+v1.MapNotificationEndpoints();
 v1.MapAdminEndpoints();
 v1.MapOrganizationEndpoints();
 v1.MapOnboardingEndpoints();
 v1.MapIntegrationEndpoints();
 v1.MapOrgUsageEndpoints();
+v1.MapWebhookEndpoints();
+v1.MapBusinessRulesEndpoints();
+v1.MapConversationEndpoints();
 
 app.MapBillingEndpoints();
+app.MapCustomerConciergeEndpoints();
 
 // Apply EF Core migrations on startup for a fresh/local database. Guarded to the
 // relational (PostgreSQL) provider so the in-memory contexts used by the test suite are

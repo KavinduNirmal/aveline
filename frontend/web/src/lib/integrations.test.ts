@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { IntegrationStatusDto, IntegrationType, SaveIntegrationRequest } from '../types/integration'
+import type {
+  InboundMessageLogDto,
+  IntegrationStatusDto,
+  IntegrationType,
+  SaveIntegrationRequest,
+} from '../types/integration'
 import { integrationRouteSegment } from '../types/integration'
 
 describe('Integrations Contracts', () => {
@@ -24,12 +29,47 @@ describe('Integrations Contracts', () => {
   it('never carries plaintext in the status DTO', () => {
     const status: IntegrationStatusDto = {
       type: 'WhatsApp',
+      status: 'Connected',
       connected: true,
       maskedPreview: '****oken',
       metadata: null,
+      lastConnectedAt: '2026-09-06T00:00:00Z',
+      lastError: null,
       updatedAt: '2026-09-06T00:00:00Z',
     }
     expect(status.maskedPreview).toBe('****oken')
     expect(status).not.toHaveProperty('credentials')
+  })
+
+  it('exposes the lifecycle status fields', () => {
+    const status: IntegrationStatusDto = {
+      type: 'WhatsApp',
+      status: 'Expired',
+      connected: false,
+      maskedPreview: '****oken',
+      metadata: null,
+      lastConnectedAt: null,
+      lastError: 'Token expired',
+      updatedAt: '2026-09-06T00:00:00Z',
+    }
+    expect(status.status).toBe('Expired')
+    expect(status.lastError).toBe('Token expired')
+    expect(status.connected).toBe(false)
+  })
+
+  it('shapes an inbound message log entry without secrets', () => {
+    const log: InboundMessageLogDto = {
+      id: 'log-1',
+      channel: 'whatsapp',
+      direction: 'inbound',
+      externalId: 'wamid.ABC',
+      from: '+94771234567',
+      to: null,
+      content: 'Hi, do you have this in red?',
+      receivedAt: '2026-09-08T00:00:00Z',
+    }
+    expect(log.channel).toBe('whatsapp')
+    expect(log.direction).toBe('inbound')
+    expect(log).not.toHaveProperty('credentials')
   })
 })

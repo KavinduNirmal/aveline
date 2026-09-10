@@ -1,11 +1,12 @@
 import { useClerk, useUser } from '@clerk/react'
 import {
-  Bell,
+  BarChart3,
   ChevronsUpDown,
   ClipboardCheck,
   CreditCard,
   LayoutDashboard,
   LogOut,
+  MessageSquare,
   Plus,
   Settings,
   Share2,
@@ -20,9 +21,16 @@ import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { Blossom } from '@/components/auth/Blossom'
+import { AvelineChatDrawer } from '@/components/conversation/AvelineChatDrawer'
+import { AvelineChatLauncher } from '@/components/conversation/AvelineChatLauncher'
+import { SalonPanel } from '@/components/conversation/SalonPanel'
 import { Overview } from '@/components/dashboard/Overview'
 import { SectionPlaceholder } from '@/components/dashboard/SectionPlaceholder'
 import { TeamManagement } from '@/components/dashboard/TeamManagement'
+import { IntegrationsPanel } from '@/components/dashboard/IntegrationsPanel'
+import { NotificationBell } from '@/components/dashboard/NotificationBell'
+import { UsagePanel } from '@/components/dashboard/UsagePanel'
+import { ConversationsProvider } from '@/contexts/ConversationsContext'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -44,11 +52,14 @@ import type {
 
 type SectionId =
   | 'overview'
+  | 'salon'
   | 'customers'
   | 'catalog'
   | 'approvals'
   | 'integrations'
   | 'team'
+  | 'usage'
+  | 'billing'
   | 'settings'
 
 interface SectionDef {
@@ -62,11 +73,14 @@ interface SectionDef {
 
 const SECTIONS: SectionDef[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { id: 'salon', label: 'Salon', icon: MessageSquare },
   { id: 'customers', label: 'Customers', icon: Users, placeholder: 'Customer concierge & memory', permission: 'customers:view' },
   { id: 'catalog', label: 'Catalog', icon: Shirt, placeholder: 'Visual intelligence & sourcing', permission: 'catalog:view' },
   { id: 'approvals', label: 'Approvals', icon: ClipboardCheck, placeholder: 'Commerce approvals', permission: 'approvals:approve' },
   { id: 'integrations', label: 'Integrations', icon: Share2, placeholder: 'Channel connections', permission: 'settings:manage' },
   { id: 'team', label: 'Team', icon: UserPlus, placeholder: 'Staff & invitations', permission: 'settings:manage' },
+  { id: 'usage', label: 'Usage', icon: BarChart3 },
+  { id: 'billing', label: 'Billing', icon: CreditCard, placeholder: 'Plan, invoices & payment methods' },
   { id: 'settings', label: 'Settings', icon: Settings, placeholder: 'Boutique & plan settings', permission: 'settings:manage' },
 ]
 
@@ -100,6 +114,7 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
   const { signOut } = useClerk()
   const [section, setSection] = useState<SectionId>('overview')
   const [boutiques, setBoutiques] = useState<OrganizationMembership[]>([])
+  const [chatOpen, setChatOpen] = useState(false)
 
   const allowedSections = SECTIONS.filter(
     (item) => !item.permission || hasPermission(role, item.permission),
@@ -140,10 +155,11 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
   const handleSignOut = () => signOut(() => navigate('/sign-in'))
 
   return (
-    <div className="flex min-h-screen bg-background">
-      <aside className="sticky top-0 flex h-screen w-64 shrink-0 flex-col border-r bg-background/60 backdrop-blur-sm">
+    <ConversationsProvider organizationId={organization.id}>
+      <div className="flex min-h-screen bg-background">
+        <aside className="sticky top-0 flex h-screen w-64 shrink-0 flex-col border-r bg-background/60 backdrop-blur-sm">
         {/* Boutique identity */}
-        <div className="flex items-center gap-3 border-b px-4 py-5">
+        <div className="flex h-16 items-center gap-3 border-b px-4">
           <div className="relative size-10 shrink-0 overflow-hidden rounded-full ring-1 ring-primary/20">
             {organization.logoUrl ? (
               <img
@@ -161,9 +177,10 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
             <p className="truncate font-serif text-lg font-medium leading-tight">
               {organization.name}
             </p>
-            <p className="truncate text-xs text-muted-foreground">
-              aveline.app/b/{organization.slug}
-            </p>
+            <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-primary/15 bg-primary/5 px-2 py-0.5 text-[11px] font-medium text-primary">
+              <Sparkles className="size-3" aria-hidden />
+              {organization.planTier} · Blossom plan
+            </span>
           </div>
         </div>
 
@@ -293,12 +310,6 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
                 </select>
               </label>
             )}
-
-            {/* Plan information as a pill */}
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/15 bg-primary/5 px-3 py-1 text-xs font-medium text-primary">
-              <Sparkles className="size-3.5" aria-hidden />
-              {organization.planTier} · Blossom plan
-            </span>
           </div>
 
           {/* Blossom balance + top up + notifications */}
@@ -331,31 +342,24 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
               Top up
             </Button>
 
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" aria-label="Notifications">
-                  <Bell className="size-5" aria-hidden />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-80">
-                <DropdownMenuLabel>Notifications</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <div className="px-3 py-8 text-center text-sm text-muted-foreground">
-                  <p>You're all caught up.</p>
-                  <p className="mt-1 text-xs">
-                    Approvals, Blossom usage, and team activity will appear here.
-                  </p>
-                </div>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <NotificationBell />
+
+            {/* Always-available Aveline chat launcher (header). */}
+            <AvelineChatLauncher open={chatOpen} onOpen={() => setChatOpen(true)} />
           </div>
         </header>
 
         <main className="flex-1 px-6 py-8">
           {activeSection === 'overview' ? (
             <Overview organization={organization} usage={usage} role={role} />
+          ) : activeSection === 'salon' ? (
+            <SalonPanel />
           ) : activeSection === 'team' ? (
             <TeamManagement organization={organization} role={role} />
+          ) : activeSection === 'integrations' ? (
+            <IntegrationsPanel organization={organization} />
+          ) : activeSection === 'usage' ? (
+            <UsagePanel organization={organization} usage={usage} />
           ) : (
             (() => {
               const def = allowedSections.find((s) => s.id === activeSection)
@@ -371,6 +375,10 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
         </main>
 
       </div>
-    </div>
+      </div>
+
+      {/* Slide-in Aveline chat panel, rendered at the shell root so it spans full height. */}
+      <AvelineChatDrawer open={chatOpen} onClose={() => setChatOpen(false)} />
+    </ConversationsProvider>
   )
 }

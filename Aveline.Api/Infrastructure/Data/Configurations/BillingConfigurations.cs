@@ -1,4 +1,5 @@
 using Aveline.Api.Modules.Billing.Models;
+using Aveline.Api.Modules.Organizations.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -37,6 +38,11 @@ public class AiUsageRecordConfiguration : IEntityTypeConfiguration<AiUsageRecord
         builder.Property(r => r.CreatedAt)
             .IsRequired();
 
+        builder.HasOne(r => r.Organization)
+            .WithMany()
+            .HasForeignKey(r => r.OrganizationId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         // Index for querying organization usage history by date
         builder.HasIndex(r => new { r.OrganizationId, r.CreatedAt });
     }
@@ -71,6 +77,11 @@ public class UsageAccountConfiguration : IEntityTypeConfiguration<UsageAccount>
 
         builder.Property(a => a.UpdatedAt)
             .IsRequired();
+
+        builder.HasOne(a => a.Organization)
+            .WithMany()
+            .HasForeignKey(a => a.OrganizationId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         // Unique index ensures one active ledger row per organisation per billing period
         builder.HasIndex(a => new { a.OrganizationId, a.PeriodStart })

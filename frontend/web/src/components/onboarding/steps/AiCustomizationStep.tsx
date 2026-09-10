@@ -71,7 +71,7 @@ export function AiCustomizationStep() {
                   onValueChange={(val) => {
                     if (val) patch({ brandVoice: val })
                   }}
-                  className="flex flex-wrap gap-2 justify-start"
+                  className="flex flex-wrap justify-start"
                 >
                   {BRAND_VOICE_OPTIONS.map((tone) => (
                     <ToggleGroupItem key={tone} value={tone} variant="outline" size="sm">

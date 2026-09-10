@@ -1,3 +1,5 @@
+using Aveline.Api.Modules.Organizations.Models;
+
 namespace Aveline.Api.Modules.Integrations.Models;
 
 /// <summary>
@@ -22,7 +24,19 @@ public class IntegrationCredential
     /// <summary>Optional non-sensitive metadata (JSON), e.g. WhatsApp phone number or token expiry.</summary>
     public string? Metadata { get; set; }
 
+    /// <summary>Lifecycle state of the integration (see <see cref="IntegrationStatus"/>).</summary>
+    public IntegrationStatus Status { get; set; } = IntegrationStatus.Pending;
+
+    /// <summary>UTC instant the integration was last successfully validated/connected.</summary>
+    public DateTime? LastConnectedAt { get; set; }
+
+    /// <summary>Last error message (non-secret) when the integration is in an error/expired state.</summary>
+    public string? LastError { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>Owning boutique.</summary>
+    public Organization? Organization { get; set; }
 }

@@ -32,6 +32,7 @@ public static class CorsConfiguration
         {
             options.AddPolicy(DefaultPolicy, policy =>
                 policy.WithOrigins(allowedOrigins)
+                      .AllowCredentials()
                       .AllowAnyHeader()
                       .AllowAnyMethod()
                       .WithExposedHeaders("X-Completed-Onboarding", "X-Account-State"));

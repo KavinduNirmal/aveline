@@ -24,6 +24,15 @@ public interface IIntegrationCredentialRepository
         IntegrationType type,
         string encryptedValue,
         string? metadata,
+        IntegrationStatus status,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Updates the lifecycle state of an existing integration row.</summary>
+    Task UpdateStatusAsync(
+        Guid organizationId,
+        IntegrationType type,
+        IntegrationStatus status,
+        string? lastError = null,
         CancellationToken cancellationToken = default);
 
     Task<bool> DeleteAsync(

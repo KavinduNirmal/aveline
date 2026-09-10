@@ -72,6 +72,153 @@ namespace Aveline.Api.Migrations
                     b.ToTable("AdminApprovalRequests");
                 });
 
+            modelBuilder.Entity("Aveline.Api.Modules.Attendance.Models.TimeEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("ClockInAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ClockOutAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("UserId")
+                        .IsUnique()
+                        .HasFilter("\"ClockOutAt\" IS NULL");
+
+                    b.HasIndex("UserId", "ClockInAt");
+
+                    b.ToTable("TimeEntries", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Billing.Models.AiUsageRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("ActualCostUsd")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("numeric(18,8)");
+
+                    b.Property<decimal>("BlossomUnits")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<int>("CachedTokens")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("InputTokens")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("OutputTokens")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("RequestId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("WorkflowId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "CreatedAt");
+
+                    b.ToTable("AiUsageRecords", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Billing.Models.UsageAccount", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("ActiveCustomerCount")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("BlossomRemaining")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<decimal>("BlossomUsed")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<decimal>("MonthlyBlossomLimit")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("PeriodEnd")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("PeriodStart")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("StaffCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "PeriodStart")
+                        .IsUnique();
+
+                    b.ToTable("UsageAccounts", (string)null);
+                });
+
             modelBuilder.Entity("Aveline.Api.Modules.Commerce.Models.ApprovalQueueEntry", b =>
                 {
                     b.Property<Guid>("Id")
@@ -82,6 +229,9 @@ namespace Aveline.Api.Migrations
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
+
+                    b.Property<Guid?>("ConversationId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -112,12 +262,18 @@ namespace Aveline.Api.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
+                    b.Property<string>("ThreadId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<bool>("ThresholdExceeded")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")
                         .HasDefaultValue(true);
 
                     b.HasKey("Id");
+
+                    b.HasIndex("DecidedBy");
 
                     b.HasIndex("OrderId");
 
@@ -300,6 +456,8 @@ namespace Aveline.Api.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CreatedBy");
+
                     b.HasIndex("CustomerId");
 
                     b.HasIndex("OrganizationId");
@@ -421,11 +579,775 @@ namespace Aveline.Api.Migrations
                     b.ToTable("Payments", (string)null);
                 });
 
+            modelBuilder.Entity("Aveline.Api.Modules.Conversations.Models.Conversation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CustomerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ExternalRef")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("LastMessageAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ThreadId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("ThreadId")
+                        .IsUnique();
+
+                    b.HasIndex("OrganizationId", "CustomerId", "Kind");
+
+                    b.ToTable("Conversations", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Conversations.Models.Message", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AuthorAgentKey")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("AuthorKind")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("AuthorUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ContentBlocksJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("ContentHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("ReplyToMessageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("TraceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("WorkflowRunId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConversationId", "CreatedAt");
+
+                    b.ToTable("Messages", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Conversations.Models.SignOffDecision", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("Approved")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("DecidedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("DecidedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("MessageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MessageId");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.ToTable("SignOff_Decisions", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.Customer", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Email")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("FullName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTime?>("LastVisitAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PhoneNumber")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("new");
+
+                    b.Property<decimal>("TotalSpent")
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasDefaultValue(0m);
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("VisitCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedBy");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("OrganizationId", "PhoneNumber")
+                        .IsUnique();
+
+                    b.ToTable("Customers", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.CustomerConsent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ConsentGrantedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ConsentRevokedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ConsentStatus")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("pending");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RevokeToken")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CustomerId");
+
+                    b.HasIndex("OrganizationId", "CustomerId")
+                        .IsUnique();
+
+                    b.ToTable("Customer_Consent", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.CustomerEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTime>("EventDate")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("other");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true);
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ReminderSentAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CustomerId");
+
+                    b.HasIndex("EventDate");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.ToTable("Customer_Events", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.CustomerInteraction", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("whatsapp");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Direction")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("inbound");
+
+                    b.Property<string>("MessageContent")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ParsedIntentJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("{}");
+
+                    b.Property<Guid?>("StaffMemberId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Channel");
+
+                    b.HasIndex("CustomerId");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("StaffMemberId");
+
+                    b.HasIndex("CustomerId", "CreatedAt");
+
+                    b.ToTable("Customer_Interactions", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.CustomerMemory", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("fact");
+
+                    b.Property<decimal>("Confidence")
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(3, 2)
+                        .HasColumnType("numeric(3,2)")
+                        .HasDefaultValue(0.50m);
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsExplicit")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<string>("MetadataJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("{}");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("conversation");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Category");
+
+                    b.HasIndex("CustomerId");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.ToTable("Customer_Memory", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.CustomerPreference", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("Confidence")
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(3, 2)
+                        .HasColumnType("numeric(3,2)")
+                        .HasDefaultValue(0.50m);
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsExplicit")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PreferenceKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("PreferenceValue")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("conversation");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CustomerId");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("CustomerId", "PreferenceKey");
+
+                    b.ToTable("Customer_Preferences", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.CustomerTag", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Tag")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CustomerId");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("CustomerId", "Tag")
+                        .IsUnique();
+
+                    b.ToTable("Customer_Tags", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Integrations.Models.InboundMessageLog", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("Content")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Direction")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("ExternalId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("From")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("ReceivedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("To")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("OrganizationId", "ReceivedAt");
+
+                    b.ToTable("InboundMessageLogs", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Integrations.Models.IntegrationCredential", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EncryptedValue")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("IntegrationType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTime?>("LastConnectedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Metadata")
+                        .HasColumnType("jsonb");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("OrganizationId", "IntegrationType")
+                        .IsUnique();
+
+                    b.ToTable("IntegrationCredentials", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Notifications.Models.NotificationDelivery", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("AttemptedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Channel")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("NotificationRecordId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NotificationRecordId");
+
+                    b.ToTable("NotificationDeliveries");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Notifications.Models.NotificationRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DataJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.ToTable("NotificationRecords", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Notifications.Models.UserDeviceToken", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Platform")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Token")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Token")
+                        .IsUnique();
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("UserDeviceTokens", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Notifications.Models.UserNotification", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeliveredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DismissedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("NotificationRecordId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ReadAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NotificationRecordId");
+
+                    b.HasIndex("UserId", "DismissedAt", "ReadAt");
+
+                    b.ToTable("UserNotifications", (string)null);
+                });
+
             modelBuilder.Entity("Aveline.Api.Modules.Organizations.Models.Organization", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
+
+                    b.Property<string>("Address")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("BrandVoice")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("BusinessRules")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
 
                     b.Property<string>("ClerkOrgId")
                         .HasMaxLength(64)
@@ -434,18 +1356,55 @@ namespace Aveline.Api.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("CustomerPreferences")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<bool>("HasCompletedOnboarding")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
                     b.Property<bool>("IsActive")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")
                         .HasDefaultValue(true);
+
+                    b.Property<string>("LogoUrl")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
 
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
+                    b.Property<int>("OnboardingStep")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(2);
+
                     b.Property<Guid>("OwnerUserId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("PhoneNumber")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("PlanTier")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("Seed");
+
+                    b.Property<string>("PreferredColorsFabrics")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
 
                     b.Property<string>("Slug")
                         .IsRequired()
@@ -675,8 +1634,54 @@ namespace Aveline.Api.Migrations
                     b.ToTable("Users", (string)null);
                 });
 
+            modelBuilder.Entity("Aveline.Api.Modules.Attendance.Models.TimeEntry", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Aveline.Api.Modules.Shared.Models.User", "User")
+                        .WithMany("TimeEntries")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Organization");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Billing.Models.AiUsageRecord", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Billing.Models.UsageAccount", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Organization");
+                });
+
             modelBuilder.Entity("Aveline.Api.Modules.Commerce.Models.ApprovalQueueEntry", b =>
                 {
+                    b.HasOne("Aveline.Api.Modules.Shared.Models.User", "DecidedByUser")
+                        .WithMany()
+                        .HasForeignKey("DecidedBy")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("Aveline.Api.Modules.Commerce.Models.Order", "Order")
                         .WithMany("Approvals")
                         .HasForeignKey("OrderId")
@@ -688,6 +1693,8 @@ namespace Aveline.Api.Migrations
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.Navigation("DecidedByUser");
 
                     b.Navigation("Order");
 
@@ -726,11 +1733,18 @@ namespace Aveline.Api.Migrations
 
             modelBuilder.Entity("Aveline.Api.Modules.Commerce.Models.Order", b =>
                 {
+                    b.HasOne("Aveline.Api.Modules.Shared.Models.User", "CreatedByUser")
+                        .WithMany()
+                        .HasForeignKey("CreatedBy")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
                         .WithMany()
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.Navigation("CreatedByUser");
 
                     b.Navigation("Organization");
                 });
@@ -771,6 +1785,211 @@ namespace Aveline.Api.Migrations
                     b.Navigation("Order");
 
                     b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Conversations.Models.Conversation", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Conversations.Models.Message", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.Conversations.Models.Conversation", "Conversation")
+                        .WithMany("Messages")
+                        .HasForeignKey("ConversationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Conversation");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.Customer", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.Shared.Models.User", "CreatedByUser")
+                        .WithMany()
+                        .HasForeignKey("CreatedBy")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("CreatedByUser");
+
+                    b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.CustomerConsent", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.CustomerConcierge.Models.Customer", "Customer")
+                        .WithMany("Consents")
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Customer");
+
+                    b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.CustomerEvent", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.CustomerConcierge.Models.Customer", "Customer")
+                        .WithMany("Events")
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Customer");
+
+                    b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.CustomerInteraction", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.CustomerConcierge.Models.Customer", "Customer")
+                        .WithMany("Interactions")
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Aveline.Api.Modules.Shared.Models.User", "StaffMember")
+                        .WithMany()
+                        .HasForeignKey("StaffMemberId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Customer");
+
+                    b.Navigation("Organization");
+
+                    b.Navigation("StaffMember");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.CustomerMemory", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.CustomerConcierge.Models.Customer", "Customer")
+                        .WithMany("Memories")
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Customer");
+
+                    b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.CustomerPreference", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.CustomerConcierge.Models.Customer", "Customer")
+                        .WithMany("Preferences")
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Customer");
+
+                    b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.CustomerTag", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.CustomerConcierge.Models.Customer", "Customer")
+                        .WithMany("Tags")
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Customer");
+
+                    b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Integrations.Models.IntegrationCredential", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Notifications.Models.NotificationDelivery", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.Notifications.Models.NotificationRecord", "Notification")
+                        .WithMany("Deliveries")
+                        .HasForeignKey("NotificationRecordId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Notification");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Notifications.Models.NotificationRecord", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Notifications.Models.UserNotification", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.Notifications.Models.NotificationRecord", "Notification")
+                        .WithMany()
+                        .HasForeignKey("NotificationRecordId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Notification");
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Organizations.Models.Organization", b =>
@@ -837,11 +2056,41 @@ namespace Aveline.Api.Migrations
                     b.Navigation("Payments");
                 });
 
+            modelBuilder.Entity("Aveline.Api.Modules.Conversations.Models.Conversation", b =>
+                {
+                    b.Navigation("Messages");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.Customer", b =>
+                {
+                    b.Navigation("Consents");
+
+                    b.Navigation("Events");
+
+                    b.Navigation("Interactions");
+
+                    b.Navigation("Memories");
+
+                    b.Navigation("Preferences");
+
+                    b.Navigation("Tags");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Notifications.Models.NotificationRecord", b =>
+                {
+                    b.Navigation("Deliveries");
+                });
+
             modelBuilder.Entity("Aveline.Api.Modules.Organizations.Models.Organization", b =>
                 {
                     b.Navigation("Invitations");
 
                     b.Navigation("Memberships");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Shared.Models.User", b =>
+                {
+                    b.Navigation("TimeEntries");
                 });
 #pragma warning restore 612, 618
         }

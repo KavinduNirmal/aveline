@@ -4,11 +4,14 @@ uvicorn
 
 # LangGraph & LangChain
 langgraph
+langgraph-checkpoint-postgres
 langchain
 langchain-openai
+langchain-deepseek
 langchain-community
 
 # Database
+psycopg[binary]
 psycopg2-binary
 pgvector
 sqlalchemy[asyncio]
@@ -22,5 +25,15 @@ python-dotenv
 # HTTP client
 httpx
 
+# Redis (event bus, ADR-014)
+redis
+
 # LLM provider
 openai
+
+# Observability (OpenTelemetry)
+opentelemetry-sdk
+opentelemetry-exporter-otlp-proto-http
+opentelemetry-instrumentation-fastapi
+opentelemetry-instrumentation-httpx
+opentelemetry-instrumentation-langchain

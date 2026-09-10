@@ -1,31 +1,54 @@
 # Tests — Aveline
 
-This folder documents the testing strategy and how to run the test suites for the
-Aveline platform.
+This folder documents the testing strategy, how to run each test suite, and the
+coverage tooling for the Aveline platform.
 
 ---
 
 ## 1. Test Layers
 
-| Layer | Scope | Tools | Location |
-|---|---|---|---|
-| **Unit** | JWT validation rules, role normalization, authorization policies, permission handler, CORS, internal-auth handler, typed agent client, DI registration | xUnit (C#) | `Aveline.Api.Tests/` |
-| **Unit** | Internal-token middleware (valid / missing / invalid / unconfigured), `/agents/ping`, user-context logging | pytest + FastAPI TestClient | `agnet-service/tests/` |
-| **Integration** | Full auth flow: frontend JWT → backend validation (real JwtBearer + JWKS pipeline) → internal-token call to agent → response + identity propagation | xUnit + WebApplicationFactory + stub servers | `Aveline.Api.Tests/FullAuthFlowIntegrationTests.cs` |
+Aveline tests four independent codebases, one per technology stack:
 
-> The Python-side internal-token enforcement and the backend→agent contract are also
-> exercised end-to-end manually against the live dev stack (see `docs/ai-usage/` and
-> the ADRs).
+| Layer | Stack | Tools | Location |
+|---|---|---|---|
+| **Backend API** | ASP.NET Core 10 (C#) | xUnit + Moq + `WebApplicationFactory` + Coverlet | `Aveline.Api.Tests/` |
+| **Agent Service** | Python 3.12 + FastAPI + LangGraph | pytest + `pytest-asyncio` + `pytest-cov` + respx + fakeredis | `agnet-service/tests/` |
+| **Web Dashboard** | React 19 + TypeScript (Vite) | Vitest + `@vitest/coverage-v8` | `frontend/web/src/**/*.test.ts(x)` |
+| **Mobile App** | Flutter (Dart) | `flutter_test` | `frontend/aveline_mobile/test/` |
 
 ---
 
 ## 2. Backend Tests (`Aveline.Api.Tests/`)
+
+283 test cases across 49 files. Two distinct approaches:
+
+- **Unit tests** — exercise a single class in isolation, with collaborators mocked
+  via **Moq** (e.g. `OrganizationServiceTests`, `CredentialEncryptionServiceTests`,
+  `EventingRedisTests`).
+- **Integration tests** — boot the real app with
+  `WebApplicationFactory<Program>` against an **in-memory EF Core database**
+  (`UseInMemoryDatabase`), with external dependencies replaced by stub servers
+  and fake stores (see §5).
+
+Shared test infrastructure:
+
+| File | Purpose |
+|---|---|
+| `StubServers.cs` | In-process `StubAuthServer` (real OIDC/JWKS discovery on an ephemeral port) and `StubAgentServer` (echoes the internal token), both `IAsyncDisposable` |
+| `CapturingHttpMessageHandler.cs` | Captures/asserts outbound HTTP requests made by typed clients |
+| `TestInvitationCodeStore.cs` | In-memory fake of the distributed invitation code store |
 
 ### Run
 
 ```bash
 dotnet test Aveline.Api/Aveline.Api.sln
 ```
+
+Two of the Customer Concierge test classes (`CustomerMemoryRepositoryPostgresTests`,
+`CustomerConciergeSearchPostgresTests`) spin up a disposable **pgvector PostgreSQL container**
+via `Testcontainers` and run the real migrations — the in-memory provider cannot exercise the
+pgvector `vector(1536)` column. These require a Docker daemon (present on CI's
+`build-api` ubuntu runners).
 
 ### Coverage
 
@@ -35,40 +58,107 @@ dotnet test Aveline.Api/Aveline.Api.sln --collect:"XPlat Code Coverage"
 
 Reports are written to `Aveline.Api.Tests/TestResults/` (gitignored).
 
-### Files
+### Files (grouped by module)
 
-| File | Covers |
+| Module | Files |
 |---|---|
-| `JwtValidationTests.cs` | `AuthenticationConfiguration.BuildTokenValidationParameters` — valid, wrong key, expired, not-yet-valid, wrong issuer, missing `aud`, mismatched audience, missing role claims |
-| `RoleClaimNormalizerTests.cs` | `RoleClaimNormalizer.PromoteRoleClaims` — `user_role`/`org_role` promotion, no-role, empty value, no duplication, null identity |
-| `AuthorizationPolicyTests.cs` | `AuthorizationConfiguration` role policies (`Associates`/`Managers`/`Owners`) and permission policies (`approvals:approve`, `payments:refund`, `catalog:view`, `settings:manage`) — allowed + denied cases |
-| `AuthenticationConfigurationTests.cs` | Bearer scheme registration; throws when `Clerk:Authority` missing |
-| `CorsConfigurationTests.cs` | CORS policy origins allow-list; throws when origins missing/empty |
-| `ServiceToServiceAuthTests.cs` | `InternalServiceAuthHandler` adds `X-Internal-Token` (+ throws when unset); `AgentServiceClient` path routing; `AddAgentServiceClient` registration |
-| `FullAuthFlowIntegrationTests.cs` | **Integration** — full flow described below |
+| **Authentication & Authorization** | `JwtValidationTests`, `RoleClaimNormalizerTests`, `AuthorizationPolicyTests`, `AuthenticationConfigurationTests`, `CorsConfigurationTests`, `ServiceToServiceAuthTests`, `FullAuthFlowIntegrationTests` |
+| **Organizations & Invitations** | `OrganizationServiceTests`, `OrganizationRepositoryTests`, `OrganizationRecipientResolverTests`, `OrganizationEndpointsIntegrationTests`, `OrganizationAuthorizationIntegrationTests`, `OrganizationInvitationLifecycleTests`, `OrganizationProfileEndpointsIntegrationTests`, `InvitationManagementEndpointsIntegrationTests`, `InvitationAcceptRateLimitIntegrationTests`, `DistributedInvitationCodeStoreTests` |
+| **Onboarding** | `OnboardingServiceTests`, `OnboardingMiddlewareTests`, `OnboardingEndpointsIntegrationTests` |
+| **Users** | `UserServiceTests`, `UserRepositoryTests`, `UserCacheServiceTests`, `UserEndpointsIntegrationTests` |
+| **Commerce / Approvals** | `AdminApprovalFlowIntegrationTests` |
+| **Customer Concierge & Memory (Slice 1)** | `CustomerConciergeEntityConfigurationTests`, `CustomerConciergeRepositoryTests`, `CustomerConciergeServiceTests`, `CustomerConciergeEndpointsIntegrationTests`, `CustomerMemoryRepositoryPostgresTests` (Testcontainers), `CustomerConciergeSearchPostgresTests` (Testcontainers) |
+| **Notifications** | `NotificationDispatcherTests`, `NotificationRepositoryTests`, `UserNotificationRepositoryTests`, `ChannelRouterTests`, `EmailServiceTests`, `FcmPushChannelTests`, `LoggingNotificationChannelsTests`, `NotificationHubTests`, `SignalRRealtimeChannelTests`, `NotificationEndpointsIntegrationTests`, `NotificationHubIntegrationTests`, `DeviceTokenEndpointsIntegrationTests`, `DeviceTokenRepositoryTests` |
+| **Eventing** | `EventingTests`, `EventingRedisTests` |
+| **Integrations** | `IntegrationServiceTests`, `IntegrationEndpointsIntegrationTests` |
+| **Usage** | `UsageTrackerServiceTests`, `UsageEndpointsIntegrationTests` |
+| **Security / Resilience** | `CredentialEncryptionServiceTests`, `DistributedRateLimiterTests` |
 
 ---
 
 ## 3. Python Tests (`agnet-service/tests/`)
 
-### Run (from `agnet-service/` or repo root)
+186 test functions across the top-level files plus the Customer Memory Agent suite. The
+`agents/` and `tools/` subfolders describe the intended graph/tool test layout (see their
+`README.md` files); the Customer Memory Agent (Slice 1) sub-graph is tested in
+`test_customer_memory_agent.py`.
+
+Approach:
+
+- **Endpoint tests** use `fastapi.testclient.TestClient` against the real FastAPI
+  `app` (e.g. `test_internal_auth.py`, `test_agents_warmup.py`).
+- **External HTTP** is mocked with `respx` (`test_usage_reporter.py`).
+- **Redis** is faked with `fakeredis.aioredis` (`test_event_bus.py`).
+- Async tests rely on `pytest-asyncio` with `asyncio_mode = auto`.
+
+### Run
 
 ```bash
 pytest agnet-service/tests/ -v
 ```
 
 Configuration lives in `agnet-service/pyproject.toml` (`[tool.pytest.ini_options]`:
-`testpaths`, `pythonpath`, `asyncio_mode=auto`).
+`testpaths = ["tests"]`, `pythonpath = ["."]`, `asyncio_mode = "auto"`).
 
 ### Files
 
 | File | Covers |
 |---|---|
-| `test_internal_auth.py` | `/health` public; `/agents/ping` missing/invalid token → 401, valid → 200 + echo; logs forwarded user context; dependency-level valid/missing/invalid; unconfigured token → 500 |
+| `test_internal_auth.py` | `/health` public; `/agents/ping` missing/invalid token → 401, valid → 200 + echo; forwarded user context; dependency-level valid/missing/invalid; unconfigured token → 500 |
+| `test_agents_warmup.py` | `/agents/warmup` internal-token enforcement (missing/invalid → 401, valid → 200) |
+| `test_event_bus.py` | `channel_for`/`pattern_for` channel naming, `EventEnvelope` defaults + snake_case JSON serialization, publish/subscribe over fake Redis |
+| `test_usage_reporter.py` | `report_usage` success path and error handling with `respx`-mocked HTTP |
+| `test_customer_memory_schemas.py` | Memory-agent Pydantic I/O schemas (intent, memories, events, output) + extra-field rejection |
+| `test_customer_memory_agent.py` | Memory sub-graph golden cases against a fake `ToolRegistry` (wedding, revoked consent, missing context, preference extraction) + rule parsing |
+| `test_tool_registry.py` | Shared `ToolRegistry`/`InternalApiClient` routing for memory endpoints against a mocked HTTP client |
 
 ---
 
-## 4. Integration Test — Full Auth Flow (`FullAuthFlowIntegrationTests`)
+## 4. Web Dashboard Tests (`frontend/web/`)
+
+Vitest (node environment, no jsdom) across 13 files covering the `lib/` service
+layer and React contexts. Component/context rendering uses `renderToString` from
+`react-dom/server`; heavy dependencies (`@clerk/react`, `sonner`,
+`@microsoft/signalr`) are stubbed with `vi.mock` + `vi.hoisted`.
+
+### Run
+
+```bash
+bun run test            # vitest run
+bun run test:coverage   # with coverage thresholds
+```
+
+### Files
+
+| File | Covers |
+|---|---|
+| `lib/auth.test.ts` | JWT payload decoding, `hasAdminRole` role matrix |
+| `lib/api.test.ts`, `lib/api-error.test.ts` | HTTP client wrapper + error handling |
+| `lib/organizations.test.ts`, `lib/invitations.test.ts`, `lib/onboarding.test.ts` | Slice-specific API helpers |
+| `lib/boutique.test.ts`, `lib/integrations.test.ts`, `lib/permissions.test.ts` | Dashboard settings/integrations/permissions helpers |
+| `lib/notifications.test.ts`, `lib/notifications-api.test.ts` | Notification client + API |
+| `contexts/UserContext.test.tsx`, `contexts/NotificationsContext.test.tsx` | Context providers (default state + misuse guards) |
+
+---
+
+## 5. Flutter Tests (`frontend/aveline_mobile/`)
+
+A single widget test bootstraps the mobile suite.
+
+| File | Covers |
+|---|---|
+| `test/widget_test.dart` | `AppTheme.light` builds a `MaterialApp` with the expected color scheme |
+
+### Run
+
+```bash
+flutter test            # from frontend/aveline_mobile/
+flutter test --coverage # emits coverage/lcov.info
+```
+
+---
+
+## 6. Integration Test — Full Auth Flow (`FullAuthFlowIntegrationTests`)
 
 Simulates the mandatory cross-platform flow **without external dependencies**:
 
@@ -94,28 +184,60 @@ Cases:
 | Valid token (roles) → `/api/v1/agents/ping` | 200; agent received the internal token; identity (`userId`, `roles`) propagated in the body |
 | Valid token, no roles | 403; agent not called |
 
+Other integration suites (`*EndpointsIntegrationTests`) follow the same pattern:
+in-memory EF Core DB seeded per test, external HTTP via stub servers or
+`CapturingHttpMessageHandler`, Redis via Moq.
+
 ---
 
-## 5. Coverage Targets
+## 7. Coverage
+
+Each stack instruments coverage with its own tooling and enforces a threshold in CI:
+
+| Layer | Tool | Command / Config | Threshold |
+|---|---|---|---|
+| **Backend** | Coverlet (coverage.cobertura.xml) | `dotnet test --collect:"XPlat Code Coverage"` + ReportGenerator (HTML) | line ≥ **30%** (CI gate) |
+| **Agent Service** | `pytest-cov` | `pytest --cov=app --cov-report=xml --cov-report=term --cov-fail-under=90` | **90%** |
+| **Web** | `@vitest/coverage-v8` | `vitest run --coverage` (config in `vite.config.ts`) | lines 80 / functions 70 / branches 70 / statements 80 |
+| **Mobile** | `flutter test --coverage` | `flutter test --coverage` → `coverage/lcov.info` | none (report uploaded only) |
+
+Local coverage reports:
+
+- **Backend**: `Aveline.Api.Tests/TestResults/` (gitignored).
+- **Agent Service**: `agnet-service/coverage.xml` (XML) + terminal summary.
+- **Web**: `frontend/web/coverage/` (text, JSON summary, and HTML reporters).
+- **Mobile**: `frontend/aveline_mobile/coverage/lcov.info`.
+
+### Coverage notes
 
 - Core auth code (validation rules, role normalization, policies, permission handler,
   CORS, internal-auth handler, client config, DI wiring, app startup) is at **100%**
-  line coverage (the integration tests exercise `Program` and all configuration end-to-end).
-- Full-project coverage is lower because feature modules are still scaffolding.
+  line coverage — the integration tests exercise `Program` and all configuration
+  end-to-end.
+- The backend CI gate is deliberately low (30%) because feature modules are still
+  scaffolding; the agent service (90%) and web (80%) gates are strict and enforced
+  on every PR.
 
 ---
 
-## 6. CI Integration
+## 8. CI Integration
 
-`ci.yml`:
-- `build-api` builds the **solution** (API + tests) and runs `dotnet test`.
-- `lint-python` runs `ruff check agnet-service/app/` (tests not yet executed in CI —
-  planned under issue #23).
+`ci.yml` runs each suite in its own job:
+
+| Job | Steps |
+|---|---|
+| `build-api` | build solution → `dotnet test` → collect coverage → enforce ≥30% line → ReportGenerator HTML → upload `aveline-api-coverage` |
+| `test-python` | `ruff check` → `pytest --cov --cov-fail-under=90` → upload `aveline-agent-coverage` |
+| `test-web` | `oxlint` → `bun run test:coverage` (thresholds) → upload `aveline-web-coverage` → build |
+| `test-flutter` | `flutter analyze` → `flutter test --coverage` → upload `aveline-mobile-coverage` → build APK |
+
+All four coverage artifacts are uploaded as GitHub Actions artifacts for inspection.
 
 ---
 
-## 7. Related Documentation
+## 9. Related Documentation
 
 - [ADR-007: Clerk Authentication & JWT Validation Strategy](../ADR/ADR-007-clerk-authentication.md)
 - [Authentication Flow — Architecture](../architecture/authentication.md)
 - [CI/CD Specification](../../spec/spec-process-cicd-ci.md)
+- [SE3090 Assignment Reports](../reports/README.md)

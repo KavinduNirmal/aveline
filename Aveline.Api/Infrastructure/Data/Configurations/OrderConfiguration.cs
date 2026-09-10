@@ -71,7 +71,6 @@ public class OrderConfiguration : IEntityTypeConfiguration<Order>
             .WithMany()
             .HasForeignKey(o => o.CreatedBy)
             .OnDelete(DeleteBehavior.Restrict);
-
         // Relationships
         builder.HasMany(o => o.Items)
             .WithOne(i => i.Order)

@@ -22,6 +22,7 @@ using Aveline.Api.Modules.Organizations.Repositories;
 using Aveline.Api.Modules.Organizations.Services;
 using Aveline.Api.Modules.Shared.Repositories;
 using Aveline.Api.Modules.Shared.Services;
+using Aveline.Api.Modules.Statistics;
 using Aveline.Api.Modules.SystemHealth;
 using Aveline.Api.Modules.SystemHealth.Endpoints;
 
@@ -60,6 +61,7 @@ builder.Services.AddNotificationsModule(builder.Configuration);
 builder.Services.AddConversationsModule(builder.Configuration);
 builder.Services.AddCustomerConciergeModule();
 builder.Services.AddSystemHealthModule(builder.Configuration);
+builder.Services.AddStatisticsModule();
 
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IUserCacheService, UserCacheService>();

@@ -1859,3 +1859,89 @@ task, a commit per task, and updated docs. Scope agreed with the user: Phase 0
   deferred to Phase 2 with the ledger.
 - `docs/api/openapi.yaml` still describes these endpoints as planned; the
   reconciliation step (generated output wins for shipped endpoints) remains.
+
+## Session 2026-09-11 (cont.) — Admin backend API, Phase 2 (entitlement ledger)
+
+**Task:** Implement Phase 2 of `docs/backend/` on `feature/admin-backend-api`: the
+append-only entitlement ledger, Blossom operations, idempotency, the entitlement
+catalog, org/admin Blossom endpoints, subscription/plan-change endpoints, ledger
+jobs and the usage pricing snapshot. Strict TDD, one GitHub issue and one commit
+per task.
+**Tool used:** DSH (deepseek-flash) coding agent
+
+### Work performed (one commit per issue)
+
+- **#190 M3 schema.** Extended `UsageAccounts` (granted/adjusted, tier snapshot,
+  close flags, `xmin` token, balance `CHECK`); added append-only
+  `BlossomLedgerEntries` and `IdempotencyRecords`; hand-extended M3 with the
+  tier-snapshot correction and the `PeriodAllocation` backfill.
+- **#191 BlossomService.** `IBlossomLedgerRepository` plus credit/debit/revoke with
+  the transactional projection, sign/precision/cap/reason rules, the negative guard,
+  closed-period rejection, idempotent replay and concurrency retries.
+- **#192 Idempotency.** Replay store, canonical-body SHA-256, a replay service, and
+  an endpoint filter that buffers request/response to replay the identical body.
+- **#193 Entitlements.** `PlanEntitlements`, `PlanEntitlementOverrides`,
+  `OrganizationSubscriptions`, M4 with the 70-row seed, `IEntitlementResolver`
+  (override > tier, effective dating), and the D-1/D-2/D-12 fixes. The usage write
+  path now uses an atomic increment, removing the consumption lost-update race.
+- **#194/#195 Blossom endpoints.** Org balance/usage/statement/top-ups and admin
+  credit/debit/revoke/statement, with the merged statement and reconciliation block.
+- **#196 Subscription.** GET subscription (status `None` fallback), change-plan with
+  immediate proration through the ledger, the three-limit downgrade guard, cancel,
+  and the entitlement catalog/usage endpoints.
+- **#197 Jobs.** `BlossomExpiryJob`, `BillingPeriodRolloverJob` and
+  `IdempotencyRecordCleanupJob`, each taking the distributed job lock and safe to re-run.
+- **#198 Pricing snapshot.** Six nullable `AiUsageRecords` columns and ingest writes
+  the applied rule id/version/units/rounding/decimals/normalized units.
+- **#199 Postgres tests.** 20 parallel credits, `xmin` conflict, filtered unique
+  idempotency index, and the balance `CHECK`.
+- **#200 Documentation.** Backend README, API catalog and this log.
+
+### Files created / modified (highlights)
+
+- `Aveline.Api/Modules/Billing/Models/{BlossomLedgerEntry,IdempotencyRecord,PlanEntitlement,PlanEntitlementOverride,OrganizationSubscription,BlossomDomainExceptions}.cs`
+- `Aveline.Api/Modules/Billing/Repositories/{BlossomLedgerRepository,IdempotencyRepository,EntitlementRepository}.cs` and their interfaces
+- `Aveline.Api/Modules/Billing/Services/{BlossomService,IdempotencyService,EntitlementResolver,SubscriptionService}.cs`
+- `Aveline.Api/Modules/Billing/Endpoints/{BlossomEndpoints,SubscriptionEndpoints,IdempotencyEndpointFilter}.cs`
+- `Aveline.Api/Modules/Billing/Jobs/LedgerJobs.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/{LedgerConfigurations,EntitlementConfigurations}.cs`
+- Migrations M3 `AddBlossomLedgerAndUsageAccountBalance`, M4 `AddPlanEntitlements`,
+  `AddAiUsageRecordPricingSnapshot`
+- `Aveline.Api/Configurations/{IdempotencyConfiguration,AuthorizationConfiguration}.cs`,
+  `Program.cs`, `BillingModule.cs`, `UsageTrackerService.cs`, `UsageRepository.cs`,
+  `OnboardingService.cs`, `Permissions` usage
+- Tests: `LedgerEntityConfigurationTests`, `BillingMigrationBackfillTests`,
+  `BlossomServiceTests`, `IdempotencyStoreTests`, `EntitlementResolverTests`,
+  `BlossomEndpointsIntegrationTests`, `SubscriptionEndpointsIntegrationTests`,
+  `LedgerJobsTests`, `UsagePricingSnapshotTests`, `LedgerPostgresTests`
+
+### Important architectural decisions
+
+- **The period's base allocation never changes mid-period.** An immediate plan
+  change writes the allowance difference as a `PlanUpgradeProration` /
+  `PlanDowngradeAdjustment` ledger entry instead of mutating
+  `UsageAccounts.MonthlyBlossomLimit`, so the balance identity and the statement
+  reconciliation stay exact.
+- **Statement reconciliation derives the allowance separately:** `limit + non
+  PeriodAllocation deltas - used`, which is correct both for backfilled periods
+  (which have a `PeriodAllocation`) and lazily-created ones (which do not).
+- **A documented default entitlement catalog** (`PlanEntitlementDefaults`) is used
+  when the table is empty (in-memory tests) and as the M4 seed source of truth.
+- **Same-account mutations are serialised in-process** in front of the `xmin` retry
+  loop so 20 parallel credits converge without exhausting the five-attempt budget.
+
+### Verification performed
+
+- `dotnet test Aveline.Api/Aveline.Api.sln` — **697 passed, 0 failed**, including
+  the Testcontainers suites (migration backfill, ledger concurrency, constraints).
+- Migrations M3/M4/pricing-snapshot applied cleanly to the local PostgreSQL 16
+  container; the 70-row entitlement seed and the ledger backfill were inspected
+  directly with `psql`.
+- Each task committed separately with the Husky pre-commit gates passing.
+
+### Remaining work
+
+- Phases 3–6 (API keys/user admin, agentic/API/system statistics) are not started.
+- `POST /admin/pricing/rules/{ruleId}/recompute` still returns 501; the snapshot
+  columns it needs now exist, so the job can be scheduled.
+- `docs/api/openapi.yaml` reconciliation against generated output remains.

@@ -912,6 +912,10 @@ priceLkr, effectiveFrom, changeReason }` where `skuKind` ∈
 
 ### C.2 Blossom balance and operations (Phase 2)
 
+> **Status: implemented** on `feature/admin-backend-api` (issues #194 and #195).
+> Balance, usage, statement, top-ups and the admin credit/debit/revoke/statement
+> operations are live; the recompute-dependent pricing endpoint remains 501.
+
 ---
 
 #### `GET /api/v1/orgs/{organizationId:guid}/blossoms/balance`
@@ -1130,6 +1134,9 @@ curl -X POST "https://api.aveline.app/api/v1/admin/orgs/$ORG_ID/blossoms/credit"
 ---
 
 ### C.3 Subscription and entitlements (Phase 2)
+
+> **Status: implemented** on `feature/admin-backend-api` (issue #196). A `nextPeriod`
+> plan change is recorded on the subscription and applied at period rollover.
 
 #### `GET /api/v1/orgs/{organizationId:guid}/subscription`
 

@@ -1,8 +1,8 @@
 # Aveline Backend — Requirements and Implementation Plan
 
-**Status:** Phases 0–1 (foundations and Blossom pricing) are **implemented** on
-`feature/admin-backend-api` (issues #176–#189). Phases 2–6 remain proposed; the
-three blocking open questions below now gate Phase 2 only.
+**Status:** Phases 0–2 (foundations, Blossom pricing and the entitlement ledger) are
+**implemented** on `feature/admin-backend-api` (issues #176–#200). Phases 3–6 remain
+proposed; the three blocking open questions below now gate Phase 3.
 **Baseline:** commit `902f27f` (`integration/slice-2-to-slice-1`)
 **Scope:** backend only — `Aveline.Api` and `agnet-service`. No frontend, no
 screens, no UX flows.
@@ -56,7 +56,7 @@ a Clerk-backed auth model and organization-scoped authorization.
 | Feature area | State |
 | --- | --- |
 | 1 · Blossom price adjustment | **Implemented (Phase 1).** Effective-dated `BlossomConversionRules` and `BlossomPriceEntries` (M2), `BlossomCalculator`, `PricingService`, admin pricing endpoints, and ingest-time pricing behind `Pricing:UseLegacyFormula`. `POST /admin/pricing/rules/{id}/recompute` returns 501 until the Phase 2 ledger |
-| 2 · Org Blossom operations | **Entirely absent.** No add/deduct/remove, no adjustment ledger, no idempotency, no concurrency control, no plan-change endpoint |
+| 2 · Org Blossom operations | **Implemented (Phase 2).** Append-only `BlossomLedgerEntries` (M3) with the O(1) `UsageAccount` projection, idempotency replay store, `BlossomService` credit/debit/revoke, entitlement catalog + `IEntitlementResolver` (M4), org/admin Blossom endpoints, subscription/plan-change endpoints, and the expiry/rollover/cleanup jobs. **Fixes D-1, D-2, D-3, D-12** |
 | 3 · User management | Partial. No member list, no role change, no profile update, no soft delete, no sessions, **no API keys at all** |
 | 4 · Organization management | Partial. No settings update, no subscription, no entitlements, no API key management |
 | 5 · Agentic statistics | Only one aggregate row per workflow. No agent/node runs, status, latency, tool calls, or retries |
@@ -135,6 +135,32 @@ the predecessor atomically. See
 
 **Deferred to Phase 2:** `AiUsageRecord` pricing-snapshot columns and
 `POST /admin/pricing/rules/{ruleId}/recompute` (which writes ledger corrections).
+
+### Implementation status (Phase 2 — ledger and entitlements)
+
+| Issue | What landed |
+| --- | --- |
+| [#190](https://github.com/KavinduNirmal/aveline/issues/190) | M3: extended `UsageAccounts`, `BlossomLedgerEntries`, `IdempotencyRecords` + backfill |
+| [#191](https://github.com/KavinduNirmal/aveline/issues/191) | `BlossomLedgerRepository` and `BlossomService` credit/debit/revoke |
+| [#192](https://github.com/KavinduNirmal/aveline/issues/192) | Idempotency replay store and endpoint filter |
+| [#193](https://github.com/KavinduNirmal/aveline/issues/193) | M4 entitlements, `IEntitlementResolver`, D-1/D-2/D-12 fixes |
+| [#194](https://github.com/KavinduNirmal/aveline/issues/194) / [#195](https://github.com/KavinduNirmal/aveline/issues/195) | Org and admin Blossom endpoints |
+| [#196](https://github.com/KavinduNirmal/aveline/issues/196) | Subscription, plan-change and entitlement endpoints |
+| [#197](https://github.com/KavinduNirmal/aveline/issues/197) | Expiry, period-rollover and idempotency-cleanup jobs |
+| [#198](https://github.com/KavinduNirmal/aveline/issues/198) | `AiUsageRecord` pricing-snapshot columns |
+| [#199](https://github.com/KavinduNirmal/aveline/issues/199) | Postgres concurrency, constraint and backfill coverage |
+| [#200](https://github.com/KavinduNirmal/aveline/issues/200) | Documentation and AI-usage update |
+
+**Confirmed deviations from the proposed plan:**
+
+1. **M2 exclusion predicate is `Active` only** (see the Phase 0–1 note above).
+2. **`POST /admin/pricing/rules/{ruleId}/recompute` returns 501** until the ledger
+   recompute job is scheduled; the snapshot columns it needs now exist (M6-free
+   migration `AddAiUsageRecordPricingSnapshot`).
+3. **The pricing-snapshot columns ship in Phase 2**, not in M6 as the domain model
+   suggested, so ingest can persist the applied rule (FR-1.4).
+4. **A `nextPeriod` plan change stores the target tier on the subscription**; the
+   organisation's live tier and period allocation change at rollover.
 
 ---
 

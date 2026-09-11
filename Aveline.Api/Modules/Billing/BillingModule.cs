@@ -1,3 +1,4 @@
+using Aveline.Api.Modules.Billing.Domain;
 using Aveline.Api.Modules.Billing.Endpoints;
 using Aveline.Api.Modules.Billing.Repositories;
 using Aveline.Api.Modules.Billing.Services;
@@ -11,8 +12,12 @@ public static class BillingModule
 {
     public static IServiceCollection AddBillingModule(this IServiceCollection services)
     {
+        services.AddMemoryCache();
         services.AddScoped<IUsageRepository, UsageRepository>();
         services.AddScoped<IUsageTrackerService, UsageTrackerService>();
+        services.AddScoped<IPricingRepository, PricingRepository>();
+        services.AddScoped<IPricingService, PricingService>();
+        services.AddSingleton<PricingRuleCache>();
 
         return services;
     }

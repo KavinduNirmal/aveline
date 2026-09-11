@@ -66,6 +66,16 @@ public class AppDbContext : DbContext
     public DbSet<Modules.Statistics.Models.AgentStepRun> AgentStepRuns =>
         Set<Modules.Statistics.Models.AgentStepRun>();
 
+    // Statistics Module (Phase 5 — API consumption statistics, M7)
+    public DbSet<Modules.Statistics.Models.ApiRequestMetric> ApiRequestMetrics =>
+        Set<Modules.Statistics.Models.ApiRequestMetric>();
+
+    public DbSet<Modules.Statistics.Models.ApiRequestLog> ApiRequestLogs =>
+        Set<Modules.Statistics.Models.ApiRequestLog>();
+
+    public DbSet<Modules.Statistics.Models.ApiQuotaUsage> ApiQuotaUsage =>
+        Set<Modules.Statistics.Models.ApiQuotaUsage>();
+
     public DbSet<IntegrationCredential> IntegrationCredentials => Set<IntegrationCredential>();
 
     public DbSet<InboundMessageLog> InboundMessageLogs => Set<InboundMessageLog>();

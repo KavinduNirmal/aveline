@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using System.Security.Claims;
-using Aveline.Api.Modules.ApiAccess.Authentication;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -22,9 +20,6 @@ public sealed class ApiTelemetryMiddleware(
     IOptions<TelemetryOptions> options,
     ILogger<ApiTelemetryMiddleware> logger)
 {
-    private const string OrganizationClaim = "org_id";
-    private const string UserClaim = "user_id";
-
     private readonly TelemetryOptions _options = options.Value;
 
     public async Task InvokeAsync(HttpContext context)
@@ -81,7 +76,7 @@ public sealed class ApiTelemetryMiddleware(
         var durationMs = (int)Math.Clamp(elapsed.TotalMilliseconds, 0, int.MaxValue);
         var statusCode = (short)Math.Clamp(context.Response.StatusCode, 0, short.MaxValue);
 
-        var (organizationId, apiKeyId, userId) = ResolvePrincipal(context.User);
+        var (organizationId, apiKeyId, userId) = RequestPrincipal.Resolve(context.User);
         var request = context.Request;
 
         var sample = new ApiRequestSample
@@ -97,7 +92,7 @@ public sealed class ApiTelemetryMiddleware(
             RequestBytes = ClampBytes(request.ContentLength),
             ResponseBytes = ClampBytes(context.Response.ContentLength),
             RequestId = context.TraceIdentifier,
-            TraceId = ParseGuid(Activity.Current?.TraceId.ToString()),
+            TraceId = Guid.TryParse(Activity.Current?.TraceId.ToString(), out var traceId) ? traceId : null,
             ClientIpHash = MetricDimensionHasher.HashIp(
                 context.Connection.RemoteIpAddress?.ToString(), _options.IpHashSalt),
             UserAgentHash = MetricDimensionHasher.HashUserAgent(
@@ -110,31 +105,6 @@ public sealed class ApiTelemetryMiddleware(
         channel.TryEnqueue(sample);
     }
 
-    private static (Guid? OrganizationId, Guid? ApiKeyId, Guid? UserId) ResolvePrincipal(
-        ClaimsPrincipal principal)
-    {
-        if (principal.Identity?.IsAuthenticated != true)
-        {
-            return (null, null, null);
-        }
-
-        var organizationId =
-            ParseGuid(principal.FindFirst(ApiKeyClaimTypes.OrganizationId)?.Value)
-            ?? ParseGuid(principal.FindFirst(OrganizationClaim)?.Value);
-
-        var apiKeyId = ParseGuid(principal.FindFirst(ApiKeyClaimTypes.ApiKeyId)?.Value);
-
-        var userId =
-            ParseGuid(principal.FindFirst(UserClaim)?.Value)
-            ?? ParseGuid(principal.FindFirst(ClaimTypes.NameIdentifier)?.Value)
-            ?? ParseGuid(principal.FindFirst("sub")?.Value);
-
-        return (organizationId, apiKeyId, userId);
-    }
-
     private static int ClampBytes(long? value)
         => value is null or < 0 ? 0 : (int)Math.Min(value.Value, int.MaxValue);
-
-    private static Guid? ParseGuid(string? value)
-        => Guid.TryParse(value, out var parsed) ? parsed : null;
 }

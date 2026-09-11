@@ -15,7 +15,8 @@ public sealed class ApiTelemetryWriter(
     TelemetryChannel channel,
     IServiceScopeFactory scopeFactory,
     IOptions<TelemetryOptions> options,
-    ILogger<ApiTelemetryWriter> logger) : BackgroundService
+    ILogger<ApiTelemetryWriter> logger,
+    IApiKeyUsageSink? keyUsageSink = null) : BackgroundService
 {
     private readonly TelemetryOptions _options = options.Value;
 
@@ -32,6 +33,17 @@ public sealed class ApiTelemetryWriter(
         if (batch.Count == 0)
         {
             return 0;
+        }
+
+        if (keyUsageSink is not null)
+        {
+            foreach (var sample in batch)
+            {
+                if (sample.ApiKeyId is { } apiKeyId)
+                {
+                    keyUsageSink.Record(apiKeyId, sample.OccurredAt, sample.ClientIpHash);
+                }
+            }
         }
 
         var (metrics, logs) = ApiRequestAggregator.Aggregate(batch);

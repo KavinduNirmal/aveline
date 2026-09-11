@@ -1,8 +1,10 @@
+using Aveline.Api.Configurations;
 using Aveline.Api.Modules.Statistics.Endpoints;
 using Aveline.Api.Modules.Statistics.Jobs;
 using Aveline.Api.Modules.Statistics.Repositories;
 using Aveline.Api.Modules.Statistics.Services;
 using Aveline.Api.Modules.Statistics.Telemetry;
+using StackExchange.Redis;
 
 namespace Aveline.Api.Modules.Statistics;
 
@@ -18,6 +20,8 @@ public static class StatisticsModule
     {
         services.Configure<TelemetryOptions>(
             configuration.GetSection(TelemetryOptions.SectionName));
+        services.Configure<QuotaOptions>(
+            configuration.GetSection(QuotaOptions.SectionName));
 
         services.AddScoped<IAgentRunRepository, AgentRunRepository>();
         services.AddScoped<IAgentStatisticsService, AgentStatisticsService>();
@@ -26,12 +30,29 @@ public static class StatisticsModule
         services.AddScoped<IApiMetricRepository, ApiMetricRepository>();
         services.AddScoped<IApiRequestLogRepository, ApiRequestLogRepository>();
         services.AddScoped<IApiStatisticsService, ApiStatisticsService>();
+        services.AddScoped<IQuotaService, QuotaService>();
+
+        // Atomic Redis counters when Redis is configured; the process-local fallback mirrors
+        // InMemoryDistributedJobLock and is only for local development and tests.
+        if (!string.IsNullOrWhiteSpace(CacheConfiguration.ResolveRedisConnectionString(configuration)))
+        {
+            services.AddSingleton<IQuotaCounterStore>(sp =>
+                new RedisQuotaCounterStore(sp.GetRequiredService<IConnectionMultiplexer>()));
+        }
+        else
+        {
+            services.AddSingleton<IQuotaCounterStore, InMemoryQuotaCounterStore>();
+        }
 
         services.AddSingleton<TelemetryChannel>();
+        services.AddSingleton<ApiKeyUsageAggregator>();
+        services.AddSingleton<IApiKeyUsageSink>(sp => sp.GetRequiredService<ApiKeyUsageAggregator>());
 
         services.AddHostedService<AgentStatsRetentionJob>();
         services.AddHostedService<StaleAgentRunJob>();
         services.AddHostedService<ApiTelemetryWriter>();
+        services.AddHostedService<ApiQuotaResetJob>();
+        services.AddHostedService(sp => sp.GetRequiredService<ApiKeyUsageAggregator>());
 
         return services;
     }

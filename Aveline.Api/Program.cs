@@ -102,6 +102,9 @@ app.UseAvelineOnboarding();
 // Telemetry is stamped after authentication/authorization so attribution is available, and
 // before endpoints so every measured request is captured (FR-6.1). It never fails a request.
 app.UseMiddleware<Aveline.Api.Modules.Statistics.Telemetry.ApiTelemetryMiddleware>();
+// Quota enforcement is a no-op unless Quotas:EnforcementEnabled=true; when it is on, an
+// exhausted meter is rejected with 429 before the endpoint runs (BR-6.5).
+app.UseMiddleware<Aveline.Api.Modules.Statistics.Telemetry.QuotaEnforcementMiddleware>();
 
 app.MapHub<NotificationHub>("/hubs/notifications");
 app.MapHub<ConversationHub>("/hubs/conversations");

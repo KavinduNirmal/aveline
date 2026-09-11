@@ -39,6 +39,26 @@ public class CorsConfigurationTests
     }
 
     [Fact]
+    public async Task Registers_Policy_Exposing_Correlation_Headers()
+    {
+        var config = TestConfig(new Dictionary<string, string?>
+        {
+            ["Cors:AllowedOrigins:0"] = "http://localhost:5173",
+        });
+
+        var provider = new ServiceCollection()
+            .AddAvelineCors(config)
+            .BuildServiceProvider();
+
+        var policyProvider = provider.GetRequiredService<ICorsPolicyProvider>();
+        var policy = await policyProvider.GetPolicyAsync(new DefaultHttpContext(), CorsConfiguration.DefaultPolicy);
+
+        // The React dashboard cannot read these response headers unless they are exposed.
+        Assert.Contains("X-Request-Id", policy!.ExposedHeaders);
+        Assert.Contains("X-Trace-Id", policy!.ExposedHeaders);
+    }
+
+    [Fact]
     public void Throws_When_Origins_Not_Configured()
     {
         var config = TestConfig(new Dictionary<string, string?>());

@@ -76,6 +76,9 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.UseAvelineSecurityHeaders();
 app.UseCors(CorsConfiguration.DefaultPolicy);
+// Correlation ids must be established before authentication so 401/403 audit logs
+// and every downstream log line carry the same request id (FR-6.10).
+app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseAvelineAuthAudit();

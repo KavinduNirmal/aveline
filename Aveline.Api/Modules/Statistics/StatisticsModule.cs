@@ -2,6 +2,7 @@ using Aveline.Api.Modules.Statistics.Endpoints;
 using Aveline.Api.Modules.Statistics.Jobs;
 using Aveline.Api.Modules.Statistics.Repositories;
 using Aveline.Api.Modules.Statistics.Services;
+using Aveline.Api.Modules.Statistics.Telemetry;
 
 namespace Aveline.Api.Modules.Statistics;
 
@@ -11,13 +12,25 @@ namespace Aveline.Api.Modules.Statistics;
 /// </summary>
 public static class StatisticsModule
 {
-    public static IServiceCollection AddStatisticsModule(this IServiceCollection services)
+    public static IServiceCollection AddStatisticsModule(
+        this IServiceCollection services,
+        IConfiguration configuration)
     {
+        services.Configure<TelemetryOptions>(
+            configuration.GetSection(TelemetryOptions.SectionName));
+
         services.AddScoped<IAgentRunRepository, AgentRunRepository>();
         services.AddScoped<IAgentStatisticsService, AgentStatisticsService>();
         services.AddScoped<IAgentRunIngestService, AgentRunIngestService>();
+
+        services.AddScoped<IApiMetricRepository, ApiMetricRepository>();
+        services.AddScoped<IApiRequestLogRepository, ApiRequestLogRepository>();
+
+        services.AddSingleton<TelemetryChannel>();
+
         services.AddHostedService<AgentStatsRetentionJob>();
         services.AddHostedService<StaleAgentRunJob>();
+        services.AddHostedService<ApiTelemetryWriter>();
 
         return services;
     }

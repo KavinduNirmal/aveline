@@ -61,7 +61,7 @@ builder.Services.AddNotificationsModule(builder.Configuration);
 builder.Services.AddConversationsModule(builder.Configuration);
 builder.Services.AddCustomerConciergeModule();
 builder.Services.AddSystemHealthModule(builder.Configuration);
-builder.Services.AddStatisticsModule();
+builder.Services.AddStatisticsModule(builder.Configuration);
 
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IUserCacheService, UserCacheService>();
@@ -99,6 +99,9 @@ app.UseMiddleware<Aveline.Api.Modules.ApiAccess.Middleware.ApiKeyTenantScopeMidd
 app.UseAuthorization();
 app.UseAvelineAuthAudit();
 app.UseAvelineOnboarding();
+// Telemetry is stamped after authentication/authorization so attribution is available, and
+// before endpoints so every measured request is captured (FR-6.1). It never fails a request.
+app.UseMiddleware<Aveline.Api.Modules.Statistics.Telemetry.ApiTelemetryMiddleware>();
 
 app.MapHub<NotificationHub>("/hubs/notifications");
 app.MapHub<ConversationHub>("/hubs/conversations");

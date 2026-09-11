@@ -42,6 +42,12 @@ public static class AuthorizationConfiguration
     /// </summary>
     public const string InternalServicePolicy = "InternalServicePolicy";
 
+    /// <summary>
+    /// Policy for the Prometheus scrape endpoint: an internal service token or the
+    /// optional <c>Metrics:ScrapeToken</c> bearer token.
+    /// </summary>
+    public const string MetricsPolicy = "Metrics";
+
     public static IServiceCollection AddAvelineAuthorization(this IServiceCollection services)
     {
         services.AddHttpContextAccessor();
@@ -56,6 +62,15 @@ public static class AuthorizationConfiguration
                 p.AddAuthenticationSchemes(Aveline.Api.Infrastructure.Integrations.InternalTokenAuthenticationHandler.SchemeName);
                 p.RequireAuthenticatedUser();
                 p.RequireRole("InternalService");
+            });
+
+            // /metrics accepts either the internal service token or a configured scrape token.
+            options.AddPolicy(MetricsPolicy, p =>
+            {
+                p.AddAuthenticationSchemes(
+                    Aveline.Api.Infrastructure.Integrations.InternalTokenAuthenticationHandler.SchemeName,
+                    Aveline.Api.Infrastructure.Integrations.ScrapeTokenAuthenticationHandler.SchemeName);
+                p.RequireAuthenticatedUser();
             });
 
             // Role-based policies.

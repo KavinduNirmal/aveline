@@ -32,6 +32,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
 });
 builder.Services.AddAvelineLogging(builder.Configuration);
+builder.Services.AddAvelineObservability(builder.Configuration);
 builder.Services.AddAvelineDatabase(builder.Configuration);
 builder.Services.AddAvelineCache(builder.Configuration);
 builder.Services.AddAvelineJobs(builder.Configuration);
@@ -94,6 +95,9 @@ app.MapHub<NotificationHub>("/hubs/notifications");
 app.MapHub<ConversationHub>("/hubs/conversations");
 // Health checks are public (the fallback authorization policy requires auth by default).
 app.MapSystemHealthEndpoints();
+// Prometheus scraping requires an internal service token or the configured scrape token.
+app.MapPrometheusScrapingEndpoint("/metrics")
+    .RequireAuthorization(AuthorizationConfiguration.MetricsPolicy);
 
 var v1 = app.MapGroup("/api/v1");
 v1.MapAuthEndpoints();

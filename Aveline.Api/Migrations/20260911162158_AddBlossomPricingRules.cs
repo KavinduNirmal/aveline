@@ -96,8 +96,11 @@ namespace Aveline.Api.Migrations
                 unique: true)
                 .Annotation("Npgsql:NullsDistinct", false);
 
-            // Database-enforced non-overlap per scope. An application-only check races
-            // under concurrent admin writes, so the invariant lives in PostgreSQL.
+            // Database-enforced non-overlap per scope. The predicate covers Active rows
+            // only: a successor Draft necessarily overlaps the open-ended predecessor, and
+            // activation trims the predecessor to Superseded in the same flow (BR-1.8).
+            // Covering Drafts as well would make activation impossible; this corrects the
+            // proposed predicate in docs/backend/domain-model.md §3.1.
             migrationBuilder.Sql(
                 "ALTER TABLE \"BlossomConversionRules\" " +
                 "ADD CONSTRAINT \"EX_BlossomConversionRules_NoOverlap\" " +
@@ -106,7 +109,7 @@ namespace Aveline.Api.Migrations
                 "coalesce(\"Provider\", '') WITH =, " +
                 "coalesce(\"Model\", '') WITH =, " +
                 "tstzrange(\"EffectiveFrom\", \"EffectiveTo\", '[)') WITH &&" +
-                ") WHERE (\"Status\" IN ('Draft', 'Active'));");
+                ") WHERE (\"Status\" = 'Active');");
 
             // Backs the coalesce expressions used by the exclusion constraint and the
             // scope lookup, so the constraint is maintained through an index.

@@ -134,13 +134,18 @@ CREATE INDEX "IX_BlossomConversionRules_Active"
   WHERE "Status" = 'Active';
 
 -- Overlap prevention. Requires CREATE EXTENSION btree_gist;
+-- NOTE (implementation correction): the predicate is Active only. A successor Draft
+-- necessarily overlaps the open-ended Active predecessor, and BR-1.8 activation trims
+-- the predecessor to Superseded in the same flow; covering Drafts would make activation
+-- impossible. Two Drafts for one scope may therefore coexist; the unique index on
+-- (ScopeKind, Provider, Model, EffectiveFrom) still prevents identical windows.
 ALTER TABLE "BlossomConversionRules"
   ADD CONSTRAINT "EX_BlossomConversionRules_NoOverlap" EXCLUDE USING gist (
     "ScopeKind" WITH =,
     coalesce("Provider", '') WITH =,
     coalesce("Model", '')    WITH =,
     tstzrange("EffectiveFrom", "EffectiveTo", '[)') WITH &&
-  ) WHERE ("Status" IN ('Draft', 'Active'));
+  ) WHERE ("Status" = 'Active');
 ```
 
 `NULLS NOT DISTINCT` requires PostgreSQL 15+; the stack is PostgreSQL 16

@@ -89,6 +89,21 @@ public class PricingRuleConstraintTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DraftOverlappingAnActiveRule_IsAccepted()
+    {
+        // A successor must be preparable while the predecessor is still Active; activation
+        // supersedes the predecessor in the same flow (BR-1.8). Only Active rows are
+        // constrained, so the Draft insert is legal.
+        _context.BlossomConversionRules.Add(Rule(WindowStart, null));
+        await _context.SaveChangesAsync();
+
+        _context.BlossomConversionRules.Add(Rule(WindowStart.AddDays(10), null, BlossomRuleStatus.Draft));
+        await _context.SaveChangesAsync();
+
+        Assert.Equal(2, await _context.BlossomConversionRules.CountAsync());
+    }
+
+    [Fact]
     public async Task CancelledWindow_DoesNotBlockANewRule()
     {
         _context.BlossomConversionRules.Add(

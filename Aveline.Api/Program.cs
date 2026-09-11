@@ -132,6 +132,7 @@ v1.MapStatisticsEndpoints();
 
 app.MapBillingEndpoints();
 app.MapCustomerConciergeEndpoints();
+app.MapStatisticsInternalEndpoints();
 
 // Apply EF Core migrations on startup for a fresh/local database. Guarded to the
 // relational (PostgreSQL) provider so the in-memory contexts used by the test suite are

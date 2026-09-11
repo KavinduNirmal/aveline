@@ -14,4 +14,11 @@ public static class AuditAction
     public const string PricingPriceEntryCreated = "pricing.price-entry.created";
     public const string PricingPriceEntryUpdated = "pricing.price-entry.updated";
     public const string PricingPriceEntryCancelled = "pricing.price-entry.cancelled";
+    public const string ApiKeyCreated = "apikey.created";
+    public const string ApiKeyRevoked = "apikey.revoked";
+    public const string ApiKeyDeleted = "apikey.deleted";
+    public const string OrganizationSettingsUpdated = "org.settings.updated";
+    public const string MembershipRoleChanged = "membership.role.changed";
+    public const string UserProfileUpdated = "user.profile.updated";
+    public const string UserStateChanged = "user.state.changed";
 }

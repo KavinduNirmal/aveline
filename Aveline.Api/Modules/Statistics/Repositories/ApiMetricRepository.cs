@@ -1,4 +1,5 @@
 using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Modules.Statistics.DTOs;
 using Aveline.Api.Modules.Statistics.Models;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
@@ -58,6 +59,51 @@ public sealed class ApiMetricRepository(AppDbContext db) : IApiMetricRepository
         {
             await db.Database.ExecuteSqlRawAsync(UpsertSql, Parameters(metric), cancellationToken);
         }
+    }
+
+    public async Task<IReadOnlyList<ApiRequestMetric>> QueryAsync(
+        ApiStatisticsFilter filter, CancellationToken cancellationToken = default)
+    {
+        var query = db.ApiRequestMetrics.AsNoTracking()
+            .Where(metric => metric.WindowStart >= filter.From && metric.WindowStart <= filter.To);
+
+        if (filter.OrganizationId is { } organizationId)
+        {
+            query = query.Where(metric => metric.OrganizationId == organizationId);
+        }
+
+        if (filter.ApiKeyId is { } apiKeyId)
+        {
+            query = query.Where(metric => metric.ApiKeyId == apiKeyId);
+        }
+
+        if (filter.UserId is { } userId)
+        {
+            query = query.Where(metric => metric.UserId == userId);
+        }
+
+        if (filter.StatusCode is { } statusCode)
+        {
+            query = query.Where(metric => metric.StatusCode == statusCode);
+        }
+
+        if (!string.IsNullOrWhiteSpace(filter.StatusClass))
+        {
+            query = query.Where(metric => metric.StatusClass == filter.StatusClass);
+        }
+
+        if (!string.IsNullOrWhiteSpace(filter.RouteTemplate))
+        {
+            query = query.Where(metric => metric.RouteTemplate == filter.RouteTemplate);
+        }
+
+        if (!string.IsNullOrWhiteSpace(filter.HttpMethod))
+        {
+            var method = filter.HttpMethod.ToUpperInvariant();
+            query = query.Where(metric => metric.HttpMethod == method);
+        }
+
+        return await query.ToListAsync(cancellationToken);
     }
 
     private async Task UpsertInMemoryAsync(

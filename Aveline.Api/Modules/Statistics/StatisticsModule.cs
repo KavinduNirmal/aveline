@@ -25,6 +25,7 @@ public static class StatisticsModule
 
         services.AddScoped<IApiMetricRepository, ApiMetricRepository>();
         services.AddScoped<IApiRequestLogRepository, ApiRequestLogRepository>();
+        services.AddScoped<IApiStatisticsService, ApiStatisticsService>();
 
         services.AddSingleton<TelemetryChannel>();
 

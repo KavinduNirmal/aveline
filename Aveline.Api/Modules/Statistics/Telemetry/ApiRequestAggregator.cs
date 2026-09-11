@@ -1,3 +1,4 @@
+using Aveline.Api.Modules.Statistics.Domain;
 using Aveline.Api.Modules.Statistics.Models;
 
 namespace Aveline.Api.Modules.Statistics.Telemetry;
@@ -9,21 +10,10 @@ namespace Aveline.Api.Modules.Statistics.Telemetry;
 public static class ApiRequestAggregator
 {
     /// <summary>Cumulative <c>le</c> bucket upper bounds in milliseconds (domain-model.md §7.1).</summary>
-    public static readonly int[] BucketBoundaries = [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
+    public static int[] BucketBoundaries => LatencyBuckets.UpperBoundsMs;
 
     /// <summary>The index of the smallest bucket whose upper bound is &gt;= <paramref name="durationMs"/>.</summary>
-    public static int BucketIndex(int durationMs)
-    {
-        for (var i = 0; i < BucketBoundaries.Length; i++)
-        {
-            if (durationMs <= BucketBoundaries[i])
-            {
-                return i;
-            }
-        }
-
-        return BucketBoundaries.Length; // overflow bucket
-    }
+    public static int BucketIndex(int durationMs) => LatencyBuckets.Assign(durationMs);
 
     public static (List<ApiRequestMetric> Metrics, List<ApiRequestLog> Logs) Aggregate(
         IReadOnlyList<ApiRequestSample> samples)

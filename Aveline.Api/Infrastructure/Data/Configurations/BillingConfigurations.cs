@@ -35,6 +35,10 @@ public class AiUsageRecordConfiguration : IEntityTypeConfiguration<AiUsageRecord
         builder.Property(r => r.BlossomUnits)
             .HasPrecision(18, 4);
 
+        builder.Property(r => r.RoundingMode)
+            .HasConversion<string>()
+            .HasMaxLength(16);
+
         builder.Property(r => r.CreatedAt)
             .IsRequired();
 

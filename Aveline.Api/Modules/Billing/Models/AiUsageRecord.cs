@@ -57,6 +57,24 @@ public class AiUsageRecord
     /// </summary>
     public decimal BlossomUnits { get; set; }
 
+    /// <summary>Pricing rule applied at ingest; <c>null</c> when the fallback was used.</summary>
+    public Guid? PricingRuleId { get; set; }
+
+    /// <summary>Version of the applied rule.</summary>
+    public int? PricingRuleVersion { get; set; }
+
+    /// <summary>Snapshot of the applied units-per-Blossom; <c>null</c> means 1000.</summary>
+    public int? UnitsPerBlossom { get; set; }
+
+    /// <summary>Snapshot of the applied rounding mode.</summary>
+    public Domain.BlossomRoundingMode? RoundingMode { get; set; }
+
+    /// <summary>Snapshot of the applied rounding decimals.</summary>
+    public short? RoundingDecimals { get; set; }
+
+    /// <summary>Input + output + cached tokens as priced.</summary>
+    public long? NormalizedUnits { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     /// <summary>The organisation whose Blossom balance was consumed.</summary>

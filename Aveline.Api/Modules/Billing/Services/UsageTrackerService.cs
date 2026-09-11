@@ -36,7 +36,7 @@ public sealed class UsageTrackerService(
     {
         ValidateRequest(request);
 
-        decimal blossomUnits = await CalculateBlossomUnitsAsync(request, cancellationToken);
+        var (blossomUnits, pricingSnapshot) = await CalculateBlossomUnitsAsync(request, cancellationToken);
         decimal blossomLimit = await ResolveBlossomLimitAsync(request.OrganizationId, cancellationToken);
 
         var record = new AiUsageRecord
@@ -51,6 +51,14 @@ public sealed class UsageTrackerService(
             CachedTokens   = request.CachedTokens,
             ActualCostUsd  = request.ActualCostUsd,
             BlossomUnits   = blossomUnits,
+            PricingRuleId  = pricingSnapshot?.RuleId,
+            PricingRuleVersion = pricingSnapshot?.Version,
+            UnitsPerBlossom = pricingSnapshot?.UnitsPerBlossom,
+            RoundingMode = pricingSnapshot?.RoundingMode,
+            RoundingDecimals = pricingSnapshot is null ? null : (short)pricingSnapshot.RoundingDecimals,
+            NormalizedUnits = pricingSnapshot is null
+                ? null
+                : (long)request.InputTokens + request.OutputTokens + request.CachedTokens,
         };
 
         await usageRepository.AddUsageRecordAndUpdateAccountAsync(record, blossomLimit, cancellationToken);
@@ -117,13 +125,13 @@ public sealed class UsageTrackerService(
     /// formula is enabled or no pricing service is available. Callers can never choose
     /// their own price: the timestamp is always the API ingest time (BR-1.12).
     /// </summary>
-    private async Task<decimal> CalculateBlossomUnitsAsync(
+    private async Task<(decimal BlossomUnits, PricingRuleSnapshot? Snapshot)> CalculateBlossomUnitsAsync(
         RecordUsageRequest request, CancellationToken cancellationToken)
     {
         var useLegacyFormula = configuration.GetValue("Pricing:UseLegacyFormula", defaultValue: true);
         if (useLegacyFormula || pricingService is null)
         {
-            return CalculateBlossomUnits(request.InputTokens, request.OutputTokens, request.CachedTokens);
+            return (CalculateBlossomUnits(request.InputTokens, request.OutputTokens, request.CachedTokens), null);
         }
 
         var resolution = await pricingService.ResolveAsync(
@@ -132,12 +140,16 @@ public sealed class UsageTrackerService(
         var rule = resolution.Rule;
         long normalizedUnits = (long)request.InputTokens + request.OutputTokens + request.CachedTokens;
 
-        return BlossomCalculator.Calculate(
+        var blossomUnits = BlossomCalculator.Calculate(
             normalizedUnits,
             rule.UnitsPerBlossom,
             rule.RoundingMode,
             rule.RoundingDecimals,
             rule.MinimumChargeBlossoms);
+
+        // A fallback resolution is not a real rule, so no snapshot is stored (NULL means
+        // "assume 1000" on the read path).
+        return (blossomUnits, resolution.IsFallback ? null : rule);
     }
 
     /// <summary>

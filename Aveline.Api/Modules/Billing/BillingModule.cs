@@ -18,6 +18,7 @@ public static class BillingModule
         services.AddScoped<IPricingRepository, PricingRepository>();
         services.AddScoped<IPricingService, PricingService>();
         services.AddSingleton<PricingRuleCache>();
+        services.AddHostedService<PricingRuleCacheWarmer>();
 
         return services;
     }

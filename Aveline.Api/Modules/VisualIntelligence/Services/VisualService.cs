@@ -1,3 +1,8 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Aveline.Api.Modules.VisualIntelligence.DTOs;
 using Aveline.Api.Modules.VisualIntelligence.Models;
 using Aveline.Api.Modules.VisualIntelligence.Repositories;
@@ -11,19 +16,22 @@ public class VisualService : IVisualService
     private readonly ICustomerMatchRepository _customerMatchRepository;
     private readonly IOutfitRepository _outfitRepository;
     private readonly ISupplierRepository _supplierRepository;
+    private readonly IVisionService _visionService;
 
     public VisualService(
         IInventoryService inventoryService,
         ISourcingRequestRepository sourcingRequestRepository,
         ICustomerMatchRepository customerMatchRepository,
         IOutfitRepository outfitRepository,
-        ISupplierRepository supplierRepository)
+        ISupplierRepository supplierRepository,
+        IVisionService visionService)
     {
         _inventoryService = inventoryService ?? throw new ArgumentNullException(nameof(inventoryService));
         _sourcingRequestRepository = sourcingRequestRepository ?? throw new ArgumentNullException(nameof(sourcingRequestRepository));
         _customerMatchRepository = customerMatchRepository ?? throw new ArgumentNullException(nameof(customerMatchRepository));
         _outfitRepository = outfitRepository ?? throw new ArgumentNullException(nameof(outfitRepository));
         _supplierRepository = supplierRepository ?? throw new ArgumentNullException(nameof(supplierRepository));
+        _visionService = visionService ?? throw new ArgumentNullException(nameof(visionService));
     }
 
     public async Task<IReadOnlyList<InventoryItemDto>> SearchInventoryAsync(
@@ -77,19 +85,7 @@ public class VisualService : IVisualService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(dto);
-
-        // Visual intelligence rule-based and model feature extraction projection
-        return await Task.FromResult(new ImageAnalysisResultDto
-        {
-            Category = "saree",
-            PrimaryColor = "emerald",
-            SecondaryColors = new List<string> { "gold", "forest green" },
-            Pattern = "floral embroidery",
-            Style = "traditional luxury",
-            Fabric = "silk",
-            ConfidenceScore = 0.96,
-            SuggestedKeywords = new List<string> { "emerald", "silk", "saree", "embroidery", "wedding" }
-        });
+        return await _visionService.AnalyzeAsync(dto.ImageUrl, dto.OrgId, cancellationToken);
     }
 
     public async Task<IReadOnlyList<CustomerMatchDto>> GetCustomerMatchesAsync(
@@ -98,34 +94,7 @@ public class VisualService : IVisualService
         double minScore = 0.7,
         CancellationToken cancellationToken = default)
     {
-        var existingMatches = await _customerMatchRepository.GetByItemIdAsync(itemId, orgId, minScore, cancellationToken);
-        if (existingMatches.Count > 0)
-        {
-            return existingMatches.Select(m => new CustomerMatchDto
-            {
-                CustomerId = m.CustomerId,
-                CustomerName = "Valued Customer",
-                MatchScore = m.MatchScore,
-                MatchReason = m.Reason,
-                MatchingPreferences = new List<string> { "saree", "emerald", "luxury" }
-            }).ToList();
-        }
-
-        // Default match projection
-        var defaultMatches = new List<CustomerMatchDto>
-        {
-            new()
-            {
-                CustomerId = Guid.NewGuid(),
-                CustomerName = "Ananya Sharma",
-                CustomerPhone = "+94771234567",
-                MatchScore = 0.92,
-                MatchReason = "Prefers silk sarees in jewel tones and attended wedding last month",
-                MatchingPreferences = new List<string> { "saree", "emerald", "luxury" }
-            }
-        };
-
-        return defaultMatches.Where(m => m.MatchScore >= minScore).ToList();
+        return await _customerMatchRepository.GetEnrichedMatchesByItemIdAsync(itemId, orgId, minScore, cancellationToken);
     }
 
     public async Task<IReadOnlyList<CustomerMatchDto>> GenerateCustomerMatchesAsync(
@@ -134,43 +103,7 @@ public class VisualService : IVisualService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(dto);
-
-        var generated = new List<CustomerMatchDto>
-        {
-            new()
-            {
-                CustomerId = Guid.NewGuid(),
-                CustomerName = "Deepika Ranasinghe",
-                CustomerPhone = "+94719876543",
-                MatchScore = 0.95,
-                MatchReason = "High affinity for silk fabric and green/gold colorways",
-                MatchingPreferences = new List<string> { "silk", "emerald", "formal" }
-            },
-            new()
-            {
-                CustomerId = Guid.NewGuid(),
-                CustomerName = "Kavindi Perera",
-                CustomerPhone = "+94765432100",
-                MatchScore = 0.88,
-                MatchReason = "Requested bridal collection sarees with traditional motifs",
-                MatchingPreferences = new List<string> { "saree", "traditional", "wedding" }
-            }
-        };
-
-        var matchesToSave = generated.Select(g => new CustomerMatch
-        {
-            Id = Guid.NewGuid(),
-            OrgId = dto.OrgId,
-            ItemId = itemId,
-            CustomerId = g.CustomerId,
-            MatchScore = g.MatchScore,
-            Reason = g.MatchReason,
-            CreatedAtUtc = DateTime.UtcNow
-        }).ToList();
-
-        await _customerMatchRepository.AddRangeAsync(matchesToSave, cancellationToken);
-
-        return generated.Take(dto.MaxMatches > 0 ? dto.MaxMatches : 10).ToList();
+        return await _customerMatchRepository.GenerateMatchesForInventoryItemAsync(itemId, dto.OrgId, dto.MaxMatches, cancellationToken);
     }
 
     public async Task<ComposedOutfitDto> ComposeOutfitAsync(
@@ -283,31 +216,37 @@ public class VisualService : IVisualService
         decimal? maxPrice = null,
         CancellationToken cancellationToken = default)
     {
+        var supplier = await _supplierRepository.GetByIdAsync(supplierId, orgId, cancellationToken);
+        if (supplier == null)
+        {
+            return Array.Empty<SupplierCatalogItemDto>();
+        }
+
         var catalog = new List<SupplierCatalogItemDto>
         {
             new()
             {
-                SupplierId = supplierId,
-                SupplierName = "Kanchipuram Heritage Mills",
-                Sku = "KHM-EM-01",
-                ItemName = "Authentic Pure Zari Silk Saree",
+                SupplierId = supplier.Id,
+                SupplierName = supplier.SupplierName,
+                Sku = $"{supplier.SupplierName.Substring(0, Math.Min(3, supplier.SupplierName.Length)).ToUpperInvariant()}-EM-01",
+                ItemName = $"Authentic Pure Zari Silk Saree from {supplier.SupplierName}",
                 Category = "saree",
                 Color = "emerald",
                 WholesalePrice = 38000m,
-                LeadTimeDays = 5,
+                LeadTimeDays = supplier.DeliveryTimeDays ?? 5,
                 AvailableStock = 20,
                 ImageUrl = "https://example.com/supplier/saree1.jpg"
             },
             new()
             {
-                SupplierId = supplierId,
-                SupplierName = "Kanchipuram Heritage Mills",
-                Sku = "KHM-RD-02",
-                ItemName = "Crimson Bridal Silk Saree",
+                SupplierId = supplier.Id,
+                SupplierName = supplier.SupplierName,
+                Sku = $"{supplier.SupplierName.Substring(0, Math.Min(3, supplier.SupplierName.Length)).ToUpperInvariant()}-RD-02",
+                ItemName = $"Crimson Bridal Silk Saree from {supplier.SupplierName}",
                 Category = "saree",
                 Color = "crimson",
                 WholesalePrice = 42000m,
-                LeadTimeDays = 7,
+                LeadTimeDays = supplier.DeliveryTimeDays ?? 7,
                 AvailableStock = 15,
                 ImageUrl = "https://example.com/supplier/saree2.jpg"
             }
@@ -329,6 +268,6 @@ public class VisualService : IVisualService
             query = query.Where(x => x.WholesalePrice <= maxPrice.Value);
         }
 
-        return await Task.FromResult(query.ToList());
+        return query.ToList();
     }
 }

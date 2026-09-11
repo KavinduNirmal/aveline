@@ -122,3 +122,106 @@ async def test_visual_insight_graph_out_of_stock_sourcing():
     assert len(output["looks"]) == 0
     assert output["sourcing_request"] is not None
     assert "partner ateliers" in output["suggestion"]
+
+
+@pytest.mark.asyncio
+async def test_visual_insight_graph_with_llm_curation():
+    registry = MagicMock()
+    registry.search_inventory = AsyncMock(
+        return_value={
+            "items": [
+                {
+                    "itemId": "item-101",
+                    "name": "Peach Raw-Silk Drape Gown",
+                    "price": 1250.0,
+                    "stock": 2,
+                    "imageUrl": "https://images.aveline.luxury/gown.jpg",
+                }
+            ]
+        }
+    )
+
+    mock_llm_response = MagicMock()
+    mock_llm_response.content = "Custom editorial look curated by AI stylist."
+    mock_llm_response.usage_metadata = {"input_tokens": 120, "output_tokens": 45}
+
+    mock_llm = MagicMock()
+    mock_llm.ainvoke = AsyncMock(return_value=mock_llm_response)
+
+    graph = build_visual_graph(registry, llm=mock_llm)
+
+    state = {
+        "org_id": "org-boutique-1",
+        "customer_id": "cust-sarah",
+        "message": "I need an outfit for my sister's wedding in Galle",
+        "image_url": None,
+    }
+
+    result = await graph.ainvoke(state)
+    output = result["output"]
+
+    assert output["status"] == "success"
+    assert len(output["looks"]) == 1
+    assert output["looks"][0]["text"] == "Custom editorial look curated by AI stylist."
+    assert mock_llm.ainvoke.called
+
+
+@pytest.mark.asyncio
+async def test_visual_insight_graph_staff_query_emits_text_summary_no_suggestion():
+    registry = MagicMock()
+    registry.search_inventory = AsyncMock(
+        return_value={
+            "items": [
+                {
+                    "itemId": "item-101",
+                    "name": "Peach Raw-Silk Drape Gown",
+                    "price": 1250.0,
+                    "stock": 2,
+                    "imageUrl": "https://images.aveline.luxury/gown.jpg",
+                }
+            ]
+        }
+    )
+
+    graph = build_visual_graph(registry)
+
+    state = {
+        "org_id": "org-boutique-1",
+        "customer_id": "cust-sarah",
+        "message": "Stock check for Peach Gown",
+        "staff_query": True,
+        "direction": "outbound",
+    }
+
+    result = await graph.ainvoke(state)
+    output = result["output"]
+
+    assert output["status"] == "success"
+    assert output["suggestion"] is None
+    assert output["text"] is not None
+    assert "Found 1 matching inventory item(s)" in output["text"]
+
+
+def test_coerce_visual_output_runtime_validation():
+    from pydantic import ValidationError
+    from app.schemas.visual_insight import coerce_visual_output
+
+    valid_payload = {
+        "status": "success",
+        "agent": "visual",
+        "ran": True,
+        "items": [],
+        "looks": [],
+        "suggestion": "Elle curated 1 piece.",
+    }
+    validated = coerce_visual_output(valid_payload)
+    assert validated.status == "success"
+    assert validated.suggestion == "Elle curated 1 piece."
+
+    invalid_payload = {
+        **valid_payload,
+        "forbidden_extra_field": "disallowed",
+    }
+    with pytest.raises(ValidationError):
+        coerce_visual_output(invalid_payload)
+

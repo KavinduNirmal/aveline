@@ -102,7 +102,7 @@ export function MessageBubble({
           {streamText !== null ? (
             <TypewriterText text={streamText} onProgress={onStreamProgress} />
           ) : (
-            <BlockList blocks={message.contentBlocks} onSignOff={onSignOff} />
+            <BlockList blocks={message.contentBlocks} onSignOff={onSignOff} persona={persona} />
           )}
         </div>
 

@@ -8,13 +8,15 @@ import logging
 from typing import Any
 
 from app.agents.visual_insight.state import VisualAgentState
+from app.prompts.assembly import assemble_system_prompt
 from app.schemas.visual_insight import (
     ImageAttributes,
     LookDto,
     PieceItem,
     SourcingRequestDto,
-    VisualAgentOutput,
+    coerce_visual_output,
 )
+from app.services.usage_reporter import report_usage
 from app.tools.inventory.image_tools import analyze_product_image
 from app.tools.inventory.inventory_tools import search_inventory
 from app.tools.inventory.outfit_tools import compose_outfit
@@ -241,16 +243,53 @@ class VisualInsightAgent:
         raw_items = state.get("matched_items") or []
         items = [PieceItem(**item) for item in raw_items]
         occasion = (state.get("search_criteria") or {}).get("occasion") or "Boutique Collection"
+        staff_query = bool(state.get("staff_query"))
 
         if items:
             look: LookDto = compose_outfit(items, occasion=occasion, customer_preferences=state.get("preferences"))
-            name = items[0].name
-            suggestion = f"Elle curated {len(items)} piece(s) harmonizing with your aesthetic, including the {name}."
-            return {
-                "composed_looks": [look.model_dump()],
-                "suggestion": suggestion,
-                "status": "success",
-            }
+
+            prompt_tokens = 0
+            completion_tokens = 0
+            if self.llm is not None:
+                try:
+                    system_prompt = assemble_system_prompt("visual", {"organization_id": state.get("org_id")})
+                    user_msg = (
+                        f"Curate a look for occasion '{occasion}' featuring: "
+                        + ", ".join(f"{i.name} ({i.category or 'garment'}, {i.color or 'color'})" for i in items)
+                    )
+                    llm_res = await self.llm.ainvoke([("system", system_prompt), ("human", user_msg)])
+                    if hasattr(llm_res, "content") and llm_res.content:
+                        look.text = str(llm_res.content).strip()
+                    if hasattr(llm_res, "usage_metadata") and llm_res.usage_metadata:
+                        prompt_tokens = llm_res.usage_metadata.get("input_tokens", 0)
+                        completion_tokens = llm_res.usage_metadata.get("output_tokens", 0)
+                except Exception as e:
+                    logger.warning("LLM look composition commentary failed, using rule fallback: %s", e)
+
+            if staff_query:
+                # Bug 1 fix: for staff queries, emit concise factual text and no customer-facing suggestion box
+                summary_text = f"Found {len(items)} matching inventory item(s) for query."
+                return {
+                    "composed_looks": [look.model_dump()],
+                    "suggestion": None,
+                    "summary": summary_text,
+                    "text": summary_text,
+                    "status": "success",
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                }
+            else:
+                name = items[0].name
+                suggestion = f"Elle curated {len(items)} piece(s) harmonizing with your aesthetic, including the {name}."
+                return {
+                    "composed_looks": [look.model_dump()],
+                    "suggestion": suggestion,
+                    "summary": None,
+                    "text": None,
+                    "status": "success",
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                }
 
         return {
             "composed_looks": [],
@@ -263,6 +302,7 @@ class VisualInsightAgent:
         org_id = state.get("org_id", "")
         customer_id = state.get("customer_id")
         image_url = state.get("image_url")
+        staff_query = bool(state.get("staff_query"))
 
         notes = f"Sourcing request initiated from inquiry: '{msg}'"
         req: SourcingRequestDto = await create_sourcing_request(
@@ -273,21 +313,32 @@ class VisualInsightAgent:
             notes=notes,
         )
 
-        suggestion = (
-            "We do not have this exact piece in stock right now, but Elle has initiated a custom "
-            "sourcing request with our partner ateliers."
-        )
-
-        return {
-            "sourcing_request": req.model_dump(),
-            "suggestion": suggestion,
-            "status": "pending",
-        }
+        if staff_query:
+            summary_text = "No in-stock pieces matched. Sourcing request created with partner ateliers."
+            return {
+                "sourcing_request": req.model_dump(),
+                "suggestion": None,
+                "summary": summary_text,
+                "text": summary_text,
+                "status": "pending",
+            }
+        else:
+            suggestion = (
+                "We do not have this exact piece in stock right now, but Elle has initiated a custom "
+                "sourcing request with our partner ateliers."
+            )
+            return {
+                "sourcing_request": req.model_dump(),
+                "suggestion": suggestion,
+                "summary": None,
+                "text": None,
+                "status": "pending",
+            }
 
     async def compose_output(self, state: VisualAgentState) -> dict[str, Any]:
         """Format final output payload conforming to VisualAgentOutput contract."""
         status = state.get("status") or "success"
-        if status not in ("success", "pending", "out_of_scope", "skipped", "stub", "error"):
+        if status not in ("success", "no_results", "pending", "out_of_scope", "skipped", "stub", "error"):
             status = "success"
 
         items = [PieceItem(**i) for i in state.get("matched_items", [])]
@@ -303,14 +354,36 @@ class VisualInsightAgent:
             else None
         )
 
-        output = VisualAgentOutput(
-            status=status,  # type: ignore[arg-type]
-            suggestion=state.get("suggestion"),
-            items=items,
-            looks=looks,
-            sourcing_request=sourcing_req,
-            image_attributes=image_attrs,
-            reason=state.get("reason"),
-        )
+        output = coerce_visual_output({
+            "status": status,
+            "agent": "visual",
+            "ran": True,
+            "suggestion": state.get("suggestion"),
+            "summary": state.get("summary"),
+            "text": state.get("text"),
+            "items": items,
+            "looks": looks,
+            "sourcing_request": sourcing_req,
+            "image_attributes": image_attrs,
+            "reason": state.get("reason"),
+        })
+
+        # ADR-010 Usage Reporting (best-effort)
+        prompt_tokens = state.get("prompt_tokens") or 0
+        completion_tokens = state.get("completion_tokens") or 0
+        if (prompt_tokens + completion_tokens) > 0 and state.get("org_id"):
+            try:
+                await report_usage(
+                    organization_id=str(state["org_id"]),
+                    request_id=str(state.get("customer_id") or "visual-req"),
+                    workflow_id="visual_insight",
+                    provider="openai",
+                    model="visual-llm",
+                    input_tokens=prompt_tokens,
+                    output_tokens=completion_tokens,
+                )
+            except Exception as exc:
+                logger.warning("Usage reporting failed (non-fatal): %s", exc)
 
         return {"output": output.model_dump()}
+

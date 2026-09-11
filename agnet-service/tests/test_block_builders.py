@@ -201,7 +201,34 @@ def test_elle_blocks_skip_piece_when_no_items():
     visual["items"] = []
     blocks = build_elle_blocks(visual)
 
-    assert all(b["type"] != "piece" for b in blocks)
+    assert not any(b["type"] == "piece" for b in blocks)
+    assert any(b["type"] == "look" for b in blocks)
+
+
+def test_elle_blocks_staff_query_emits_text_block_no_suggestion():
+    staff_visual = {
+        "agent": "visual",
+        "ran": True,
+        "status": "success",
+        "text": "Found 2 matching items in boutique inventory for 'silk saree'.",
+        "suggestion": None,
+        "items": [
+            {
+                "itemId": "i1",
+                "name": "Silk Slip Dress",
+                "price": 24000,
+                "size": "M",
+                "stock": 2,
+            }
+        ],
+        "looks": [],
+    }
+    blocks = build_elle_blocks(staff_visual)
+
+    assert blocks[0]["type"] == "text"
+    assert "Found 2 matching items" in blocks[0]["text"]
+    assert not any(b["type"] == "suggestion" for b in blocks)
+    assert any(b["type"] == "piece" for b in blocks)
 
 
 # ----------------------------------------------------------------------- Lina (commerce)

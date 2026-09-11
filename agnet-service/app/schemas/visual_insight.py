@@ -105,3 +105,14 @@ class VisualAgentOutput(BaseModel):
     reason: str | None = None
     note: str | None = None
     message: str | None = None
+    text: str | None = None
+    summary: str | None = None
+
+
+def coerce_visual_output(data: dict[str, Any]) -> VisualAgentOutput:
+    """Validate and coerce dictionary payload into VisualAgentOutput.
+
+    Ensures forbidden extra fields fail with ValidationError (ADR-002, ADR-016).
+    """
+    return VisualAgentOutput.model_validate(data)
+

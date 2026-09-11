@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Modules.CustomerConcierge.Models;
 using Aveline.Api.Modules.VisualIntelligence.DTOs;
 using Aveline.Api.Modules.VisualIntelligence.Models;
 using FluentAssertions;
@@ -552,6 +553,31 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
     {
         var orgId = Guid.NewGuid();
         var itemId = Guid.NewGuid();
+        var customer = new Customer
+        {
+            Id = Guid.NewGuid(),
+            OrganizationId = orgId,
+            FullName = "Priyanka Dias",
+            PhoneNumber = "+94770001122",
+            Status = "returning"
+        };
+        var match = new CustomerMatch
+        {
+            Id = Guid.NewGuid(),
+            OrgId = orgId,
+            ItemId = itemId,
+            CustomerId = customer.Id,
+            MatchConfidence = 0.88m,
+            MatchReason = "Prefers silk sarees"
+        };
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await db.Customers.AddAsync(customer);
+            await db.CustomerMatches.AddAsync(match);
+            await db.SaveChangesAsync();
+        }
 
         using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/internal/visual/customer-matches/{itemId}?orgId={orgId}&minScore=0.7");
         request.Headers.Add("X-Internal-Token", InternalKey);
@@ -563,6 +589,8 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
 
         var matches = await response.Content.ReadFromJsonAsync<List<CustomerMatchDto>>();
         matches.Should().NotBeNull();
+        matches!.Should().NotBeEmpty();
+        matches![0].CustomerName.Should().Be("Priyanka Dias");
     }
 
     // --- Endpoint 9: POST /api/internal/visual/customer-matches/{itemId}/generate ---
@@ -587,15 +615,47 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task GenerateCustomerMatches_WithValidItem_ReturnsGeneratedMatches()
     {
-        var itemId = Guid.NewGuid();
         var orgId = Guid.NewGuid();
+        var item = new InventoryItem
+        {
+            Id = Guid.NewGuid(),
+            OrgId = orgId,
+            ItemName = "Emerald Silk Saree",
+            Category = "saree",
+            Color = "emerald",
+            Price = 45000m,
+            Quantity = 3,
+            Status = "available"
+        };
+        var customer = new Customer
+        {
+            Id = Guid.NewGuid(),
+            OrganizationId = orgId,
+            FullName = "Ananya Sharma",
+            PhoneNumber = "+94771234567",
+            Status = "vip",
+            Preferences = new List<CustomerPreference>
+            {
+                new() { OrganizationId = orgId, PreferenceKey = "color", PreferenceValue = "emerald", Confidence = 0.9m },
+                new() { OrganizationId = orgId, PreferenceKey = "fabric", PreferenceValue = "silk", Confidence = 0.85m }
+            }
+        };
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await db.InventoryItems.AddAsync(item);
+            await db.Customers.AddAsync(customer);
+            await db.SaveChangesAsync();
+        }
+
         var body = new
         {
             orgId = orgId,
             maxMatches = 5
         };
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/internal/visual/customer-matches/{itemId}/generate")
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/internal/visual/customer-matches/{item.Id}/generate")
         {
             Content = JsonContent.Create(body)
         };
@@ -609,6 +669,7 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
         var result = await response.Content.ReadFromJsonAsync<List<CustomerMatchDto>>();
         result.Should().NotBeNull();
         result!.Should().NotBeEmpty();
+        result![0].CustomerName.Should().Be("Ananya Sharma");
     }
 
     // --- Endpoint 10: POST /api/internal/visual/outfits/compose ---
@@ -772,6 +833,20 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
     {
         var supplierId = Guid.NewGuid();
         var orgId = Guid.NewGuid();
+        var supplier = new Supplier
+        {
+            Id = supplierId,
+            OrgId = orgId,
+            SupplierName = "Kanchipuram Heritage Mills",
+            IsActive = true
+        };
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await db.Suppliers.AddAsync(supplier);
+            await db.SaveChangesAsync();
+        }
 
         using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/internal/visual/suppliers/{supplierId}/catalog?orgId={orgId}&category=saree&color=emerald");
         request.Headers.Add("X-Internal-Token", InternalKey);
@@ -784,5 +859,6 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
         var items = await response.Content.ReadFromJsonAsync<List<SupplierCatalogItemDto>>();
         items.Should().NotBeNull();
         items!.Should().NotBeEmpty();
+        items![0].SupplierName.Should().Be("Kanchipuram Heritage Mills");
     }
 }

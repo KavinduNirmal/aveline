@@ -1101,6 +1101,113 @@
 - `pytest tests/test_visual_agent.py tests/test_visual_insight_schemas.py tests/test_visual_routing.py tests/test_product_analysis_cache.py tests/test_inventory_search_cache.py`: 33/33 tests passed in 8.65s (100% success).
 - `pytest tests/`: 294 passed, 2 skipped in 146.53s (100% success).
 
+## Session 2026-09-11 (Slice 2 Review Fix: Item 1 pytest-httpx & respx Refactor)
 
+**Task:** Fix Item 1 from the Slice 2 review — declare `pytest-httpx` in dev dependencies and refactor `test_visual_tools.py` from `httpx_mock` fixture to `@respx.mock` to prevent CI fixture errors.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed (100% Tests Passing)
+
+### Work Performed
+1. Authored fix implementation plan for Item 1 in `implementation_plan.md`.
+2. Added `pytest-httpx` to `agnet-service/requirements-dev.txt`.
+3. Refactored all 10 test functions in `agnet-service/tests/tools/test_visual_tools.py` to use `@respx.mock` matching Slice 1's test conventions (`test_tool_registry.py`).
+4. Executed targeted and full test suite verifications.
+
+### Files Created or Modified
+- `agnet-service/requirements-dev.txt`
+- `agnet-service/tests/tools/test_visual_tools.py`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- `pytest tests/tools/test_visual_tools.py -v`: 10/10 passed in 13.18s (100% success).
+- `pytest tests/`: 294 passed, 2 skipped in 144.16s (0 errors, 0 failures).
+
+## Session 2026-09-11 (Slice 2 Review Fix: Item 2 AI Readiness, LLM Wiring, Usage Reporting & Schema Validation)
+
+**Task:** Fix Item 2 from the Slice 2 review — wire LLM into `VisualInsightAgent` and `build_visual_graph`, implement ADR-010 usage reporting, enforce strict runtime schema validation (`coerce_visual_output`), implement Elle's system prompt, and handle staff queries without suggestion blocks.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed (100% Tests Passing)
+
+### Work Performed
+1. Authored fix implementation plan for Item 2 in `implementation_plan.md`.
+2. Filled in Elle's persona prompt in `app/prompts/agent_prompts.py["visual"]`.
+3. Updated `build_visual_graph(registry, llm=None)` to accept and thread `llm` to `VisualInsightAgent`.
+4. Wired LLM styling commentary in `VisualInsightAgent.compose_looks` with deterministic fallback when `llm` is `None`.
+5. Added ADR-010 `report_usage()` integration in `compose_output` for token and Blossom unit tracking.
+6. Implemented `coerce_visual_output` in `app/schemas/visual_insight.py` for strict runtime schema validation (`extra="forbid"`).
+7. Added staff-query handling to `nodes.py`, `state.py`, `concierge_workflow.py`, and `block_builders.py`.
+8. Created unit tests in `test_visual_insight_graph.py`, `test_block_builders.py`, and updated `test_prompt_system.py`.
+
+### Files Created or Modified
+- `agnet-service/app/prompts/agent_prompts.py`
+- `agnet-service/app/schemas/visual_insight.py`
+- `agnet-service/app/agents/visual_insight/state.py`
+- `agnet-service/app/agents/visual_insight/graph.py`
+- `agnet-service/app/agents/visual_insight/nodes.py`
+- `agnet-service/app/events/block_builders.py`
+- `agnet-service/app/workflows/concierge_workflow.py`
+- `agnet-service/tests/agents/test_visual_insight_graph.py`
+- `agnet-service/tests/test_block_builders.py`
+- `agnet-service/tests/test_prompt_system.py`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+## Session 2026-09-11 (Slice 2 Review Fix: Real Services, Vision Abstraction & Real Repository Intelligence)
+
+**Task:** Complete remaining Slice 2 review items — replace hardcoded intelligence with real abstractions (`IVisionService` / `VisionService`), zero-fabrication customer preference matching in `CustomerMatchRepository`, supplier catalog tenant-scoped query integration in `VisualService`, enforce ADR-009 single-header auth (`X-Internal-Token` only), separate entity models into one-class-per-file (`OutfitItem.cs`, `Supplier.cs`), fix Salon card SuggestionBlock persona accent theming (Bug 2), and add comprehensive unit/integration/Testcontainers tests.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed (100% Tests Passing, Build Clean)
+
+### Work Performed
+1. **One-class-per-file Entity Separation**:
+   - Created `Aveline.Api/Modules/VisualIntelligence/Models/OutfitItem.cs` and `Supplier.cs`.
+   - Cleaned `OutfitComposition.cs` and `SourcingRequest.cs` to ensure single entity per file.
+2. **Vision Service Abstraction (`IVisionService` & `VisionService`)**:
+   - Created `IVisionService.cs` and `VisionService.cs` with OpenAI-compatible multimodal image feature extraction and deterministic offline fallback.
+   - Registered `services.AddHttpClient<IVisionService, VisionService>()` in `VisualIntelligenceModule.cs`.
+3. **Zero-Fabrication Customer Matching**:
+   - Extended `ICustomerMatchRepository` and `CustomerMatchRepository` with `GenerateMatchesForInventoryItemAsync` and `GetEnrichedMatchesByItemIdAsync`.
+   - Replaced fabricated hardcoded customer profiles (`"Ananya Sharma"`, etc.) with queries against real boutique customers (`_db.Customers.Include(c => c.Preferences)`).
+4. **Supplier & Sourcing Integration**:
+   - Updated `VisualService.GetSupplierCatalogAsync` to query `_supplierRepository.GetByIdAsync(supplierId, orgId)` and enforce tenant isolation.
+5. **ADR-009 Authentication Alignment**:
+   - Updated `InternalTokenAuthenticationHandler.cs` to remove `X-Internal-Key` check, strictly requiring `X-Internal-Token`.
+6. **Frontend Bug 2 Fix (Salon SuggestionBlock & LookBlock Persona Accents)**:
+   - Updated `frontend/web/src/components/conversation/blocks.tsx` and `MessageBubble.tsx` to pass author `persona` into `BlockList` and `SuggestionBlock` / `LookBlock`, rendering proper theme tokens (`memory`, `visual`, `commerce`, `primary`).
+7. **Documentation & Reports**:
+   - Saved `docs/reports/slice2-convention-alignment.md`.
+8. **Test Suite Implementation**:
+   - Created `Aveline.Api.Tests/VisionServiceTests.cs`.
+   - Created `Aveline.Api.Tests/CustomerMatchRepositoryTests.cs`.
+   - Created `Aveline.Api.Tests/VisualIntelligencePostgresTests.cs` (Testcontainers).
+   - Updated `Aveline.Api.Tests/VisualEndpointsIntegrationTests.cs`.
+
+### Files Created or Modified
+- `Aveline.Api/Modules/VisualIntelligence/Models/OutfitItem.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Models/OutfitComposition.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Models/Supplier.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Models/SourcingRequest.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/IVisionService.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/VisionService.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/VisualService.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/ICustomerMatchRepository.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/CustomerMatchRepository.cs`
+- `Aveline.Api/Modules/VisualIntelligence/VisualIntelligenceModule.cs`
+- `Aveline.Api/Infrastructure/Integrations/InternalTokenAuthenticationHandler.cs`
+- `Aveline.Api.Tests/VisionServiceTests.cs`
+- `Aveline.Api.Tests/CustomerMatchRepositoryTests.cs`
+- `Aveline.Api.Tests/VisualIntelligencePostgresTests.cs`
+- `Aveline.Api.Tests/VisualEndpointsIntegrationTests.cs`
+- `frontend/web/src/components/conversation/blocks.tsx`
+- `frontend/web/src/components/conversation/MessageBubble.tsx`
+- `docs/reports/slice2-convention-alignment.md`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~Visual"`: 42/42 tests passed in 43s (100% success).
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~VisionServiceTests|FullyQualifiedName~CustomerMatchRepositoryTests"`: 5/5 tests passed in 3s (100% success).
+- `npm run build` (`tsc -b && vite build`): Production build succeeded with zero errors in 35.50s.
+- `pytest tests/` (in `agnet-service`): 299 passed, 2 skipped in 155.30s (0 errors, 0 failures).
 
 

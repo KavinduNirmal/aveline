@@ -11,9 +11,9 @@ from app.agents.visual_insight.nodes import VisualInsightAgent
 from app.agents.visual_insight.state import VisualAgentState
 
 
-def build_visual_graph(registry: Any) -> Any:
-    """Compile and return the Visual Insight Agent graph bound to ``registry``."""
-    agent = VisualInsightAgent(registry)
+def build_visual_graph(registry: Any, llm: Any = None) -> Any:
+    """Compile and return the Visual Insight Agent graph bound to ``registry`` and optional ``llm``."""
+    agent = VisualInsightAgent(registry, llm=llm)
 
     graph = StateGraph(VisualAgentState)
 

@@ -9,8 +9,15 @@ public interface IUsageRepository
     /// <see cref="UsageAccount.BlossomUsed"/> on the matching period ledger row.
     /// Both operations execute within a single database transaction.
     /// </summary>
+    /// <param name="record">The immutable usage record to insert.</param>
+    /// <param name="defaultBlossomLimit">
+    /// Plan allowance used only when the period row does not exist yet; callers resolve it
+    /// from <see cref="Domain.IEntitlementResolver"/> rather than a hardcoded map.
+    /// </param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     Task AddUsageRecordAndUpdateAccountAsync(
         AiUsageRecord record,
+        decimal defaultBlossomLimit,
         CancellationToken cancellationToken = default);
 
     /// <summary>

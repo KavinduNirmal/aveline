@@ -49,6 +49,12 @@ public class AppDbContext : DbContext
 
     public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
 
+    public DbSet<PlanEntitlement> PlanEntitlements => Set<PlanEntitlement>();
+
+    public DbSet<PlanEntitlementOverride> PlanEntitlementOverrides => Set<PlanEntitlementOverride>();
+
+    public DbSet<OrganizationSubscription> OrganizationSubscriptions => Set<OrganizationSubscription>();
+
     public DbSet<AuditLogEntry> AuditLogEntries => Set<AuditLogEntry>();
 
     public DbSet<IntegrationCredential> IntegrationCredentials => Set<IntegrationCredential>();

@@ -20,22 +20,14 @@ public sealed class UsageTrackerService(
     IUsageRepository usageRepository,
     ILogger<UsageTrackerService> logger,
     IConfiguration configuration,
-    IPricingService? pricingService = null) : IUsageTrackerService
+    IPricingService? pricingService = null,
+    IEntitlementResolver? entitlementResolver = null) : IUsageTrackerService
 {
-    // Default plan limits per tier (Blossoms/month). These values are used when creating
-    // a new UsageAccount for the period and no billing integration has assigned a limit yet.
-    // They mirror the pricing_plan.md tables and will be superseded by subscription data.
-    private static readonly Dictionary<PlanTier, decimal> DefaultBlossomLimits = new()
-    {
-        { PlanTier.Seed,       150m },
-        { PlanTier.Bloom,      750m },
-        { PlanTier.Orchid,    2000m },
-        { PlanTier.Rose,      5000m },
-        { PlanTier.Enterprise, 9999m },
-    };
+    /// <summary>Fallback allowance when no entitlement resolver is registered.</summary>
+    private const decimal SeedFallbackLimit = 150m;
 
-    // The default tier assigned to new usage accounts until the subscription system sets one.
-    private const PlanTier DefaultNewAccountTier = PlanTier.Seed;
+    /// <summary>The entitlement key that supplies the monthly Blossom allowance.</summary>
+    public const string MonthlyBlossomsKey = "blossoms.monthly";
 
     /// <inheritdoc/>
     public async Task<AiUsageRecord> RecordWorkflowUsageAsync(
@@ -45,6 +37,7 @@ public sealed class UsageTrackerService(
         ValidateRequest(request);
 
         decimal blossomUnits = await CalculateBlossomUnitsAsync(request, cancellationToken);
+        decimal blossomLimit = await ResolveBlossomLimitAsync(request.OrganizationId, cancellationToken);
 
         var record = new AiUsageRecord
         {
@@ -60,7 +53,7 @@ public sealed class UsageTrackerService(
             BlossomUnits   = blossomUnits,
         };
 
-        await usageRepository.AddUsageRecordAndUpdateAccountAsync(record, cancellationToken);
+        await usageRepository.AddUsageRecordAndUpdateAccountAsync(record, blossomLimit, cancellationToken);
 
         logger.LogInformation(
             "Usage recorded: org={OrganizationId} workflow={WorkflowId} model={Model} " +
@@ -75,13 +68,13 @@ public sealed class UsageTrackerService(
     }
 
     /// <inheritdoc/>
-    public Task<UsageAccount> GetOrCreateCurrentAccountAsync(
+    public async Task<UsageAccount> GetOrCreateCurrentAccountAsync(
         Guid organizationId,
         CancellationToken cancellationToken = default)
     {
         var (periodStart, periodEnd) = GetCurrentPeriod();
-        decimal limit = DefaultBlossomLimits[DefaultNewAccountTier];
-        return usageRepository.GetOrCreateAccountAsync(
+        var limit = await ResolveBlossomLimitAsync(organizationId, cancellationToken);
+        return await usageRepository.GetOrCreateAccountAsync(
             organizationId, periodStart, periodEnd, limit, cancellationToken);
     }
 
@@ -145,6 +138,22 @@ public sealed class UsageTrackerService(
             rule.RoundingMode,
             rule.RoundingDecimals,
             rule.MinimumChargeBlossoms);
+    }
+
+    /// <summary>
+    /// Resolves the organisation's monthly Blossom allowance from the entitlement catalog
+    /// (fixes defects D-1 and D-2: the limit was previously always the Seed value).
+    /// </summary>
+    private async Task<decimal> ResolveBlossomLimitAsync(
+        Guid organizationId, CancellationToken cancellationToken)
+    {
+        if (entitlementResolver is null)
+        {
+            return SeedFallbackLimit;
+        }
+
+        return await entitlementResolver.GetDecimalAsync(
+            organizationId, MonthlyBlossomsKey, SeedFallbackLimit, at: null, cancellationToken);
     }
 
     private static (DateTime periodStart, DateTime periodEnd) GetCurrentPeriod()

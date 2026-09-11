@@ -17,6 +17,8 @@ public static class BillingModule
         services.AddScoped<IUsageTrackerService, UsageTrackerService>();
         services.AddScoped<IPricingRepository, PricingRepository>();
         services.AddScoped<IPricingService, PricingService>();
+        services.AddScoped<IEntitlementRepository, EntitlementRepository>();
+        services.AddScoped<IEntitlementResolver, EntitlementResolver>();
         services.AddSingleton<PricingRuleCache>();
         services.AddHostedService<PricingRuleCacheWarmer>();
 

@@ -21,6 +21,8 @@ using Aveline.Api.Modules.Organizations.Repositories;
 using Aveline.Api.Modules.Organizations.Services;
 using Aveline.Api.Modules.Shared.Repositories;
 using Aveline.Api.Modules.Shared.Services;
+using Aveline.Api.Modules.SystemHealth;
+using Aveline.Api.Modules.SystemHealth.Endpoints;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -53,6 +55,7 @@ builder.Services.AddSignalR()
 builder.Services.AddNotificationsModule(builder.Configuration);
 builder.Services.AddConversationsModule(builder.Configuration);
 builder.Services.AddCustomerConciergeModule();
+builder.Services.AddSystemHealthModule(builder.Configuration);
 
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IUserCacheService, UserCacheService>();
@@ -90,7 +93,7 @@ app.UseAvelineOnboarding();
 app.MapHub<NotificationHub>("/hubs/notifications");
 app.MapHub<ConversationHub>("/hubs/conversations");
 // Health checks are public (the fallback authorization policy requires auth by default).
-app.MapHealthChecks("/health").AllowAnonymous();
+app.MapSystemHealthEndpoints();
 
 var v1 = app.MapGroup("/api/v1");
 v1.MapAuthEndpoints();

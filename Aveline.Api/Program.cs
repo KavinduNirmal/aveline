@@ -75,6 +75,8 @@ builder.Services.AddScoped<IRateLimiter, DistributedRateLimiter>();
 builder.Services.AddScoped<IAdminApprovalRepository, AdminApprovalRepository>();
 builder.Services.AddScoped<IAdminApprovalService, AdminApprovalService>();
 builder.Services.AddScoped<IOnboardingService, OnboardingService>();
+builder.Services.AddScoped<Aveline.Api.Modules.Organizations.Webhooks.IClerkWebhookSyncService,
+    Aveline.Api.Modules.Organizations.Webhooks.ClerkWebhookSyncService>();
 
 var app = builder.Build();
 
@@ -118,6 +120,7 @@ v1.MapOnboardingEndpoints();
 v1.MapIntegrationEndpoints();
 v1.MapOrgUsageEndpoints();
 v1.MapWebhookEndpoints();
+v1.MapClerkWebhookEndpoints();
 v1.MapConversationEndpoints();
 v1.MapPricingEndpoints();
 v1.MapBlossomEndpoints();

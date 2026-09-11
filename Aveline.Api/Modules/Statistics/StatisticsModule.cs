@@ -1,3 +1,4 @@
+using Aveline.Api.Modules.Statistics.Endpoints;
 using Aveline.Api.Modules.Statistics.Repositories;
 using Aveline.Api.Modules.Statistics.Services;
 
@@ -19,6 +20,7 @@ public static class StatisticsModule
 
     public static IEndpointRouteBuilder MapStatisticsEndpoints(this IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapAgentStatisticsEndpoints();
         return endpoints;
     }
 }

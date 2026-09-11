@@ -128,6 +128,7 @@ v1.MapPricingEndpoints();
 v1.MapBlossomEndpoints();
 v1.MapSubscriptionEndpoints();
 v1.MapApiAccessEndpoints();
+v1.MapStatisticsEndpoints();
 
 app.MapBillingEndpoints();
 app.MapCustomerConciergeEndpoints();

@@ -24,6 +24,9 @@ public static class BillingModule
         services.AddScoped<IEntitlementResolver, EntitlementResolver>();
         services.AddSingleton<PricingRuleCache>();
         services.AddHostedService<PricingRuleCacheWarmer>();
+        services.AddHostedService<Jobs.BlossomExpiryJob>();
+        services.AddHostedService<Jobs.BillingPeriodRolloverJob>();
+        services.AddHostedService<Jobs.IdempotencyRecordCleanupJob>();
 
         return services;
     }

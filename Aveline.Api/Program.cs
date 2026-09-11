@@ -20,6 +20,7 @@ using Aveline.Api.Modules.Organizations.Repositories;
 using Aveline.Api.Modules.Organizations.Services;
 using Aveline.Api.Modules.Shared.Repositories;
 using Aveline.Api.Modules.Shared.Services;
+using Aveline.Api.Modules.VisualIntelligence;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -69,9 +70,7 @@ builder.Services.AddScoped<IOnboardingService, OnboardingService>();
 builder.Services.AddControllers();
 
 // Visual Intelligence & Inventory Module (Slice 2)
-builder.Services.AddScoped<Aveline.Domain.Repositories.IInventoryRepository, Aveline.Infrastructure.Persistence.Repositories.InventoryRepository>();
-builder.Services.AddScoped<Aveline.Application.Services.Inventory.IInventoryService, Aveline.Application.Services.Inventory.InventoryService>();
-builder.Services.AddScoped<Aveline.Application.Services.Visual.IVisualService, Aveline.Application.Services.Visual.VisualService>();
+builder.Services.AddVisualIntelligenceModule();
 
 var app = builder.Build();
 
@@ -110,6 +109,7 @@ v1.MapConversationEndpoints();
 
 app.MapBillingEndpoints();
 app.MapCustomerConciergeEndpoints();
+app.MapVisualEndpoints();
 app.MapControllers();
 
 // Apply EF Core migrations on startup for a fresh/local database. Guarded to the

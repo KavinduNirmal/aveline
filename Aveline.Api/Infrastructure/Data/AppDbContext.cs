@@ -8,6 +8,7 @@ using Aveline.Api.Modules.Integrations.Models;
 using Aveline.Api.Modules.Notifications.Models;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Shared.Models;
+using Aveline.Api.Modules.VisualIntelligence.Models;
 using Microsoft.EntityFrameworkCore;
 
 namespace Aveline.Api.Infrastructure.Data;
@@ -19,6 +20,15 @@ public class AppDbContext : DbContext
     }
 
     public DbSet<User> Users => Set<User>();
+
+    // Visual Intelligence Module (Slice 2)
+    public DbSet<InventoryItem> InventoryItems => Set<InventoryItem>();
+    public DbSet<InventoryImage> InventoryImages => Set<InventoryImage>();
+    public DbSet<CustomerMatch> CustomerMatches => Set<CustomerMatch>();
+    public DbSet<OutfitComposition> OutfitCompositions => Set<OutfitComposition>();
+    public DbSet<OutfitItem> OutfitItems => Set<OutfitItem>();
+    public DbSet<SourcingRequest> SourcingRequests => Set<SourcingRequest>();
+    public DbSet<Supplier> Suppliers => Set<Supplier>();
 
     // Commerce Module (Slice 3)
     public DbSet<Order> Orders => Set<Order>();
@@ -68,6 +78,12 @@ public class AppDbContext : DbContext
     public DbSet<CustomerInteraction> CustomerInteractions => Set<CustomerInteraction>();
     public DbSet<CustomerConsent> CustomerConsents => Set<CustomerConsent>();
     public DbSet<CustomerTag> CustomerTags => Set<CustomerTag>();
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        base.OnConfiguring(optionsBuilder);
+        optionsBuilder.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning));
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

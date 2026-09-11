@@ -41,33 +41,41 @@ export interface ContentBlock {
   [key: string]: unknown
 }
 
+import type { Persona } from './persona'
+
 interface BlockRendererProps {
   block: ContentBlock
   onSignOff?: (approved: boolean) => void
   onSelectCustomer?: (customerId: string) => void
+  persona?: Persona | null
 }
 
 /** Renders a single content block by type. */
-export function BlockRenderer({ block, onSignOff, onSelectCustomer }: BlockRendererProps) {
+export function BlockRenderer({
+  block,
+  onSignOff,
+  onSelectCustomer,
+  persona,
+}: BlockRendererProps) {
   switch (block.type) {
     case 'text':
       return <p className="whitespace-pre-wrap text-sm leading-relaxed">{block.text}</p>
     case 'piece':
-      return <PieceBlock block={block} />
+      return <PieceBlock block={block} onSignOff={onSignOff} persona={persona} />
     case 'at_a_glance':
-      return <AtAGlanceBlock block={block} />
+      return <AtAGlanceBlock block={block} onSignOff={onSignOff} persona={persona} />
     case 'sign_off':
-      return <SignOffBlock block={block} onSignOff={onSignOff} />
+      return <SignOffBlock block={block} onSignOff={onSignOff} persona={persona} />
     case 'client_message':
-      return <ClientMessageBlock block={block} />
+      return <ClientMessageBlock block={block} onSignOff={onSignOff} persona={persona} />
     case 'payment':
-      return <PaymentBlock block={block} />
+      return <PaymentBlock block={block} onSignOff={onSignOff} persona={persona} />
     case 'courier':
-      return <CourierBlock block={block} />
+      return <CourierBlock block={block} onSignOff={onSignOff} persona={persona} />
     case 'suggestion':
-      return <SuggestionBlock block={block} />
+      return <SuggestionBlock block={block} onSignOff={onSignOff} persona={persona} />
     case 'look':
-      return <LookBlock block={block} />
+      return <LookBlock block={block} onSignOff={onSignOff} persona={persona} />
     case 'choice':
       return <ChoiceBlock block={block} onSelectCustomer={onSelectCustomer} />
     default:
@@ -241,22 +249,45 @@ function CourierBlock({ block }: BlockRendererProps) {
   )
 }
 
-function SuggestionBlock({ block }: BlockRendererProps) {
+function SuggestionBlock({ block, persona }: BlockRendererProps) {
+  const borderClass =
+    persona?.key === 'ava'
+      ? 'border-memory/20'
+      : persona?.key === 'elle'
+        ? 'border-visual/20'
+        : persona?.key === 'lina'
+          ? 'border-commerce/20'
+          : 'border-primary/20'
+
+  const bgClass =
+    persona?.key === 'ava'
+      ? 'bg-memory/5'
+      : persona?.key === 'elle'
+        ? 'bg-visual/5'
+        : persona?.key === 'lina'
+          ? 'bg-commerce/5'
+          : 'bg-primary/5'
+
+  const textClass = persona?.text ?? 'text-primary'
+
   return (
-    <div className="rounded-lg border border-visual/20 bg-visual/5 p-3">
-      <p className="text-xs font-medium text-visual">Suggestion</p>
+    <div className={cn('rounded-lg border p-3', borderClass, bgClass)}>
+      <p className={cn('text-xs font-medium', textClass)}>Suggestion</p>
       {block.text && <p className="mt-1 text-sm">{block.text}</p>}
     </div>
   )
 }
 
-function LookBlock({ block }: BlockRendererProps) {
+function LookBlock({ block, persona }: BlockRendererProps) {
+  const bgSoftClass = persona?.bgSoft ?? 'bg-visual/10'
+  const textClass = persona?.text ?? 'text-visual'
+
   return (
     <div className="overflow-hidden rounded-lg border">
       {block.imageUrl ? (
         <img src={block.imageUrl} alt={block.name ?? 'Look'} className="h-44 w-full object-cover" />
       ) : (
-        <div className={cn('flex h-24 items-center justify-center bg-visual/10 text-visual')}>
+        <div className={cn('flex h-24 items-center justify-center', bgSoftClass, textClass)}>
           <span className="text-xs font-medium">Look</span>
         </div>
       )}
@@ -272,10 +303,12 @@ export function BlockList({
   blocks,
   onSignOff,
   onSelectCustomer,
+  persona,
 }: {
   blocks: unknown[]
   onSignOff?: (approved: boolean) => void
   onSelectCustomer?: (customerId: string) => void
+  persona?: Persona | null
 }) {
   const parsed = (blocks ?? []) as ContentBlock[]
   if (parsed.length === 0) return null
@@ -284,7 +317,12 @@ export function BlockList({
       {parsed.map((block, i) => (
         <div key={i}>
           {i > 0 && <Separator className="my-2" />}
-          <BlockRenderer block={block} onSignOff={onSignOff} onSelectCustomer={onSelectCustomer} />
+          <BlockRenderer
+            block={block}
+            onSignOff={onSignOff}
+            onSelectCustomer={onSelectCustomer}
+            persona={persona}
+          />
         </div>
       ))}
     </div>

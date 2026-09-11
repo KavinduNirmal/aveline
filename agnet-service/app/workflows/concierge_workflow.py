@@ -172,6 +172,9 @@ async def run_visual_agent(state: ConciergeState) -> dict[str, Any]:
     message = state.get("message", "")
     image_url = org_context.get("image_url")
 
+    direction = org_context.get("direction")
+    staff_query = org_context.get("staff_query") if "staff_query" in org_context else (not direction or direction in ("outbound", "internal"))
+
     registry = ToolRegistry()
     graph = build_visual_graph(registry)
     vis_state = {
@@ -182,6 +185,9 @@ async def run_visual_agent(state: ConciergeState) -> dict[str, Any]:
         "image_url": image_url,
         "intent_type": (state.get("intent") or {}).get("intent_type"),
         "preferences": (state.get("memory_output") or {}).get("extracted_memories"),
+        "channel": org_context.get("channel", "internal"),
+        "direction": direction,
+        "staff_query": bool(staff_query),
     }
     result = await graph.ainvoke(vis_state)
     output = result.get("output") or {

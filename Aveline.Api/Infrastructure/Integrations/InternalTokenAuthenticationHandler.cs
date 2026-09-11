@@ -25,8 +25,7 @@ public class InternalTokenAuthenticationHandler(
 
     protected override Task<AuthenticateResult> HandleAuthenticateAsync()
     {
-        if (!Request.Headers.TryGetValue(InternalServiceAuthHandler.HeaderName, out var tokenValues)
-            && !Request.Headers.TryGetValue("X-Internal-Key", out tokenValues))
+        if (!Request.Headers.TryGetValue(InternalServiceAuthHandler.HeaderName, out var tokenValues))
         {
             return Task.FromResult(AuthenticateResult.NoResult());
         }

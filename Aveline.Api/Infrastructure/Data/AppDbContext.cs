@@ -41,6 +41,10 @@ public class AppDbContext : DbContext
 
     public DbSet<UsageAccount> UsageAccounts => Set<UsageAccount>();
 
+    public DbSet<BlossomConversionRule> BlossomConversionRules => Set<BlossomConversionRule>();
+
+    public DbSet<BlossomPriceEntry> BlossomPriceEntries => Set<BlossomPriceEntry>();
+
     public DbSet<AuditLogEntry> AuditLogEntries => Set<AuditLogEntry>();
 
     public DbSet<IntegrationCredential> IntegrationCredentials => Set<IntegrationCredential>();

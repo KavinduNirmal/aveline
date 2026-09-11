@@ -8,6 +8,7 @@ using Aveline.Api.Infrastructure.Notifications;
 using Aveline.Api.Infrastructure.RateLimiting;
 using Aveline.Api.Modules.Admin.Repositories;
 using Aveline.Api.Modules.Admin.Services;
+using Aveline.Api.Modules.Audit;
 using Aveline.Api.Modules.Billing;
 using Aveline.Api.Modules.Billing.Endpoints;
 using Aveline.Api.Modules.Conversations;
@@ -39,6 +40,7 @@ builder.Services.AddAgentServiceClient(builder.Configuration);
 builder.Services.AddClerkAdminClient();
 builder.Services.AddWhatsAppProvider(builder.Configuration);
 builder.Services.AddBillingModule();
+builder.Services.AddAuditModule();
 builder.Services.AddIntegrationsModule();
 builder.Services.AddSignalR()
     .AddJsonProtocol(options =>

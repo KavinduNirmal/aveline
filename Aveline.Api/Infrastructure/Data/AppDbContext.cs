@@ -1,5 +1,6 @@
 using Aveline.Api.Modules.Admin.Models;
 using Aveline.Api.Modules.Attendance.Models;
+using Aveline.Api.Modules.Audit.Models;
 using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Commerce.Models;
 using Aveline.Api.Modules.Conversations.Models;
@@ -39,6 +40,8 @@ public class AppDbContext : DbContext
     public DbSet<AiUsageRecord> AiUsageRecords => Set<AiUsageRecord>();
 
     public DbSet<UsageAccount> UsageAccounts => Set<UsageAccount>();
+
+    public DbSet<AuditLogEntry> AuditLogEntries => Set<AuditLogEntry>();
 
     public DbSet<IntegrationCredential> IntegrationCredentials => Set<IntegrationCredential>();
 

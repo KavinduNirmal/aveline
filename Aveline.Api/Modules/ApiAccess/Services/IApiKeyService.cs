@@ -29,7 +29,7 @@ public interface IApiKeyService
     Task<ApiKey> RevokeAsync(
         Guid organizationId,
         Guid keyId,
-        Guid revokedByUserId,
+        Guid? revokedByUserId,
         string? reason,
         CancellationToken cancellationToken = default);
 

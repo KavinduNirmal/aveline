@@ -120,7 +120,7 @@ public sealed class ApiKeyService : IApiKeyService
     public async Task<ApiKey> RevokeAsync(
         Guid organizationId,
         Guid keyId,
-        Guid revokedByUserId,
+        Guid? revokedByUserId,
         string? reason,
         CancellationToken cancellationToken = default)
     {
@@ -152,7 +152,7 @@ public sealed class ApiKeyService : IApiKeyService
             "ApiKey",
             key.Id.ToString(),
             OrganizationId: organizationId,
-            ActorKind: AuditActorKind.User,
+            ActorKind: revokedByUserId is null ? AuditActorKind.ApiKey : AuditActorKind.User,
             ActorUserId: revokedByUserId,
             Before: new { Status = ApiKeyStatus.Active.ToString() },
             After: new { Status = ApiKeyStatus.Revoked.ToString(), key.RevokedReason },

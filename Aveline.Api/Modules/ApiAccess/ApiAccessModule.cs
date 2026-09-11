@@ -1,3 +1,4 @@
+using Aveline.Api.Modules.ApiAccess.Endpoints;
 using Aveline.Api.Modules.ApiAccess.Repositories;
 using Aveline.Api.Modules.ApiAccess.Services;
 
@@ -15,6 +16,7 @@ public static class ApiAccessModule
 
     public static IEndpointRouteBuilder MapApiAccessEndpoints(this IEndpointRouteBuilder app)
     {
+        app.MapApiKeyEndpoints();
         return app;
     }
 }

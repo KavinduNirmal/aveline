@@ -264,7 +264,9 @@ public partial class OnboardingService : IOnboardingService
         // 3. Update User record
         user.OrganizationId = org.Id.ToString();
         user.UserRole = Roles.Owner;
-        user.OrganizationRole = "org:principal";
+        // Defect D-9: the previous literal "org:principal" is absent from Roles.cs and
+        // therefore granted nothing. Assign the canonical owner role instead.
+        user.OrganizationRole = Roles.BoutiqueOwner;
         user.HasCompletedOnboarding = true;
         user.AccountState = AccountState.Active;
         user.UpdatedAt = DateTime.UtcNow;

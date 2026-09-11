@@ -175,7 +175,7 @@ public class OnboardingServiceTests
         Assert.True(response.Organization.HasCompletedOnboarding);
         Assert.Equal(6, response.Organization.OnboardingStep);
         Assert.Equal("owner", response.UserRole);
-        Assert.Equal("org:principal", response.OrganizationRole);
+        Assert.Equal(Roles.BoutiqueOwner, response.OrganizationRole);
         Assert.Equal(AccountState.Active.ToString(), response.AccountState);
         Assert.Equal(750m, response.BlossomAllocation);
         Assert.True(response.AgentWarmedUp);
@@ -186,6 +186,8 @@ public class OnboardingServiceTests
         Assert.True(updatedUser.HasCompletedOnboarding);
         Assert.Equal(AccountState.Active, updatedUser.AccountState);
         Assert.Equal("owner", updatedUser.UserRole);
+        // Defect D-9: a literal that is absent from the role catalog grants nothing.
+        Assert.Equal(Roles.BoutiqueOwner, updatedUser.OrganizationRole);
     }
 
     private class FakeAgentServiceClient : IAgentServiceClient

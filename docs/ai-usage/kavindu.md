@@ -1741,3 +1741,121 @@ running end to end. Branch: stacked on feature/154.
 ### Remaining work / notes
 
 - Changes not yet in any merged branch; commit/PR follows.
+
+## Session 2026-09-11 — Admin backend API, Phase 0 (foundations) + Phase 1 (Blossom pricing)
+
+**Task:** Implement the backend API for the admin slice described in `docs/backend/`
+on branch `feature/admin-backend-api`, strictly test-first, with a GitHub issue per
+task, a commit per task, and updated docs. Scope agreed with the user: Phase 0
+(foundations) and Phase 1 (pricing rules / price book) only; Phases 2–6 deferred.
+**Tool used:** DSH (deepseek-flash) coding agent
+
+### Work performed (one commit per issue)
+
+- **#176 Correlation IDs.** `CorrelationIdMiddleware` generates/validates/echoes
+  `X-Request-Id`, rejects malformed values with 400, pushes a log scope, emits
+  `X-Trace-Id`, and a delegating handler propagates the id to the agent service.
+  CORS now exposes `X-Request-Id`/`X-Trace-Id`. Fixes D-11.
+- **#177 Audit foundation.** `AuditLogEntries` table (migration M1), append-only
+  repository, key-based `AuditRedactor`, and `IAuditService` that enriches entries
+  with the request/trace id and never fails a non-critical caller.
+- **#178 Permission catalog.** Added 15 administrative permissions and re-derived
+  role grants. `BoutiqueOwner` no longer inherits blanket `All`; `pricing:backdate`
+  is owner-only, so `Admin` is `All` minus that permission.
+- **#179 Distributed job lock.** `IDistributedJobLock` with an atomic Redis
+  `SET NX PX` implementation plus an in-memory, clock-injectable fallback.
+- **#180 Health split.** `/health/live` (dependency-free), `/health/ready`
+  (database, redis, agent, clerk-jwks + version block, 503 only for critical
+  failures), `/health` alias, anonymous.
+- **#181 OpenTelemetry + `/metrics`.** Prometheus exporter on an authenticated
+  endpoint (internal token or `Metrics:ScrapeToken`); OTLP export only when
+  `Observability:OtlpEndpoint` is set.
+- **#182 D-9 fixes.** Onboarding now writes `Roles.BoutiqueOwner`; the exceptions
+  README and the authorization permission matrix were corrected from the code.
+- **#183 BlossomCalculator.** Pure arithmetic with four rounding modes, configurable
+  decimals and minimum clamp, stored at 4 dp; defaults reproduce the legacy formula.
+- **#184 Pricing entities + M2.** `BlossomConversionRule` / `BlossomPriceEntry`,
+  check constraints, `NULLS NOT DISTINCT` unique index, `xmin` concurrency token,
+  and a hand-extended migration adding `btree_gist` and a GiST exclusion constraint.
+- **#185 Pricing service.** BR-1.9 resolution precedence, legacy fallback, Draft-only
+  editing, atomic activate (trim + supersede predecessor), cancel, backdate guard,
+  audit entries, and a generation-invalidated 5 s L1 cache.
+- **#186 Admin pricing endpoints.** `/api/v1/admin/pricing/**` rule lifecycle and
+  price-book CRUD under `pricing:view` / `pricing:manage` / `pricing:backdate`;
+  overlap and immutability map to 409; recompute returns 501 until Phase 2.
+- **#187 Ingest pricing.** `UsageTrackerService` resolves the rule at ingest time
+  behind `Pricing:UseLegacyFormula`; `PricingRuleCacheWarmer` pre-resolves scopes.
+- **#188 Postgres tests.** Activation trim/supersede, unique index rejection,
+  `btree_gist` installation, and draft-over-active acceptance.
+- **#189 Documentation.** Backend README, API catalog, domain model, and this log.
+
+### Files created / modified (highlights)
+
+- `Aveline.Api/Common/Middleware/CorrelationIdMiddleware.cs`,
+  `Aveline.Api/Infrastructure/Integrations/CorrelationIdDelegatingHandler.cs`,
+  `ScrapeTokenAuthenticationHandler.cs`
+- `Aveline.Api/Modules/Audit/**` (models, repository, redactor, service, module)
+- `Aveline.Api/Common/Jobs/**` and `Configurations/JobsConfiguration.cs`
+- `Aveline.Api/Modules/SystemHealth/**` and `Configurations/ObservabilityConfiguration.cs`
+- `Aveline.Api/Modules/Billing/Domain/**` (`BlossomCalculator`, `PricingRuleCache`,
+  `PricingResolution`), `Models/BlossomConversionRule.cs`, `Models/BlossomPriceEntry.cs`,
+  `Repositories/PricingRepository.cs`, `Services/PricingService.cs`,
+  `Services/PricingRuleCacheWarmer.cs`, `Endpoints/PricingEndpoints.cs`, `DTOs/PricingDtos.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/{AuditLogEntry,Pricing}Configurations.cs`
+- `Aveline.Api/Migrations/20260911160237_AddAuditLogEntries.cs`,
+  `20260911162158_AddBlossomPricingRules.cs`
+- `Aveline.Api/Authorization/Permissions.cs`, `Configurations/{Authorization,Authentication,Cors,Eventing}Configuration.cs`,
+  `Program.cs`, `appsettings.json`, `Aveline.Api.csproj`
+- Tests: `CorrelationIdMiddlewareTests`, `AuditServiceTests`, `AuditRedactionTests`,
+  `PermissionsCatalogTests`, `DistributedJobLockTests`, `HealthCheckResponseWriterTests`,
+  `CriticalityHealthCheckTests`, `HealthEndpointsIntegrationTests`, `MetricsEndpointAuthTests`,
+  `BlossomCalculatorTests`, `PricingEntityConfigurationTests`, `PricingRuleConstraintTests`,
+  `PricingServiceTests`, `PricingEndpointsIntegrationTests`, `UsagePricingTests`,
+  `PricingRuleCacheWarmerTests`, `PricingActivationPostgresTests`
+- Docs: `docs/backend/README.md`, `docs/backend/domain-model.md`,
+  `docs/api/README.md`, `docs/architecture/authorization.md`,
+  `docs/architecture/onboarding-flow.md`, `Aveline.Api/Common/Exceptions/README.md`
+
+### Important architectural decisions
+
+- **Exclusion-constraint predicate corrected to `Active` only.** The proposed
+  predicate `IN ('Draft','Active')` makes BR-1.8 activation impossible because a
+  successor Draft always overlaps the open-ended Active predecessor. Drafts may now
+  overlap; activation trims and supersedes the predecessor atomically. Recorded in
+  the migration, the domain model, and the backend README.
+- **`Pricing:UseLegacyFormula` defaults to `true`.** The new pricing engine is inert
+  until the flag is flipped, matching the plan's safe rollout; the fallback also
+  applies when no rule matches or no pricing service is registered.
+- **`Admin` is `All` minus `pricing:backdate`.** The catalog cannot give Admin a
+  blanket `All` while keeping backdating owner-only.
+- **OpenTelemetry pin `1.18.0` (`-beta.1` for the Prometheus exporter and EF
+  instrumentation).** Those two packages have no stable release.
+
+### Problems encountered
+
+- The DSH sandbox blocked NuGet's global package cache (`~/.nuget/packages`); the
+  package-add was re-run once with elevated file access, after which restore worked.
+- Npgsql 10 renamed `HasNullsNotDistinct()` to `AreNullsDistinct(false)` and dropped
+  `UseXminAsConcurrencyToken()`; the latter is replaced by a `uint` `IsRowVersion()`
+  property that the provider auto-maps to `xmin`.
+- EF Core 10's read-optimized runtime model strips check constraints and value
+  converters, so the entity-configuration tests inspect `IDesignTimeModel`.
+
+### Verification performed
+
+- `dotnet build Aveline.Api/Aveline.Api.sln` — succeeds.
+- `dotnet test Aveline.Api/Aveline.Api.sln` — **642 passed, 0 failed** (baseline was
+  509), including the Testcontainers/PostgreSQL constraint and activation suites.
+- Migration M1 and M2 applied cleanly to the local PostgreSQL 16 container; the
+  exclusion constraint, check constraints, unique index, and `btree_gist` were
+  inspected directly with `psql`.
+- Each task was committed separately with the Husky pre-commit gates passing.
+
+### Remaining work
+
+- Phases 2–6 (ledger, API keys/user admin, agentic/API/system statistics) are not
+  started.
+- `AiUsageRecord` pricing-snapshot columns and the pricing recompute endpoint are
+  deferred to Phase 2 with the ledger.
+- `docs/api/openapi.yaml` still describes these endpoints as planned; the
+  reconciliation step (generated output wins for shipped endpoints) remains.

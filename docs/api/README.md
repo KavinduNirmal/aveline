@@ -744,6 +744,10 @@ below is registered under the `/api/v1` group unless the path says otherwise.
 
 ### C.1 Blossom pricing — admin (Phase 1)
 
+> **Status: implemented** on `feature/admin-backend-api` (issue #186). The one
+> exception is `POST /rules/{ruleId}/recompute`, which returns `501` until the
+> Phase 2 ledger ships.
+
 Permissions: `pricing:view` (read), `pricing:manage` (write), `pricing:backdate`
 (past effective dates). **Never available to boutique roles.**
 
@@ -1786,6 +1790,10 @@ Base: `/api/v1/admin/statistics`. **Auth:** `stats:system` (Aveline team only).
 ---
 
 ### C.9 Health and metrics (Phase 0)
+
+> **Status: implemented** on `feature/admin-backend-api` (issues #180 and #181).
+> `/health/live`, `/health/ready`, `/health`, and the authenticated `/metrics`
+> endpoint are live.
 
 #### `GET /health/live`
 

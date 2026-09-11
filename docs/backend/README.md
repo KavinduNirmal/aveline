@@ -1,7 +1,8 @@
 # Aveline Backend — Requirements and Implementation Plan
 
-**Status:** Proposed — awaiting answers to three blocking open questions before
-Phase 1 starts.
+**Status:** Phases 0–1 (foundations and Blossom pricing) are **implemented** on
+`feature/admin-backend-api` (issues #176–#189). Phases 2–6 remain proposed; the
+three blocking open questions below now gate Phase 2 only.
 **Baseline:** commit `902f27f` (`integration/slice-2-to-slice-1`)
 **Scope:** backend only — `Aveline.Api` and `agnet-service`. No frontend, no
 screens, no UX flows.
@@ -54,7 +55,7 @@ a Clerk-backed auth model and organization-scoped authorization.
 
 | Feature area | State |
 | --- | --- |
-| 1 · Blossom price adjustment | **Entirely absent.** The normalisation rate is a private static (`UsageTrackerService.cs:110-117`); no rate entity, history, effective dating, rounding configuration, permissions, or endpoints |
+| 1 · Blossom price adjustment | **Implemented (Phase 1).** Effective-dated `BlossomConversionRules` and `BlossomPriceEntries` (M2), `BlossomCalculator`, `PricingService`, admin pricing endpoints, and ingest-time pricing behind `Pricing:UseLegacyFormula`. `POST /admin/pricing/rules/{id}/recompute` returns 501 until the Phase 2 ledger |
 | 2 · Org Blossom operations | **Entirely absent.** No add/deduct/remove, no adjustment ledger, no idempotency, no concurrency control, no plan-change endpoint |
 | 3 · User management | Partial. No member list, no role change, no profile update, no soft delete, no sessions, **no API keys at all** |
 | 4 · Organization management | Partial. No settings update, no subscription, no entitlements, no API key management |
@@ -104,9 +105,40 @@ Phases 0–1 are shared and 2–4 parallelise. Phase 4 has a hard dependency on
 Python instrumentation owned by other slices — see
 [OQ-11](assumptions-and-open-questions.md#oq-11--who-owns-the-python-instrumentation-work).
 
+### Implementation status (Phase 0–1)
+
+Shipped on `feature/admin-backend-api`, one commit per issue:
+
+| Phase | Issue | What landed |
+| --- | --- | --- |
+| 0 | [#176](https://github.com/KavinduNirmal/aveline/issues/176) | `CorrelationIdMiddleware` (`X-Request-Id`, validation, echo, log scope, agent propagation) |
+| 0 | [#177](https://github.com/KavinduNirmal/aveline/issues/177) | `AuditLogEntries` (M1), redactor, `IAuditService` |
+| 0 | [#178](https://github.com/KavinduNirmal/aveline/issues/178) | 15 new permissions, boutique roles excluded from money-shaped grants |
+| 0 | [#179](https://github.com/KavinduNirmal/aveline/issues/179) | `IDistributedJobLock` (Redis NX, in-memory fallback) |
+| 0 | [#180](https://github.com/KavinduNirmal/aveline/issues/180) | `/health/live` + `/health/ready` + version block |
+| 0 | [#181](https://github.com/KavinduNirmal/aveline/issues/181) | OpenTelemetry + authenticated `/metrics` |
+| 0 | [#182](https://github.com/KavinduNirmal/aveline/issues/182) | D-9 doc drift and `org:principal` literal fixed |
+| 1 | [#183](https://github.com/KavinduNirmal/aveline/issues/183) | `BlossomCalculator` (rounding modes, minimum clamp) |
+| 1 | [#184](https://github.com/KavinduNirmal/aveline/issues/184) | Pricing entities + M2 (`btree_gist`, exclusion constraint) |
+| 1 | [#185](https://github.com/KavinduNirmal/aveline/issues/185) | `PricingRepository` / `PricingService` and L1 cache |
+| 1 | [#186](https://github.com/KavinduNirmal/aveline/issues/186) | `/api/v1/admin/pricing/**` endpoints |
+| 1 | [#187](https://github.com/KavinduNirmal/aveline/issues/187) | Ingest-time pricing + `PricingRuleCacheWarmer` |
+| 1 | [#188](https://github.com/KavinduNirmal/aveline/issues/188) | Postgres constraint/activation tests |
+| 1 | [#189](https://github.com/KavinduNirmal/aveline/issues/189) | Documentation and AI-usage updates |
+
+**Confirmed deviation from the proposed plan:** the M2 GiST exclusion predicate is
+`Status = 'Active'` only, not `('Draft', 'Active')`. A successor Draft necessarily
+overlaps the open-ended Active predecessor, so the proposed predicate would make
+BR-1.8 activation impossible. Drafts may therefore overlap; activation supersedes
+the predecessor atomically. See
+[domain-model.md §3.1](domain-model.md#31-blossomconversionrule--blossomconversionrules).
+
+**Deferred to Phase 2:** `AiUsageRecord` pricing-snapshot columns and
+`POST /admin/pricing/rules/{ruleId}/recompute` (which writes ledger corrections).
+
 ---
 
-## Three decisions needed before Phase 1
+## Three decisions needed before Phase 2
 
 | # | Question | Why it blocks |
 | --- | --- | --- |

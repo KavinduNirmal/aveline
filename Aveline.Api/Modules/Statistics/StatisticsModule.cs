@@ -1,4 +1,5 @@
 using Aveline.Api.Modules.Statistics.Endpoints;
+using Aveline.Api.Modules.Statistics.Jobs;
 using Aveline.Api.Modules.Statistics.Repositories;
 using Aveline.Api.Modules.Statistics.Services;
 
@@ -15,6 +16,8 @@ public static class StatisticsModule
         services.AddScoped<IAgentRunRepository, AgentRunRepository>();
         services.AddScoped<IAgentStatisticsService, AgentStatisticsService>();
         services.AddScoped<IAgentRunIngestService, AgentRunIngestService>();
+        services.AddHostedService<AgentStatsRetentionJob>();
+        services.AddHostedService<StaleAgentRunJob>();
 
         return services;
     }

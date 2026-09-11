@@ -57,6 +57,8 @@ public class AppDbContext : DbContext
 
     public DbSet<AuditLogEntry> AuditLogEntries => Set<AuditLogEntry>();
 
+    public DbSet<Modules.ApiAccess.Models.ApiKey> ApiKeys => Set<Modules.ApiAccess.Models.ApiKey>();
+
     public DbSet<IntegrationCredential> IntegrationCredentials => Set<IntegrationCredential>();
 
     public DbSet<InboundMessageLog> InboundMessageLogs => Set<InboundMessageLog>();

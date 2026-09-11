@@ -75,6 +75,23 @@ public class OrganizationConfiguration : IEntityTypeConfiguration<Organization>
             .IsRequired()
             .HasDefaultValue(false);
 
+        builder.Property(o => o.BillingEmail)
+            .HasMaxLength(254);
+
+        builder.Property(o => o.ContactEmail)
+            .HasMaxLength(254);
+
+        builder.Property(o => o.Currency)
+            .IsRequired()
+            .HasMaxLength(3)
+            .IsFixedLength()
+            .HasDefaultValue("LKR");
+
+        builder.Property(o => o.TimeZone)
+            .IsRequired()
+            .HasMaxLength(64)
+            .HasDefaultValue("UTC");
+
         builder.Property(o => o.CreatedAt)
             .IsRequired();
 

@@ -383,40 +383,54 @@ public sealed class BlossomService(
     private async Task<BlossomLedgerEntry> PersistAsync(
         BlossomLedgerEntry entry, UsageAccount account, decimal delta, CancellationToken cancellationToken)
     {
-        ApplyDelta(account, delta);
-        entry.BlossomBalanceAfter = account.BlossomRemaining;
+        // Serialise mutations for the same period within this process so 20 concurrent
+        // credits do not spend their retry budget fighting each other. Cross-instance
+        // safety still comes from the xmin token and the retry loop below (BR-2.14).
+        var gate = AccountLocks.GetOrAdd(account.Id, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken);
 
-        for (var attempt = 1; ; attempt++)
+        try
         {
-            try
-            {
-                await ledgerRepository.AddEntryAndUpdateAccountAsync(entry, account, cancellationToken);
-                return entry;
-            }
-            catch (DbUpdateConcurrencyException) when (attempt < MaxRetryAttempts)
-            {
-                logger.LogWarning(
-                    "Concurrent Blossom modification for org={OrganizationId}; retrying attempt {Attempt}.",
-                    entry.OrganizationId, attempt);
+            ApplyDelta(account, delta);
+            entry.BlossomBalanceAfter = account.BlossomRemaining;
 
-                // Re-read the freshest projection and re-apply the delta on top of it.
-                var refreshed = await ledgerRepository.GetAccountAsync(
-                    account.OrganizationId, account.PeriodStart, cancellationToken);
-                if (refreshed is not null)
+            for (var attempt = 1; ; attempt++)
+            {
+                try
                 {
-                    account = refreshed;
-                    ApplyDelta(account, delta);
-                    entry.BlossomBalanceAfter = account.BlossomRemaining;
+                    await ledgerRepository.AddEntryAndUpdateAccountAsync(entry, account, cancellationToken);
+                    return entry;
                 }
+                catch (DbUpdateConcurrencyException) when (attempt < MaxRetryAttempts)
+                {
+                    logger.LogWarning(
+                        "Concurrent Blossom modification for org={OrganizationId}; retrying attempt {Attempt}.",
+                        entry.OrganizationId, attempt);
 
-                await Task.Delay(Random.Shared.Next(5, 25) * attempt, cancellationToken);
-            }
-            catch (DbUpdateConcurrencyException)
-            {
-                throw new ConcurrentModificationException();
+                    // Re-read the freshest projection and re-apply the delta on top of it.
+                    var refreshed = await ledgerRepository.ReloadAccountAsync(account, cancellationToken);
+                    if (refreshed is not null)
+                    {
+                        account = refreshed;
+                        ApplyDelta(account, delta);
+                        entry.BlossomBalanceAfter = account.BlossomRemaining;
+                    }
+
+                    await Task.Delay(Random.Shared.Next(5, 25) * attempt, cancellationToken);
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    throw new ConcurrentModificationException();
+                }
             }
         }
+        finally
+        {
+            gate.Release();
+        }
     }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, SemaphoreSlim> AccountLocks = new();
 
     private static void ApplyDelta(UsageAccount account, decimal delta)
     {

@@ -11,6 +11,10 @@ public interface IBlossomLedgerRepository
     Task<UsageAccount?> GetAccountAsync(
         Guid organizationId, DateTime periodStart, CancellationToken cancellationToken = default);
 
+    /// <summary>Replays the freshest row values (including the concurrency token) after a conflict.</summary>
+    Task<UsageAccount?> ReloadAccountAsync(
+        UsageAccount account, CancellationToken cancellationToken = default);
+
     /// <summary>Replay lookup for an idempotent ledger write (BR-2.8).</summary>
     Task<BlossomLedgerEntry?> FindEntryByKeyAsync(
         Guid organizationId, string idempotencyScope, string idempotencyKey,

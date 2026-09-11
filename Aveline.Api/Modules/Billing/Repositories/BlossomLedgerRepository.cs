@@ -13,6 +13,21 @@ public sealed class BlossomLedgerRepository(AppDbContext db) : IBlossomLedgerRep
             account => account.OrganizationId == organizationId && account.PeriodStart == periodStart,
             cancellationToken);
 
+    public async Task<UsageAccount?> ReloadAccountAsync(
+        UsageAccount account, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await db.Entry(account).ReloadAsync(cancellationToken);
+            return account;
+        }
+        catch (InvalidOperationException)
+        {
+            // The row no longer exists.
+            return null;
+        }
+    }
+
     public Task<BlossomLedgerEntry?> FindEntryByKeyAsync(
         Guid organizationId, string idempotencyScope, string idempotencyKey,
         CancellationToken cancellationToken = default) =>

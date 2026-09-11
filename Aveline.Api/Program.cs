@@ -32,6 +32,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 builder.Services.AddAvelineLogging(builder.Configuration);
 builder.Services.AddAvelineDatabase(builder.Configuration);
 builder.Services.AddAvelineCache(builder.Configuration);
+builder.Services.AddAvelineJobs(builder.Configuration);
 builder.Services.AddAvelineEventing(builder.Configuration);
 builder.Services.AddAvelineAuthentication(builder.Configuration);
 builder.Services.AddAvelineAuthorization();

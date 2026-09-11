@@ -205,6 +205,39 @@ public sealed class BlossomService(
             DateTime.UtcNow);
     }
 
+    public async Task<BlossomLedgerEntry?> ApplyPlanChangeAsync(
+        ApplyPlanChangeCommand command, CancellationToken cancellationToken = default)
+    {
+        if (command.BlossomDelta == 0)
+        {
+            return null;
+        }
+
+        ValidateReason(command.Reason);
+
+        var account = await GetOrCreateAccountAsync(command.OrganizationId, cancellationToken);
+        EnsureOpen(account);
+
+        var entry = new BlossomLedgerEntry
+        {
+            OrganizationId = command.OrganizationId,
+            UsageAccountId = account.Id,
+            EntryType = command.EntryType,
+            BlossomDelta = command.BlossomDelta,
+            Reason = command.Reason,
+            SourceKind = BlossomSourceKind.PlanChange,
+            IdempotencyKey = command.IdempotencyKey,
+            IdempotencyScope = command.IdempotencyScope,
+            CreatedByUserId = command.ActorUserId,
+            CreatedAt = DateTime.UtcNow,
+        };
+
+        var saved = await PersistAsync(entry, account, command.BlossomDelta, cancellationToken);
+        await PublishBalanceEventsAsync(saved, account, cancellationToken);
+        await RecordAuditAsync(saved, command.ActorUserId, cancellationToken);
+        return saved;
+    }
+
     public async Task<BlossomStatement> GetStatementAsync(
         Guid organizationId, DateTime from, DateTime to, string? kind, int page, int pageSize,
         CancellationToken cancellationToken = default)

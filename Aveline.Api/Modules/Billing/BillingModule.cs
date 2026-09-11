@@ -17,6 +17,7 @@ public static class BillingModule
         services.AddScoped<IUsageTrackerService, UsageTrackerService>();
         services.AddScoped<IBlossomLedgerRepository, BlossomLedgerRepository>();
         services.AddScoped<IBlossomService, BlossomService>();
+        services.AddScoped<ISubscriptionService, SubscriptionService>();
         services.AddScoped<IPricingRepository, PricingRepository>();
         services.AddScoped<IPricingService, PricingService>();
         services.AddScoped<IEntitlementRepository, EntitlementRepository>();

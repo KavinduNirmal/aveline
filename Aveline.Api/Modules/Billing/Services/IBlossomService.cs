@@ -31,6 +31,15 @@ public sealed record RevokeBlossomsCommand(
     string? IdempotencyKey,
     string? IdempotencyScope);
 
+public sealed record ApplyPlanChangeCommand(
+    Guid OrganizationId,
+    decimal BlossomDelta,
+    BlossomLedgerEntryType EntryType,
+    string Reason,
+    Guid? ActorUserId,
+    string? IdempotencyKey = null,
+    string? IdempotencyScope = null);
+
 /// <summary>The authoritative balance projection for one period.</summary>
 public sealed record BlossomBalance(
     Guid OrganizationId,
@@ -96,6 +105,13 @@ public interface IBlossomService
 
     Task<BlossomLedgerEntry> RevokeAsync(
         RevokeBlossomsCommand command, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Writes the mid-period allowance delta for a plan change without changing the
+    /// period's base allocation (BR-2.10). Returns <c>null</c> when the delta is zero.
+    /// </summary>
+    Task<BlossomLedgerEntry?> ApplyPlanChangeAsync(
+        ApplyPlanChangeCommand command, CancellationToken cancellationToken = default);
 
     Task<BlossomBalance> GetBalanceAsync(
         Guid organizationId, CancellationToken cancellationToken = default);

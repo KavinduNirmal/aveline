@@ -52,6 +52,9 @@ public static class StatisticsModule
         services.AddHostedService<StaleAgentRunJob>();
         services.AddHostedService<ApiTelemetryWriter>();
         services.AddHostedService<ApiQuotaResetJob>();
+        services.AddHostedService<ApiStatsRollupJob>();
+        services.AddHostedService<ApiStatsRetentionJob>();
+        services.AddHostedService<ApiRequestLogPartitionJob>();
         services.AddHostedService(sp => sp.GetRequiredService<ApiKeyUsageAggregator>());
 
         return services;

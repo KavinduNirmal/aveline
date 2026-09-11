@@ -40,4 +40,13 @@ public sealed class TelemetryOptions
 
     /// <summary>Usage percentage at which a quota warning is published.</summary>
     public int QuotaWarningPercent { get; set; } = 80;
+
+    /// <summary>Raw request-log retention (FR-6.4).</summary>
+    public int RawLogRetentionDays { get; set; } = 7;
+
+    /// <summary>Hourly rollup retention; daily compaction beyond this is deferred.</summary>
+    public int HourlyRollupRetentionDays { get; set; } = 90;
+
+    /// <summary>Daily rollup retention (S-24); no day rows are produced yet.</summary>
+    public int DailyRollupRetentionDays { get; set; } = 400;
 }

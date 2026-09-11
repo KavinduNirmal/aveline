@@ -59,6 +59,13 @@ public class AppDbContext : DbContext
 
     public DbSet<Modules.ApiAccess.Models.ApiKey> ApiKeys => Set<Modules.ApiAccess.Models.ApiKey>();
 
+    // Statistics Module (Phase 4)
+    public DbSet<Modules.Statistics.Models.AgentWorkflowRun> AgentWorkflowRuns =>
+        Set<Modules.Statistics.Models.AgentWorkflowRun>();
+
+    public DbSet<Modules.Statistics.Models.AgentStepRun> AgentStepRuns =>
+        Set<Modules.Statistics.Models.AgentStepRun>();
+
     public DbSet<IntegrationCredential> IntegrationCredentials => Set<IntegrationCredential>();
 
     public DbSet<InboundMessageLog> InboundMessageLogs => Set<InboundMessageLog>();

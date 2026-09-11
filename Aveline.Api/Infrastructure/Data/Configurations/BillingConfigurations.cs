@@ -49,6 +49,16 @@ public class AiUsageRecordConfiguration : IEntityTypeConfiguration<AiUsageRecord
 
         // Index for querying organization usage history by date
         builder.HasIndex(r => new { r.OrganizationId, r.CreatedAt });
+
+        // One-to-one link to the agent workflow run that produced this usage row (FR-5.5).
+        builder.HasOne<Modules.Statistics.Models.AgentWorkflowRun>()
+            .WithMany()
+            .HasForeignKey(r => r.AgentWorkflowRunId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasIndex(r => r.AgentWorkflowRunId)
+            .IsUnique()
+            .HasFilter("\"AgentWorkflowRunId\" IS NOT NULL");
     }
 }
 

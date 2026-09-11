@@ -75,6 +75,12 @@ public class AiUsageRecord
     /// <summary>Input + output + cached tokens as priced.</summary>
     public long? NormalizedUnits { get; set; }
 
+    /// <summary>
+    /// The agent workflow run this usage row was produced by (FR-5.5); <c>null</c> for
+    /// rows ingested before the statistics module existed or through the legacy path.
+    /// </summary>
+    public Guid? AgentWorkflowRunId { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     /// <summary>The organisation whose Blossom balance was consumed.</summary>

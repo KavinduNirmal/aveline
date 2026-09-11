@@ -90,7 +90,10 @@ public sealed record ApiUserUsageItemDto(
 
 /// <summary>S-29 <c>apiUserUsage</c>.</summary>
 public sealed record ApiUserUsageDto(
-    PagedResult<ApiUserUsageItemDto> Page,
+    IReadOnlyList<ApiUserUsageItemDto> Items,
+    int Page,
+    int PageSize,
+    int Total,
     ApiStatisticsDataQualityDto DataQuality);
 
 public sealed record ApiKeyUsageItemDto(
@@ -104,7 +107,10 @@ public sealed record ApiKeyUsageItemDto(
 
 /// <summary>S-28 <c>apiKeyUsage</c>.</summary>
 public sealed record ApiKeyUsageDto(
-    PagedResult<ApiKeyUsageItemDto> Page,
+    IReadOnlyList<ApiKeyUsageItemDto> Items,
+    int Page,
+    int PageSize,
+    int Total,
     ApiStatisticsDataQualityDto DataQuality);
 
 public sealed record ApiQuotaStatusItemDto(
@@ -140,7 +146,10 @@ public sealed record ApiSlowRequestItemDto(
 
 /// <summary>S-31 <c>apiSlowestRequests</c>; never carries request or response bodies.</summary>
 public sealed record ApiSlowRequestsDto(
-    PagedResult<ApiSlowRequestItemDto> Page,
+    IReadOnlyList<ApiSlowRequestItemDto> Items,
+    int Page,
+    int PageSize,
+    int Total,
     ApiStatisticsDataQualityDto DataQuality);
 
 /// <summary>S-32 <c>apiBillableRequests</c>; excludes health, OpenAPI, preflight and 499s.</summary>

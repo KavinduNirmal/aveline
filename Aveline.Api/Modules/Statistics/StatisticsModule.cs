@@ -40,6 +40,7 @@ public static class StatisticsModule
     public static IEndpointRouteBuilder MapStatisticsEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapAgentStatisticsEndpoints();
+        endpoints.MapApiStatisticsEndpoints();
         return endpoints;
     }
 

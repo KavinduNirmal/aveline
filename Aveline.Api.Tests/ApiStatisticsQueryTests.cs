@@ -202,13 +202,13 @@ public class ApiStatisticsQueryTests
         await harness.Context.SaveChangesAsync();
 
         var users = await harness.Service.GetUsersAsync(Filter(org));
-        Assert.Equal(2, users.Page.Total);
+        Assert.Equal(2, users.Total);
 
         var keys = await harness.Service.GetApiKeysAsync(Filter(org));
-        Assert.Single(keys.Page.Items);
-        Assert.Equal(7, keys.Page.Items[0].RequestCount);
-        Assert.Equal(Window.AddMinutes(5), keys.Page.Items[0].LastUsedAt);
-        Assert.Equal("/api/v1/things/{id}", keys.Page.Items[0].TopEndpoint);
+        Assert.Single(keys.Items);
+        Assert.Equal(7, keys.Items[0].RequestCount);
+        Assert.Equal(Window.AddMinutes(5), keys.Items[0].LastUsedAt);
+        Assert.Equal("/api/v1/things/{id}", keys.Items[0].TopEndpoint);
     }
 
     [Fact]
@@ -255,9 +255,9 @@ public class ApiStatisticsQueryTests
 
         var result = await harness.Service.GetSlowRequestsAsync(Filter(org));
 
-        Assert.Single(result.Page.Items);
-        Assert.Equal("slow-1", result.Page.Items[0].RequestId);
-        Assert.Equal(2500, result.Page.Items[0].DurationMs);
+        Assert.Single(result.Items);
+        Assert.Equal("slow-1", result.Items[0].RequestId);
+        Assert.Equal(2500, result.Items[0].DurationMs);
     }
 
     [Fact]

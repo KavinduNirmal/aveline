@@ -151,8 +151,9 @@ public sealed class ApiStatisticsService(
             .ThenBy(i => i.UserId)
             .ToArray();
 
+        var page = Page(grouped, filter.Page, filter.PageSize);
         return new ApiUserUsageDto(
-            Page(grouped, filter.Page, filter.PageSize), ApiStatisticsDataQualityDto.Default);
+            page.Items, page.Page, page.PageSize, page.Total, ApiStatisticsDataQualityDto.Default);
     }
 
     public async Task<ApiKeyUsageDto> GetApiKeysAsync(
@@ -190,8 +191,9 @@ public sealed class ApiStatisticsService(
             .ThenBy(i => i.ApiKeyId)
             .ToArray();
 
+        var page = Page(grouped, filter.Page, filter.PageSize);
         return new ApiKeyUsageDto(
-            Page(grouped, filter.Page, filter.PageSize), ApiStatisticsDataQualityDto.Default);
+            page.Items, page.Page, page.PageSize, page.Total, ApiStatisticsDataQualityDto.Default);
     }
 
     public async Task<ApiQuotaStatusDto> GetQuotaAsync(
@@ -238,8 +240,9 @@ public sealed class ApiStatisticsService(
                 log.ResourceType, log.ResourceId, log.ErrorCode))
             .ToArray();
 
+        var page = Page(items, filter.Page, filter.PageSize);
         return new ApiSlowRequestsDto(
-            Page(items, filter.Page, filter.PageSize), ApiStatisticsDataQualityDto.Default);
+            page.Items, page.Page, page.PageSize, page.Total, ApiStatisticsDataQualityDto.Default);
     }
 
     public async Task<ApiBillableRequestsDto> GetBillableAsync(

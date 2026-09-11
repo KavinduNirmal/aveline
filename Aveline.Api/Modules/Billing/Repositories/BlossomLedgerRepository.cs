@@ -91,6 +91,18 @@ public sealed class BlossomLedgerRepository(AppDbContext db) : IBlossomLedgerRep
         return sum ?? 0m;
     }
 
+    public async Task<decimal> SumDeltasExcludingAsync(
+        Guid usageAccountId, BlossomLedgerEntryType excludedType,
+        CancellationToken cancellationToken = default)
+    {
+        var sum = await db.BlossomLedgerEntries
+            .Where(entry => entry.UsageAccountId == usageAccountId)
+            .Where(entry => entry.EntryType != excludedType)
+            .SumAsync(entry => (decimal?)entry.BlossomDelta, cancellationToken);
+
+        return sum ?? 0m;
+    }
+
     private IQueryable<BlossomLedgerEntry> ApplyFilter(
         Guid organizationId, DateTime? from, DateTime? to, BlossomLedgerEntryType? entryType)
     {

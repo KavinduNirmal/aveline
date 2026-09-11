@@ -132,4 +132,18 @@ public sealed class UsageRepository(AppDbContext db) : IUsageRepository
             .Take(pageSize)
             .ToListAsync(cancellationToken);
     }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<AiUsageRecord>> ListRecordsInWindowAsync(
+        Guid organizationId,
+        DateTime from,
+        DateTime to,
+        CancellationToken cancellationToken = default)
+    {
+        return await db.AiUsageRecords
+            .Where(r => r.OrganizationId == organizationId)
+            .Where(r => r.CreatedAt >= from && r.CreatedAt < to)
+            .OrderBy(r => r.CreatedAt)
+            .ToListAsync(cancellationToken);
+    }
 }

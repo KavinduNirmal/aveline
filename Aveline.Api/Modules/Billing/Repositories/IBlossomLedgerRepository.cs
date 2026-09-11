@@ -35,4 +35,9 @@ public interface IBlossomLedgerRepository
 
     /// <summary>Sum of all ledger deltas for a period; used by the reconciliation check.</summary>
     Task<decimal> SumDeltasAsync(Guid usageAccountId, CancellationToken cancellationToken = default);
+
+    /// <summary>Sum of ledger deltas excluding one entry type (used to reconcile the allowance).</summary>
+    Task<decimal> SumDeltasExcludingAsync(
+        Guid usageAccountId, BlossomLedgerEntryType excludedType,
+        CancellationToken cancellationToken = default);
 }

@@ -11,7 +11,8 @@ public sealed record CreditBlossomsCommand(
     string? SourceRef,
     Guid? ActorUserId,
     string? IdempotencyKey,
-    string? IdempotencyScope);
+    string? IdempotencyScope,
+    BlossomLedgerEntryType EntryType = BlossomLedgerEntryType.AdminCredit);
 
 public sealed record DebitBlossomsCommand(
     Guid OrganizationId,
@@ -44,6 +45,46 @@ public sealed record BlossomBalance(
     decimal BlossomRemaining,
     DateTime AsOf);
 
+/// <summary>One line of the statement of account.</summary>
+public sealed record BlossomStatementItem(
+    Guid Id,
+    DateTime OccurredAt,
+    string Kind,
+    BlossomLedgerEntryType? EntryType,
+    decimal BlossomDelta,
+    decimal BalanceAfter,
+    string Reason,
+    BlossomSourceKind? SourceKind,
+    string? SourceRef,
+    DateTime? ExpiresAt,
+    Guid? CreatedByUserId);
+
+public sealed record BlossomStatementReconciliation(
+    decimal ProjectedBalance, decimal LedgerDerivedBalance, decimal Drift, bool IsConsistent);
+
+public sealed record BlossomStatement(
+    Guid OrganizationId,
+    DateTime PeriodStart,
+    DateTime PeriodEnd,
+    decimal OpeningBalance,
+    IReadOnlyList<BlossomStatementItem> Items,
+    int Total,
+    int Page,
+    int PageSize,
+    decimal ClosingBalance,
+    BlossomStatementReconciliation Reconciliation,
+    DateTime GeneratedAt);
+
+public sealed record BlossomUsagePoint(string Key, decimal Blossoms, long NormalizedUnits, int WorkflowCount);
+
+public sealed record BlossomUsage(
+    DateTime From,
+    DateTime To,
+    decimal TotalBlossoms,
+    long TotalNormalizedUnits,
+    IReadOnlyList<BlossomUsagePoint> Series,
+    DateTime GeneratedAt);
+
 /// <summary>Administrative and self-service Blossom account operations (FR-2.2..FR-2.9).</summary>
 public interface IBlossomService
 {
@@ -58,4 +99,22 @@ public interface IBlossomService
 
     Task<BlossomBalance> GetBalanceAsync(
         Guid organizationId, CancellationToken cancellationToken = default);
+
+    /// <summary>Merged statement of entitlement entries and consumption (FR-2.9).</summary>
+    Task<BlossomStatement> GetStatementAsync(
+        Guid organizationId,
+        DateTime from,
+        DateTime to,
+        string? kind,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Consumption series grouped by day, provider, model or workflow (FR-2.1).</summary>
+    Task<BlossomUsage> GetUsageAsync(
+        Guid organizationId,
+        DateTime from,
+        DateTime to,
+        string groupBy,
+        CancellationToken cancellationToken = default);
 }

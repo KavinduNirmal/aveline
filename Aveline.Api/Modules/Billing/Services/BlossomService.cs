@@ -56,7 +56,7 @@ public sealed class BlossomService(
         {
             OrganizationId = command.OrganizationId,
             UsageAccountId = account.Id,
-            EntryType = BlossomLedgerEntryType.AdminCredit,
+            EntryType = command.EntryType,
             BlossomDelta = command.Amount,
             Reason = command.Reason,
             SourceKind = command.SourceKind,
@@ -202,6 +202,126 @@ public sealed class BlossomService(
             account.BlossomAdjusted,
             account.BlossomUsed,
             account.BlossomRemaining,
+            DateTime.UtcNow);
+    }
+
+    public async Task<BlossomStatement> GetStatementAsync(
+        Guid organizationId, DateTime from, DateTime to, string? kind, int page, int pageSize,
+        CancellationToken cancellationToken = default)
+    {
+        if (to <= from)
+        {
+            throw new BlossomValidationException("The window end must be after its start.");
+        }
+
+        var account = await GetOrCreateAccountAsync(organizationId, cancellationToken);
+        var normalizedKind = kind?.ToLowerInvariant();
+        var includeEntitlements = normalizedKind is null or "all" or "entitlement";
+        var includeConsumption = normalizedKind is null or "all" or "consumption";
+
+        var entries = includeEntitlements
+            ? await ledgerRepository.ListEntriesAsync(organizationId, from, to, null, 1, int.MaxValue, cancellationToken)
+            : [];
+        var usage = includeConsumption
+            ? await usageRepository.ListRecordsInWindowAsync(organizationId, from, to, cancellationToken)
+            : [];
+
+        // Derive the opening balance from the projection: closing = opening + ledger - usage.
+        var windowLedger = entries.Sum(entry => entry.BlossomDelta);
+        var windowUsage = usage.Sum(record => record.BlossomUnits);
+        var openingBalance = account.BlossomRemaining - windowLedger + windowUsage;
+
+        var timeline = new List<(DateTime At, BlossomLedgerEntry? Ledger, AiUsageRecord? Usage)>();
+        timeline.AddRange(entries.Select(entry => (entry.CreatedAt, (BlossomLedgerEntry?)entry, (AiUsageRecord?)null)));
+        timeline.AddRange(usage.Select(record => (record.CreatedAt, (BlossomLedgerEntry?)null, (AiUsageRecord?)record)));
+        timeline.Sort((left, right) => left.At.CompareTo(right.At));
+
+        var running = openingBalance;
+        var accumulated = new List<BlossomStatementItem>(timeline.Count);
+
+        foreach (var node in timeline)
+        {
+            if (node.Ledger is { } ledgerEntry)
+            {
+                running += ledgerEntry.BlossomDelta;
+                accumulated.Add(new BlossomStatementItem(
+                    ledgerEntry.Id, ledgerEntry.CreatedAt, "Entitlement", ledgerEntry.EntryType,
+                    ledgerEntry.BlossomDelta, running, ledgerEntry.Reason, ledgerEntry.SourceKind,
+                    ledgerEntry.SourceRef, ledgerEntry.ExpiresAt, ledgerEntry.CreatedByUserId));
+            }
+            else if (node.Usage is { } usageRecord)
+            {
+                running -= usageRecord.BlossomUnits;
+                accumulated.Add(new BlossomStatementItem(
+                    usageRecord.Id, usageRecord.CreatedAt, "Consumption", null, -usageRecord.BlossomUnits,
+                    running, "Agent workflow", null, usageRecord.WorkflowId, null, null));
+            }
+        }
+
+        var safePage = Math.Max(page, 1);
+        var safePageSize = Math.Clamp(pageSize, 1, 200);
+        var pageItems = accumulated
+            .OrderByDescending(item => item.OccurredAt)
+            .Skip((safePage - 1) * safePageSize)
+            .Take(safePageSize)
+            .ToArray();
+
+        var nonAllocationDeltas = await ledgerRepository.SumDeltasExcludingAsync(
+            account.Id, BlossomLedgerEntryType.PeriodAllocation, cancellationToken);
+        var ledgerDerivedBalance =
+            account.MonthlyBlossomLimit + nonAllocationDeltas - account.BlossomUsed;
+        var drift = account.BlossomRemaining - ledgerDerivedBalance;
+
+        return new BlossomStatement(
+            organizationId,
+            account.PeriodStart,
+            account.PeriodEnd,
+            openingBalance,
+            pageItems,
+            accumulated.Count,
+            safePage,
+            safePageSize,
+            account.BlossomRemaining,
+            new BlossomStatementReconciliation(
+                account.BlossomRemaining, ledgerDerivedBalance, drift, drift == 0m),
+            DateTime.UtcNow);
+    }
+
+    public async Task<BlossomUsage> GetUsageAsync(
+        Guid organizationId, DateTime from, DateTime to, string groupBy,
+        CancellationToken cancellationToken = default)
+    {
+        if (to <= from)
+        {
+            throw new BlossomValidationException("The window end must be after its start.");
+        }
+
+        var records = await usageRepository.ListRecordsInWindowAsync(organizationId, from, to, cancellationToken);
+
+        string KeySelector(AiUsageRecord record) => groupBy?.ToLowerInvariant() switch
+        {
+            "provider" => record.Provider,
+            "model" => record.Model,
+            "workflowid" or "workflow" => record.WorkflowId,
+            _ => record.CreatedAt.ToString("yyyy-MM-dd"),
+        };
+
+        var series = records
+            .GroupBy(KeySelector)
+            .OrderBy(group => group.Key, StringComparer.Ordinal)
+            .Select(group => new BlossomUsagePoint(
+                group.Key,
+                group.Sum(record => record.BlossomUnits),
+                group.Sum(record => (long)record.InputTokens + record.OutputTokens + record.CachedTokens),
+                group.Count()))
+            .ToArray();
+
+        return new BlossomUsage(
+            from,
+            to,
+            records.Sum(record => record.BlossomUnits),
+            records.Sum(record => (long)record.InputTokens + record.OutputTokens + record.CachedTokens),
+            series,
             DateTime.UtcNow);
     }
 

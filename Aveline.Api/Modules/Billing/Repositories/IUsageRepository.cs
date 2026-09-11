@@ -40,4 +40,11 @@ public interface IUsageRepository
         int page,
         int pageSize,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Returns every usage record for an organisation inside a UTC window.</summary>
+    Task<IReadOnlyList<AiUsageRecord>> ListRecordsInWindowAsync(
+        Guid organizationId,
+        DateTime from,
+        DateTime to,
+        CancellationToken cancellationToken = default);
 }

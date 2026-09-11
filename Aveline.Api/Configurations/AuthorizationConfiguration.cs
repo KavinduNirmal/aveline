@@ -43,6 +43,18 @@ public static class AuthorizationConfiguration
     public const string InternalServicePolicy = "InternalServicePolicy";
 
     /// <summary>
+    /// Org-scoped policy for the Blossom balance, usage and statement: requires an active
+    /// membership granting <c>billing:view</c>.
+    /// </summary>
+    public const string BillingViewPolicy = "BillingView";
+
+    /// <summary>
+    /// Org-scoped policy for plan changes and top-up purchases: requires an active
+    /// membership granting <c>billing:manage</c>.
+    /// </summary>
+    public const string BillingManagePolicy = "BillingManage";
+
+    /// <summary>
     /// Policy for the Prometheus scrape endpoint: an internal service token or the
     /// optional <c>Metrics:ScrapeToken</c> bearer token.
     /// </summary>
@@ -101,6 +113,18 @@ public static class AuthorizationConfiguration
             {
                 p.RequireAuthenticatedUser();
                 p.AddRequirements(new OrganizationScopeRequirement(Permissions.ConversationsView));
+            });
+
+            options.AddPolicy(BillingViewPolicy, p =>
+            {
+                p.RequireAuthenticatedUser();
+                p.AddRequirements(new OrganizationScopeRequirement(Permissions.BillingView));
+            });
+
+            options.AddPolicy(BillingManagePolicy, p =>
+            {
+                p.RequireAuthenticatedUser();
+                p.AddRequirements(new OrganizationScopeRequirement(Permissions.BillingManage));
             });
 
             // Permission-based policies (one per permission in the catalog).

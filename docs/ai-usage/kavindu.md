@@ -1945,3 +1945,105 @@ per task.
 - `POST /admin/pricing/rules/{ruleId}/recompute` still returns 501; the snapshot
   columns it needs now exist, so the job can be scheduled.
 - `docs/api/openapi.yaml` reconciliation against generated output remains.
+
+---
+
+## Session 2026-09-11 (cont.) — Admin backend API, Phase 3 (API access, users and organizations)
+
+**Student:** K.N. Delpachithra (Kavindu) · **ID:** IT24102532
+**Branch:** `feature/admin-backend-api` · **Issues:** #201–#208
+
+### Work performed (one commit per issue)
+
+- [#201](https://github.com/KavinduNirmal/aveline/issues/201) — M5 migration:
+  `ApiKeys` table (`Prefix` unique, org/status index, filtered expiry index, FK to
+  `Organizations`/`Users`), plus `Organization.BillingEmail/ContactEmail/Currency/
+  TimeZone/SuspendedAt`. Verified that the `OrganizationMemberships(UserId,
+  OrganizationId)` unique index already existed. Migration applied to the local
+  PostgreSQL 16 container.
+- [#202](https://github.com/KavinduNirmal/aveline/issues/202) — `ApiKeyCredentials`
+  (`avl_{live|test}_{32 base62}`, prefix, SHA-256, constant-time compare),
+  `ApiKeyScopes` validation against `Permissions.All` rejecting `pricing:*`,
+  `billing:adjust`, `admin:*`; `ApiKeyRepository`; `ApiKeyService` with the
+  `api.access` entitlement gate.
+- [#203](https://github.com/KavinduNirmal/aveline/issues/203) — the third
+  authentication scheme (`X-Api-Key`), org-scoped policies accepting bearer or key,
+  scope evaluation in both authorization handlers, and the tenant-scope middleware
+  that returns **404** (not 403) for a cross-organization key.
+- [#204](https://github.com/KavinduNirmal/aveline/issues/204) — API-key management
+  endpoints; the secret is returned once; hard delete is refused (409) once a key
+  has traffic; an API key may not create another API key (403).
+- [#205](https://github.com/KavinduNirmal/aveline/issues/205) — organization
+  settings PATCH/GET (AI-context fields entitlement-gated, 409 on slug collision),
+  paginated/filtered member list, and role change with the FR-3.4 guards.
+- [#206](https://github.com/KavinduNirmal/aveline/issues/206) — user profile PATCH,
+  soft delete (memberships + API keys revoked), Clerk session list/revoke via the
+  extended `ClerkAdminClient`, and the admin user search/state endpoints with the
+  FR-3.9 transition matrix.
+- [#207](https://github.com/KavinduNirmal/aveline/issues/207) — Clerk webhook
+  receiver with Svix signature verification, replay window, and idempotent
+  read-model sync for user/membership/organization events.
+- [#208](https://github.com/KavinduNirmal/aveline/issues/208) — the
+  `TenantIsolationTests` matrix over every new tenant endpoint, and these docs.
+
+### Files created / modified (highlights)
+
+- `Modules/ApiAccess/**` — model, EF configuration, credentials/scopes, repository,
+  service, authentication handler, tenant-scope middleware, DTOs and endpoints.
+- `Modules/Organizations/Webhooks/**` — `ClerkWebhookVerifier`,
+  `ClerkWebhookSyncService`. `Endpoints/ClerkWebhookEndpoints.cs`.
+- `Modules/Shared/**` — `AccountStateTransitions`, profile/admin methods on
+  `IUserService`/`UserService`, `SearchAsync` on `IUserRepository`.
+- `Modules/Organizations/**` — settings/member/role methods on the service, the new
+  repository method, and the new organization endpoints.
+- `Configurations/AuthorizationConfiguration.cs`, `AuthenticationConfiguration.cs`,
+  `Common/Middleware/OnboardingMiddleware.cs`, `Program.cs`.
+- Tests: `ApiKeyEntityConfigurationTests`, `ApiKeyServiceTests`,
+  `ApiKeyAuthenticationTests`, `ApiKeyEndpointsIntegrationTests`,
+  `OrganizationSettingsTests`, `MembershipRoleChangeTests`,
+  `AccountStateTransitionTests`, `ClerkAdminClientTests`, `UserAccountStateTests`,
+  `ClerkWebhookVerifierTests`, `ClerkWebhookTests`, `TenantIsolationTests`.
+
+### Important architectural decisions
+
+- **The API-key scheme is not the default scheme.** `UseAuthentication` only runs
+  the default (bearer) scheme, so the tenant-scope middleware explicitly
+  authenticates the key scheme when the header is present; otherwise a cross-org
+  key reached the endpoint and returned **200**.
+- **API-key principals are detected by the `api_key_id` claim**, not by
+  `Identity.AuthenticationType`, which is not reliable after the policy evaluator
+  merges scheme results.
+- **`OnboardingMiddleware` skips API-key principals.** Otherwise
+  `GetOrSynchronizeUserAsync` would create a Clerk-less stub user for every machine
+  request.
+- **Cross-organization API keys get 404, not 403**, so an owned and a non-existent
+  organization are indistinguishable (plan §8.2).
+- **`User` carries a soft-delete query filter** (`DeletedAt == null`), so
+  verification of a deleted account must use `IgnoreQueryFilters()`.
+
+### Problems encountered
+
+- The secret scanner blocked a literal `avl_live_...` test string and a literal
+  `whsec_...`; both were replaced with runtime-generated values.
+- The `DeleteAccountAsync` DTO was originally built before the mutation, so it
+  reported the pre-delete `Active` state; it now returns the post-delete DTO.
+- Two test fakes (`ConversationHubTests`, `NotificationHubTests`,
+  `OnboardingMiddlewareTests`, `AdminApprovalFlowIntegrationTests`) needed the new
+  interface members.
+
+### Verification performed
+
+- Full suite: **825 passed, 0 failed** at the end of Phase 3 (Phase 2 ended at 697).
+- `TenantIsolationTests` asserts a valid org-A token never gets 2xx for org B on 11
+  tenant endpoints, and that the same call for org A is not 403/404.
+- M5 applied cleanly to the local PostgreSQL 16 container; each task committed
+  separately with the Husky pre-commit gates passing.
+
+### Remaining work
+
+- Phase 4 (agentic statistics) is next: M6, `/internal/agent-runs` ingest, agent
+  statistics endpoints and the retention/stale-run jobs.
+- `LastUsedAt`/`RequestCount` amortisation (FR-3.18) waits on the Phase 5 telemetry
+  pipeline.
+- `POST /admin/pricing/rules/{ruleId}/recompute` still returns 501.
+- `docs/api/openapi.yaml` reconciliation against generated output remains.

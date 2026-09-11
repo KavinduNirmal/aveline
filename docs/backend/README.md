@@ -1,8 +1,9 @@
 # Aveline Backend — Requirements and Implementation Plan
 
-**Status:** Phases 0–2 (foundations, Blossom pricing and the entitlement ledger) are
-**implemented** on `feature/admin-backend-api` (issues #176–#200). Phases 3–6 remain
-proposed; the three blocking open questions below now gate Phase 3.
+**Status:** Phases 0–3 (foundations, Blossom pricing, the entitlement ledger, and API
+access/user/organization administration) are **implemented** on
+`feature/admin-backend-api` (issues #176–#208). Phase 4 is in progress; Phases 5–6
+remain proposed. The three blocking open questions below now gate Phase 5.
 **Baseline:** commit `902f27f` (`integration/slice-2-to-slice-1`)
 **Scope:** backend only — `Aveline.Api` and `agnet-service`. No frontend, no
 screens, no UX flows.
@@ -57,8 +58,8 @@ a Clerk-backed auth model and organization-scoped authorization.
 | --- | --- |
 | 1 · Blossom price adjustment | **Implemented (Phase 1).** Effective-dated `BlossomConversionRules` and `BlossomPriceEntries` (M2), `BlossomCalculator`, `PricingService`, admin pricing endpoints, and ingest-time pricing behind `Pricing:UseLegacyFormula`. `POST /admin/pricing/rules/{id}/recompute` returns 501 until the Phase 2 ledger |
 | 2 · Org Blossom operations | **Implemented (Phase 2).** Append-only `BlossomLedgerEntries` (M3) with the O(1) `UsageAccount` projection, idempotency replay store, `BlossomService` credit/debit/revoke, entitlement catalog + `IEntitlementResolver` (M4), org/admin Blossom endpoints, subscription/plan-change endpoints, and the expiry/rollover/cleanup jobs. **Fixes D-1, D-2, D-3, D-12** |
-| 3 · User management | Partial. No member list, no role change, no profile update, no soft delete, no sessions, **no API keys at all** |
-| 4 · Organization management | Partial. No settings update, no subscription, no entitlements, no API key management |
+| 3 · User management | **Implemented (Phase 3).** Profile update, soft delete with membership/API-key revocation, Clerk session list/revoke, and the cross-org admin user search + account-state endpoints |
+| 4 · Organization management | **Implemented (Phase 3).** Settings update with AI-context entitlement gating, settings read with resolved entitlements, member list with filters, role change with the FR-3.4 guards, and the `ApiKeys` table + scheme/endpoints behind the `api.access` entitlement |
 | 5 · Agentic statistics | Only one aggregate row per workflow. No agent/node runs, status, latency, tool calls, or retries |
 | 6 · API consumption statistics | **Entirely absent.** No request telemetry, no correlation id, no quotas |
 | 7 · System statistics | A Redis-only `/health` and an event-bus metrics logger. No readiness split, resource metrics, queue depth, error rate, or alerts |
@@ -161,6 +162,38 @@ the predecessor atomically. See
    suggested, so ingest can persist the applied rule (FR-1.4).
 4. **A `nextPeriod` plan change stores the target tier on the subscription**; the
    organisation's live tier and period allocation change at rollover.
+
+### Implementation status (Phase 3 — API access, users and organizations)
+
+| Issue | What landed |
+| --- | --- |
+| [#201](https://github.com/KavinduNirmal/aveline/issues/201) | M5: `ApiKeys` table, `Organization` setting columns, verified membership unique index |
+| [#202](https://github.com/KavinduNirmal/aveline/issues/202) | `ApiKey` generation/hash/scope validation and `ApiKeyRepository` |
+| [#203](https://github.com/KavinduNirmal/aveline/issues/203) | `ApiKey` authentication scheme, org-scoped policies, tenant-scope 404 middleware |
+| [#204](https://github.com/KavinduNirmal/aveline/issues/204) | API-key management endpoints and the `api.access` entitlement gate |
+| [#205](https://github.com/KavinduNirmal/aveline/issues/205) | Organization settings, member list and the FR-3.4 role-change guards |
+| [#206](https://github.com/KavinduNirmal/aveline/issues/206) | User profile, soft delete, Clerk sessions, admin user search/state endpoints |
+| [#207](https://github.com/KavinduNirmal/aveline/issues/207) | Clerk webhook receiver (Svix signature) and idempotent read-model sync |
+| [#208](https://github.com/KavinduNirmal/aveline/issues/208) | Tenant isolation matrix, docs and AI-usage update |
+
+**Confirmed deviations from the proposed plan:**
+
+1. **API keys cannot create other API keys.** A machine credential with
+   `apikeys:manage` is rejected with 403 on `POST /api-keys`: allowing it would let a
+   key mint a wider key, and there is no user to attribute the creation to.
+2. **`LastUsedAt` amortisation (FR-3.18) is deferred to the Phase 5 telemetry
+   pipeline.** No per-request write happens today; the column and the flush job are
+   the Phase 5 work item.
+3. **`Clerk:WebhookSecret` absence fails closed with 503.** The endpoint is
+   anonymous by necessity, so it refuses to accept unsigned events rather than
+   trusting the caller.
+4. **An organization is never adopted from a Clerk `organization.created` event.**
+   Only organizations created through onboarding are updated, so an unreviewed
+   Clerk org cannot appear as a tenant.
+5. **The member role-change guards are enforced in the service, not only the
+   policy.** Only a boutique owner holds `settings:manage`, so the owner-grant and
+   last-owner guards are defence in depth; they are covered by
+   `MembershipRoleChangeTests` at the service level.
 
 ---
 

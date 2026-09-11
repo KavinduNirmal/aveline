@@ -1242,6 +1242,14 @@ gating from this endpoint rather than hardcoding a plan matrix.
 
 ### C.4 API keys (Phase 3)
 
+> **Implemented in Phase 3** (issues #201–#204). Deviations from the plan below:
+> the plaintext secret is returned in the 201 body as
+> `{ key: ApiKeyDto, secret: string }` and never again; `DELETE` on a key that has
+> served traffic returns **409** and the key must be revoked instead; creating a key
+> with an **API key** (rather than a user token) returns **403** — a machine
+> credential may not mint another key; `Environment` is `live` or `test` and defaults
+> to `live`. Key scope grants are rejected at creation and at authorization time.
+
 ---
 
 #### `POST /api/v1/orgs/{organizationId:guid}/api-keys`
@@ -1308,6 +1316,20 @@ beyond that dialog.
 ---
 
 ### C.5 Users and organization settings (Phase 3)
+
+> **Implemented in Phase 3** (issues #205–#207). Deviations from the plan below:
+> `DELETE /users/me` returns **200** with `{ message, accountState }` (idempotent on
+> repeat); `GET /users/me/sessions` returns `[{ id, status, createdAt, lastActiveAt,
+> expireAt }]` proxied from Clerk; `POST /users/me/sessions/revoke-all` returns
+> `{ revoked }`; `PATCH /admin/users/{userId}/state` accepts `OnboardingPending`,
+> `Active` or `Suspended` and enforces the FR-3.9 matrix with **409** on an invalid
+> transition; `GET /admin/users` returns `{ items, page, pageSize, total }`. New in
+> this phase: `PATCH /orgs/{organizationId}` (settings, AI fields entitlement-gated,
+> **409** on slug collision), `GET /orgs/{organizationId}/settings`,
+> `GET /orgs/{organizationId}/members` (filters `status`, `role`, `q`) and
+> `PATCH /orgs/{organizationId}/members/{userId}` (**403** non-owner owner-change,
+> **409** self-change or last-owner demotion). `POST /webhooks/clerk` is anonymous
+> and requires `Clerk:WebhookSecret` (**503** when unset, **401** on a bad signature).
 
 | Method | Path | Policy | Body | Response |
 | --- | --- | --- | --- | --- |

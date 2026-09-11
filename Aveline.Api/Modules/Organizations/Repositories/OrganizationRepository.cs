@@ -128,8 +128,19 @@ public class OrganizationRepository : IOrganizationRepository
             .ToListAsync(cancellationToken);
     }
 
-    public async Task<IReadOnlyList<OrganizationMembership>> GetActiveMembersAsync(
+    public async Task<IReadOnlyList<OrganizationMembership>> ListMembershipsWithUsersAsync(
         Guid organizationId,
+        CancellationToken cancellationToken = default)
+    {
+        return await _context.OrganizationMemberships
+            .AsNoTracking()
+            .Include(m => m.User)
+            .Where(m => m.OrganizationId == organizationId)
+            .OrderBy(m => m.CreatedAt)
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<OrganizationMembership>> GetActiveMembersAsync(        Guid organizationId,
         CancellationToken cancellationToken = default)
     {
         return await _context.OrganizationMemberships

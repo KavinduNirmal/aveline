@@ -84,6 +84,7 @@ public class ConversationHubTests
         public Task RemoveMembershipAsync(OrganizationMembership membership, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<bool> UserHasActiveMembershipAsync(Guid userId, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task<IReadOnlyList<OrganizationMembership>> ListMembershipsForOrganizationAsync(Guid organizationId, CancellationToken cancellationToken = default) => Task.FromResult(memberships);
+        public Task<IReadOnlyList<OrganizationMembership>> ListMembershipsWithUsersAsync(Guid organizationId, CancellationToken cancellationToken = default) => Task.FromResult(memberships);
         public Task<IReadOnlyList<OrganizationMembership>> GetActiveMembersAsync(Guid organizationId, CancellationToken cancellationToken = default) => Task.FromResult(memberships);
     }
 

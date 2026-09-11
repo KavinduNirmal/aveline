@@ -41,6 +41,11 @@ public interface IOrganizationRepository
         Guid organizationId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>All memberships of an organization (any status) with the user populated.</summary>
+    Task<IReadOnlyList<OrganizationMembership>> ListMembershipsWithUsersAsync(
+        Guid organizationId,
+        CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Returns the <see cref="MembershipStatus.Active"/> memberships of an organization,
     /// with the <see cref="OrganizationMembership.User"/> navigation populated.

@@ -195,6 +195,47 @@ the predecessor atomically. See
    last-owner guards are defence in depth; they are covered by
    `MembershipRoleChangeTests` at the service level.
 
+### Implementation status (Phase 4 — agentic statistics)
+
+| Issue | What landed |
+| --- | --- |
+| [#209](https://github.com/KavinduNirmal/aveline/issues/209) | M6: `AgentWorkflowRuns`, `AgentStepRuns`, the `AiUsageRecord.AgentWorkflowRunId` link and its migration |
+| [#210](https://github.com/KavinduNirmal/aveline/issues/210) | `PercentileCalculator`, `IAgentRunRepository`/`AgentRunRepository`, `IAgentStatisticsService`/`AgentStatisticsService` (S-13…S-23) and `StatisticsModule` |
+| [#211](https://github.com/KavinduNirmal/aveline/issues/211) | `/api/v1/orgs/{organizationId}/statistics/agents/**` and the team-only `/api/v1/admin/statistics/agents/{overview,runs,reliability}` subset |
+| [#212](https://github.com/KavinduNirmal/aveline/issues/212) | `/internal/agent-runs` ingest (`POST ""`, `POST /{workflowId}/steps`, `GET /{workflowId}`) with idempotency, the terminal conflict, the step cap and D-7 |
+| [#213](https://github.com/KavinduNirmal/aveline/issues/213) | `AgentStatsRetentionJob` (daily 03:00 UTC) and `StaleAgentRunJob` (hourly) with the `AgentStats:*` config keys |
+| [#214](https://github.com/KavinduNirmal/aveline/issues/214) | These documents and the AI-usage record |
+
+**Confirmed deviations from the proposed plan:**
+
+1. **The Python instrumentation (gaps G-1…G-14) is deferred per risk R-1.** The
+   C# ingest, storage, endpoints and jobs are complete and covered by tests, but
+   nothing in `agnet-service/` emits run/step telemetry yet, so every live response
+   carries `dataQuality` with `latencyInstrumented`, `nodeFailuresObserved`,
+   `perStepAttribution`, `toolInstrumented` and `costInstrumented` **all `false`**.
+   `GET /latency` returns a null series rather than zeros. The catalog's §8 flag
+   names differ slightly from the wire contract: the API uses `costInstrumented`
+   where the catalog says `costIsEstimated`, and the API omits
+   `retryInstrumented`, `materialisedCounts`, `streamingRunsIncluded` and
+   `unattributedRunsExcluded` until the corresponding work exists.
+2. **There is no `DailyAgentMetrics` rollup and therefore no `AgentStatsRollupJob`.**
+   Percentiles are computed on the fly over the bounded window (catalog §9 says the
+   on-the-fly path is sufficient at current volumes). The hybrid "rollup beyond
+   seven days" described for S-16 is not implemented.
+3. **`AgentStats:MinSampleForPercentile` and the retention keys are new config
+   keys** beyond the two the plan's §10.2 listed (`MaxStepsPerRun`,
+   `PausedRunTimeoutHours`). `AgentStats:StepRetentionDays` (90) and
+   `AgentStats:RunRetentionDays` (400) were previously hard-coded in the catalog.
+4. **Step-level endpoints (`/steps`, `/tokens`, `/tools`) apply only `agentKey`
+   and the time window.** The step filter does not join the run table, so
+   `status`/`triggerKind` are ignored for those three statistics.
+5. **`AgentKey` is validated against the registered set** (`customer_memory`,
+   `visual_insight`, `commerce`, `orchestrator`) per BR-5.5, and a step report that
+   overlaps an existing `(StepIndex, AttemptNumber)` is a 409 rather than a database
+   error.
+6. **S-23 concurrency is not exposed here.** The catalog routes it to
+   `/api/v1/admin/statistics/system/queues`, which belongs to Phase 6.
+
 ---
 
 ## Three decisions needed before Phase 2

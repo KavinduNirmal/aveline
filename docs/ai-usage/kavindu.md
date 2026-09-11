@@ -2047,3 +2047,111 @@ per task.
   pipeline.
 - `POST /admin/pricing/rules/{ruleId}/recompute` still returns 501.
 - `docs/api/openapi.yaml` reconciliation against generated output remains.
+
+## Session 2026-09-11 (cont.) — Admin backend API, Phase 4 (agentic statistics)
+
+**Student:** K.N. Delpachithra (Kavindu) · **ID:** IT24102532
+**Branch:** `feature/admin-backend-api` · **Issues:** #209–#214
+
+### Work performed (one commit per issue, strict TDD)
+
+- [#209](https://github.com/KavinduNirmal/aveline/issues/209) — M6 schema:
+  `AgentWorkflowRun`, `AgentStepRun` and their four enums, EF configurations
+  (unique `(OrganizationId, WorkflowId)` `NULLS NOT DISTINCT`, denormalised step
+  `OrganizationId`, `text[]` `AgentsInvolved` with a GIN index), the
+  `AiUsageRecord.AgentWorkflowRunId` unique filtered FK, and the applied migration.
+- [#210](https://github.com/KavinduNirmal/aveline/issues/210) — the failing tests
+  first (`PercentileCalculatorTests`, `AgentStatisticsQueryTests`), then
+  `PercentileCalculator` (linear interpolation matching
+  `percentile_cont`), `IAgentRunRepository`/`AgentRunRepository` (always
+  org-filtered), `IAgentStatisticsService`/`AgentStatisticsService` for S-13…S-23
+  and the first `StatisticsModule`. Every response carries `dataQuality` with the
+  five flags all false, and latency is a null series, not zeros.
+- [#211](https://github.com/KavinduNirmal/aveline/issues/211) — the org routes
+  `/api/v1/orgs/{organizationId:guid}/statistics/agents/**` behind
+  `StatsAgent`, the team-only admin subset (`overview`, `runs`, `reliability`)
+  behind `StatsSystem`, manual `status`/`triggerKind` parsing (unknown value →
+  `400 {"message"}`), and the `AgentStatisticsEndpointsTests` integration suite.
+- [#212](https://github.com/KavinduNirmal/aveline/issues/212) — `/internal/agent-runs`
+  (`POST ""`, `POST /{workflowId}/steps`, `GET /{workflowId}`) with
+  `AgentRunIngestService`: idempotency on `(OrganizationId, WorkflowId)`, terminal
+  conflict → 409, `CompletedAt >= StartedAt` with the > 5 ms `DurationMs`
+  recomputation (BR-5.2), the terminal/non-terminal `CompletedAt` rules (BR-5.3),
+  the `AgentStats:MaxStepsPerRun` cap → 413 naming the limit, `NULL`-org
+  unattributed storage (D-7), `AiUsageRecord` linking (FR-5.5) and
+  `agent.run.*` events. The privacy test reflects over the ingest DTOs.
+- [#213](https://github.com/KavinduNirmal/aveline/issues/213) — `StatisticsJobBase`
+  (`PeriodicTimer` + `IDistributedJobLock` + structured start/end logs),
+  `AgentStatsRetentionJob` (daily 03:00 UTC; steps > 90 d, runs > 400 d) and
+  `StaleAgentRunJob` (hourly; paused > 72 h → `TimedOut`), plus the five
+  `AgentStats:*` config keys.
+- [#214](https://github.com/KavinduNirmal/aveline/issues/214) — these documents,
+  the `docs/backend/README.md` Phase 4 status table, the `docs/api/README.md` §C.6
+  implementation note and the `statistics-catalog.md` §8 flag-name note.
+
+### Files created / modified (highlights)
+
+- `Modules/Statistics/Domain/PercentileCalculator.cs`,
+  `Repositories/{I,}AgentRunRepository.cs`,
+  `Services/{IAgentStatisticsService,AgentStatisticsService,IAgentRunIngestService,AgentRunIngestService}.cs`,
+  `DTOs/AgentStatisticsDtos.cs`, `DTOs/AgentRunIngestDtos.cs`,
+  `Models/StatisticsDomainExceptions.cs`,
+  `Endpoints/{AgentStatisticsEndpoints,InternalAgentRunEndpoints}.cs`,
+  `Jobs/{StatisticsJobBase,AgentStatsRetentionJob,StaleAgentRunJob}.cs`,
+  `StatisticsModule.cs`.
+- `Aveline.Api/Program.cs`, `Aveline.Api/appsettings.json` (the `AgentStats` block).
+- Tests: `PercentileCalculatorTests`, `AgentStatisticsQueryTests`,
+  `AgentStatisticsEndpointsTests`, `AgentRunIngestTests`,
+  `AgentRunUnattributedTests`, `AgentRunPrivacyTests`, `AgentStatsJobsTests`.
+
+### Important architectural decisions
+
+- **Percentiles are computed in memory, not in SQL.** There is no
+  `DailyAgentMetrics` rollup and the Postgres provider could not be exercised by the
+  in-memory test suite, so `AgentStatisticsService` fetches the bounded window and
+  uses `PercentileCalculator`, which mirrors `percentile_cont` exactly.
+- **Step responses ignore `status`/`triggerKind`.** The step filter only carries
+  `agentKey` and the window because it does not join the run table; documented as a
+  deviation rather than silently accepted.
+- **`AgentKey` is validated against the four registered keys** (BR-5.5), and an
+  overlapping `(StepIndex, AttemptNumber)` on an append is a 409, keeping the
+  database unique index as a backstop rather than the user-facing error.
+- **A terminal run is immutable but a byte-identical re-report is idempotent.**
+  Only a changed `Status`/`CompletedAt`/`ErrorCode` for a terminal run is a 409.
+- **The internal routes are mapped at the application root**, not on the
+  `/api/v1` group, because the documented path is `/internal/agent-runs`. The org
+  and admin statistics routes stay on the v1 group.
+
+### Problems encountered
+
+- The retention job's `RunAsync` deletes steps before runs, so a step older than
+  90 days and its 401-day-old run are both removed without relying on cascade
+  ordering.
+- `MergeAgents` needed an `IEnumerable<string>` cast: the nullable
+  `string[]?` request property and the `List<string>` model property have no
+  common `??` type.
+- The scanner flagged no new secret because the new integration tests generate the
+  internal token at runtime rather than embedding a literal.
+- A misfiled write to a non-existent `avelinaline/` path was denied by the file
+  sandbox and immediately corrected; no escalation was requested.
+
+### Verification performed
+
+- Full suite `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj -c Debug`:
+  **896 passed, 0 failed** (Phase 3 ended at 825).
+- `dotnet build -c Release` succeeds.
+- Each task was committed separately with the Husky pre-commit gate (build +
+  secret scan) passing; the Phase 4 Postgres tests (Testcontainers) also ran.
+- `AgentStatisticsEndpointsTests` asserts org A never sees org B's or an
+  unattributed run and that `dataQuality` flags are present and false;
+  `AgentRunPrivacyTests` asserts no ingest DTO field can carry prompt/tool content.
+
+### Remaining work
+
+- The Python instrumentation (gaps G-1…G-14, defects D-4…D-8) is deferred per
+  risk R-1, so the `dataQuality` flags stay false and the endpoints return empty or
+  null series in production until the agent service reports runs.
+- No `AgentStatsRollupJob`/`DailyAgentMetrics`; percentiles are on the fly.
+- S-23 concurrency and the remaining `/admin/statistics/**` groups belong to
+  Phases 5–6.
+- `docs/api/openapi.yaml` reconciliation against generated output remains.

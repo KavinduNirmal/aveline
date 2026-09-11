@@ -1419,6 +1419,23 @@ revoke `org:boutique_owner`;
 Base: `/api/v1/orgs/{organizationId:guid}/statistics/agents`. **Auth:** `stats:view:agent`.
 All accept `from`, `to` (ISO 8601 UTC, max 92 days), plus the filters listed.
 
+> **Implemented (Phase 4, issues #210–#213).** Deviations from the sketch below:
+>
+> - The window default is 30 days and the maximum enforced by the implementation is
+>   **400 days** (the run-retention horizon), not 92.
+> - An invalid `status` or `triggerKind` value is a `400 {"message": "..."}` rather
+>   than a model-binding error.
+> - `dataQuality` currently contains exactly five flags — `latencyInstrumented`,
+>   `nodeFailuresObserved`, `perStepAttribution`, `toolInstrumented`,
+>   `costInstrumented` — and **all are `false`** until the Python instrumentation
+>   (gaps G-1…G-14) lands. `latencyInstrumented` returning `false` means
+>   `GET /latency` returns a null series, not zeros.
+> - Runs omit `requestId`/`errorMessage` on the wire; the run summary carries the
+>   columns the M6 model persists. `page`/`pageSize` default to `1`/`50` (max 200).
+> - The admin subset is exactly `GET /api/v1/admin/statistics/agents/overview`,
+>   `/runs` and `/reliability` (`stats:system`, team-only).
+> - `/internal/agent-runs` is documented under [§C.6.1](#c61-internal-agent-run-ingest).
+
 ---
 
 #### `GET /runs`

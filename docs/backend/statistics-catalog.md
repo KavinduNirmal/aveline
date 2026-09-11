@@ -746,6 +746,16 @@ requirement as partially satisfied. This is deliberate: the catalog describes th
 **target** statistic and states exactly what is missing, rather than silently
 shrinking the definition to what happens to work today.
 
+> **Shipped note (Phase 4, issues #210–#213).** The implemented `dataQuality`
+> object on the agent statistics responses carries a deliberately smaller set than
+> the table above: `latencyInstrumented`, `nodeFailuresObserved`,
+> `perStepAttribution`, `toolInstrumented` and `costInstrumented` (the last named
+> `costIsEstimated` here). All five are `false` until the Python instrumentation
+> G-1…G-14 lands; `retryInstrumented`, `materialisedCounts`,
+> `streamingRunsIncluded` and `unattributedRunsExcluded` are not emitted yet. A
+> false `latencyInstrumented` makes `GET /latency` return a null series rather than
+> zeros. See [README.md](README.md#implementation-status-phase-4--agentic-statistics).
+
 ---
 
 ## 9. Retention and aggregation summary

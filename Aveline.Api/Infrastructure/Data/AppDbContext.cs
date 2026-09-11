@@ -45,6 +45,10 @@ public class AppDbContext : DbContext
 
     public DbSet<BlossomPriceEntry> BlossomPriceEntries => Set<BlossomPriceEntry>();
 
+    public DbSet<BlossomLedgerEntry> BlossomLedgerEntries => Set<BlossomLedgerEntry>();
+
+    public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
+
     public DbSet<AuditLogEntry> AuditLogEntries => Set<AuditLogEntry>();
 
     public DbSet<IntegrationCredential> IntegrationCredentials => Set<IntegrationCredential>();

@@ -52,7 +52,14 @@ public class UsageAccountConfiguration : IEntityTypeConfiguration<UsageAccount>
 {
     public void Configure(EntityTypeBuilder<UsageAccount> builder)
     {
-        builder.ToTable("UsageAccounts");
+        builder.ToTable("UsageAccounts", table =>
+        {
+            // The projection must always equal the normative balance identity so a bug
+            // cannot silently desynchronise it (domain-model.md §4.1).
+            table.HasCheckConstraint(
+                "CK_UsageAccounts_Balance",
+                "\"BlossomRemaining\" = \"MonthlyBlossomLimit\" + \"BlossomGranted\" - \"BlossomAdjusted\" - \"BlossomUsed\"");
+        });
 
         builder.HasKey(a => a.Id);
 
@@ -62,8 +69,18 @@ public class UsageAccountConfiguration : IEntityTypeConfiguration<UsageAccount>
         builder.Property(a => a.BlossomUsed)
             .HasPrecision(18, 4);
 
+        builder.Property(a => a.BlossomGranted)
+            .HasPrecision(18, 4);
+
+        builder.Property(a => a.BlossomAdjusted)
+            .HasPrecision(18, 4);
+
         builder.Property(a => a.BlossomRemaining)
             .HasPrecision(18, 4);
+
+        builder.Property(a => a.PlanTierSnapshot)
+            .HasConversion<string>()
+            .HasMaxLength(32);
 
         builder.Property(a => a.Status)
             .HasConversion<string>()
@@ -78,6 +95,9 @@ public class UsageAccountConfiguration : IEntityTypeConfiguration<UsageAccount>
         builder.Property(a => a.UpdatedAt)
             .IsRequired();
 
+        builder.Property(a => a.ConcurrencyToken)
+            .IsRowVersion();
+
         builder.HasOne(a => a.Organization)
             .WithMany()
             .HasForeignKey(a => a.OrganizationId)
@@ -86,5 +106,8 @@ public class UsageAccountConfiguration : IEntityTypeConfiguration<UsageAccount>
         // Unique index ensures one active ledger row per organisation per billing period
         builder.HasIndex(a => new { a.OrganizationId, a.PeriodStart })
             .IsUnique();
+
+        builder.HasIndex(a => new { a.OrganizationId, a.IsClosed, a.PeriodStart })
+            .IsDescending(false, false, true);
     }
 }

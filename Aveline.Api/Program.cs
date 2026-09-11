@@ -8,6 +8,7 @@ using Aveline.Api.Infrastructure.Notifications;
 using Aveline.Api.Infrastructure.RateLimiting;
 using Aveline.Api.Modules.Admin.Repositories;
 using Aveline.Api.Modules.Admin.Services;
+using Aveline.Api.Modules.ApiAccess;
 using Aveline.Api.Modules.Audit;
 using Aveline.Api.Modules.Billing;
 using Aveline.Api.Modules.Billing.Endpoints;
@@ -44,6 +45,7 @@ builder.Services.AddAgentServiceClient(builder.Configuration);
 builder.Services.AddClerkAdminClient();
 builder.Services.AddWhatsAppProvider(builder.Configuration);
 builder.Services.AddBillingModule();
+builder.Services.AddApiAccessModule();
 builder.Services.AddAvelineIdempotency();
 builder.Services.AddAuditModule();
 builder.Services.AddIntegrationsModule();
@@ -88,6 +90,8 @@ app.UseCors(CorsConfiguration.DefaultPolicy);
 // and every downstream log line carry the same request id (FR-6.10).
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseAuthentication();
+// A cross-organization API key gets 404 before authorization can answer 403 (plan §8.2).
+app.UseMiddleware<Aveline.Api.Modules.ApiAccess.Middleware.ApiKeyTenantScopeMiddleware>();
 app.UseAuthorization();
 app.UseAvelineAuthAudit();
 app.UseAvelineOnboarding();
@@ -117,6 +121,7 @@ v1.MapConversationEndpoints();
 v1.MapPricingEndpoints();
 v1.MapBlossomEndpoints();
 v1.MapSubscriptionEndpoints();
+v1.MapApiAccessEndpoints();
 
 app.MapBillingEndpoints();
 app.MapCustomerConciergeEndpoints();

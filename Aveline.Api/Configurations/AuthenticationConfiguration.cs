@@ -35,6 +35,8 @@ public static class AuthenticationConfiguration
                 Aveline.Api.Infrastructure.Integrations.InternalTokenAuthenticationHandler.SchemeName, _ => { })
             .AddScheme<Aveline.Api.Infrastructure.Integrations.ScrapeTokenAuthenticationOptions, Aveline.Api.Infrastructure.Integrations.ScrapeTokenAuthenticationHandler>(
                 Aveline.Api.Infrastructure.Integrations.ScrapeTokenAuthenticationHandler.SchemeName, _ => { })
+            .AddScheme<Aveline.Api.Modules.ApiAccess.Authentication.ApiKeyAuthenticationOptions, Aveline.Api.Modules.ApiAccess.Authentication.ApiKeyAuthenticationHandler>(
+                Aveline.Api.Modules.ApiAccess.Authentication.ApiKeyAuthenticationHandler.SchemeName, _ => { })
             .AddJwtBearer(options =>
             {
                 options.Authority = authority;

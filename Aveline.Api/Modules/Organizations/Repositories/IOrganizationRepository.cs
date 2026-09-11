@@ -46,6 +46,11 @@ public interface IOrganizationRepository
         Guid organizationId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Removes every membership of a user across all organizations (FR-3.5).</summary>
+    Task<int> RemoveAllMembershipsForUserAsync(
+        Guid userId,
+        CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Returns the <see cref="MembershipStatus.Active"/> memberships of an organization,
     /// with the <see cref="OrganizationMembership.User"/> navigation populated.

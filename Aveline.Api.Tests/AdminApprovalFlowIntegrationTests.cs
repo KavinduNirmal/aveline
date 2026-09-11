@@ -29,6 +29,14 @@ public class AdminApprovalFlowIntegrationTests : IAsyncLifetime
             Granted.Add(clerkUserId);
             return Task.CompletedTask;
         }
+
+        public Task<IReadOnlyList<ClerkSession>> ListSessionsAsync(
+            string clerkUserId, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<ClerkSession>>([]);
+
+        public Task<int> RevokeAllSessionsAsync(
+            string clerkUserId, CancellationToken cancellationToken = default) =>
+            Task.FromResult(0);
     }
 
     private readonly RecordingClerkAdminClient _clerk = new();

@@ -43,6 +43,18 @@ public class OnboardingMiddlewareTests
         {
             return Task.FromResult<UserDto?>(null);
         }
+
+        public Task<UserDto?> UpdateProfileAsync(string clerkId, UpdateUserProfileRequest request, CancellationToken cancellationToken = default) =>
+            Task.FromResult<UserDto?>(null);
+
+        public Task<UserDto?> DeleteAccountAsync(string clerkId, CancellationToken cancellationToken = default) =>
+            Task.FromResult<UserDto?>(null);
+
+        public Task<UserDto> ChangeAccountStateAsync(Guid userId, AccountState state, Guid actorUserId, CancellationToken cancellationToken = default) =>
+            throw new NotImplementedException();
+
+        public Task<PagedUsers> SearchUsersAsync(string? search, AccountState? state, int page, int pageSize, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new PagedUsers([], page, pageSize, 0));
     }
 
     private readonly FakeUserService _fakeUserService = new();

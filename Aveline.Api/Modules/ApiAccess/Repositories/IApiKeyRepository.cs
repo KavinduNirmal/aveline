@@ -17,4 +17,10 @@ public interface IApiKeyRepository
     Task UpdateAsync(ApiKey key, CancellationToken cancellationToken = default);
 
     Task DeleteAsync(ApiKey key, CancellationToken cancellationToken = default);
+
+    /// <summary>Revokes every active key created by a user (FR-3.5 account deletion).</summary>
+    Task<int> RevokeAllForCreatorAsync(
+        Guid createdByUserId,
+        string reason,
+        CancellationToken cancellationToken = default);
 }

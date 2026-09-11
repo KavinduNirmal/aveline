@@ -140,7 +140,8 @@ public class OrganizationRepository : IOrganizationRepository
             .ToListAsync(cancellationToken);
     }
 
-    public async Task<IReadOnlyList<OrganizationMembership>> GetActiveMembersAsync(        Guid organizationId,
+    public async Task<IReadOnlyList<OrganizationMembership>> GetActiveMembersAsync(
+        Guid organizationId,
         CancellationToken cancellationToken = default)
     {
         return await _context.OrganizationMemberships
@@ -149,5 +150,23 @@ public class OrganizationRepository : IOrganizationRepository
             .Where(m => m.OrganizationId == organizationId && m.Status == MembershipStatus.Active)
             .OrderBy(m => m.CreatedAt)
             .ToListAsync(cancellationToken);
+    }
+
+    public async Task<int> RemoveAllMembershipsForUserAsync(
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        var memberships = await _context.OrganizationMemberships
+            .Where(m => m.UserId == userId)
+            .ToListAsync(cancellationToken);
+
+        if (memberships.Count == 0)
+        {
+            return 0;
+        }
+
+        _context.OrganizationMemberships.RemoveRange(memberships);
+        await _context.SaveChangesAsync(cancellationToken);
+        return memberships.Count;
     }
 }

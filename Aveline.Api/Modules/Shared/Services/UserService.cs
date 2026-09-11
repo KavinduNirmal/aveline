@@ -1,5 +1,10 @@
 using System.Security.Claims;
 using Aveline.Api.Infrastructure.Caching;
+using Aveline.Api.Infrastructure.Eventing;
+using Aveline.Api.Modules.ApiAccess.Repositories;
+using Aveline.Api.Modules.Audit.Models;
+using Aveline.Api.Modules.Audit.Services;
+using Aveline.Api.Modules.Organizations.Repositories;
 using Aveline.Api.Modules.Organizations.Services;
 using Aveline.Api.Modules.Shared.DTOs;
 using Aveline.Api.Modules.Shared.Models;
@@ -9,21 +14,35 @@ namespace Aveline.Api.Modules.Shared.Services;
 
 public class UserService : IUserService
 {
+    private const int MaxMemberPageSize = 100;
+
     private readonly IUserRepository _userRepository;
     private readonly IUserCacheService _cacheService;
     private readonly IOrganizationService _organizationService;
     private readonly ILogger<UserService> _logger;
+    private readonly IOrganizationRepository? _organizationRepository;
+    private readonly IApiKeyRepository? _apiKeyRepository;
+    private readonly IAuditService? _auditService;
+    private readonly IEventBus? _eventBus;
 
     public UserService(
         IUserRepository userRepository,
         IUserCacheService cacheService,
         IOrganizationService organizationService,
-        ILogger<UserService> logger)
+        ILogger<UserService> logger,
+        IOrganizationRepository? organizationRepository = null,
+        IApiKeyRepository? apiKeyRepository = null,
+        IAuditService? auditService = null,
+        IEventBus? eventBus = null)
     {
         _userRepository = userRepository;
         _cacheService = cacheService;
         _organizationService = organizationService;
         _logger = logger;
+        _organizationRepository = organizationRepository;
+        _apiKeyRepository = apiKeyRepository;
+        _auditService = auditService;
+        _eventBus = eventBus;
     }
 
     public async Task<UserOnboardingCacheItem> GetOrSynchronizeUserAsync(
@@ -218,6 +237,233 @@ public class UserService : IUserService
         await _cacheService.SetUserAsync(clerkId, cacheItem, cancellationToken: cancellationToken);
         await _cacheService.SetUserProfileAsync(clerkId, dto, cancellationToken: cancellationToken);
         return dto;
+    }
+
+    public async Task<UserDto?> UpdateProfileAsync(
+        string clerkId,
+        UpdateUserProfileRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var user = await _userRepository.GetByClerkIdAsync(clerkId, cancellationToken);
+        if (user is null)
+        {
+            return null;
+        }
+
+        if (request.FirstName is not null)
+        {
+            user.FirstName = RequireText(request.FirstName, "firstName", 100);
+        }
+
+        if (request.LastName is not null)
+        {
+            user.LastName = RequireText(request.LastName, "lastName", 100);
+        }
+
+        if (request.DisplayName is not null)
+        {
+            user.DisplayName = OptionalText(request.DisplayName, "displayName", 200);
+        }
+
+        if (request.PhoneNumber is not null)
+        {
+            user.PhoneNumber = OptionalText(request.PhoneNumber, "phoneNumber", 20) ?? string.Empty;
+        }
+
+        if (request.ProfileImageUrl is not null)
+        {
+            user.ProfileImageUrl = OptionalText(request.ProfileImageUrl, "profileImageUrl", 1000);
+        }
+
+        if (request.ContactPreference is not null)
+        {
+            user.ContactPreference = request.ContactPreference.Value;
+        }
+
+        if (request.PushNotificationsEnabled is not null)
+        {
+            user.PushNotificationsEnabled = request.PushNotificationsEnabled.Value;
+        }
+
+        user.UpdatedAt = DateTime.UtcNow;
+        await _userRepository.UpdateAsync(user, cancellationToken);
+
+        var dto = UserDto.FromEntity(user);
+        await _cacheService.SetUserAsync(user.ClerkId, MapToCacheItem(user), cancellationToken: cancellationToken);
+        await _cacheService.SetUserProfileAsync(user.ClerkId, dto, cancellationToken: cancellationToken);
+
+        _logger.LogInformation("User profile updated. userId={UserId}", user.Id);
+
+        if (_auditService is not null)
+        {
+            await _auditService.RecordAsync(new AuditEntryRequest(
+                AuditAction.UserProfileUpdated,
+                "User",
+                user.Id.ToString(),
+                ActorKind: AuditActorKind.User,
+                ActorUserId: user.Id,
+                After: new { user.FirstName, user.LastName, user.DisplayName, user.PhoneNumber }), cancellationToken);
+        }
+
+        if (_eventBus is not null)
+        {
+            await _eventBus.PublishAsync(
+                "user.profile.updated", null, new { userId = user.Id }, cancellationToken: cancellationToken);
+        }
+
+        return dto;
+    }
+
+    public async Task<UserDto?> DeleteAccountAsync(
+        string clerkId,
+        CancellationToken cancellationToken = default)
+    {
+        var user = await _userRepository.GetByClerkIdAsync(clerkId, cancellationToken);
+        if (user is null)
+        {
+            return null;
+        }
+
+        if (user.DeletedAt is not null)
+        {
+            // Idempotent: a second delete changes nothing.
+            return UserDto.FromEntity(user);
+        }
+
+        var now = DateTime.UtcNow;
+        user.DeletedAt = now;
+        user.IsActive = false;
+        user.AccountState = AccountState.Suspended;
+        user.UpdatedAt = now;
+
+        // Sever the tenant relationships and every machine credential the user created.
+        if (_organizationRepository is not null)
+        {
+            await _organizationRepository.RemoveAllMembershipsForUserAsync(user.Id, cancellationToken);
+        }
+
+        if (_apiKeyRepository is not null)
+        {
+            await _apiKeyRepository.RevokeAllForCreatorAsync(
+                user.Id, "The owning user deleted their account.", cancellationToken);
+        }
+
+        await _userRepository.UpdateAsync(user, cancellationToken);
+        await _cacheService.InvalidateAsync(user.ClerkId, cancellationToken);
+
+        _logger.LogInformation("User account soft-deleted. userId={UserId}", user.Id);
+
+        if (_auditService is not null)
+        {
+            await _auditService.RecordAsync(new AuditEntryRequest(
+                AuditAction.UserStateChanged,
+                "User",
+                user.Id.ToString(),
+                ActorKind: AuditActorKind.User,
+                ActorUserId: user.Id,
+                After: new { AccountState = nameof(AccountState.Suspended), user.IsActive, user.DeletedAt }),
+                cancellationToken);
+        }
+
+        if (_eventBus is not null)
+        {
+            await _eventBus.PublishAsync(
+                "user.state.changed", null, new { userId = user.Id, state = nameof(AccountState.Suspended) },
+                cancellationToken: cancellationToken);
+        }
+
+        return UserDto.FromEntity(user);
+    }
+
+    public async Task<UserDto> ChangeAccountStateAsync(
+        Guid userId,
+        AccountState state,
+        Guid actorUserId,
+        CancellationToken cancellationToken = default)
+    {
+        var user = await _userRepository.GetByIdAsync(userId, cancellationToken);
+        if (user is null || user.DeletedAt is not null)
+        {
+            throw new KeyNotFoundException($"User '{userId}' was not found.");
+        }
+
+        AccountStateTransitions.EnsureAllowed(user.AccountState, state);
+
+        user.AccountState = state;
+        user.IsActive = state != AccountState.Suspended;
+        user.UpdatedAt = DateTime.UtcNow;
+
+        await _userRepository.UpdateAsync(user, cancellationToken);
+        await _cacheService.InvalidateAsync(user.ClerkId, cancellationToken);
+
+        _logger.LogInformation(
+            "Account state changed by an administrator. userId={UserId} state={State} actorUserId={ActorUserId}",
+            userId, state, actorUserId);
+
+        if (_auditService is not null)
+        {
+            await _auditService.RecordAsync(new AuditEntryRequest(
+                AuditAction.UserStateChanged,
+                "User",
+                user.Id.ToString(),
+                ActorKind: AuditActorKind.User,
+                ActorUserId: actorUserId,
+                After: new { AccountState = state.ToString() }), cancellationToken);
+        }
+
+        if (_eventBus is not null)
+        {
+            await _eventBus.PublishAsync(
+                "user.state.changed", null, new { userId = user.Id, state = state.ToString() },
+                cancellationToken: cancellationToken);
+        }
+
+        return UserDto.FromEntity(user);
+    }
+
+    public async Task<PagedUsers> SearchUsersAsync(
+        string? search,
+        AccountState? state,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken = default)
+    {
+        page = page < 1 ? 1 : page;
+        pageSize = pageSize is < 1 or > MaxMemberPageSize ? 20 : pageSize;
+
+        var (items, total) = await _userRepository.SearchAsync(
+            search, state, page, pageSize, cancellationToken);
+
+        return new PagedUsers(items.Select(UserDto.FromEntity).ToArray(), page, pageSize, total);
+    }
+
+    private static string RequireText(string value, string field, int maxLength)
+    {
+        var trimmed = value.Trim();
+        if (trimmed.Length == 0 || trimmed.Length > maxLength)
+        {
+            throw new ArgumentException($"'{field}' must be 1..{maxLength} characters.");
+        }
+
+        return trimmed;
+    }
+
+    private static string? OptionalText(string value, string field, int maxLength)
+    {
+        var trimmed = value.Trim();
+        if (trimmed.Length == 0)
+        {
+            return null;
+        }
+
+        if (trimmed.Length > maxLength)
+        {
+            throw new ArgumentException($"'{field}' cannot exceed {maxLength} characters.");
+        }
+
+        return trimmed;
     }
 
     private async Task<AccountState> ResolveAccountStateAsync(

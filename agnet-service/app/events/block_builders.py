@@ -86,6 +86,10 @@ def build_elle_blocks(visual_output: Any) -> list[dict[str, Any]]:
 
     blocks: list[dict[str, Any]] = []
 
+    text = visual.get("text") or visual.get("summary")
+    if text:
+        blocks.append({"type": "text", "text": str(text)})
+
     suggestion = visual.get("suggestion")
     if suggestion:
         blocks.append({"type": "suggestion", "text": str(suggestion)})

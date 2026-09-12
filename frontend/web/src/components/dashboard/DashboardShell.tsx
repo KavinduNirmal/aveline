@@ -30,6 +30,7 @@ import { TeamManagement } from '@/components/dashboard/TeamManagement'
 import { IntegrationsPanel } from '@/components/dashboard/IntegrationsPanel'
 import { NotificationBell } from '@/components/dashboard/NotificationBell'
 import { UsagePanel } from '@/components/dashboard/UsagePanel'
+import { CatalogPanel } from '@/components/catalog/CatalogPanel'
 import { ConversationsProvider } from '@/contexts/ConversationsContext'
 
 import { Button } from '@/components/ui/button'
@@ -354,6 +355,12 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
             <Overview organization={organization} usage={usage} role={role} />
           ) : activeSection === 'salon' ? (
             <SalonPanel />
+          ) : activeSection === 'catalog' ? (
+            <CatalogPanel
+              organization={organization}
+              role={role}
+              onOpenSalonForCustomer={(_id, _name) => setSection('salon')}
+            />
           ) : activeSection === 'team' ? (
             <TeamManagement organization={organization} role={role} />
           ) : activeSection === 'integrations' ? (

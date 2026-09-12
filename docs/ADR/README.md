@@ -31,6 +31,7 @@ control as an audit trail.
 | `ADR-017-memory-pgvector-embeddings.md` | Customer memory semantics — OpenAI `text-embedding-3-small` 1536-d embeddings, pgvector column kept outside the EF model, cosine search in the .NET API via raw SQL + Testcontainers |
 | `ADR-018-realtime-conversation-delivery.md` | The Salon realtime delivery model — batched `message.created` cards + `agent.status` lifecycle (no token streaming yet); SignOff LangGraph resume and real specialist sub-graphs deferred |
 | `ADR-019-entity-mentions.md` | Explicit entity mentions (`@name`, `#phone`, …) for deterministic customer resolution; free-text extraction kept as fallback |
+| `ADR-020-multimodal-vision-provider.md` | Multimodal vision provider — centralized OpenAI-compatible `VisionService`, config resolution, ADR-010 Blossom usage tracking, deterministic offline fallback |
 
 ## ADR Template
 

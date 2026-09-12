@@ -20,11 +20,11 @@ Aveline tests four independent codebases, one per technology stack:
 
 ## 2. Backend Tests (`Aveline.Api.Tests/`)
 
-283 test cases across 49 files. Two distinct approaches:
+569 test cases across unit and integration test suites. Two distinct approaches:
 
 - **Unit tests** — exercise a single class in isolation, with collaborators mocked
   via **Moq** (e.g. `OrganizationServiceTests`, `CredentialEncryptionServiceTests`,
-  `EventingRedisTests`).
+  `VisionServiceTests`, `EventingRedisTests`).
 - **Integration tests** — boot the real app with
   `WebApplicationFactory<Program>` against an **in-memory EF Core database**
   (`UseInMemoryDatabase`), with external dependencies replaced by stub servers
@@ -44,11 +44,10 @@ Shared test infrastructure:
 dotnet test Aveline.Api/Aveline.Api.sln
 ```
 
-Two of the Customer Concierge test classes (`CustomerMemoryRepositoryPostgresTests`,
-`CustomerConciergeSearchPostgresTests`) spin up a disposable **pgvector PostgreSQL container**
-via `Testcontainers` and run the real migrations — the in-memory provider cannot exercise the
-pgvector `vector(1536)` column. These require a Docker daemon (present on CI's
-`build-api` ubuntu runners).
+Test classes requiring PostgreSQL/pgvector (`CustomerMemoryRepositoryPostgresTests`,
+`CustomerConciergeSearchPostgresTests`, `VisualIntelligencePostgresTests`) spin up a disposable
+**PostgreSQL container** via `Testcontainers` and run real migrations. These require a Docker daemon
+(present on CI's `build-api` ubuntu runners).
 
 ### Coverage
 
@@ -68,20 +67,18 @@ Reports are written to `Aveline.Api.Tests/TestResults/` (gitignored).
 | **Users** | `UserServiceTests`, `UserRepositoryTests`, `UserCacheServiceTests`, `UserEndpointsIntegrationTests` |
 | **Commerce / Approvals** | `AdminApprovalFlowIntegrationTests` |
 | **Customer Concierge & Memory (Slice 1)** | `CustomerConciergeEntityConfigurationTests`, `CustomerConciergeRepositoryTests`, `CustomerConciergeServiceTests`, `CustomerConciergeEndpointsIntegrationTests`, `CustomerMemoryRepositoryPostgresTests` (Testcontainers), `CustomerConciergeSearchPostgresTests` (Testcontainers) |
+| **Visual Intelligence & Sourcing (Slice 2)** | `VisionServiceTests`, `VisualIntelligenceEntityConfigurationTests`, `VisualIntelligencePostgresTests` (Testcontainers), `CustomerMatchRepositoryTests`, `VisualEndpointsIntegrationTests` |
 | **Notifications** | `NotificationDispatcherTests`, `NotificationRepositoryTests`, `UserNotificationRepositoryTests`, `ChannelRouterTests`, `EmailServiceTests`, `FcmPushChannelTests`, `LoggingNotificationChannelsTests`, `NotificationHubTests`, `SignalRRealtimeChannelTests`, `NotificationEndpointsIntegrationTests`, `NotificationHubIntegrationTests`, `DeviceTokenEndpointsIntegrationTests`, `DeviceTokenRepositoryTests` |
 | **Eventing** | `EventingTests`, `EventingRedisTests` |
 | **Integrations** | `IntegrationServiceTests`, `IntegrationEndpointsIntegrationTests` |
-| **Usage** | `UsageTrackerServiceTests`, `UsageEndpointsIntegrationTests` |
+| **Usage & Billing** | `UsageTrackerServiceTests`, `UsageEndpointsIntegrationTests` |
 | **Security / Resilience** | `CredentialEncryptionServiceTests`, `DistributedRateLimiterTests` |
 
 ---
 
 ## 3. Python Tests (`agnet-service/tests/`)
 
-186 test functions across the top-level files plus the Customer Memory Agent suite. The
-`agents/` and `tools/` subfolders describe the intended graph/tool test layout (see their
-`README.md` files); the Customer Memory Agent (Slice 1) sub-graph is tested in
-`test_customer_memory_agent.py`.
+381 test functions across agent graphs, tool registries, orchestrators, and schemas.
 
 Approach:
 
@@ -89,6 +86,7 @@ Approach:
   `app` (e.g. `test_internal_auth.py`, `test_agents_warmup.py`).
 - **External HTTP** is mocked with `respx` (`test_usage_reporter.py`).
 - **Redis** is faked with `fakeredis.aioredis` (`test_event_bus.py`).
+- **LangGraph sub-graphs & orchestration** are tested with mock LLMs and simulated tool registries.
 - Async tests rely on `pytest-asyncio` with `asyncio_mode = auto`.
 
 ### Run
@@ -110,7 +108,14 @@ Configuration lives in `agnet-service/pyproject.toml` (`[tool.pytest.ini_options
 | `test_usage_reporter.py` | `report_usage` success path and error handling with `respx`-mocked HTTP |
 | `test_customer_memory_schemas.py` | Memory-agent Pydantic I/O schemas (intent, memories, events, output) + extra-field rejection |
 | `test_customer_memory_agent.py` | Memory sub-graph golden cases against a fake `ToolRegistry` (wedding, revoked consent, missing context, preference extraction) + rule parsing |
-| `test_tool_registry.py` | Shared `ToolRegistry`/`InternalApiClient` routing for memory endpoints against a mocked HTTP client |
+| `test_visual_insight_schemas.py` | Visual agent Pydantic schemas (`ImageAttributes`, `PieceItem`, `LookDto`, `SourcingRequestDto`, `VisualAgentOutput`) |
+| `test_visual_insight_graph.py` | Visual Insight LangGraph sub-graph execution, conditional look composition vs. sourcing routing |
+| `test_visual_intent_gate.py` | Elle visual intent classification and confidence gating |
+| `test_visual_routing.py` | Conditional routing after visual agent (commerce transition vs formulate response) |
+| `test_inventory_tools.py` | Visual inventory search, stock verification, and image analysis tools |
+| `test_visual_tools.py` | Look composition, customer matching, and sourcing request creation tools |
+| `test_concierge_workflow.py` | Full multi-agent orchestration (`intent_gate -> customer_resolution -> memory -> visual -> commerce -> formulate`) with LLM commentary and ADR-010 reporting |
+| `test_tool_registry.py` | Shared `ToolRegistry`/`InternalApiClient` routing for memory and visual endpoints against a mocked HTTP client |
 
 ---
 

@@ -112,7 +112,9 @@ CodeCoverage/
 ScaffoldingReadMe.txt
 
 # Misc
+.dotnet/
 ~$*
+
 
 # =============================================================================
 # PYTHON
@@ -257,3 +259,6 @@ USER_INFORMATION_FOR_AGENT.md
 
 # Firebase service account key (never commit)
 firebase-service-account.json
+
+# Agents.md
+Agents.md

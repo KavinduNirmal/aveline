@@ -12,10 +12,12 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
+import { analyzeProductImage } from '@/lib/catalog-api'
 import type { InventoryItemMock } from './mockData'
 
 interface AddProductModalProps {
   open: boolean
+  organizationId?: string
   onClose: () => void
   onSave: (item: InventoryItemMock) => void
   editingItem?: InventoryItemMock | null
@@ -63,6 +65,7 @@ const SAMPLE_IMAGES = [
 
 export function AddProductModal({
   open,
+  organizationId,
   onClose,
   onSave,
   editingItem,
@@ -99,9 +102,30 @@ export function AddProductModal({
     }
 
     setAnalyzing(true)
-    // Simulate Vision API multimodal processing latency
-    await new Promise((resolve) => setTimeout(resolve, 900))
+    try {
+      if (organizationId) {
+        const result = await analyzeProductImage(organizationId, imageUrl.trim())
+        if (result) {
+          if (result.detectedColor) setColor(result.detectedColor)
+          if (result.colorHex) setColorHex(result.colorHex)
+          if (result.fabric) setFabric(result.fabric)
+          if (result.style) setStyle(result.style)
+          if (result.pattern) setPattern(result.pattern)
+          if (result.confidenceScore) setAiConfidence(result.confidenceScore)
+          if (result.summary && !description) setDescription(result.summary)
+          if (result.category && CATEGORIES.includes(result.category)) setCategory(result.category)
+          toast.success('Visual attributes extracted via Vision AI', {
+            description: `${result.fabric || 'Fabric'}, ${result.detectedColor || 'color'} & styling populated.`,
+          })
+          setAnalyzing(false)
+          return
+        }
+      }
+    } catch {
+      // Fallback to sample / client heuristics
+    }
 
+    // Heuristic sample matching fallback
     const matchedSample = SAMPLE_IMAGES.find((s) => s.url === imageUrl)
     if (matchedSample) {
       setColor(matchedSample.detectedColor)

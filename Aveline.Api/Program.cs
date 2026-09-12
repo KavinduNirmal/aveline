@@ -106,6 +106,7 @@ v1.MapIntegrationEndpoints();
 v1.MapOrgUsageEndpoints();
 v1.MapWebhookEndpoints();
 v1.MapConversationEndpoints();
+v1.MapCatalogEndpoints();
 
 app.MapBillingEndpoints();
 app.MapCustomerConciergeEndpoints();

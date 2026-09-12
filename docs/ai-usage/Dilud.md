@@ -1,4 +1,70 @@
 
+## Session 2026-09-12 (Catalog & Visual Intelligence Frontend-Backend & Agent Integration)
+
+**Task:** Connect Catalog & Visual Intelligence UI components with ASP.NET Core backend endpoints, Clean Architecture services/repositories, and Elle Visual Insight Agent.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Architecture & Service Layer Extensions**:
+   - Extended `IOutfitRepository.cs` and `OutfitRepository.cs` with `GetByOrgIdAsync(Guid orgId, CancellationToken ct)`.
+   - Created DTOs in `Aveline.Api/Modules/VisualIntelligence/DTOs/`: `OutfitCompositionDto.cs`, `SupplierDto.cs`, `UpdateSourcingStatusDto.cs`.
+   - Extended `IVisualService.cs` and `VisualService.cs` with `GetLookbooksByOrgIdAsync`, `GetSourcingRequestsByOrgIdAsync`, `UpdateSourcingRequestStatusAsync`, and `GetSuppliersByOrgIdAsync`.
+
+2. **ASP.NET Core Tenant Catalog Endpoints**:
+   - Implemented `Aveline.Api/Endpoints/CatalogEndpoints.cs` mapping group `/orgs/{organizationId:guid}/catalog` guarded by `AuthorizationConfiguration.BoutiqueAccessPolicy` (requiring Clerk JWT, active org membership, and `catalog:view` permission).
+   - Exposed endpoints for inventory CRUD, stock thresholds, Elle Vision AI analysis, customer style matches, lookbook curation, sourcing pipeline ticket creation/patching, and atelier supplier catalogs.
+   - Registered `v1.MapCatalogEndpoints()` in `Aveline.Api/Program.cs`.
+
+3. **Backend Integration Testing**:
+   - Created `Aveline.Api.Tests/CatalogEndpointsIntegrationTests.cs` using `StubAuthServer` and `WebApplicationFactory<Program>`.
+   - Verified 401 unauthorized rejection, org-scoped membership authorization, inventory CRUD, low stock queries, lookbooks, sourcing request lifecycle, and supplier catalog queries.
+
+4. **Frontend Types & API Client**:
+   - Created `frontend/web/src/types/catalog.ts` containing typed models for `InventoryItem`, `CustomerMatch`, `OutfitComposition`, `SourcingRequest`, `Supplier`, `SupplierCatalogItem`, `VisionAnalysisResult`, and request payloads.
+   - Created `frontend/web/src/lib/catalog-api.ts` with Axios client functions and data normalizers.
+   - Created `frontend/web/src/lib/catalog-api.test.ts` providing 13 unit tests for all client operations.
+
+5. **Frontend UI Wiring & Graceful Fallbacks**:
+   - Updated `DashboardShell.tsx` to pass `organization` and `role` to `<CatalogPanel />`.
+   - Updated `CatalogPanel.tsx` with asynchronous `loadCatalogData` effect, live refresh trigger, optimistic state mutation, and graceful fallback to mock datasets.
+   - Updated `AddProductModal.tsx` to invoke `analyzeProductImage` on "Extract with Vision AI" and save to backend.
+   - Updated `CustomerMatchesDrawer.tsx` to support live match generation via `generateCustomerMatches` with Salon outreach navigation.
+   - Updated `ComposeOutfitModal.tsx` to invoke `composeLookbook` with Elle.
+   - Verified production build and tests.
+
+### Files Created or Modified
+
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/IOutfitRepository.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/OutfitRepository.cs`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/OutfitCompositionDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/SupplierDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/UpdateSourcingStatusDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/IVisualService.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/VisualService.cs`
+- `Aveline.Api/Endpoints/CatalogEndpoints.cs`
+- `Aveline.Api/Program.cs`
+- `Aveline.Api.Tests/CatalogEndpointsIntegrationTests.cs`
+- `frontend/web/src/types/catalog.ts`
+- `frontend/web/src/lib/catalog-api.ts`
+- `frontend/web/src/lib/catalog-api.test.ts`
+- `frontend/web/src/components/catalog/CatalogPanel.tsx`
+- `frontend/web/src/components/catalog/AddProductModal.tsx`
+- `frontend/web/src/components/catalog/CustomerMatchesDrawer.tsx`
+- `frontend/web/src/components/catalog/ComposeOutfitModal.tsx`
+- `frontend/web/src/components/dashboard/DashboardShell.tsx`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- .NET unit & integration test suite: 578/578 passed (`dotnet test Aveline.Api/Aveline.Api.sln`).
+- Frontend test suite: 158/158 passed (`npm test` in `frontend/web`).
+- Frontend production bundle build: Success with 0 errors (`npm run build` in `frontend/web`).
+- Python agent service test suite: 379 passed, 2 skipped (`.venv\Scripts\pytest` in `agnet-service`).
+
+---
+
 ## Session 2026-09-12 (Catalog & Visual Intelligence UI Implementation)
 
 **Task:** Design and build the Catalog & Visual Intelligence UI for Tenant Dashboard (`frontend/web/src/components/catalog/`).

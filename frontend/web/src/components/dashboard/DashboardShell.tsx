@@ -356,7 +356,11 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
           ) : activeSection === 'salon' ? (
             <SalonPanel />
           ) : activeSection === 'catalog' ? (
-            <CatalogPanel onOpenSalonForCustomer={(_id, _name) => setSection('salon')} />
+            <CatalogPanel
+              organization={organization}
+              role={role}
+              onOpenSalonForCustomer={(_id, _name) => setSection('salon')}
+            />
           ) : activeSection === 'team' ? (
             <TeamManagement organization={organization} role={role} />
           ) : activeSection === 'integrations' ? (

@@ -51,8 +51,27 @@ public interface IVisualService
         ComposeOutfitDto dto,
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<OutfitCompositionDto>> GetLookbooksByOrgIdAsync(
+        Guid orgId,
+        CancellationToken cancellationToken = default);
+
     Task<SourcingRequestDto> CreateSourcingRequestAsync(
         CreateSourcingRequestDto dto,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<SourcingRequestDto>> GetSourcingRequestsByOrgIdAsync(
+        Guid orgId,
+        string? status = null,
+        CancellationToken cancellationToken = default);
+
+    Task<SourcingRequestDto?> UpdateSourcingRequestStatusAsync(
+        Guid id,
+        Guid orgId,
+        string status,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<SupplierDto>> GetSuppliersByOrgIdAsync(
+        Guid orgId,
         CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<SupplierCatalogItemDto>> GetSupplierCatalogAsync(

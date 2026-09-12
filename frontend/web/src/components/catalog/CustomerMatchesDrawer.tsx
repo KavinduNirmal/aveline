@@ -13,11 +13,13 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
+import { generateCustomerMatches } from '@/lib/catalog-api'
 import type { CustomerMatchMock, InventoryItemMock } from './mockData'
 
 interface CustomerMatchesDrawerProps {
   item: InventoryItemMock | null
   matches: CustomerMatchMock[]
+  organizationId?: string
   open: boolean
   onClose: () => void
   onOpenSalon?: (customerId: string, clientName: string) => void
@@ -26,15 +28,38 @@ interface CustomerMatchesDrawerProps {
 export function CustomerMatchesDrawer({
   item,
   matches,
+  organizationId,
   open,
   onClose,
   onOpenSalon,
 }: CustomerMatchesDrawerProps) {
   const [actedMatches, setActedMatches] = useState<Record<string, boolean>>({})
+  const [liveMatches, setLiveMatches] = useState<CustomerMatchMock[]>([])
+  const [isGenerating, setIsGenerating] = useState(false)
+
+  const handleGenerateMatches = async () => {
+    if (!organizationId || !item) return
+    setIsGenerating(true)
+    try {
+      const generated = await generateCustomerMatches(organizationId, item.id)
+      if (generated && generated.length > 0) {
+        setLiveMatches(generated as unknown as CustomerMatchMock[])
+        toast.success('Generated fresh VIP client affinity matches')
+      } else {
+        toast.info('No new customer affinities discovered for this piece.')
+      }
+    } catch {
+      toast.error('Could not generate matches with agent service')
+    } finally {
+      setIsGenerating(false)
+    }
+  }
 
   if (!open || !item) return null
 
-  const itemMatches = matches.filter((m) => m.itemId === item.id)
+  const displayMatches = liveMatches.length > 0
+    ? liveMatches
+    : matches.filter((m) => m.itemId === item.id)
 
   const handleAction = (matchId: string, clientName: string, customerId: string) => {
     setActedMatches((prev) => ({ ...prev, [matchId]: true }))
@@ -62,14 +87,28 @@ export function CustomerMatchesDrawer({
               </p>
             </div>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onClose}
-            className="size-8 p-0 text-muted-foreground hover:text-foreground"
-          >
-            <X className="size-4" />
-          </Button>
+          <div className="flex items-center gap-2">
+            {organizationId && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-xs h-7 border-primary/30 text-primary hover:bg-primary/10"
+                onClick={handleGenerateMatches}
+                disabled={isGenerating}
+              >
+                <Sparkles className={`size-3 ${isGenerating ? 'animate-spin' : ''}`} />
+                <span>{isGenerating ? 'Computing...' : 'Find New Matches'}</span>
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onClose}
+              className="size-8 p-0 text-muted-foreground hover:text-foreground"
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
         </div>
 
         {/* Selected Product Banner */}
@@ -95,7 +134,7 @@ export function CustomerMatchesDrawer({
 
         {/* Matches List */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {itemMatches.length === 0 ? (
+          {displayMatches.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
               <Heart className="size-10 stroke-1 text-muted-foreground/40 mb-2" />
               <p className="text-sm font-medium text-foreground">No VIP matches yet</p>
@@ -105,7 +144,7 @@ export function CustomerMatchesDrawer({
               </p>
             </div>
           ) : (
-            itemMatches.map((match) => {
+            displayMatches.map((match) => {
               const acted = actedMatches[match.id] ?? match.employeeActed
               const scorePct = Math.round(match.matchConfidence * 100)
 

@@ -31,6 +31,16 @@ public class OutfitRepository : IOutfitRepository
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyList<OutfitComposition>> GetByOrgIdAsync(Guid orgId, CancellationToken cancellationToken = default)
+    {
+        return await _db.OutfitCompositions
+            .Include(x => x.Items)
+            .AsNoTracking()
+            .Where(x => x.OrgId == orgId)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task AddAsync(OutfitComposition composition, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(composition);

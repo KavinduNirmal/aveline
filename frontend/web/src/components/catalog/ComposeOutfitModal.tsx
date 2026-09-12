@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
+import { composeLookbook } from '@/lib/catalog-api'
 import type {
   InventoryItemMock,
   OutfitCompositionMock,
@@ -22,6 +23,7 @@ interface ComposeOutfitModalProps {
   open: boolean
   heroItem: InventoryItemMock | null
   inventory: InventoryItemMock[]
+  organizationId?: string
   onClose: () => void
   onSaveOutfit: (outfit: OutfitCompositionMock) => void
 }
@@ -38,6 +40,7 @@ export function ComposeOutfitModal({
   open,
   heroItem,
   inventory,
+  organizationId,
   onClose,
   onSaveOutfit,
 }: ComposeOutfitModalProps) {
@@ -58,7 +61,30 @@ export function ComposeOutfitModal({
     if (!activeHero) return
 
     setComposing(true)
-    await new Promise((resolve) => setTimeout(resolve, 1000))
+    try {
+      if (organizationId) {
+        const result = await composeLookbook(organizationId, {
+          name: `${occasion} - ${activeHero.color} Look`,
+          primaryItemId: activeHero.id,
+          notes: `Occasion: ${occasion}. Fabric: ${activeHero.fabric}.`,
+        })
+
+        if (result) {
+          setLookName(result.name || `${occasion} - ${activeHero.color} Edition`)
+          setStyleNotes(result.styleNotes || `Styling recommendations curated for ${occasion}.`)
+          if (result.items && result.items.length > 0) {
+            setComposedItems(result.items as unknown as OutfitItemMock[])
+            setComposing(false)
+            toast.success('Outfit look composed by Elle', {
+              description: 'AI styling recommendations and ensemble calculated.',
+            })
+            return
+          }
+        }
+      }
+    } catch {
+      // Fallback to client composition
+    }
 
     // Complementary items from inventory
     const otherItems = inventory.filter((i) => i.id !== activeHero.id)

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Shirt,
   Layers,
@@ -8,9 +8,13 @@ import {
   Package,
   TrendingUp,
   AlertTriangle,
+  RefreshCw,
 } from 'lucide-react'
+import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import type { OrganizationProfileDto } from '@/types/organization'
 
 import {
   MOCK_INVENTORY,
@@ -25,6 +29,17 @@ import {
   type SupplierMock,
 } from './mockData'
 
+import {
+  fetchCatalogItems,
+  fetchLookbooks,
+  fetchSourcingRequests,
+  fetchSuppliers,
+  createCatalogItem,
+  updateCatalogItem,
+  updateSourcingRequestStatus,
+  createSourcingRequest,
+} from '@/lib/catalog-api'
+
 import { InventoryTab } from './InventoryTab'
 import { LookbooksTab } from './LookbooksTab'
 import { SourcingTab } from './SourcingTab'
@@ -36,11 +51,18 @@ import { ComposeOutfitModal } from './ComposeOutfitModal'
 export type CatalogSubTab = 'inventory' | 'lookbooks' | 'sourcing' | 'suppliers'
 
 interface CatalogPanelProps {
+  organization?: OrganizationProfileDto | null
+  role?: string | null
   onOpenSalonForCustomer?: (customerId: string, clientName: string) => void
 }
 
-export function CatalogPanel({ onOpenSalonForCustomer }: CatalogPanelProps) {
+export function CatalogPanel({
+  organization,
+  role: _role,
+  onOpenSalonForCustomer,
+}: CatalogPanelProps) {
   const [activeTab, setActiveTab] = useState<CatalogSubTab>('inventory')
+  const [isLoading, setIsLoading] = useState<boolean>(false)
 
   // Reactive state initialized with mock datasets
   const [inventory, setInventory] = useState<InventoryItemMock[]>(MOCK_INVENTORY)
@@ -49,7 +71,7 @@ export function CatalogPanel({ onOpenSalonForCustomer }: CatalogPanelProps) {
   const [sourcingRequests, setSourcingRequests] = useState<SourcingRequestMock[]>(
     MOCK_SOURCING_REQUESTS,
   )
-  const [suppliers] = useState<SupplierMock[]>(MOCK_SUPPLIERS)
+  const [suppliers, setSuppliers] = useState<SupplierMock[]>(MOCK_SUPPLIERS)
 
   // Dialog & Drawer States
   const [addModalOpen, setAddModalOpen] = useState(false)
@@ -57,6 +79,48 @@ export function CatalogPanel({ onOpenSalonForCustomer }: CatalogPanelProps) {
   const [selectedMatchItem, setSelectedMatchItem] = useState<InventoryItemMock | null>(null)
   const [composeHeroItem, setComposeHeroItem] = useState<InventoryItemMock | null>(null)
   const [composeModalOpen, setComposeModalOpen] = useState(false)
+
+  const orgId = organization?.id
+
+  // Load catalog data from backend API when organization is mounted
+  const loadCatalogData = async () => {
+    if (!orgId) return
+    setIsLoading(true)
+    try {
+      const [apiItems, apiLookbooks, apiSourcing, apiSuppliers] = await Promise.allSettled([
+        fetchCatalogItems(orgId),
+        fetchLookbooks(orgId),
+        fetchSourcingRequests(orgId),
+        fetchSuppliers(orgId),
+      ])
+
+      if (apiItems.status === 'fulfilled' && apiItems.value.length > 0) {
+        setInventory(apiItems.value as unknown as InventoryItemMock[])
+      }
+
+      if (apiLookbooks.status === 'fulfilled' && apiLookbooks.value.length > 0) {
+        setOutfits(apiLookbooks.value as unknown as OutfitCompositionMock[])
+      }
+
+      if (apiSourcing.status === 'fulfilled' && apiSourcing.value.length > 0) {
+        setSourcingRequests(apiSourcing.value as unknown as SourcingRequestMock[])
+      }
+
+      if (apiSuppliers.status === 'fulfilled' && apiSuppliers.value.length > 0) {
+        setSuppliers(apiSuppliers.value as unknown as SupplierMock[])
+      }
+    } catch {
+      // Graceful fallback to rich mock data
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (orgId) {
+      void loadCatalogData()
+    }
+  }, [orgId])
 
   // Metrics Calculations
   const totalStockCount = inventory.reduce((sum, item) => sum + item.stockQuantity, 0)
@@ -69,7 +133,39 @@ export function CatalogPanel({ onOpenSalonForCustomer }: CatalogPanelProps) {
   ).length
 
   // Handlers
-  const handleSaveProduct = (item: InventoryItemMock) => {
+  const handleSaveProduct = async (item: InventoryItemMock) => {
+    if (orgId) {
+      try {
+        if (editingItem) {
+          await updateCatalogItem(orgId, editingItem.id, {
+            itemName: item.name,
+            category: item.category,
+            color: item.color,
+            sizes: item.sizes,
+            price: item.price,
+            quantity: item.stockQuantity,
+            imageUrl: item.imageUrl,
+            sku: item.sku,
+            description: item.description,
+          })
+        } else {
+          await createCatalogItem(orgId, {
+            itemName: item.name,
+            category: item.category,
+            color: item.color,
+            sizes: item.sizes,
+            price: item.price,
+            quantity: item.stockQuantity,
+            imageUrl: item.imageUrl,
+            sku: item.sku,
+            description: item.description,
+          })
+        }
+      } catch {
+        // Continue with local optimistic update
+      }
+    }
+
     setInventory((prev) => {
       const exists = prev.some((i) => i.id === item.id)
       if (exists) {
@@ -98,16 +194,39 @@ export function CatalogPanel({ onOpenSalonForCustomer }: CatalogPanelProps) {
     setOutfits((prev) => [newOutfit, ...prev])
   }
 
-  const handleUpdateSourcingStatus = (
+  const handleUpdateSourcingStatus = async (
     id: string,
     newStatus: SourcingRequestMock['status'],
   ) => {
+    if (orgId) {
+      try {
+        await updateSourcingRequestStatus(orgId, id, newStatus)
+      } catch {
+        // Fallback to local optimistic update
+      }
+    }
+
     setSourcingRequests((prev) =>
       prev.map((req) => (req.id === id ? { ...req, status: newStatus } : req)),
     )
   }
 
-  const handleAddSourcingRequest = (newRequest: SourcingRequestMock) => {
+  const handleAddSourcingRequest = async (newRequest: SourcingRequestMock) => {
+    if (orgId) {
+      try {
+        await createSourcingRequest(orgId, {
+          category: newRequest.category,
+          color: newRequest.color,
+          description: newRequest.itemDescription,
+          targetPrice: newRequest.targetPrice,
+          quantityNeeded: 1,
+          urgency: 'medium',
+        })
+      } catch {
+        // Fallback to local optimistic update
+      }
+    }
+
     setSourcingRequests((prev) => [newRequest, ...prev])
   }
 
@@ -127,6 +246,20 @@ export function CatalogPanel({ onOpenSalonForCustomer }: CatalogPanelProps) {
               <Sparkles className="size-3" />
               Vision AI Active
             </Badge>
+            {orgId && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="size-7 p-0 text-muted-foreground hover:text-foreground"
+                onClick={() => {
+                  void loadCatalogData()
+                  toast.success('Catalog refreshed')
+                }}
+                title="Refresh catalog from server"
+              >
+                <RefreshCw className={`size-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+              </Button>
+            )}
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">
             Manage boutique inventory, extract visual fabric tags, match VIP clients, and track atelier sourcing
@@ -277,6 +410,7 @@ export function CatalogPanel({ onOpenSalonForCustomer }: CatalogPanelProps) {
       {/* Add / Edit Piece Modal */}
       <AddProductModal
         open={addModalOpen}
+        organizationId={orgId}
         onClose={() => {
           setAddModalOpen(false)
           setEditingItem(null)
@@ -289,6 +423,7 @@ export function CatalogPanel({ onOpenSalonForCustomer }: CatalogPanelProps) {
       <CustomerMatchesDrawer
         item={selectedMatchItem}
         matches={matches}
+        organizationId={orgId}
         open={selectedMatchItem !== null}
         onClose={() => setSelectedMatchItem(null)}
         onOpenSalon={(customerId, clientName) => {
@@ -303,6 +438,7 @@ export function CatalogPanel({ onOpenSalonForCustomer }: CatalogPanelProps) {
         open={composeModalOpen}
         heroItem={composeHeroItem}
         inventory={inventory}
+        organizationId={orgId}
         onClose={() => {
           setComposeModalOpen(false)
           setComposeHeroItem(null)

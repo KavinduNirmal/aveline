@@ -6,9 +6,9 @@ import {
   Building2,
   Sparkles,
   Package,
-  TrendingUp,
   AlertTriangle,
   RefreshCw,
+  TrendingUp,
 } from 'lucide-react'
 import { toast } from 'sonner'
 

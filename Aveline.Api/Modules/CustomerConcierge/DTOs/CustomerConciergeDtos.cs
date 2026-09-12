@@ -4,6 +4,44 @@ using Aveline.Api.Modules.CustomerConcierge.Repositories;
 
 namespace Aveline.Api.Modules.CustomerConcierge.DTOs;
 
+/// <summary>A concise customer match returned from the read-only lookup path.</summary>
+public sealed record CustomerMatchDto(
+    Guid CustomerId,
+    string? FullName,
+    string PhoneNumber,
+    string Status,
+    DateTime? LastVisitAt)
+{
+    public static CustomerMatchDto From(Customer c) => new(
+        c.Id, c.FullName, c.PhoneNumber, c.Status, c.LastVisitAt);
+}
+
+/// <summary>Request to look up customers by name and/or phone. At least one is required.</summary>
+public sealed record CustomerLookupRequest
+{
+    [Required]
+    public Guid OrganizationId { get; init; }
+
+    [MaxLength(200)]
+    public string? Name { get; init; }
+
+    [MaxLength(50)]
+    public string? PhoneNumber { get; init; }
+
+    [MaxLength(200)]
+    [EmailAddress]
+    public string? Email { get; init; }
+}
+
+/// <summary>Response to a customer lookup. <see cref="IsExact"/> is true only when one match.</summary>
+public sealed record CustomerLookupResponse(
+    IReadOnlyList<CustomerMatchDto> Matches,
+    bool IsExact,
+    int Total)
+{
+    public static CustomerLookupResponse Empty => new([], false, 0);
+}
+
 /// <summary>A customer preference as returned to callers.</summary>
 public sealed record CustomerPreferenceDto(
     Guid Id,
@@ -187,6 +225,23 @@ public sealed record RecordInteractionRequest
     public string? ParsedIntentJson { get; init; }
 
     public Guid? StaffMemberId { get; init; }
+}
+
+/// <summary>A customer's resolved lifecycle status (Issue #169).</summary>
+public sealed record CustomerStatusDto(Guid CustomerId, string Status);
+
+/// <summary>Request to recompute/override a customer's loyalty status.</summary>
+public sealed record RecomputeStatusRequest
+{
+    [Required]
+    public Guid OrganizationId { get; init; }
+
+    /// <summary>
+    /// Optional owner override. When supplied the status is set as-is; when omitted the status is
+    /// recomputed from <c>TotalSpent</c>/<c>VisitCount</c>/<c>LastVisitAt</c>.
+    /// </summary>
+    [MaxLength(16)]
+    public string? Status { get; init; }
 }
 
 /// <summary>Request to update a customer's consent.</summary>

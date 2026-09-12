@@ -56,6 +56,13 @@ public static class ConversationEndpoints
             .Produces(StatusCodes.Status404NotFound)
             .Produces(StatusCodes.Status401Unauthorized);
 
+        group.MapPost("/{conversationId:guid}/select-customer", SelectCustomerAsync)
+            .WithName("SelectConversationCustomer")
+            .WithSummary("Bind a Salon to a customer chosen from a resolution choice block and re-trigger the agent.")
+            .Produces<ConversationDto>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status401Unauthorized);
+
         group.MapPost("/{conversationId:guid}/messages/{messageId:guid}/sign-off", DecideSignOffAsync)
             .WithName("DecideConversationSignOff")
             .WithSummary("Approve or reject a SignOff message.")
@@ -189,6 +196,26 @@ public static class ConversationEndpoints
         {
             return Results.BadRequest(new { message = ex.Message });
         }
+    }
+
+    private static async Task<IResult> SelectCustomerAsync(
+        Guid organizationId,
+        Guid conversationId,
+        SelectCustomerRequest request,
+        IConversationService conversations,
+        CancellationToken cancellationToken = default)
+    {
+        if (request.CustomerId == Guid.Empty)
+        {
+            return Results.BadRequest(new { message = "A customerId is required." });
+        }
+
+        var conversation = await conversations.SelectCustomerAsync(
+            organizationId, conversationId, request.CustomerId, request.Query, cancellationToken);
+
+        return conversation is null
+            ? Results.NotFound(new { message = "Conversation not found." })
+            : Results.Ok(conversation);
     }
 
     private static async Task<Guid?> ResolveUserIdAsync(

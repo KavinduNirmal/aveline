@@ -7,6 +7,25 @@ enum MessageDeliveryStatus {
   failed,
 }
 
+/// A selectable customer in a resolution `choice` content block (Issue #161).
+class SalonChoiceOption {
+  const SalonChoiceOption({
+    required this.customerId,
+    this.fullName,
+    this.status,
+  });
+
+  final String customerId;
+  final String? fullName;
+  final String? status;
+
+  factory SalonChoiceOption.fromJson(Map<String, dynamic> json) => SalonChoiceOption(
+        customerId: json['customerId'] as String? ?? '',
+        fullName: json['fullName'] as String?,
+        status: json['status'] as String?,
+      );
+}
+
 /// A single message in the Salon thread.
 ///
 /// Mirrors the web `MessageDto` shape (author kind, agent key, kind, content) plus UI-only
@@ -22,6 +41,8 @@ class SalonMessage {
     this.deliveryStatus,
     this.thoughtSeconds,
     this.streamIn = false,
+    this.choicePrompt = '',
+    this.choiceOptions = const [],
   });
 
   final String id;
@@ -46,6 +67,12 @@ class SalonMessage {
   /// True for agent messages that arrived live and should type out word by word.
   final bool streamIn;
 
+  /// Heading of a resolution `choice` content block, when present (empty otherwise).
+  final String choicePrompt;
+
+  /// Candidate customers to pick from a resolution `choice` block, when present.
+  final List<SalonChoiceOption> choiceOptions;
+
   bool get isOwn => authorKind == 'User';
 
   bool get isSending => deliveryStatus == MessageDeliveryStatus.sending;
@@ -53,15 +80,27 @@ class SalonMessage {
   bool get isFailed => deliveryStatus == MessageDeliveryStatus.failed;
 
   /// Parses a wire `MessageDto` (from the API or SignalR `ReceiveMessage`) into a
-  /// [SalonMessage]. The first `text` content block becomes [text].
+  /// [SalonMessage]. The first `text` content block becomes [text]; a `choice` block fills
+  /// [choicePrompt]/[choiceOptions].
   factory SalonMessage.fromJson(Map<String, dynamic> json) {
     final blocks = json['contentBlocks'];
     var text = '';
+    var choicePrompt = '';
+    var choiceOptions = <SalonChoiceOption>[];
     if (blocks is List) {
       for (final block in blocks) {
-        if (block is Map && block['type'] == 'text' && block['text'] is String) {
+        if (block is! Map) continue;
+        if (block['type'] == 'text' && block['text'] is String) {
           text = block['text'] as String;
-          break;
+        } else if (block['type'] == 'choice') {
+          choicePrompt = block['prompt'] as String? ?? '';
+          final options = block['options'];
+          if (options is List) {
+            choiceOptions = options
+                .whereType<Map>()
+                .map((o) => SalonChoiceOption.fromJson(Map<String, dynamic>.from(o)))
+                .toList();
+          }
         }
       }
     }
@@ -73,6 +112,8 @@ class SalonMessage {
       createdAt:
           DateTime.tryParse(json['createdAt'] as String? ?? '')?.toLocal() ??
               DateTime.now(),
+      choicePrompt: choicePrompt,
+      choiceOptions: choiceOptions,
     );
   }
 
@@ -85,6 +126,8 @@ class SalonMessage {
     Object? deliveryStatus = _unset,
     Object? thoughtSeconds = _unset,
     bool? streamIn,
+    String? choicePrompt,
+    List<SalonChoiceOption>? choiceOptions,
   }) {
     return SalonMessage(
       id: id ?? this.id,
@@ -99,6 +142,8 @@ class SalonMessage {
           ? this.thoughtSeconds
           : thoughtSeconds as double?,
       streamIn: streamIn ?? this.streamIn,
+      choicePrompt: choicePrompt ?? this.choicePrompt,
+      choiceOptions: choiceOptions ?? this.choiceOptions,
     );
   }
 

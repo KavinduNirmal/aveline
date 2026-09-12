@@ -29,3 +29,10 @@ public sealed record ConversationPage(
 
 /// <summary>Request to get-or-create a Salon for an optional customer.</summary>
 public sealed record CreateConversationRequest(Guid? CustomerId);
+
+/// <summary>
+/// Request to bind a Salon to a customer chosen from a resolution <c>choice</c> block
+/// (Issue #161). <see cref="Query"/> is the original staff text that triggered the lookup, so
+/// the agent can re-run against the resolved customer.
+/// </summary>
+public sealed record SelectCustomerRequest(Guid CustomerId, string? Query);

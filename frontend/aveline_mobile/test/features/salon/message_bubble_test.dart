@@ -51,4 +51,42 @@ void main() {
     await tester.pumpWidget(wrap(MessageBubble(message: agentMessage())));
     expect(find.textContaining('Thought for'), findsNothing);
   });
+
+  SalonMessage choiceMessage() => SalonMessage(
+        id: 'm4',
+        authorKind: 'Agent',
+        agentKey: 'aveline',
+        text: '',
+        choicePrompt: 'Which one did you mean?',
+        choiceOptions: const [
+          SalonChoiceOption(
+            customerId: 'c1',
+            fullName: 'Samantha Arias',
+            status: 'vip',
+          ),
+          SalonChoiceOption(customerId: 'c2', fullName: 'Samantha Ranaweera'),
+        ],
+        createdAt: DateTime(2026, 9, 9, 10, 0),
+      );
+
+  testWidgets('renders choice options for an ambiguous resolution',
+      (tester) async {
+    await tester.pumpWidget(wrap(MessageBubble(message: choiceMessage())));
+    expect(find.text('Which one did you mean?'), findsOneWidget);
+    expect(find.text('Samantha Arias'), findsOneWidget);
+    expect(find.text('Samantha Ranaweera'), findsOneWidget);
+  });
+
+  testWidgets('tapping a choice option reports the selected customer',
+      (tester) async {
+    String? selected;
+    await tester.pumpWidget(wrap(
+      MessageBubble(
+        message: choiceMessage(),
+        onSelectCustomer: (customerId) => selected = customerId,
+      ),
+    ));
+    await tester.tap(find.text('Samantha Arias'));
+    expect(selected, 'c1');
+  });
 }

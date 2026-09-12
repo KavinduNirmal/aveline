@@ -5,11 +5,17 @@ the ASP.NET Core internal endpoints). All business decisions are deterministic (
 template drafting) so the graph is testable without an LLM or a live backend.
 """
 
+import json
 import logging
 from typing import Any
 
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import HumanMessage, SystemMessage
+
 from app.agents.customer_memory.parsing import parse_message
 from app.agents.customer_memory.state import MemoryAgentState
+from app.prompts.assembly import assemble_system_prompt
+from app.schemas.customer_memory import MemoryAgentOutput
 from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger("aveline.agent.customer_memory")
@@ -19,11 +25,67 @@ SUCCESS = "success"
 OUT_OF_SCOPE = "out_of_scope"
 
 
+def coerce_output(output: dict[str, Any]) -> MemoryAgentOutput | None:
+    """Validate an assembled ``MemoryAgentOutput``-shaped dict in the running path.
+
+    The Pydantic models forbid extra fields, so any contract drift between the graph's plain
+    dict and the typed output schema is caught here rather than silently escaping to the caller.
+    Returns ``None`` when the dict does not conform.
+    """
+    try:
+        return MemoryAgentOutput.model_validate(output)
+    except Exception:  # noqa: BLE001 - a malformed output must degrade gracefully
+        logger.error("Memory agent output failed schema validation; emitting error.", exc_info=True)
+        return None
+
+
+def _unwrap_reply(content: str) -> str:
+    """Extract a plain-text reply from an LLM completion.
+
+    The universal system prompt tells the model to emit a JSON envelope, so a draft call may
+    return fenced JSON (``{status, output: {assistant_reply: ...}}``). This unwraps code fences and
+    any envelope to keep the staff-facing ``draft_response`` plain text. Non-JSON text is returned
+    unchanged.
+    """
+    text = content.strip()
+
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].strip().startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+
+    try:
+        parsed = json.loads(text)
+    except (ValueError, TypeError):
+        return text
+
+    if not isinstance(parsed, dict):
+        return text
+
+    output = parsed.get("output")
+    candidates = output if isinstance(output, dict) else parsed
+    for key in ("assistant_reply", "draft_response", "reply", "text"):
+        value = candidates.get(key) if isinstance(candidates, dict) else None
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return text
+
+
 class CustomerMemoryAgent:
     """LangGraph node set for the Customer Memory Agent, bound to a ``ToolRegistry``."""
 
-    def __init__(self, registry: ToolRegistry) -> None:
+    def __init__(
+        self,
+        registry: ToolRegistry,
+        llm: BaseChatModel | None = None,
+        org_context: dict[str, Any] | None = None,
+    ) -> None:
         self.registry = registry
+        self.llm = llm
+        self.org_context = org_context
 
     async def resolve_customer(self, state: MemoryAgentState) -> dict[str, Any]:
         """Resolve the customer id from explicit id or phone; short-circuit if unavailable."""
@@ -69,17 +131,34 @@ class CustomerMemoryAgent:
         }
 
     async def retrieve(self, state: MemoryAgentState) -> dict[str, Any]:
-        """Semantically search the customer's memory for context on this message."""
+        """Semantically search the customer's memory for context on this message.
+
+        Semantic search depends on the backend embedding provider; when it is unavailable the agent
+        degrades gracefully (empty context) rather than failing the whole run, so resolution and
+        brief/draft composition still happen.
+        """
         org_id = state.get("org_id")
         customer_id = state.get("customer_id")
-        results = await self.registry.get_customer_memories(
-            str(org_id), str(customer_id), state.get("message", ""), top_k=5
-        )
-        memories = results if isinstance(results, list) else results.get("results", [])
-        return {"semantic_context": memories}
+        try:
+            results = await self.registry.get_customer_memories(
+                str(org_id), str(customer_id), state.get("message", ""), top_k=5
+            )
+            memories = results if isinstance(results, list) else results.get("results", [])
+            return {"semantic_context": memories}
+        except Exception:  # noqa: BLE001 - retrieval must not fail personalization
+            logger.warning(
+                "Semantic memory retrieval failed; continuing without context (customer %s).",
+                customer_id,
+                exc_info=True,
+            )
+            return {"semantic_context": []}
 
     async def persist(self, state: MemoryAgentState) -> dict[str, Any]:
-        """Save explicit preferences and detected events as memories (consent-granted only)."""
+        """Save explicit preferences and detected events as memories (consent-granted only).
+
+        Backend writes are best-effort: a failure (e.g. the embedding provider is down) is logged
+        and never fails the run, so inbound messages still produce a brief + draft.
+        """
         if state.get("consent_status") == "revoked":
             return {}
 
@@ -94,37 +173,92 @@ class CustomerMemoryAgent:
                 content = f"{name} dislikes {signal['preference_value']}"
             else:
                 content = f"{name} prefers {signal['preference_value']}"
-            await self.registry.save_customer_memory(org_id, customer_id, content, "preference")
-            extracted.append(
-                {
-                    "content": content,
-                    "category": "preference",
-                    "is_explicit": True,
-                    "confidence": 0.9,
-                }
-            )
+            if await self._try_save_memory(org_id, customer_id, content, "preference"):
+                extracted.append(
+                    {
+                        "content": content,
+                        "category": "preference",
+                        "is_explicit": True,
+                        "confidence": 0.9,
+                    }
+                )
 
         for event in state.get("detected_events", []):
             on_date = f" on {event['event_date']}" if event.get("event_date") else ""
             content = f"{name} has a {event['event_type']}{on_date}"
-            await self.registry.save_customer_memory(org_id, customer_id, content, "event")
-            extracted.append(
-                {"content": content, "category": "event", "is_explicit": True, "confidence": 0.9}
-            )
+            if await self._try_save_memory(org_id, customer_id, content, "event"):
+                extracted.append(
+                    {"content": content, "category": "event", "is_explicit": True, "confidence": 0.9}
+                )
+            # Persist a structured Customer_Event row when a concrete date is known, so event
+            # queries and reminders answer from real data (not just free-text memories).
+            if event.get("event_date"):
+                try:
+                    await self.registry.add_customer_event(
+                        org_id,
+                        customer_id,
+                        event["event_type"],
+                        event["event_date"],
+                        description=event.get("description"),
+                    )
+                except Exception:  # noqa: BLE001 - best-effort event persistence
+                    logger.warning("Failed to persist customer event (event_type=%s).", event["event_type"])
+
+        # Log the inbound interaction with the structured intent the agent extracted (ADR-016).
+        # Staff queries are not customer interactions, so only genuine inbound messages are logged.
+        if not state.get("staff_query"):
+            parsed_intent = state.get("parsed_intent") or {}
+            try:
+                await self.registry.record_customer_interaction(
+                    org_id,
+                    customer_id,
+                    channel=state.get("channel", "whatsapp"),
+                    direction=state.get("direction", "inbound"),
+                    message_content=state.get("message", ""),
+                    parsed_intent_json=json.dumps(parsed_intent) if parsed_intent else None,
+                )
+            except Exception:  # noqa: BLE001 - best-effort interaction logging
+                logger.warning("Failed to record customer interaction (customer %s).", customer_id)
 
         return {"extracted_memories": extracted}
 
+    async def _try_save_memory(self, org_id: str, customer_id: str, content: str, category: str) -> bool:
+        """Attempt to persist a memory; returns True on success (best-effort)."""
+        try:
+            await self.registry.save_customer_memory(org_id, customer_id, content, category)
+            return True
+        except Exception:  # noqa: BLE001 - best-effort memory save
+            logger.warning("Failed to save customer memory (category=%s).", category)
+            return False
+
     async def compose_output(self, state: MemoryAgentState) -> dict[str, Any]:
-        """Assemble the final output: brief + a staff-review draft response."""
+        """Assemble the final output.
+
+        Two audiences (ADR-019):
+        - Inbound CUSTOMER message: a staff-facing ``interaction_brief`` plus a customer-facing
+          draft (``draft_response``, surfaced as a Suggestion for staff to approve/send).
+        - STAFF query (no inbound direction): Ava answers the staff directly as text and produces
+          NO customer-facing draft / Suggestion.
+        """
         profile = state.get("profile") or {}
         intent = state.get("parsed_intent") or {}
         name = self._customer_name(state)
-        tags = profile.get("tags") or []
+        staff = bool(state.get("staff_query"))
+        backend = await self._backend_brief(state)
 
-        brief = self._build_brief(name, profile, state.get("semantic_context", []), tags)
+        if staff:
+            interaction_brief = self._staff_text(state, name, profile, backend)
+            draft = None
+            usage = None
+            action = None
+        else:
+            interaction_brief = self._format_brief(state, name, profile, backend)
+            draft, usage = await self._generate_draft(state, profile, intent, name)
+            action = "send_whatsapp" if intent.get("intent_type") == "item_search" else None
 
-        draft = self._draft(name, intent)
-        action = "send_whatsapp" if intent.get("intent_type") == "item_search" else None
+        # Only dateable events are emitted as structured DetectedEvents (the schema requires a
+        # date); undated signals remain as free-text memories so the output stays schema-valid.
+        structured_events = [e for e in (state.get("detected_events") or []) if e.get("event_date")]
 
         output = {
             "status": SUCCESS,
@@ -137,14 +271,153 @@ class CustomerMemoryAgent:
                 "consent_status": state.get("consent_status") or "pending",
             },
             "extracted_memories": state.get("extracted_memories", []),
-            "detected_events": state.get("detected_events", []),
-            "interaction_brief": brief,
+            "detected_events": structured_events,
+            "interaction_brief": interaction_brief,
             "draft_response": draft,
             "action_required": action,
         }
-        return {"output": output, "status": SUCCESS}
+
+        # Validate against the typed schema in the running path (Issue #167). On failure emit a
+        # safe error fallback so a malformed output never escapes the graph un-validated.
+        if coerce_output(output) is None:
+            fallback = {
+                "status": "error",
+                "reason": "memory output failed schema validation",
+                "extracted_memories": [],
+                "detected_events": [],
+            }
+            return {"output": fallback, "status": "error", "usage": usage}
+
+        return {"output": output, "status": SUCCESS, "usage": usage}
 
     # ------------------------------------------------------------------ helpers
+
+    async def _backend_brief(self, state: MemoryAgentState) -> dict[str, Any]:
+        """Fetch the backend interaction brief (real events/tags/preferences), or {} on failure."""
+        org_id = state.get("org_id")
+        customer_id = state.get("customer_id")
+        if not org_id or not customer_id:
+            return {}
+        try:
+            return (await self.registry.generate_interaction_brief(str(org_id), str(customer_id))) or {}
+        except Exception:  # noqa: BLE001 - brief failure must not break compose
+            logger.warning("Interaction brief backend call failed; using local brief.", exc_info=True)
+            return {}
+
+    def _format_brief(
+        self,
+        state: MemoryAgentState,
+        name: str,
+        profile: dict[str, Any],
+        backend: dict[str, Any],
+    ) -> str:
+        """Assemble the staff-facing digest (name/status + semantic context + events/tags)."""
+        semantic_context = state.get("semantic_context") or []
+        tags = profile.get("tags") or []
+        status = backend.get("status") or profile.get("status") or "new"
+        display_name = backend.get("customerName") or name
+
+        parts = [f"{display_name} ({status})"]
+        if semantic_context:
+            parts.append(f"Context: {semantic_context[0].get('content')}")
+        if backend.get("upcomingEvents"):
+            parts.append(f"Upcoming: {backend['upcomingEvents']}")
+        backend_tags = backend.get("tags")
+        merged_tags = backend_tags if isinstance(backend_tags, list) and backend_tags else tags
+        if merged_tags:
+            parts.append(f"Tags: {', '.join(merged_tags)}")
+        return " | ".join(parts)
+
+    def _staff_text(
+        self,
+        state: MemoryAgentState,
+        name: str,
+        profile: dict[str, Any],
+        backend: dict[str, Any],
+    ) -> str:
+        """Answer a STAFF query directly (no customer-facing draft).
+
+        Uses the real backend facts (status, preferences, upcoming events, tags) so the answer is
+        grounded. Event-style queries answer about events; a brand-new customer is announced; other
+        queries summarise what is known, or state when nothing is on file yet.
+        """
+        display_name = backend.get("customerName") or name
+        status = backend.get("status") or profile.get("status") or "new"
+        intent_type = (state.get("parsed_intent") or {}).get("intent_type")
+        events = backend.get("upcomingEvents")
+        prefs = backend.get("preferenceSummary")
+        tags = backend.get("tags") if isinstance(backend.get("tags"), list) else []
+
+        if intent_type == "event_query":
+            if events:
+                return f"Upcoming events for {display_name}: {events}."
+            return f"No upcoming events on file for {display_name}."
+
+        # General staff query: give the staff a readable, grounded summary.
+        if status == "new" and not events and not prefs and not tags:
+            return f"{display_name} is a new customer - nothing on file yet."
+        if not events and not prefs and not tags:
+            return f"{display_name} ({status}) has no preferences or events on file yet."
+
+        details: list[str] = []
+        if prefs:
+            details.append(f"preferences: {prefs}")
+        if events:
+            details.append(f"upcoming events: {events}")
+        if tags:
+            details.append(f"tags: {', '.join(tags)}")
+        summary = "; ".join(details)
+        return f"{display_name} ({status}) - {summary}."
+
+    async def _generate_draft(
+        self,
+        state: MemoryAgentState,
+        profile: dict[str, Any],
+        intent: dict[str, Any],
+        name: str,
+    ) -> tuple[str, dict[str, Any] | None]:
+        """Return ``(draft_response, usage)`` using the injected LLM when available.
+
+        The deterministic ``_draft`` template is the fallback whenever no LLM is configured or
+        the provider call fails, so a live LLM is never a hard dependency of the graph. When an
+        LLM successfully produces a draft, the langchain ``usage_metadata`` token counts are
+        returned for usage reporting (ADR-010); ``usage`` is ``None`` otherwise.
+        """
+        if self.llm is None:
+            return self._draft(name, intent), None
+
+        context_lines = [f"Customer message: {state.get('message', '')}"]
+        semantic = state.get("semantic_context") or []
+        if semantic:
+            top = semantic[0]
+            context_lines.append(f"Relevant memory: {top.get('content')}")
+        if intent:
+            context_lines.append(f"Detected intent: {json.dumps(intent)}")
+        context_lines.append(
+            "Write a short, warm, staff-facing DRAFT customer reply (2-4 sentences). "
+            "Reply with ONLY the plain text of that draft - no JSON, no code fences, no labels. "
+            "Do not auto-send; it is reviewed by a human associate."
+        )
+
+        system = assemble_system_prompt("memory", self.org_context)
+        try:
+            result = await self.llm.ainvoke(
+                [SystemMessage(content=system), HumanMessage(content="\n".join(context_lines))]
+            )
+        except Exception:  # noqa: BLE001 - provider failure must not break the graph
+            logger.warning("LLM draft generation failed; falling back to template.", exc_info=True)
+            return self._draft(name, intent), None
+
+        draft = _unwrap_reply(getattr(result, "content", None) or "")
+        if not draft:
+            return self._draft(name, intent), None
+
+        meta = getattr(result, "usage_metadata", None) or {}
+        usage: dict[str, Any] | None = {
+            "input_tokens": int(meta.get("input_tokens") or 0),
+            "output_tokens": int(meta.get("output_tokens") or 0),
+        }
+        return draft, usage
 
     @staticmethod
     def _skip(reason: str) -> dict[str, Any]:
@@ -158,16 +431,6 @@ class CustomerMemoryAgent:
     def _customer_name(state: MemoryAgentState) -> str:
         profile = state.get("profile") or {}
         return profile.get("fullName") or state.get("customer_name") or "The customer"
-
-    @staticmethod
-    def _build_brief(name: str, profile: dict[str, Any], context: list[dict[str, Any]], tags: list[str]) -> str:
-        parts = [f"{name} ({profile.get('status', 'new')})"]
-        if context:
-            top = context[0]
-            parts.append(f"Context: {top.get('content')}")
-        if tags:
-            parts.append(f"Tags: {', '.join(tags)}")
-        return " | ".join(parts)
 
     @staticmethod
     def _draft(name: str, intent: dict[str, Any]) -> str:

@@ -126,6 +126,52 @@ async def test_registry_identify_customer(client):
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_registry_lookup_customers_by_name(client):
+    route = respx.post(f"{BASE_URL}/internal/customers/lookup").respond(
+        status_code=200, json={"matches": [{"customerId": "c1"}], "isExact": True, "total": 1}
+    )
+    registry = ToolRegistry(client)
+    result = await registry.lookup_customers("org-1", name="Samantha Arias")
+    assert route.called
+    body = route.calls.last.request.content
+    assert b"organizationId" in body
+    assert b"name" in body
+    assert b"phoneNumber" not in body
+    assert result["isExact"] is True
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_registry_lookup_customers_by_phone(client):
+    route = respx.post(f"{BASE_URL}/internal/customers/lookup").respond(
+        status_code=200, json={"matches": [], "isExact": False, "total": 0}
+    )
+    registry = ToolRegistry(client)
+    await registry.lookup_customers("org-1", phone="0771234567")
+    assert route.called
+    body = route.calls.last.request.content
+    assert b"phoneNumber" in body
+    assert b"0771234567" in body
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_registry_lookup_customers_by_email(client):
+    route = respx.post(f"{BASE_URL}/internal/customers/lookup").respond(
+        status_code=200, json={"matches": [{"customerId": "c1"}], "isExact": True, "total": 1}
+    )
+    registry = ToolRegistry(client)
+    result = await registry.lookup_customers("org-1", email="samantha@example.com")
+    assert route.called
+    body = route.calls.last.request.content
+    assert b"email" in body
+    assert b"samantha@example.com" in body
+    assert b"name" not in body
+    assert result["isExact"] is True
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_registry_save_customer_memory(client):
     route = respx.post(f"{BASE_URL}/internal/customers/cust-1/memories").respond(
         status_code=201, json={"id": "mem-1"}
@@ -156,10 +202,26 @@ async def test_registry_record_customer_interaction(client):
     )
     registry = ToolRegistry(client)
     result = await registry.record_customer_interaction(
-        "org-1", "cust-1", "whatsapp", "inbound", "I need a blue saree"
+        "org-1", "cust-1", "whatsapp", "inbound", "I need a blue saree",
+        parsed_intent_json='{"intent_type":"item_search"}',
     )
     assert route.called
+    body = route.calls.last.request.content
+    assert b"parsedIntentJson" in body
     assert result == {"id": "int-1"}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_registry_record_customer_interaction_omits_intent_when_none(client):
+    route = respx.post(f"{BASE_URL}/internal/customers/cust-1/interactions").respond(
+        status_code=201, json={"id": "int-1"}
+    )
+    registry = ToolRegistry(client)
+    await registry.record_customer_interaction("org-1", "cust-1", "whatsapp", "inbound", "hi")
+    assert route.called
+    body = route.calls.last.request.content
+    assert b"parsedIntentJson" not in body
 
 
 @pytest.mark.asyncio
@@ -172,6 +234,34 @@ async def test_registry_get_customer_consent(client):
     result = await registry.get_customer_consent("org-1", "cust-1")
     assert route.called
     assert result == {"consentStatus": "revoked"}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_registry_add_customer_event(client):
+    route = respx.post(f"{BASE_URL}/internal/customers/cust-1/events").respond(
+        status_code=201, json={"id": "evt-1", "eventType": "wedding"}
+    )
+    registry = ToolRegistry(client)
+    result = await registry.add_customer_event("org-1", "cust-1", "wedding", "2026-12-01", "Sister's wedding")
+    assert route.called
+    body = route.calls.last.request.content
+    assert b"eventType" in body
+    assert b"eventDate" in body
+    assert b"2026-12-01" in body
+    assert result["eventType"] == "wedding"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_registry_get_customer_events(client):
+    route = respx.get(f"{BASE_URL}/internal/customers/cust-1/events?organizationId=org-1").respond(
+        status_code=200, json=[{"id": "evt-1", "eventType": "wedding"}]
+    )
+    registry = ToolRegistry(client)
+    result = await registry.get_customer_events("org-1", "cust-1")
+    assert route.called
+    assert result == [{"id": "evt-1", "eventType": "wedding"}]
 
 
 @pytest.mark.asyncio

@@ -116,3 +116,21 @@ export async function decideSignOff(
   )
   return response.data
 }
+
+/**
+ * Binds a Salon to a customer chosen from a resolution `choice` block and re-triggers the
+ * agent with that customer in context. See
+ * POST /api/v1/orgs/{orgId}/conversations/{id}/select-customer.
+ */
+export async function selectConversationCustomer(
+  organizationId: string,
+  conversationId: string,
+  customerId: string,
+  query?: string,
+): Promise<ConversationDto> {
+  const response = await apiClient.post<ConversationDto>(
+    `${conversationsBase(organizationId)}/${conversationId}/select-customer`,
+    { customerId, query },
+  )
+  return response.data
+}

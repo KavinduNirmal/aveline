@@ -178,9 +178,17 @@ def build_aveline_blocks(output: Any) -> list[dict[str, Any]]:
 
     The summary is intent-aware and names the customer when the memory agent resolved one,
     but it deliberately does not duplicate Ava's rich blocks (brief/memories/draft live in
-    Ava's own message).
+    Ava's own message). When the orchestrator could not resolve a customer it carries a
+    ``clarification`` (ambiguous candidates or not-found) which is rendered instead.
     """
     out = _as_dict(output)
+
+    clarification = out.get("clarification")
+    if clarification:
+        blocks = build_clarification_blocks(clarification)
+        if blocks:
+            return blocks
+
     label = _intent_label(out.get("intent"))
 
     customer_name: str | None = None
@@ -195,3 +203,49 @@ def build_aveline_blocks(output: Any) -> list[dict[str, Any]]:
         text = f"Treated this as {label}."
 
     return [{"type": "text", "text": text}]
+
+
+def build_clarification_blocks(clarification: Any) -> list[dict[str, Any]]:
+    """Render a customer-resolution clarification (Issue #161) as content blocks.
+
+    - ``ambiguous`` -> a ``choice`` block listing candidate customers to tap.
+    - ``not_found`` -> a ``text`` block asking the staff for a phone number.
+
+    Returns an empty list when the clarification carries no renderable content.
+    """
+    out = _as_dict(clarification)
+    kind = out.get("kind")
+
+    if kind == "ambiguous":
+        options: list[dict[str, Any]] = []
+        for candidate in out.get("candidates") or []:
+            option: dict[str, Any] = {
+                "customerId": str((candidate or {}).get("customer_id", "")),
+                "fullName": (candidate or {}).get("full_name"),
+                "status": (candidate or {}).get("status") or "new",
+            }
+            last_visit = (candidate or {}).get("last_visit_at")
+            if last_visit is not None:
+                option["lastVisitAt"] = str(last_visit)
+            options.append(option)
+
+        if not options:
+            return []
+
+        return [
+            {
+                "type": "choice",
+                "prompt": "I found a few customers that could match. Which one did you mean?",
+                "options": options,
+            }
+        ]
+
+    if kind == "not_found":
+        return [
+            {
+                "type": "text",
+                "text": "I couldn't find a customer with that name. Could you share their phone number so I can look them up?",
+            }
+        ]
+
+    return []

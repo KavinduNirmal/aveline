@@ -13,6 +13,7 @@ class MessageBubble extends StatelessWidget {
     super.key,
     required this.message,
     this.onStreamProgress,
+    this.onSelectCustomer,
   });
 
   final SalonMessage message;
@@ -20,12 +21,16 @@ class MessageBubble extends StatelessWidget {
   /// Called as a streamed message types out, so the thread can keep the tail in view.
   final VoidCallback? onStreamProgress;
 
+  /// Called when the staff picks a customer from a resolution `choice` block (Issue #161).
+  final ValueChanged<String>? onSelectCustomer;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final persona = personaForAuthor(message.authorKind, message.agentKey);
     final isOwn = message.isOwn;
+    final hasChoice = message.choiceOptions.isNotEmpty && !isOwn;
 
     return Row(
       mainAxisAlignment:
@@ -76,26 +81,105 @@ class MessageBubble extends StatelessWidget {
                       ? null
                       : Border.all(color: scheme.outlineVariant),
                 ),
-                child: message.streamIn
-                    ? TypewriterText(
-                        text: message.text,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: isOwn ? scheme.onPrimary : scheme.onSurface,
-                        ),
-                        onProgress: onStreamProgress,
+                child: hasChoice
+                    ? _ChoiceContent(
+                        prompt: message.choicePrompt.isNotEmpty
+                            ? message.choicePrompt
+                            : message.text,
+                        options: message.choiceOptions,
+                        onSelectCustomer: onSelectCustomer,
                       )
-                    : Text(
-                        message.text,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: isOwn ? scheme.onPrimary : scheme.onSurface,
-                        ),
-                      ),
+                    : message.streamIn
+                        ? TypewriterText(
+                            text: message.text,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color:
+                                  isOwn ? scheme.onPrimary : scheme.onSurface,
+                            ),
+                            onProgress: onStreamProgress,
+                          )
+                        : Text(
+                            message.text,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color:
+                                  isOwn ? scheme.onPrimary : scheme.onSurface,
+                            ),
+                          ),
               ),
               const SizedBox(height: 2),
               _Footer(message: message, isOwn: isOwn),
             ],
           ),
         ),
+      ],
+    );
+  }
+}
+
+/// Renders a customer-resolution `choice`: a prompt plus tappable candidate customers.
+class _ChoiceContent extends StatelessWidget {
+  const _ChoiceContent({
+    required this.prompt,
+    required this.options,
+    this.onSelectCustomer,
+  });
+
+  final String prompt;
+  final List<SalonChoiceOption> options;
+  final ValueChanged<String>? onSelectCustomer;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (prompt.isNotEmpty)
+          Text(
+            prompt,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurface,
+            ),
+          ),
+        if (prompt.isNotEmpty) const SizedBox(height: 8),
+        for (final option in options) ...[
+          InkWell(
+            onTap: onSelectCustomer == null
+                ? null
+                : () => onSelectCustomer!(option.customerId),
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: theme.colorScheme.outlineVariant),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    option.fullName ?? 'Customer',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w500,
+                      color: theme.colorScheme.onSurface,
+                    ),
+                  ),
+                  if (option.status != null)
+                    Text(
+                      option.status!,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+        ],
       ],
     );
   }

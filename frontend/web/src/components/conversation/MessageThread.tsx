@@ -12,6 +12,7 @@ interface MessageThreadProps {
   /** Aveline's in-progress reasoning, rendered as a live bubble while non-null. */
   agentActivity?: AgentActivity | null
   onSignOff?: (messageId: string, approved: boolean) => void
+  onSelectCustomer?: (customerId: string) => void
 }
 
 /**
@@ -25,6 +26,7 @@ export function MessageThread({
   loading,
   agentActivity,
   onSignOff,
+  onSelectCustomer,
 }: MessageThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -74,6 +76,7 @@ export function MessageThread({
             message={message}
             isOwn={message.authorKind === 'User'}
             onStreamProgress={handleStreamProgress}
+            onSelectCustomer={onSelectCustomer}
             onSignOff={
               message.kind === 'SignOff' && message.status === 'AwaitingSignOff'
                 ? (approved) => onSignOff?.(message.id, approved)

@@ -1,35 +1,38 @@
 # Agent Service: API Layer
 
-This folder contains **FastAPI route handlers** — the HTTP interface of the agent service.
+This folder contains the **FastAPI route handlers** — the HTTP interface of the agent service.
+They are guarded by the internal service token (`X-Internal-Token`, ADR-009).
 
-## What belongs here
+## Routes (in `agents.py`)
 
-One router module per agent/workflow, for example:
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/agents/ping` | Service-to-service auth echo |
+| POST | `/agents/warmup` | Warm up agents with boutique context |
+| POST | `/agents/query` | Run the concierge workflow and return a structured `AgentResponse` |
+| POST | `/agents/query/stream` | Stream workflow lifecycle events over SSE |
 
-- `customer_memory.py` — routes that trigger the Customer Memory Agent
-- `visual_insight.py` — routes that trigger the Visual Insight Agent
-- `commerce.py` — routes that trigger the Commerce Agent
+`POST /agents/query` runs the full concierge workflow (intent gate → resolve customer →
+specialist agents → formulate response), publishes lifecycle `agent.status` events, publishes
+persona `message.created` events to the Salon, and reports always-on usage/blossom consumption to
+the backend (`/internal/usage/record`, ADR-010).
 
-Each module should define an `APIRouter` and be mounted in `app/main.py`.
-
-## What does NOT belong here
-
-- Agent graph definitions (those go in `app/agents/`)
-- Tool implementations (those go in `app/tools/`)
-- Business logic (route handlers should be thin — validate input, call workflow, return output)
-- Database access (never query the DB directly from a route handler)
+`GET /health` (in `health.py`) stays public for liveness checks.
 
 ## Pattern
 
+Handlers are thin: they validate input (`AgentQueryRequest`), call the workflow
+(`run_concierge`), and return the result. Business logic lives in `app/workflows/`,
+`app/agents/`, and the backend internal endpoints.
+
 ```python
-from fastapi import APIRouter
-from app.schemas.customer_memory import RunAgentRequest, RunAgentResponse
-from app.workflows.concierge_workflow import run_concierge_workflow
-
-router = APIRouter()
-
-@router.post("/run", response_model=RunAgentResponse)
-async def run_customer_memory_agent(request: RunAgentRequest) -> RunAgentResponse:
-    result = await run_concierge_workflow(request)
-    return result
+@router.post("/query", response_model=AgentQueryResponse)
+async def agents_query(payload: AgentQueryRequest, request: Request) -> AgentQueryResponse:
+    ...
 ```
+
+## What does NOT belong here
+
+- Agent graph definitions (those go in `app/agents/`).
+- Backend tool wrappers (those go in `app/tools/registry.py`).
+- Business logic / database access (handlers stay thin).

@@ -10,6 +10,14 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 
+/** An option in a customer-resolution `choice` block. */
+export interface ChoiceOption {
+  customerId: string
+  fullName?: string | null
+  status?: string | null
+  lastVisitAt?: string | null
+}
+
 /** A single typed content block from a message's `contentBlocks` array. */
 export interface ContentBlock {
   type: string
@@ -28,6 +36,8 @@ export interface ContentBlock {
   reason?: string
   from?: string
   status?: string
+  prompt?: string
+  options?: ChoiceOption[]
   [key: string]: unknown
 }
 
@@ -36,11 +46,17 @@ import type { Persona } from './persona'
 interface BlockRendererProps {
   block: ContentBlock
   onSignOff?: (approved: boolean) => void
+  onSelectCustomer?: (customerId: string) => void
   persona?: Persona | null
 }
 
 /** Renders a single content block by type. */
-export function BlockRenderer({ block, onSignOff, persona }: BlockRendererProps) {
+export function BlockRenderer({
+  block,
+  onSignOff,
+  onSelectCustomer,
+  persona,
+}: BlockRendererProps) {
   switch (block.type) {
     case 'text':
       return <p className="whitespace-pre-wrap text-sm leading-relaxed">{block.text}</p>
@@ -60,9 +76,53 @@ export function BlockRenderer({ block, onSignOff, persona }: BlockRendererProps)
       return <SuggestionBlock block={block} onSignOff={onSignOff} persona={persona} />
     case 'look':
       return <LookBlock block={block} onSignOff={onSignOff} persona={persona} />
+    case 'choice':
+      return <ChoiceBlock block={block} onSelectCustomer={onSelectCustomer} />
     default:
       return null
   }
+}
+
+/** A customer-resolution choice: pick which customer you meant (Issue #161). */
+function ChoiceBlock({
+  block,
+  onSelectCustomer,
+}: {
+  block: ContentBlock
+  onSelectCustomer?: (customerId: string) => void
+}) {
+  const options = block.options ?? []
+  if (options.length === 0) return null
+  return (
+    <div className="space-y-2">
+      {block.prompt && <p className="whitespace-pre-wrap text-sm leading-relaxed">{block.prompt}</p>}
+      <div className="space-y-1.5">
+        {options.map((option) => (
+          <button
+            key={option.customerId}
+            type="button"
+            onClick={() => onSelectCustomer?.(option.customerId)}
+            className="flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors hover:bg-muted disabled:opacity-50"
+            disabled={!onSelectCustomer}
+          >
+            <span className="min-w-0">
+              <span className="block truncate font-medium">
+                {option.fullName ?? 'Customer'}
+              </span>
+              {option.status && (
+                <span className="text-xs capitalize text-muted-foreground">{option.status}</span>
+              )}
+            </span>
+            {option.lastVisitAt && (
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {new Date(option.lastVisitAt).toLocaleDateString()}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 function PieceBlock({ block }: BlockRendererProps) {
@@ -242,10 +302,12 @@ function LookBlock({ block, persona }: BlockRendererProps) {
 export function BlockList({
   blocks,
   onSignOff,
+  onSelectCustomer,
   persona,
 }: {
   blocks: unknown[]
   onSignOff?: (approved: boolean) => void
+  onSelectCustomer?: (customerId: string) => void
   persona?: Persona | null
 }) {
   const parsed = (blocks ?? []) as ContentBlock[]
@@ -255,7 +317,12 @@ export function BlockList({
       {parsed.map((block, i) => (
         <div key={i}>
           {i > 0 && <Separator className="my-2" />}
-          <BlockRenderer block={block} onSignOff={onSignOff} persona={persona} />
+          <BlockRenderer
+            block={block}
+            onSignOff={onSignOff}
+            onSelectCustomer={onSelectCustomer}
+            persona={persona}
+          />
         </div>
       ))}
     </div>

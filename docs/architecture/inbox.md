@@ -124,7 +124,7 @@ fields. A message may carry a single block or a composite (e.g. a `Note` plus se
 ```
 
 Block types: `text`, `piece`, `look`, `at_a_glance`, `sign_off`, `payment`, `courier`,
-`suggestion`, `client_message`.
+`suggestion`, `client_message`, `choice`.
 
 ### 5.1 Emitted blocks from real agent output
 
@@ -134,7 +134,10 @@ produces real content (no placeholder text).
 
 - **Aveline summary** (`build_aveline_blocks`): a single `text` block that is intent-aware
   and names the resolved customer when the memory agent found one. It never duplicates
-  Ava's rich detail.
+  Ava's rich detail. When the orchestrator cannot resolve a customer it instead renders a
+  **clarification** (`build_clarification_blocks`): an ambiguous lookup becomes a `choice`
+  block listing candidate customers to tap; a not-found lookup becomes a `text` block asking
+  for a phone number (Issue #161).
 - **Ava / memory** (`build_ava_blocks`), in order:
   1. `text` - the `interaction_brief`.
   2. `at_a_glance` - one `Category`/`Content` row per `extracted_memories` entry.
@@ -148,6 +151,25 @@ produces real content (no placeholder text).
   `status: "stub"` with no content, so Elle/Lina stay silent and the Salon never shows
   fabricated product/payment data. A `sign_off` card is never emitted from these generic
   builders - a SignOff is a first-class HITL message (`kind == SignOff`).
+
+#### 5.1.1 `choice` block (customer resolution)
+
+A `choice` block lets staff pick a customer when Aveline's lookup was ambiguous:
+
+```json
+{
+  "type": "choice",
+  "prompt": "I found a few customers that could match. Which one did you mean?",
+  "options": [
+    { "customerId": "…", "fullName": "Samantha Arias", "status": "vip", "lastVisitAt": "2026-08-20" },
+    { "customerId": "…", "fullName": "Samantha Ranaweera", "status": "returning", "lastVisitAt": null }
+  ]
+}
+```
+
+Tapping an option calls `POST /orgs/{orgId}/conversations/{id}/select-customer`
+(`{ customerId, query }`), which binds the Salon's `CustomerId` and re-triggers the agent
+with that customer in context so Ava pulls up their profile/events.
 
 ---
 

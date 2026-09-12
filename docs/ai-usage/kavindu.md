@@ -1588,3 +1588,156 @@ streaming) and the deferred SignOff LangGraph resume. On branch `feature/154-rea
 
 - Commit, push, open the PR for #154. This completes the realtime conversation workflow
   finalisation plan (Issues #150-#154).
+
+## Session 2026-09-09 — Issue #161 Shared customer resolution (General Salon)
+
+**Task:** Implement shared, agent-agnostic message-level customer resolution so any
+specialist (Ava now; Elle/Lina later) can resolve a customer from free text typed into the
+General Salon. Adapting the earlier concierge-lookup design to the existing codebase
+(no new controller/tool class; extends existing `CustomerConcierge` + `ToolRegistry` +
+orchestrator). Working on branch `feature/slice1-customer-resolution`.
+**Tool used:** opencode (AI coding agent)
+
+### Intended work (tests-first)
+
+- .NET: `PhoneNormalizer`, `CustomerLookupRequest/Match/Response` DTOs, `LookupAsync`
+  (repository `ListMatchesAsync` + `IDistributedCache` short-TTL caching),
+  `POST /internal/customers/lookup`, `POST /orgs/{org}/conversations/{id}/select-customer`.
+- Python: shared `app/customer_resolution/` (extract + resolver), `lookup_customers` tool,
+  orchestrator `resolve_customer`/`clarify` nodes, `choice` block builder (Aveline-attributed).
+- Frontend: `choice` block renderer + `selectCustomer` (web + Flutter).
+- Docs: customer-memory.md, inbox.md §5, OpenApi.
+
+### Created
+
+- GitHub issue #161: https://github.com/KavinduNirmal/aveline/issues/161
+- Branch `feature/slice1-customer-resolution` (from origin/development @ 2d55785).
+
+### Work performed (tests-first, TDD)
+
+- .NET: `PhoneNormalizer` (E.164, lookup-only); `CustomerLookupRequest/Match/Response` DTOs;
+  `CustomerRepository.ListMatchesAsync` (org-scoped, soft-delete aware, case-insensitive name +
+  exact/E.164 phone); `CustomerService.LookupAsync` cached via `IDistributedCache` (60s TTL,
+  cache-miss on failure); `POST /internal/customers/lookup`; DTO + endpoint for
+  `POST /orgs/{org}/conversations/{id}/select-customer` (binds `Conversation.CustomerId`,
+  re-triggers agent with `customer_id` in `org_context`).
+- Python: shared `app/customer_resolution/` (deterministic `extract_phone`/`extract_customer_name`,
+  `resolve_customer` -> `CustomerResolution` resolved/ambiguous/not_found/no_signal, models);
+  `ToolRegistry.lookup_customers`; orchestrator `run_resolve_customer` node runs the shared
+  resolver once after the intent gate and stores it in `ConciergeState`; ambiguous/not-found
+  short-circuit to `formulate_response` (no specialists); `build_clarification_blocks`
+  (Aveline `choice` / ask-for-phone text).
+- Web (React): `choice` block renderer + tap; `conversations-api.selectConversationCustomer`;
+  context `selectCustomer` re-triggers with last staff query; plumbed through
+  MessageThread/MessageBubble/BlockList in SalonPanel + AvelineChatDrawer. Fixed the SalonPanel
+  thread Card default `py-6` that pushed the conversation header down (border misalignment).
+- Flutter: parse `choice` content blocks into `SalonMessage`; `MessageBubble` renders tappable
+  candidates; `ConversationApi.selectCustomer`; `SalonScreen` selection handler re-triggers agent.
+
+### Tests added
+- .NET: `PhoneNormalizerTests` (13), `CustomerConciergeLookupRepositoryTests` (9),
+  `CustomerConciergeLookupServiceTests` (6, incl. cache-hit skips repo), lookup endpoint
+  integration cases, `select-customer` service tests (+ stubs). Full suite 480 passed.
+- Python: `tests/test_customer_resolution.py` (16), block-builder clarification, workflow
+  resolve/clarify routing, tool-registry lookup. Full suite 238 passed; ruff clean.
+- Web: blocks.test choice cases; conversation tests (61 passed), tsc clean, oxlint no errors.
+- Flutter: salon choice parse + bubble tap tests (21 passed), analyze clean.
+
+### Verification performed
+- `dotnet test` 480 passed; `pytest tests/ -v` 238 passed, ruff clean; web vitest + `tsc -b`
+  clean; `flutter analyze` clean + `flutter test test/features/salon` 21 passed.
+- Committed across 4 logical commits on `feature/slice1-customer-resolution` (Husky gates pass).
+
+### Remaining work / notes
+- Docs updated (customer-memory.md, inbox.md §5.1.1 choice block). No new ADR (additive block
+  type + existing `IDistributedCache`). Follow-ups: Postgres `ILIKE` for name match; optional
+  write-side phone normalization in `identify`; optional LLM name extraction layer.
+
+## Session 2026-09-09
+
+**Task:** Finalize AVA — Customer Memory Agent (Slice 1) end-to-end: wire the LLM, usage reporting,
+interactions, structured events + real brief, runtime schema validation, email lookup, loyalty
+progression, event reminders, and stale-doc cleanup.
+**Tool used:** opencode (Claude) AI coding agent
+**Branch:** `feature/slice1-ava-finalize` (based on `feature/slice1-customer-resolution`)
+
+### Summary of Activities
+
+Created 8 GitHub issues (#163–#170) and implemented each test-first:
+
+- **#163 Wire LLM** — `AGENT_LLM_ENABLED` setting + `app/llm/runtime.py:memory_llm_or_none` gate
+  (requires key + model); `CustomerMemoryAgent`/`build_memory_graph` accept an optional chat
+  model; `compose_output` drafts via the LLM (assemble prompt, read langchain `usage_metadata`)
+  with a deterministic-template fallback; `run_memory_agent` threads the LLM + usage through.
+- **#164 Record interactions** — `record_customer_interaction` sends `parsedIntentJson`; the
+  `persist` node logs each inbound interaction with the extracted intent.
+- **#165 Always-on usage reporting** — `AgentMetadata` gains input/output tokens; `formulate_response`
+  attaches model + token split (or `rule-based` sentinel); `agents_query` calls `report_usage`
+  best-effort (workflow_id = thread_id) after every `/agents/query`.
+- **#166 Structured events + backend brief** — `ToolRegistry.add_customer_event`/`get_customer_events`;
+  `persist` creates a `Customer_Event` row per dated event; `compose_output` enriches the brief
+  from the backend `GenerateBriefAsync` (real events/tags/status) while keeping semantic context.
+- **#167 Runtime schema validation** — `coerce_output` validates against `MemoryAgentOutput`
+  (extra forbidden) in the running path with a graceful error fallback; only dated events are
+  emitted as structured events; `CustomerProfileSummary.phone_number` made optional (agent can know
+  a customer by id/name without a phone).
+- **#168 Email + intent + docs** — .NET lookup matches by email; `ToolRegistry.lookup_customers`
+  surfaces email; removed the never-produced `order_status` literal; rewrote stale agent READMEs.
+- **#169 Loyalty** — deterministic `CustomerLoyaltyService` (new → returning → vip → dormant) +
+  `POST /internal/customers/{id}/status` recompute/override (spend/visit data arrives via Slice 3).
+- **#170 Event reminders** — `ICustomerEventRepository.FindDueForReminderAsync` +
+  `MarkReminderSentAsync`; `EventReminderService` dispatches `NotificationType.EventReminder` to
+  org staff via `INotificationDispatcher` and marks reminded; `EventReminderWorker` (daily).
+- Docs: `docs/architecture/customer-memory.md`, `ADR-017` follow-up section.
+
+### Verification Performed
+
+- Python: `pytest tests/` green (268 passed, 2 skipped), `ruff check app/ tests/` clean, coverage
+  94%+ (gate ≥ 90).
+- .NET: `dotnet build` clean; new `CustomerLoyaltyServiceTests`, `EventReminderServiceTests`,
+  lookup/email, and endpoint integration tests pass (line coverage gate ≥ 30% verified by CI).
+- Committed across 8 logical commits, one per issue (#163–#170); Husky pre-commit gates pass.
+
+### Notes
+- Found that EF turns the required `Include(Customer)` into an INNER JOIN (soft-delete query
+  filter on `Customer`), which dropped orphan events in tests — seeded matching customers.
+- `report_usage` failure is swallowed (logged) so usage accounting never fails a query; rule-based
+  runs report the `rule-based` sentinel (0 tokens → 0.1 Blossom minimum per ADR-010).
+- Branched from `feature/slice1-customer-resolution` (the AVA Slice 1 tip incl. shared customer
+  resolution #161/#162), not `development`, so it inherits the full slice state.
+
+## Session 2026-09-09 (cont.) — Gemini embeddings adapter for Ava
+
+**Task:** Enable the Customer Memory agent (Ava) to use `gemini-embedding-2` for pgvector
+retrieval/persistence, and get the local full workflow (owner chat -> agent -> Ava -> Salon)
+running end to end. Branch: stacked on feature/154.
+**Tool used:** opencode (AI coding agent)
+
+### Findings
+
+- Gemini embeddings are NOT OpenAI-compatible: no OpenAI-style `/v1/embeddings` route exists
+  (404s verified); only the native `POST /v1beta/models/{model}:embedContent` endpoint works.
+  Aveline's EmbeddingService only spoke the OpenAI shape, so a URL change alone was insufficient.
+- The agent service's `api_base_url` defaulted to `localhost:5000` (wrong in docker), so Ava's
+  tool calls to the API's `/internal/customers/*` endpoints would have failed.
+
+### Work performed
+
+- Wired `Embeddings__ApiKey/BaseUrl/Model` into docker-compose `api` (from `.env`), and added
+  `API_BASE_URL: http://api:8080` to the `agent` service.
+- Added a Gemini adapter branch in `EmbeddingService.cs`: when the base URL host is
+  `generativelanguage.googleapis.com`, POSTs to `v1beta/models/{model}:embedContent` with the
+  Gemini body + `X-Goog-Api-Key` header and `outputDimensionality: 1536` (matches pgvector
+  `vector(1536)`); otherwise keeps the OpenAI path. Added `EmbeddingServiceTests.cs` (5 tests).
+- Rebuilt the `api` image; recreated `api` + `agent`; drove a phone-context query.
+- Verified end to end: Ava identified a customer, saved a memory with a **1536-dim** Gemini
+  embedding, and posted a real rich message (brief + at_a_glance + suggestion) into the Salon.
+
+### Verification performed
+
+- `dotnet test` - 450 passed (445 + 5 new embedding tests).
+- Local run: API healthy; agent -> API internal calls succeed; Gemini embedding stored as 1536 dims.
+
+### Remaining work / notes
+
+- Changes not yet in any merged branch; commit/PR follows.

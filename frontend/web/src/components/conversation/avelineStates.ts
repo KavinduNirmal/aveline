@@ -72,3 +72,12 @@ export const AVELINE_STATES: Record<AvelineState, AvelineStateConfig> = {
 export function avelineStateConfig(state: AvelineState): AvelineStateConfig {
   return AVELINE_STATES[state] ?? AVELINE_STATES.idle
 }
+
+/**
+ * True for states that mean "the workflow finished" (success/error/response). These must
+ * collapse the live activity bubble rather than leave a hanging 'Done'/'Something went wrong'
+ * indicator once the reply has landed.
+ */
+export function isTerminalState(state: AvelineState): boolean {
+  return state === 'success' || state === 'error' || state === 'response'
+}

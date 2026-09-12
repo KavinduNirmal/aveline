@@ -20,4 +20,12 @@ public interface ICustomerService
         Guid orgId,
         Guid customerId,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Read-only lookup by name and/or phone (Issue #161). Never creates a profile. Returns
+    /// matches with <see cref="CustomerLookupResponse.IsExact"/> true only for a single match.
+    /// </summary>
+    Task<CustomerLookupResponse> LookupAsync(
+        CustomerLookupRequest request,
+        CancellationToken cancellationToken = default);
 }

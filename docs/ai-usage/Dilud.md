@@ -1546,5 +1546,27 @@
 - `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~VisionServiceTests"`: 5/5 passed (100% success).
 - `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName!~Postgres"`: 564/564 passed (100% success).
 
+## Session 2026-09-12 (ADR-020 Vision Architecture & Testing Matrix Documentation)
+
+**Task:** Author ADR-020 for the multimodal vision provider decision and update `docs/tests/README.md` with the full Slice 2 Visual Intelligence test suite matrix and verified test counts.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+1. **ADR-020 Documentation**: Authored `docs/ADR/ADR-020-multimodal-vision-provider.md` documenting the centralized OpenAI-compatible `VisionService`, configuration parameters (`Vision:ApiKey`, `Vision:BaseUrl`, `Vision:Model`), ADR-010 Blossom token usage reporting, and deterministic offline fallback.
+2. **ADR Index Registration**: Registered `ADR-020` in `docs/ADR/README.md`.
+3. **Testing Matrix Update**: Updated `docs/tests/README.md` to reflect the current 569 .NET test suite and 381 Python agent test suite, documenting all Slice 2 Visual Intelligence test files across backend and Python agent layers.
+
+### Files Created or Modified
+- `docs/ADR/ADR-020-multimodal-vision-provider.md`
+- `docs/ADR/README.md`
+- `docs/tests/README.md`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- Verified all ADR links and test file paths match actual repository locations.
+- Re-verified test suite pass counts.
+
+
 
 

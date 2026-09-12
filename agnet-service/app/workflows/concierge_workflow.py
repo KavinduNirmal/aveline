@@ -22,10 +22,11 @@ from langgraph.graph import END, START, StateGraph
 
 from app.agents.customer_memory.graph import build_memory_graph
 from app.agents.customer_memory.parsing import parse_message
+from app.agents.visual_insight.graph import build_visual_graph
 from app.core.config import get_settings
 from app.customer_resolution import resolve_customer
 from app.gate import classify_by_rules
-from app.llm.runtime import memory_llm_or_none
+from app.llm.runtime import memory_llm_or_none, visual_llm_or_none
 from app.schemas.response import AgentMetadata, AgentResponse, AgentStatus
 from app.schemas.state import AgentState
 from app.tools.registry import ToolRegistry
@@ -158,26 +159,48 @@ async def run_memory_agent(state: ConciergeState) -> dict[str, Any]:
     return {"memory_output": {"agent": "memory", "ran": True, **output}, "usage": usage}
 
 
-def run_visual_agent(state: ConciergeState) -> dict[str, Any]:
-    """Stub Visual Insight Agent node.
+async def run_visual_agent(state: ConciergeState) -> dict[str, Any]:
+    """Run the Visual Insight Agent (Elle — Slice 2).
 
-    TODO(Slice 2): replace with the real ``app/agents/visual_insight/graph.py``
-    sub-graph, which fills ``items``/``looks``/``suggestion`` and sets ``status``
-    to ``success``/``pending``. Until then this stub declares the structured output
-    shape with ``status == "stub"`` and no content, so the Salon sees no fabricated
-    product data.
+    Executes ``app/agents/visual_insight/graph.py`` sub-graph, which fills
+    ``items``, ``looks``, and ``suggestion`` for styling & visual sourcing.
     """
-    return {
-        "visual_output": {
-            "agent": "visual",
-            "ran": True,
-            "status": "stub",
-            "note": "Visual sourcing and outfit composition are not wired yet (Slice 2).",
-            "items": [],
-            "looks": [],
-            "suggestion": None,
-        }
+    org_context = state.get("org_context") or {}
+    org_id = str(org_context.get("organization_id") or org_context.get("org_id") or "")
+    customer_id = org_context.get("customer_id")
+    customer_name = org_context.get("customer_name")
+    message = state.get("message", "")
+    image_url = org_context.get("image_url")
+
+    direction = org_context.get("direction")
+    staff_query = org_context.get("staff_query") if "staff_query" in org_context else (not direction or direction in ("outbound", "internal"))
+
+    registry = ToolRegistry()
+    llm = visual_llm_or_none(get_settings())
+    graph = build_visual_graph(registry, llm=llm)
+    vis_state = {
+        "org_id": org_id,
+        "customer_id": str(customer_id) if customer_id else None,
+        "customer_name": customer_name,
+        "message": message,
+        "image_url": image_url,
+        "intent_type": (state.get("intent") or {}).get("intent_type"),
+        "preferences": (state.get("memory_output") or {}).get("extracted_memories"),
+        "channel": org_context.get("channel", "internal"),
+        "direction": direction,
+        "staff_query": bool(staff_query),
     }
+    result = await graph.ainvoke(vis_state)
+    output = result.get("output") or {
+        "status": "success",
+        "agent": "visual",
+        "ran": True,
+        "items": [],
+        "looks": [],
+        "suggestion": None,
+    }
+    return {"visual_output": {"agent": "visual", "ran": True, **output}}
+
 
 
 def run_commerce_agent(state: ConciergeState) -> dict[str, Any]:
@@ -288,19 +311,34 @@ def _route_after_resolve(state: ConciergeState) -> str:
 def _route_after_memory(state: ConciergeState) -> str:
     intent = state.get("intent") or {}
     agents = intent.get("suggested_agents", [])
-    if "visual" in agents:
+    org_context = state.get("org_context") or {}
+    if "visual" in agents or org_context.get("image_url"):
         return "visual_agent"
     if "commerce" in agents:
         return "commerce_agent"
     return "formulate_response"
 
 
+
+def route_after_visual(state: dict[str, Any]) -> str:
+    """Route to commerce if visual output requires commerce actions; otherwise formulate."""
+    if state.get("requires_commerce"):
+        return "commerce"
+
+    visual_output = state.get("visual_output")
+    if isinstance(visual_output, dict) and visual_output.get("requires_commerce"):
+        return "commerce"
+
+    return "formulate"
+
+
 def _route_after_visual(state: ConciergeState) -> str:
     intent = state.get("intent") or {}
     agents = intent.get("suggested_agents", [])
-    if "commerce" in agents:
+    if "commerce" in agents or route_after_visual(state) == "commerce":
         return "commerce_agent"
     return "formulate_response"
+
 
 
 # ---------------------------------------------------------------------------

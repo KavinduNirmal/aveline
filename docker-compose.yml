@@ -78,14 +78,14 @@ services:
       Eventing__SubscribeEventTypes__3: ${EVENTING_SUBSCRIBE_EVENT_TYPES_3:-agent.status}
       AgentService__BaseUrl: http://agent:8000
       AgentService__InternalToken: ${INTERNAL_API_TOKEN:-change-me-internal-token}
-      # OpenAI-compatible embeddings for pgvector memory retrieval (Ava, ADR-017). Required for
-      # the /memories/search + /memories endpoints. Defaults to OpenAI text-embedding-3-small.
-      Embeddings__ApiKey: ${EMBEDDINGS_API_KEY:?EMBEDDINGS_API_KEY is required}
-      Embeddings__BaseUrl: ${EMBEDDINGS_BASE_URL:-https://api.openai.com}
       # OpenAI-compatible embeddings used by the Customer Memory agent (pgvector retrieval).
       Embeddings__ApiKey: ${EMBEDDINGS_API_KEY:-}
       Embeddings__BaseUrl: ${EMBEDDINGS_BASE_URL:-https://api.openai.com/v1}
       Embeddings__Model: ${EMBEDDINGS_MODEL:-text-embedding-3-small}
+      # OpenAI-compatible vision provider for Visual Intelligence (Elle, Slice 2 image analysis).
+      Vision__ApiKey: ${VISION_API_KEY:-}
+      Vision__BaseUrl: ${VISION_BASE_URL:-https://api.openai.com}
+      Vision__Model: ${VISION_MODEL:-gpt-4o-mini}
       # AES-256-GCM key for tenant integration credentials (base64, 32 bytes).
       Credentials__EncryptionKey: ${CREDENTIALS_ENCRYPTION_KEY:?CREDENTIALS_ENCRYPTION_KEY is required}
       # WhatsApp (Meta) integration gateway — base URL + API version (defaults used if unset).

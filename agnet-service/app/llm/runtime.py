@@ -34,3 +34,25 @@ def memory_llm_or_none(settings: Settings) -> BaseChatModel | None:
         logger.info("LLM not configured (missing api key or model); using rule-based mode.")
         return None
     return create_chat_model(settings)
+
+
+def visual_llm_or_none(settings: Settings) -> BaseChatModel | None:
+    """Return a configured chat model for the visual insight agent, or ``None`` to stay rule-based.
+
+    Args:
+        settings: Application settings carrying ``agent_llm_enabled``, ``llm_api_key`` and
+            ``llm_model``.
+
+    Returns:
+        A chat model when LLM use is enabled and a key + model are configured, else ``None``.
+    """
+    if not settings.agent_llm_enabled:
+        logger.info("LLM disabled for visual agent workflows (agent_llm_enabled=false); using rule-based mode.")
+        return None
+    if not settings.llm_api_key or not settings.llm_model:
+        logger.info("LLM not configured (missing api key or model); using rule-based mode.")
+        return None
+    return create_chat_model(settings)
+
+
+workflow_llm_or_none = memory_llm_or_none

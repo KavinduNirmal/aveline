@@ -1474,3 +1474,39 @@
 
 ### Verification Performed
 - Executed `git merge-base`, `git log`, and `git merge-tree origin/development 4b6b2e1`.
+
+## Session 2026-09-12 (Fix B3: Merge origin/development, Resolve Conflicts, & Full Stack Verification)
+
+**Task:** Synchronize `feature/visual-insight-agent` with `origin/development`, reconcile all 6 merge conflicts without losing Slice 2 visual features or Slice 1 customer resolution, and verify all test suites across the stack.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed (Clean Merge & Full Suite Passing)
+
+### Work Performed
+1. **Upstream Merge**: Executed `git merge origin/development` into `feature/visual-insight-agent`.
+2. **Conflict Resolution**:
+   - `agnet-service/app/llm/runtime.py`: Reconciled both `memory_llm_or_none` and `visual_llm_or_none` runtime helper entry points with `agent_llm_enabled` gating.
+   - `agnet-service/app/workflows/concierge_workflow.py`: Integrated upstream's `resolve_customer` node alongside `run_visual_agent` LLM wiring and conditional routing (`route_after_visual`). Restored `classify_by_rules` import.
+   - `agnet-service/tests/test_concierge_workflow.py`: Integrated upstream customer resolution tests (`test_ambiguous_resolution_short_circuits_to_clarification`, `test_not_found_resolution_asks_for_phone`, `test_resolve_node_records_explicit_customer`) and visual agent workflow path tests (`test_run_visual_agent_wires_llm_when_configured`).
+   - `agnet-service/tests/test_llm_runtime.py`: Merged provider parametrization tests and visual LLM tests.
+   - `frontend/web/src/components/conversation/blocks.tsx`: Reconciled `ChoiceBlock` (`onSelectCustomer`) with `SuggestionBlock`/`LookBlock` (`persona` theme palette).
+   - `frontend/web/src/components/conversation/MessageBubble.tsx`: Passed both `onSelectCustomer` and `persona` props down to `<BlockList />`.
+3. **Commit Creation**: Committed merge commit `c4e8bac` and import fix `9bbb0a9`.
+4. **Full Stack Verification**:
+   - Ran `pytest` in `agnet-service`: 379 passed, 2 skipped across all test modules.
+   - Ran `dotnet test` in `Aveline.Api.Tests`: 569 passed, 0 failed across the entire .NET test suite.
+   - Ran `bun run build` in `frontend/web`: TypeScript type-check and Vite build succeeded with 0 errors.
+
+### Files Created or Modified
+- `agnet-service/app/llm/runtime.py`
+- `agnet-service/app/workflows/concierge_workflow.py`
+- `agnet-service/tests/test_concierge_workflow.py`
+- `agnet-service/tests/test_llm_runtime.py`
+- `frontend/web/src/components/conversation/blocks.tsx`
+- `frontend/web/src/components/conversation/MessageBubble.tsx`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- `agnet-service` pytest suite: 379 passed, 2 skipped, 0 failed in 163.96s (100% success).
+- `Aveline.Api.Tests` dotnet suite: 569 passed, 0 failed in 109s (100% success).
+- `frontend/web` bun build: `✓ built in 25.40s` with 0 type errors.
+

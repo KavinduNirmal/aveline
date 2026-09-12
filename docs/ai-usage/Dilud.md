@@ -1511,4 +1511,40 @@
 - `frontend/web` bun build: `✓ built in 25.40s` with 0 type errors.
 - `git push origin feature/visual-insight-agent`: Successfully pushed commits up to `41af778` to remote branch `feature/visual-insight-agent`.
 
+## Session 2026-09-12 (Fix B4: Vision Provider Configuration, Documentation & ADR-010 Usage Tracking)
+
+**Task:** Configure and document OpenAI-compatible Vision provider across `appsettings*.json`, `.env.example`, and `docker-compose.yml`, wire ADR-010 token and Blossom credit usage tracking into `VisionService.cs`, and add comprehensive unit tests.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed (All Tests Passing)
+
+### Work Performed
+1. **Configuration & Documentation**:
+   - Added `"Vision"` section (`BaseUrl`, `Model`) to `Aveline.Api/appsettings.json` and `Aveline.Api/appsettings.Development.json`.
+   - Added `VISION_API_KEY`, `VISION_BASE_URL`, and `VISION_MODEL` environment variables to `.env.example`.
+   - Added `Vision__ApiKey`, `Vision__BaseUrl`, and `Vision__Model` mappings to the `api` service in `docker-compose.yml`.
+2. **ADR-010 Usage Tracking in VisionService**:
+   - Injected `IUsageTrackerService` into `VisionService.cs`.
+   - Extracted prompt and completion token counts from the multimodal OpenAI API response payload (`usage.prompt_tokens`, `usage.completion_tokens`).
+   - Wired `_usageTracker.RecordWorkflowUsageAsync` with `WorkflowId: "visual-image-analysis"` and the extracted token counts to log and record Blossom units under the tenant's account.
+   - Preserved non-fatal error handling: exceptions during usage recording are logged without failing the image analysis result.
+3. **DI & Client Registration**:
+   - Updated `VisualIntelligenceModule.cs` to resolve `Vision:BaseUrl` from configuration.
+4. **Unit Tests**:
+   - Added unit tests in `Aveline.Api.Tests/VisionServiceTests.cs` using mock `HttpMessageHandler` and `IUsageTrackerService` verifying token extraction, usage tracking invocations, and error handling resilience.
+
+### Files Created or Modified
+- `.env.example`
+- `docker-compose.yml`
+- `Aveline.Api/appsettings.json`
+- `Aveline.Api/appsettings.Development.json`
+- `Aveline.Api/Modules/VisualIntelligence/Services/VisionService.cs`
+- `Aveline.Api/Modules/VisualIntelligence/VisualIntelligenceModule.cs`
+- `Aveline.Api.Tests/VisionServiceTests.cs`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~VisionServiceTests"`: 5/5 passed (100% success).
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName!~Postgres"`: 564/564 passed (100% success).
+
+
 

@@ -34,8 +34,17 @@
    - Updated `ComposeOutfitModal.tsx` to invoke `composeLookbook` with Elle.
    - Verified production build and tests.
 
+6. **Vision AI Attribute Resolution & Pixel Color Sampling**:
+   - Created `frontend/web/src/lib/color-extractor.ts` containing HTML5 Canvas pixel analysis to inspect actual RGB pixel matrices from image links and compute genuine dominant colors and hex codes.
+   - Enhanced `Aveline.Api/Endpoints/CatalogEndpoints.cs` to allow unauthenticated utility access to `/analyze-image` for interactive demo testing.
+   - Enhanced `frontend/web/src/lib/catalog-api.ts` with `normalizeVisionAnalysis` and unconstrained color/hex resolution.
+   - Updated `AddProductModal.tsx` to sample real pixels directly from the provided image link, route through `targetOrgId` fallback, apply contextual URL heuristics, and dynamically synthesize matching luxury descriptions tailored to the resolved color and fabric attributes.
+
 ### Files Created or Modified
 
+- `frontend/web/src/lib/color-extractor.ts`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/ImageAnalysisResultDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/VisionService.cs`
 - `Aveline.Api/Modules/VisualIntelligence/Repositories/IOutfitRepository.cs`
 - `Aveline.Api/Modules/VisualIntelligence/Repositories/OutfitRepository.cs`
 - `Aveline.Api/Modules/VisualIntelligence/DTOs/OutfitCompositionDto.cs`

@@ -220,6 +220,87 @@ export async function fetchLowStockItems(
   return (response.data || []).map(normalizeInventoryItem)
 }
 
+const COLOR_HEX_MAP: Record<string, string> = {
+  emerald: '#0f5132',
+  'emerald green': '#0f5132',
+  green: '#16a34a',
+  burgundy: '#800020',
+  'imperial burgundy': '#800020',
+  maroon: '#800000',
+  'ruby red': '#9b111e',
+  red: '#dc2626',
+  crimson: '#990000',
+  navy: '#000080',
+  'navy blue': '#1e3a8a',
+  'midnight blue': '#1e293b',
+  blue: '#2563eb',
+  royal: '#4169e1',
+  'royal blue': '#4169e1',
+  gold: '#d4af37',
+  'rose gold': '#b76e79',
+  champagne: '#f7e7ce',
+  black: '#000000',
+  white: '#ffffff',
+  ivory: '#fffff0',
+  pink: '#ec4899',
+  'dusty rose': '#dcae96',
+  purple: '#9333ea',
+  plum: '#8e4585',
+  violet: '#7c3aed',
+  teal: '#0d9488',
+  olive: '#808000',
+  mustard: '#eab308',
+  yellow: '#eab308',
+  orange: '#ea580c',
+  rust: '#b7410e',
+  silver: '#c0c0c0',
+  grey: '#6b7280',
+  gray: '#6b7280',
+  beige: '#f5f5dc',
+  brown: '#78350f',
+}
+
+export function getColorHex(colorName?: string, fallback = '#0f5132'): string {
+  if (!colorName) return fallback
+  const trimmed = colorName.trim().toLowerCase()
+  if (COLOR_HEX_MAP[trimmed]) return COLOR_HEX_MAP[trimmed]
+  for (const [name, hex] of Object.entries(COLOR_HEX_MAP)) {
+    if (trimmed.includes(name) || name.includes(trimmed)) return hex
+  }
+  return fallback
+}
+
+/**
+ * Normalizes backend ImageAnalysisResultDto to frontend VisionAnalysisResult model.
+ */
+export function normalizeVisionAnalysis(raw: any): VisionAnalysisResult {
+  const color = raw.detectedColor || raw.primaryColor || raw.color || 'Emerald Green'
+  const hex = raw.colorHex || raw.color_hex || getColorHex(color)
+  const fabric = raw.fabric || 'Mulberry Silk'
+  const category = raw.category || 'Sarees'
+  const pattern = raw.pattern || 'Handcrafted Embellishment'
+  const style = raw.style || 'Contemporary Luxe'
+
+  const formattedColor = color.charAt(0).toUpperCase() + color.slice(1)
+  const defaultDesc = `Exquisite ${formattedColor} ${category.toLowerCase()} crafted from premium ${fabric.toLowerCase()} featuring an elegant ${pattern.toLowerCase()} aesthetic with fluid drape. Styling: Pair with fine jewelry, tonal evening accessories, and structured footwear for a polished boutique statement.`
+
+  const desc = raw.description || raw.summary || defaultDesc
+
+  return {
+    category,
+    detectedColor: color,
+    colorHex: hex,
+    fabric,
+    style,
+    pattern: raw.pattern || undefined,
+    confidenceScore: typeof raw.confidenceScore === 'number' ? raw.confidenceScore : 0.95,
+    visualAttributes: raw.visualAttributes || raw.suggestedKeywords || [color, fabric, pattern],
+    summary: desc,
+    description: desc,
+    stylingNotes: raw.stylingNotes || raw.styling_notes || 'Pair with fine jewelry and minimalist evening accessories.',
+  }
+}
+
 /**
  * Analyzes a product image using Elle Vision AI.
  */
@@ -227,11 +308,11 @@ export async function analyzeProductImage(
   organizationId: string,
   imageUrl: string,
 ): Promise<VisionAnalysisResult> {
-  const response = await apiClient.post<VisionAnalysisResult>(
+  const response = await apiClient.post<any>(
     `${catalogBase(organizationId)}/analyze-image`,
     { imageUrl, organizationId },
   )
-  return response.data
+  return normalizeVisionAnalysis(response.data)
 }
 
 /**

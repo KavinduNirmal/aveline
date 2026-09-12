@@ -121,6 +121,8 @@ export interface VisionAnalysisResult {
   confidenceScore: number
   visualAttributes: string[]
   summary: string
+  description?: string
+  stylingNotes?: string
 }
 
 export interface SearchInventoryParams {

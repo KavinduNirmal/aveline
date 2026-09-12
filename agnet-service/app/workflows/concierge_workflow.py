@@ -25,6 +25,7 @@ from app.agents.customer_memory.parsing import parse_message
 from app.agents.visual_insight.graph import build_visual_graph
 from app.core.config import get_settings
 from app.customer_resolution import resolve_customer
+from app.gate import classify_by_rules
 from app.llm.runtime import memory_llm_or_none, visual_llm_or_none
 from app.schemas.response import AgentMetadata, AgentResponse, AgentStatus
 from app.schemas.state import AgentState

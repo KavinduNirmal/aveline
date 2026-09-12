@@ -342,7 +342,7 @@ class VisualInsightAgent:
             status = "success"
 
         items = [PieceItem(**i) for i in state.get("matched_items", [])]
-        looks = [LookDto(**l) for l in state.get("composed_looks", [])]
+        looks = [LookDto(**look) for look in state.get("composed_looks", [])]
         sourcing_req = (
             SourcingRequestDto(**state["sourcing_request"])
             if state.get("sourcing_request")

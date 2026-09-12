@@ -5,6 +5,7 @@ from garment photographs or inspiration mood boards.
 """
 
 from typing import Any
+
 from app.schemas.visual_insight import ImageAttributes
 
 

@@ -1,4 +1,61 @@
 
+## Session 2026-09-12 (Fix 3 GitHub Actions CI Check Failures)
+
+**Task:** Resolve failing GitHub Actions CI checks for Python Agent Service, Flutter Mobile App, and Web Dashboard.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+1. **Python Agent Service (`Aveline CI / Lint & Test Python Agent Service`)**:
+   - Fixed Ruff `E741` ambiguous variable name error in `agnet-service/app/agents/visual_insight/nodes.py:345` (`l` -> `look`).
+   - Ran `ruff check app/ --fix` to format and reorganize import blocks in `graph.py`, `visual_insight.py`, `image_tools.py`, `inventory_tools.py`, `outfit_tools.py`, and `sourcing_tools.py`.
+   - Verified that `ruff check app/` passed with 0 errors.
+
+2. **Flutter Mobile App (`Aveline CI / Analyze, Test & Build Flutter App`)**:
+   - Fixed `frontend/aveline_mobile/lib/features/salon/presentation/screens/salon_screen.dart` by initializing `_messages = _seedMessages();` directly.
+   - Guaranteed immediate deterministic rendering of seeded concierge greeting in isolated widget test suites (`salon_screen_test.dart`) and offline app launches.
+
+3. **Web Dashboard & Repository Hygiene (`Aveline CI / Build, Test & Lint Web Dashboard`)**:
+   - Verified lockfile hygiene rules and `.gitignore` exclusions for `package-lock.json` to ensure only `bun.lock` is used.
+
+### Files Created or Modified
+- `agnet-service/app/agents/visual_insight/nodes.py`
+- `agnet-service/app/agents/visual_insight/graph.py`
+- `agnet-service/app/schemas/visual_insight.py`
+- `agnet-service/app/tools/inventory/image_tools.py`
+- `agnet-service/app/tools/inventory/inventory_tools.py`
+- `agnet-service/app/tools/inventory/outfit_tools.py`
+- `agnet-service/app/tools/inventory/sourcing_tools.py`
+- `frontend/aveline_mobile/lib/features/salon/presentation/screens/salon_screen.dart`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- Python agent linter: `ruff check app/` passed with 0 errors across all checks.
+- Flutter mobile tests & initialization logic verified.
+
+---
+
+## Session 2026-09-12 (Flutter Mobile Web Platform Configuration & Passkeys SDK)
+
+**Task:** Resolve Flutter Web Passkeys SDK dependency error and configure dev defaults for running `frontend/aveline_mobile` on Chrome.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+1. Diagnosed `Error: Passkeys Web SDK not loaded` thrown by `clerk_flutter` / Corbado Passkeys SDK during web runtime initialization.
+2. Injected `<script src="https://github.com/corbado/flutter-passkeys/releases/download/2.4.0/bundle.js"></script>` into `frontend/aveline_mobile/web/index.html`.
+3. Updated `AppConfig.fromEnvironment()` in `frontend/aveline_mobile/lib/core/config/app_config.dart` with default test Clerk publishable key fallback so the app can launch directly without requiring verbose command line arguments.
+
+### Files Created or Modified
+- `frontend/aveline_mobile/web/index.html`
+- `frontend/aveline_mobile/lib/core/config/app_config.dart`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- Verified `index.html` script injection syntax and `AppConfig` compile-time environment parsing.
+
+---
+
 ## Session 2026-09-12 (Catalog & Visual Intelligence Frontend-Backend & Agent Integration)
 
 **Task:** Connect Catalog & Visual Intelligence UI components with ASP.NET Core backend endpoints, Clean Architecture services/repositories, and Elle Visual Insight Agent.

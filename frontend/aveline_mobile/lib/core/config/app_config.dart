@@ -26,14 +26,22 @@ class AppConfig {
 
   static const String _defaultJwtTemplateName = 'jwt-aveline-v1';
 
+  /// Default Clerk test publishable key for local development.
+  static const String _defaultClerkKey =
+      'pk_test_aW5zcGlyZWQtd2FydGhvZy04MjA4LmNsZXJrLmFjY291bnRzLmRldiQ';
+
   /// Reads the app configuration from the compile-time environment.
   factory AppConfig.fromEnvironment() {
-    const clerkPublishableKey = String.fromEnvironment('CLERK_PUBLISHABLE_KEY');
+    final clerkPublishableKey = const String.fromEnvironment(
+      'CLERK_PUBLISHABLE_KEY',
+      defaultValue: _defaultClerkKey,
+    );
+
     if (clerkPublishableKey.isEmpty) {
       throw StateError(
         'CLERK_PUBLISHABLE_KEY is not set. Run the app with:\n'
         'flutter run --dart-define=CLERK_PUBLISHABLE_KEY=pk_test_... '
-        '--dart-define=API_BASE_URL=http://10.0.2.2:5091',
+        '--dart-define=API_BASE_URL=http://localhost:5091',
       );
     }
 

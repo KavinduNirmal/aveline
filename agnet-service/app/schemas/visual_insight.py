@@ -5,6 +5,7 @@ Models forbid extra fields so schema/contract drift fails loudly.
 """
 
 from typing import Any, Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 

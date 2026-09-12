@@ -103,6 +103,8 @@ public class VisualIntelligenceEntityConfigurationTests
 
         Assert.NotNull(entity.FindProperty(nameof(SourcingRequest.OrgId)));
         Assert.NotNull(entity.FindProperty(nameof(SourcingRequest.Status)));
+        Assert.NotNull(entity.FindProperty(nameof(SourcingRequest.Category)));
+        Assert.NotNull(entity.FindProperty(nameof(SourcingRequest.Color)));
     }
 
     [Fact]

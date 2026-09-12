@@ -131,12 +131,27 @@ public class VisualIntelligencePostgresTests : IAsyncLifetime
         var (orgId, customerId) = await SeedCustomerAsync();
         var customerMatchRepo = new CustomerMatchRepository(_context!);
 
-        var itemId = Guid.NewGuid();
+        var inventoryItem = new InventoryItem
+        {
+            Id = Guid.NewGuid(),
+            OrgId = orgId,
+            ItemName = "Royal Banarasi Silk Saree",
+            Category = "saree",
+            Color = "emerald",
+            Sizes = new List<string> { "FreeSize" },
+            Price = 75000m,
+            Quantity = 4,
+            Status = "available",
+            CreatedAtUtc = DateTime.UtcNow
+        };
+        _context!.InventoryItems.Add(inventoryItem);
+        await _context.SaveChangesAsync();
+
         var match = new CustomerMatch
         {
             Id = Guid.NewGuid(),
             OrgId = orgId,
-            ItemId = itemId,
+            ItemId = inventoryItem.Id,
             CustomerId = customerId,
             MatchConfidence = 0.94m,
             MatchReason = "Customer has strong preference for jewel-tone silks",
@@ -145,7 +160,7 @@ public class VisualIntelligencePostgresTests : IAsyncLifetime
 
         await customerMatchRepo.AddRangeAsync(new[] { match });
 
-        var matches = await customerMatchRepo.GetEnrichedMatchesByItemIdAsync(itemId, orgId, 0.7);
+        var matches = await customerMatchRepo.GetEnrichedMatchesByItemIdAsync(inventoryItem.Id, orgId, 0.7);
 
         matches.Should().NotBeEmpty();
         matches[0].CustomerId.Should().Be(customerId);

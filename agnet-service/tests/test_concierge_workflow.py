@@ -224,3 +224,68 @@ async def test_workflow_reference_image_path():
     # 4. Formulate Response
     assert result["response"]["status"] == AgentStatus.success
 
+
+@pytest.mark.asyncio
+async def test_run_visual_agent_wires_llm_when_configured(monkeypatch):
+    """Verify run_visual_agent queries visual_llm_or_none and executes with LLM commentary."""
+    from unittest.mock import AsyncMock, MagicMock
+    from app.workflows.concierge_workflow import run_visual_agent
+
+    mock_llm_res = MagicMock()
+    mock_llm_res.content = "Editorial styling commentary from wired LLM."
+    mock_llm_res.usage_metadata = {"input_tokens": 80, "output_tokens": 25}
+
+    mock_llm = MagicMock()
+    mock_llm.ainvoke = AsyncMock(return_value=mock_llm_res)
+
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.visual_llm_or_none",
+        lambda settings: mock_llm,
+    )
+
+    # Mock tool registry inventory search so items are matched
+    monkeypatch.setattr(
+        "app.agents.visual_insight.nodes.search_inventory",
+        AsyncMock(
+            return_value=[
+                MagicMock(
+                    itemId="item-101",
+                    name="Peach Raw-Silk Drape Gown",
+                    price=1250.0,
+                    stock=2,
+                    imageUrl="https://images.aveline.luxury/gown.jpg",
+                    category="Gown",
+                    color="Peach",
+                    occasion="Wedding",
+                    aestheticTags=["Silk"],
+                    model_dump=lambda: {
+                        "itemId": "item-101",
+                        "name": "Peach Raw-Silk Drape Gown",
+                        "price": 1250.0,
+                        "stock": 2,
+                        "imageUrl": "https://images.aveline.luxury/gown.jpg",
+                    },
+                )
+            ]
+        ),
+    )
+
+    state = {
+        "message": "I need a gown for a wedding",
+        "org_context": {
+            "organization_id": "org-test",
+            "customer_id": "cust-01",
+            "direction": "inbound",
+        },
+        "intent": {"intent_type": "item_search"},
+    }
+
+    result = await run_visual_agent(state)
+    visual_output = result["visual_output"]
+
+    assert visual_output["ran"] is True
+    assert visual_output["status"] == "success"
+    assert len(visual_output["looks"]) == 1
+    assert visual_output["looks"][0]["text"] == "Editorial styling commentary from wired LLM."
+    assert mock_llm.ainvoke.called
+

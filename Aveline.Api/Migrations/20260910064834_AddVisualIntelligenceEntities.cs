@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -67,6 +67,8 @@ namespace Aveline.Api.Migrations
                     OrgId = table.Column<Guid>(type: "uuid", nullable: false),
                     CustomerId = table.Column<Guid>(type: "uuid", nullable: true),
                     ReferenceImageUrl = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: true),
+                    Category = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: true),
+                    Color = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: true),
                     ItemDescription = table.Column<string>(type: "character varying(2000)", maxLength: 2000, nullable: true),
                     SupplierId = table.Column<Guid>(type: "uuid", nullable: true),
                     EstimatedCost = table.Column<decimal>(type: "numeric(12,2)", precision: 12, scale: 2, nullable: true),

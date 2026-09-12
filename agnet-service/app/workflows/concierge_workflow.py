@@ -25,6 +25,7 @@ from app.agents.customer_memory.parsing import parse_message
 from app.agents.visual_insight.graph import build_visual_graph
 from app.core.config import get_settings
 from app.gate import classify_by_rules
+from app.llm.runtime import visual_llm_or_none
 from app.schemas.response import AgentResponse, AgentStatus
 from app.schemas.state import AgentState
 from app.tools.registry import ToolRegistry
@@ -129,7 +130,8 @@ async def run_visual_agent(state: ConciergeState) -> dict[str, Any]:
     staff_query = org_context.get("staff_query") if "staff_query" in org_context else (not direction or direction in ("outbound", "internal"))
 
     registry = ToolRegistry()
-    graph = build_visual_graph(registry)
+    llm = visual_llm_or_none(get_settings())
+    graph = build_visual_graph(registry, llm=llm)
     vis_state = {
         "org_id": org_id,
         "customer_id": str(customer_id) if customer_id else None,

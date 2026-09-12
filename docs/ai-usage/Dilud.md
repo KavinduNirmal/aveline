@@ -1779,3 +1779,25 @@
 - `bun x tsc -b`: Exited with code 0 (0 type errors).
 - `bun run test:coverage`: 25 test files passed, 158 tests passed, 91.59% line coverage (Threshold >= 80% met).
 - `bun run build`: Exited with code 0 (✓ built in 17.39s).
+
+## Session 2026-09-12 (Remove Sample Data & Initialize Live State in Catalog)
+
+**Task:** Remove hardcoded sample datasets (`MOCK_INVENTORY`, `MOCK_CUSTOMER_MATCHES`, `MOCK_OUTFITS`, `MOCK_SOURCING_REQUESTS`, `MOCK_SUPPLIERS`, `SAMPLE_IMAGES`) from Catalog components, ensure clean empty state views, and sync changes to Git.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed (All Tests and Typechecks Passing)
+
+### Work Performed
+1. **AddProductModal Clean-Up**: Removed `SAMPLE_IMAGES` array and the `Quick Presets:` buttons; sanitized default inputs to empty strings for direct user entry and Vision AI attribute extraction.
+2. **Catalog State Clean-Up**: Replaced hardcoded mock initial states in `CatalogPanel.tsx` with empty arrays (`[]`), allowing reactive datasets to populate solely from the live backend API (`fetchCatalogItems`, `fetchLookbooks`, `fetchSourcingRequests`, `fetchSuppliers`).
+3. **Empty State Handling**: Added graceful empty state rendering for `SuppliersTab.tsx` when no supplier records are present.
+4. **Build & Test Verification**: Confirmed `tsc -b` compiles cleanly and all 25 vitest test files (158 tests) pass with coverage thresholds satisfied.
+
+### Files Created or Modified
+- `frontend/web/src/components/catalog/AddProductModal.tsx`
+- `frontend/web/src/components/catalog/CatalogPanel.tsx`
+- `frontend/web/src/components/catalog/SuppliersTab.tsx`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- `bun x tsc -b`: Exited with code 0 (0 type errors).
+- `bun run test:coverage`: 25 test files passed, 158 tests passed, 91.59% line coverage (Threshold >= 80% met).

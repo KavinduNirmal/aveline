@@ -34,35 +34,6 @@ const CATEGORIES = [
   'Jewelry & Accessories',
 ]
 
-const SAMPLE_IMAGES = [
-  {
-    url: 'https://images.unsplash.com/photo-1610030469983-98e550d6193c?auto=format&fit=crop&w=800&q=80',
-    title: 'Emerald Kanjeevaram Saree',
-    detectedColor: 'Emerald Green',
-    detectedHex: '#0f5132',
-    detectedFabric: 'Mulberry Silk',
-    detectedStyle: 'Traditional Heirloom',
-    detectedPattern: 'Gold Zari Brocade',
-  },
-  {
-    url: 'https://images.unsplash.com/photo-1594938298603-c8148c4dae35?auto=format&fit=crop&w=800&q=80',
-    title: 'Midnight Royal Sherwani',
-    detectedColor: 'Midnight Blue',
-    detectedHex: '#1e293b',
-    detectedFabric: 'Micro Velvet',
-    detectedStyle: 'Contemporary Royal',
-    detectedPattern: 'French Knot Embroidery',
-  },
-  {
-    url: 'https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?auto=format&fit=crop&w=800&q=80',
-    title: 'Rose Gold Chanderi Lehenga',
-    detectedColor: 'Rose Gold',
-    detectedHex: '#b76e79',
-    detectedFabric: 'Chanderi Silk',
-    detectedStyle: 'Festive Romantic',
-    detectedPattern: 'Gota Patti Sequin',
-  },
-]
 
 export function AddProductModal({
   open,
@@ -88,7 +59,7 @@ export function AddProductModal({
   )
   const [sizesInput, setSizesInput] = useState(editingItem?.sizes.join(', ') ?? '38, 40, 42')
   const [imageUrl, setImageUrl] = useState(
-    editingItem?.imageUrl ?? SAMPLE_IMAGES[0].url,
+    editingItem?.imageUrl ?? '',
   )
   const [description, setDescription] = useState(editingItem?.description ?? '')
   const [analyzing, setAnalyzing] = useState(false)
@@ -170,20 +141,9 @@ export function AddProductModal({
     }
 
     // 4. Intelligent contextual heuristic parser fallback
-    const matchedSample = SAMPLE_IMAGES.find((s) => s.url === imageUrl)
-    if (matchedSample) {
-      setColor(matchedSample.detectedColor)
-      setColorHex(matchedSample.detectedHex)
-      setFabric(matchedSample.detectedFabric)
-      setStyle(matchedSample.detectedStyle)
-      setPattern(matchedSample.detectedPattern)
-      if (!name) setName(matchedSample.title)
-      const sampleDesc = `Exquisite ${matchedSample.detectedColor.toLowerCase()} ${category.toLowerCase()} crafted from premium ${matchedSample.detectedFabric.toLowerCase()} with refined ${matchedSample.detectedPattern.toLowerCase()}. Styling: Pair with coordinated luxury accents for an editorial aesthetic.`
-      setDescription(sampleDesc)
-    } else {
-      const lower = url.toLowerCase()
-      let dynColor = 'Emerald Green'
-      let dynHex = '#0F5132'
+    const lower = url.toLowerCase()
+    let dynColor = 'Emerald Green'
+    let dynHex = '#0F5132'
 
       if (lower.includes('burgundy') || lower.includes('maroon') || lower.includes('wine')) {
         dynColor = 'Imperial Burgundy'
@@ -229,7 +189,6 @@ export function AddProductModal({
 
       const dynDesc = `Exquisite ${dynColor.toLowerCase()} ${category.toLowerCase()} crafted from premium ${dynFabric.toLowerCase()} featuring an elegant ${dynPattern.toLowerCase()} with fluid drape. Styling: Pair with fine jewelry, tonal evening accessories, and structured footwear for a polished boutique statement.`
       setDescription(dynDesc)
-    }
 
     setAiConfidence(0.96)
     setAnalyzing(false)
@@ -269,7 +228,7 @@ export function AddProductModal({
       cost: parsedCost,
       stockQuantity: parsedStock,
       status: parsedStock === 0 ? 'reserved' : parsedStock <= 2 ? 'low_stock' : 'available',
-      imageUrl: imageUrl.trim() || SAMPLE_IMAGES[0].url,
+      imageUrl: imageUrl.trim() || '',
       confidenceScore: aiConfidence ?? 0.92,
       description: description.trim() || undefined,
       createdAt: editingItem?.createdAt ?? new Date().toISOString(),
@@ -328,30 +287,6 @@ export function AddProductModal({
                 )}
                 <span>{analyzing ? 'Analyzing...' : 'Extract with Vision AI'}</span>
               </Button>
-            </div>
-
-            {/* Sample Image Presets */}
-            <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground">
-              <span>Quick Presets:</span>
-              {SAMPLE_IMAGES.map((sample, idx) => (
-                <button
-                  key={idx}
-                  type="button"
-                  onClick={() => {
-                    setImageUrl(sample.url)
-                    setName(sample.title)
-                    setColor(sample.detectedColor)
-                    setColorHex(sample.detectedHex)
-                    setFabric(sample.detectedFabric)
-                    setStyle(sample.detectedStyle)
-                    setPattern(sample.detectedPattern)
-                    setAiConfidence(0.96)
-                  }}
-                  className="rounded border border-border px-2 py-0.5 text-[10px] hover:bg-muted transition-colors"
-                >
-                  {sample.detectedColor}
-                </button>
-              ))}
             </div>
           </div>
 

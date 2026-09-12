@@ -35,95 +35,105 @@ export function SuppliersTab({ suppliers }: SuppliersTabProps) {
       </div>
 
       {/* Suppliers Grid */}
-      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
-        {suppliers.map((supplier) => (
-          <Card
-            key={supplier.id}
-            className="flex flex-col justify-between overflow-hidden border-border/80 bg-card p-5 shadow-2xs transition-all hover:border-border hover:shadow-md"
-          >
-            <div>
-              {/* Header & Status */}
-              <div className="flex items-start justify-between gap-2 mb-3">
-                <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                  <Building2 className="size-5" />
+      {suppliers.length === 0 ? (
+        <Card className="flex flex-col items-center justify-center p-12 text-center border-dashed border-border/80 bg-card/50">
+          <Building2 className="size-12 text-muted-foreground/40 mb-3" />
+          <h4 className="font-serif text-base font-medium">No Partner Ateliers Found</h4>
+          <p className="text-xs text-muted-foreground max-w-sm mt-1 mb-4">
+            Connect your heritage suppliers and fabric mills to track sourcing lead times and minimum orders.
+          </p>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
+          {suppliers.map((supplier) => (
+            <Card
+              key={supplier.id}
+              className="flex flex-col justify-between overflow-hidden border-border/80 bg-card p-5 shadow-2xs transition-all hover:border-border hover:shadow-md"
+            >
+              <div>
+                {/* Header & Status */}
+                <div className="flex items-start justify-between gap-2 mb-3">
+                  <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                    <Building2 className="size-5" />
+                  </div>
+                  <Badge
+                    variant="outline"
+                    className={
+                      supplier.isActive
+                        ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20 text-[10px]'
+                        : 'text-muted-foreground text-[10px]'
+                    }
+                  >
+                    {supplier.isActive ? 'Active Partner' : 'Inactive'}
+                  </Badge>
                 </div>
-                <Badge
+
+                {/* Title & Location */}
+                <h4 className="font-serif text-base font-semibold text-foreground">
+                  {supplier.name}
+                </h4>
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5 mb-2">
+                  <MapPin className="size-3 text-primary shrink-0" />
+                  <span>{supplier.location}</span>
+                </div>
+
+                {/* Specialty Tag */}
+                <div className="rounded-lg bg-muted/40 p-2 text-xs text-muted-foreground leading-relaxed mb-4">
+                  <span className="font-medium text-foreground block text-[11px] mb-0.5">
+                    Craft Specialty:
+                  </span>
+                  {supplier.specialty}
+                </div>
+
+                {/* Contact Info */}
+                <div className="space-y-1.5 text-xs text-muted-foreground mb-4">
+                  <div className="flex items-center gap-2">
+                    <Mail className="size-3 text-muted-foreground/70" />
+                    <span className="truncate">{supplier.contactEmail}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Phone className="size-3 text-muted-foreground/70" />
+                    <span>{supplier.contactPhone}</span>
+                  </div>
+                </div>
+
+                {/* Operational Metrics */}
+                <div className="grid grid-cols-2 gap-2 border-t border-border/60 pt-3 text-[11px]">
+                  <div className="rounded-lg bg-muted/20 p-2">
+                    <span className="text-muted-foreground block text-[10px]">Lead Time</span>
+                    <span className="font-semibold text-foreground flex items-center gap-1 mt-0.5">
+                      <Clock className="size-3 text-primary" />
+                      {supplier.deliveryTimeDays} days
+                    </span>
+                  </div>
+                  <div className="rounded-lg bg-muted/20 p-2">
+                    <span className="text-muted-foreground block text-[10px]">Min. Order (MOQ)</span>
+                    <span className="font-semibold text-foreground flex items-center gap-1 mt-0.5">
+                      <DollarSign className="size-3 text-primary" />
+                      ${supplier.minimumOrder.toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Catalog Action */}
+              <div className="pt-4 mt-4 border-t border-border/60">
+                <Button
                   variant="outline"
-                  className={
-                    supplier.isActive
-                      ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20 text-[10px]'
-                      : 'text-muted-foreground text-[10px]'
-                  }
+                  size="sm"
+                  className="w-full gap-1.5 text-xs h-8 rounded-lg"
+                  onClick={() => setActiveCatalogSupplier(supplier)}
                 >
-                  {supplier.isActive ? 'Active Partner' : 'Inactive'}
-                </Badge>
-              </div>
-
-              {/* Title & Location */}
-              <h4 className="font-serif text-base font-semibold text-foreground">
-                {supplier.name}
-              </h4>
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5 mb-2">
-                <MapPin className="size-3 text-primary shrink-0" />
-                <span>{supplier.location}</span>
-              </div>
-
-              {/* Specialty Tag */}
-              <div className="rounded-lg bg-muted/40 p-2 text-xs text-muted-foreground leading-relaxed mb-4">
-                <span className="font-medium text-foreground block text-[11px] mb-0.5">
-                  Craft Specialty:
-                </span>
-                {supplier.specialty}
-              </div>
-
-              {/* Contact Info */}
-              <div className="space-y-1.5 text-xs text-muted-foreground mb-4">
-                <div className="flex items-center gap-2">
-                  <Mail className="size-3 text-muted-foreground/70" />
-                  <span className="truncate">{supplier.contactEmail}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Phone className="size-3 text-muted-foreground/70" />
-                  <span>{supplier.contactPhone}</span>
-                </div>
-              </div>
-
-              {/* Operational Metrics */}
-              <div className="grid grid-cols-2 gap-2 border-t border-border/60 pt-3 text-[11px]">
-                <div className="rounded-lg bg-muted/20 p-2">
-                  <span className="text-muted-foreground block text-[10px]">Lead Time</span>
-                  <span className="font-semibold text-foreground flex items-center gap-1 mt-0.5">
-                    <Clock className="size-3 text-primary" />
-                    {supplier.deliveryTimeDays} days
+                  <Layers className="size-3.5" />
+                  <span>
+                    View Atelier Catalog ({supplier.sampleCatalogCount ?? 0} items)
                   </span>
-                </div>
-                <div className="rounded-lg bg-muted/20 p-2">
-                  <span className="text-muted-foreground block text-[10px]">Min. Order (MOQ)</span>
-                  <span className="font-semibold text-foreground flex items-center gap-1 mt-0.5">
-                    <DollarSign className="size-3 text-primary" />
-                    ${supplier.minimumOrder.toLocaleString()}
-                  </span>
-                </div>
+                </Button>
               </div>
-            </div>
-
-            {/* Catalog Action */}
-            <div className="pt-4 mt-4 border-t border-border/60">
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full gap-1.5 text-xs h-8 rounded-lg"
-                onClick={() => setActiveCatalogSupplier(supplier)}
-              >
-                <Layers className="size-3.5" />
-                <span>
-                  View Atelier Catalog ({supplier.sampleCatalogCount ?? 0} items)
-                </span>
-              </Button>
-            </div>
-          </Card>
-        ))}
-      </div>
+            </Card>
+          ))}
+        </div>
+      )}
 
       {/* Supplier Catalog Modal */}
       {activeCatalogSupplier && (

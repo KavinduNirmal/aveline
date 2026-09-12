@@ -16,17 +16,12 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import type { OrganizationProfileDto } from '@/types/organization'
 
-import {
-  MOCK_INVENTORY,
-  MOCK_CUSTOMER_MATCHES,
-  MOCK_OUTFITS,
-  MOCK_SOURCING_REQUESTS,
-  MOCK_SUPPLIERS,
-  type InventoryItemMock,
-  type CustomerMatchMock,
-  type OutfitCompositionMock,
-  type SourcingRequestMock,
-  type SupplierMock,
+import type {
+  InventoryItemMock,
+  CustomerMatchMock,
+  OutfitCompositionMock,
+  SourcingRequestMock,
+  SupplierMock,
 } from './mockData'
 
 import {
@@ -64,14 +59,12 @@ export function CatalogPanel({
   const [activeTab, setActiveTab] = useState<CatalogSubTab>('inventory')
   const [isLoading, setIsLoading] = useState<boolean>(false)
 
-  // Reactive state initialized with mock datasets
-  const [inventory, setInventory] = useState<InventoryItemMock[]>(MOCK_INVENTORY)
-  const [matches] = useState<CustomerMatchMock[]>(MOCK_CUSTOMER_MATCHES)
-  const [outfits, setOutfits] = useState<OutfitCompositionMock[]>(MOCK_OUTFITS)
-  const [sourcingRequests, setSourcingRequests] = useState<SourcingRequestMock[]>(
-    MOCK_SOURCING_REQUESTS,
-  )
-  const [suppliers, setSuppliers] = useState<SupplierMock[]>(MOCK_SUPPLIERS)
+  // Reactive state initialized with real datasets from backend API
+  const [inventory, setInventory] = useState<InventoryItemMock[]>([])
+  const [matches] = useState<CustomerMatchMock[]>([])
+  const [outfits, setOutfits] = useState<OutfitCompositionMock[]>([])
+  const [sourcingRequests, setSourcingRequests] = useState<SourcingRequestMock[]>([])
+  const [suppliers, setSuppliers] = useState<SupplierMock[]>([])
 
   // Dialog & Drawer States
   const [addModalOpen, setAddModalOpen] = useState(false)
@@ -94,23 +87,23 @@ export function CatalogPanel({
         fetchSuppliers(orgId),
       ])
 
-      if (apiItems.status === 'fulfilled' && apiItems.value.length > 0) {
+      if (apiItems.status === 'fulfilled') {
         setInventory(apiItems.value as unknown as InventoryItemMock[])
       }
 
-      if (apiLookbooks.status === 'fulfilled' && apiLookbooks.value.length > 0) {
+      if (apiLookbooks.status === 'fulfilled') {
         setOutfits(apiLookbooks.value as unknown as OutfitCompositionMock[])
       }
 
-      if (apiSourcing.status === 'fulfilled' && apiSourcing.value.length > 0) {
+      if (apiSourcing.status === 'fulfilled') {
         setSourcingRequests(apiSourcing.value as unknown as SourcingRequestMock[])
       }
 
-      if (apiSuppliers.status === 'fulfilled' && apiSuppliers.value.length > 0) {
+      if (apiSuppliers.status === 'fulfilled') {
         setSuppliers(apiSuppliers.value as unknown as SupplierMock[])
       }
     } catch {
-      // Graceful fallback to rich mock data
+      // Handled cleanly
     } finally {
       setIsLoading(false)
     }

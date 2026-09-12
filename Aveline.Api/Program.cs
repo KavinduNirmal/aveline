@@ -66,6 +66,10 @@ builder.Services.AddScoped<IAdminApprovalRepository, AdminApprovalRepository>();
 builder.Services.AddScoped<IAdminApprovalService, AdminApprovalService>();
 builder.Services.AddScoped<IOnboardingService, OnboardingService>();
 
+// Commerce Module (Slice 3)
+builder.Services.AddScoped<Aveline.Api.Modules.Commerce.Repositories.IBusinessRulesRepository, Aveline.Api.Modules.Commerce.Repositories.BusinessRulesRepository>();
+builder.Services.AddScoped<Aveline.Api.Modules.Commerce.Services.IBusinessRulesService, Aveline.Api.Modules.Commerce.Services.BusinessRulesService>();
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
@@ -99,6 +103,7 @@ v1.MapOnboardingEndpoints();
 v1.MapIntegrationEndpoints();
 v1.MapOrgUsageEndpoints();
 v1.MapWebhookEndpoints();
+v1.MapBusinessRulesEndpoints();
 v1.MapConversationEndpoints();
 
 app.MapBillingEndpoints();

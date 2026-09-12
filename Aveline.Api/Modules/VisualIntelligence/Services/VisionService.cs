@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using Aveline.Api.Modules.Billing.Services;
 using Aveline.Api.Modules.VisualIntelligence.DTOs;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -15,7 +16,8 @@ namespace Aveline.Api.Modules.VisualIntelligence.Services;
 /// <summary>
 /// Vision service client for multimodal image analysis. Reads configuration from
 /// <c>Vision:ApiKey</c>, <c>Vision:BaseUrl</c>, and <c>Vision:Model</c>. Provides
-/// a deterministic attribute analysis fallback when no external API key is configured.
+/// a deterministic attribute analysis fallback when no external API key is configured,
+/// and reports token consumption to <see cref="IUsageTrackerService"/> (ADR-010).
 /// </summary>
 public class VisionService : IVisionService
 {
@@ -23,16 +25,25 @@ public class VisionService : IVisionService
     private readonly string? _apiKey;
     private readonly string _model;
     private readonly ILogger<VisionService> _logger;
+    private readonly IUsageTrackerService? _usageTracker;
 
     public VisionService(
         HttpClient httpClient,
         IConfiguration configuration,
-        ILogger<VisionService> logger)
+        ILogger<VisionService> logger,
+        IUsageTrackerService? usageTracker = null)
     {
         _httpClient = httpClient;
-        _apiKey = configuration["Vision:ApiKey"] ?? configuration["OpenAI:ApiKey"];
-        _model = configuration["Vision:Model"] ?? "gpt-4o-mini";
+        _apiKey = configuration["Vision:ApiKey"]
+            ?? configuration["Vision__ApiKey"]
+            ?? configuration["VISION_API_KEY"]
+            ?? configuration["OpenAI:ApiKey"];
+        _model = configuration["Vision:Model"]
+            ?? configuration["Vision__Model"]
+            ?? configuration["VISION_MODEL"]
+            ?? "gpt-4o-mini";
         _logger = logger;
+        _usageTracker = usageTracker;
     }
 
     public async Task<ImageAnalysisResultDto> AnalyzeAsync(
@@ -92,6 +103,44 @@ public class VisionService : IVisionService
 
             var content = await response.Content.ReadAsStringAsync(cancellationToken);
             using var doc = JsonDocument.Parse(content);
+
+            // Record token usage if available (ADR-010)
+            int promptTokens = 0;
+            int completionTokens = 0;
+            if (doc.RootElement.TryGetProperty("usage", out var usageElem))
+            {
+                if (usageElem.TryGetProperty("prompt_tokens", out var ptElem))
+                {
+                    promptTokens = ptElem.GetInt32();
+                }
+                if (usageElem.TryGetProperty("completion_tokens", out var ctElem))
+                {
+                    completionTokens = ctElem.GetInt32();
+                }
+            }
+
+            if (_usageTracker != null && organizationId != Guid.Empty)
+            {
+                try
+                {
+                    await _usageTracker.RecordWorkflowUsageAsync(new RecordUsageRequest(
+                        OrganizationId: organizationId,
+                        RequestId: Guid.NewGuid().ToString(),
+                        WorkflowId: "visual-image-analysis",
+                        Provider: "openai",
+                        Model: _model,
+                        InputTokens: promptTokens,
+                        OutputTokens: completionTokens,
+                        CachedTokens: 0,
+                        ActualCostUsd: 0m
+                    ), cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to record ADR-010 usage for vision analysis.");
+                }
+            }
+
             var choiceContent = doc.RootElement
                 .GetProperty("choices")[0]
                 .GetProperty("message")

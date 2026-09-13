@@ -74,6 +74,12 @@ public class AdminApprovalService : IAdminApprovalService
     {
         var request = await RequirePendingAsync(requestId, cancellationToken);
 
+        // Segregation of duties: nobody may approve their own admin access request.
+        if (string.Equals(request.ClerkUserId, reviewerClerkUserId, StringComparison.Ordinal))
+        {
+            throw new AdminSelfApprovalException(requestId);
+        }
+
         // Grant first: if the Clerk Backend API call fails the request stays Pending.
         await _clerkAdminClient.GrantAdminRoleAsync(request.ClerkUserId, cancellationToken);
 

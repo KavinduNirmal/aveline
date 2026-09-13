@@ -151,6 +151,24 @@ public class AdminApprovalFlowIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Moderator_CannotApproveTheirOwnRequest()
+    {
+        var token = CreateToken("admin_req_self", "moderator", "self.approver@aveline.lk");
+
+        var submit = await _client.SendAsync(
+            Authorized(HttpMethod.Post, "/api/v1/admin/requests", token));
+        Assert.Equal(HttpStatusCode.OK, submit.StatusCode);
+        var id = JsonDocument.Parse(await submit.Content.ReadAsStringAsync()).RootElement
+            .GetProperty("id").GetString();
+
+        var approve = await _client.SendAsync(
+            Authorized(HttpMethod.Post, $"/api/v1/admin/requests/{id}/approve", token));
+
+        Assert.Equal(HttpStatusCode.Forbidden, approve.StatusCode);
+        Assert.DoesNotContain("admin_req_self", _clerk.Granted);
+    }
+
+    [Fact]
     public async Task Reviewer_Rejects_AndResubmissionAllowed_ButApproveAfterRejectConflicts()
     {
         var requester = CreateToken("admin_req_reject", "staff", "reject.me@aveline.lk");

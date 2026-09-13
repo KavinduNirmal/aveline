@@ -17,6 +17,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Npgsql;
 using Testcontainers.PostgreSql;
 
 namespace Aveline.Api.Tests;
@@ -199,4 +200,33 @@ public class AdminReconciliationPostgresTests : IAsyncLifetime
             .Where(entry => entry.OrganizationId == organizationId)
             .ToListAsync());
     }
+
+    [Fact]
+    public async Task OverrideNoOverlapConstraint_RejectsOverlappingRowsInTheDatabase()
+    {
+        var organizationId = await SeedOrganizationAsync(Guid.NewGuid().ToString("N"));
+
+        _context.PlanEntitlementOverrides.Add(Override(organizationId, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)));
+        await _context.SaveChangesAsync();
+
+        // A second window with a different start that overlaps the first. The application
+        // check refuses this through the API; the exclusion constraint must refuse it even
+        // when two concurrent writers race past that check (§2.4).
+        _context.PlanEntitlementOverrides.Add(Override(organizationId, new DateTime(2026, 6, 1, 0, 0, 0, DateTimeKind.Utc)));
+
+        var exception = await Assert.ThrowsAsync<DbUpdateException>(() => _context.SaveChangesAsync());
+        var postgres = Assert.IsType<PostgresException>(exception.InnerException);
+        Assert.Equal("23P01", postgres.SqlState);
+    }
+
+    private static PlanEntitlementOverride Override(Guid organizationId, DateTime effectiveFrom) => new()
+    {
+        OrganizationId = organizationId,
+        Key = "staff.max",
+        ValueType = EntitlementValueType.Integer,
+        ValueDecimal = 50m,
+        EffectiveFrom = effectiveFrom,
+        Reason = "Postgres override constraint probe.",
+        CreatedByUserId = Guid.CreateVersion7(),
+    };
 }

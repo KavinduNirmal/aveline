@@ -46,9 +46,14 @@ the generated document is served at `/openapi/v1.json` in Development
 (`Aveline.Api/Program.cs:79`).
 
 `docs/api/openapi.yaml` is the hand-maintained contract. **It is normative for
-shipped endpoints only:** every route the API actually maps must appear in it with
-the shipped method, policy and shapes. Endpoints that have no route are **not** part
-of the normative contract — they are listed only in the fenced
+shipped client-facing endpoints:** every `/api/v1` route the API maps must appear
+in it with the shipped method, policy and shapes, with three deliberate
+exclusions — the `/internal/**` service-to-service surface, the Development-only
+`/api/v1/policies/**` demo routes, and the SignalR hubs
+(`/hubs/notifications`, `/hubs/conversations`), none of which belong in a client
+contract or are expressible as OpenAPI 3.0.3 operations. Those routes are
+documented in prose in this README instead. Endpoints that have no route are
+**not** part of the normative contract — they are listed only in the fenced
 **Appendix P — Planned / not yet implemented** at the end of this document (and in
 the commented YAML sections of `docs/api/openapi.yaml`). The reconciliation
 procedure is:
@@ -113,7 +118,7 @@ header is present, but only for paths beginning `/hubs`
 | `AccountState` | Behaviour |
 | --- | --- |
 | `Active` | Allowed |
-| `OnboardingPending` | Allowed only on profile, organization, invitation, and onboarding routes; otherwise **403 `onboarding-required`** |
+| `OnboardingPending` | Allowed only on profile (`/api/v1/users/me*`), onboarding-wizard (`/api/v1/users/onboarding`, `/api/v1/onboarding`), invitation (`/api/v1/invitations`) and auth-claims (`/api/v1/auth/claims`) routes, plus the single exact path `POST /api/v1/admin/requests`. Raw `/api/v1/orgs*` routes are deliberately **excluded**, and every other path is **403 `onboarding-required`** (`OnboardingMiddleware.cs`) |
 | `Suspended` | **403 `account-suspended`** everywhere |
 
 Responses carry `X-Account-State` and `X-Completed-Onboarding` headers, exposed
@@ -228,8 +233,8 @@ Convention, verified across `ConversationEndpoints`, `NotificationEndpoints`:
 
 | Param | Type | Default | Bounds |
 | --- | --- | --- | --- |
-| `page` | integer | `1` | `>= 1` (`Math.Max(page, 1)`) |
-| `pageSize` | integer | `50` | `1..200` (`Math.Clamp(pageSize, 1, 200)`) |
+| `page` | integer | `1` | `>= 1` (`Math.Max(page, 1)`); upper-bounded at `10 000` on the admin read endpoints |
+| `pageSize` | integer | `50` | `1..200`; values **below** `1` fall back to the default `50` rather than clamping to `1` |
 
 Envelope — note the property is **`total`**, not `totalCount`:
 
@@ -249,9 +254,10 @@ Envelope — note the property is **`total`**, not `totalCount`:
 | `GET /internal/usage/records/{orgId}` | Bare array, no total, `page` not clamped, only `pageSize` clamped |
 | `POST /internal/visual/inventory/search` | Paging in the body, defaults `page=1`, `pageSize=20`, no 200 clamp |
 | `GET /api/v1/orgs/{organizationId}/statistics/**` (Part C) | Follows the standard envelope **exactly** |
+| `GET /admin/audit`, `GET /admin/orgs`, `GET /admin/users` | `pageSize < 1` falls back to the default `50` instead of clamping to `1` (`UserService.cs`, `AuditEndpoints.cs`, `AdminOrganizationEndpoints.cs`) |
 
 **Part C rule:** every paginated response uses the envelope, `total`, and the
-clamp above. New endpoints never return a bare array.
+bounds above. New endpoints never return a bare array.
 
 ### A.5 Idempotency
 
@@ -274,13 +280,17 @@ Idempotency-Key: <opaque string, 1..128 chars, [A-Za-z0-9._:-]>
 | Replay, same key, same body | The **byte-identical** original response, plus `Idempotency-Replayed: true` |
 | Replay, same key, **different** body | `409 { "message": "...", "code": "idempotency-key-reuse" }` |
 | Concurrent request, same key, original still in flight | `409 { "message": "...", "code": "idempotency-key-in-flight" }` |
+| Lease store unreachable | `503 { "message": "...", "code": "idempotency-unavailable" }` — the request is **not executed** |
 | Missing header on a money-shaped POST | `400 { "message": "The Idempotency-Key header is required.", "code": "idempotency-key-required" }` |
 | Retained for | `Billing:IdempotencyRetentionHours`, default 24 h |
 
 Concurrent requests carrying the same key are serialised by a per-key lease, so the
-endpoint executes exactly once: the loser waits for the winner and then replays its
-stored response. The `409 idempotency-key-in-flight` body is returned only when the
-winner is still running after the wait budget expires; retry shortly with the same key.
+endpoint executes exactly once: the loser waits for the winner (up to
+`Billing:IdempotencyLeaseWaitSeconds`, default 10 s) and then replays its stored
+response. The `409 idempotency-key-in-flight` body is returned only when the winner is
+still running after that budget expires. The lease **fails closed**: if the lock store
+is unreachable the request is refused with `503 idempotency-unavailable` rather than
+executed without the exactly-once guard.
 
 **Client guidance:** generate a UUIDv4 per logical operation and reuse it across
 retries. Do **not** reuse a key for a genuinely different operation. Endpoints

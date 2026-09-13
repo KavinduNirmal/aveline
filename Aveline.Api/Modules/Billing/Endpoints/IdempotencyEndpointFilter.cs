@@ -3,6 +3,7 @@ using System.Text;
 using Aveline.Api.Common.Jobs;
 using Aveline.Api.Modules.Billing.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 
 namespace Aveline.Api.Modules.Billing.Endpoints;
 
@@ -11,12 +12,15 @@ namespace Aveline.Api.Modules.Billing.Endpoints;
 /// body returns the stored response with <c>Idempotency-Replayed: true</c>; a replay with
 /// a different body returns 409 <c>idempotency-key-reuse</c>. A per-key distributed lease
 /// serialises concurrent requests carrying the same key so the "exactly once" guarantee is
-/// enforced rather than emergent from the ledger's own dedup (§3.2).
+/// enforced rather than emergent from the ledger's own dedup. The lease **fails closed**:
+/// if the lock store is unreachable the request is refused with 503 rather than allowed to
+/// execute unprotected (disposition §2.1).
 /// </summary>
 public sealed class IdempotencyEndpointFilter(
     IIdempotencyService idempotencyService,
     IDistributedJobLock locks,
-    ILogger<IdempotencyEndpointFilter> logger) : IEndpointFilter
+    ILogger<IdempotencyEndpointFilter> logger,
+    IConfiguration? configuration = null) : IEndpointFilter
 {
     public const string HeaderName = "Idempotency-Key";
     private const int MaxKeyLength = 128;
@@ -24,10 +28,14 @@ public sealed class IdempotencyEndpointFilter(
     /// <summary>Long enough for any endpoint invocation; short enough to recover from a crash.</summary>
     private static readonly TimeSpan LeaseDuration = TimeSpan.FromSeconds(30);
 
-    /// <summary>How long a duplicate waits for the in-flight original before giving up.</summary>
-    private static readonly TimeSpan LeaseWait = TimeSpan.FromSeconds(10);
-
     private static readonly TimeSpan LeasePollInterval = TimeSpan.FromMilliseconds(25);
+
+    /// <summary>
+    /// How long a duplicate waits for the in-flight original before giving up. Configurable
+    /// (<c>Billing:IdempotencyLeaseWaitSeconds</c>) so the timeout path is testable.
+    /// </summary>
+    private readonly TimeSpan _leaseWait = TimeSpan.FromSeconds(
+        Math.Max(0, configuration?.GetValue("Billing:IdempotencyLeaseWaitSeconds", 10) ?? 10));
 
     public async ValueTask<object?> InvokeAsync(
         EndpointFilterInvocationContext context, EndpointFilterDelegate next)
@@ -68,10 +76,30 @@ public sealed class IdempotencyEndpointFilter(
         var actorUserId = ResolveActorUserId(http);
 
         // Serialise on the key: without this, two simultaneous requests both miss the lookup
-        // below and both execute the endpoint (§3.2). The loser of the race waits and then
-        // replays the winner's stored response.
-        await using var lease = await AcquireLeaseAsync(
-            organizationId, endpoint, httpMethod, key, http.RequestAborted);
+        // below and both execute the endpoint. The loser of the race waits and then replays
+        // the winner's stored response.
+        IAsyncDisposable? lease;
+        try
+        {
+            lease = await AcquireLeaseAsync(
+                organizationId, endpoint, httpMethod, key, http.RequestAborted);
+        }
+        catch (IdempotencyLeaseUnavailableException exception)
+        {
+            // Fail closed rather than run an idempotent money operation unprotected.
+            logger.LogError(
+                exception,
+                "Idempotency lease store unavailable for key {Key}; refusing the request.",
+                key);
+            return Results.Json(
+                new
+                {
+                    code = "idempotency-unavailable",
+                    message = "The idempotency guard is unavailable, so the request was not executed. Retry shortly.",
+                },
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+
         if (lease is null)
         {
             return Results.Conflict(new
@@ -80,6 +108,29 @@ public sealed class IdempotencyEndpointFilter(
                 message = "Another request with the same Idempotency-Key is still in flight. Retry shortly.",
             });
         }
+
+        await using (lease)
+        {
+            return await ExecuteAsync(
+                context, next, organizationId, actorUserId, endpoint, httpMethod, key, requestHash);
+        }
+    }
+
+    /// <summary>
+    /// Runs the endpoint while the key's lease is held, replaying a stored response when one
+    /// exists and storing the result of a fresh execution otherwise.
+    /// </summary>
+    private async Task<object?> ExecuteAsync(
+        EndpointFilterInvocationContext context,
+        EndpointFilterDelegate next,
+        Guid? organizationId,
+        Guid? actorUserId,
+        string endpoint,
+        string httpMethod,
+        string key,
+        string requestHash)
+    {
+        var http = context.HttpContext;
 
         IdempotencyReplay? replay;
         try
@@ -144,12 +195,14 @@ public sealed class IdempotencyEndpointFilter(
     /// Takes a short distributed lease on the (organization, endpoint, method, key) tuple so
     /// only one request executes it. The lock is the same atomic mutex the scheduled jobs
     /// use, so it is correct across instances with Redis and process-local otherwise.
+    /// Returns <c>null</c> when the original holder is still running; throws
+    /// <see cref="IdempotencyLeaseUnavailableException"/> when the store itself fails.
     /// </summary>
     private async Task<IAsyncDisposable?> AcquireLeaseAsync(
         Guid? organizationId, string endpoint, string httpMethod, string key, CancellationToken ct)
     {
         var leaseKey = $"idempotency:{organizationId?.ToString() ?? "global"}:{httpMethod}:{endpoint}:{key}";
-        var deadline = DateTime.UtcNow + LeaseWait;
+        var deadline = DateTime.UtcNow + _leaseWait;
 
         while (true)
         {
@@ -160,14 +213,8 @@ public sealed class IdempotencyEndpointFilter(
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                // The lease store is down. Turning a lock outage into a billing outage would
-                // be worse than the concurrency window, so fall back to the ledger-level
-                // dedup that protected this path before the lease existed.
-                logger.LogWarning(
-                    exception,
-                    "Idempotency lease store unavailable for key {Key}; continuing without a lease.",
-                    key);
-                return NoOpLease.Instance;
+                // Never degrade to an unguarded execution: the caller is refused instead.
+                throw new IdempotencyLeaseUnavailableException(exception);
             }
 
             if (handle is not null)
@@ -185,14 +232,6 @@ public sealed class IdempotencyEndpointFilter(
 
             await Task.Delay(LeasePollInterval, ct);
         }
-    }
-
-    /// <summary>Used when the lease store is unreachable; releasing it is a no-op.</summary>
-    private sealed class NoOpLease : IAsyncDisposable
-    {
-        public static readonly NoOpLease Instance = new();
-
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private async Task PersistAsync(

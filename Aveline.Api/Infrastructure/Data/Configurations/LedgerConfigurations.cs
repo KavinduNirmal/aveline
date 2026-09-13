@@ -113,7 +113,9 @@ public class IdempotencyRecordConfiguration : IEntityTypeConfiguration<Idempoten
 
         // HttpMethod is part of the key: the same (organization, endpoint, key) tuple reused
         // with a different verb is a different operation, and omitting the verb produced a
-        // false 409 for that case (H-1(d)).
+        // false 409 for that case (H-1(d)). The index is partial on a non-null organization
+        // so two org-less records with the same key cannot collide (disposition §2.2); every
+        // filtered route carries an organizationId.
         builder.HasIndex(record => new
             {
                 record.OrganizationId,
@@ -122,7 +124,7 @@ public class IdempotencyRecordConfiguration : IEntityTypeConfiguration<Idempoten
                 record.IdempotencyKey,
             })
             .IsUnique()
-            .AreNullsDistinct(false)
+            .HasFilter("\"OrganizationId\" IS NOT NULL")
             .HasDatabaseName("IX_IdempotencyRecords_Org_Endpoint_Method_Key");
 
         builder.HasIndex(record => record.ExpiresAt);

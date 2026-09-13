@@ -12,6 +12,14 @@ public sealed class IdempotencyKeyReuseException()
     : Exception("The Idempotency-Key was already used with a different request body.");
 
 /// <summary>
+/// The idempotency lease store is unreachable. The endpoint filter fails closed: it refuses
+/// the request with 503 rather than executing an idempotent money operation without the
+/// exactly-once guarantee (disposition §2.1).
+/// </summary>
+public sealed class IdempotencyLeaseUnavailableException(Exception inner)
+    : Exception("The idempotency lease store is unavailable.", inner);
+
+/// <summary>
 /// Idempotent replay store operations (FR-2.7, BR-2.8, BR-2.9). Kept separate from the
 /// HTTP filter so the replay decision is unit-testable.
 /// </summary>

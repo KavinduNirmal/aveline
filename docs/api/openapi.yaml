@@ -47,7 +47,9 @@ info:
     with a different body returns `409` with `code: idempotency-key-reuse`. Concurrent
     requests carrying the same key are serialised: the first executes and the rest replay
     its response, or receive `409` with `code: idempotency-key-in-flight` if the original
-    is still running when the wait budget expires.
+    is still running when the wait budget expires. If the lease store is unreachable the
+    request is not executed and returns `503` with `code: idempotency-unavailable` (the
+    guard fails closed).
 
     ## Statistics data quality
     Several statistics depend on instrumentation that is not yet complete. Every
@@ -307,6 +309,13 @@ paths:
         - name: accountState
           in: query
           schema: { $ref: "#/components/schemas/AccountState" }
+        - name: state
+          in: query
+          deprecated: true
+          schema: { $ref: "#/components/schemas/AccountState" }
+          description: |
+            Legacy alias of `accountState`; both are bound and either may be used. When
+            both are supplied, `accountState` wins.
         - name: organizationId
           in: query
           schema: { type: string, format: uuid }
@@ -343,8 +352,7 @@ paths:
                   enum: [OnboardingPending, Active, Suspended]
                 reason:
                   type: string
-                  description: Optional justification persisted on the audit row.
-                  minLength: 10
+                  description: Optional justification persisted on the audit row (trimmed, no minimum length).
                   maxLength: 500
       responses:
         "200":
@@ -2263,8 +2271,10 @@ paths:
         recompute job is not scheduled, so the handler always returns `501`, even
         though the ledger itself has shipped. The intended behaviour is to write
         compensating ledger entries and never mutate `AiUsageRecord`; when it ships,
-        the intended body is `{ asOf, dryRun }` and the intended `200` body is
-        `PricingRecomputeResult`. Always run it with `dryRun: true` first. The
+        the intended body is `{ asOf, dryRun }` and the intended `200` body records
+        `asOf`, `dryRun`, the affected providers/models, `recordCount`, the current
+        and recomputed Blossom totals, `deltaBlossoms`, `organizationsAffected` and
+        `ledgerEntriesWritten`. Always run it with `dryRun: true` first. The
         handler ignores the request body today.
       operationId: recomputePricingRule
       responses:
@@ -2468,10 +2478,10 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
-  /api/v1/orgs/{organizationId}/statistics/agents/runs/{workflowRunId}:
+  /api/v1/orgs/{organizationId}/statistics/agents/runs/{runId}:
     parameters:
       - $ref: "#/components/parameters/OrganizationId"
-      - name: workflowRunId
+      - name: runId
         in: path
         required: true
         schema: { type: string, format: uuid }
@@ -3685,7 +3695,9 @@ components:
         different body returns `409` with `code: idempotency-key-reuse`. Concurrent
         requests with the same key are serialised by a short lease, so exactly one
         executes; `409` with `code: idempotency-key-in-flight` means the original was
-        still running when the wait budget expired.
+        still running when the wait budget expired, and `503` with
+        `code: idempotency-unavailable` means the lease store was unreachable so the
+        request was refused (the guard fails closed).
 
   responses:
     Unauthorized:
@@ -4566,23 +4578,6 @@ components:
             items:
               type: array
               items: { $ref: "#/components/schemas/PricingRule" }
-    PricingRecomputeResult:
-      type: object
-      properties:
-        asOf: { type: string, format: date-time }
-        dryRun: { type: boolean }
-        affectedProviders:
-          type: array
-          items: { type: string }
-        affectedModels:
-          type: array
-          items: { type: string }
-        recordCount: { type: integer }
-        currentBlossomTotal: { type: number }
-        recomputedBlossomTotal: { type: number }
-        deltaBlossoms: { type: number }
-        organizationsAffected: { type: integer }
-        ledgerEntriesWritten: { type: integer }
     PricingSkuKind:
       type: string
       enum: [PlanAllowance, TopUpPack, OverageUsage]

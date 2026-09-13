@@ -6,6 +6,7 @@ using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Billing.Services;
 using Aveline.Api.Modules.Organizations.Repositories;
 using Aveline.Api.Modules.Shared.Services;
+using Microsoft.EntityFrameworkCore;
 
 namespace Aveline.Api.Modules.Admin.Endpoints;
 
@@ -94,6 +95,17 @@ public static class AdminOrganizationEndpoints
             catch (OrganizationNotFoundException ex)
             {
                 return Results.NotFound(new { message = ex.Message });
+            }
+            catch (DbUpdateException)
+            {
+                // The database non-overlap exclusion constraint refused a window that a
+                // concurrent request created after the application-level check (§2.4).
+                return Results.Conflict(new
+                {
+                    code = "override-overlap",
+                    message = "Another override for the same key now covers this window. "
+                              + "Retry with the current state.",
+                });
             }
         }).RequireAuthorization(Permissions.BillingAdjust);
 

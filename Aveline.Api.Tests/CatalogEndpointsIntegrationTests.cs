@@ -137,6 +137,19 @@ public class CatalogEndpointsIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AnalyzeImage_WithoutAuth_ReturnsUnauthorized()
+    {
+        // Regression guard: this route previously carried .AllowAnonymous(), which let an
+        // unauthenticated caller invoke the paid Vision AI provider against any organization.
+        var orgId = Guid.NewGuid();
+        var response = await _client.PostAsJsonAsync(
+            $"/api/v1/orgs/{orgId}/catalog/analyze-image",
+            new AnalyzeImageDto { ImageUrl = "https://images.aveline.luxury/evening-dress.jpg" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
     public async Task GetItems_WithActiveMember_ReturnsOk()
     {
         var (user, org) = await SeedMemberAndOrgAsync("cat_items");

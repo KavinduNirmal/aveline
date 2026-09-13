@@ -275,4 +275,80 @@ public class PricingEndpointsIntegrationTests : IAsyncLifetime
         var items = JsonDocument.Parse(await list.Content.ReadAsStringAsync()).RootElement;
         Assert.True(items.GetArrayLength() >= 1);
     }
+
+    [Theory]
+    [InlineData(Roles.BoutiqueOwner)]
+    [InlineData(Roles.BoutiqueManager)]
+    public async Task PricingReads_AsBoutiqueRoles_Return403(string orgRole)
+    {
+        var clerkId = $"pricing_read_{orgRole.Replace(':', '_')}";
+        await SeedUserAsync(clerkId, Roles.Staff);
+        var token = CreateToken(clerkId, orgRole: orgRole);
+
+        var paths = new[]
+        {
+            "/api/v1/admin/pricing/rules",
+            $"/api/v1/admin/pricing/rules/{Guid.CreateVersion7()}",
+            "/api/v1/admin/pricing/price-book",
+            $"/api/v1/admin/pricing/price-book/{Guid.CreateVersion7()}",
+        };
+
+        foreach (var path in paths)
+        {
+            var response = await _client.SendAsync(Authorized(HttpMethod.Get, path, token));
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+    }
+
+    [Fact]
+    public async Task PricingReads_AsTeamAdmin_Return200()
+    {
+        await SeedUserAsync("pricing_read_team_admin", Roles.Admin);
+        var token = CreateToken("pricing_read_team_admin", userRole: Roles.Admin);
+
+        var rules = await _client.SendAsync(
+            Authorized(HttpMethod.Get, "/api/v1/admin/pricing/rules", token));
+        Assert.Equal(HttpStatusCode.OK, rules.StatusCode);
+
+        var priceBook = await _client.SendAsync(
+            Authorized(HttpMethod.Get, "/api/v1/admin/pricing/price-book", token));
+        Assert.Equal(HttpStatusCode.OK, priceBook.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetPriceEntry_IsScopedToTheOwningOrganization()
+    {
+        await SeedUserAsync("pricing_read_org_admin", Roles.Admin);
+        var token = CreateToken("pricing_read_org_admin", userRole: Roles.Admin);
+        var owningOrganization = Guid.CreateVersion7();
+        var otherOrganization = Guid.CreateVersion7();
+
+        var body = new Dictionary<string, object?>
+        {
+            ["organizationId"] = owningOrganization,
+            ["skuKind"] = "PlanAllowance",
+            ["blossomQuantity"] = 100,
+            ["priceLkr"] = 990.00m,
+            ["effectiveFrom"] = DateTime.UtcNow.AddDays(1).ToString("O"),
+            ["changeReason"] = "Per-organization price entry for tenant isolation.",
+        };
+
+        var create = await _client.SendAsync(
+            Authorized(HttpMethod.Post, "/api/v1/admin/pricing/price-book", token, body));
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var entryId = JsonDocument.Parse(await create.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("id").GetString();
+
+        var crossOrganization = await _client.SendAsync(Authorized(
+            HttpMethod.Get,
+            $"/api/v1/admin/pricing/price-book/{entryId}?organizationId={otherOrganization}",
+            token));
+        Assert.Equal(HttpStatusCode.NotFound, crossOrganization.StatusCode);
+
+        var owning = await _client.SendAsync(Authorized(
+            HttpMethod.Get,
+            $"/api/v1/admin/pricing/price-book/{entryId}?organizationId={owningOrganization}",
+            token));
+        Assert.Equal(HttpStatusCode.OK, owning.StatusCode);
+    }
 }

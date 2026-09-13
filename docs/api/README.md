@@ -749,7 +749,9 @@ below is registered under the `/api/v1` group unless the path says otherwise.
 > Phase 2 ledger ships.
 
 Permissions: `pricing:view` (read), `pricing:manage` (write), `pricing:backdate`
-(past effective dates). **Never available to boutique roles.**
+(past effective dates). **Never available to boutique roles.** The read routes are
+enforced by the team-only `PricingAdminRead` policy (Admin or Owner, #237); the
+write routes need `pricing:manage`.
 
 ---
 
@@ -907,6 +909,10 @@ rule. `POST` body: `{ planTier?, organizationId?, skuKind, skuCode?, blossomQuan
 priceLkr, effectiveFrom, changeReason }` where `skuKind` ∈
 `PlanAllowance | TopUpPack | OverageUsage`.
 **Errors:** identical set to the rules endpoints.
+
+`GET /price-book/{entryId:guid}` accepts an optional `organizationId` query filter.
+A global entry (no `organizationId`) is always readable; a per-organization override
+is readable only when the caller passes that same `organizationId` (#237).
 
 ---
 

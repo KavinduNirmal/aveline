@@ -137,6 +137,16 @@ BR-1.8 activation impossible. Drafts may therefore overlap; activation supersede
 the predecessor atomically. See
 [domain-model.md §3.1](domain-model.md#31-blossomconversionrule--blossomconversionrules).
 
+**Security deviation (#237):** [backend-requirements.md §3.5](backend-requirements.md#35-permissions)
+lists `pricing:view` as granted to boutique owner/manager, but the admin pricing
+**read** routes are gated by the team-only `PricingAdminRead` policy (Admin or
+Owner) so the two documents agree with [../api/README.md §C.1](../api/README.md)
+("never available to boutique roles"). The boutique grant remains in the permission
+catalog for any future boutique-facing read surface; it no longer reaches
+`/admin/pricing/**`. The `GET /admin/pricing/price-book/{entryId}` lookup also takes
+an optional `organizationId` and refuses a per-organization override outside that
+organization (global entries stay readable).
+
 **Deferred to Phase 2:** `AiUsageRecord` pricing-snapshot columns and
 `POST /admin/pricing/rules/{ruleId}/recompute` (which writes ledger corrections).
 

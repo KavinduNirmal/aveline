@@ -85,7 +85,8 @@ public interface IPricingService
     Task<BlossomPriceEntry> UpdatePriceEntryAsync(
         Guid entryId, UpdatePriceEntryCommand command, CancellationToken cancellationToken = default);
 
-    Task<BlossomPriceEntry?> GetPriceEntryAsync(Guid entryId, CancellationToken cancellationToken = default);
+    Task<BlossomPriceEntry?> GetPriceEntryAsync(
+        Guid entryId, Guid? organizationId, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<BlossomPriceEntry>> ListPriceEntriesAsync(
         BlossomSkuKind? skuKind,

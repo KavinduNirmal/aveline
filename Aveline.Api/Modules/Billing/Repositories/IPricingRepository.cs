@@ -39,7 +39,17 @@ public interface IPricingRepository
     Task<BlossomPriceEntry> AddPriceEntryAsync(
         BlossomPriceEntry entry, CancellationToken cancellationToken = default);
 
-    Task<BlossomPriceEntry?> GetPriceEntryAsync(Guid entryId, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Reads a price entry scoped to the caller's organization context: a global entry
+    /// (<see cref="BlossomPriceEntry.OrganizationId"/> <c>null</c>) is always readable, a
+    /// per-organization override is readable only when it belongs to
+    /// <paramref name="organizationId"/> (H-4 defence in depth).
+    /// </summary>
+    Task<BlossomPriceEntry?> GetPriceEntryAsync(
+        Guid entryId, Guid? organizationId, CancellationToken cancellationToken = default);
+
+    /// <summary>Unscoped lookup used by the authenticated write path to locate any entry.</summary>
+    Task<BlossomPriceEntry?> FindPriceEntryAsync(Guid entryId, CancellationToken cancellationToken = default);
 
     Task UpdatePriceEntryAsync(BlossomPriceEntry entry, CancellationToken cancellationToken = default);
 

@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Aveline.Api.Authorization;
+using Aveline.Api.Configurations;
 using Aveline.Api.Modules.Billing.DTOs;
 using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Billing.Repositories;
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore;
 namespace Aveline.Api.Modules.Billing.Endpoints;
 
 /// <summary>
-/// Administrative pricing endpoints (docs/api/README.md §C.1). Read requires
-/// <c>pricing:view</c>; write requires <c>pricing:manage</c>; a past effective date
-/// additionally requires <c>pricing:backdate</c>.
+/// Administrative pricing endpoints (docs/api/README.md §C.1). Reads are team-only
+/// (<c>PricingAdminRead</c>: Admin or Owner), because the API catalogue states
+/// <c>pricing:view</c> is never available to boutique roles; write requires
+/// <c>pricing:manage</c>; a past effective date additionally requires
+/// <c>pricing:backdate</c>.
 /// </summary>
 public static class PricingEndpoints
 {
@@ -41,14 +44,14 @@ public static class PricingEndpoints
             var filter = new PricingRuleFilter(parsedScope, provider, model, parsedStatus, activeAt);
             var result = await pricing.ListRulesAsync(filter, page ?? 1, pageSize ?? 50, ct);
             return Results.Ok(PricingRulePageDto.From(result));
-        }).RequireAuthorization(Permissions.PricingView);
+        }).RequireAuthorization(AuthorizationConfiguration.PricingAdminReadPolicy);
 
         group.MapGet("/rules/{ruleId:guid}", async (
             Guid ruleId, IPricingService pricing, CancellationToken ct) =>
         {
             var rule = await pricing.GetRuleAsync(ruleId, ct);
             return rule is null ? Results.NotFound() : Results.Ok(PricingRuleDto.From(rule));
-        }).RequireAuthorization(Permissions.PricingView);
+        }).RequireAuthorization(AuthorizationConfiguration.PricingAdminReadPolicy);
 
         group.MapPost("/rules", async (
             CreatePricingRuleRequest request,
@@ -178,14 +181,17 @@ public static class PricingEndpoints
 
             var entries = await pricing.ListPriceEntriesAsync(parsedSku, parsedTier, organizationId, ct);
             return Results.Ok(entries.Select(PricingPriceEntryDto.From));
-        }).RequireAuthorization(Permissions.PricingView);
+        }).RequireAuthorization(AuthorizationConfiguration.PricingAdminReadPolicy);
 
         group.MapGet("/price-book/{entryId:guid}", async (
-            Guid entryId, IPricingService pricing, CancellationToken ct) =>
+            Guid entryId,
+            Guid? organizationId,
+            IPricingService pricing,
+            CancellationToken ct) =>
         {
-            var entry = await pricing.GetPriceEntryAsync(entryId, ct);
+            var entry = await pricing.GetPriceEntryAsync(entryId, organizationId, ct);
             return entry is null ? Results.NotFound() : Results.Ok(PricingPriceEntryDto.From(entry));
-        }).RequireAuthorization(Permissions.PricingView);
+        }).RequireAuthorization(AuthorizationConfiguration.PricingAdminReadPolicy);
 
         group.MapPost("/price-book", async (
             CreatePriceEntryRequest request,

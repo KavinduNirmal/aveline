@@ -219,6 +219,15 @@ policy per member (`AuthorizationConfiguration.cs:91-95`), adding to
 `Permissions.All` automatically registers the new policies. No new policy
 constant is required.
 
+> **Admin surface is team-only (#237).** The `pricing:view` grant to
+> `org:boutique_owner` / `org:boutique_manager` above describes the permission
+> catalog only. The `/admin/pricing/**` read routes are gated by the team-only
+> `PricingAdminRead` policy (Admin or Owner), matching
+> [../api/README.md §C.1](../api/README.md), which states these permissions are
+> never available to boutique roles. The price-entry lookup is additionally scoped
+> to the caller's organization: a global entry remains readable, while a
+> per-organization override is readable only within its own organization.
+
 ### 3.6 Events, jobs, and webhooks
 
 | Kind | Name | Trigger | Payload |

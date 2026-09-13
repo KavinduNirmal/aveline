@@ -239,7 +239,7 @@ public sealed class PricingService(
     public async Task<BlossomPriceEntry> UpdatePriceEntryAsync(
         Guid entryId, UpdatePriceEntryCommand command, CancellationToken cancellationToken = default)
     {
-        var entry = await repository.GetPriceEntryAsync(entryId, cancellationToken)
+        var entry = await repository.FindPriceEntryAsync(entryId, cancellationToken)
             ?? throw new PricingPriceEntryNotFoundException(entryId);
 
         var quantity = command.BlossomQuantity ?? entry.BlossomQuantity;
@@ -280,8 +280,8 @@ public sealed class PricingService(
     }
 
     public Task<BlossomPriceEntry?> GetPriceEntryAsync(
-        Guid entryId, CancellationToken cancellationToken = default) =>
-        repository.GetPriceEntryAsync(entryId, cancellationToken);
+        Guid entryId, Guid? organizationId, CancellationToken cancellationToken = default) =>
+        repository.GetPriceEntryAsync(entryId, organizationId, cancellationToken);
 
     public Task<IReadOnlyList<BlossomPriceEntry>> ListPriceEntriesAsync(
         BlossomSkuKind? skuKind,

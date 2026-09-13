@@ -96,6 +96,15 @@ public sealed class PricingRepository(AppDbContext db) : IPricingRepository
     }
 
     public Task<BlossomPriceEntry?> GetPriceEntryAsync(
+        Guid entryId, Guid? organizationId, CancellationToken cancellationToken = default) =>
+        db.BlossomPriceEntries
+            .Where(entry => entry.Id == entryId)
+            // Defence in depth (H-4): a global entry is readable; a per-organization
+            // override only within its own organization.
+            .Where(entry => entry.OrganizationId == null || entry.OrganizationId == organizationId)
+            .FirstOrDefaultAsync(cancellationToken);
+
+    public Task<BlossomPriceEntry?> FindPriceEntryAsync(
         Guid entryId, CancellationToken cancellationToken = default) =>
         db.BlossomPriceEntries.FirstOrDefaultAsync(entry => entry.Id == entryId, cancellationToken);
 

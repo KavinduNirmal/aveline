@@ -79,6 +79,13 @@ public static class AuthorizationConfiguration
     public const string AuditViewPolicy = "AuditView";
 
     /// <summary>
+    /// Team-only policy for the admin pricing read surface (docs/api/README.md §C.1):
+    /// the API catalogue states <c>pricing:view</c> is never available to boutique roles,
+    /// so the read routes require an Aveline team role rather than the bare permission.
+    /// </summary>
+    public const string PricingAdminReadPolicy = "PricingAdminRead";
+
+    /// <summary>
     /// An org-scoped policy accepts either a Clerk bearer token or an API key. API-key
     /// principals are evaluated by scope in the authorization handlers (A-10); team-only
     /// policies deliberately omit the API-key scheme.
@@ -187,6 +194,8 @@ public static class AuthorizationConfiguration
             options.AddPolicy(StatsSystemPolicy, p => p.RequireRole(Roles.Owner, Roles.Admin));
 
             options.AddPolicy(AuditViewPolicy, p => p.RequireRole(Roles.Owner, Roles.Admin));
+
+            options.AddPolicy(PricingAdminReadPolicy, p => p.RequireRole(Roles.Owner, Roles.Admin));
 
             // Permission-based policies (one per permission in the catalog).
             foreach (var permission in Permissions.All)

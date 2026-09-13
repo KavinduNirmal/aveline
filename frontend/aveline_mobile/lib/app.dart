@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:app_links/app_links.dart';
 import 'package:clerk_flutter/clerk_flutter.dart';
 import 'package:dio/dio.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -108,7 +109,12 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
     _ownerOnboardingProvider = OwnerOnboardingProvider(OwnerOnboardingApi(_dio));
     _notificationProvider = NotificationProvider();
     _pushNotificationService = PushNotificationService(
-      FirebasePushTokenSource(FirebaseMessaging.instance),
+      // Firebase is initialized best-effort in `main()`. When it is unavailable
+      // (no `google-services.json`, no network at startup) fall back to a no-op
+      // source so push is disabled instead of crashing the whole shell.
+      Firebase.apps.isEmpty
+          ? const NoopPushTokenSource()
+          : FirebasePushTokenSource(FirebaseMessaging.instance),
       DioDeviceTokenApi(_dio),
       Platform.isIOS ? 'IOS' : 'Android',
     );

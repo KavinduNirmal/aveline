@@ -12,10 +12,12 @@ public interface IUserRepository
 
     /// <summary>
     /// Cross-organization paginated user search for Aveline support staff (FR-3.7).
+    /// <paramref name="organizationId"/> filters through the membership table.
     /// </summary>
     Task<(IReadOnlyList<User> Items, int Total)> SearchAsync(
         string? term,
         AccountState? state,
+        Guid? organizationId,
         int page,
         int pageSize,
         CancellationToken cancellationToken = default);

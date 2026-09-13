@@ -14,7 +14,9 @@ namespace Aveline.Api.Modules.Shared.Services;
 
 public class UserService : IUserService
 {
-    private const int MaxMemberPageSize = 100;
+    /// <summary>The admin user search paging convention (docs/api/README.md §A.4): 50 default / 200 max.</summary>
+    private const int DefaultAdminUserPageSize = 50;
+    private const int MaxAdminUserPageSize = 200;
 
     private readonly IUserRepository _userRepository;
     private readonly IUserCacheService _cacheService;
@@ -381,6 +383,7 @@ public class UserService : IUserService
         Guid userId,
         AccountState state,
         Guid actorUserId,
+        string? reason = null,
         CancellationToken cancellationToken = default)
     {
         var user = await _userRepository.GetByIdAsync(userId, cancellationToken);
@@ -410,7 +413,8 @@ public class UserService : IUserService
                 user.Id.ToString(),
                 ActorKind: AuditActorKind.User,
                 ActorUserId: actorUserId,
-                After: new { AccountState = state.ToString() }), cancellationToken);
+                After: new { AccountState = state.ToString() },
+                Reason: string.IsNullOrWhiteSpace(reason) ? null : reason.Trim()), cancellationToken);
         }
 
         if (_eventBus is not null)
@@ -426,15 +430,18 @@ public class UserService : IUserService
     public async Task<PagedUsers> SearchUsersAsync(
         string? search,
         AccountState? state,
+        Guid? organizationId,
         int page,
         int pageSize,
         CancellationToken cancellationToken = default)
     {
         page = page < 1 ? 1 : page;
-        pageSize = pageSize is < 1 or > MaxMemberPageSize ? 20 : pageSize;
+        pageSize = pageSize < 1
+            ? DefaultAdminUserPageSize
+            : Math.Min(pageSize, MaxAdminUserPageSize);
 
         var (items, total) = await _userRepository.SearchAsync(
-            search, state, page, pageSize, cancellationToken);
+            search, state, organizationId, page, pageSize, cancellationToken);
 
         return new PagedUsers(items.Select(UserDto.FromEntity).ToArray(), page, pageSize, total);
     }

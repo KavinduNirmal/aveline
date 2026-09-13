@@ -4,7 +4,29 @@ namespace Aveline.Api.Modules.Billing.Models;
 public abstract class PricingDomainException(string message) : Exception(message);
 
 /// <summary>Field or business validation failed (HTTP 400).</summary>
-public sealed class PricingValidationException(string message) : PricingDomainException(message);
+public class PricingValidationException(string message) : PricingDomainException(message)
+{
+    /// <summary>Machine-readable discriminator surfaced in the <c>400</c> body (docs/api/README.md §C.1).</summary>
+    public virtual string Code => "validation";
+}
+
+/// <summary>
+/// The declared scope disagrees with the supplied provider/model (HTTP 400,
+/// <c>scope-inconsistent</c>).
+/// </summary>
+public sealed class PricingScopeInconsistentException(string message) : PricingValidationException(message)
+{
+    public override string Code => "scope-inconsistent";
+}
+
+/// <summary>The rule is no longer a Draft and cannot transition (HTTP 400, <c>rule-not-draft</c>).</summary>
+public sealed class PricingRuleNotDraftException(string message) : PricingDomainException(message);
+
+/// <summary>
+/// Cancelling the rule would strand already-priced usage; supersede it instead
+/// (HTTP 400, <c>rule-priced</c>).
+/// </summary>
+public sealed class PricingRuleHasPricedUsageException(string message) : PricingDomainException(message);
 
 /// <summary>A backdated effective date requires <c>pricing:backdate</c> (HTTP 403).</summary>
 public sealed class PricingBackdateForbiddenException(string message) : PricingDomainException(message);

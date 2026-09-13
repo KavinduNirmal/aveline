@@ -1329,8 +1329,11 @@ beyond that dialog.
 > repeat); `GET /users/me/sessions` returns `[{ id, status, createdAt, lastActiveAt,
 > expireAt }]` proxied from Clerk; `POST /users/me/sessions/revoke-all` returns
 > `{ revoked }`; `PATCH /admin/users/{userId}/state` accepts `OnboardingPending`,
-> `Active` or `Suspended` and enforces the FR-3.9 matrix with **409** on an invalid
-> transition; `GET /admin/users` returns `{ items, page, pageSize, total }`. New in
+> `Active` or `Suspended`, persists the optional `reason` on the audit row, and
+> enforces the FR-3.9 matrix with **409** on an invalid transition; `GET /admin/users`
+> returns `{ items, page, pageSize, total }`, binds the documented `accountState` and
+> `organizationId` filters through the membership table, pages at the §A.4 convention
+> (50/200), and still accepts `state` as a legacy alias for `accountState`. New in
 > this phase: `PATCH /orgs/{organizationId}` (settings, AI fields entitlement-gated,
 > **409** on slug collision), `GET /orgs/{organizationId}/settings`,
 > `GET /orgs/{organizationId}/members` (filters `status`, `role`, `q`) and
@@ -1345,7 +1348,7 @@ beyond that dialog.
 | `GET` | `/api/v1/users/me/sessions` | authenticated | — | `{ items: [{ id, ipAddressHash, userAgent, createdAt, lastActiveAt, isCurrent }] }` |
 | `POST` | `/api/v1/users/me/sessions/revoke-all` | authenticated | `{ exceptCurrent?: boolean }` | `204` |
 | `GET` | `/api/v1/admin/users` | `admin:users:read` | query: `page`, `pageSize`, `q`, `accountState`, `organizationId` | `AdminUserPage` |
-| `PATCH` | `/api/v1/admin/users/{userId:guid}/state` | `admin:users:manage` | `{ accountState: "Active" \| "Suspended", reason }` | `UserDto` |
+| `PATCH` | `/api/v1/admin/users/{userId:guid}/state` | `admin:users:manage` | `{ accountState: "Active" \| "Suspended", reason?: string }` | `UserDto` |
 | `PATCH` | `/api/v1/orgs/{organizationId:guid}` | `settings:manage` | see below | `OrganizationProfileDto` |
 | `GET` | `/api/v1/orgs/{organizationId:guid}/settings` | `settings:manage` | — | settings + entitlements |
 | `GET` | `/api/v1/orgs/{organizationId:guid}/members` | `settings:manage` | query: `page`, `pageSize`, `status?`, `role?`, `q?` | `MemberPage` |

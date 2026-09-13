@@ -31,17 +31,20 @@ public interface IUserService
 
     /// <summary>
     /// Administrator account-state change, enforcing the FR-3.9 transition matrix.
+    /// <paramref name="reason"/> is persisted on the audit row as the justification.
     /// </summary>
     Task<UserDto> ChangeAccountStateAsync(
         Guid userId,
         AccountState state,
         Guid actorUserId,
+        string? reason = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>Cross-organization paginated user search for Aveline support staff (FR-3.7).</summary>
     Task<PagedUsers> SearchUsersAsync(
         string? search,
         AccountState? state,
+        Guid? organizationId,
         int page,
         int pageSize,
         CancellationToken cancellationToken = default);

@@ -328,13 +328,14 @@ paths:
           application/json:
             schema:
               type: object
-              required: [accountState, reason]
+              required: [accountState]
               properties:
                 accountState:
                   type: string
                   enum: [Active, Suspended]
                 reason:
                   type: string
+                  description: Optional justification persisted on the audit row.
                   minLength: 10
                   maxLength: 500
       responses:

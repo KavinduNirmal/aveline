@@ -9,6 +9,7 @@ using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Infrastructure.Integrations;
 using Aveline.Api.Modules.ApiAccess.Domain;
 using Aveline.Api.Modules.ApiAccess.Models;
+using Aveline.Api.Modules.Audit.Models;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Shared.Models;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -111,7 +112,7 @@ public class UserAccountStateTests : IAsyncLifetime
         return user;
     }
 
-    private static async Task SeedMembershipAsync(Guid userId)
+    private static async Task<Guid> SeedMembershipAsync(Guid userId)
     {
         await using var context = CreateContext();
         var org = new Organization
@@ -129,6 +130,7 @@ public class UserAccountStateTests : IAsyncLifetime
             Status = MembershipStatus.Active,
         });
         await context.SaveChangesAsync();
+        return org.Id;
     }
 
     private string CreateToken(string clerkId, string? userRole = null, string? orgRole = null)
@@ -190,7 +192,7 @@ public class UserAccountStateTests : IAsyncLifetime
     {
         var clerkId = $"delete_{Guid.NewGuid():N}";
         var user = await SeedUserAsync(clerkId);
-        await SeedMembershipAsync(user.Id);
+        _ = await SeedMembershipAsync(user.Id);
         var token = CreateToken(clerkId, orgRole: Roles.BoutiqueOwner);
 
         Guid keyId;
@@ -281,6 +283,110 @@ public class UserAccountStateTests : IAsyncLifetime
             HttpMethod.Patch, $"/api/v1/admin/users/{target.Id}/state", token,
             new { accountState = "OnboardingPending" }));
         Assert.Equal(HttpStatusCode.Conflict, invalid.StatusCode);
+    }
+
+    [Fact]
+    public async Task AdminUserSearch_BindsAccountState_PreferentiallyOverTheStateAlias()
+    {
+        var adminClerk = $"filteradmin_{Guid.NewGuid():N}";
+        await SeedUserAsync(adminClerk);
+        var marker = Guid.NewGuid().ToString("N");
+        await SeedUserAsync($"filter_suspended_{marker}", AccountState.Suspended);
+        await SeedUserAsync($"filter_active_{marker}", AccountState.Active);
+        var token = CreateToken(adminClerk, userRole: Roles.Admin);
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Get, $"/api/v1/admin/users?accountState=Suspended&q={marker}", token));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await BodyAsync(response);
+        Assert.Equal(1, body.GetProperty("total").GetInt32());
+        Assert.Equal("Suspended", body.GetProperty("items")[0].GetProperty("accountState").GetString());
+    }
+
+    [Fact]
+    public async Task AdminUserSearch_StillAcceptsTheLegacyStateAlias()
+    {
+        var adminClerk = $"aliasadmin_{Guid.NewGuid():N}";
+        await SeedUserAsync(adminClerk);
+        var marker = Guid.NewGuid().ToString("N");
+        await SeedUserAsync($"alias_suspended_{marker}", AccountState.Suspended);
+        await SeedUserAsync($"alias_active_{marker}", AccountState.Active);
+        var token = CreateToken(adminClerk, userRole: Roles.Admin);
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Get, $"/api/v1/admin/users?state=Suspended&q={marker}", token));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await BodyAsync(response);
+        Assert.Equal(1, body.GetProperty("total").GetInt32());
+        Assert.Equal("Suspended", body.GetProperty("items")[0].GetProperty("accountState").GetString());
+    }
+
+    [Fact]
+    public async Task AdminUserSearch_FiltersByOrganizationThroughTheMembershipTable()
+    {
+        var adminClerk = $"orgfilteradmin_{Guid.NewGuid():N}";
+        await SeedUserAsync(adminClerk);
+        var marker = Guid.NewGuid().ToString("N");
+        var member = await SeedUserAsync($"org_member_{marker}", AccountState.Active);
+        await SeedUserAsync($"org_other_{marker}", AccountState.Active);
+        var organizationId = await SeedMembershipAsync(member.Id);
+
+        var token = CreateToken(adminClerk, userRole: Roles.Admin);
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Get,
+            $"/api/v1/admin/users?organizationId={organizationId}&q={marker}",
+            token));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await BodyAsync(response);
+        Assert.Equal(1, body.GetProperty("total").GetInt32());
+        Assert.Equal(member.Id, body.GetProperty("items")[0].GetProperty("id").GetGuid());
+    }
+
+    [Fact]
+    public async Task AdminUserSearch_DefaultsToPageSize50_AndClampsTo200()
+    {
+        var adminClerk = $"pageadmin_{Guid.NewGuid():N}";
+        await SeedUserAsync(adminClerk);
+        await SeedUserAsync($"page_target_{Guid.NewGuid():N}");
+        var token = CreateToken(adminClerk, userRole: Roles.Admin);
+
+        var defaults = await _client.SendAsync(Authorized(
+            HttpMethod.Get, "/api/v1/admin/users", token));
+        Assert.Equal(HttpStatusCode.OK, defaults.StatusCode);
+        var defaultBody = await BodyAsync(defaults);
+        Assert.Equal(50, defaultBody.GetProperty("pageSize").GetInt32());
+
+        var clamped = await _client.SendAsync(Authorized(
+            HttpMethod.Get, "/api/v1/admin/users?pageSize=1000", token));
+        var clampedBody = await BodyAsync(clamped);
+        Assert.Equal(200, clampedBody.GetProperty("pageSize").GetInt32());
+    }
+
+    [Fact]
+    public async Task AdminStateChange_PersistsTheReasonOnTheAuditRow()
+    {
+        var adminClerk = $"auditadmin_{Guid.NewGuid():N}";
+        await SeedUserAsync(adminClerk);
+        var target = await SeedUserAsync($"audittarget_{Guid.NewGuid():N}", AccountState.OnboardingPending);
+        var token = CreateToken(adminClerk, userRole: Roles.Admin);
+        const string reason = "Support verified the account and restored access.";
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Patch, $"/api/v1/admin/users/{target.Id}/state", token,
+            new { accountState = "Active", reason }));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var context = CreateContext();
+        var audit = await context.AuditLogEntries
+            .Where(entry => entry.EntityId == target.Id.ToString())
+            .OrderByDescending(entry => entry.CreatedAt)
+            .FirstAsync();
+        Assert.Equal(AuditAction.UserStateChanged, audit.Action);
+        Assert.Equal(reason, audit.Reason);
     }
 
     [Fact]

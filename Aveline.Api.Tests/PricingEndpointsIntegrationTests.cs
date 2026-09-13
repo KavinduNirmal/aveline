@@ -165,6 +165,96 @@ public class PricingEndpointsIntegrationTests : IAsyncLifetime
                 CreateRuleBody("Global", provider: "openai")));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("scope-inconsistent", body.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task CreateRule_OmittedOptionalValues_BindTheDocumentedDefaults()
+    {
+        await SeedUserAsync("pricing_admin_defaults", Roles.Admin);
+        var token = CreateToken("pricing_admin_defaults", userRole: Roles.Admin);
+
+        var body = new Dictionary<string, object?>
+        {
+            ["scopeKind"] = "Global",
+            ["unitsPerBlossom"] = 1200,
+            ["effectiveFrom"] = DateTime.UtcNow.AddDays(1).ToString("O"),
+            ["changeReason"] = "Rule that relies on the documented DTO defaults.",
+        };
+
+        var response = await _client.SendAsync(
+            Authorized(HttpMethod.Post, "/api/v1/admin/pricing/rules", token, body));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var created = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal(0.1m, created.GetProperty("minimumChargeBlossoms").GetDecimal());
+        Assert.Equal(1, created.GetProperty("roundingDecimals").GetInt32());
+    }
+
+    [Fact]
+    public async Task CreateRule_InvalidRoundingDecimals_Returns400ValidationCode()
+    {
+        await SeedUserAsync("pricing_admin_validation", Roles.Admin);
+        var token = CreateToken("pricing_admin_validation", userRole: Roles.Admin);
+
+        var body = CreateRuleBody();
+        ((Dictionary<string, object?>)body)["roundingDecimals"] = 9;
+
+        var response = await _client.SendAsync(
+            Authorized(HttpMethod.Post, "/api/v1/admin/pricing/rules", token, body));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var error = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("validation", error.GetProperty("code").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(error.GetProperty("message").GetString()));
+    }
+
+    [Fact]
+    public async Task ActivateRule_OnNonDraft_Returns400()
+    {
+        await SeedUserAsync("pricing_activate_non_draft", Roles.Admin);
+        var token = CreateToken("pricing_activate_non_draft", userRole: Roles.Admin);
+        var provider = $"non-draft-{Guid.CreateVersion7():N}";
+
+        var create = await _client.SendAsync(Authorized(
+            HttpMethod.Post, "/api/v1/admin/pricing/rules", token,
+            CreateRuleBody("Provider", provider: provider)));
+        var ruleId = JsonDocument.Parse(await create.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("id").GetString();
+
+        var first = await _client.SendAsync(Authorized(
+            HttpMethod.Post, $"/api/v1/admin/pricing/rules/{ruleId}/activate", token));
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+
+        var second = await _client.SendAsync(Authorized(
+            HttpMethod.Post, $"/api/v1/admin/pricing/rules/{ruleId}/activate", token));
+
+        Assert.Equal(HttpStatusCode.BadRequest, second.StatusCode);
+        var error = JsonDocument.Parse(await second.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("rule-not-draft", error.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task CancelRule_OnDraft_Returns200()
+    {
+        await SeedUserAsync("pricing_cancel_draft", Roles.Admin);
+        var token = CreateToken("pricing_cancel_draft", userRole: Roles.Admin);
+        var provider = $"cancel-draft-{Guid.CreateVersion7():N}";
+
+        var create = await _client.SendAsync(Authorized(
+            HttpMethod.Post, "/api/v1/admin/pricing/rules", token,
+            CreateRuleBody("Provider", provider: provider)));
+        var ruleId = JsonDocument.Parse(await create.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("id").GetString();
+
+        var cancel = await _client.SendAsync(Authorized(
+            HttpMethod.Post, $"/api/v1/admin/pricing/rules/{ruleId}/cancel", token,
+            new { reason = "Abandoned before activation." }));
+
+        Assert.Equal(HttpStatusCode.OK, cancel.StatusCode);
+        var body = JsonDocument.Parse(await cancel.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("Cancelled", body.GetProperty("status").GetString());
     }
 
     [Fact]

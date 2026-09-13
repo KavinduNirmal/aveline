@@ -63,7 +63,7 @@ public class NotificationHubTests
         public Task<User> CreateAsync(User user, CancellationToken cancellationToken = default) => Task.FromResult(user);
         public Task<User> UpdateAsync(User user, CancellationToken cancellationToken = default) => Task.FromResult(user);
         public Task<bool> ExistsByClerkIdAsync(string clerkId, CancellationToken cancellationToken = default) => Task.FromResult(false);
-        public Task<(IReadOnlyList<User> Items, int Total)> SearchAsync(string? term, AccountState? state, int page, int pageSize, CancellationToken cancellationToken = default) => Task.FromResult<(IReadOnlyList<User>, int)>((user is null ? [] : [user], user is null ? 0 : 1));
+        public Task<(IReadOnlyList<User> Items, int Total)> SearchAsync(string? term, AccountState? state, Guid? organizationId, int page, int pageSize, CancellationToken cancellationToken = default) => Task.FromResult<(IReadOnlyList<User>, int)>((user is null ? [] : [user], user is null ? 0 : 1));
     }
 
     private sealed class FakeOrganizationRepository(IReadOnlyList<OrganizationMembership> memberships) : IOrganizationRepository

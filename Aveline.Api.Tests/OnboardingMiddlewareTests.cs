@@ -50,10 +50,10 @@ public class OnboardingMiddlewareTests
         public Task<UserDto?> DeleteAccountAsync(string clerkId, CancellationToken cancellationToken = default) =>
             Task.FromResult<UserDto?>(null);
 
-        public Task<UserDto> ChangeAccountStateAsync(Guid userId, AccountState state, Guid actorUserId, CancellationToken cancellationToken = default) =>
+        public Task<UserDto> ChangeAccountStateAsync(Guid userId, AccountState state, Guid actorUserId, string? reason = null, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
-        public Task<PagedUsers> SearchUsersAsync(string? search, AccountState? state, int page, int pageSize, CancellationToken cancellationToken = default) =>
+        public Task<PagedUsers> SearchUsersAsync(string? search, AccountState? state, Guid? organizationId, int page, int pageSize, CancellationToken cancellationToken = default) =>
             Task.FromResult(new PagedUsers([], page, pageSize, 0));
     }
 

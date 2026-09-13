@@ -303,12 +303,31 @@ public static class PricingEndpoints
             code = "rule-immutable",
             message = exception.Message,
         }),
+        PricingRuleNotDraftException => Results.BadRequest(new
+        {
+            code = "rule-not-draft",
+            message = exception.Message,
+        }),
+        PricingRuleHasPricedUsageException => Results.BadRequest(new
+        {
+            code = "rule-priced",
+            message = exception.Message,
+        }),
+        PricingScopeInconsistentException scopeException => Results.BadRequest(new
+        {
+            code = scopeException.Code,
+            message = scopeException.Message,
+        }),
+        PricingValidationException validationException => Results.BadRequest(new
+        {
+            code = validationException.Code,
+            message = validationException.Message,
+        }),
         PricingRuleOverlapException => Results.Conflict(new
         {
             code = "rule-overlap",
             message = exception.Message,
         }),
-        PricingValidationException => Results.BadRequest(new { message = exception.Message }),
         DbUpdateException => Results.Conflict(new
         {
             code = "rule-overlap",

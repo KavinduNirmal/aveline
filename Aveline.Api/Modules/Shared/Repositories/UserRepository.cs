@@ -51,6 +51,7 @@ public class UserRepository : IUserRepository
     public async Task<(IReadOnlyList<User> Items, int Total)> SearchAsync(
         string? term,
         AccountState? state,
+        Guid? organizationId,
         int page,
         int pageSize,
         CancellationToken cancellationToken = default)
@@ -71,6 +72,15 @@ public class UserRepository : IUserRepository
         if (state is not null)
         {
             query = query.Where(u => u.AccountState == state);
+        }
+
+        if (organizationId is not null)
+        {
+            // Membership is the canonical tenant link; User.OrganizationId is a legacy
+            // Clerk string and must not be used as the filter key (H-2).
+            query = query.Where(u =>
+                _context.OrganizationMemberships.Any(m =>
+                    m.UserId == u.Id && m.OrganizationId == organizationId));
         }
 
         var total = await query.CountAsync(cancellationToken);

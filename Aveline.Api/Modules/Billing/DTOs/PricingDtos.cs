@@ -86,12 +86,12 @@ public sealed record CreatePricingRuleRequest(
     string? Provider,
     string? Model,
     int UnitsPerBlossom,
-    decimal MinimumChargeBlossoms,
-    BlossomRoundingMode RoundingMode,
-    int RoundingDecimals,
     DateTime EffectiveFrom,
-    DateTime? EffectiveTo,
-    string ChangeReason);
+    string ChangeReason,
+    decimal MinimumChargeBlossoms = 0.1m,
+    BlossomRoundingMode RoundingMode = BlossomRoundingMode.Ceiling,
+    int RoundingDecimals = 1,
+    DateTime? EffectiveTo = null);
 
 public sealed record UpdatePricingRuleRequest(
     int? UnitsPerBlossom,

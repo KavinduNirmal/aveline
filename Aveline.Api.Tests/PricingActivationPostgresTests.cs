@@ -212,6 +212,10 @@ public class PricingActivationPostgresTests : IAsyncLifetime
             BlossomConversionRule candidate, CancellationToken cancellationToken = default) =>
             inner.FindPredecessorAsync(candidate, cancellationToken);
 
+        public Task<bool> HasPricedUsageAsync(
+            Guid ruleId, CancellationToken cancellationToken = default) =>
+            inner.HasPricedUsageAsync(ruleId, cancellationToken);
+
         public Task AddRuleAsync(
             BlossomConversionRule rule, CancellationToken cancellationToken = default) =>
             inner.AddRuleAsync(rule, cancellationToken);

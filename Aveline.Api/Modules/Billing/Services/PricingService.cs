@@ -135,7 +135,7 @@ public sealed class PricingService(
 
         if (rule.Status != BlossomRuleStatus.Draft)
         {
-            throw new PricingRuleImmutableException("Only a Draft rule can be activated.");
+            throw new PricingRuleNotDraftException("Only a Draft rule can be activated.");
         }
 
         rule.EffectiveFrom = effectiveFrom ?? rule.EffectiveFrom;
@@ -174,6 +174,13 @@ public sealed class PricingService(
     {
         var rule = await GetOrThrowAsync(ruleId, cancellationToken);
         ValidateChangeReason(reason);
+
+        if (rule.Status == BlossomRuleStatus.Active
+            && await repository.HasPricedUsageAsync(ruleId, cancellationToken))
+        {
+            throw new PricingRuleHasPricedUsageException(
+                "This rule has already priced usage and cannot be cancelled; activate a superseding rule instead.");
+        }
 
         rule.Status = BlossomRuleStatus.Cancelled;
         rule.ChangeReason = reason;
@@ -359,7 +366,7 @@ public sealed class PricingService(
 
         if (!valid)
         {
-            throw new PricingValidationException(
+            throw new PricingScopeInconsistentException(
                 "ScopeKind is inconsistent with the supplied Provider and Model.");
         }
     }

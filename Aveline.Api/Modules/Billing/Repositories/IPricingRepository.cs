@@ -51,6 +51,12 @@ public interface IPricingRepository
 
     Task UpdateRuleAsync(BlossomConversionRule rule, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Whether any <c>AiUsageRecord</c> has already been priced by the rule. A rule with
+    /// priced usage may not be cancelled (docs/api/README.md §C.1).
+    /// </summary>
+    Task<bool> HasPricedUsageAsync(Guid ruleId, CancellationToken cancellationToken = default);
+
     Task<BlossomPriceEntry> AddPriceEntryAsync(
         BlossomPriceEntry entry, CancellationToken cancellationToken = default);
 

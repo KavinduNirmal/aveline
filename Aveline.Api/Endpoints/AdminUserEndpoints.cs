@@ -20,24 +20,29 @@ public static class AdminUserEndpoints
 
         group.MapGet("", async (
             string? q,
+            string? accountState,
             string? state,
+            Guid? organizationId,
             int? page,
             int? pageSize,
             IUserService userService,
             CancellationToken ct) =>
         {
+            // `accountState` is the documented parameter; `state` remains a cheap alias.
+            var requestedState = !string.IsNullOrWhiteSpace(accountState) ? accountState : state;
             AccountState? parsedState = null;
-            if (!string.IsNullOrWhiteSpace(state))
+            if (!string.IsNullOrWhiteSpace(requestedState))
             {
-                if (!Enum.TryParse<AccountState>(state, ignoreCase: true, out var value))
+                if (!Enum.TryParse<AccountState>(requestedState, ignoreCase: true, out var value))
                 {
-                    return Results.BadRequest(new { message = "state must be OnboardingPending, Active or Suspended." });
+                    return Results.BadRequest(new { message = "accountState must be OnboardingPending, Active or Suspended." });
                 }
 
                 parsedState = value;
             }
 
-            var users = await userService.SearchUsersAsync(q, parsedState, page ?? 1, pageSize ?? 20, ct);
+            var users = await userService.SearchUsersAsync(
+                q, parsedState, organizationId, page ?? 1, pageSize ?? 50, ct);
             return Results.Ok(users);
         }).RequireAuthorization(Permissions.AdminUsersRead);
 
@@ -61,7 +66,8 @@ public static class AdminUserEndpoints
 
             try
             {
-                var updated = await userService.ChangeAccountStateAsync(userId, state, actorUserId.Value, ct);
+                var updated = await userService.ChangeAccountStateAsync(
+                    userId, state, actorUserId.Value, request.Reason, ct);
                 return Results.Ok(updated);
             }
             catch (InvalidAccountStateTransitionException ex)
@@ -93,4 +99,4 @@ public static class AdminUserEndpoints
 }
 
 /// <summary>Request to set an account's lifecycle state (FR-3.8).</summary>
-public sealed record ChangeUserStateRequest(string AccountState);
+public sealed record ChangeUserStateRequest(string AccountState, string? Reason = null);

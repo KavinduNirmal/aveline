@@ -154,7 +154,7 @@ public class PricingServiceTests
     {
         var service = CreateService();
 
-        await Assert.ThrowsAsync<PricingValidationException>(() =>
+        await Assert.ThrowsAnyAsync<PricingValidationException>(() =>
             service.CreateRuleAsync(Command(BlossomRuleScopeKind.Global, provider: "openai")));
     }
 
@@ -216,6 +216,67 @@ public class PricingServiceTests
         var cancelled = await service.CancelRuleAsync(rule.Id, "No longer required after review.");
 
         Assert.Equal(BlossomRuleStatus.Cancelled, cancelled.Status);
+    }
+
+    [Fact]
+    public async Task CancelRuleAsync_OnDraftRule_DoesNotRequirePricedUsage()
+    {
+        var service = CreateService();
+        var rule = await service.CreateRuleAsync(Command());
+
+        // A Draft rule has, by construction, priced nothing; cancellation stays allowed (M-19).
+        var cancelled = await service.CancelRuleAsync(rule.Id, "Abandoned before activation.");
+
+        Assert.Equal(BlossomRuleStatus.Cancelled, cancelled.Status);
+    }
+
+    [Fact]
+    public async Task CancelRuleAsync_OnActiveRuleWithPricedUsage_Throws()
+    {
+        var service = CreateService();
+        var rule = await service.CreateRuleAsync(Command());
+        await service.ActivateRuleAsync(rule.Id);
+        await SeedUsagePricedByAsync(rule.Id);
+
+        await Assert.ThrowsAsync<PricingRuleHasPricedUsageException>(() =>
+            service.CancelRuleAsync(rule.Id, "Attempt to cancel a rule that already priced usage."));
+    }
+
+    [Fact]
+    public async Task ActivateRuleAsync_OnNonDraftRule_ThrowsNotDraft()
+    {
+        var service = CreateService();
+        var rule = await service.CreateRuleAsync(Command());
+        await service.ActivateRuleAsync(rule.Id);
+
+        await Assert.ThrowsAsync<PricingRuleNotDraftException>(() =>
+            service.ActivateRuleAsync(rule.Id));
+    }
+
+    [Fact]
+    public async Task CreateRuleAsync_GlobalScopeWithProvider_ThrowsScopeInconsistent()
+    {
+        var service = CreateService();
+
+        var exception = await Assert.ThrowsAsync<PricingScopeInconsistentException>(() =>
+            service.CreateRuleAsync(Command(BlossomRuleScopeKind.Global, provider: "openai")));
+
+        Assert.Equal("scope-inconsistent", exception.Code);
+    }
+
+    private async Task SeedUsagePricedByAsync(Guid ruleId)
+    {
+        _context.AiUsageRecords.Add(new AiUsageRecord
+        {
+            OrganizationId = Guid.CreateVersion7(),
+            RequestId = "req-1",
+            WorkflowId = "wf-1",
+            Provider = "openai",
+            Model = "gpt-4o",
+            PricingRuleId = ruleId,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await _context.SaveChangesAsync();
     }
 
     [Fact]

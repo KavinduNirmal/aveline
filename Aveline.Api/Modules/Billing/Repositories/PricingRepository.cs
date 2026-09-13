@@ -94,6 +94,9 @@ public sealed class PricingRepository(AppDbContext db) : IPricingRepository
         await db.SaveChangesAsync(cancellationToken);
     }
 
+    public Task<bool> HasPricedUsageAsync(Guid ruleId, CancellationToken cancellationToken = default) =>
+        db.AiUsageRecords.AnyAsync(record => record.PricingRuleId == ruleId, cancellationToken);
+
     public async Task UpdateRuleAsync(BlossomConversionRule rule, CancellationToken cancellationToken = default)
     {
         db.BlossomConversionRules.Update(rule);

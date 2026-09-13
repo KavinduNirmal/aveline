@@ -208,6 +208,126 @@ public class VisualService : IVisualService
         };
     }
 
+    public async Task<IReadOnlyList<OutfitCompositionDto>> GetLookbooksByOrgIdAsync(
+        Guid orgId,
+        CancellationToken cancellationToken = default)
+    {
+        var outfits = await _outfitRepository.GetByOrgIdAsync(orgId, cancellationToken);
+        var dtos = new List<OutfitCompositionDto>();
+
+        foreach (var outfit in outfits)
+        {
+            var itemDetails = new List<OutfitItemDetailDto>();
+            string? heroImageUrl = null;
+
+            foreach (var item in outfit.Items)
+            {
+                var inv = await _inventoryService.GetItemByIdAsync(item.InventoryItemId, orgId, cancellationToken);
+                if (inv != null)
+                {
+                    if (item.Role == "primary" && heroImageUrl == null)
+                    {
+                        heroImageUrl = inv.ImageUrl;
+                    }
+                    itemDetails.Add(new OutfitItemDetailDto
+                    {
+                        Id = item.Id,
+                        InventoryItemId = item.InventoryItemId,
+                        Role = item.Role,
+                        ItemName = inv.ItemName,
+                        Category = inv.Category,
+                        Price = inv.Price,
+                        ImageUrl = inv.ImageUrl
+                    });
+                }
+            }
+
+            dtos.Add(new OutfitCompositionDto
+            {
+                Id = outfit.Id,
+                OrganizationId = outfit.OrgId,
+                CustomerId = outfit.CustomerId,
+                Name = outfit.Name,
+                Occasion = outfit.Occasion,
+                TotalPrice = outfit.TotalPrice,
+                StyleNotes = outfit.StyleNotes,
+                HeroImageUrl = heroImageUrl,
+                CreatedAtUtc = outfit.CreatedAtUtc,
+                Items = itemDetails
+            });
+        }
+
+        return dtos;
+    }
+
+    public async Task<IReadOnlyList<SourcingRequestDto>> GetSourcingRequestsByOrgIdAsync(
+        Guid orgId,
+        string? status = null,
+        CancellationToken cancellationToken = default)
+    {
+        var requests = await _sourcingRequestRepository.GetByOrgIdAsync(orgId, status, cancellationToken);
+        return requests.Select(r => new SourcingRequestDto
+        {
+            Id = r.Id,
+            OrgId = r.OrgId,
+            Category = r.Category,
+            Color = r.Color,
+            Description = r.Description,
+            TargetPrice = r.TargetPrice,
+            CustomerId = r.CustomerId,
+            Status = r.Status,
+            CreatedAtUtc = r.CreatedAtUtc
+        }).ToList();
+    }
+
+    public async Task<SourcingRequestDto?> UpdateSourcingRequestStatusAsync(
+        Guid id,
+        Guid orgId,
+        string status,
+        CancellationToken cancellationToken = default)
+    {
+        var request = await _sourcingRequestRepository.GetByIdAsync(id, orgId, cancellationToken);
+        if (request == null)
+        {
+            return null;
+        }
+
+        request.Status = status;
+        await _sourcingRequestRepository.UpdateAsync(request, cancellationToken);
+
+        return new SourcingRequestDto
+        {
+            Id = request.Id,
+            OrgId = request.OrgId,
+            Category = request.Category,
+            Color = request.Color,
+            Description = request.Description,
+            TargetPrice = request.TargetPrice,
+            CustomerId = request.CustomerId,
+            Status = request.Status,
+            CreatedAtUtc = request.CreatedAtUtc
+        };
+    }
+
+    public async Task<IReadOnlyList<SupplierDto>> GetSuppliersByOrgIdAsync(
+        Guid orgId,
+        CancellationToken cancellationToken = default)
+    {
+        var suppliers = await _supplierRepository.GetByOrgIdAsync(orgId, cancellationToken);
+        return suppliers.Select(s => new SupplierDto
+        {
+            Id = s.Id,
+            OrganizationId = s.OrgId,
+            SupplierName = s.SupplierName,
+            ContactEmail = s.ContactEmail,
+            ContactPhone = s.ContactPhone,
+            MinimumOrder = s.MinimumOrder,
+            DeliveryTimeDays = s.DeliveryTimeDays,
+            IsActive = s.IsActive,
+            CreatedAtUtc = s.CreatedAtUtc
+        }).ToList();
+    }
+
     public async Task<IReadOnlyList<SupplierCatalogItemDto>> GetSupplierCatalogAsync(
         Guid supplierId,
         Guid orgId,

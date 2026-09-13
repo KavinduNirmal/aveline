@@ -5,6 +5,7 @@ Compiles the visual intelligence and sourcing graph:
 """
 
 from typing import Any
+
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.visual_insight.nodes import VisualInsightAgent

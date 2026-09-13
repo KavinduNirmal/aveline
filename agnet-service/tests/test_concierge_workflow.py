@@ -179,6 +179,134 @@ async def test_run_concierge_preserves_state_order_with_delay(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Workflow Path End-to-End Tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_workflow_product_search_path():
+    """Product Search Path: Intent Gate -> Memory Agent -> Visual Agent -> Formulate Response."""
+    result = await _invoke("Do you have an emerald silk saree for a reception?")
+
+    # 1. Intent Gate
+    assert result["intent"]["intent_type"] == "item_search"
+    # 2. Memory Agent
+    assert result["memory_output"] is not None
+    assert result["memory_output"]["ran"] is True
+    # 3. Visual Agent
+    assert result["visual_output"] is not None
+    assert result["visual_output"]["ran"] is True
+    # 4. Commerce Agent skipped
+    assert result["commerce_output"] is None
+    # 5. Formulate Response
+    assert result["response"]["status"] == AgentStatus.success
+
+
+@pytest.mark.asyncio
+async def test_workflow_purchase_request_path():
+    """Purchase-Related Request Path: Intent Gate -> Memory Agent -> Visual Agent -> Commerce Agent -> Formulate Response."""
+    result = await _invoke("I want to purchase this emerald silk saree")
+
+    # 1. Intent Gate
+    assert result["intent"]["intent_type"] == "order_placement"
+    # 2. Memory Agent
+    assert result["memory_output"] is not None
+    # 3. Visual Agent
+    assert result["visual_output"] is not None
+    # 4. Commerce Agent
+    assert result["commerce_output"] is not None
+    assert result["commerce_output"]["ran"] is True
+    # 5. Formulate Response
+    assert result["response"]["status"] == AgentStatus.success
+
+
+@pytest.mark.asyncio
+async def test_workflow_reference_image_path():
+    """Reference Image Path: Intent Gate -> Memory Agent -> Visual Agent (Image Analysis -> Inventory Search -> Possible Sourcing) -> Formulate Response."""
+    result = await _invoke(
+        "Find me something matching this photo",
+        org_context={"image_url": "https://images.aveline.luxury/evening-dress.jpg"},
+    )
+
+    # 1. Intent Gate
+    assert result["intent"]["intent_type"] in ("item_search", "general_inquiry")
+    # 2. Memory Agent
+    assert result["memory_output"] is not None
+    # 3. Visual Agent executed with image attributes & inventory search / looks / sourcing
+    assert result["visual_output"] is not None
+    assert result["visual_output"]["ran"] is True
+    assert "items" in result["visual_output"]
+    assert "looks" in result["visual_output"]
+    # 4. Formulate Response
+    assert result["response"]["status"] == AgentStatus.success
+
+
+@pytest.mark.asyncio
+async def test_run_visual_agent_wires_llm_when_configured(monkeypatch):
+    """Verify run_visual_agent queries visual_llm_or_none and executes with LLM commentary."""
+    from unittest.mock import AsyncMock, MagicMock
+    from app.workflows.concierge_workflow import run_visual_agent
+
+    mock_llm_res = MagicMock()
+    mock_llm_res.content = "Editorial styling commentary from wired LLM."
+    mock_llm_res.usage_metadata = {"input_tokens": 80, "output_tokens": 25}
+
+    mock_llm = MagicMock()
+    mock_llm.ainvoke = AsyncMock(return_value=mock_llm_res)
+
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.visual_llm_or_none",
+        lambda settings: mock_llm,
+    )
+
+    # Mock tool registry inventory search so items are matched
+    monkeypatch.setattr(
+        "app.agents.visual_insight.nodes.search_inventory",
+        AsyncMock(
+            return_value=[
+                MagicMock(
+                    itemId="item-101",
+                    name="Peach Raw-Silk Drape Gown",
+                    price=1250.0,
+                    stock=2,
+                    imageUrl="https://images.aveline.luxury/gown.jpg",
+                    category="Gown",
+                    color="Peach",
+                    occasion="Wedding",
+                    aestheticTags=["Silk"],
+                    model_dump=lambda: {
+                        "itemId": "item-101",
+                        "name": "Peach Raw-Silk Drape Gown",
+                        "price": 1250.0,
+                        "stock": 2,
+                        "imageUrl": "https://images.aveline.luxury/gown.jpg",
+                    },
+                )
+            ]
+        ),
+    )
+
+    state = {
+        "message": "I need a gown for a wedding",
+        "org_context": {
+            "organization_id": "org-test",
+            "customer_id": "cust-01",
+            "direction": "inbound",
+        },
+        "intent": {"intent_type": "item_search"},
+    }
+
+    result = await run_visual_agent(state)
+    visual_output = result["visual_output"]
+
+    assert visual_output["ran"] is True
+    assert visual_output["status"] == "success"
+    assert len(visual_output["looks"]) == 1
+    assert visual_output["looks"][0]["text"] == "Editorial styling commentary from wired LLM."
+    assert mock_llm.ainvoke.called
+
+
+# ---------------------------------------------------------------------------
 # Shared customer resolution (Issue #161)
 # ---------------------------------------------------------------------------
 
@@ -245,66 +373,3 @@ async def test_resolve_node_records_explicit_customer(monkeypatch):
 
     assert out["resolution"]["kind"] == "resolved"
     assert calls == [("org-1", "c1", None)]
-
-
-# ---------------------------------------------------------------------------
-# Workflow Path End-to-End Tests
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_workflow_product_search_path():
-    """Product Search Path: Intent Gate -> Memory Agent -> Visual Agent -> Formulate Response."""
-    result = await _invoke("Do you have an emerald silk saree for a reception?")
-
-    # 1. Intent Gate
-    assert result["intent"]["intent_type"] == "item_search"
-    # 2. Memory Agent
-    assert result["memory_output"] is not None
-    assert result["memory_output"]["ran"] is True
-    # 3. Visual Agent
-    assert result["visual_output"] is not None
-    assert result["visual_output"]["ran"] is True
-    # 4. Commerce Agent skipped
-    assert result["commerce_output"] is None
-    # 5. Formulate Response
-    assert result["response"]["status"] == AgentStatus.success
-
-
-@pytest.mark.asyncio
-async def test_workflow_purchase_request_path():
-    """Purchase-Related Request Path: Intent Gate -> Memory Agent -> Visual Agent -> Commerce Agent -> Formulate Response."""
-    result = await _invoke("I want to purchase this emerald silk saree")
-
-    # 1. Intent Gate
-    assert result["intent"]["intent_type"] == "order_placement"
-    # 2. Memory Agent
-    assert result["memory_output"] is not None
-    # 3. Visual Agent
-    assert result["visual_output"] is not None
-    # 4. Commerce Agent
-    assert result["commerce_output"] is not None
-    assert result["commerce_output"]["ran"] is True
-    # 5. Formulate Response
-    assert result["response"]["status"] == AgentStatus.success
-
-
-@pytest.mark.asyncio
-async def test_workflow_reference_image_path():
-    """Reference Image Path: Intent Gate -> Memory Agent -> Visual Agent (Image Analysis -> Inventory Search -> Possible Sourcing) -> Formulate Response."""
-    result = await _invoke(
-        "Find me something matching this photo",
-        org_context={"image_url": "https://images.aveline.luxury/evening-dress.jpg"},
-    )
-
-    # 1. Intent Gate
-    assert result["intent"]["intent_type"] in ("item_search", "general_inquiry")
-    # 2. Memory Agent
-    assert result["memory_output"] is not None
-    # 3. Visual Agent executed with image attributes & inventory search / looks / sourcing
-    assert result["visual_output"] is not None
-    assert result["visual_output"]["ran"] is True
-    assert "items" in result["visual_output"]
-    assert "looks" in result["visual_output"]
-    # 4. Formulate Response
-    assert result["response"]["status"] == AgentStatus.success

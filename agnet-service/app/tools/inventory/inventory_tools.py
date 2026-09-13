@@ -1,6 +1,7 @@
 """Inventory search and stock verification tools for Visual Insight Agent (Elle)."""
 
 from typing import Any
+
 from app.schemas.visual_insight import PieceItem
 
 

@@ -15,7 +15,8 @@ public static class VisualIntelligenceModule
         // be overridden via the "Vision:BaseUrl" config key.
         services.AddHttpClient<IVisionService, VisionService>((sp, client) =>
         {
-            var baseUrl = sp.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>()["Vision:BaseUrl"];
+            var config = sp.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();
+            var baseUrl = config["Vision:BaseUrl"] ?? config["Vision__BaseUrl"] ?? config["VISION_BASE_URL"];
             client.BaseAddress = string.IsNullOrWhiteSpace(baseUrl)
                 ? new Uri("https://api.openai.com")
                 : new Uri(baseUrl);

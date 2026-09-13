@@ -4,6 +4,7 @@ Assembles individual pieces into harmonious editorial looks.
 """
 
 from typing import Any
+
 from app.schemas.visual_insight import LookDto, PieceItem
 
 

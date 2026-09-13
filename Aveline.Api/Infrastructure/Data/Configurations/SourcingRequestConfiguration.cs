@@ -12,10 +12,14 @@ public class SourcingRequestConfiguration : IEntityTypeConfiguration<SourcingReq
 
         builder.HasKey(x => x.Id);
 
-        builder.Ignore(x => x.Category);
-        builder.Ignore(x => x.Color);
         builder.Ignore(x => x.Description);
         builder.Ignore(x => x.TargetPrice);
+
+        builder.Property(x => x.Category)
+            .HasMaxLength(100);
+
+        builder.Property(x => x.Color)
+            .HasMaxLength(100);
 
         builder.Property(x => x.OrgId)
             .IsRequired();

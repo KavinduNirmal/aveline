@@ -3,8 +3,8 @@
 Initiates sourcing tickets when clients inquire about unavailable pieces or bespoke silhouettes.
 """
 
-from typing import Any
 import uuid
+from typing import Any
 
 from app.schemas.visual_insight import SourcingRequestDto
 

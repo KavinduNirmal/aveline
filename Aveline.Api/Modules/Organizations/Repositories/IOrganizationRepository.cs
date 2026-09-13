@@ -1,3 +1,4 @@
+using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Organizations.Models;
 
 namespace Aveline.Api.Modules.Organizations.Repositories;
@@ -10,6 +11,19 @@ public interface IOrganizationRepository
     Task<bool> ExistsBySlugAsync(string slug, CancellationToken cancellationToken = default);
     Task<Organization> CreateAsync(Organization organization, CancellationToken cancellationToken = default);
     Task<Organization> UpdateAsync(Organization organization, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Cross-tenant organization search for the Aveline-team admin route (FR-4.8).
+    /// Organizations are deliberately not tenant-scoped here: the caller's
+    /// <c>admin:orgs:read</c> permission is the scope.
+    /// </summary>
+    Task<(IReadOnlyList<Organization> Items, int Total)> SearchAsync(
+        string? term,
+        bool? isActive,
+        PlanTier? planTier,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken = default);
 
     Task<OrganizationMembership?> GetMembershipAsync(
         Guid organizationId,

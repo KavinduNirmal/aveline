@@ -14,4 +14,11 @@ public interface IEntitlementRepository
     /// <summary>Override rows for an organisation effective at <paramref name="at"/>, newest first.</summary>
     Task<IReadOnlyList<PlanEntitlementOverride>> ListEffectiveOverridesAsync(
         Guid organizationId, DateTime at, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Inserts or updates the override uniquely identified by
+    /// <c>(OrganizationId, Key, EffectiveFrom)</c> (FR-4.9). Returns the persisted row.
+    /// </summary>
+    Task<PlanEntitlementOverride> UpsertOverrideAsync(
+        PlanEntitlementOverride entry, CancellationToken cancellationToken = default);
 }

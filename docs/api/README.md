@@ -1340,6 +1340,13 @@ beyond that dialog.
 > `PATCH /orgs/{organizationId}/members/{userId}` (**403** non-owner owner-change,
 > **409** self-change or last-owner demotion). `POST /webhooks/clerk` is anonymous
 > and requires `Clerk:WebhookSecret` (**503** when unset, **401** on a bad signature).
+>
+> **Implemented in #241:** the audit read surface (`GET /admin/audit`,
+> `GET /admin/audit/{entryId:guid}`), the Aveline-team organization search
+> (`GET /admin/orgs`, FR-4.8) and per-organization entitlement overrides
+> (`PATCH /admin/orgs/{organizationId}/entitlement-overrides`, FR-4.9). The audit log
+> was previously write-only, so `audit:view` and `AuditViewPolicy` were dead.
+
 
 | Method | Path | Policy | Body | Response |
 | --- | --- | --- | --- | --- |
@@ -1353,9 +1360,10 @@ beyond that dialog.
 | `GET` | `/api/v1/orgs/{organizationId:guid}/settings` | `settings:manage` | — | settings + entitlements |
 | `GET` | `/api/v1/orgs/{organizationId:guid}/members` | `settings:manage` | query: `page`, `pageSize`, `status?`, `role?`, `q?` | `MemberPage` |
 | `PATCH` | `/api/v1/orgs/{organizationId:guid}/members/{userId:guid}` | `settings:manage` | `{ boutiqueRole }` | `{ organizationId, userId, boutiqueRole, status }` |
-| `GET` | `/api/v1/admin/orgs` | `admin:orgs:read` | query: paging + `q` | `AdminOrgPage` |
-| `PATCH` | `/api/v1/admin/orgs/{organizationId:guid}/entitlement-overrides` | `billing:adjust` | `{ key, valueType, value, effectiveFrom, effectiveTo?, reason }` | `201` |
+| `GET` | `/api/v1/admin/orgs` | `admin:orgs:read` | query: `page`, `pageSize`, `q?`, `isActive?`, `planTier?` | `{ items, page, pageSize, total }` |
+| `PATCH` | `/api/v1/admin/orgs/{organizationId:guid}/entitlement-overrides` | `billing:adjust` | `{ overrides: [{ key, valueType, value, reason, effectiveFrom? }] }` | `{ organizationId, entitlements }` |
 | `GET` | `/api/v1/admin/audit` | `audit:view` | query: `page`, `pageSize`, `organizationId?`, `actorUserId?`, `entityType?`, `entityId?`, `action?`, `from?`, `to?` | `AuditPage` |
+| `GET` | `/api/v1/admin/audit/{entryId:guid}` | `audit:view` | — | `AuditLogEntry` (**404** `{ message }` when unknown) |
 
 **`PATCH /orgs/{organizationId}` validation:**
 
@@ -1421,6 +1429,36 @@ revoke `org:boutique_owner`;
 > **Secrets never appear in `before`/`after`.** The write path runs an
 > `IAuditRedactor`. If a frontend ever sees a secret in an audit response, that is
 > a security defect worth reporting.
+
+`GET /admin/audit` returns the §A.4 envelope `{ items, page, pageSize, total }`
+(newest first, default `pageSize` 50, max 200); `GET /admin/audit/{entryId:guid}`
+returns one entry or **404** `{ message }`.
+
+**`GET /api/v1/admin/orgs` item shape:**
+
+```json
+{
+  "id": "0198f3c2-...",
+  "name": "Aurora Boutique",
+  "slug": "aurora-boutique",
+  "clerkOrgId": "org_2abc...",
+  "ownerUserId": "0198f3c2-...",
+  "planTier": "Orchid",
+  "isActive": true,
+  "createdAt": "2026-01-11T09:35:00Z",
+  "updatedAt": "2026-09-11T09:35:00Z"
+}
+```
+
+**`PATCH /api/v1/admin/orgs/{organizationId:guid}/entitlement-overrides`:** the body is
+a set of overrides (`Decimal`/`Integer` values are JSON numbers, `Boolean` is a JSON
+boolean, `String` is a JSON string). Each override is upserted on
+`(organizationId, key, effectiveFrom)` and an `entitlement.override.updated` audit
+entry is written. The **200** response is
+`{ "organizationId": "...", "entitlements": [{ key, valueType, value, source, effectiveFrom }] }`
+with the override carrying `source: "Override"`. An unknown key, unknown `valueType`
+or a `value` that does not match its `valueType` is a **400** `{ message }`; an unknown
+organization is a **404** `{ message }`.
 
 ---
 
@@ -1778,6 +1816,12 @@ malformed timestamp; `401`; `403`.
 **Response series item:** `{ key, name, requestCount, errorRate, avgMs,
 lastUsedAt, topEndpoint }`. **Related statistics:** [S-28](../backend/statistics-catalog.md).
 
+> **Deferred (not implemented).** The three organization billing statistics below —
+> `GET /orgs/{id}/statistics/billing/burn-rate`, `GET /orgs/{id}/statistics/customers/active`
+> and `GET /orgs/{id}/statistics/staff/seats` — are consciously out of scope for the
+> #241 fix. No route exists, so they return **404**; the shapes below remain the intended
+> contract for whoever picks them up.
+
 #### `GET /api/v1/orgs/{organizationId:guid}/statistics/billing/burn-rate`
 
 **Auth:** `billing:view`. **Params:** `window` (`7d` \| `14d` \| `30d`).
@@ -1805,9 +1849,11 @@ lastUsedAt, topEndpoint }`. **Related statistics:** [S-28](../backend/statistics
 
 ### C.8 System statistics (Phase 6)
 
-> **Status: implemented** on `feature/admin-backend-api` (issues #227–#230). The schema,
-> the metric collector and retention job, the alert evaluation service and the eight
-> endpoints below are live. Confirmed deviations: the metrics endpoint names its
+> **Status: partially implemented** on `feature/admin-backend-api` (issues #227–#230).
+> The schema, the metric collector and retention job, the alert evaluation service and
+> the **eight `/system/*` endpoints** in the table are live. The five
+> **`/billing/*` statistics endpoints are deferred** (see below).
+> Confirmed deviations: the metrics endpoint names its
 > granularity parameter `windowSize` (not `groupBy`) and accepts
 > `instant|minute|hour|day`; an unknown metric returns an empty series with a
 > `dataQuality.omitted` reason rather than a 400; `inbound_message_backlog` and
@@ -1827,11 +1873,14 @@ Base: `/api/v1/admin/statistics`. **Auth:** `stats:system` (Aveline team only).
 | `GET /system/eventbus` | `from`, `to` | Published, delivered, failed, publish latency |
 | `GET /system/alerts` | `status?`, `severity?`, `ruleId?`, `page`, `pageSize` | `SystemAlertPage` |
 | `POST /system/alerts/{alertId:guid}/acknowledge` | body `{ "note": string? }` | Updated alert |
-| `GET /billing/profitability` | `from`, `to`, `groupBy` | Actual cost vs Blossoms charged vs margin |
-| `GET /billing/org-usage` | `window`, `planTier?`, `page`, `pageSize` | Org ranking by Blossom use |
-| `GET /billing/adjustments` | `from`, `to`, `entryType?`, `actorUserId?` | Adjustment activity |
-| `GET /billing/plan-changes` | `from`, `to` | Upgrades/downgrades with Blossom deltas |
-| `GET /billing/downgrades` | `from`, `to` | Blocked downgrades by violated key |
+
+> **Deferred (not implemented).** The five billing-analysis endpoints —
+> `GET /billing/profitability` (`from`, `to`, `groupBy`), `GET /billing/org-usage`
+> (`window`, `planTier?`, `page`, `pageSize`), `GET /billing/adjustments`
+> (`from`, `to`, `entryType?`, `actorUserId?`), `GET /billing/plan-changes`
+> (`from`, `to`) and `GET /billing/downgrades` (`from`, `to`) — are consciously out of
+> scope for the #241 fix. No route exists, so they return **404**. They are documented
+> here only so the intended contract is not lost.
 
 **`GET /system/overview` response:**
 

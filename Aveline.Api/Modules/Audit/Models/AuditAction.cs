@@ -18,6 +18,7 @@ public static class AuditAction
     public const string ApiKeyRevoked = "apikey.revoked";
     public const string ApiKeyDeleted = "apikey.deleted";
     public const string OrganizationSettingsUpdated = "org.settings.updated";
+    public const string EntitlementOverrideUpdated = "entitlement.override.updated";
     public const string MembershipRoleChanged = "membership.role.changed";
     public const string UserProfileUpdated = "user.profile.updated";
     public const string UserStateChanged = "user.state.changed";

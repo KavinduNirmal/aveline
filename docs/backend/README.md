@@ -61,11 +61,11 @@ a Clerk-backed auth model and organization-scoped authorization.
 | --- | --- |
 | 1 · Blossom price adjustment | **Implemented (Phase 1).** Effective-dated `BlossomConversionRules` and `BlossomPriceEntries` (M2), `BlossomCalculator`, `PricingService`, admin pricing endpoints, and ingest-time pricing behind `Pricing:UseLegacyFormula`. `POST /admin/pricing/rules/{id}/recompute` returns 501 until the Phase 2 ledger |
 | 2 · Org Blossom operations | **Implemented (Phase 2).** Append-only `BlossomLedgerEntries` (M3) with the O(1) `UsageAccount` projection, idempotency replay store, `BlossomService` credit/debit/revoke, entitlement catalog + `IEntitlementResolver` (M4), org/admin Blossom endpoints, subscription/plan-change endpoints, and the expiry/rollover/cleanup jobs. **Fixes D-1, D-2, D-3, D-12** |
-| 3 · User management | **Implemented (Phase 3).** Profile update, soft delete with membership/API-key revocation, Clerk session list/revoke, and the cross-org admin user search + account-state endpoints |
-| 4 · Organization management | **Implemented (Phase 3).** Settings update with AI-context entitlement gating, settings read with resolved entitlements, member list with filters, role change with the FR-3.4 guards, and the `ApiKeys` table + scheme/endpoints behind the `api.access` entitlement |
+| 3 · User management | **Implemented (Phase 3).** Profile update, soft delete with membership/API-key revocation, Clerk session list/revoke, and the cross-org admin user search + account-state endpoints. **#241:** audit read (`GET /admin/audit`, `/admin/audit/{entryId}`) and Aveline-team org search (`GET /admin/orgs`, FR-4.8) |
+| 4 · Organization management | **Implemented (Phase 3).** Settings update with AI-context entitlement gating, settings read with resolved entitlements, member list with filters, role change with the FR-3.4 guards, and the `ApiKeys` table + scheme/endpoints behind the `api.access` entitlement. **#241:** per-org entitlement overrides (`PATCH /admin/orgs/{id}/entitlement-overrides`, FR-4.9) |
 | 5 · Agentic statistics | Only one aggregate row per workflow. No agent/node runs, status, latency, tool calls, or retries |
 | 6 · API consumption statistics | **Entirely absent.** No request telemetry, no correlation id, no quotas |
-| 7 · System statistics | A Redis-only `/health` and an event-bus metrics logger. No readiness split, resource metrics, queue depth, error rate, or alerts |
+| 7 · System statistics | A Redis-only `/health` and an event-bus metrics logger. No readiness split, resource metrics, queue depth, error rate, or alerts. The five `/admin/statistics/billing/*` endpoints and the org billing statistics (`burn-rate`, `customers/active`, `staff/seats`) are **deferred** (see Phase 6 status) |
 
 **Twelve live defects were found.** The four that matter most:
 
@@ -216,6 +216,18 @@ invalidation mechanism. See [backend-requirements.md §3.6](backend-requirements
    last-owner guards are defence in depth; they are covered by
    `MembershipRoleChangeTests` at the service level.
 
+### Implementation status (#241 — audit read, admin org search, entitlement overrides)
+
+| Issue | What landed |
+| --- | --- |
+| [#241](https://github.com/KavinduNirmal/aveline/issues/241) | `IAuditRepository.GetByIdAsync`/`QueryAsync` + `GET /api/v1/admin/audit` and `/admin/audit/{entryId:guid}` (`audit:view`, `AuditViewPolicy`); `OrganizationRepository.SearchAsync` + `GET /api/v1/admin/orgs` (`admin:orgs:read`, FR-4.8); `EntitlementOverrideService` + `PATCH /api/v1/admin/orgs/{id}/entitlement-overrides` (`billing:adjust`, FR-4.9) |
+
+The audit subsystem was write-only before this change: `audit:view` and
+`AuditViewPolicy` were registered but referenced by no endpoint (finding C-1). Overrides
+upsert on `(OrganizationId, Key, EffectiveFrom)`, write an
+`entitlement.override.updated` audit entry, and return the organization's resolved
+entitlements.
+
 ### Implementation status (Phase 4 — agentic statistics)
 
 | Issue | What landed |
@@ -358,6 +370,12 @@ invalidation mechanism. See [backend-requirements.md §3.6](backend-requirements
    filter by organization. `EvaluateRuleAsync`'s `organizationId` only scopes the fired alert
    (and its critical notification); a future org-scoped metric would carry the organization in
    `DimensionsJson` and be selected through the rule's dimension filter.
+10. **The billing statistics family is deferred, not shipped.** The five
+    `/api/v1/admin/statistics/billing/*` endpoints (`profitability`, `org-usage`,
+    `adjustments`, `plan-changes`, `downgrades`) and the three organization billing
+    statistics (`/orgs/{id}/statistics/billing/burn-rate`, `/customers/active`,
+    `/staff/seats`) are consciously out of scope for the #241 fix. No route exists, so
+    they return **404**; `docs/api/README.md` marks them as deferred.
 
 
 ---

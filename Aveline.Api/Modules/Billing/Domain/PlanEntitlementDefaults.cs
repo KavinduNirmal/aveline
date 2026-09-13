@@ -15,11 +15,22 @@ public static class PlanEntitlementDefaults
 
     private static readonly Dictionary<PlanTier, Dictionary<string, EntitlementValue>> Catalog = Build();
 
+    /// <summary>
+    /// Every key the catalog knows about, regardless of tier. Used to reject an unknown
+    /// key on the admin override route (FR-4.9).
+    /// </summary>
+    public static IReadOnlySet<string> KnownKeys { get; } = BuildKnownKeys();
+
     /// <summary>Returns the default entitlement values for a tier keyed by entitlement key.</summary>
     public static IReadOnlyDictionary<string, EntitlementValue> For(PlanTier tier) =>
         Catalog.TryGetValue(tier, out var values)
             ? values
             : new Dictionary<string, EntitlementValue>(StringComparer.Ordinal);
+
+    private static HashSet<string> BuildKnownKeys() =>
+        Catalog.Values
+            .SelectMany(values => values.Keys)
+            .ToHashSet(StringComparer.Ordinal);
 
     private static Dictionary<PlanTier, Dictionary<string, EntitlementValue>> Build()
     {

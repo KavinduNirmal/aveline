@@ -113,5 +113,21 @@ public class AuditServiceTests
     {
         public Task AddAsync(AuditLogEntry entry, CancellationToken cancellationToken = default)
             => throw new InvalidOperationException("audit store unavailable");
+
+        public Task<AuditLogEntry?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("audit store unavailable");
+
+        public Task<(IReadOnlyList<AuditLogEntry> Items, int Total)> QueryAsync(
+            string? action,
+            string? entityType,
+            string? entityId,
+            Guid? organizationId,
+            Guid? actorUserId,
+            DateTime? from,
+            DateTime? to,
+            int page,
+            int pageSize,
+            CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("audit store unavailable");
     }
 }

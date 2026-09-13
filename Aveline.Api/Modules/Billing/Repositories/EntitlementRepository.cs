@@ -39,4 +39,33 @@ public sealed class EntitlementRepository(AppDbContext db) : IEntitlementReposit
             .OrderByDescending(o => o.EffectiveFrom)
             .ToListAsync(cancellationToken);
     }
+
+    public async Task<PlanEntitlementOverride> UpsertOverrideAsync(
+        PlanEntitlementOverride entry, CancellationToken cancellationToken = default)
+    {
+        var existing = await db.PlanEntitlementOverrides
+            .FirstOrDefaultAsync(
+                o => o.OrganizationId == entry.OrganizationId
+                     && o.Key == entry.Key
+                     && o.EffectiveFrom == entry.EffectiveFrom,
+                cancellationToken);
+
+        if (existing is null)
+        {
+            db.PlanEntitlementOverrides.Add(entry);
+            await db.SaveChangesAsync(cancellationToken);
+            return entry;
+        }
+
+        existing.ValueType = entry.ValueType;
+        existing.ValueDecimal = entry.ValueDecimal;
+        existing.ValueBool = entry.ValueBool;
+        existing.ValueText = entry.ValueText;
+        existing.EffectiveTo = entry.EffectiveTo;
+        existing.Reason = entry.Reason;
+        existing.CreatedByUserId = entry.CreatedByUserId;
+        existing.CreatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync(cancellationToken);
+        return existing;
+    }
 }

@@ -22,6 +22,7 @@ public static class BillingModule
         services.AddScoped<IPricingService, PricingService>();
         services.AddScoped<IEntitlementRepository, EntitlementRepository>();
         services.AddScoped<IEntitlementResolver, EntitlementResolver>();
+        services.AddScoped<IEntitlementOverrideService, EntitlementOverrideService>();
         services.AddSingleton<PricingRuleCache>();
         services.AddHostedService<PricingRuleCacheWarmer>();
         services.AddHostedService<Jobs.BlossomExpiryJob>();

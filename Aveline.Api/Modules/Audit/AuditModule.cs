@@ -1,3 +1,4 @@
+using Aveline.Api.Modules.Audit.Endpoints;
 using Aveline.Api.Modules.Audit.Repositories;
 using Aveline.Api.Modules.Audit.Services;
 
@@ -14,5 +15,12 @@ public static class AuditModule
         services.AddScoped<IAuditService, AuditService>();
 
         return services;
+    }
+
+    /// <summary>Maps the <c>/api/v1</c>-relative audit read routes (call on the v1 group).</summary>
+    public static IEndpointRouteBuilder MapAuditEndpoints(this IEndpointRouteBuilder endpoints)
+    {
+        AuditEndpoints.MapAuditEndpoints(endpoints);
+        return endpoints;
     }
 }

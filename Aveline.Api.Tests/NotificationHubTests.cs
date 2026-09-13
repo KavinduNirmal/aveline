@@ -75,6 +75,7 @@ public class NotificationHubTests
         public Task<Organization?> GetByOwnerUserIdAsync(Guid ownerUserId, CancellationToken cancellationToken = default) => Task.FromResult<Organization?>(null);
         public Task<Organization?> GetBySlugAsync(string slug, CancellationToken cancellationToken = default) => Task.FromResult<Organization?>(null);
         public Task<bool> ExistsBySlugAsync(string slug, CancellationToken cancellationToken = default) => Task.FromResult(false);
+        public Task<(IReadOnlyList<Organization> Items, int Total)> SearchAsync(string? term, bool? isActive, Aveline.Api.Modules.Billing.Models.PlanTier? planTier, int page, int pageSize, CancellationToken cancellationToken = default) => Task.FromResult<(IReadOnlyList<Organization>, int)>(([], 0));
         public Task<Organization> CreateAsync(Organization organization, CancellationToken cancellationToken = default) => Task.FromResult(organization);
         public Task<Organization> UpdateAsync(Organization organization, CancellationToken cancellationToken = default) => Task.FromResult(organization);
         public Task<OrganizationMembership?> GetMembershipAsync(Guid organizationId, Guid userId, CancellationToken cancellationToken = default) => Task.FromResult<OrganizationMembership?>(null);

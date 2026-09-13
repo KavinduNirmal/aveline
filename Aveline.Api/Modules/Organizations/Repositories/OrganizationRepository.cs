@@ -1,4 +1,5 @@
 using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Organizations.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -36,6 +37,43 @@ public class OrganizationRepository : IOrganizationRepository
     {
         return await _context.Organizations
             .AnyAsync(o => o.Slug == slug, cancellationToken);
+    }
+
+    public async Task<(IReadOnlyList<Organization> Items, int Total)> SearchAsync(
+        string? term,
+        bool? isActive,
+        PlanTier? planTier,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken = default)
+    {
+        var query = _context.Organizations.AsNoTracking().AsQueryable();
+
+        if (!string.IsNullOrWhiteSpace(term))
+        {
+            var trimmed = term.Trim();
+            query = query.Where(o => o.Name.Contains(trimmed) || o.Slug.Contains(trimmed));
+        }
+
+        if (isActive is not null)
+        {
+            query = query.Where(o => o.IsActive == isActive);
+        }
+
+        if (planTier is not null)
+        {
+            query = query.Where(o => o.PlanTier == planTier);
+        }
+
+        var total = await query.CountAsync(cancellationToken);
+        var items = await query
+            .OrderByDescending(o => o.CreatedAt)
+            .ThenByDescending(o => o.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        return (items, total);
     }
 
     public async Task<Organization> CreateAsync(Organization organization, CancellationToken cancellationToken = default)

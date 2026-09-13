@@ -37,7 +37,7 @@ class SalonScreen extends StatefulWidget {
   State<SalonScreen> createState() => _SalonScreenState();
 }
 
-class _SalonScreenState extends State<SalonScreen> {
+class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
   final List<SalonMessage> _messages = _seedMessages();
   final ScrollController _scrollController = ScrollController();
   final AgentStateProvider _agentStateProvider = AgentStateProvider();
@@ -47,6 +47,17 @@ class _SalonScreenState extends State<SalonScreen> {
   String? _conversationId;
   _AgentActivity? _agentActivity;
   bool _sending = false;
+
+  /// True while the thread is scrolled to (or within [_atBottomThreshold] of) the newest
+  /// message. Drives both auto-following replies and the jump-to-latest button.
+  bool _atBottom = true;
+
+  /// Set while we scroll the thread ourselves, so the scroll listener does not mistake our
+  /// own animation frames for the reader scrolling away.
+  bool _autoScrolling = false;
+
+  /// How close to the bottom still counts as being at the newest message.
+  static const double _atBottomThreshold = 48;
 
   static List<SalonMessage> _seedMessages() {
     final now = DateTime.now();
@@ -87,7 +98,18 @@ class _SalonScreenState extends State<SalonScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _scrollController.addListener(_onScroll);
     _connectRealtime();
+    // Open on the newest message rather than the top of the thread.
+    _scrollToBottom(animate: false);
+  }
+
+  /// Keeps the newest message visible when the viewport changes size, most importantly when
+  /// the on-screen keyboard opens and shortens the thread.
+  @override
+  void didChangeMetrics() {
+    if (_atBottom) _scrollToBottom(animate: false);
   }
 
   /// Resolves the Aveline Salon and opens a realtime connection to receive agent states and
@@ -124,6 +146,9 @@ class _SalonScreenState extends State<SalonScreen> {
             ..clear()
             ..addAll(history);
         });
+        // History is served oldest-first, so without this the thread stays at the top of the
+        // conversation and appears to open on the oldest message.
+        _scrollToBottom(animate: false);
       } catch (_) {
         if (mounted) setState(() => _messages.addAll(_seedMessages()));
       }
@@ -160,6 +185,7 @@ class _SalonScreenState extends State<SalonScreen> {
   /// Xs" caption and appends the message.
   void _handleIncomingMessage(SalonMessage message) {
     if (!mounted) return;
+    final wasAtBottom = _atBottom;
     setState(() {
       if (_messages.any((m) => m.id == message.id)) return;
 
@@ -179,7 +205,9 @@ class _SalonScreenState extends State<SalonScreen> {
         _agentActivity = null;
       }
     });
-    _scrollToBottom();
+    // Follow the conversation only when the reader is already at the newest message;
+    // otherwise leave their position alone so the jump-to-latest button surfaces instead.
+    if (wasAtBottom) _scrollToBottom();
   }
 
   Future<void> _send(String text) async {
@@ -288,20 +316,58 @@ class _SalonScreenState extends State<SalonScreen> {
     }
   }
 
-  void _scrollToBottom() {
+  /// Tracks whether the reader is following the newest message, so an incoming reply only
+  /// pulls the thread down when they are already at the bottom.
+  void _onScroll() {
+    if (_autoScrolling || !_scrollController.hasClients) return;
+    _updateAtBottom();
+  }
+
+  void _updateAtBottom() {
+    final position = _scrollController.position;
+    final atBottom =
+        position.maxScrollExtent - position.pixels <= _atBottomThreshold;
+    if (atBottom != _atBottom && mounted) {
+      setState(() => _atBottom = atBottom);
+    }
+  }
+
+  /// Scrolls the thread to its newest message.
+  ///
+  /// Deferred to the next frame so the list has laid out and `maxScrollExtent` accounts for
+  /// the messages that were just added; scrolling before that leaves the thread parked at
+  /// the top of the conversation.
+  void _scrollToBottom({bool animate = true}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 250),
-          curve: Curves.easeOut,
-        );
+      if (!mounted || !_scrollController.hasClients) return;
+
+      final target = _scrollController.position.maxScrollExtent;
+      _autoScrolling = true;
+
+      if (!animate) {
+        _scrollController.jumpTo(target);
+        _autoScrolling = false;
+        if (!_atBottom) setState(() => _atBottom = true);
+        return;
       }
+
+      _scrollController
+          .animateTo(
+            target,
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeOut,
+          )
+          .whenComplete(() {
+        _autoScrolling = false;
+        if (mounted && !_atBottom) setState(() => _atBottom = true);
+      });
     });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _scrollController.removeListener(_onScroll);
     _realtimeService?.disconnect();
     _agentStateProvider.dispose();
     _scrollController.dispose();
@@ -312,6 +378,38 @@ class _SalonScreenState extends State<SalonScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+
+    final thread = ListView.builder(
+      controller: _scrollController,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      itemCount: _messages.length + (_agentActivity != null ? 1 : 0),
+      itemBuilder: (context, index) {
+        if (index >= _messages.length) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: _AnimatedEntry(
+              child: AgentActivityBubble(
+                state: _agentActivity!.currentState,
+              ),
+            ),
+          );
+        }
+        final message = _messages[index];
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: _AnimatedEntry(
+            child: MessageBubble(
+              message: message,
+              // Only follow a streaming reply while the reader is at the newest message.
+              onStreamProgress: () {
+                if (_atBottom) _scrollToBottom();
+              },
+              onSelectCustomer: _selectCustomer,
+            ),
+          ),
+        );
+      },
+    );
 
     return Scaffold(
       appBar: AppBar(
@@ -360,36 +458,24 @@ class _SalonScreenState extends State<SalonScreen> {
           Expanded(
             child: _messages.isEmpty && _agentActivity == null
                 ? const _EmptySalon()
-                : ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 16,
-                    ),
-                    itemCount: _messages.length + (_agentActivity != null ? 1 : 0),
-                    itemBuilder: (context, index) {
-                      if (index >= _messages.length) {
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: _AnimatedEntry(
-                            child: AgentActivityBubble(
-                              state: _agentActivity!.currentState,
+                : Stack(
+                    children: [
+                      Positioned.fill(child: thread),
+                      // Only offered while the reader has scrolled away from the newest
+                      // message, so the thread can be returned to the bottom in one tap.
+                      if (!_atBottom)
+                        Positioned(
+                          right: 12,
+                          bottom: 12,
+                          child: FloatingActionButton.small(
+                            onPressed: () => _scrollToBottom(),
+                            tooltip: 'Jump to latest',
+                            child: const Icon(
+                              Icons.keyboard_arrow_down_rounded,
                             ),
                           ),
-                        );
-                      }
-                      final message = _messages[index];
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: _AnimatedEntry(
-                          child: MessageBubble(
-                            message: message,
-                            onStreamProgress: _scrollToBottom,
-                            onSelectCustomer: _selectCustomer,
-                          ),
                         ),
-                      );
-                    },
+                    ],
                   ),
           ),
           SalonComposer(onSend: (text) => _send(text)),

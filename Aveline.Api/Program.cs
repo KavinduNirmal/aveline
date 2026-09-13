@@ -28,6 +28,7 @@ using Aveline.Api.Modules.Statistics;
 using Aveline.Api.Modules.Statistics.Telemetry;
 using Aveline.Api.Modules.SystemHealth;
 using Aveline.Api.Modules.SystemHealth.Endpoints;
+using Aveline.Api.Modules.VisualIntelligence;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -88,6 +89,11 @@ builder.Services.AddScoped<IAdminApprovalService, AdminApprovalService>();
 builder.Services.AddScoped<IOnboardingService, OnboardingService>();
 builder.Services.AddScoped<Aveline.Api.Modules.Organizations.Webhooks.IClerkWebhookSyncService,
     Aveline.Api.Modules.Organizations.Webhooks.ClerkWebhookSyncService>();
+
+builder.Services.AddControllers();
+
+// Visual Intelligence & Inventory Module (Slice 2)
+builder.Services.AddVisualIntelligenceModule();
 
 var app = builder.Build();
 
@@ -159,10 +165,13 @@ v1.MapBlossomEndpoints();
 v1.MapSubscriptionEndpoints();
 v1.MapApiAccessEndpoints();
 v1.MapStatisticsEndpoints();
+v1.MapCatalogEndpoints();
 
 app.MapBillingEndpoints();
 app.MapCustomerConciergeEndpoints();
+app.MapVisualEndpoints();
 app.MapStatisticsInternalEndpoints();
+app.MapControllers();
 
 // Apply EF Core migrations on startup for a fresh/local database. Guarded to the
 // relational (PostgreSQL) provider so the in-memory contexts used by the test suite are

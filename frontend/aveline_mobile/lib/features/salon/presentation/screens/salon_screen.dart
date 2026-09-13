@@ -38,7 +38,7 @@ class SalonScreen extends StatefulWidget {
 }
 
 class _SalonScreenState extends State<SalonScreen> {
-  final List<SalonMessage> _messages = [];
+  final List<SalonMessage> _messages = _seedMessages();
   final ScrollController _scrollController = ScrollController();
   final AgentStateProvider _agentStateProvider = AgentStateProvider();
   ConversationRealtimeService? _realtimeService;

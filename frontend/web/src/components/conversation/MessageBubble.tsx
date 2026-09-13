@@ -128,6 +128,7 @@ export function MessageBubble({
               blocks={message.contentBlocks}
               onSignOff={onSignOff}
               onSelectCustomer={onSelectCustomer}
+              persona={persona}
             />
           )}
         </div>

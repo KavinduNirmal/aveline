@@ -34,6 +34,7 @@ public static class StatisticsModule
 
         services.AddScoped<ISystemMetricRepository, SystemMetricRepository>();
         services.AddScoped<IAlertService, AlertService>();
+        services.AddScoped<ISystemStatisticsService, SystemStatisticsService>();
 
         // Atomic Redis counters when Redis is configured; the process-local fallback mirrors
         // InMemoryDistributedJobLock and is only for local development and tests.
@@ -71,6 +72,7 @@ public static class StatisticsModule
     {
         endpoints.MapAgentStatisticsEndpoints();
         endpoints.MapApiStatisticsEndpoints();
+        endpoints.MapSystemStatisticsEndpoints();
         return endpoints;
     }
 

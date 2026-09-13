@@ -23,10 +23,11 @@ public class ConversationServiceTests
     public async Task SelectCustomerAsync_BindsCustomer_AndReTriggersAgentWithContext()
     {
         var orgId = Guid.NewGuid();
-        var salon = await _sut.GetOrCreateSalonAsync(orgId, Guid.NewGuid(), null, CancellationToken.None);
+        var userId = Guid.NewGuid();
+        var salon = await _sut.GetOrCreateSalonAsync(orgId, userId, null, CancellationToken.None);
         var customerId = Guid.NewGuid();
 
-        var selected = await _sut.SelectCustomerAsync(orgId, salon.Id, customerId, "Any events for Samantha?", CancellationToken.None);
+        var selected = await _sut.SelectCustomerAsync(orgId, userId, salon.Id, customerId, "Any events for Samantha?", CancellationToken.None);
 
         Assert.NotNull(selected);
         Assert.Equal(customerId, selected!.CustomerId);
@@ -46,7 +47,7 @@ public class ConversationServiceTests
     {
         var orgId = Guid.NewGuid();
 
-        var result = await _sut.SelectCustomerAsync(orgId, Guid.NewGuid(), Guid.NewGuid(), null, CancellationToken.None);
+        var result = await _sut.SelectCustomerAsync(orgId, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), null, CancellationToken.None);
 
         Assert.Null(result);
         Assert.Equal(0, _agent.PostCount);
@@ -60,19 +61,29 @@ public class ConversationServiceTests
         public Task<Conversation?> GetAsync(Guid orgId, Guid id, CancellationToken ct)
             => Task.FromResult(_conversations.FirstOrDefault(c => c.OrganizationId == orgId && c.Id == id));
 
+        public Task<Conversation?> GetVisibleToUserAsync(Guid orgId, Guid id, Guid userId, CancellationToken ct)
+            => Task.FromResult(_conversations.FirstOrDefault(
+                c => c.OrganizationId == orgId
+                     && c.Id == id
+                     && (c.OwnerUserId == null || c.OwnerUserId == userId)));
+
         public Task<Conversation?> GetByThreadIdAsync(string threadId, CancellationToken ct)
             => Task.FromResult(_conversations.FirstOrDefault(c => c.ThreadId == threadId));
 
-        public Task<(IReadOnlyList<Conversation> Items, int Total)> ListAsync(Guid orgId, int page, int pageSize, CancellationToken ct)
+        public Task<(IReadOnlyList<Conversation> Items, int Total)> ListAsync(Guid orgId, Guid userId, int page, int pageSize, CancellationToken ct)
         {
-            var scoped = _conversations.Where(c => c.OrganizationId == orgId).OrderByDescending(c => c.LastMessageAt).ToList();
+            var scoped = _conversations
+                .Where(c => c.OrganizationId == orgId && (c.OwnerUserId == null || c.OwnerUserId == userId))
+                .OrderByDescending(c => c.LastMessageAt).ToList();
             var items = scoped.Skip((page - 1) * pageSize).Take(pageSize).ToList();
             return Task.FromResult<(IReadOnlyList<Conversation>, int)>((items, scoped.Count));
         }
 
-        public Task<(Conversation Conversation, bool Created)> GetOrCreateSalonAsync(Guid orgId, Guid? customerId, string threadId, CancellationToken ct)
+        public Task<(Conversation Conversation, bool Created)> GetOrCreateSalonAsync(Guid orgId, Guid userId, Guid? customerId, string threadId, CancellationToken ct)
         {
-            var existing = _conversations.FirstOrDefault(c => c.OrganizationId == orgId && c.CustomerId == customerId && c.Kind == ConversationKind.Salon);
+            var existing = customerId is null
+                ? _conversations.FirstOrDefault(c => c.OrganizationId == orgId && c.OwnerUserId == userId && c.CustomerId == null && c.Kind == ConversationKind.Salon)
+                : _conversations.FirstOrDefault(c => c.OrganizationId == orgId && c.CustomerId == customerId && c.Kind == ConversationKind.Salon);
             if (existing is not null)
             {
                 return Task.FromResult<(Conversation, bool)>((existing, false));
@@ -84,6 +95,7 @@ public class ConversationServiceTests
                 OrganizationId = orgId,
                 Kind = ConversationKind.Salon,
                 CustomerId = customerId,
+                OwnerUserId = customerId is null ? userId : null,
                 ThreadId = threadId,
                 Status = ConversationStatus.Active,
             };
@@ -120,6 +132,7 @@ public class ConversationServiceTests
             {
                 existing.Status = conversation.Status;
                 existing.CustomerId = conversation.CustomerId;
+                existing.OwnerUserId = conversation.OwnerUserId;
                 existing.LastMessageAt = conversation.LastMessageAt;
             }
             return Task.CompletedTask;
@@ -235,12 +248,13 @@ public class ConversationServiceTests
     public async Task GetOrCreateSalonAsync_DoesNotReseedGreeting_OnExistingSalon()
     {
         var orgId = Guid.NewGuid();
-        await _sut.GetOrCreateSalonAsync(orgId, Guid.NewGuid(), null, CancellationToken.None);
+        var userId = Guid.NewGuid();
+        await _sut.GetOrCreateSalonAsync(orgId, userId, null, CancellationToken.None);
 
-        await _sut.GetOrCreateSalonAsync(orgId, Guid.NewGuid(), null, CancellationToken.None);
+        await _sut.GetOrCreateSalonAsync(orgId, userId, null, CancellationToken.None);
 
         var (items, _) = await _messages.ListAsync(
-            (await _conversations.ListAsync(orgId, 1, 50, CancellationToken.None)).Items.Single().Id,
+            (await _conversations.ListAsync(orgId, userId, 1, 50, CancellationToken.None)).Items.Single().Id,
             1, 50, null, CancellationToken.None);
         Assert.Single(items);
     }
@@ -339,10 +353,11 @@ public class ConversationServiceTests
             _sut.ApplyAgentMessageAsync(evt, CancellationToken.None));
     }
 
-    private async Task<(Guid orgId, Guid conversationId, Guid messageId, string contentHash)> SeedSignOffAsync()
+    private async Task<(Guid orgId, Guid userId, Guid conversationId, Guid messageId, string contentHash)> SeedSignOffAsync()
     {
         var orgId = Guid.NewGuid();
-        var salon = await _sut.GetOrCreateSalonAsync(orgId, Guid.NewGuid(), null, CancellationToken.None);
+        var userId = Guid.NewGuid();
+        var salon = await _sut.GetOrCreateSalonAsync(orgId, userId, null, CancellationToken.None);
         var evt = new AgentMessageEvent(
             salon.Id,
             salon.ThreadId,
@@ -356,15 +371,15 @@ public class ConversationServiceTests
         var stored = await _messages.GetAsync(salon.Id, message.Id, CancellationToken.None);
         stored!.Status = MessageStatus.AwaitingSignOff;
         await _messages.SaveAsync(stored, CancellationToken.None);
-        return (orgId, salon.Id, message.Id, stored.ContentHash!);
+        return (orgId, userId, salon.Id, message.Id, stored.ContentHash!);
     }
 
     [Fact]
     public async Task DecideSignOffAsync_Approve_PublishesMessage_AndActivatesConversation()
     {
-        var (orgId, conversationId, messageId, contentHash) = await SeedSignOffAsync();
+        var (orgId, userId, conversationId, messageId, contentHash) = await SeedSignOffAsync();
 
-        var decided = await _sut.DecideSignOffAsync(orgId, Guid.NewGuid(), conversationId, messageId, true, contentHash, CancellationToken.None);
+        var decided = await _sut.DecideSignOffAsync(orgId, userId, conversationId, messageId, true, contentHash, CancellationToken.None);
 
         Assert.Equal(MessageStatus.Published, decided.Status);
         var conversation = await _conversations.GetAsync(orgId, conversationId, CancellationToken.None);
@@ -374,9 +389,9 @@ public class ConversationServiceTests
     [Fact]
     public async Task DecideSignOffAsync_Reject_CancelsMessage_AndResolvesConversation()
     {
-        var (orgId, conversationId, messageId, contentHash) = await SeedSignOffAsync();
+        var (orgId, userId, conversationId, messageId, contentHash) = await SeedSignOffAsync();
 
-        var decided = await _sut.DecideSignOffAsync(orgId, Guid.NewGuid(), conversationId, messageId, false, contentHash, CancellationToken.None);
+        var decided = await _sut.DecideSignOffAsync(orgId, userId, conversationId, messageId, false, contentHash, CancellationToken.None);
 
         Assert.Equal(MessageStatus.Cancelled, decided.Status);
         var conversation = await _conversations.GetAsync(orgId, conversationId, CancellationToken.None);
@@ -387,21 +402,22 @@ public class ConversationServiceTests
     public async Task DecideSignOffAsync_Throws_WhenMessageIsNotSignOff()
     {
         var orgId = Guid.NewGuid();
-        var salon = await _sut.GetOrCreateSalonAsync(orgId, Guid.NewGuid(), null, CancellationToken.None);
-        var note = await _sut.SendStaffNoteAsync(orgId, Guid.NewGuid(), salon.Id, "hello", CancellationToken.None);
+        var userId = Guid.NewGuid();
+        var salon = await _sut.GetOrCreateSalonAsync(orgId, userId, null, CancellationToken.None);
+        var note = await _sut.SendStaffNoteAsync(orgId, userId, salon.Id, "hello", CancellationToken.None);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            _sut.DecideSignOffAsync(orgId, Guid.NewGuid(), salon.Id, note.Id, true, "hash", CancellationToken.None));
+            _sut.DecideSignOffAsync(orgId, userId, salon.Id, note.Id, true, "hash", CancellationToken.None));
     }
 
     [Fact]
     public async Task DecideSignOffAsync_Throws_WhenContentHashDoesNotMatch()
     {
-        var (orgId, conversationId, messageId, _) = await SeedSignOffAsync();
+        var (orgId, userId, conversationId, messageId, _) = await SeedSignOffAsync();
 
         // A stale/wrong hash means the payload changed after display; the decision is void.
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            _sut.DecideSignOffAsync(orgId, Guid.NewGuid(), conversationId, messageId, true, "stale-hash", CancellationToken.None));
+            _sut.DecideSignOffAsync(orgId, userId, conversationId, messageId, true, "stale-hash", CancellationToken.None));
 
         // The message must remain awaiting a decision.
         var stored = await _messages.GetAsync(conversationId, messageId, CancellationToken.None);
@@ -411,8 +427,7 @@ public class ConversationServiceTests
     [Fact]
     public async Task DecideSignOffAsync_RecordsDecisionOutOfBand()
     {
-        var (orgId, conversationId, messageId, contentHash) = await SeedSignOffAsync();
-        var userId = Guid.NewGuid();
+        var (orgId, userId, conversationId, messageId, contentHash) = await SeedSignOffAsync();
 
         await _sut.DecideSignOffAsync(orgId, userId, conversationId, messageId, true, contentHash, CancellationToken.None);
 
@@ -446,7 +461,7 @@ public class ConversationServiceTests
         await _sut.RecordInboundClientMessageAsync(orgId, number, number, "second", CancellationToken.None);
 
         Assert.Equal(2, _messages.SaveCount);
-        var (items, _) = await _conversations.ListAsync(orgId, 1, 50, CancellationToken.None);
+        var (items, _) = await _conversations.ListAsync(orgId, Guid.NewGuid(), 1, 50, CancellationToken.None);
         Assert.Single(items);
     }
 
@@ -494,7 +509,7 @@ public class ConversationServiceTests
     [Fact]
     public async Task ApplyAgentMessageUpdateAsync_RecomputesContentHash_ForSignOff()
     {
-        var (orgId, conversationId, messageId, originalHash) = await SeedSignOffAsync();
+        var (_, _, conversationId, messageId, originalHash) = await SeedSignOffAsync();
 
         var updated = await _sut.ApplyAgentMessageUpdateAsync(new AgentMessageUpdateEvent(
             conversationId, messageId, null,

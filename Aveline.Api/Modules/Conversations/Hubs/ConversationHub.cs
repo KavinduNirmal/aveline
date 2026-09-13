@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Aveline.Api.Modules.Conversations.Repositories;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Organizations.Repositories;
 using Aveline.Api.Modules.Shared.Repositories;
@@ -33,11 +34,16 @@ public class ConversationHub : Hub
 {
     private readonly IUserRepository _users;
     private readonly IOrganizationRepository _organizations;
+    private readonly IConversationRepository _conversations;
 
-    public ConversationHub(IUserRepository users, IOrganizationRepository organizations)
+    public ConversationHub(
+        IUserRepository users,
+        IOrganizationRepository organizations,
+        IConversationRepository conversations)
     {
         _users = users;
         _organizations = organizations;
+        _conversations = conversations;
     }
 
     public override async Task OnConnectedAsync()
@@ -76,7 +82,8 @@ public class ConversationHub : Hub
     /// <summary>
     /// Joins the caller to the <c>salon:&#123;conversationId&#125;</c> group so they receive
     /// <c>ReceiveMessage</c> for that conversation. The caller must be an active member of the
-    /// organization that owns the conversation.
+    /// organization that owns the conversation, and must be allowed to see it: organization-shared
+    /// Salons, or their own general Salon (ADR-021).
     /// </summary>
     public async Task JoinSalon(Guid organizationId, Guid conversationId)
     {
@@ -97,6 +104,15 @@ public class ConversationHub : Hub
         if (membership is null || membership.Status != MembershipStatus.Active)
         {
             throw new HubException("User is not an active member of this organization.");
+        }
+
+        // Organization membership is not enough: the general Salon is owned by one user, so a
+        // colleague must not be able to subscribe to it (ADR-021).
+        var conversation = await _conversations.GetVisibleToUserAsync(
+            organizationId, conversationId, user.Id, Context.ConnectionAborted);
+        if (conversation is null)
+        {
+            throw new HubException("Conversation not found for this user.");
         }
 
         await Groups.AddToGroupAsync(Context.ConnectionId, GroupName.ForSalon(conversationId), Context.ConnectionAborted);

@@ -37,7 +37,7 @@ public class ConversationService : IConversationService
         CancellationToken cancellationToken = default)
     {
         var threadId = Guid.NewGuid().ToString("N");
-        var (conversation, created) = await _conversations.GetOrCreateSalonAsync(orgId, customerId, threadId, cancellationToken);
+        var (conversation, created) = await _conversations.GetOrCreateSalonAsync(orgId, userId, customerId, threadId, cancellationToken);
 
         // A brand-new Salon gets a predefined Aveline greeting so the user always has a
         // warm first message (no LLM required).
@@ -80,30 +80,35 @@ public class ConversationService : IConversationService
 
     public async Task<ConversationDto?> GetAsync(
         Guid orgId,
+        Guid userId,
         Guid conversationId,
         CancellationToken cancellationToken = default)
     {
-        var conversation = await _conversations.GetAsync(orgId, conversationId, cancellationToken);
+        var conversation = await _conversations.GetVisibleToUserAsync(orgId, conversationId, userId, cancellationToken);
         return conversation is null ? null : ConversationDto.From(conversation);
     }
 
     public async Task<ConversationDto?> SelectCustomerAsync(
         Guid orgId,
+        Guid userId,
         Guid conversationId,
         Guid customerId,
         string? query,
         CancellationToken cancellationToken = default)
     {
-        var conversation = await _conversations.GetAsync(orgId, conversationId, cancellationToken);
+        var conversation = await _conversations.GetVisibleToUserAsync(orgId, conversationId, userId, cancellationToken);
         if (conversation is null)
         {
             return null;
         }
 
         // Bind the Salon to the customer the staff picked so later messages carry the context.
-        if (conversation.CustomerId != customerId)
+        // Binding also promotes the thread to organization-shared, so it stops being owned by
+        // whichever user happened to resolve the customer (ADR-021).
+        if (conversation.CustomerId != customerId || conversation.OwnerUserId is not null)
         {
             conversation.CustomerId = customerId;
+            conversation.OwnerUserId = null;
             await _conversations.SaveAsync(conversation, cancellationToken);
         }
 
@@ -118,23 +123,25 @@ public class ConversationService : IConversationService
 
     public async Task<(IReadOnlyList<ConversationDto> Items, int Total)> ListAsync(
         Guid orgId,
+        Guid userId,
         int page,
         int pageSize,
         CancellationToken cancellationToken = default)
     {
-        var (items, total) = await _conversations.ListAsync(orgId, page, pageSize, cancellationToken);
+        var (items, total) = await _conversations.ListAsync(orgId, userId, page, pageSize, cancellationToken);
         return (items.Select(ConversationDto.From).ToList(), total);
     }
 
     public async Task<(IReadOnlyList<MessageDto> Items, int Total)> ListMessagesAsync(
         Guid orgId,
+        Guid userId,
         Guid conversationId,
         int page,
         int pageSize,
         Guid? around = null,
         CancellationToken cancellationToken = default)
     {
-        var conversation = await _conversations.GetAsync(orgId, conversationId, cancellationToken);
+        var conversation = await _conversations.GetVisibleToUserAsync(orgId, conversationId, userId, cancellationToken);
         if (conversation is null)
         {
             throw new InvalidOperationException("Conversation not found in this organization.");
@@ -151,7 +158,7 @@ public class ConversationService : IConversationService
         string text,
         CancellationToken cancellationToken = default)
     {
-        var conversation = await _conversations.GetAsync(orgId, conversationId, cancellationToken)
+        var conversation = await _conversations.GetVisibleToUserAsync(orgId, conversationId, userId, cancellationToken)
             ?? throw new InvalidOperationException("Conversation not found in this organization.");
 
         var message = new Message
@@ -263,7 +270,7 @@ public class ConversationService : IConversationService
         string contentHash,
         CancellationToken cancellationToken = default)
     {
-        var conversation = await _conversations.GetAsync(orgId, conversationId, cancellationToken)
+        var conversation = await _conversations.GetVisibleToUserAsync(orgId, conversationId, userId, cancellationToken)
             ?? throw new InvalidOperationException("Conversation not found in this organization.");
 
         var message = await _messages.GetAsync(conversationId, messageId, cancellationToken)

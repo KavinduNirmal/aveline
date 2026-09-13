@@ -67,7 +67,7 @@ public sealed class UsageTrackerService(
             "Usage recorded: org={OrganizationId} workflow={WorkflowId} model={Model} " +
             "tokens={TotalTokens} blossoms={BlossomUnits} cost_usd={ActualCostUsd}",
             record.OrganizationId, record.WorkflowId, record.Model,
-            record.InputTokens + record.OutputTokens + record.CachedTokens,
+            (long)record.InputTokens + record.OutputTokens + record.CachedTokens,
             record.BlossomUnits, record.ActualCostUsd);
 
         CheckAbnormalCost(record);
@@ -113,7 +113,7 @@ public sealed class UsageTrackerService(
     /// </summary>
     public static decimal CalculateBlossomUnits(int inputTokens, int outputTokens, int cachedTokens)
     {
-        decimal totalTokens = inputTokens + outputTokens + cachedTokens;
+        decimal totalTokens = (long)inputTokens + outputTokens + cachedTokens;
         decimal raw = totalTokens / 1000m;
         // Ceiling to 1 decimal place
         decimal ceiled = Math.Ceiling(raw * 10m) / 10m;

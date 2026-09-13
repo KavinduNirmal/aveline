@@ -25,4 +25,14 @@ enum AgentState {
     }
     return AgentState.idle;
   }
+
+  /// True for states that mean the workflow run has finished.
+  ///
+  /// Mirrors the web `isTerminalState` helper. A terminal state ends the live activity bubble
+  /// rather than opening one, so a late terminal event cannot leave a stale "Done"/"Something
+  /// went wrong" card hanging in the thread.
+  bool get isTerminal =>
+      this == AgentState.success ||
+      this == AgentState.error ||
+      this == AgentState.response;
 }

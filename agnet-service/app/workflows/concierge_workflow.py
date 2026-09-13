@@ -20,6 +20,7 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from app.agents.commerce.graph import build_commerce_graph
 from app.agents.customer_memory.graph import build_memory_graph
 from app.agents.customer_memory.parsing import parse_message
 from app.core.config import get_settings
@@ -180,26 +181,57 @@ def run_visual_agent(state: ConciergeState) -> dict[str, Any]:
     }
 
 
-def run_commerce_agent(state: ConciergeState) -> dict[str, Any]:
-    """Stub Commerce Agent node.
+async def run_commerce_agent(state: ConciergeState) -> dict[str, Any]:
+    """Run the Commerce Agent (Slice 3 - Lina).
 
-    TODO(Slice 3): replace with the real ``app/agents/commerce/graph.py`` sub-graph, which
-    fills ``summary``/``payment``/``courier`` and, when approval is required, pauses for
-    human-in-the-loop sign-off. Until then this stub declares the structured output shape
-    with ``status == "stub"`` and no fabricated payment or approval data.
+    Evaluates order deals, profit margins, loyalty discounts, triggers HITL
+    approvals when thresholds are exceeded, and produces payment links and delivery plans.
     """
-    return {
-        "commerce_output": {
-            "agent": "commerce",
-            "ran": True,
-            "status": "stub",
-            "note": "Commerce validation is not wired yet (Slice 3).",
-            "needs_approval": False,
-            "summary": None,
-            "payment": None,
-            "courier": None,
+    org_context = state.get("org_context") or {}
+    org_id = org_context.get("organization_id") or org_context.get("org_id")
+    if not org_id:
+        return {
+            "commerce_output": {
+                "agent": "commerce",
+                "ran": True,
+                "status": "skipped",
+                "reason": "no organization context available",
+            }
         }
+
+    customer_id = org_context.get("customer_id")
+    customer_name = org_context.get("customer_name")
+    resolution = state.get("resolution") or {}
+    if resolution.get("kind") == "resolved":
+        customer_id = customer_id or resolution.get("customer_id")
+        profile = resolution.get("profile") or {}
+        customer_name = customer_name or profile.get("fullName")
+
+    items = org_context.get("items") or []
+    proposed_discount = float(org_context.get("proposed_discount") or 0.0)
+    delivery_address = org_context.get("delivery_address")
+    channel = org_context.get("channel") or "whatsapp"
+
+    registry = ToolRegistry()
+    graph = build_commerce_graph(registry, org_context=org_context)
+    commerce_state = {
+        "org_id": str(org_id),
+        "order_id": org_context.get("order_id"),
+        "customer_id": str(customer_id) if customer_id else None,
+        "customer_name": customer_name,
+        "items": items,
+        "proposed_discount": proposed_discount,
+        "delivery_address": delivery_address,
+        "channel": channel,
+        "message": state.get("message", ""),
     }
+    result = await graph.ainvoke(commerce_state)
+    output = result.get("output") or {
+        "agent": "commerce",
+        "ran": True,
+        "status": result.get("status") or "success",
+    }
+    return {"commerce_output": output}
 
 
 def formulate_response(state: ConciergeState) -> dict[str, Any]:

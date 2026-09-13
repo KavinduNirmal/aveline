@@ -739,6 +739,28 @@ unless it appears in this catalog **and** in
 | Endpoint | `GET /api/v1/admin/statistics/system/overview` |
 | Access | `stats:system` |
 
+> **Shipped note (Phase 6, issues #227–#230).** S-33–S-43 are implemented as documented,
+> with these deviations:
+>
+> - **S-33 readiness** is returned verbatim from `HealthCheckService`; the
+>   `aveline.system.readiness` sample is not written by the collector (the readiness check
+>   is synchronous and already exposed on `/health/ready`).
+> - **S-34 uptime** is computed from `Process.StartTime`; `restarts` is not stored.
+> - **S-35/S-36/S-40/S-41** are produced by `SystemMetricCollector` under the
+>   BR-7.8-compliant names `aveline.process.*`, `aveline.queue.telemetry_channel`,
+>   `aveline.api.telemetry.dropped`, `aveline.eventbus.*`, `aveline.api.requests_per_second`,
+>   `aveline.api.error_rate` and `aveline.agent.runs_running`. CPU seconds use the `count`
+>   unit because the documented unit set has no `seconds` member.
+> - **S-36** omits `inbound_message_backlog`: `InboundMessageLog` has no processed marker.
+>   The response lists it in `omitted` (BR-7.10).
+> - **S-37/S-38** database pool and cache metrics are not collected yet; the endpoints do
+>   not expose them.
+> - **S-39** reports the rate of `5xx` requests; unhandled-exception counts are not
+>   instrumented and are listed in `omitted`.
+> - **S-41** exposes the counter snapshot; `publish_latency_ms` is listed in `omitted`
+>   because `EventBusMetrics` keeps counters only.
+> - **S-43** composes the same statistics over a 15-minute window and is not cached.
+
 ---
 
 ## 8. Data quality warnings (must be returned to clients)

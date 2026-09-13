@@ -1795,6 +1795,16 @@ lastUsedAt, topEndpoint }`. **Related statistics:** [S-28](../backend/statistics
 
 ### C.8 System statistics (Phase 6)
 
+> **Status: implemented** on `feature/admin-backend-api` (issues #227–#230). The schema,
+> the metric collector and retention job, the alert evaluation service and the eight
+> endpoints below are live. Confirmed deviations: the metrics endpoint names its
+> granularity parameter `windowSize` (not `groupBy`) and accepts
+> `instant|minute|hour|day`; an unknown metric returns an empty series with a
+> `dataQuality.omitted` reason rather than a 400; `inbound_message_backlog` and
+> `publish_latency_ms` are reported in `omitted` because the current schema cannot measure
+> them; and only an organization-scoped critical alert creates a `NotificationRecord`
+> because `NotificationRecords.OrganizationId` is a required FK to `Organizations`.
+
 Base: `/api/v1/admin/statistics`. **Auth:** `stats:system` (Aveline team only).
 
 | Endpoint | Params | Returns |

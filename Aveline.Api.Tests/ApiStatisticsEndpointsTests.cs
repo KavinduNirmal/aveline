@@ -305,21 +305,31 @@ public class ApiStatisticsEndpointsTests : IAsyncLifetime
         }
 
         await SeedMetricAsync(orgA, 9);
-        // Attach the key id by rewriting the seeded metric.
+        // Attach the key id by rewriting the seeded metric. The shared in-memory database
+        // means other classes' telemetry may also be present, so match this test's row.
         await using (var context = Context())
         {
-            var metric = await context.ApiRequestMetrics.FirstAsync();
+            var metric = await context.ApiRequestMetrics.FirstAsync(
+                candidate => candidate.OrganizationId == orgA && candidate.RequestCount == 9);
             metric.ApiKeyId = apiKeyId;
             await context.SaveChangesAsync();
         }
 
         await SeedAdminAsync($"apistats_keysadmin_{suffix}");
         var admin = CreateToken($"apistats_keysadmin_{suffix}", userRole: Roles.Admin);
-        var response = await GetAsync("/api/v1/admin/statistics/api-keys", admin);
+
+        // Scope the window to the seeded metric so live telemetry written by other test
+        // classes into the shared in-memory database cannot change the total.
+        var from = DateTime.UtcNow.AddHours(-3);
+        var to = DateTime.UtcNow.AddHours(-1);
+        var response = await GetAsync(
+            $"/api/v1/admin/statistics/api-keys?from={from:O}&to={to:O}", admin);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
-        Assert.Equal(1, body.GetProperty("total").GetInt32());
-        Assert.Equal(apiKeyId, body.GetProperty("items")[0].GetProperty("apiKeyId").GetGuid());
+        Assert.True(body.GetProperty("total").GetInt32() >= 1);
+        var item = body.GetProperty("items").EnumerateArray()
+            .Single(candidate => candidate.GetProperty("apiKeyId").GetGuid() == apiKeyId);
+        Assert.Equal(9, item.GetProperty("requestCount").GetInt64());
     }
 }

@@ -1,9 +1,12 @@
 # Aveline Backend — Requirements and Implementation Plan
 
-**Status:** Phases 0–5 (foundations, Blossom pricing, the entitlement ledger, API
-access/user/organization administration, agentic statistics, and API consumption
-statistics) are **implemented** on `feature/admin-backend-api` (issues #176–#226).
-Phase 6 remains proposed. The three blocking open questions below now gate Phase 6.
+**Status:** Phases 0–6 (foundations, Blossom pricing, the entitlement ledger, API
+access/user/organization administration, agentic statistics, API consumption
+statistics, and system statistics and alerts) are **implemented** on
+`feature/admin-backend-api` (issues #176–#231). The eight-migration sequence in
+[domain-model.md](domain-model.md) is complete: M1 `AuditLogEntries`, M2 pricing, M3
+ledger, M4 entitlements, M5 API access, M6 agent statistics, M7 API consumption and
+M8 system statistics are all applied. No further migration is planned by this document.
 **Baseline:** commit `902f27f` (`integration/slice-2-to-slice-1`)
 **Scope:** backend only — `Aveline.Api` and `agnet-service`. No frontend, no
 screens, no UX flows.
@@ -279,6 +282,43 @@ the predecessor atomically. See
    `HourlyRollupRetentionDays`, `DailyRollupRetentionDays`, `WriterBatchSize`,
    `WriterFlushSeconds`, `MinSampleForPercentile`, `MaxWindowDays`,
    `QuotaWarningPercent`, `IpHashSalt`) are exposed in `appsettings.json` beyond the
+   plan's §10.2 list.
+
+---
+
+### Implementation status (Phase 6 — system statistics and alerts)
+
+| Issue | What landed |
+| --- | --- |
+| [#227](https://github.com/KavinduNirmal/aveline/issues/227) | M8: `SystemMetricSamples`, `SystemAlertRules`, `SystemAlerts`, the CHECK/unique indexes and the twelve seeded rules |
+| [#228](https://github.com/KavinduNirmal/aveline/issues/228) | `SystemMetricCollector` (pure `BuildSamples`, bounded 100-sample retry buffer), `SystemMetricRetentionJob` (daily 03:30, 30 days), `ISystemMetricRepository` and the `Observability:SystemMetric*` keys |
+| [#229](https://github.com/KavinduNirmal/aveline/issues/229) | `IAlertService`/`AlertService` (Avg/Max/Min/Sum/Rate/Count over the window, cooldown aggregation, persisted consecutive-OK auto-resolution, critical notification, audit and `system.alert.*` events) and `AlertEvaluationJob` (60 s, lock-guarded) |
+| [#230](https://github.com/KavinduNirmal/aveline/issues/230) | `/api/v1/admin/statistics/system/{overview,metrics,queues,errors,throughput,eventbus,alerts}` and `POST /alerts/{alertId}/acknowledge` under `stats:system` |
+| [#231](https://github.com/KavinduNirmal/aveline/issues/231) | This document, [../api/README.md §C.8](../api/README.md), [statistics-catalog.md](statistics-catalog.md) and the AI-usage record |
+
+**Confirmed deviations from the proposed plan:**
+
+1. **Collected metric names follow BR-7.8** (`aveline.<subsystem>.<measure>`, e.g.
+   `aveline.api.error_rate`, `aveline.agent.runs_running`). The seeded rules from #227 still
+   reference the short `api.*` / `agent.*` / `blossom.*` names for metrics the collector does
+   not produce, so those rules fire only when another producer supplies those names.
+2. **The collector records CPU seconds with unit `count`.** The documented unit set
+   (`count`, `ms`, `bytes`, `ratio`, `percent`) has no `seconds` member.
+3. **BR-7.11 is honoured only for organization-scoped critical alerts.**
+   `NotificationRecords.OrganizationId` is a required FK to `Organizations` and the scheduled
+   rules are system-wide, so a system-wide critical alert logs that no notification was
+   created rather than writing an invalid FK. `IAlertService.EvaluateRuleAsync` accepts an
+   optional organization id, so an org-scoped alert does create the record through
+   `IRecipientResolver`.
+4. **`inbound_message_backlog` and `publish_latency_ms` are unmeasurable today.**
+   `InboundMessageLog` has no processed marker and `EventBusMetrics` exposes counters only;
+   both appear in each response's `omitted` list instead of as zero (BR-7.10).
+5. **The metrics endpoint parameter is `windowSize`** (`instant|minute|hour|day`), not the
+   `groupBy` name used in the §C.8 draft; the collector writes `instant` samples.
+6. **Rate aggregation sums positive deltas per minute.** For a cumulative counter this is the
+   increase over the window, and a reset cannot produce a negative rate.
+7. **`Observability:SystemMetricCollectionSeconds` and `SystemMetricRetentionDays` are new
+   config keys**; `AlertEvaluationSeconds` and `AutoResolveConsecutiveOk` were already in the
    plan's §10.2 list.
 
 ---

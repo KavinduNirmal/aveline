@@ -2228,3 +2228,114 @@ per task.
 - Hour→day rollup compaction beyond 90 days.
 - A load-test harness to prove FR-6.3/BR-6.3.
 - `docs/api/openapi.yaml` reconciliation against generated output remains.
+
+---
+
+## Session 2026-09-11 (cont.) — Admin backend API, Phase 6 (system statistics and alerts)
+
+**Student:** K.N. Delpachithra (Kavindu) · **ID:** IT24102532
+**Branch:** `feature/admin-backend-api` · **Issues:** #227–#231
+
+Issue #227 (the M8 schema and the twelve seeded alert rules) was already committed
+as `45fbfc6`; this session implemented the remaining four issues with one TDD task
+per issue and one commit per issue.
+
+### Work performed (one commit per issue)
+
+- [#228](https://github.com/KavinduNirmal/aveline/issues/228) — `SystemMetricCollector`
+  (`JobName = system-metric-collector`, interval from
+  `Observability:SystemMetricCollectionSeconds`, default 30) with a pure
+  `BuildSamples(MetricSnapshot)` mapper, SHA-256 dimension hashing and a bounded
+  100-sample in-memory retry buffer that drops the excess and increments
+  `DroppedSamples`; `SystemMetricRetentionJob` (daily 03:30, 30 days); the
+  `ISystemMetricRepository` registration and the two new `Observability:*` keys.
+  `TelemetryChannel.PendingCount` was finished from the uncommitted partial work.
+- [#229](https://github.com/KavinduNirmal/aveline/issues/229) — `IAlertService` /
+  `AlertService`: Avg/Max/Min/Sum/Rate/Count over `WindowSeconds`, the five
+  comparison operators, cooldown aggregation on the open row (BR-7.6), persisted
+  `ConsecutiveOkCount` auto-resolution (BR-7.7), acknowledgement, critical
+  notification through `IRecipientResolver` + `INotificationRepository` (BR-7.11),
+  `system.alert.fired|acknowledged|resolved` events, rule CRUD/acknowledgement
+  `AuditLogEntry` writes, and `AlertEvaluationJob` (60 s, lock-guarded).
+  `NotificationType.SystemAlert` and five `AuditAction` constants were added.
+- [#230](https://github.com/KavinduNirmal/aveline/issues/230) — the
+  `/api/v1/admin/statistics/system/{overview,metrics,queues,errors,throughput,eventbus,alerts}`
+  endpoints plus `POST /alerts/{alertId:guid}/acknowledge`, all under
+  `AuthorizationConfiguration.StatsSystemPolicy`, with DTOs, a
+  `SystemStatisticsService` read model, a 400 `{ message }` validation surface and
+  an `omitted`/`dataQuality` indication for unmeasurable metrics.
+- [#231](https://github.com/KavinduNirmal/aveline/issues/231) — the Phase 6 status
+  table and deviations in `docs/backend/README.md`, the §C.8 implemented note in
+  `docs/api/README.md`, the Phase 6 shipped note in
+  `docs/backend/statistics-catalog.md`, this record, and a determinism fix to
+  `ApiStatisticsEndpointsTests.AdminApiKeys_ReturnSystemWideKeys`.
+
+### Important architectural decisions
+
+- **Unknown metrics are omitted, never zero** (BR-7.10). `BuildSamples` returns no
+  sample for a null member, and the composite system endpoints list the metrics they
+  cannot measure in an `omitted` array.
+- **The collector never crashes the host.** A failed write buffers at most 100
+  samples; further samples are counted as dropped, and the buffer is flushed with the
+  next successful pass.
+- **Cooldown aggregation reuses the open alert row.** A breaching evaluation inside
+  `CooldownSeconds` increments `OccurrenceCount`/`LastObservedAt` and resets the
+  OK counter; outside cooldown the same row is refreshed and the fire side effects
+  run again, so there is never more than one open alert per rule.
+- **Auto-resolution is persisted, not in-memory.** `ConsecutiveOkCount` lives on
+  `SystemAlert`, so a restart cannot lose progress toward resolution.
+- **Collected metric names follow BR-7.8** (`aveline.<subsystem>.<measure>`), which
+  the seeded rules from #227 predate for the `api.*`/`agent.*`/`blossom.*` names.
+
+### Problems encountered
+
+- **A `SystemAlertRule` carries no organization, so the seeded rules evaluate
+  system-wide.** `NotificationRecords.OrganizationId` is a required FK to
+  `Organizations`, so a system-wide critical alert cannot create a tenant-scoped
+  notification. `EvaluateRuleAsync` therefore accepts an optional organization id;
+  the scheduled job passes none and logs the omission, while an org-scoped alert
+  creates the record through `IRecipientResolver`. BR-7.11 is documented as
+  partially satisfied.
+- **`InboundMessageLog` has no processed marker and `EventBusMetrics` keeps counters
+  only**, so `inbound_message_backlog` and `publish_latency_ms` are returned in the
+  response `omitted` list instead of as zero.
+- **The documented unit set has no `seconds` member**, so `aveline.process.cpu_seconds`
+  is recorded with unit `count`.
+- **A pre-existing shared-in-memory-database race** made
+  `ApiStatisticsEndpointsTests.AdminApiKeys_ReturnSystemWideKeys` order-dependent: it
+  asserted a global `total == 1` while other classes' live telemetry wrote
+  `ApiRequestMetrics` rows with an `ApiKeyId`. It was reproduced without any Phase 6
+  code; the fix scopes the query window to the seeded metric and asserts the seeded
+  key is present rather than a global count.
+- **The metrics endpoint parameter is `windowSize`, not the §C.8 draft's `groupBy`**,
+  because the collector writes `instant` samples.
+
+### Verification performed
+
+- Full suite: **1042 passed, 0 failed** (Phase 5 ended at 997; 30 new tests: 8 for
+  #228, 9 for #229, 13 for #230; the balance is the `ApiStatisticsEndpointsTests`
+  determinism adjustment).
+- `SystemMetricCollectorTests` proves the unknown-metric omission, the stable
+  64-character hash, the ≤ 100-sample buffer with the drop counter, and the flush.
+- `SystemMetricRetentionJobTests` proves the cutoff and the no-op re-run.
+- `AlertEvaluationTests` proves fire, cooldown aggregation, auto-resolution after
+  three OK evaluations, the critical notification, acknowledgement with audit/event,
+  rule-CRUD audit, and the `blossom.ledger.drift` acceptance case (a non-zero
+  `blossom.reconciliation.drift` sample fires the seeded rule).
+- `SystemStatisticsEndpointsTests` proves anonymous 401, boutique-owner 403, the
+  overview shape, the metric series, alerts filtering and acknowledgement, and the
+  400 validation surface.
+- `dotnet build Aveline.Api/Aveline.Api.sln -c Release` succeeded; each issue was
+  committed separately with the Husky pre-commit gates passing.
+
+### Remaining work
+
+- **BR-7.11 for system-wide alerts**: give system notifications an organization
+  context, or make `NotificationRecord.OrganizationId` nullable, so the seeded
+  system-wide critical rules can notify platform owners/admins.
+- **Database pool and cache metrics (S-37, S-38)** are still uncollected; the
+  endpoints do not expose them yet.
+- **Hour→day system-metric compaction** (400-day hourly retention) is not scheduled.
+- **The short seeded metric names** (`api.error_rate`, `agent.*`, `blossom.*`) have
+  no producer yet, so those rules fire only when a producer supplies them.
+- `docs/api/openapi.yaml` reconciliation against generated output remains.

@@ -89,6 +89,12 @@ builder.Services.AddScoped<IOnboardingService, OnboardingService>();
 builder.Services.AddScoped<Aveline.Api.Modules.Organizations.Webhooks.IClerkWebhookSyncService,
     Aveline.Api.Modules.Organizations.Webhooks.ClerkWebhookSyncService>();
 
+// Commerce Module (Slice 3)
+builder.Services.AddScoped<Aveline.Api.Modules.Commerce.Repositories.IBusinessRulesRepository, Aveline.Api.Modules.Commerce.Repositories.BusinessRulesRepository>();
+builder.Services.AddScoped<Aveline.Api.Modules.Commerce.Services.IBusinessRulesService, Aveline.Api.Modules.Commerce.Services.BusinessRulesService>();
+builder.Services.AddScoped<Aveline.Api.Modules.Commerce.Repositories.IOrderRepository, Aveline.Api.Modules.Commerce.Repositories.OrderRepository>();
+builder.Services.AddScoped<Aveline.Api.Modules.Commerce.Services.IOrderService, Aveline.Api.Modules.Commerce.Services.OrderService>();
+
 var app = builder.Build();
 
 // Fail fast when Production would hash client IPs with an empty salt (M-1).

@@ -25,7 +25,11 @@ public sealed class IdempotencyEndpointFilter(
 
         if (string.IsNullOrWhiteSpace(key))
         {
-            return await next(context);
+            return Results.BadRequest(new
+            {
+                message = $"The {HeaderName} header is required.",
+                code = "idempotency-key-required",
+            });
         }
 
         if (key.Length > MaxKeyLength)
@@ -65,7 +69,9 @@ public sealed class IdempotencyEndpointFilter(
             });
         }
 
-        if (replay is not null)
+        // Only successful responses are replayed; a failed operation must be able to run
+        // again once the caller has corrected the underlying condition.
+        if (replay is not null && replay.Status < StatusCodes.Status400BadRequest)
         {
             http.Response.StatusCode = replay.Status;
             http.Response.ContentType = "application/json; charset=utf-8";
@@ -110,6 +116,13 @@ public sealed class IdempotencyEndpointFilter(
         Guid? organizationId, Guid? actorUserId, string endpoint, string key, string requestHash,
         HttpContext http, string responseBody)
     {
+        // Never store a failure: replaying a 4xx/5xx after the caller has fixed the
+        // condition would keep returning the stale error for the whole retention window.
+        if (http.Response.StatusCode >= StatusCodes.Status400BadRequest)
+        {
+            return;
+        }
+
         try
         {
             await idempotencyService.SaveAsync(

@@ -68,7 +68,8 @@ public class SubscriptionEndpointsIntegrationTests : IAsyncLifetime
         return handler.CreateToken(descriptor);
     }
 
-    private HttpRequestMessage Authorized(HttpMethod method, string path, string token, object? body = null)
+    private HttpRequestMessage Authorized(
+        HttpMethod method, string path, string token, object? body = null, string? idempotencyKey = null)
     {
         var request = new HttpRequestMessage(method, path)
         {
@@ -78,6 +79,11 @@ public class SubscriptionEndpointsIntegrationTests : IAsyncLifetime
         if (body is not null)
         {
             request.Content = JsonContent.Create(body);
+        }
+
+        if (idempotencyKey is not null)
+        {
+            request.Headers.Add("Idempotency-Key", idempotencyKey);
         }
 
         return request;
@@ -165,7 +171,8 @@ public class SubscriptionEndpointsIntegrationTests : IAsyncLifetime
 
         var response = await _client.SendAsync(Authorized(
             HttpMethod.Post, $"/api/v1/orgs/{orgId}/subscription/change-plan", token,
-            new { planTier = "Bloom", effective = "immediate", reason = "Upgrade for peak season." }));
+            new { planTier = "Bloom", effective = "immediate", reason = "Upgrade for peak season." },
+            "change-plan-upgrade"));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
@@ -182,7 +189,8 @@ public class SubscriptionEndpointsIntegrationTests : IAsyncLifetime
 
         var response = await _client.SendAsync(Authorized(
             HttpMethod.Post, $"/api/v1/orgs/{orgId}/subscription/change-plan", token,
-            new { planTier = "Seed", effective = "immediate" }));
+            new { planTier = "Seed", effective = "immediate" },
+            "change-plan-noop"));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
@@ -197,7 +205,8 @@ public class SubscriptionEndpointsIntegrationTests : IAsyncLifetime
 
         var response = await _client.SendAsync(Authorized(
             HttpMethod.Post, $"/api/v1/orgs/{orgId}/subscription/change-plan", token,
-            new { planTier = "Seed", effective = "immediate" }));
+            new { planTier = "Seed", effective = "immediate" },
+            "change-plan-downgrade"));
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;

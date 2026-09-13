@@ -61,6 +61,20 @@ public class IdempotencyStoreTests
     }
 
     [Fact]
+    public async Task TryReplayAsync_FailedResponse_IsNotReplayed()
+    {
+        var orgId = Guid.CreateVersion7();
+        var service = CreateService();
+        await service.SaveAsync(
+            orgId, "POST /x", "POST", "key-failed", "hash-a", 409,
+            "{\"code\":\"insufficient-balance\"}", Now);
+
+        var replay = await service.TryReplayAsync(orgId, "POST /x", "key-failed", "hash-a", Now);
+
+        Assert.Null(replay);
+    }
+
+    [Fact]
     public async Task TryReplayAsync_ExpiredRecord_IsTreatedAsUnknown()
     {
         var orgId = Guid.CreateVersion7();

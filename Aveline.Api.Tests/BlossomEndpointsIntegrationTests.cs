@@ -245,6 +245,47 @@ public class BlossomEndpointsIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AdminCredit_WithoutIdempotencyKey_Returns400WithCode()
+    {
+        var (orgId, _) = await SeedBoutiqueAsync("nokey");
+        await SeedAdminAsync("blossom_admin_nokey");
+        var token = CreateToken("blossom_admin_nokey", userRole: Roles.Admin);
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Post, $"/api/v1/admin/orgs/{orgId}/blossoms/credit", token,
+            new { amount = 100m, reason = "Missing idempotency key." }));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("idempotency-key-required", body.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task AdminDebit_FailedOperation_IsNotReplayedOnRetry()
+    {
+        var (orgId, _) = await SeedBoutiqueAsync("failedreplay");
+        await SeedAdminAsync("blossom_admin_failedreplay");
+        var token = CreateToken("blossom_admin_failedreplay", userRole: Roles.Admin);
+        var body = new { amount = 500m, reason = "Debit before any top-up exists." };
+
+        var first = await _client.SendAsync(Authorized(
+            HttpMethod.Post, $"/api/v1/admin/orgs/{orgId}/blossoms/debit", token, body, "failed-replay-1"));
+        Assert.Equal(HttpStatusCode.Conflict, first.StatusCode);
+
+        // Make the same logical operation possible, then retry the same key.
+        var credit = await _client.SendAsync(Authorized(
+            HttpMethod.Post, $"/api/v1/admin/orgs/{orgId}/blossoms/credit", token,
+            new { amount = 500m, reason = "Top-up after the failed debit." }, "failed-replay-credit"));
+        Assert.Equal(HttpStatusCode.Created, credit.StatusCode);
+
+        var retry = await _client.SendAsync(Authorized(
+            HttpMethod.Post, $"/api/v1/admin/orgs/{orgId}/blossoms/debit", token, body, "failed-replay-1"));
+
+        Assert.Equal(HttpStatusCode.Created, retry.StatusCode);
+        Assert.False(retry.Headers.Contains("Idempotency-Replayed"));
+    }
+
+    [Fact]
     public async Task AdminCredit_ReplayedWithSameKey_ReturnsReplayHeader()
     {
         var (orgId, _) = await SeedBoutiqueAsync("replay");

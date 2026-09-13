@@ -25,6 +25,13 @@ public sealed class IdempotencyService(
             return null;
         }
 
+        // A failed operation is not a replayable result: the caller must be able to
+        // retry the same key after correcting the underlying condition.
+        if (record.ResponseStatus >= 400)
+        {
+            return null;
+        }
+
         if (!string.Equals(record.RequestHash, requestHash, StringComparison.Ordinal))
         {
             throw new IdempotencyKeyReuseException();

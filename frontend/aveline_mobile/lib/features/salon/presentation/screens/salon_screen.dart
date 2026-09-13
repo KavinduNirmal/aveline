@@ -9,20 +9,13 @@ import '../../../../core/notifications/realtime_connection_factory.dart';
 import '../../../../core/providers/agent_state_provider.dart';
 import '../../../../core/providers/user_provider.dart';
 import '../../data/conversation_api.dart';
+import '../../domain/agent_activity.dart';
 import '../../domain/agent_state.dart';
 import '../../domain/salon_message.dart';
 import '../widgets/agent_activity_bubble.dart';
 import '../widgets/agent_avatar.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/salon_composer.dart';
-
-/// Aveline's in-progress reasoning, shown as a live activity bubble until a reply lands.
-class _AgentActivity {
-  const _AgentActivity({required this.startedAt, required this.currentState});
-
-  final DateTime startedAt;
-  final AgentState currentState;
-}
 
 /// The full-screen Salon conversation. Opened from the dock's center launcher;
 /// the dock is hidden here. Mirrors the web SalonPanel/MessageThread in a
@@ -45,7 +38,7 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
   ConversationApi? _conversationApi;
   String? _organizationId;
   String? _conversationId;
-  _AgentActivity? _agentActivity;
+  AgentActivity? _agentActivity;
   bool _sending = false;
 
   /// True while the thread is scrolled to (or within [_atBottomThreshold] of) the newest
@@ -161,16 +154,19 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
         organizationId: organizationId,
         conversationId: conversation.id,
         onAgentState: (payload) {
+          if (!mounted) return;
+
           final state = AgentState.fromWire(payload.state);
+          final activity = _agentActivity;
+
+          // States are published next to the messages they describe but on separate channels,
+          // so one can arrive after the reply it belonged to. Tracking only a run that is
+          // actually in flight keeps a late state from reopening the activity bubble, which
+          // nothing would ever close again.
+          if (activity == null && !state.isTerminal) return;
+
           _agentStateProvider.apply(state);
-          setState(() {
-            _agentActivity = _agentActivity == null
-                ? _AgentActivity(startedAt: DateTime.now(), currentState: state)
-                : _AgentActivity(
-                    startedAt: _agentActivity!.startedAt,
-                    currentState: state,
-                  );
-          });
+          setState(() => _agentActivity = nextAgentActivity(activity, state));
         },
         onMessage: (message) {
           _handleIncomingMessage(message);
@@ -186,11 +182,12 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
   void _handleIncomingMessage(SalonMessage message) {
     if (!mounted) return;
     final wasAtBottom = _atBottom;
+    var isAgent = false;
     setState(() {
       if (_messages.any((m) => m.id == message.id)) return;
 
       final activity = _agentActivity;
-      final isAgent = message.authorKind == 'Agent';
+      isAgent = message.authorKind == 'Agent';
       final thoughtSeconds = isAgent && activity != null
           ? DateTime.now().difference(activity.startedAt).inMilliseconds / 1000.0
           : null;
@@ -205,6 +202,11 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
         _agentActivity = null;
       }
     });
+    // The reply is the visible end of the run, so settle the avatar/status with it. A terminal
+    // state normally follows, but it must not be the only thing that stops the header spinning.
+    if (isAgent) {
+      _agentStateProvider.reset();
+    }
     // Follow the conversation only when the reader is already at the newest message;
     // otherwise leave their position alone so the jump-to-latest button surfaces instead.
     if (wasAtBottom) _scrollToBottom();
@@ -249,7 +251,7 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
 
       // Only once the user message is confirmed does Aveline's activity bubble appear.
       setState(() {
-        _agentActivity = _AgentActivity(
+        _agentActivity = AgentActivity(
           startedAt: DateTime.now(),
           currentState: AgentState.thinking,
         );
@@ -305,7 +307,7 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
       );
       if (!mounted) return;
       setState(() {
-        _agentActivity = _AgentActivity(
+        _agentActivity = AgentActivity(
           startedAt: DateTime.now(),
           currentState: AgentState.thinking,
         );

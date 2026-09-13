@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Aveline.Api.Infrastructure.Eventing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -147,6 +148,130 @@ public class RedisSubscriptionServiceSubscribeTests
         }
 
         throw new TimeoutException($"Expected {expectedCount} SubscribeAsync invocations but saw {subscriber.Invocations.Count}.");
+    }
+}
+
+/// <summary>
+/// Ordering guarantees for the Redis subscription host. StackExchange.Redis hands the
+/// subscriber callback an <see cref="Action{T1,T2}"/> and never awaits it, so the callback must
+/// only enqueue: dispatching inline let a later event overtake an earlier one, and clients saw
+/// an <c>agent.status</c> state arrive after the reply it belonged to.
+/// </summary>
+public class RedisSubscriptionServiceOrderingTests
+{
+    [Fact]
+    public async Task MessagesAreDispatchedInArrivalOrder()
+    {
+        var serializer = new SystemTextJsonEventSerializer();
+        var orgId = Guid.NewGuid();
+
+        // One mock serves both roles: the bus's publish side and the subscription host's
+        // subscriber. Subscribe callbacks are captured so the test can replay Redis delivery.
+        var callbacks = new ConcurrentQueue<Action<RedisChannel, RedisValue>>();
+        var subscriber = new Mock<ISubscriber>();
+        subscriber
+            .Setup(s => s.SubscribeAsync(
+                It.IsAny<RedisChannel>(),
+                It.IsAny<Action<RedisChannel, RedisValue>>(),
+                It.IsAny<CommandFlags>()))
+            .Callback<RedisChannel, Action<RedisChannel, RedisValue>, CommandFlags>(
+                (_, callback, _) => callbacks.Enqueue(callback))
+            .Returns(Task.CompletedTask);
+        subscriber
+            .Setup(s => s.PublishAsync(It.IsAny<RedisChannel>(), It.IsAny<RedisValue>(), It.IsAny<CommandFlags>()))
+            .ReturnsAsync(1L);
+
+        var connection = new Mock<IConnectionMultiplexer>();
+        connection.Setup(c => c.GetSubscriber()).Returns(subscriber.Object);
+
+        var bus = new RedisEventBus(
+            connection.Object,
+            serializer,
+            new EventBusMetrics(),
+            NullLogger<RedisEventBus>.Instance);
+
+        var dispatched = new List<string>();
+        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await bus.SubscribeAsync("agent.status", async (_, _) =>
+        {
+            dispatched.Add("agent.status:start");
+            firstStarted.TrySetResult();
+            await releaseFirst.Task;
+            dispatched.Add("agent.status:end");
+        });
+        await bus.SubscribeAsync("message.created", (_, _) =>
+        {
+            dispatched.Add("message.created");
+            secondStarted.TrySetResult();
+            return Task.CompletedTask;
+        });
+
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Eventing:SubscribeEventTypes:0"] = "agent.status",
+                ["Eventing:SubscribeEventTypes:1"] = "message.created",
+            })
+            .Build();
+
+        var service = new RedisSubscriptionService(
+            bus,
+            connection.Object,
+            configuration,
+            NullLogger<RedisSubscriptionService>.Instance);
+
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitForSubscriptionsAsync(callbacks, expectedCount: 2);
+            var captured = callbacks.ToArray();
+
+            // Replay Redis delivery order: the state event is published before the message it
+            // describes (the agent publishes agent.status=thinking, then the reply).
+            captured[0](
+                RedisChannel.Literal($"aveline:{orgId}:agent.status"),
+                serializer.Serialize(EventEnvelope.Create("agent.status", orgId, new { state = "thinking" })));
+            await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            captured[1](
+                RedisChannel.Literal($"aveline:{orgId}:message.created"),
+                serializer.Serialize(EventEnvelope.Create("message.created", orgId, new { thread_id = "thread-1" })));
+
+            // The later event must queue behind the handler that is still running, not overtake it.
+            var winner = await Task.WhenAny(secondStarted.Task, Task.Delay(TimeSpan.FromMilliseconds(250)));
+            Assert.NotSame(secondStarted.Task, winner);
+
+            releaseFirst.TrySetResult();
+            await secondStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal(
+                new[] { "agent.status:start", "agent.status:end", "message.created" },
+                dispatched);
+        }
+        finally
+        {
+            await service.StopAsync(CancellationToken.None);
+        }
+    }
+
+    private static async Task WaitForSubscriptionsAsync(
+        ConcurrentQueue<Action<RedisChannel, RedisValue>> callbacks,
+        int expectedCount)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (callbacks.Count >= expectedCount)
+            {
+                return;
+            }
+            await Task.Delay(10);
+        }
+
+        throw new TimeoutException($"Expected {expectedCount} subscriptions but saw {callbacks.Count}.");
     }
 }
 

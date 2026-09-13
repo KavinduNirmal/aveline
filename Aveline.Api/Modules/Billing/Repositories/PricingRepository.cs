@@ -1,12 +1,25 @@
 using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Modules.Billing.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace Aveline.Api.Modules.Billing.Repositories;
 
 /// <summary>EF Core implementation of <see cref="IPricingRepository"/>.</summary>
 public sealed class PricingRepository(AppDbContext db) : IPricingRepository
 {
+    public async Task<IPricingTransaction> BeginTransactionAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (!db.Database.IsRelational())
+        {
+            return NoOpPricingTransaction.Instance;
+        }
+
+        var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        return new EfPricingTransaction(transaction);
+    }
+
     public Task<BlossomConversionRule?> ResolveActiveRuleAsync(
         string? provider, string? model, DateTime at, CancellationToken cancellationToken = default)
     {
@@ -176,5 +189,22 @@ public sealed class PricingRepository(AppDbContext db) : IPricingRepository
         }
 
         return query;
+    }
+
+    private sealed class NoOpPricingTransaction : IPricingTransaction
+    {
+        public static readonly NoOpPricingTransaction Instance = new();
+
+        public Task CommitAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class EfPricingTransaction(IDbContextTransaction transaction) : IPricingTransaction
+    {
+        public Task CommitAsync(CancellationToken cancellationToken = default) =>
+            transaction.CommitAsync(cancellationToken);
+
+        public ValueTask DisposeAsync() => transaction.DisposeAsync();
     }
 }

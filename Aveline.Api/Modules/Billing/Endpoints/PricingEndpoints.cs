@@ -127,12 +127,13 @@ public static class PricingEndpoints
 
         group.MapPost("/rules/{ruleId:guid}/activate", async (
             Guid ruleId,
+            ActivatePricingRuleRequest? request,
             IPricingService pricing,
             CancellationToken ct) =>
         {
             try
             {
-                var rule = await pricing.ActivateRuleAsync(ruleId, effectiveFrom: null, ct);
+                var rule = await pricing.ActivateRuleAsync(ruleId, request?.EffectiveFrom, ct);
                 return Results.Ok(PricingRuleDto.From(rule));
             }
             catch (Exception exception)

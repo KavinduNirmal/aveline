@@ -867,7 +867,8 @@ rule's `effectiveFrom` and marks the predecessor `Superseded`, atomically.
 **Response `200`:** the activated `PricingRule`.
 **Errors:** `400` if not a `Draft`; `403`; `404`; `409 rule-overlap`.
 **Side effects:** publishes `pricing.rule.activated`; invalidates the pricing cache
-on every instance within 5 s.
+in-process immediately, and on other instances within the 5-second TTL safety net
+(no cross-instance event subscriber yet, see [../backend/README.md](../backend/README.md)).
 
 #### `POST /api/v1/admin/pricing/rules/{ruleId:guid}/cancel`
 

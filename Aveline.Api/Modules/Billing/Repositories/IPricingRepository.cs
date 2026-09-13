@@ -10,9 +10,24 @@ public sealed record PricingRuleFilter(
     BlossomRuleStatus? Status = null,
     DateTime? ActiveAt = null);
 
+/// <summary>
+/// A unit-of-work scope for an atomic pricing write. On providers that do not support
+/// transactions this is a no-op whose <see cref="CommitAsync"/> changes nothing.
+/// </summary>
+public interface IPricingTransaction : IAsyncDisposable
+{
+    Task CommitAsync(CancellationToken cancellationToken = default);
+}
+
 /// <summary>Persistence for conversion rules and the commercial price book.</summary>
 public interface IPricingRepository
 {
+    /// <summary>
+    /// Opens a transaction when the provider is relational; otherwise a no-op scope.
+    /// Callers must dispose without committing to roll back.
+    /// </summary>
+    Task<IPricingTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default);
+
     /// <summary>Resolves the most specific active rule for (provider, model) at a timestamp (BR-1.9).</summary>
     Task<BlossomConversionRule?> ResolveActiveRuleAsync(
         string? provider, string? model, DateTime at, CancellationToken cancellationToken = default);

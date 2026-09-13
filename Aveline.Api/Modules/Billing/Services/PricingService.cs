@@ -1,3 +1,4 @@
+using Aveline.Api.Infrastructure.Eventing;
 using Aveline.Api.Modules.Audit.Models;
 using Aveline.Api.Modules.Audit.Services;
 using Aveline.Api.Modules.Billing.Domain;
@@ -14,7 +15,8 @@ public sealed class PricingService(
     IPricingRepository repository,
     PricingRuleCache cache,
     IAuditService auditService,
-    ILogger<PricingService> logger) : IPricingService
+    ILogger<PricingService> logger,
+    IEventBus? eventBus = null) : IPricingService
 {
     private const int MinChangeReasonLength = 10;
     private const int MaxChangeReasonLength = 500;
@@ -139,6 +141,11 @@ public sealed class PricingService(
         rule.EffectiveFrom = effectiveFrom ?? rule.EffectiveFrom;
         ValidateWindow(rule.EffectiveFrom, rule.EffectiveTo);
 
+        // The predecessor trim and the successor activation must land together (BR-1.8).
+        // Disposing the scope without committing rolls back the trim when the successor
+        // write fails, so the scope is never left with no Active rule.
+        await using var transaction = await repository.BeginTransactionAsync(cancellationToken);
+
         // Trim and supersede the predecessor first: the exclusion constraint only covers
         // Draft and Active rows, so this order keeps both writes legal.
         var predecessor = await repository.FindPredecessorAsync(rule, cancellationToken);
@@ -154,8 +161,11 @@ public sealed class PricingService(
         rule.UpdatedAt = DateTime.UtcNow;
         await repository.UpdateRuleAsync(rule, cancellationToken);
 
+        await transaction.CommitAsync(cancellationToken);
+
         cache.Invalidate();
         await RecordAuditAsync(AuditAction.PricingRuleActivated, rule, rule.CreatedByUserId, cancellationToken);
+        await PublishRuleActivatedAsync(rule, cancellationToken);
         return rule;
     }
 
@@ -172,6 +182,7 @@ public sealed class PricingService(
         await repository.UpdateRuleAsync(rule, cancellationToken);
         cache.Invalidate();
         await RecordAuditAsync(AuditAction.PricingRuleCancelled, rule, rule.CreatedByUserId, cancellationToken);
+        await PublishRuleCancelledAsync(rule, reason, cancellationToken);
         return rule;
     }
 
@@ -295,6 +306,35 @@ public sealed class PricingService(
         return await repository.GetRuleAsync(ruleId, cancellationToken)
             ?? throw new PricingRuleNotFoundException(ruleId);
     }
+
+    private Task PublishRuleActivatedAsync(
+        BlossomConversionRule rule, CancellationToken cancellationToken) =>
+        PublishAsync(
+            "pricing.rule.activated",
+            new
+            {
+                ruleId = rule.Id,
+                scopeKind = rule.ScopeKind.ToString(),
+                provider = rule.Provider,
+                model = rule.Model,
+                unitsPerBlossom = rule.UnitsPerBlossom,
+                effectiveFrom = rule.EffectiveFrom,
+                actorUserId = rule.CreatedByUserId,
+            },
+            cancellationToken);
+
+    private Task PublishRuleCancelledAsync(
+        BlossomConversionRule rule, string reason, CancellationToken cancellationToken) =>
+        PublishAsync(
+            "pricing.rule.cancelled",
+            new { ruleId = rule.Id, actorUserId = rule.CreatedByUserId, reason },
+            cancellationToken);
+
+    private Task PublishAsync(string eventType, object payload, CancellationToken cancellationToken) =>
+        eventBus is null
+            ? Task.CompletedTask
+            : eventBus.PublishAsync(
+                eventType, organizationId: null, payload, cancellationToken: cancellationToken);
 
     private Task RecordAuditAsync(
         string action, BlossomConversionRule rule, Guid actorUserId, CancellationToken cancellationToken) =>

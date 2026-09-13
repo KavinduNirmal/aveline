@@ -1,4 +1,6 @@
+using System.Text.Json;
 using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Infrastructure.Eventing;
 using Aveline.Api.Modules.Audit.Repositories;
 using Aveline.Api.Modules.Audit.Services;
 using Aveline.Api.Modules.Billing.Domain;
@@ -28,7 +30,7 @@ public class PricingServiceTests
             .Options);
     }
 
-    private PricingService CreateService()
+    private PricingService CreateService(IEventBus? eventBus = null)
     {
         var repository = new PricingRepository(_context);
         var audit = new AuditService(
@@ -41,7 +43,8 @@ public class PricingServiceTests
             repository,
             new PricingRuleCache(new MemoryCache(new MemoryCacheOptions())),
             audit,
-            new TestLogger<PricingService>());
+            new TestLogger<PricingService>(),
+            eventBus);
     }
 
     private static CreatePricingRuleCommand Command(
@@ -237,5 +240,60 @@ public class PricingServiceTests
 
         Assert.False(resolution.IsFallback);
         Assert.Equal(5000, resolution.Rule.UnitsPerBlossom);
+    }
+
+    [Fact]
+    public async Task ActivateRuleAsync_PublishesTheActivatedEvent()
+    {
+        var eventBus = new RecordingEventBus();
+        var service = CreateService(eventBus);
+        var rule = await service.CreateRuleAsync(Command());
+
+        await service.ActivateRuleAsync(rule.Id);
+
+        var published = Assert.Single(eventBus.Published);
+        Assert.Equal("pricing.rule.activated", published.Type);
+        Assert.Null(published.OrganizationId);
+        var payload = JsonSerializer.SerializeToElement(published.Payload);
+        Assert.Equal(rule.Id, payload.GetProperty("ruleId").GetGuid());
+        Assert.Equal("Global", payload.GetProperty("scopeKind").GetString());
+        Assert.Equal(rule.EffectiveFrom, payload.GetProperty("effectiveFrom").GetDateTime());
+    }
+
+    [Fact]
+    public async Task CancelRuleAsync_PublishesTheCancelledEvent()
+    {
+        var eventBus = new RecordingEventBus();
+        var service = CreateService(eventBus);
+        var rule = await service.CreateRuleAsync(Command());
+
+        await service.CancelRuleAsync(rule.Id, "No longer required after review.");
+
+        var published = Assert.Single(eventBus.Published);
+        Assert.Equal("pricing.rule.cancelled", published.Type);
+        var payload = JsonSerializer.SerializeToElement(published.Payload);
+        Assert.Equal(rule.Id, payload.GetProperty("ruleId").GetGuid());
+        Assert.Equal("No longer required after review.", payload.GetProperty("reason").GetString());
+    }
+
+    private sealed class RecordingEventBus : IEventBus
+    {
+        public List<(string Type, Guid? OrganizationId, object? Payload)> Published { get; } = [];
+
+        public Task PublishAsync(
+            string eventType, Guid? organizationId, object? payload, Guid? traceId = null,
+            CancellationToken cancellationToken = default)
+        {
+            Published.Add((eventType, organizationId, payload));
+            return Task.CompletedTask;
+        }
+
+        public Task SubscribeAsync(
+            string eventType, Func<EventEnvelope, CancellationToken, Task> handler,
+            CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task UnsubscribeAsync(
+            string eventType, Func<EventEnvelope, CancellationToken, Task> handler,
+            CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

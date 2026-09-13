@@ -51,8 +51,8 @@ public class PricingActivationPostgresTests : IAsyncLifetime
         await _postgres.DisposeAsync();
     }
 
-    private PricingService CreateService() => new(
-        new PricingRepository(_context),
+    private PricingService CreateService(IPricingRepository? repository = null) => new(
+        repository ?? new PricingRepository(_context),
         new PricingRuleCache(new MemoryCache(new MemoryCacheOptions())),
         new AuditService(
             new AuditRepository(_context), new AuditRedactor(),
@@ -138,4 +138,119 @@ public class PricingActivationPostgresTests : IAsyncLifetime
         ChangeReason = "Cancelled rule for uniqueness test.",
         CreatedByUserId = Guid.CreateVersion7(),
     };
+
+    [Fact]
+    public async Task Activate_RollsBackThePredecessorTrimWhenTheSuccessorWriteFails()
+    {
+        var predecessor = new BlossomConversionRule
+        {
+            ScopeKind = BlossomRuleScopeKind.Global,
+            UnitsPerBlossom = 1000,
+            MinimumChargeBlossoms = 0.1m,
+            RoundingMode = BlossomRoundingMode.Ceiling,
+            RoundingDecimals = 1,
+            EffectiveFrom = Start,
+            Status = BlossomRuleStatus.Active,
+            ChangeReason = "Predecessor rule for the atomic activation test.",
+            CreatedByUserId = Guid.CreateVersion7(),
+        };
+        _context.BlossomConversionRules.Add(predecessor);
+        await _context.SaveChangesAsync();
+
+        var repository = new FailSecondRuleUpdateRepository(new PricingRepository(_context));
+        var service = CreateService(repository);
+
+        var draft = await service.CreateRuleAsync(new CreatePricingRuleCommand(
+            BlossomRuleScopeKind.Global, null, null, 2000, 0.1m,
+            BlossomRoundingMode.Ceiling, 1,
+            Start.AddDays(30), null, "Successor rule for the atomic activation test.",
+            Guid.CreateVersion7(), AllowBackdate: true));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.ActivateRuleAsync(draft.Id));
+
+        _context.ChangeTracker.Clear();
+
+        var storedPredecessor = await _context.BlossomConversionRules.SingleAsync(r => r.Id == predecessor.Id);
+        Assert.Equal(BlossomRuleStatus.Active, storedPredecessor.Status);
+        Assert.Null(storedPredecessor.EffectiveTo);
+
+        var storedDraft = await _context.BlossomConversionRules.SingleAsync(r => r.Id == draft.Id);
+        Assert.Equal(BlossomRuleStatus.Draft, storedDraft.Status);
+    }
+
+    /// <summary>
+    /// Delegates to the real repository but throws on the second rule update, simulating a
+    /// failure of the successor write after the predecessor trim has been flushed. Without a
+    /// shared transaction the trim would already be committed and this test would fail.
+    /// </summary>
+    private sealed class FailSecondRuleUpdateRepository(IPricingRepository inner) : IPricingRepository
+    {
+        private int _ruleUpdateCount;
+
+        public Task<BlossomConversionRule?> ResolveActiveRuleAsync(
+            string? provider, string? model, DateTime at, CancellationToken cancellationToken = default) =>
+            inner.ResolveActiveRuleAsync(provider, model, at, cancellationToken);
+
+        public Task<BlossomConversionRule?> GetRuleAsync(
+            Guid ruleId, CancellationToken cancellationToken = default) =>
+            inner.GetRuleAsync(ruleId, cancellationToken);
+
+        public Task<IReadOnlyList<BlossomConversionRule>> ListRulesAsync(
+            PricingRuleFilter filter, int page, int pageSize, CancellationToken cancellationToken = default) =>
+            inner.ListRulesAsync(filter, page, pageSize, cancellationToken);
+
+        public Task<int> CountRulesAsync(
+            PricingRuleFilter filter, CancellationToken cancellationToken = default) =>
+            inner.CountRulesAsync(filter, cancellationToken);
+
+        public Task<int> GetNextVersionAsync(
+            BlossomRuleScopeKind scopeKind, string? provider, string? model,
+            CancellationToken cancellationToken = default) =>
+            inner.GetNextVersionAsync(scopeKind, provider, model, cancellationToken);
+
+        public Task<BlossomConversionRule?> FindPredecessorAsync(
+            BlossomConversionRule candidate, CancellationToken cancellationToken = default) =>
+            inner.FindPredecessorAsync(candidate, cancellationToken);
+
+        public Task AddRuleAsync(
+            BlossomConversionRule rule, CancellationToken cancellationToken = default) =>
+            inner.AddRuleAsync(rule, cancellationToken);
+
+        public Task UpdateRuleAsync(
+            BlossomConversionRule rule, CancellationToken cancellationToken = default)
+        {
+            _ruleUpdateCount++;
+            if (_ruleUpdateCount == 2)
+            {
+                throw new InvalidOperationException("Simulated failure of the successor write.");
+            }
+
+            return inner.UpdateRuleAsync(rule, cancellationToken);
+        }
+
+        public Task<BlossomPriceEntry> AddPriceEntryAsync(
+            BlossomPriceEntry entry, CancellationToken cancellationToken = default) =>
+            inner.AddPriceEntryAsync(entry, cancellationToken);
+
+        public Task<BlossomPriceEntry?> GetPriceEntryAsync(
+            Guid entryId, Guid? organizationId, CancellationToken cancellationToken = default) =>
+            inner.GetPriceEntryAsync(entryId, organizationId, cancellationToken);
+
+        public Task<BlossomPriceEntry?> FindPriceEntryAsync(
+            Guid entryId, CancellationToken cancellationToken = default) =>
+            inner.FindPriceEntryAsync(entryId, cancellationToken);
+
+        public Task UpdatePriceEntryAsync(
+            BlossomPriceEntry entry, CancellationToken cancellationToken = default) =>
+            inner.UpdatePriceEntryAsync(entry, cancellationToken);
+
+        public Task<IReadOnlyList<BlossomPriceEntry>> ListPriceEntriesAsync(
+            BlossomSkuKind? skuKind, PlanTier? planTier, Guid? organizationId,
+            CancellationToken cancellationToken = default) =>
+            inner.ListPriceEntriesAsync(skuKind, planTier, organizationId, cancellationToken);
+
+        public Task<IPricingTransaction> BeginTransactionAsync(
+            CancellationToken cancellationToken = default) =>
+            inner.BeginTransactionAsync(cancellationToken);
+    }
 }

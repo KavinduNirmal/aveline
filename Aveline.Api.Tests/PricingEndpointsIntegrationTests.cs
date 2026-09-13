@@ -276,6 +276,32 @@ public class PricingEndpointsIntegrationTests : IAsyncLifetime
         Assert.True(items.GetArrayLength() >= 1);
     }
 
+    [Fact]
+    public async Task ActivateRule_WithEffectiveFromBody_HonoursTheOverride()
+    {
+        await SeedUserAsync("pricing_activate_override", Roles.Admin);
+        var token = CreateToken("pricing_activate_override", userRole: Roles.Admin);
+        var provider = $"effective-from-{Guid.CreateVersion7():N}";
+
+        var create = await _client.SendAsync(Authorized(
+            HttpMethod.Post, "/api/v1/admin/pricing/rules", token,
+            CreateRuleBody("Provider", provider: provider)));
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var ruleId = JsonDocument.Parse(await create.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("id").GetString();
+
+        var effectiveFrom = new DateTime(2030, 1, 15, 0, 0, 0, DateTimeKind.Utc);
+        var activate = await _client.SendAsync(Authorized(
+            HttpMethod.Post,
+            $"/api/v1/admin/pricing/rules/{ruleId}/activate",
+            token,
+            new { effectiveFrom }));
+
+        Assert.Equal(HttpStatusCode.OK, activate.StatusCode);
+        var activated = JsonDocument.Parse(await activate.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal(effectiveFrom, activated.GetProperty("effectiveFrom").GetDateTime());
+    }
+
     [Theory]
     [InlineData(Roles.BoutiqueOwner)]
     [InlineData(Roles.BoutiqueManager)]

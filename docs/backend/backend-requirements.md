@@ -238,9 +238,17 @@ constant is required.
 | Job | `PricingRecomputeJob` | On demand, admin-triggered | Recomputes affected `AiUsageRecord` rows; writes `BlossomLedgerEntry` corrections |
 | Webhook | none | — | No outbound webhook is required for pricing. |
 
-Cache invalidation: activation publishes `pricing.rule.activated` on the existing
-Redis event bus (`ADR-014`); every API instance subscribes and clears its L1
-cache. TTL is a 5-second safety net.
+Cache invalidation: activation publishes `pricing.rule.activated` (and cancellation
+publishes `pricing.rule.cancelled`) on the existing Redis event bus (`ADR-014`), but
+**no subscriber clears the L1 cache cross-instance yet** (#240). The 5-second
+`PricingRuleCache` TTL is therefore the effective safety net on every instance other
+than the one that handled the write; within a process the generation counter
+invalidates immediately. Wiring an event subscriber remains open.
+
+Atomicity: activation trims the predecessor and activates the successor inside one
+database transaction, so a failed successor write rolls the trim back (BR-1.8). The
+optional `{ "effectiveFrom": "<iso8601>" }` request body is honoured; omitting it
+keeps the rule's stored `EffectiveFrom`.
 
 ### 3.7 Edge cases
 

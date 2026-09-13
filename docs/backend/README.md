@@ -150,6 +150,14 @@ organization (global entries stay readable).
 **Deferred to Phase 2:** `AiUsageRecord` pricing-snapshot columns and
 `POST /admin/pricing/rules/{ruleId}/recompute` (which writes ledger corrections).
 
+**Deviation (#240):** rule activation now runs the predecessor trim and the successor
+activation in one transaction (BR-1.8) and the optional `{ "effectiveFrom": ... }`
+body is honoured; `pricing.rule.activated` and `pricing.rule.cancelled` are published
+on the `IEventBus`. The documented **cross-instance** cache invalidation subscriber
+is **not** implemented: within a process the `PricingRuleCache` generation counter
+invalidates immediately, and on other instances the 5-second TTL is the only
+invalidation mechanism. See [backend-requirements.md §3.6](backend-requirements.md#36-events-jobs-and-webhooks).
+
 ### Implementation status (Phase 2 — ledger and entitlements)
 
 | Issue | What landed |

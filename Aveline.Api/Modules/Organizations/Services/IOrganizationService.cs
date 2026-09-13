@@ -96,4 +96,35 @@ public interface IOrganizationService
         Guid organizationId,
         Guid memberUserId,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Applies a partial update to an organization's profile and settings (FR-4.1), gating
+    /// the AI-context fields on the <c>ai.customContext</c> entitlement.
+    /// </summary>
+    Task<Organization> UpdateSettingsAsync(
+        Guid organizationId,
+        UpdateOrganizationSettingsRequest request,
+        Guid actorUserId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Lists an organization's members with status/role/search filters (FR-3.1).</summary>
+    Task<PagedOrganizationMembers> ListMembersAsync(
+        Guid organizationId,
+        string? status,
+        string? role,
+        string? search,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Changes a member's boutique role, enforcing FR-3.4: no self-change, no demotion of
+    /// the last active owner, and only an owner may grant or revoke the owner role.
+    /// </summary>
+    Task<OrganizationMemberDto> ChangeMemberRoleAsync(
+        Guid organizationId,
+        Guid memberUserId,
+        string newRole,
+        Guid actingUserId,
+        CancellationToken cancellationToken = default);
 }

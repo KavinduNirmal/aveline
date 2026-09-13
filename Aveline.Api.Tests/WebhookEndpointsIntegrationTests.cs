@@ -4,13 +4,16 @@ using System.Security.Cryptography;
 using System.Text;
 using Aveline.Api.Authorization;
 using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Infrastructure.RateLimiting;
 using Aveline.Api.Modules.Integrations.Models;
 using Aveline.Api.Modules.Integrations.Services;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Shared.Models;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
 using Xunit;
 
@@ -23,13 +26,30 @@ namespace Aveline.Api.Tests;
 public class WebhookEndpointsIntegrationTests : IAsyncLifetime
 {
     private const string Base64Key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; // 32 zero bytes
-    private const string AppSecret = "test-app-secret";
+    private const string AppSigningKey = "test-app-secret";
     private const string VerifyToken = "test-verify-token";
 
     private RsaSecurityKey _signingKey = null!;
     private StubAuthServer _authServer = null!;
     private WebApplicationFactory<Program> _factory = null!;
     private HttpClient _client = null!;
+    private readonly RecordingRateLimiter _rateLimiter = new();
+
+    private sealed class RecordingRateLimiter : IRateLimiter
+    {
+        private int _calls;
+
+        public int Calls => Volatile.Read(ref _calls);
+
+        public void Reset() => Volatile.Write(ref _calls, 0);
+
+        public Task<bool> TryAllowAsync(
+            string scopeKey, int limit, TimeSpan window, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _calls);
+            return Task.FromResult(true);
+        }
+    }
 
     public async Task InitializeAsync()
     {
@@ -43,6 +63,11 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.UseSetting("Credentials:EncryptionKey", Base64Key);
+                builder.ConfigureTestServices(services =>
+                {
+                    // Observe whether a request ever reaches the rate limiter.
+                    services.AddSingleton<IRateLimiter>(_rateLimiter);
+                });
             });
         _client = _factory.CreateClient();
     }
@@ -56,7 +81,7 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
 
     private static string Sign(byte[] body)
     {
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(AppSecret));
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(AppSigningKey));
         return "sha256=" + Convert.ToHexString(hmac.ComputeHash(body)).ToLowerInvariant();
     }
 
@@ -138,7 +163,7 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
         {
             ["accessToken"] = "wa-token",
             ["phoneNumberId"] = "111",
-            ["appSecret"] = AppSecret,
+            ["appSecret"] = AppSigningKey,
             ["webhookVerifyToken"] = VerifyToken,
         });
         context.IntegrationCredentials.Add(new IntegrationCredential
@@ -203,6 +228,44 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
 
         var response = await _client.SendAsync(request);
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Post_InvalidSignature_DoesNotConsumeTheRateLimit()
+    {
+        var orgId = await SeedOrgWithWhatsAppAsync("wh_owner_rl1", "webhook-rl1");
+        _rateLimiter.Reset();
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/webhooks/whatsapp/{orgId}")
+        {
+            Content = new StringContent(MetaMessagePayload("wamid.RL1"), Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Add("X-Hub-Signature-256", "sha256=deadbeef");
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(0, _rateLimiter.Calls);
+    }
+
+    [Fact]
+    public async Task Post_ValidSignature_ChargesTheRateLimitOnce()
+    {
+        var orgId = await SeedOrgWithWhatsAppAsync("wh_owner_rl2", "webhook-rl2");
+        _rateLimiter.Reset();
+        var bytes = Encoding.UTF8.GetBytes(MetaMessagePayload("wamid.RL2"));
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/webhooks/whatsapp/{orgId}")
+        {
+            Content = new ByteArrayContent(bytes),
+        };
+        request.Content.Headers.ContentType = new("application/json");
+        request.Headers.Add("X-Hub-Signature-256", Sign(bytes));
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, _rateLimiter.Calls);
     }
 
     [Fact]

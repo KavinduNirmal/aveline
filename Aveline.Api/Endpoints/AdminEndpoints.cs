@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Aveline.Api.Configurations;
+using Aveline.Api.Modules.Admin.Models;
 using Aveline.Api.Modules.Admin.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -58,6 +59,10 @@ public static class AdminEndpoints
             {
                 var request = await adminApprovalService.ApproveAsync(requestId, reviewer, ct);
                 return Results.Ok(ToSummary(request));
+            }
+            catch (AdminSelfApprovalException ex)
+            {
+                return Results.Json(new { message = ex.Message }, statusCode: StatusCodes.Status403Forbidden);
             }
             catch (KeyNotFoundException ex)
             {

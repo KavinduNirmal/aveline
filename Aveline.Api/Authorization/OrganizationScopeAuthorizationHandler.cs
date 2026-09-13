@@ -42,6 +42,22 @@ public sealed class OrganizationScopeAuthorizationHandler
             return;
         }
 
+        // API keys are already tenant-fixed by the scheme; the middleware returns 404 for a
+        // mismatched route, so here we only need to evaluate the granted scope.
+        if (context.User.HasClaim(claim => claim.Type == Modules.ApiAccess.Authentication.ApiKeyClaimTypes.ApiKeyId))
+        {
+            var scopes = context.User
+                .FindAll(Modules.ApiAccess.Authentication.ApiKeyClaimTypes.Scope)
+                .Select(c => c.Value);
+
+            if (scopes.Contains(requirement.Permission, StringComparer.Ordinal))
+            {
+                context.Succeed(requirement);
+            }
+
+            return;
+        }
+
         var clerkId = context.User.FindFirstValue(ClaimTypes.NameIdentifier)
                       ?? context.User.FindFirstValue("sub");
         if (string.IsNullOrEmpty(clerkId))

@@ -1,5 +1,6 @@
 using Aveline.Api.Modules.Admin.Models;
 using Aveline.Api.Modules.Attendance.Models;
+using Aveline.Api.Modules.Audit.Models;
 using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Commerce.Models;
 using Aveline.Api.Modules.Conversations.Models;
@@ -39,6 +40,51 @@ public class AppDbContext : DbContext
     public DbSet<AiUsageRecord> AiUsageRecords => Set<AiUsageRecord>();
 
     public DbSet<UsageAccount> UsageAccounts => Set<UsageAccount>();
+
+    public DbSet<BlossomConversionRule> BlossomConversionRules => Set<BlossomConversionRule>();
+
+    public DbSet<BlossomPriceEntry> BlossomPriceEntries => Set<BlossomPriceEntry>();
+
+    public DbSet<BlossomLedgerEntry> BlossomLedgerEntries => Set<BlossomLedgerEntry>();
+
+    public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
+
+    public DbSet<PlanEntitlement> PlanEntitlements => Set<PlanEntitlement>();
+
+    public DbSet<PlanEntitlementOverride> PlanEntitlementOverrides => Set<PlanEntitlementOverride>();
+
+    public DbSet<OrganizationSubscription> OrganizationSubscriptions => Set<OrganizationSubscription>();
+
+    public DbSet<AuditLogEntry> AuditLogEntries => Set<AuditLogEntry>();
+
+    public DbSet<Modules.ApiAccess.Models.ApiKey> ApiKeys => Set<Modules.ApiAccess.Models.ApiKey>();
+
+    // Statistics Module (Phase 4)
+    public DbSet<Modules.Statistics.Models.AgentWorkflowRun> AgentWorkflowRuns =>
+        Set<Modules.Statistics.Models.AgentWorkflowRun>();
+
+    public DbSet<Modules.Statistics.Models.AgentStepRun> AgentStepRuns =>
+        Set<Modules.Statistics.Models.AgentStepRun>();
+
+    // Statistics Module (Phase 5 — API consumption statistics, M7)
+    public DbSet<Modules.Statistics.Models.ApiRequestMetric> ApiRequestMetrics =>
+        Set<Modules.Statistics.Models.ApiRequestMetric>();
+
+    public DbSet<Modules.Statistics.Models.ApiRequestLog> ApiRequestLogs =>
+        Set<Modules.Statistics.Models.ApiRequestLog>();
+
+    public DbSet<Modules.Statistics.Models.ApiQuotaUsage> ApiQuotaUsage =>
+        Set<Modules.Statistics.Models.ApiQuotaUsage>();
+
+    // Statistics Module (Phase 6 — system statistics and alerts, M8)
+    public DbSet<Modules.Statistics.Models.SystemMetricSample> SystemMetricSamples =>
+        Set<Modules.Statistics.Models.SystemMetricSample>();
+
+    public DbSet<Modules.Statistics.Models.SystemAlertRule> SystemAlertRules =>
+        Set<Modules.Statistics.Models.SystemAlertRule>();
+
+    public DbSet<Modules.Statistics.Models.SystemAlert> SystemAlerts =>
+        Set<Modules.Statistics.Models.SystemAlert>();
 
     public DbSet<IntegrationCredential> IntegrationCredentials => Set<IntegrationCredential>();
 

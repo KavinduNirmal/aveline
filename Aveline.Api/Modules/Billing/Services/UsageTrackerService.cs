@@ -1,3 +1,4 @@
+using Aveline.Api.Modules.Billing.Domain;
 using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Billing.Repositories;
 using Microsoft.Extensions.Logging;
@@ -10,28 +11,23 @@ namespace Aveline.Api.Modules.Billing.Services;
 /// and updates the organisation's billing period ledger — all within a single transaction.
 /// </summary>
 /// <remarks>
-/// Blossom formula (ADR-010, initial implementation):
-/// <c>blossom_units = ceil((input + output + cached) / 1000, 1 dp)</c>, minimum 0.1.
+/// When <c>Pricing:UseLegacyFormula</c> is false the conversion rule resolved for the
+/// workflow's (provider, model) at ingest time is applied (BR-1.12). The legacy
+/// formula — <c>ceil((input + output + cached) / 1000, 1 dp)</c>, minimum 0.1 —
+/// remains the escape hatch and the fallback when no rule matches.
 /// </remarks>
 public sealed class UsageTrackerService(
     IUsageRepository usageRepository,
     ILogger<UsageTrackerService> logger,
-    IConfiguration configuration) : IUsageTrackerService
+    IConfiguration configuration,
+    IPricingService? pricingService = null,
+    IEntitlementResolver? entitlementResolver = null) : IUsageTrackerService
 {
-    // Default plan limits per tier (Blossoms/month). These values are used when creating
-    // a new UsageAccount for the period and no billing integration has assigned a limit yet.
-    // They mirror the pricing_plan.md tables and will be superseded by subscription data.
-    private static readonly Dictionary<PlanTier, decimal> DefaultBlossomLimits = new()
-    {
-        { PlanTier.Seed,       150m },
-        { PlanTier.Bloom,      750m },
-        { PlanTier.Orchid,    2000m },
-        { PlanTier.Rose,      5000m },
-        { PlanTier.Enterprise, 9999m },
-    };
+    /// <summary>Fallback allowance when no entitlement resolver is registered.</summary>
+    private const decimal SeedFallbackLimit = 150m;
 
-    // The default tier assigned to new usage accounts until the subscription system sets one.
-    private const PlanTier DefaultNewAccountTier = PlanTier.Seed;
+    /// <summary>The entitlement key that supplies the monthly Blossom allowance.</summary>
+    public const string MonthlyBlossomsKey = "blossoms.monthly";
 
     /// <inheritdoc/>
     public async Task<AiUsageRecord> RecordWorkflowUsageAsync(
@@ -40,8 +36,8 @@ public sealed class UsageTrackerService(
     {
         ValidateRequest(request);
 
-        decimal blossomUnits = CalculateBlossomUnits(
-            request.InputTokens, request.OutputTokens, request.CachedTokens);
+        var (blossomUnits, pricingSnapshot) = await CalculateBlossomUnitsAsync(request, cancellationToken);
+        decimal blossomLimit = await ResolveBlossomLimitAsync(request.OrganizationId, cancellationToken);
 
         var record = new AiUsageRecord
         {
@@ -55,15 +51,23 @@ public sealed class UsageTrackerService(
             CachedTokens   = request.CachedTokens,
             ActualCostUsd  = request.ActualCostUsd,
             BlossomUnits   = blossomUnits,
+            PricingRuleId  = pricingSnapshot?.RuleId,
+            PricingRuleVersion = pricingSnapshot?.Version,
+            UnitsPerBlossom = pricingSnapshot?.UnitsPerBlossom,
+            RoundingMode = pricingSnapshot?.RoundingMode,
+            RoundingDecimals = pricingSnapshot is null ? null : (short)pricingSnapshot.RoundingDecimals,
+            NormalizedUnits = pricingSnapshot is null
+                ? null
+                : (long)request.InputTokens + request.OutputTokens + request.CachedTokens,
         };
 
-        await usageRepository.AddUsageRecordAndUpdateAccountAsync(record, cancellationToken);
+        await usageRepository.AddUsageRecordAndUpdateAccountAsync(record, blossomLimit, cancellationToken);
 
         logger.LogInformation(
             "Usage recorded: org={OrganizationId} workflow={WorkflowId} model={Model} " +
             "tokens={TotalTokens} blossoms={BlossomUnits} cost_usd={ActualCostUsd}",
             record.OrganizationId, record.WorkflowId, record.Model,
-            record.InputTokens + record.OutputTokens + record.CachedTokens,
+            (long)record.InputTokens + record.OutputTokens + record.CachedTokens,
             record.BlossomUnits, record.ActualCostUsd);
 
         CheckAbnormalCost(record);
@@ -72,13 +76,13 @@ public sealed class UsageTrackerService(
     }
 
     /// <inheritdoc/>
-    public Task<UsageAccount> GetOrCreateCurrentAccountAsync(
+    public async Task<UsageAccount> GetOrCreateCurrentAccountAsync(
         Guid organizationId,
         CancellationToken cancellationToken = default)
     {
         var (periodStart, periodEnd) = GetCurrentPeriod();
-        decimal limit = DefaultBlossomLimits[DefaultNewAccountTier];
-        return usageRepository.GetOrCreateAccountAsync(
+        var limit = await ResolveBlossomLimitAsync(organizationId, cancellationToken);
+        return await usageRepository.GetOrCreateAccountAsync(
             organizationId, periodStart, periodEnd, limit, cancellationToken);
     }
 
@@ -109,11 +113,59 @@ public sealed class UsageTrackerService(
     /// </summary>
     public static decimal CalculateBlossomUnits(int inputTokens, int outputTokens, int cachedTokens)
     {
-        decimal totalTokens = inputTokens + outputTokens + cachedTokens;
+        decimal totalTokens = (long)inputTokens + outputTokens + cachedTokens;
         decimal raw = totalTokens / 1000m;
         // Ceiling to 1 decimal place
         decimal ceiled = Math.Ceiling(raw * 10m) / 10m;
         return Math.Max(ceiled, 0.1m);
+    }
+
+    /// <summary>
+    /// Resolves the conversion rule at ingest time and applies it, unless the legacy
+    /// formula is enabled or no pricing service is available. Callers can never choose
+    /// their own price: the timestamp is always the API ingest time (BR-1.12).
+    /// </summary>
+    private async Task<(decimal BlossomUnits, PricingRuleSnapshot? Snapshot)> CalculateBlossomUnitsAsync(
+        RecordUsageRequest request, CancellationToken cancellationToken)
+    {
+        var useLegacyFormula = configuration.GetValue("Pricing:UseLegacyFormula", defaultValue: true);
+        if (useLegacyFormula || pricingService is null)
+        {
+            return (CalculateBlossomUnits(request.InputTokens, request.OutputTokens, request.CachedTokens), null);
+        }
+
+        var resolution = await pricingService.ResolveAsync(
+            request.Provider, request.Model, DateTime.UtcNow, cancellationToken);
+
+        var rule = resolution.Rule;
+        long normalizedUnits = (long)request.InputTokens + request.OutputTokens + request.CachedTokens;
+
+        var blossomUnits = BlossomCalculator.Calculate(
+            normalizedUnits,
+            rule.UnitsPerBlossom,
+            rule.RoundingMode,
+            rule.RoundingDecimals,
+            rule.MinimumChargeBlossoms);
+
+        // A fallback resolution is not a real rule, so no snapshot is stored (NULL means
+        // "assume 1000" on the read path).
+        return (blossomUnits, resolution.IsFallback ? null : rule);
+    }
+
+    /// <summary>
+    /// Resolves the organisation's monthly Blossom allowance from the entitlement catalog
+    /// (fixes defects D-1 and D-2: the limit was previously always the Seed value).
+    /// </summary>
+    private async Task<decimal> ResolveBlossomLimitAsync(
+        Guid organizationId, CancellationToken cancellationToken)
+    {
+        if (entitlementResolver is null)
+        {
+            return SeedFallbackLimit;
+        }
+
+        return await entitlementResolver.GetDecimalAsync(
+            organizationId, MonthlyBlossomsKey, SeedFallbackLimit, at: null, cancellationToken);
     }
 
     private static (DateTime periodStart, DateTime periodEnd) GetCurrentPeriod()

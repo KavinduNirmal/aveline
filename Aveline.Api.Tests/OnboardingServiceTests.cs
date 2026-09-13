@@ -3,6 +3,7 @@ using Aveline.Api.Authorization;
 using Aveline.Api.Infrastructure.Caching;
 using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Infrastructure.Integrations;
+using Aveline.Api.Modules.Billing.Domain;
 using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Billing.Repositories;
 using Aveline.Api.Modules.Organizations.DTOs;
@@ -39,13 +40,67 @@ public class OnboardingServiceTests
         _cacheService = new UserCacheService(distCache, NullLogger<UserCacheService>.Instance);
         _agentClient = new FakeAgentServiceClient();
 
+        SeedPlanEntitlements();
+
         _sut = new OnboardingService(
             new OrganizationRepository(_context),
             new UserRepository(_context),
             new UsageRepository(_context),
             _cacheService,
             _agentClient,
-            NullLogger<OnboardingService>.Instance);
+            NullLogger<OnboardingService>.Instance,
+            new EntitlementResolver(new EntitlementRepository(_context)));
+    }
+
+    /// <summary>
+    /// Seeds the entitlement rows the onboarding flow reads, mirroring the M4 seed
+    /// (blossoms.monthly and ai.customContext per tier).
+    /// </summary>
+    private void SeedPlanEntitlements()
+    {
+        var effectiveFrom = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var blossoms = new Dictionary<PlanTier, decimal>
+        {
+            [PlanTier.Seed] = 150m,
+            [PlanTier.Bloom] = 750m,
+            [PlanTier.Orchid] = 2000m,
+            [PlanTier.Rose] = 5000m,
+            [PlanTier.Enterprise] = 9999m,
+        };
+        var customContext = new Dictionary<PlanTier, string>
+        {
+            [PlanTier.Seed] = "none",
+            [PlanTier.Bloom] = "basic",
+            [PlanTier.Orchid] = "full",
+            [PlanTier.Rose] = "full",
+            [PlanTier.Enterprise] = "full",
+        };
+
+        foreach (var (tier, limit) in blossoms)
+        {
+            _context.PlanEntitlements.Add(new PlanEntitlement
+            {
+                PlanTier = tier,
+                Key = "blossoms.monthly",
+                ValueType = EntitlementValueType.Decimal,
+                ValueDecimal = limit,
+                IsEnabled = true,
+                EffectiveFrom = effectiveFrom,
+                CreatedAt = effectiveFrom,
+            });
+            _context.PlanEntitlements.Add(new PlanEntitlement
+            {
+                PlanTier = tier,
+                Key = "ai.customContext",
+                ValueType = EntitlementValueType.String,
+                ValueText = customContext[tier],
+                IsEnabled = true,
+                EffectiveFrom = effectiveFrom,
+                CreatedAt = effectiveFrom,
+            });
+        }
+
+        _context.SaveChanges();
     }
 
     private async Task<User> CreateUserAsync(string clerkId = "user_clerk_1")
@@ -175,7 +230,7 @@ public class OnboardingServiceTests
         Assert.True(response.Organization.HasCompletedOnboarding);
         Assert.Equal(6, response.Organization.OnboardingStep);
         Assert.Equal("owner", response.UserRole);
-        Assert.Equal("org:principal", response.OrganizationRole);
+        Assert.Equal(Roles.BoutiqueOwner, response.OrganizationRole);
         Assert.Equal(AccountState.Active.ToString(), response.AccountState);
         Assert.Equal(750m, response.BlossomAllocation);
         Assert.True(response.AgentWarmedUp);
@@ -186,6 +241,8 @@ public class OnboardingServiceTests
         Assert.True(updatedUser.HasCompletedOnboarding);
         Assert.Equal(AccountState.Active, updatedUser.AccountState);
         Assert.Equal("owner", updatedUser.UserRole);
+        // Defect D-9: a literal that is absent from the role catalog grants nothing.
+        Assert.Equal(Roles.BoutiqueOwner, updatedUser.OrganizationRole);
     }
 
     private class FakeAgentServiceClient : IAgentServiceClient

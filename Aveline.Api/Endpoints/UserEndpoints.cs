@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
+using Aveline.Api.Infrastructure.Integrations;
 using Aveline.Api.Modules.Shared.DTOs;
 using Aveline.Api.Modules.Shared.Services;
 using Microsoft.AspNetCore.Builder;
@@ -32,8 +33,7 @@ public static class UserEndpoints
             return Results.Ok(userDto);
         }).RequireAuthorization();
 
-        group.MapPost("/onboarding", async (
-            ClaimsPrincipal user,
+        group.MapPost("/onboarding", async (            ClaimsPrincipal user,
             CompleteOnboardingRequest request,
             IUserService userService,
             CancellationToken ct) =>
@@ -66,6 +66,104 @@ public static class UserEndpoints
             }
         }).RequireAuthorization();
 
+        group.MapPatch("/me", async (
+            ClaimsPrincipal user,
+            UpdateUserProfileRequest request,
+            IUserService userService,
+            CancellationToken ct) =>
+        {
+            var clerkId = ResolveClerkId(user);
+            if (clerkId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            try
+            {
+                var updated = await userService.UpdateProfileAsync(clerkId, request, ct);
+                return updated is null
+                    ? Results.NotFound(new { message = "User record does not exist in Aveline database." })
+                    : Results.Ok(updated);
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        }).RequireAuthorization();
+
+        group.MapDelete("/me", async (
+            ClaimsPrincipal user,
+            IUserService userService,
+            CancellationToken ct) =>
+        {
+            var clerkId = ResolveClerkId(user);
+            if (clerkId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var deleted = await userService.DeleteAccountAsync(clerkId, ct);
+            return deleted is null
+                ? Results.NotFound(new { message = "User record does not exist in Aveline database." })
+                : Results.Ok(new { message = "Account deleted.", accountState = deleted.AccountState.ToString() });
+        }).RequireAuthorization();
+
+        group.MapGet("/me/sessions", async (
+            ClaimsPrincipal user,
+            IClerkAdminClient clerkAdminClient,
+            CancellationToken ct) =>
+        {
+            var clerkId = ResolveClerkId(user);
+            if (clerkId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            try
+            {
+                var sessions = await clerkAdminClient.ListSessionsAsync(clerkId, ct);
+                return Results.Ok(sessions.Select(session => new
+                {
+                    session.Id,
+                    session.Status,
+                    session.CreatedAt,
+                    session.LastActiveAt,
+                    session.ExpireAt,
+                }));
+            }
+            catch (HttpRequestException ex)
+            {
+                return Results.Json(
+                    new { message = ex.Message }, statusCode: StatusCodes.Status502BadGateway);
+            }
+        }).RequireAuthorization();
+
+        group.MapPost("/me/sessions/revoke-all", async (
+            ClaimsPrincipal user,
+            IClerkAdminClient clerkAdminClient,
+            CancellationToken ct) =>
+        {
+            var clerkId = ResolveClerkId(user);
+            if (clerkId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            try
+            {
+                var revoked = await clerkAdminClient.RevokeAllSessionsAsync(clerkId, ct);
+                return Results.Ok(new { revoked });
+            }
+            catch (HttpRequestException ex)
+            {
+                return Results.Json(
+                    new { message = ex.Message }, statusCode: StatusCodes.Status502BadGateway);
+            }
+        }).RequireAuthorization();
+
         return endpoints;
     }
+
+    private static string? ResolveClerkId(ClaimsPrincipal principal) =>
+        principal.FindFirstValue(ClaimTypes.NameIdentifier) ?? principal.FindFirstValue("sub");
 }

@@ -3,8 +3,10 @@ using System.Text.RegularExpressions;
 using Aveline.Api.Authorization;
 using Aveline.Api.Infrastructure.Caching;
 using Aveline.Api.Infrastructure.Integrations;
+using Aveline.Api.Modules.Billing.Domain;
 using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Billing.Repositories;
+using Aveline.Api.Modules.Billing.Services;
 using Aveline.Api.Modules.Organizations.DTOs;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Organizations.Repositories;
@@ -16,20 +18,12 @@ namespace Aveline.Api.Modules.Organizations.Services;
 
 public partial class OnboardingService : IOnboardingService
 {
-    private static readonly Dictionary<PlanTier, decimal> PlanBlossomLimits = new()
-    {
-        { PlanTier.Seed,       150m },
-        { PlanTier.Bloom,      750m },
-        { PlanTier.Orchid,    2000m },
-        { PlanTier.Rose,      5000m },
-        { PlanTier.Enterprise, 9999m },
-    };
-
     private readonly IOrganizationRepository _organizationRepository;
     private readonly IUserRepository _userRepository;
     private readonly IUsageRepository _usageRepository;
     private readonly IUserCacheService _userCacheService;
     private readonly IAgentServiceClient _agentServiceClient;
+    private readonly IEntitlementResolver? _entitlementResolver;
     private readonly ILogger<OnboardingService> _logger;
 
     public OnboardingService(
@@ -38,13 +32,15 @@ public partial class OnboardingService : IOnboardingService
         IUsageRepository usageRepository,
         IUserCacheService userCacheService,
         IAgentServiceClient agentServiceClient,
-        ILogger<OnboardingService> logger)
+        ILogger<OnboardingService> logger,
+        IEntitlementResolver? entitlementResolver = null)
     {
         _organizationRepository = organizationRepository;
         _userRepository = userRepository;
         _usageRepository = usageRepository;
         _userCacheService = userCacheService;
         _agentServiceClient = agentServiceClient;
+        _entitlementResolver = entitlementResolver;
         _logger = logger;
     }
 
@@ -185,10 +181,15 @@ public partial class OnboardingService : IOnboardingService
         var org = await _organizationRepository.GetByOwnerUserIdAsync(userId, cancellationToken)
             ?? throw new InvalidOperationException("Boutique details and plan selection must precede AI customization.");
 
-        // Validate plan tier capabilities per pricing_plan.md
-        if (org.PlanTier == PlanTier.Seed)
+        // Validate plan capabilities from the entitlement catalog, not a hardcoded tier
+        // check (defect D-12).
+        var customContext = _entitlementResolver is null
+            ? "full"
+            : (await _entitlementResolver.GetAsync(org.Id, "ai.customContext", at: null, cancellationToken))?.Text
+              ?? "none";
+
+        if (customContext == "none")
         {
-            // Seed tier does not permit custom AI context
             if (!string.IsNullOrWhiteSpace(request.BrandVoice) ||
                 !string.IsNullOrWhiteSpace(request.BusinessRules) ||
                 !string.IsNullOrWhiteSpace(request.PreferredColorsFabrics) ||
@@ -197,7 +198,7 @@ public partial class OnboardingService : IOnboardingService
                 throw new ArgumentException("Custom AI context is not available on the Seed plan. Please upgrade to Bloom or Orchid to configure bespoke brand voice and rules.");
             }
         }
-        else if (org.PlanTier == PlanTier.Bloom)
+        else if (customContext == "basic")
         {
             // Bloom tier allows basic business rules and store voice tone, but not full memory tuning
             if (!string.IsNullOrWhiteSpace(request.CustomerPreferences))
@@ -264,7 +265,9 @@ public partial class OnboardingService : IOnboardingService
         // 3. Update User record
         user.OrganizationId = org.Id.ToString();
         user.UserRole = Roles.Owner;
-        user.OrganizationRole = "org:principal";
+        // Defect D-9: the previous literal "org:principal" is absent from Roles.cs and
+        // therefore granted nothing. Assign the canonical owner role instead.
+        user.OrganizationRole = Roles.BoutiqueOwner;
         user.HasCompletedOnboarding = true;
         user.AccountState = AccountState.Active;
         user.UpdatedAt = DateTime.UtcNow;
@@ -274,7 +277,10 @@ public partial class OnboardingService : IOnboardingService
         var now = DateTime.UtcNow;
         var periodStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
         var periodEnd = periodStart.AddMonths(1);
-        var blossomLimit = PlanBlossomLimits.GetValueOrDefault(org.PlanTier, 150m);
+        var blossomLimit = _entitlementResolver is null
+            ? 150m
+            : await _entitlementResolver.GetDecimalAsync(
+                org.Id, UsageTrackerService.MonthlyBlossomsKey, 150m, at: null, cancellationToken);
 
         var usageAccount = await _usageRepository.GetOrCreateAccountAsync(
             org.Id, periodStart, periodEnd, blossomLimit, cancellationToken);

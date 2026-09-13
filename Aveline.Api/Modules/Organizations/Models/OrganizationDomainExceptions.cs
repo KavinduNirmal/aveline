@@ -84,3 +84,36 @@ public class CannotManageOwnerMembershipException : InvalidOperationException
     {
     }
 }
+
+/// <summary>Raised when a user attempts to change their own membership role (FR-3.4).</summary>
+public class CannotChangeOwnRoleException : InvalidOperationException
+{
+    public CannotChangeOwnRoleException()
+        : base("You cannot change your own membership role.")
+    {
+    }
+}
+
+/// <summary>Raised when demoting the only remaining active owner (FR-3.4).</summary>
+public class CannotDemoteLastOwnerException : InvalidOperationException
+{
+    public CannotDemoteLastOwnerException()
+        : base("The last active owner cannot be demoted. Promote another owner first.")
+    {
+    }
+}
+
+/// <summary>Raised when a non-owner tries to grant or revoke the owner role (FR-3.4).</summary>
+public class OwnerRoleChangeNotPermittedException : InvalidOperationException
+{
+    public OwnerRoleChangeNotPermittedException()
+        : base("Only a boutique owner may grant or revoke the owner role.")
+    {
+    }
+}
+
+/// <summary>Raised when a role is not part of the canonical boutique role set.</summary>
+public class InvalidBoutiqueRoleException(string role)
+    : InvalidOperationException($"'{role}' is not a valid boutique role.")
+{
+}

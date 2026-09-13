@@ -42,6 +42,13 @@ public static class AuthPolicyDemoEndpoints
         group.MapGet("/fallback/authed-by-default", () =>
             Results.Ok(new { message = "Requires authentication via the fallback policy." }));
 
+        // Development-only probe for the hardening tests: a real thrown exception proves the
+        // global exception handler still emits the security headers on a handled 500 (§3.6).
+        group.MapGet("/fallback/unhandled", (HttpContext _) =>
+        {
+            throw new InvalidOperationException("Deliberate Development-only failure probe.");
+        });
+
         return endpoints;
     }
 }

@@ -1,0 +1,370 @@
+using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Infrastructure.Eventing;
+using Aveline.Api.Modules.Audit.Models;
+using Aveline.Api.Modules.Audit.Services;
+using Aveline.Api.Modules.Notifications.Models;
+using Aveline.Api.Modules.Notifications.Repositories;
+using Aveline.Api.Modules.Notifications.Services;
+using Aveline.Api.Modules.Statistics.Models;
+using Aveline.Api.Modules.Statistics.Services;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace Aveline.Api.Tests;
+
+/// <summary>
+/// Issue #229 — the alert evaluation service. Covers fire, cooldown aggregation (BR-7.6),
+/// auto-resolution after the configured consecutive OK evaluations (BR-7.7), the critical
+/// notification (BR-7.11), acknowledgement with audit, and the <c>blossom.ledger.drift</c>
+/// acceptance case.
+/// </summary>
+public class AlertEvaluationTests
+{
+    private static readonly Guid DriftRuleId = Guid.Parse("5a8632d2-648e-4af7-a7e3-15cb9251f9d1");
+
+    [Fact]
+    public async Task BlossomLedgerDrift_SeededRuleFiresOnANonZeroProjection()
+    {
+        var harness = Build();
+        await SeedAsync(harness, SystemAlertRuleSeed.Rules.ToArray());
+        await SeedSampleAsync(harness, "blossom.reconciliation.drift", 0.25m);
+
+        using (var scope = harness.Provider.CreateScope())
+        {
+            Assert.True(await scope.ServiceProvider.GetRequiredService<IAlertService>().EvaluateAsync() > 0);
+        }
+
+        await using var context = harness.Context();
+        var alert = await context.SystemAlerts.SingleAsync();
+        Assert.Equal(DriftRuleId, alert.RuleId);
+        Assert.Equal(AlertStatus.Firing, alert.Status);
+        Assert.Equal(AlertSeverity.Critical, alert.Severity);
+        Assert.Equal(0.25m, alert.ObservedValue);
+        Assert.Contains("system.alert.fired", harness.EventBus.PublishedEventTypes);
+    }
+
+    [Fact]
+    public async Task DoesNotFireWhileTheAggregateStaysBelowTheThreshold()
+    {
+        var harness = Build();
+        await SeedAsync(harness, Rule("test.low", AlertAggregation.Max, AlertComparisonOperator.Gt, 10m));
+        await SeedSampleAsync(harness, "test.low", 5m);
+
+        using (var scope = harness.Provider.CreateScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<IAlertService>().EvaluateAsync();
+        }
+
+        await using var context = harness.Context();
+        Assert.Equal(0, await context.SystemAlerts.CountAsync());
+    }
+
+    [Fact]
+    public async Task Cooldown_AggregatesOccurrencesInsteadOfFiringAgain()
+    {
+        var harness = Build();
+        await SeedAsync(harness, Rule("test.cooldown", AlertAggregation.Max, AlertComparisonOperator.Gt, 0m));
+        await SeedSampleAsync(harness, "test.cooldown", 1m);
+
+        using (var scope = harness.Provider.CreateScope())
+        {
+            var service = scope.ServiceProvider.GetRequiredService<IAlertService>();
+            await service.EvaluateAsync();
+            await service.EvaluateAsync();
+        }
+
+        await using var context = harness.Context();
+        var alert = await context.SystemAlerts.SingleAsync();
+        Assert.Equal(2, alert.OccurrenceCount);
+        Assert.Equal(AlertStatus.Firing, alert.Status);
+    }
+
+    [Fact]
+    public async Task AutoResolvesAfterThreeConsecutiveBelowThresholdEvaluations()
+    {
+        var harness = Build();
+        await SeedAsync(harness, Rule("test.resolve", AlertAggregation.Max, AlertComparisonOperator.Gt, 0m));
+        await SeedSampleAsync(harness, "test.resolve", 1m);
+
+        using (var scope = harness.Provider.CreateScope())
+        {
+            var service = scope.ServiceProvider.GetRequiredService<IAlertService>();
+            await service.EvaluateAsync();
+
+            await ReplaceSamplesAsync(harness, "test.resolve", 0m);
+
+            await service.EvaluateAsync();
+            await service.EvaluateAsync();
+
+            await using (var mid = harness.Context())
+            {
+                var pending = await mid.SystemAlerts.SingleAsync();
+                Assert.Equal(AlertStatus.Firing, pending.Status);
+                Assert.Equal(2, pending.ConsecutiveOkCount);
+            }
+
+            await service.EvaluateAsync();
+        }
+
+        await using var context = harness.Context();
+        var alert = await context.SystemAlerts.SingleAsync();
+        Assert.Equal(AlertStatus.Resolved, alert.Status);
+        Assert.NotNull(alert.ResolvedAt);
+        Assert.Contains("system.alert.resolved", harness.EventBus.PublishedEventTypes);
+    }
+
+    [Fact]
+    public async Task CriticalAlert_CreatesANotificationRecordForResolvedRecipients()
+    {
+        var harness = Build();
+        var organizationId = Guid.CreateVersion7();
+        var rule = Rule(
+            "test.notify", AlertAggregation.Max, AlertComparisonOperator.Gt, 0m,
+            AlertSeverity.Critical);
+        await SeedAsync(harness, rule);
+        await SeedSampleAsync(harness, "test.notify", 1m);
+        harness.Recipients.Recipients =
+        [
+            new ResolvedRecipient(Guid.CreateVersion7(), "owner@aveline.lk", true, default, []),
+        ];
+
+        SystemAlert? alert;
+        using (var scope = harness.Provider.CreateScope())
+        {
+            alert = await scope.ServiceProvider.GetRequiredService<IAlertService>()
+                .EvaluateRuleAsync(rule, organizationId);
+        }
+
+        Assert.NotNull(alert);
+        Assert.NotNull(alert!.NotificationRecordId);
+
+        await using var context = harness.Context();
+        var record = await context.NotificationRecords.SingleAsync();
+        Assert.Equal(alert.NotificationRecordId, record.Id);
+        Assert.Equal(organizationId, record.OrganizationId);
+        Assert.Equal(NotificationType.SystemAlert, record.Type);
+    }
+
+    [Fact]
+    public async Task WarningAlert_DoesNotCreateANotification()
+    {
+        var harness = Build();
+        var rule = Rule("test.warn", AlertAggregation.Max, AlertComparisonOperator.Gt, 0m);
+        await SeedAsync(harness, rule);
+        await SeedSampleAsync(harness, "test.warn", 1m);
+        harness.Recipients.Recipients =
+        [
+            new ResolvedRecipient(Guid.CreateVersion7(), "owner@aveline.lk", true, default, []),
+        ];
+
+        using (var scope = harness.Provider.CreateScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<IAlertService>()
+                .EvaluateRuleAsync(rule, Guid.CreateVersion7());
+        }
+
+        await using var context = harness.Context();
+        Assert.Equal(0, await context.NotificationRecords.CountAsync());
+    }
+
+    [Fact]
+    public async Task Acknowledge_SetsStatusAndWritesAuditAndEvent()
+    {
+        var harness = Build();
+        await SeedAsync(harness, Rule("test.ack", AlertAggregation.Max, AlertComparisonOperator.Gt, 0m));
+        await SeedSampleAsync(harness, "test.ack", 1m);
+
+        Guid alertId;
+        using (var scope = harness.Provider.CreateScope())
+        {
+            var service = scope.ServiceProvider.GetRequiredService<IAlertService>();
+            await service.EvaluateAsync();
+
+            await using var context = harness.Context();
+            alertId = (await context.SystemAlerts.SingleAsync()).Id;
+        }
+
+        var userId = Guid.CreateVersion7();
+        using (var scope = harness.Provider.CreateScope())
+        {
+            var service = scope.ServiceProvider.GetRequiredService<IAlertService>();
+            var acknowledged = await service.AcknowledgeAsync(alertId, userId, "looking into it");
+
+            Assert.NotNull(acknowledged);
+            Assert.Equal(AlertStatus.Acknowledged, acknowledged!.Status);
+            Assert.Equal(userId, acknowledged.AcknowledgedByUserId);
+            Assert.NotNull(acknowledged.AcknowledgedAt);
+        }
+
+        Assert.Contains(harness.Audit.Entries, entry => entry.Action == "system.alert.acknowledged");
+        Assert.Contains("system.alert.acknowledged", harness.EventBus.PublishedEventTypes);
+    }
+
+    [Fact]
+    public async Task Acknowledge_UnknownAlertReturnsNull()
+    {
+        var harness = Build();
+
+        using var scope = harness.Provider.CreateScope();
+        var result = await scope.ServiceProvider.GetRequiredService<IAlertService>()
+            .AcknowledgeAsync(Guid.CreateVersion7(), Guid.CreateVersion7());
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task RuleCrud_WritesAuditEntries()
+    {
+        var harness = Build();
+        var rule = Rule("test.crud", AlertAggregation.Max, AlertComparisonOperator.Gt, 1m);
+        var actor = Guid.CreateVersion7();
+
+        using (var scope = harness.Provider.CreateScope())
+        {
+            var service = scope.ServiceProvider.GetRequiredService<IAlertService>();
+            var created = await service.CreateRuleAsync(rule, actor);
+            created.Threshold = 2m;
+            await service.UpdateRuleAsync(created, actor);
+            Assert.True(await service.DeleteRuleAsync(created.Id, actor));
+        }
+
+        Assert.Contains(harness.Audit.Entries, entry => entry.Action == "system.alert_rule.created");
+        Assert.Contains(harness.Audit.Entries, entry => entry.Action == "system.alert_rule.updated");
+        Assert.Contains(harness.Audit.Entries, entry => entry.Action == "system.alert_rule.deleted");
+    }
+
+    private static SystemAlertRule Rule(
+        string name,
+        AlertAggregation aggregation,
+        AlertComparisonOperator comparison,
+        decimal threshold,
+        AlertSeverity severity = AlertSeverity.Warning) => new()
+    {
+        Name = name,
+        MetricName = name,
+        Aggregation = aggregation,
+        ComparisonOperator = comparison,
+        Threshold = threshold,
+        WindowSeconds = 300,
+        Severity = severity,
+        IsEnabled = true,
+        CooldownSeconds = 300,
+        MaxAlertsPerHour = 10,
+        TargetRoles = ["org:boutique_owner"],
+        CreatedByUserId = Guid.Empty,
+    };
+
+    private static Harness Build()
+    {
+        var databaseName = $"Alerts_{Guid.NewGuid()}";
+        var eventBus = new RecordingEventBus();
+        var audit = new RecordingAuditService();
+        var recipients = new StubRecipientResolver();
+
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Observability:AutoResolveConsecutiveOk"] = "3",
+            })
+            .Build();
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IConfiguration>(configuration);
+        services.AddDbContext<AppDbContext>(options => options.UseInMemoryDatabase(databaseName));
+        services.AddSingleton<IEventBus>(eventBus);
+        services.AddSingleton<IAuditService>(audit);
+        services.AddSingleton<IRecipientResolver>(recipients);
+        services.AddScoped<INotificationRepository, NotificationRepository>();
+        services.AddScoped<IAlertService, AlertService>();
+
+        return new Harness(services.BuildServiceProvider(), databaseName, eventBus, audit, recipients);
+    }
+
+    private static async Task SeedAsync(Harness harness, params SystemAlertRule[] rules)
+    {
+        await using var context = harness.Context();
+        context.SystemAlertRules.AddRange(rules);
+        await context.SaveChangesAsync();
+    }
+
+    private static async Task SeedSampleAsync(Harness harness, string metricName, decimal value)
+    {
+        await using var context = harness.Context();
+        context.SystemMetricSamples.Add(Sample(metricName, value));
+        await context.SaveChangesAsync();
+    }
+
+    private static async Task ReplaceSamplesAsync(Harness harness, string metricName, decimal value)
+    {
+        await using var context = harness.Context();
+        context.SystemMetricSamples.RemoveRange(context.SystemMetricSamples);
+        context.SystemMetricSamples.Add(Sample(metricName, value));
+        await context.SaveChangesAsync();
+    }
+
+    private static SystemMetricSample Sample(string metricName, decimal value) => new()
+    {
+        MetricName = metricName,
+        DimensionsJson = "{}",
+        DimensionHash = new string('a', 64),
+        ValueDecimal = value,
+        Unit = "count",
+        WindowStart = DateTime.UtcNow.AddSeconds(-5),
+        WindowSize = "instant",
+        SampledAt = DateTime.UtcNow.AddSeconds(-5),
+    };
+
+    private sealed record Harness(
+        ServiceProvider Provider,
+        string DatabaseName,
+        RecordingEventBus EventBus,
+        RecordingAuditService Audit,
+        StubRecipientResolver Recipients)
+    {
+        public AppDbContext Context() => new(
+            new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(DatabaseName).Options);
+    }
+
+    private sealed class RecordingEventBus : IEventBus
+    {
+        public List<string> PublishedEventTypes { get; } = [];
+
+        public Task PublishAsync(
+            string eventType, Guid? organizationId, object? payload, Guid? traceId = null,
+            CancellationToken cancellationToken = default)
+        {
+            PublishedEventTypes.Add(eventType);
+            return Task.CompletedTask;
+        }
+
+        public Task SubscribeAsync(
+            string eventType, Func<EventEnvelope, CancellationToken, Task> handler,
+            CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task UnsubscribeAsync(
+            string eventType, Func<EventEnvelope, CancellationToken, Task> handler,
+            CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    private sealed class RecordingAuditService : IAuditService
+    {
+        public List<AuditEntryRequest> Entries { get; } = [];
+
+        public Task RecordAsync(AuditEntryRequest request, CancellationToken cancellationToken = default)
+        {
+            Entries.Add(request);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class StubRecipientResolver : IRecipientResolver
+    {
+        public IReadOnlyList<ResolvedRecipient> Recipients { get; set; } = [];
+
+        public Task<IReadOnlyList<ResolvedRecipient>> ResolveAsync(
+            Notification notification, CancellationToken cancellationToken = default)
+            => Task.FromResult(Recipients);
+    }
+}

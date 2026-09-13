@@ -21,4 +21,9 @@ public static class AuditAction
     public const string MembershipRoleChanged = "membership.role.changed";
     public const string UserProfileUpdated = "user.profile.updated";
     public const string UserStateChanged = "user.state.changed";
+    public const string SystemAlertRuleCreated = "system.alert_rule.created";
+    public const string SystemAlertRuleUpdated = "system.alert_rule.updated";
+    public const string SystemAlertRuleDeleted = "system.alert_rule.deleted";
+    public const string SystemAlertAcknowledged = "system.alert.acknowledged";
+    public const string SystemAlertResolved = "system.alert.resolved";
 }

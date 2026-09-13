@@ -33,6 +33,7 @@ public static class StatisticsModule
         services.AddScoped<IQuotaService, QuotaService>();
 
         services.AddScoped<ISystemMetricRepository, SystemMetricRepository>();
+        services.AddScoped<IAlertService, AlertService>();
 
         // Atomic Redis counters when Redis is configured; the process-local fallback mirrors
         // InMemoryDistributedJobLock and is only for local development and tests.
@@ -60,6 +61,7 @@ public static class StatisticsModule
         services.AddHostedService(sp => sp.GetRequiredService<ApiKeyUsageAggregator>());
         services.AddHostedService<SystemMetricCollector>();
         services.AddHostedService<SystemMetricRetentionJob>();
+        services.AddHostedService<AlertEvaluationJob>();
 
         return services;
     }

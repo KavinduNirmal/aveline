@@ -13,6 +13,18 @@ abstract interface class PushTokenSource {
   Stream<String> get onTokenRefresh;
 }
 
+/// A [PushTokenSource] used when Firebase could not be initialized: it reports no
+/// token and never emits refreshes, so push notifications are simply disabled.
+class NoopPushTokenSource implements PushTokenSource {
+  const NoopPushTokenSource();
+
+  @override
+  Future<String?> getToken() async => null;
+
+  @override
+  Stream<String> get onTokenRefresh => const Stream.empty();
+}
+
 /// Registers the device's FCM token with the backend and keeps it in sync when the
 /// token rotates. On sign-out, [unregister] removes the token so the user stops
 /// receiving pushes on this device.
@@ -25,12 +37,35 @@ class PushNotificationService {
 
   StreamSubscription<String>? _refreshSub;
   String? _currentToken;
+  Future<void>? _initFuture;
+  bool _initialized = false;
 
   /// Requests permission, registers the current token, and subscribes to rotations.
-  Future<void> initialize() async {
-    final token = await _tokenSource.getToken();
-    if (token != null && token.isNotEmpty) {
-      await _register(token);
+  ///
+  /// Safe to call more than once: repeated or overlapping calls share a single
+  /// run. `initState` and the Clerk auth listener can both fire during startup,
+  /// and `FirebaseMessaging.requestPermission()` throws
+  /// `[firebase_messaging/unknown] A request for permissions is already running`
+  /// when two requests overlap.
+  Future<void> initialize() {
+    if (_initialized) {
+      return Future<void>.value();
+    }
+    return _initFuture ??= _initialize().whenComplete(() {
+      _initFuture = null;
+      _initialized = true;
+    });
+  }
+
+  Future<void> _initialize() async {
+    try {
+      final token = await _tokenSource.getToken();
+      if (token != null && token.isNotEmpty) {
+        await _register(token);
+      }
+    } catch (_) {
+      // Best-effort: permission may be denied or unavailable, or a request may
+      // already be in flight. Push stays disabled instead of throwing.
     }
     _refreshSub ??= _tokenSource.onTokenRefresh.listen((newToken) {
       if (newToken.isNotEmpty) {
@@ -43,6 +78,8 @@ class PushNotificationService {
   Future<void> unregister() async {
     await _refreshSub?.cancel();
     _refreshSub = null;
+    // Allow a later sign-in to request permission and register again.
+    _initialized = false;
     final token = _currentToken;
     _currentToken = null;
     if (token != null && token.isNotEmpty) {

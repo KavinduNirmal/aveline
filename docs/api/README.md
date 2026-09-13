@@ -1725,6 +1725,33 @@ All accept `from`, `to`, ISO 8601 UTC, max `Telemetry:MaxWindowDays` (92) days.
 **Errors (all):** `400` for an oversized window, an unsupported `groupBy`, or a
 malformed timestamp; `401`; `403`.
 
+> **Implementation status (Phase 5, issues #220–#226): implemented with deviations.**
+> The routes are live:
+> `/api/v1/orgs/{organizationId:guid}/statistics/api/{requests,errors,latency,endpoints,users,quota,slow-requests,billable}`
+> and `/api/v1/orgs/{organizationId:guid}/statistics/api-keys`, plus the team-only
+> `/api/v1/admin/statistics/api/{requests,errors,latency,endpoints}` and
+> `/api/v1/admin/statistics/api-keys`. Confirmed deviations from the shape above:
+>
+> - `groupBy` accepts only `hour`, `day` and `month` (default `hour`), not
+>   `routeTemplate`/`statusClass`/`apiKeyId`/`userId`; those are filters instead.
+>   `/quota` does not accept `groupBy`.
+> - Unknown `status`, `statusClass` or `groupBy` values, a reversed window or a window
+>   longer than `Telemetry:MaxWindowDays` (92) return `400` with `{ "message" }`.
+> - `requests` returns flat totals (`requestCount`, `successCount`, `errorCount`,
+>   `clientErrorCount`, `serverErrorCount`, `throttledCount`) plus a `dataQuality`
+>   envelope, not the `window`/`series`/`freshness` wrapper shown above.
+> - `latency` returns `p50Ms`/`p95Ms`/`p99Ms` as `null` with a `reason`
+>   (`insufficient_samples`) below `Telemetry:MinSampleForPercentile` (20), and
+>   `precision: "bucket-interpolated"`. The `bucketBoundsMs` array is not emitted.
+> - `users`, `api-keys` and `slow-requests` return the
+>   `{ items, page, pageSize, total, dataQuality }` envelope.
+> - Quota is enforced only when `Quotas:EnforcementEnabled` is `true` (default
+>   `false`); a limit of `0` means unlimited. When enforcing and exhausted the
+>   documented `429 { message, quota: { metricKey, limit, used, resetsAt } }` is
+>   returned.
+> - Hour→day compaction beyond 90 days and the load-test p99 gate are deferred; see
+>   [backend README](../backend/README.md#implementation-status-phase-5--api-consumption-statistics).
+
 **Frontend guidance:**
 - `precision: "bucket-interpolated"` means the percentiles are approximate within
   the containing bucket. Label them as approximate.

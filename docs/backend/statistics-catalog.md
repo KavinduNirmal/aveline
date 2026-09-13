@@ -552,6 +552,24 @@ unless it appears in this catalog **and** in
 | Endpoint | `GET /api/v1/orgs/{organizationId}/statistics/api/billable` |
 | Access | `billing:view` |
 
+> **Shipped note (Phase 5, issues #220–#226).** S-24…S-32 are implemented over
+> `ApiRequestMetrics` (hourly, exact and never sampled) and the sampled
+> `ApiRequestLogs` for S-31. Deviations from the target definitions above:
+>
+> - **S-24/S-26/S-27.** Only `WindowSize = 'hour'` rows are produced. The 90-day
+>   hourly → 400-day daily compaction is deferred because the shared dimension index
+>   would collide a day row with the 00:00 hour row; see the backend README.
+> - **S-26.** Percentiles are returned as `null` with `reason:
+>   "insufficient_samples"` below `Telemetry:MinSampleForPercentile`, and the
+>   response states `precision: "bucket-interpolated"`.
+> - **S-28.** `lastUsedAt` comes from the `ApiKeys` row updated by
+>   `ApiKeyUsageAggregator` at most once per minute (FR-3.18); `topEndpoint` is the
+>   highest-volume route in the window.
+> - **S-30.** `GET /quota` reads the durable `ApiQuotaUsage` period rows (live Redis
+>   counters feed them through `ApiQuotaResetJob`). A limit of `0` means unlimited.
+> - **S-32.** Billable is computed from the exact hourly rollup, excluding `/health`,
+>   `/openapi`, `OPTIONS` and `499`s.
+
 ---
 
 ## 7. System statistics

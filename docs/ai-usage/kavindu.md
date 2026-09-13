@@ -2155,3 +2155,76 @@ per task.
 - S-23 concurrency and the remaining `/admin/statistics/**` groups belong to
   Phases 5–6.
 - `docs/api/openapi.yaml` reconciliation against generated output remains.
+
+---
+
+## Session 2026-09-11 (cont.) — Admin backend API, Phase 5 (API consumption statistics)
+
+**Student:** K.N. Delpachithra (Kavindu) · **ID:** IT24102532
+**Branch:** `feature/admin-backend-api` · **Issues:** #220–#226
+
+### Work performed (one commit per issue)
+
+- [#220](https://github.com/KavinduNirmal/aveline/issues/220) — M7 schema:
+  `ApiRequestMetrics` (bigint identity, 12-element cumulative latency buckets,
+  `NULLS NOT DISTINCT` dimension index), `ApiQuotaUsage`, and the **hand-edited**
+  migration that creates `ApiRequestLogs` as `PARTITION BY RANGE (OccurredAt)` with
+  the daily partition plus the `aveline_ensure_api_request_log_partition` /
+  `aveline_drop_old_api_request_log_partitions` SQL functions.
+- [#221](https://github.com/KavinduNirmal/aveline/issues/221) — the telemetry
+  pipeline: `ApiTelemetryMiddleware` (timestamp + enqueue only),
+  `TelemetryChannel` (bounded; drop-oldest with `Telemetry:DroppedSamples`),
+  `RouteTemplateResolver`, `MetricDimensionHasher`, and the batched
+  `ApiTelemetryWriter` that upserts and samples.
+- [#222](https://github.com/KavinduNirmal/aveline/issues/222) — `LatencyBuckets`
+  (cumulative interpolation of p50/p95/p99), `ApiMetricRepository` with the
+  incremental `ON CONFLICT ... DO UPDATE` upsert, `ApiRequestLogRepository`, and
+  `ApiStatisticsService` covering S-24…S-32.
+- [#223](https://github.com/KavinduNirmal/aveline/issues/223) — the org
+  `/statistics/api*` and `/statistics/api-keys` endpoints plus the team-only admin
+  equivalents, with a 400 validation surface and the null-percentile body.
+- [#224](https://github.com/KavinduNirmal/aveline/issues/224) — `QuotaService`
+  (Redis Lua atomic counter with an in-memory fallback),
+  `QuotaEnforcementMiddleware`, `ApiKeyUsageAggregator` (closes FR-3.18:
+  amortised `LastUsedAt`/`RequestCount`, `apikey.lastused`) and `ApiQuotaResetJob`.
+- [#225](https://github.com/KavinduNirmal/aveline/issues/225) — `ApiStatsRollupJob`
+  (recompute-and-replace), `ApiRequestLogPartitionJob` and `ApiStatsRetentionJob`.
+- [#226](https://github.com/KavinduNirmal/aveline/issues/226) — the
+  1 000-request rollup acceptance test, the docs and this record.
+
+### Important architectural decisions
+
+- **Quota enforcement is safe-by-default.** `Quotas:EnforcementEnabled` is `false`
+  by default: every request is measured, but only a flag flip makes an exhausted
+  quota reject with 429. A limit of `0` means "not configured" (unlimited), so the
+  Seed tier's `api.requests.monthly = 0` cannot lock existing tenants out.
+- **The rollup is never sampled**; only the raw log is. That is what makes the
+  1 000-request acceptance test exact.
+- **Raw-log retention (7 days) and rollup retention (400 days) are separate jobs**
+  over separate tables, so pruning forensics cannot touch billing-quality data.
+- **Hour→day compaction is deferred** because one shared dimension index would
+  collide a synthetic day row with the 00:00 hour row.
+
+### Problems encountered
+
+- The `ApiRequestLogs` partial indexes (`IX_ApiRequestLogs_Slow`,
+  `IX_ApiRequestLogs_Errors`) cannot both be modelled by EF Core (an index is
+  identified by its property set), so they live only in the hand-edited migration
+  and are verified by the Postgres suite.
+- The FR-6.3 p99 ≤ 1 ms gate needs a load runner that CI does not have; it is
+  documented as an unmeasured acceptance criterion rather than silently skipped.
+
+### Verification performed
+
+- Full suite: **997 passed, 0 failed** (Phase 4 ended at 896).
+- M7 applied cleanly to the local PostgreSQL 16 container; `ApiConsumptionPostgresTests`
+  proves the upsert conflict target, partition routing and the partition functions.
+- Each task committed separately with the Husky pre-commit gates passing.
+
+### Remaining work
+
+- Phase 6 (system statistics and alerts: M8, metric collector, alert evaluation,
+  admin system endpoints).
+- Hour→day rollup compaction beyond 90 days.
+- A load-test harness to prove FR-6.3/BR-6.3.
+- `docs/api/openapi.yaml` reconciliation against generated output remains.

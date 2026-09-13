@@ -1,9 +1,9 @@
 # Aveline Backend — Requirements and Implementation Plan
 
-**Status:** Phases 0–3 (foundations, Blossom pricing, the entitlement ledger, and API
-access/user/organization administration) are **implemented** on
-`feature/admin-backend-api` (issues #176–#208). Phase 4 is in progress; Phases 5–6
-remain proposed. The three blocking open questions below now gate Phase 5.
+**Status:** Phases 0–5 (foundations, Blossom pricing, the entitlement ledger, API
+access/user/organization administration, agentic statistics, and API consumption
+statistics) are **implemented** on `feature/admin-backend-api` (issues #176–#226).
+Phase 6 remains proposed. The three blocking open questions below now gate Phase 6.
 **Baseline:** commit `902f27f` (`integration/slice-2-to-slice-1`)
 **Scope:** backend only — `Aveline.Api` and `agnet-service`. No frontend, no
 screens, no UX flows.
@@ -235,6 +235,51 @@ the predecessor atomically. See
    error.
 6. **S-23 concurrency is not exposed here.** The catalog routes it to
    `/api/v1/admin/statistics/system/queues`, which belongs to Phase 6.
+
+---
+
+### Implementation status (Phase 5 — API consumption statistics)
+
+| Issue | What landed |
+| --- | --- |
+| [#220](https://github.com/KavinduNirmal/aveline/issues/220) | M7: `ApiRequestMetrics`, the partitioned `ApiRequestLogs` (hand-edited migration), `ApiQuotaUsage`, the `aveline_ensure_api_request_log_partition`/`aveline_drop_old_api_request_log_partitions` functions and their Postgres tests |
+| [#221](https://github.com/KavinduNirmal/aveline/issues/221) | `ApiTelemetryMiddleware`, bounded `TelemetryChannel`, `RouteTemplateResolver`, `MetricDimensionHasher`, `ApiTelemetryWriter`, the incremental `ApiMetricRepository` upsert and the `Telemetry:*` config keys |
+| [#222](https://github.com/KavinduNirmal/aveline/issues/222) | `LatencyBuckets`, the `IApiStatisticsService` S-24…S-32 implementation, window validation and the raw-log reads |
+| [#223](https://github.com/KavinduNirmal/aveline/issues/223) | `/api/v1/orgs/{organizationId}/statistics/api[-keys]` and the team-only `/api/v1/admin/statistics/api*` endpoints with the 400 validation surface |
+| [#224](https://github.com/KavinduNirmal/aveline/issues/224) | `QuotaService` (Redis Lua counter + in-memory fallback), `QuotaEnforcementMiddleware`, `ApiKeyUsageAggregator` (closes FR-3.18) and `ApiQuotaResetJob` |
+| [#225](https://github.com/KavinduNirmal/aveline/issues/225) | `ApiStatsRollupJob`, `ApiRequestLogPartitionJob` and `ApiStatsRetentionJob` |
+| [#226](https://github.com/KavinduNirmal/aveline/issues/226) | The 1 000-request rollup acceptance test, these documents and the AI-usage record |
+
+**Confirmed deviations from the proposed plan:**
+
+1. **`Quotas:EnforcementEnabled` defaults to `false` (safe rollout).** Quota is measured
+   on every request but rejected with 429 only when the flag is on. A limit of `0` means
+   "not configured → unlimited", never an exhausted quota. When the counter store is
+   unreachable the quota path **fails closed** (treats the meter as exhausted) only while
+   enforcement is enabled; with enforcement disabled it can never fail a request.
+2. **Hour→day compaction beyond the 90-day hourly retention is deferred.** Hourly and
+   daily windows share one table and one unique dimension index, so a day row at the day
+   boundary would collide with the 00:00 hour row. `ApiStatsRollupJob` therefore
+   recomputes-and-replaces (normalises and merges) the just-closed hour; the 400-day daily
+   rollup from S-24/§9 is not produced yet.
+3. **The load-test harness is deferred.** There is no load runner in CI, so the FR-6.3 /
+   BR-6.3 gate — 5 000 req/s for 60 s with p99 telemetry overhead ≤ 1 ms — is a noted
+   acceptance criterion, not a measured one. The middleware inlines no I/O and only
+   stamps/enqueues, and `ApiTelemetryWriterTests` covers buffer overflow, but the
+   latency gate itself is unproven in this environment.
+4. **JWT user/org attribution is claim-only.** `RequestPrincipal` reads `org_id`/`user_id`
+   claims; it deliberately performs no database lookup on the request path (FR-6.3), so a
+   Clerk token without those claims is attributed to `OrganizationId = NULL` and counted
+   in system statistics only (BR-6.1). API-key traffic is fully attributed.
+5. **`IX_ApiRequestLogs_Slow` and `IX_ApiRequestLogs_Errors` are created by raw SQL.**
+   EF Core identifies an index by its property set, so the two partial indexes on
+   `OccurredAt` cannot both be modelled; they exist in the hand-edited M7 migration and
+   are verified by `ApiConsumptionPostgresTests`.
+6. **New `Telemetry:*` retention/threshold keys** (`RawLogRetentionDays`,
+   `HourlyRollupRetentionDays`, `DailyRollupRetentionDays`, `WriterBatchSize`,
+   `WriterFlushSeconds`, `MinSampleForPercentile`, `MaxWindowDays`,
+   `QuotaWarningPercent`, `IpHashSalt`) are exposed in `appsettings.json` beyond the
+   plan's §10.2 list.
 
 ---
 

@@ -51,7 +51,7 @@ public static class SystemAlertRuleSeed
             AlertAggregation.Max, AlertComparisonOperator.Gt, 200m, 60, AlertSeverity.Warning),
         Rule(
             "f259bd52-2aff-4152-93b4-f3a79e864b44", "telemetry.dropped", "aveline.api.telemetry.dropped",
-            AlertAggregation.Sum, AlertComparisonOperator.Gt, 0m, 300, AlertSeverity.Warning),
+            AlertAggregation.Rate, AlertComparisonOperator.Gt, 0m, 300, AlertSeverity.Warning),
         Rule(
             "98d1f73f-95a8-4c44-a275-091c6c9b661e", "queue.telemetry.backlog", "aveline.queue.telemetry_channel",
             AlertAggregation.Max, AlertComparisonOperator.Gt, 8000m, 300, AlertSeverity.Warning),

@@ -19,6 +19,10 @@ public static class AdminOrganizationEndpoints
     private const int DefaultPageSize = 50;
     private const int MaxPageSize = 200;
 
+    // Bounding the page keeps (page - 1) * pageSize inside int range; an unbounded page
+    // wrapped to a negative OFFSET, which PostgreSQL rejects with a 500 (§3.8(a)).
+    private const int MaxPage = 10_000;
+
     public static IEndpointRouteBuilder MapAdminOrganizationEndpoints(this IEndpointRouteBuilder endpoints)
     {
         var group = endpoints.MapGroup("/admin/orgs").WithTags("Admin Organizations");
@@ -40,7 +44,7 @@ public static class AdminOrganizationEndpoints
                 });
             }
 
-            var normalisedPage = page is null or < 1 ? 1 : page.Value;
+            var normalisedPage = page is null or < 1 ? 1 : Math.Min(page.Value, MaxPage);
             var normalisedPageSize = pageSize is null or < 1
                 ? DefaultPageSize
                 : Math.Min(pageSize.Value, MaxPageSize);
@@ -69,11 +73,17 @@ public static class AdminOrganizationEndpoints
             }
 
             var actorUserId = await ResolveActorUserIdAsync(principal, users, ct);
+            if (actorUserId is null)
+            {
+                // An unauditable entitlement change must not be written with a null actor
+                // (AdminUserEndpoints returns 401 for the same situation) (§3.8(f)).
+                return Results.Unauthorized();
+            }
 
             try
             {
                 var entitlements = await overrides.SetOverridesAsync(
-                    organizationId, actorUserId, request.Overrides, ct);
+                    organizationId, actorUserId.Value, request.Overrides, ct);
 
                 return Results.Ok(new { organizationId, entitlements });
             }
@@ -90,18 +100,18 @@ public static class AdminOrganizationEndpoints
         return endpoints;
     }
 
-    private static async Task<Guid> ResolveActorUserIdAsync(
+    private static async Task<Guid?> ResolveActorUserIdAsync(
         ClaimsPrincipal principal, IUserService users, CancellationToken ct)
     {
         var clerkId = principal.FindFirstValue(ClaimTypes.NameIdentifier)
                       ?? principal.FindFirstValue("sub");
         if (string.IsNullOrEmpty(clerkId))
         {
-            return Guid.Empty;
+            return null;
         }
 
         var user = await users.GetByClerkIdAsync(clerkId, ct);
-        return user?.Id ?? Guid.Empty;
+        return user?.Id;
     }
 
     private static bool TryParsePlanTier(string? value, out PlanTier? parsed)

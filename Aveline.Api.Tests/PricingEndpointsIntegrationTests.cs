@@ -467,4 +467,84 @@ public class PricingEndpointsIntegrationTests : IAsyncLifetime
             token));
         Assert.Equal(HttpStatusCode.OK, owning.StatusCode);
     }
+
+    [Fact]
+    public async Task ActivateRule_WithPastEffectiveFrom_AsAdmin_Returns403()
+    {
+        await SeedUserAsync("pricing_activate_backdate_admin", Roles.Admin);
+        var token = CreateToken("pricing_activate_backdate_admin", userRole: Roles.Admin);
+        var provider = $"activate-backdate-{Guid.CreateVersion7():N}";
+
+        var create = await _client.SendAsync(Authorized(
+            HttpMethod.Post, "/api/v1/admin/pricing/rules", token,
+            CreateRuleBody("Provider", provider: provider)));
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var ruleId = JsonDocument.Parse(await create.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("id").GetString();
+
+        // An Admin is deliberately denied pricing:backdate; activating with a past date must
+        // not silently re-price a historical window (BR-1.6, reconciliation §3.0).
+        var activate = await _client.SendAsync(Authorized(
+            HttpMethod.Post,
+            $"/api/v1/admin/pricing/rules/{ruleId}/activate",
+            token,
+            new { effectiveFrom = DateTime.UtcNow.AddDays(-1) }));
+
+        Assert.Equal(HttpStatusCode.Forbidden, activate.StatusCode);
+    }
+
+    [Fact]
+    public async Task ActivateRule_WithPastEffectiveFrom_AsOwner_Returns200()
+    {
+        await SeedUserAsync("pricing_activate_backdate_owner", Roles.Owner);
+        var token = CreateToken("pricing_activate_backdate_owner", userRole: Roles.Owner);
+        var provider = $"activate-backdate-owner-{Guid.CreateVersion7():N}";
+
+        var create = await _client.SendAsync(Authorized(
+            HttpMethod.Post, "/api/v1/admin/pricing/rules", token,
+            CreateRuleBody("Provider", provider: provider)));
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var ruleId = JsonDocument.Parse(await create.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("id").GetString();
+
+        var effectiveFrom = DateTime.UtcNow.AddDays(-1);
+        var activate = await _client.SendAsync(Authorized(
+            HttpMethod.Post,
+            $"/api/v1/admin/pricing/rules/{ruleId}/activate",
+            token,
+            new { effectiveFrom }));
+
+        Assert.Equal(HttpStatusCode.OK, activate.StatusCode);
+        var activated = JsonDocument.Parse(await activate.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal(
+            effectiveFrom,
+            activated.GetProperty("effectiveFrom").GetDateTime(),
+            TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public async Task UpdateRule_WithPastEffectiveFrom_AsAdmin_Returns403()
+    {
+        await SeedUserAsync("pricing_patch_backdate_admin", Roles.Admin);
+        var token = CreateToken("pricing_patch_backdate_admin", userRole: Roles.Admin);
+        var provider = $"patch-backdate-{Guid.CreateVersion7():N}";
+
+        var create = await _client.SendAsync(Authorized(
+            HttpMethod.Post, "/api/v1/admin/pricing/rules", token,
+            CreateRuleBody("Provider", provider: provider)));
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var ruleId = JsonDocument.Parse(await create.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("id").GetString();
+
+        var patch = await _client.SendAsync(Authorized(
+            HttpMethod.Patch,
+            $"/api/v1/admin/pricing/rules/{ruleId}",
+            token,
+            new Dictionary<string, object?>
+            {
+                ["effectiveFrom"] = DateTime.UtcNow.AddDays(-1).ToString("O"),
+            }));
+
+        Assert.Equal(HttpStatusCode.Forbidden, patch.StatusCode);
+    }
 }

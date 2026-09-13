@@ -65,6 +65,17 @@ public class SystemMetricCollectorTests
     }
 
     [Fact]
+    public void TelemetryDroppedRule_UsesRateNotSum()
+    {
+        // The dropped-sample counter is monotonic and never reset, so Sum over a window
+        // latches above zero for ever after the first drop. Rate measures the per-minute
+        // increase, exactly as eventbus.failed already does (§3.4).
+        var rule = SystemAlertRuleSeed.Rules.Single(candidate => candidate.Name == "telemetry.dropped");
+
+        Assert.Equal(AlertAggregation.Rate, rule.Aggregation);
+    }
+
+    [Fact]
     public void BuildSamples_OmitsMetricsThatCannotBeDetermined()
     {
         Assert.Empty(SystemMetricCollector.BuildSamples(new MetricSnapshot()));

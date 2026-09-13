@@ -111,9 +111,19 @@ public class IdempotencyRecordConfiguration : IEntityTypeConfiguration<Idempoten
         builder.Property(record => record.ExpiresAt)
             .IsRequired();
 
-        builder.HasIndex(record => new { record.OrganizationId, record.Endpoint, record.IdempotencyKey })
+        // HttpMethod is part of the key: the same (organization, endpoint, key) tuple reused
+        // with a different verb is a different operation, and omitting the verb produced a
+        // false 409 for that case (H-1(d)).
+        builder.HasIndex(record => new
+            {
+                record.OrganizationId,
+                record.Endpoint,
+                record.HttpMethod,
+                record.IdempotencyKey,
+            })
             .IsUnique()
-            .AreNullsDistinct(false);
+            .AreNullsDistinct(false)
+            .HasDatabaseName("IX_IdempotencyRecords_Org_Endpoint_Method_Key");
 
         builder.HasIndex(record => record.ExpiresAt);
     }

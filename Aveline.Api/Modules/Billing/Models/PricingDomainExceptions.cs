@@ -38,9 +38,6 @@ public sealed class PricingRuleImmutableException(string message) : PricingDomai
 public sealed class PricingRuleNotFoundException(Guid ruleId)
     : PricingDomainException($"Pricing rule '{ruleId}' was not found.");
 
-/// <summary>The effective window overlaps an existing non-cancelled rule (HTTP 409, <c>rule-overlap</c>).</summary>
-public sealed class PricingRuleOverlapException(string message) : PricingDomainException(message);
-
 /// <summary>The price-book entry does not exist (HTTP 404).</summary>
 public sealed class PricingPriceEntryNotFoundException(Guid entryId)
     : PricingDomainException($"Price-book entry '{entryId}' was not found.");

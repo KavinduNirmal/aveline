@@ -102,8 +102,21 @@ public static class PricingEndpoints
             ClaimsPrincipal principal,
             IPricingService pricing,
             IUserService users,
+            IAuthorizationService authorization,
             CancellationToken ct) =>
         {
+            // A past EffectiveFrom is a backdate and requires pricing:backdate, exactly as
+            // POST /rules already enforces (BR-1.6).
+            var backdated = request.EffectiveFrom is { } requestedFrom && requestedFrom < DateTime.UtcNow;
+            if (backdated)
+            {
+                var allowed = await authorization.AuthorizeAsync(principal, Permissions.PricingBackdate);
+                if (!allowed.Succeeded)
+                {
+                    return Results.Forbid();
+                }
+            }
+
             try
             {
                 var actorUserId = await ResolveActorUserIdAsync(principal, users, ct);
@@ -115,7 +128,8 @@ public static class PricingEndpoints
                     request.EffectiveFrom,
                     request.EffectiveTo,
                     request.ChangeReason,
-                    actorUserId), ct);
+                    actorUserId,
+                    AllowBackdate: backdated), ct);
 
                 return Results.Ok(PricingRuleDto.From(rule));
             }
@@ -128,12 +142,29 @@ public static class PricingEndpoints
         group.MapPost("/rules/{ruleId:guid}/activate", async (
             Guid ruleId,
             ActivatePricingRuleRequest? request,
+            ClaimsPrincipal principal,
             IPricingService pricing,
+            IAuthorizationService authorization,
             CancellationToken ct) =>
         {
+            // The documented activate body may move EffectiveFrom; a past value is a
+            // backdate and is refused without pricing:backdate (BR-1.6). Before this guard
+            // existed an Admin (who is deliberately denied the permission) could re-price a
+            // historical window at activation.
+            var backdated = request?.EffectiveFrom is { } requestedFrom && requestedFrom < DateTime.UtcNow;
+            if (backdated)
+            {
+                var allowed = await authorization.AuthorizeAsync(principal, Permissions.PricingBackdate);
+                if (!allowed.Succeeded)
+                {
+                    return Results.Forbid();
+                }
+            }
+
             try
             {
-                var rule = await pricing.ActivateRuleAsync(ruleId, request?.EffectiveFrom, ct);
+                var rule = await pricing.ActivateRuleAsync(
+                    ruleId, request?.EffectiveFrom, allowBackdate: backdated, ct);
                 return Results.Ok(PricingRuleDto.From(rule));
             }
             catch (Exception exception)
@@ -322,11 +353,6 @@ public static class PricingEndpoints
         {
             code = validationException.Code,
             message = validationException.Message,
-        }),
-        PricingRuleOverlapException => Results.Conflict(new
-        {
-            code = "rule-overlap",
-            message = exception.Message,
         }),
         DbUpdateException => Results.Conflict(new
         {

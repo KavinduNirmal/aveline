@@ -42,7 +42,7 @@ traceable to `path:line` citations in the documents below.
 | **[implementation-plan.md](implementation-plan.md)** | Architecture decisions, module-by-module file breakdown, jobs, caching, observability, security, testing, deployment, risks, and seven phased milestones with acceptance criteria | The person estimating, sequencing, or leading |
 | **[assumptions-and-open-questions.md](assumptions-and-open-questions.md)** | 10 assumptions, 11 open questions, what would change the plan, and 12 recommended next steps | Anyone who needs to know what is *not* settled |
 | **[../api/README.md](../api/README.md)** | Every endpoint: method, path, purpose, auth, permissions, params, request/response schemas, status codes, pagination, rate limits, idempotency, curl examples, and related statistics | A frontend developer |
-| **[../api/openapi.yaml](../api/openapi.yaml)** | The same contract, machine-readable — 101 paths, 113 operations, validated against OpenAPI 3.0.3 | A tool or a codegen pipeline |
+| **[../api/openapi.yaml](../api/openapi.yaml)** | The same contract, machine-readable — 100 shipped paths, 116 operations, validated against OpenAPI 3.0.3 (planned/not-yet-implemented endpoints are kept in commented sections) | A tool or a codegen pipeline |
 
 ---
 
@@ -380,7 +380,8 @@ entitlements.
 
 The #242 hardening pass fixed the low-risk, high-value medium findings from
 [`docs/reports/admin-backend-api-verification.md`](../reports/admin-backend-api-verification.md)
-(M-1, M-3, M-4, M-6, M-7, M-13, M-14, M-15, M-20). The following were consciously
+(M-1, M-3, M-6, M-7, M-13, M-14, M-15, M-20). M-4 is only **partially fixed** (see
+the table below). The following were consciously
 deferred; each is a confirmed finding in that report. The #243 documentation pass
 does not change the behaviour — for M-8, M-10, M-11, M-16 and M-17 it makes
 [`docs/api/README.md`](../api/README.md) state the shipped behaviour instead of the
@@ -389,6 +390,7 @@ intended contract, so this list and the catalogue now agree.
 | ID | Deferred item | Status after #243 |
 | --- | --- | --- |
 | M-2 | The committed `AgentService:InternalToken` default (`appsettings.Development.json`, `docker-compose.yml`) | Deferred; Development/compose only, the handler fails closed when the token is unset, and Production must inject a real secret. |
+| M-4 | WhatsApp webhook replay window | **Partially fixed.** The rate limit now runs *after* signature verification (`Endpoints/WebhookEndpoints.cs:113-124`), so only authentic traffic consumes the window, and the GET verify-token compare is constant-time (`:202-217`). Still open: `WebhookSignatureVerifier` has no timestamp/nonce/tolerance check (Meta sends no timestamp), and `InboundMessageLog` has no unique index on `ExternalId` (`Infrastructure/Data/Configurations/InboundMessageLogConfiguration.cs:23-24`), so a captured signed body replays indefinitely — bounded only by the 120/min per org+IP limiter. |
 | M-5 | No application-level rate limiting outside the two in-handler limiters | Deferred; tracked as accepted risk SEC-M2 in `docs/security/auth-security-review.md`; needs an infrastructure decision. |
 | M-8 | `GET /admin/pricing/price-book` returns a bare, unpaginated array | Behaviour deferred (a contract change with frontend impact); now explicitly documented in [api/README.md §C.1](../api/README.md). |
 | M-10 | `/admin/statistics/system/overview` is not cached server-side | **Claim corrected** in [api/README.md §D.3](../api/README.md); the cache itself remains unimplemented. |
@@ -424,10 +426,10 @@ Stated plainly so they are not mistaken for oversights:
 1. **`docs/api/openapi.yaml` is hand-authored, and this conflicts with an existing
    repository rule.** `docs/OpenApi/README.md:27` says *"Never hand-edit the
    exported spec — it is generated from the code."* That rule is right for
-   implemented endpoints. This document covers endpoints that **do not exist
-   yet**, so it cannot be generated. The reconciliation procedure — generated
-   output wins for shipped endpoints, this file wins for planned ones, and a CI
-   diff once the first planned endpoint ships — is specified in
+   implemented endpoints. `docs/api/openapi.yaml` is normative for **shipped**
+   endpoints only — generated output wins for those — while endpoints with no route
+   are listed only in its commented "Planned / not yet implemented" appendix and in
+   [api/README.md Appendix P](../api/README.md). The procedure is specified in
    [api/README.md §1.3](../api/README.md).
 2. **Two of four research workstreams failed mid-investigation** (the org/user
    endpoint inventory and the build/deployment conventions). Both were recovered

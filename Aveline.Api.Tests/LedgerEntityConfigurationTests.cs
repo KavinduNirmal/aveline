@@ -105,6 +105,9 @@ public class LedgerEntityConfigurationTests
             {
                 nameof(IdempotencyRecord.OrganizationId),
                 nameof(IdempotencyRecord.Endpoint),
+                // H-1(d): the verb is part of the key, so the same key on a different
+                // method is a different operation rather than a false 409.
+                nameof(IdempotencyRecord.HttpMethod),
                 nameof(IdempotencyRecord.IdempotencyKey),
             },
             index.Properties.Select(p => p.Name));

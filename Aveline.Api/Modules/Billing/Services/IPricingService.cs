@@ -26,7 +26,8 @@ public sealed record UpdatePricingRuleCommand(
     DateTime? EffectiveFrom,
     DateTime? EffectiveTo,
     string? ChangeReason,
-    Guid ActorUserId);
+    Guid ActorUserId,
+    bool AllowBackdate = false);
 
 public sealed record PricingRulePage(
     IReadOnlyList<BlossomConversionRule> Items, int Total, int Page, int PageSize);
@@ -68,8 +69,15 @@ public interface IPricingService
     Task<BlossomConversionRule> UpdateRuleAsync(
         Guid ruleId, UpdatePricingRuleCommand command, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Activates a Draft rule. A past <paramref name="effectiveFrom"/> is rejected with
+    /// <see cref="PricingBackdateForbiddenException"/> unless the actor holds
+    /// <c>pricing:backdate</c> and <paramref name="allowBackdate"/> is therefore true
+    /// (BR-1.6).
+    /// </summary>
     Task<BlossomConversionRule> ActivateRuleAsync(
-        Guid ruleId, DateTime? effectiveFrom = null, CancellationToken cancellationToken = default);
+        Guid ruleId, DateTime? effectiveFrom = null, bool allowBackdate = false,
+        CancellationToken cancellationToken = default);
 
     Task<BlossomConversionRule> CancelRuleAsync(
         Guid ruleId, string reason, CancellationToken cancellationToken = default);

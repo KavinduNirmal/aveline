@@ -1,15 +1,16 @@
 namespace Aveline.Api.Modules.Statistics.Telemetry;
 
 /// <summary>
-/// Startup guard for telemetry secrets (M-1). The IP hash salt is the only thing that
-/// stops the stored SHA-256 of a client address being brute-forced; an empty salt in
-/// Production is a configuration error, not a warning.
+/// Startup guard for telemetry secrets (M-1). The hash salt is the only thing that stops
+/// the stored SHA-256 of a client address or user agent being brute-forced; an empty salt
+/// in Production is a configuration error, not a warning.
 /// </summary>
 public static class TelemetrySecurityGuard
 {
     /// <summary>
-    /// Fails fast when Production runs with no <c>Telemetry:IpHashSalt</c>. Other
-    /// environments stay permissive so local development and tests need no secret.
+    /// Fails fast when Production runs with no <c>Telemetry:IpHashSalt</c>. The same salt
+    /// covers both the IP and user-agent hashes. Other environments stay permissive so
+    /// local development and tests need no secret.
     /// </summary>
     public static void EnsureIpHashSaltForProduction(
         IHostEnvironment environment, IConfiguration configuration)

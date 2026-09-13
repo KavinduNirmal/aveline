@@ -118,6 +118,7 @@ public class SystemMetricCollector(
         Math.Max(1, configuration.GetValue("Observability:SystemMetricCollectionSeconds", 30));
 
     private long _droppedSamples;
+    private long _databaseReadFailures;
 
     protected override string JobName => "system-metric-collector";
 
@@ -125,6 +126,12 @@ public class SystemMetricCollector(
 
     /// <summary>Samples dropped because the in-memory buffer was already full.</summary>
     public long DroppedSamples => Interlocked.Read(ref _droppedSamples);
+
+    /// <summary>
+    /// Database capture passes that threw, so their database-derived metrics are missing.
+    /// A non-zero value means the alert evaluator is seeing gaps, not health (§3.3(c)).
+    /// </summary>
+    public long DatabaseReadFailures => Interlocked.Read(ref _databaseReadFailures);
 
     /// <summary>Exposed for tests: samples currently held for the next successful flush.</summary>
     internal int BufferedSampleCount => _buffer.Count;
@@ -320,7 +327,7 @@ public class SystemMetricCollector(
         return snapshot;
     }
 
-    private static async Task CaptureDatabaseAsync(
+    private async Task CaptureDatabaseAsync(
         AppDbContext db,
         MetricSnapshot snapshot,
         Action<MetricSnapshot> update,
@@ -380,7 +387,15 @@ public class SystemMetricCollector(
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // A transient read failure omits the database metrics for this pass (BR-7.10).
+            // A transient read failure omits the database metrics for this pass (BR-7.10),
+            // but it must be visible: a silent drop makes a missing drift sample look like a
+            // healthy one and lets a firing integrity alert auto-resolve (§3.3(c)).
+            Interlocked.Increment(ref _databaseReadFailures);
+            logger.LogError(
+                exception,
+                "System metric database capture failed; the database-derived metrics are "
+                + "omitted for this pass (failures={Failures}).",
+                DatabaseReadFailures);
         }
     }
 
@@ -426,19 +441,29 @@ public class SystemMetricCollector(
     /// <summary>
     /// Blossom balance, ledger/projection drift and consumption rate (S-30). Drift reuses
     /// <see cref="BlossomService.ReconciliationDrift"/> so the alert and the statement agree.
+    /// Only current, open usage accounts are considered: closed historical periods are never
+    /// deleted, so an old overdrawn period would otherwise pin <c>Min(...)</c> negative and
+    /// latch <c>blossom.balance.negative</c> for ever (§3.3(b)).
     /// </summary>
     private static async Task<MetricSnapshot> CaptureBlossomAsync(
         AppDbContext db, MetricSnapshot snapshot, DateTime now, CancellationToken cancellationToken)
     {
         var accounts = await db.UsageAccounts
             .AsNoTracking()
+            .Where(account => !account.IsClosed
+                              && account.PeriodStart <= now
+                              && account.PeriodEnd > now)
             .ToListAsync(cancellationToken);
 
         if (accounts.Count > 0)
         {
+            // Scope the ledger aggregate to the open accounts so the scan stays bounded and
+            // closed periods cannot contribute to the drift maximum.
+            var accountIds = accounts.Select(account => account.Id).ToList();
             var ledgerSums = await db.BlossomLedgerEntries
                 .AsNoTracking()
                 .Where(entry => entry.EntryType != BlossomLedgerEntryType.PeriodAllocation)
+                .Where(entry => accountIds.Contains(entry.UsageAccountId))
                 .GroupBy(entry => entry.UsageAccountId)
                 .Select(group => new { UsageAccountId = group.Key, Total = group.Sum(entry => entry.BlossomDelta) })
                 .ToDictionaryAsync(row => row.UsageAccountId, row => row.Total, cancellationToken);

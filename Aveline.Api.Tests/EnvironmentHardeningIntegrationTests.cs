@@ -15,8 +15,8 @@ namespace Aveline.Api.Tests;
 
 /// <summary>
 /// Issue #242 — environment-sensitive hardening: the demo policy endpoints are
-/// Development-only (M-14) and the anonymous readiness payload stops disclosing the
-/// deployment version block in Production (M-3).
+/// Development-only (M-14). The Production readiness payload's version suppression (M-3)
+/// is covered by <see cref="HealthEndpointsIntegrationTests"/>.
 /// </summary>
 public class EnvironmentHardeningIntegrationTests : IAsyncLifetime
 {

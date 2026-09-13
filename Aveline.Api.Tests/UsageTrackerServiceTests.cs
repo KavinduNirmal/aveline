@@ -53,9 +53,10 @@ public class UsageTrackerServiceTests
     [Fact]
     public void CalculateBlossomUnits_TotalAboveIntMax_IsNotWrapped()
     {
-        // 2_000_000_000 + 147_483_648 + 1_000_000_000 = 3_147_483_648. Summing the
-        // three ints wraps to a negative int before widening; summed in long the
-        // legacy formula bills ceil(3_147_483.648, 1 dp) = 3_147_483.7, not the 0.1 floor.
+        // 2_000_000_000 + 147_483_648 + 1_000_000_000 = 3_147_483_648 tokens, which is
+        // 3_147_483.648 Blossom units. Summing the three ints wraps to a negative int
+        // before widening; summed in long the formula bills ceil(3_147_483.648, 1 dp)
+        // = 3_147_483.7, not the 0.1 minimum charge the wrapped sum produced.
         var units = UsageTrackerService.CalculateBlossomUnits(2000000000, 147483648, 1000000000);
 
         Assert.Equal(3_147_483.7m, units);

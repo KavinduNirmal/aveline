@@ -1,5 +1,7 @@
+using System.Text;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.HttpsPolicy;
 
 namespace Aveline.Api.Configurations;
 
@@ -25,15 +27,56 @@ public static class SecurityConfiguration
     public const string PermissionsPolicy =
         "camera=(), microphone=(), geolocation=(), payment=(), usb=()";
 
+    /// <summary>
+    /// Writes the five baseline hardening headers onto <paramref name="response"/>.
+    /// Public because <c>GlobalExceptionHandler</c> must re-apply them: the framework
+    /// clears the response, headers included, before it invokes an exception handler.
+    /// </summary>
+    public static void ApplyHardeningHeaders(HttpResponse response)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+
+        response.Headers["X-Content-Type-Options"] = "nosniff";
+        response.Headers["X-Frame-Options"] = "DENY";
+        response.Headers["Referrer-Policy"] = "no-referrer";
+        response.Headers["Content-Security-Policy"] = ContentSecurityPolicy;
+        response.Headers["Permissions-Policy"] = PermissionsPolicy;
+    }
+
+    /// <summary>
+    /// Writes the HSTS header for an HTTPS response using the same policy
+    /// <c>UseHsts()</c> would have applied, so a handled 500 carries it too. The
+    /// framework's localhost exclusions are honoured by the caller.
+    /// </summary>
+    public static void ApplyHstsHeader(HttpResponse response, HstsOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (options.MaxAge <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        var value = new StringBuilder("max-age=").Append((long)options.MaxAge.TotalSeconds);
+        if (options.IncludeSubDomains)
+        {
+            value.Append("; includeSubDomains");
+        }
+
+        if (options.Preload)
+        {
+            value.Append("; preload");
+        }
+
+        response.Headers.StrictTransportSecurity = value.ToString();
+    }
+
     public static IApplicationBuilder UseAvelineSecurityHeaders(this IApplicationBuilder app)
     {
         return app.Use(async (context, next) =>
         {
-            context.Response.Headers["X-Content-Type-Options"] = "nosniff";
-            context.Response.Headers["X-Frame-Options"] = "DENY";
-            context.Response.Headers["Referrer-Policy"] = "no-referrer";
-            context.Response.Headers["Content-Security-Policy"] = ContentSecurityPolicy;
-            context.Response.Headers["Permissions-Policy"] = PermissionsPolicy;
+            ApplyHardeningHeaders(context.Response);
             await next();
         });
     }

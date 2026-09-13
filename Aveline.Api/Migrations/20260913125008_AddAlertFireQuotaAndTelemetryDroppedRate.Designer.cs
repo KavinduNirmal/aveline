@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Aveline.Api.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Aveline.Api.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260913125008_AddAlertFireQuotaAndTelemetryDroppedRate")]
+    partial class AddAlertFireQuotaAndTelemetryDroppedRate
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -673,11 +676,10 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("ExpiresAt");
 
-                    b.HasIndex("OrganizationId", "Endpoint", "HttpMethod", "IdempotencyKey")
-                        .IsUnique()
-                        .HasDatabaseName("IX_IdempotencyRecords_Org_Endpoint_Method_Key");
+                    b.HasIndex("OrganizationId", "Endpoint", "IdempotencyKey")
+                        .IsUnique();
 
-                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("OrganizationId", "Endpoint", "HttpMethod", "IdempotencyKey"), false);
+                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("OrganizationId", "Endpoint", "IdempotencyKey"), false);
 
                     b.ToTable("IdempotencyRecords", (string)null);
                 });

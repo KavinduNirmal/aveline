@@ -151,6 +151,25 @@ public class AdminOrganizationEndpointsIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Admin_Search_ClampsAnOutOfRangePage()
+    {
+        var token = Guid.NewGuid().ToString("N");
+        await SeedOrganizationAsync($"Admin Org {token}", $"admin-org-{token}", PlanTier.Orchid);
+
+        var adminToken = CreateToken($"admin_orgs_{token}", Roles.Admin);
+        await SeedActiveUserAsync($"admin_orgs_{token}");
+
+        // An unbounded page wrapped (page - 1) * pageSize to a negative OFFSET, which
+        // PostgreSQL rejects with a 500 (§3.8(a)).
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Get, "/api/v1/admin/orgs?page=2147483647", adminToken));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await BodyAsync(response);
+        Assert.Equal(10_000, body.GetProperty("page").GetInt32());
+    }
+
+    [Fact]
     public async Task Admin_Search_FiltersByActiveState()
     {
         var token = Guid.NewGuid().ToString("N");

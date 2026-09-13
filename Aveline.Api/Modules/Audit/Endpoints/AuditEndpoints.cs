@@ -14,6 +14,10 @@ public static class AuditEndpoints
     private const int DefaultPageSize = 50;
     private const int MaxPageSize = 200;
 
+    // Bounding the page keeps (page - 1) * pageSize inside int range; an unbounded page
+    // wrapped to a negative OFFSET, which PostgreSQL rejects with a 500 (§3.8(a)).
+    private const int MaxPage = 10_000;
+
     public static IEndpointRouteBuilder MapAuditEndpoints(this IEndpointRouteBuilder endpoints)
     {
         var group = endpoints.MapGroup("/admin/audit").WithTags("Audit");
@@ -31,7 +35,7 @@ public static class AuditEndpoints
             IAuditRepository repository,
             CancellationToken ct) =>
         {
-            var normalisedPage = page is null or < 1 ? 1 : page.Value;
+            var normalisedPage = page is null or < 1 ? 1 : Math.Min(page.Value, MaxPage);
             var normalisedPageSize = pageSize is null or < 1
                 ? DefaultPageSize
                 : Math.Min(pageSize.Value, MaxPageSize);

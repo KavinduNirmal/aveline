@@ -322,6 +322,151 @@ public class AlertEvaluationTests
         return await scope.ServiceProvider.GetRequiredService<IAlertService>().EvaluateAsync();
     }
 
+    [Fact]
+    public async Task ReFire_IsCappedByTheMaxAlertsPerHourStormGuard()
+    {
+        var harness = Build();
+        var rule = Rule("test.refire.guard", AlertAggregation.Max, AlertComparisonOperator.Gt, 0m);
+        rule.MaxAlertsPerHour = 2;
+        await SeedAsync(harness, rule);
+        await SeedSampleAsync(harness, "test.refire.guard", 1m);
+
+        await EvaluateOnceAsync(harness); // fire 1 consumes the first quota slot
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            // Age the last fire past the cooldown while the breach continues, which is
+            // exactly the path that used to bypass the storm guard (§3.3(a)).
+            await using (var context = harness.Context())
+            {
+                var open = await context.SystemAlerts.SingleAsync();
+                open.FiredAt = DateTime.UtcNow.AddSeconds(-(rule.CooldownSeconds + 1));
+                await context.SaveChangesAsync();
+            }
+
+            await EvaluateOnceAsync(harness);
+        }
+
+        var fires = harness.EventBus.PublishedEventTypes.Count(type => type == "system.alert.fired");
+        Assert.Equal(2, fires); // the initial fire plus a single re-fire inside the hour
+    }
+
+    [Fact]
+    public async Task ReFire_RefreshesTheRulesLastTriggeredAt()
+    {
+        var harness = Build();
+        var rule = Rule("test.refire.stamp", AlertAggregation.Max, AlertComparisonOperator.Gt, 0m);
+        await SeedAsync(harness, rule);
+        await SeedSampleAsync(harness, "test.refire.stamp", 1m);
+
+        await EvaluateOnceAsync(harness);
+        DateTime? firstTrigger;
+        await using (var context = harness.Context())
+        {
+            firstTrigger = (await context.SystemAlertRules.SingleAsync()).LastTriggeredAt;
+        }
+
+        await using (var context = harness.Context())
+        {
+            var open = await context.SystemAlerts.SingleAsync();
+            open.FiredAt = DateTime.UtcNow.AddSeconds(-(rule.CooldownSeconds + 1));
+            await context.SaveChangesAsync();
+        }
+
+        await EvaluateOnceAsync(harness);
+
+        await using (var context = harness.Context())
+        {
+            var refreshed = (await context.SystemAlertRules.SingleAsync()).LastTriggeredAt;
+            Assert.NotNull(refreshed);
+            Assert.True(refreshed > firstTrigger, "a re-fire must refresh rule.LastTriggeredAt");
+        }
+    }
+
+    [Fact]
+    public async Task MissingSamples_DoNotAutoResolveAFiringAlert()
+    {
+        var harness = Build();
+        await SeedAsync(harness, Rule("test.gap", AlertAggregation.Max, AlertComparisonOperator.Gt, 0m));
+        await SeedSampleAsync(harness, "test.gap", 1m);
+        await EvaluateOnceAsync(harness);
+
+        // A telemetry gap removes the sample entirely; that is not evidence of health.
+        await using (var context = harness.Context())
+        {
+            context.SystemMetricSamples.RemoveRange(context.SystemMetricSamples);
+            await context.SaveChangesAsync();
+        }
+
+        for (var pass = 0; pass < 5; pass++)
+        {
+            await EvaluateOnceAsync(harness);
+        }
+
+        await using var verify = harness.Context();
+        var alert = await verify.SystemAlerts.SingleAsync();
+        Assert.Equal(AlertStatus.Firing, alert.Status);
+        Assert.Equal(0, alert.ConsecutiveOkCount);
+        Assert.DoesNotContain("system.alert.resolved", harness.EventBus.PublishedEventTypes);
+    }
+
+    [Fact]
+    public async Task BlossomBalance_IgnoresClosedHistoricalPeriods()
+    {
+        var harness = Build();
+        await using (var context = harness.Context())
+        {
+            // A closed, overdrawn historical period. Closed rows are never deleted, so an
+            // unfiltered Min(...) would latch the Critical negative-balance alert (§3.3(b)).
+            context.UsageAccounts.Add(new UsageAccount
+            {
+                OrganizationId = Guid.CreateVersion7(),
+                PeriodStart = DateTime.UtcNow.AddDays(-60),
+                PeriodEnd = DateTime.UtcNow.AddDays(-30),
+                IsClosed = true,
+                ClosedAt = DateTime.UtcNow.AddDays(-30),
+                MonthlyBlossomLimit = 100m,
+                BlossomUsed = 150m,
+                BlossomRemaining = -50m,
+            });
+            context.UsageAccounts.Add(new UsageAccount
+            {
+                OrganizationId = Guid.CreateVersion7(),
+                PeriodStart = DateTime.UtcNow.AddDays(-1),
+                PeriodEnd = DateTime.UtcNow.AddDays(29),
+                MonthlyBlossomLimit = 100m,
+                BlossomUsed = 10m,
+                BlossomRemaining = 90m,
+            });
+            await context.SaveChangesAsync();
+        }
+
+        var snapshot = await CollectRealSnapshotAsync(harness);
+
+        Assert.Equal(90m, snapshot.BlossomBalance);
+    }
+
+    [Fact]
+    public async Task DatabaseCaptureFailure_IsCountedInsteadOfSwallowed()
+    {
+        var services = new ServiceCollection();
+        var disposed = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(databaseName: $"Alerts_{Guid.NewGuid()}")
+            .Options);
+        disposed.Dispose();
+        services.AddSingleton(disposed);
+        using var provider = services.BuildServiceProvider();
+
+        var collector = new RealCaptureCollector(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            new InMemoryDistributedJobLock());
+
+        var snapshot = await collector.CaptureForTestAsync(provider, CancellationToken.None);
+
+        Assert.Equal(1, collector.DatabaseReadFailures);
+        Assert.Null(snapshot.BlossomReconciliationDrift);
+    }
+
     private static async Task<MetricSnapshot> CollectRealSnapshotAsync(Harness harness)
     {
         var collector = new RealCaptureCollector(

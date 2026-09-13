@@ -166,6 +166,12 @@ public sealed class BillingPeriodRolloverJob(
 
         var processed = 0;
 
+        // A tenant can have several due accounts in one run; resolving its plan tier and
+        // entitlement limit once per organization keeps this at O(distinct orgs) rather than
+        // the 3N round-trips a per-account resolution cost (§3.8(e)).
+        var tierByOrganization = new Dictionary<Guid, PlanTier>();
+        var limitByOrganization = new Dictionary<Guid, decimal>();
+
         foreach (var account in due)
         {
             account.IsClosed = true;
@@ -179,19 +185,27 @@ public sealed class BillingPeriodRolloverJob(
 
             if (!exists)
             {
-                var tier = await db.Organizations
-                    .Where(org => org.Id == account.OrganizationId)
-                    .Select(org => (PlanTier?)org.PlanTier)
-                    .FirstOrDefaultAsync(cancellationToken) ?? PlanTier.Seed;
+                if (!tierByOrganization.TryGetValue(account.OrganizationId, out var tier))
+                {
+                    tier = await db.Organizations
+                        .Where(org => org.Id == account.OrganizationId)
+                        .Select(org => (PlanTier?)org.PlanTier)
+                        .FirstOrDefaultAsync(cancellationToken) ?? PlanTier.Seed;
+                    tierByOrganization[account.OrganizationId] = tier;
+                }
 
                 // Resolve through IEntitlementResolver so a per-organisation override (or a
                 // corrected catalog row) defines the next period's allowance (M-20).
-                var limit = await entitlements.GetDecimalAsync(
-                    account.OrganizationId,
-                    UsageTrackerService.MonthlyBlossomsKey,
-                    SeedFallbackBlossomLimit,
-                    at: null,
-                    cancellationToken);
+                if (!limitByOrganization.TryGetValue(account.OrganizationId, out var limit))
+                {
+                    limit = await entitlements.GetDecimalAsync(
+                        account.OrganizationId,
+                        UsageTrackerService.MonthlyBlossomsKey,
+                        SeedFallbackBlossomLimit,
+                        at: null,
+                        cancellationToken);
+                    limitByOrganization[account.OrganizationId] = limit;
+                }
 
                 var next = new UsageAccount
                 {

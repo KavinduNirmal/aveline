@@ -45,17 +45,21 @@ generated from the code."* That rule is correct for **implemented** endpoints, a
 the generated document is served at `/openapi/v1.json` in Development
 (`Aveline.Api/Program.cs:79`).
 
-`docs/api/openapi.yaml` is different in kind: it documents endpoints that **do not
-exist yet**, so it cannot be generated. The reconciliation procedure is:
+`docs/api/openapi.yaml` is the hand-maintained contract. **It is normative for
+shipped endpoints only:** every route the API actually maps must appear in it with
+the shipped method, policy and shapes. Endpoints that have no route are **not** part
+of the normative contract — they are listed only in the fenced
+**Appendix P — Planned / not yet implemented** at the end of this document (and in
+the commented YAML sections of `docs/api/openapi.yaml`). The reconciliation
+procedure is:
 
 | Situation | Source of truth |
 | --- | --- |
-| Endpoint is implemented (Part B) | **Generated** `/openapi/v1.json` wins. `docs/api/openapi.yaml` must be diffed against it each phase. |
-| Endpoint is planned (Part C) | **`docs/api/openapi.yaml`** is the contract. |
-| They disagree about an implemented endpoint | The generated document is correct; **fix `docs/api/openapi.yaml` in the same PR**, not later. |
+| Endpoint is shipped | **Generated** `/openapi/v1.json` wins. `docs/api/openapi.yaml` must be diffed against it each phase. |
+| Endpoint is planned / not yet implemented | Listed only in the fenced Appendix P; it is **not** normative and must not be counted as "documented but missing". |
+| They disagree about a shipped endpoint | The generated document is correct; **fix `docs/api/openapi.yaml` in the same PR**, not later. |
 
-A CI check that diffs the two documents should be added once the first Part C
-endpoint ships.
+A CI check that diffs the two documents for shipped endpoints should be added.
 
 ### 1.4 Endpoint template
 
@@ -174,9 +178,13 @@ organizations (`Authorization/OrganizationScopeAuthorizationHandler.cs:38-74`).
 
 ### A.3 Error responses
 
-There is **no global exception handler** and no `ProblemDetails` on most routes
-(`Aveline.Api/Common/Exceptions/` contains only a README describing a handler that
-does not exist). The actual shapes are:
+A single global exception handler (`GlobalExceptionHandler`, an `IExceptionHandler`)
+is registered **outermost** at `Aveline.Api/Program.cs:40,99`, so every unhandled
+exception becomes a stable `500` envelope
+(`{ "status": 500, "message": "...", "traceId": "..." }`). The exception type,
+message and stack trace are logged server-side and never serialised; correlate the
+client-visible `traceId` with the server log. Everything that is not an unhandled
+exception is still translated by the endpoint itself. The shapes are:
 
 | Status | Body | Note |
 | --- | --- | --- |
@@ -188,7 +196,7 @@ does not exist). The actual shapes are:
 | `404` | `{ "message": "..." }` | |
 | `409` | `{ "message": "..." }` | |
 | `429` | `{ "message": "..." }` **or** empty | Two shapes exist today |
-| `500` | **empty body** (framework default) | No handler exists |
+| `500` | `{ "status": 500, "message": "An unexpected error occurred while processing the request.", "traceId": "..." }` | `GlobalExceptionHandler`; the detail is log-only |
 | `502` / `503` | `{ "message": "..." }` | Agent/Clerk proxy failures |
 
 > **Known inconsistency (defect D-10).** Internal endpoints under `/internal/*`
@@ -265,8 +273,14 @@ Idempotency-Key: <opaque string, 1..128 chars, [A-Za-z0-9._:-]>
 | First request | Normal `200`/`201`; the response is stored |
 | Replay, same key, same body | The **byte-identical** original response, plus `Idempotency-Replayed: true` |
 | Replay, same key, **different** body | `409 { "message": "...", "code": "idempotency-key-reuse" }` |
+| Concurrent request, same key, original still in flight | `409 { "message": "...", "code": "idempotency-key-in-flight" }` |
 | Missing header on a money-shaped POST | `400 { "message": "The Idempotency-Key header is required.", "code": "idempotency-key-required" }` |
 | Retained for | `Billing:IdempotencyRetentionHours`, default 24 h |
+
+Concurrent requests carrying the same key are serialised by a per-key lease, so the
+endpoint executes exactly once: the loser waits for the winner and then replays its
+stored response. The `409 idempotency-key-in-flight` body is returned only when the
+winner is still running after the wait budget expires; retry shortly with the same key.
 
 **Client guidance:** generate a UUIDv4 per logical operation and reuse it across
 retries. Do **not** reuse a key for a genuinely different operation. Endpoints
@@ -766,10 +780,10 @@ below is registered under the `/api/v1` group unless the path says otherwise.
 >    compensating-ledger recompute job is not scheduled yet. See the endpoint below
 >    for the status response and the intended contract.
 
-Permissions: `pricing:view` (read), `pricing:manage` (write), `pricing:backdate`
-(past effective dates). **Never available to boutique roles.** The read routes are
-enforced by the team-only `PricingAdminRead` policy (Admin or Owner, #237); the
-write routes need `pricing:manage`.
+Permissions: the read routes are enforced by the team-only `PricingAdminRead` policy
+(Admin or Owner, #237); writes need `pricing:manage`, and a past effective date
+additionally needs `pricing:backdate`. `pricing:view` remains in the catalog but no
+longer gates a route. **Never available to boutique roles.**
 
 ---
 
@@ -874,8 +888,9 @@ Read one rule. **Errors:** `404`.
 
 **Purpose:** Edit a rule. **Only while `status = Draft`.**
 **Body:** any subset of the create fields except `scopeKind`.
-**Errors:** `400 validation`; `404`; `409 { "code": "rule-immutable" }` if the rule
-has already priced usage or is not a `Draft`.
+**Errors:** `400 validation`; `403` if `effectiveFrom` is in the past and the caller
+lacks `pricing:backdate`; `404`; `409 { "code": "rule-immutable" }` if the rule is not
+a `Draft` (supersede it with a new rule instead).
 
 #### `POST /api/v1/admin/pricing/rules/{ruleId:guid}/activate`
 
@@ -883,7 +898,8 @@ has already priced usage or is not a `Draft`.
 rule's `effectiveFrom` and marks the predecessor `Superseded`, atomically.
 **Body:** `{ "effectiveFrom": "<iso8601>" }` (optional override).
 **Response `200`:** the activated `PricingRule`.
-**Errors:** `400 { "code": "rule-not-draft" }` if not a `Draft`; `403`; `404 { message }`;
+**Errors:** `400 { "code": "rule-not-draft" }` if not a `Draft`; `403` (missing
+`pricing:manage`, or a past `effectiveFrom` without `pricing:backdate`); `404 { message }`;
 `409 { "code": "rule-overlap" }`.
 **Side effects:** publishes `pricing.rule.activated`; invalidates the pricing cache
 in-process immediately, and on other instances within the 5-second TTL safety net
@@ -1401,13 +1417,13 @@ beyond that dialog.
 | `GET` | `/api/v1/users/me/sessions` | authenticated | — | `{ items: [{ id, ipAddressHash, userAgent, createdAt, lastActiveAt, isCurrent }] }` |
 | `POST` | `/api/v1/users/me/sessions/revoke-all` | authenticated | `{ exceptCurrent?: boolean }` | `204` |
 | `GET` | `/api/v1/admin/users` | `admin:users:read` | query: `page`, `pageSize`, `q`, `accountState`, `organizationId` | `AdminUserPage` |
-| `PATCH` | `/api/v1/admin/users/{userId:guid}/state` | `admin:users:manage` | `{ accountState: "Active" \| "Suspended", reason?: string }` | `UserDto` |
+| `PATCH` | `/api/v1/admin/users/{userId:guid}/state` | `admin:users:manage` | `{ accountState: "OnboardingPending" \| "Active" \| "Suspended", reason?: string }` | `UserDto` |
 | `PATCH` | `/api/v1/orgs/{organizationId:guid}` | `settings:manage` | see below | `OrganizationProfileDto` |
 | `GET` | `/api/v1/orgs/{organizationId:guid}/settings` | `settings:manage` | — | settings + entitlements |
 | `GET` | `/api/v1/orgs/{organizationId:guid}/members` | `settings:manage` | query: `page`, `pageSize`, `status?`, `role?`, `q?` | `MemberPage` |
 | `PATCH` | `/api/v1/orgs/{organizationId:guid}/members/{userId:guid}` | `settings:manage` | `{ boutiqueRole }` | `{ organizationId, userId, boutiqueRole, status }` |
 | `GET` | `/api/v1/admin/orgs` | `admin:orgs:read` | query: `page`, `pageSize`, `q?`, `isActive?`, `planTier?` | `{ items, page, pageSize, total }` |
-| `PATCH` | `/api/v1/admin/orgs/{organizationId:guid}/entitlement-overrides` | `billing:adjust` | `{ overrides: [{ key, valueType, value, reason, effectiveFrom? }] }` | `{ organizationId, entitlements }` |
+| `PATCH` | `/api/v1/admin/orgs/{organizationId:guid}/entitlement-overrides` | `billing:adjust` | `{ overrides: [{ key, valueType, value, reason, effectiveFrom?, effectiveTo? }] }` | `{ organizationId, entitlements }` |
 | `GET` | `/api/v1/admin/audit` | `audit:view` | query: `page`, `pageSize`, `organizationId?`, `actorUserId?`, `entityType?`, `entityId?`, `action?`, `from?`, `to?` | `AuditPage` |
 | `GET` | `/api/v1/admin/audit/{entryId:guid}` | `audit:view` | — | `AuditLogEntry` (**404** `{ message }` when unknown) |
 
@@ -1498,9 +1514,10 @@ returns one entry or **404** `{ message }`.
 
 **`PATCH /api/v1/admin/orgs/{organizationId:guid}/entitlement-overrides`:** the body is
 a set of overrides (`Decimal`/`Integer` values are JSON numbers, `Boolean` is a JSON
-boolean, `String` is a JSON string). Each override is upserted on
-`(organizationId, key, effectiveFrom)` and an `entitlement.override.updated` audit
-entry is written. The **200** response is
+boolean, `String` is a JSON string). Each override carries `key`, `valueType`, `value`,
+`reason`, and the optional validity bounds `effectiveFrom` and `effectiveTo`. Each
+override is upserted on `(organizationId, key, effectiveFrom)` and an
+`entitlement.override.updated` audit entry is written. The **200** response is
 `{ "organizationId": "...", "entitlements": [{ key, valueType, value, source, effectiveFrom }] }`
 with the override carrying `source: "Override"`. An unknown key, unknown `valueType`
 or a `value` that does not match its `valueType` is a **400** `{ message }`; an unknown
@@ -1862,34 +1879,12 @@ malformed timestamp; `401`; `403`.
 **Response series item:** `{ key, name, requestCount, errorRate, avgMs,
 lastUsedAt, topEndpoint }`. **Related statistics:** [S-28](../backend/statistics-catalog.md).
 
-> **Deferred (not implemented).** The three organization billing statistics below —
+> **Deferred (not implemented).** The three organization billing statistics —
 > `GET /orgs/{id}/statistics/billing/burn-rate`, `GET /orgs/{id}/statistics/customers/active`
-> and `GET /orgs/{id}/statistics/staff/seats` — are consciously out of scope for the
-> #241 fix. No route exists, so they return **404**; the shapes below remain the intended
-> contract for whoever picks them up.
-
-#### `GET /api/v1/orgs/{organizationId:guid}/statistics/billing/burn-rate`
-
-**Auth:** `billing:view`. **Params:** `window` (`7d` \| `14d` \| `30d`).
-**Response `200`:**
-
-```json
-{
-  "window": "14d",
-  "burnRatePerDay": 22.4,
-  "availableBlossoms": 617.6,
-  "projectedExhaustionAt": "2026-10-19T00:00:00Z",
-  "confidence": "medium",
-  "sampleDays": 10
-}
-```
-
-`projectedExhaustionAt` is `null` when `burnRatePerDay` is 0.
-**Related statistics:** [S-4](../backend/statistics-catalog.md).
-
-#### `GET /api/v1/orgs/{organizationId:guid}/statistics/customers/active` and `.../staff/seats`
-
-**Auth:** `billing:view`. **Related statistics:** [S-11](../backend/statistics-catalog.md), [S-12](../backend/statistics-catalog.md).
+> and `GET /orgs/{id}/statistics/staff/seats` — have no route and return **404**. They
+> are listed, with their intended shapes, in the fenced
+> **Appendix P — Planned / not yet implemented** at the end of this document and are
+> **not** part of the normative contract.
 
 ---
 
@@ -1936,9 +1931,10 @@ Base: `/api/v1/admin/statistics`. **Auth:** `stats:system` (Aveline team only).
 > `GET /billing/profitability` (`from`, `to`, `groupBy`), `GET /billing/org-usage`
 > (`window`, `planTier?`, `page`, `pageSize`), `GET /billing/adjustments`
 > (`from`, `to`, `entryType?`, `actorUserId?`), `GET /billing/plan-changes`
-> (`from`, `to`) and `GET /billing/downgrades` (`from`, `to`) — are consciously out of
-> scope for the #241 fix. No route exists, so they return **404**. They are documented
-> here only so the intended contract is not lost.
+> (`from`, `to`) and `GET /billing/downgrades` (`from`, `to`) — have no route and
+> return **404**. They are listed, with their intended shapes, in the fenced
+> **Appendix P — Planned / not yet implemented** at the end of this document and are
+> **not** part of the normative contract.
 
 **`GET /system/overview` response:**
 
@@ -2098,3 +2094,51 @@ is exactly the drift this plan removes, and it would break on the next plan chan
 | [OQ-7](../backend/assumptions-and-open-questions.md) | 402 vs 403 vs 429 for exceeding a plan quota | Determines which status code triggers the upgrade prompt |
 | [OQ-1](../backend/assumptions-and-open-questions.md) | Whether the LKR price book is in scope | Determines whether a pricing page has data behind it |
 | [OQ-5](../backend/assumptions-and-open-questions.md) | Whether Blossom exhaustion blocks AI requests | Determines whether the UI needs a hard-stop state |
+
+---
+
+## Appendix P — Planned / not yet implemented
+
+> **Not part of the normative contract.** Every endpoint in this appendix has **no
+> route** in the shipped API, so it returns **404**. It is listed here only so the
+> intended contract is not lost, and it must not be reported as "documented but
+> missing". `docs/api/openapi.yaml` carries the same set in commented
+> "Planned / not yet implemented" sections. See
+> [§1.3](#13-reconciliation-with-docsopenapi).
+
+### Organization billing statistics
+
+#### `GET /api/v1/orgs/{organizationId:guid}/statistics/billing/burn-rate`
+
+**Auth:** `billing:view`. **Params:** `window` (`7d` \| `14d` \| `30d`).
+**Intended `200`:**
+
+```json
+{
+  "window": "14d",
+  "burnRatePerDay": 22.4,
+  "availableBlossoms": 617.6,
+  "projectedExhaustionAt": "2026-10-19T00:00:00Z",
+  "confidence": "medium",
+  "sampleDays": 10
+}
+```
+
+`projectedExhaustionAt` is `null` when `burnRatePerDay` is 0.
+**Related statistics:** [S-4](../backend/statistics-catalog.md).
+
+#### `GET /api/v1/orgs/{organizationId:guid}/statistics/customers/active` and `.../staff/seats`
+
+**Auth:** `billing:view`. **Related statistics:** [S-11](../backend/statistics-catalog.md), [S-12](../backend/statistics-catalog.md).
+
+### Admin billing statistics
+
+Base `/api/v1/admin/statistics/billing`. **Auth:** `stats:system` (Aveline team only).
+
+| Endpoint | Params | Intended response |
+| --- | --- | --- |
+| `GET /profitability` | `from`, `to`, `groupBy` (`planTier` \| `organizationId` \| `provider` \| `model` \| `day`) | Cost-versus-charged series; `dataQuality.costIsEstimated` is `true` while the agent service reports no actual cost |
+| `GET /org-usage` | `window` (`7d` \| `30d` \| `month`), `planTier?`, `page`, `pageSize` | Organizations ranked by Blossom consumption |
+| `GET /adjustments` | `from`, `to`, `entryType?`, `actorUserId?` | Blossom adjustment activity; the primary abuse-detection signal |
+| `GET /plan-changes` | `from`, `to` | Plan change history |
+| `GET /downgrades` | `from`, `to` | Blocked downgrade statistics |

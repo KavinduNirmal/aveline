@@ -8,11 +8,12 @@ namespace Aveline.Api.Modules.Billing.Repositories;
 public sealed class IdempotencyRepository(AppDbContext db) : IIdempotencyRepository
 {
     public Task<IdempotencyRecord?> FindAsync(
-        Guid? organizationId, string endpoint, string idempotencyKey,
+        Guid? organizationId, string endpoint, string httpMethod, string idempotencyKey,
         CancellationToken cancellationToken = default) =>
         db.IdempotencyRecords.FirstOrDefaultAsync(
             record => record.OrganizationId == organizationId
                    && record.Endpoint == endpoint
+                   && record.HttpMethod == httpMethod
                    && record.IdempotencyKey == idempotencyKey,
             cancellationToken);
 

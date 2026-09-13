@@ -110,6 +110,17 @@ public sealed class PricingService(
         var effectiveFrom = command.EffectiveFrom ?? rule.EffectiveFrom;
         var effectiveTo = command.EffectiveTo ?? rule.EffectiveTo;
 
+        // A caller-supplied past date is a backdate and needs pricing:backdate (BR-1.6).
+        // The endpoint authorises the actor and sets AllowBackdate; this guard stops any
+        // non-HTTP caller (a job, a future admin route) from bypassing the control.
+        if (command.EffectiveFrom is { } requestedFrom
+            && requestedFrom < DateTime.UtcNow
+            && !command.AllowBackdate)
+        {
+            throw new PricingBackdateForbiddenException(
+                "A past EffectiveFrom requires the pricing:backdate permission.");
+        }
+
         ValidateValues(units, minimum, roundingMode, roundingDecimals, reason);
         ValidateWindow(effectiveFrom, effectiveTo);
 
@@ -129,13 +140,25 @@ public sealed class PricingService(
     }
 
     public async Task<BlossomConversionRule> ActivateRuleAsync(
-        Guid ruleId, DateTime? effectiveFrom = null, CancellationToken cancellationToken = default)
+        Guid ruleId,
+        DateTime? effectiveFrom = null,
+        bool allowBackdate = false,
+        CancellationToken cancellationToken = default)
     {
         var rule = await GetOrThrowAsync(ruleId, cancellationToken);
 
         if (rule.Status != BlossomRuleStatus.Draft)
         {
             throw new PricingRuleNotDraftException("Only a Draft rule can be activated.");
+        }
+
+        // The activate body may move the effective date; a past date is a backdate and is
+        // refused without pricing:backdate (BR-1.6). Compare the *requested* date only, so
+        // activating a rule whose stored date is already in the past needs no re-authorisation.
+        if (effectiveFrom is { } requested && requested < DateTime.UtcNow && !allowBackdate)
+        {
+            throw new PricingBackdateForbiddenException(
+                "A past EffectiveFrom requires the pricing:backdate permission.");
         }
 
         rule.EffectiveFrom = effectiveFrom ?? rule.EffectiveFrom;
@@ -146,8 +169,9 @@ public sealed class PricingService(
         // write fails, so the scope is never left with no Active rule.
         await using var transaction = await repository.BeginTransactionAsync(cancellationToken);
 
-        // Trim and supersede the predecessor first: the exclusion constraint only covers
-        // Draft and Active rows, so this order keeps both writes legal.
+        // Trim and supersede the predecessor first: the exclusion constraint is predicated
+        // on "Status" = 'Active' only (AddBlossomPricingRules migration), so two Active
+        // rows for the same scope would collide until the predecessor is retired.
         var predecessor = await repository.FindPredecessorAsync(rule, cancellationToken);
         if (predecessor is not null)
         {

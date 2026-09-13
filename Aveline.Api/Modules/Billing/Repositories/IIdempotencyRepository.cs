@@ -6,7 +6,7 @@ namespace Aveline.Api.Modules.Billing.Repositories;
 public interface IIdempotencyRepository
 {
     Task<IdempotencyRecord?> FindAsync(
-        Guid? organizationId, string endpoint, string idempotencyKey,
+        Guid? organizationId, string endpoint, string httpMethod, string idempotencyKey,
         CancellationToken cancellationToken = default);
 
     void Add(IdempotencyRecord record);

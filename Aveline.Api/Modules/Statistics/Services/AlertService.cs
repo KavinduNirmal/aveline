@@ -81,19 +81,31 @@ public sealed class AlertService : IAlertService
         var now = DateTime.UtcNow;
         var samples = await LoadSamplesAsync(rule, now, cancellationToken);
         var observed = Aggregate(rule.Aggregation, samples, rule.WindowSeconds);
-        var breaching = observed is { } value && Breaches(rule.ComparisonOperator, value, rule.Threshold);
 
         var open = await _db.SystemAlerts
             .Where(alert => alert.RuleId == rule.Id && alert.Status != AlertStatus.Resolved)
             .OrderByDescending(alert => alert.FiredAt)
             .FirstOrDefaultAsync(cancellationToken);
 
-        if (!breaching)
+        // An absent sample is not a healthy reading. Counting it as OK would let a
+        // telemetry read failure auto-resolve a firing alert after three passes - exactly
+        // the ledger-integrity signal the alert exists to protect (§3.3(c)). Leave the
+        // alert state untouched until real data arrives.
+        if (observed is null)
+        {
+            _logger.LogDebug(
+                "No {Metric} samples for alert rule {Rule} in the last {Window}s; "
+                + "leaving the alert state unchanged.",
+                rule.MetricName, rule.Name, rule.WindowSeconds);
+            return open;
+        }
+
+        if (!Breaches(rule.ComparisonOperator, observed.Value, rule.Threshold))
         {
             return await HandleOkEvaluationAsync(open, now, cancellationToken);
         }
 
-        var observedValue = observed!.Value;
+        var observedValue = observed.Value;
 
         if (open is not null)
         {
@@ -112,22 +124,36 @@ public sealed class AlertService : IAlertService
                 return open;
             }
 
-            // The cooldown elapsed while the breach continued: re-fire and re-notify.
+            // The cooldown elapsed while the breach continued: re-fire, but under the same
+            // rolling-hour storm guard as a brand-new alert. Without this a sustained
+            // Critical breach re-notified on every cooldown with no throttle (§3.3(a)).
+            if (!TryConsumeFireQuota(rule, now))
+            {
+                _logger.LogWarning(
+                    "Alert storm guard suppressed the re-fire of rule {Rule}: "
+                    + "{Count} fires in the current rolling hour (max {Max}).",
+                    rule.Name, rule.FiresInWindow, rule.MaxAlertsPerHour);
+
+                open.OccurrenceCount++;
+                await _db.SaveChangesAsync(cancellationToken);
+                return open;
+            }
+
             open.FiredAt = now;
             open.OccurrenceCount = 1;
             open.NotificationRecordId = null;
+            rule.LastTriggeredAt = now;
             await _db.SaveChangesAsync(cancellationToken);
             await FireAsync(rule, open, observedValue, cancellationToken);
             return open;
         }
 
-        var firedThisHour = await _db.SystemAlerts.CountAsync(
-            alert => alert.RuleId == rule.Id && alert.FiredAt >= now.AddHours(-1), cancellationToken);
-        if (firedThisHour >= rule.MaxAlertsPerHour)
+        if (!TryConsumeFireQuota(rule, now))
         {
             _logger.LogWarning(
-                "Alert storm guard suppressed rule {Rule}: {Count} alerts in the last hour.",
-                rule.Name, firedThisHour);
+                "Alert storm guard suppressed rule {Rule}: {Count} fires in the current "
+                + "rolling hour (max {Max}).",
+                rule.Name, rule.FiresInWindow, rule.MaxAlertsPerHour);
             return null;
         }
 
@@ -152,6 +178,30 @@ public sealed class AlertService : IAlertService
         await _db.SaveChangesAsync(cancellationToken);
         await FireAsync(rule, alert, observedValue, cancellationToken);
         return alert;
+    }
+
+    /// <summary>
+    /// Consumes one fire from the rule's rolling-hour quota (BR-7.6). Returns false when the
+    /// quota is exhausted, in which case the caller must not fire or notify. The counter is
+    /// persisted on the rule because a re-fire resets the alert row's own timestamps.
+    /// </summary>
+    private static bool TryConsumeFireQuota(SystemAlertRule rule, DateTime now)
+    {
+        if (rule.FireWindowStart is not { } windowStart
+            || now - windowStart >= TimeSpan.FromHours(1)
+            || now < windowStart)
+        {
+            rule.FireWindowStart = now;
+            rule.FiresInWindow = 0;
+        }
+
+        if (rule.FiresInWindow >= rule.MaxAlertsPerHour)
+        {
+            return false;
+        }
+
+        rule.FiresInWindow++;
+        return true;
     }
 
     public async Task<SystemAlert?> AcknowledgeAsync(

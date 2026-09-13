@@ -120,6 +120,16 @@ public class SystemAlertRule
     /// <summary>Upper bound on alerts fired per rolling hour (BR-7.6, alert-storm guard).</summary>
     public int MaxAlertsPerHour { get; set; } = 10;
 
+    /// <summary>
+    /// Fires recorded inside the current rolling-hour window. Persisted because a re-fire
+    /// resets the alert row's own timestamps, so the count cannot be derived from
+    /// <see cref="SystemAlert"/> rows without losing the earlier fires (§3.3(a)).
+    /// </summary>
+    public int FiresInWindow { get; set; }
+
+    /// <summary>Start of the rolling-hour window <see cref="FiresInWindow"/> belongs to.</summary>
+    public DateTime? FireWindowStart { get; set; }
+
     /// <summary>Canonical boutique roles targeted through <c>IRecipientResolver</c> (BR-7.11).</summary>
     public List<string> TargetRoles { get; set; } = ["owner"];
 

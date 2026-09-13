@@ -33,6 +33,9 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenApi();
 // A single handler turns every unhandled exception into a stable 500 envelope (M-7).
+// AddHsts registers the policy options the handler reads so a handled 500 carries the
+// same HSTS header UseHsts() writes on success paths.
+builder.Services.AddHsts(_ => { });
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.ConfigureHttpJsonOptions(options =>

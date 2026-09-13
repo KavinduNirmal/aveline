@@ -123,6 +123,9 @@ public class SystemAlertRuleConfiguration : IEntityTypeConfiguration<SystemAlert
         builder.Property(r => r.MaxAlertsPerHour)
             .IsRequired();
 
+        builder.Property(r => r.FiresInWindow)
+            .IsRequired();
+
         builder.Property(r => r.TargetRoles)
             .IsRequired()
             .HasConversion(TargetRolesConverter, TargetRolesComparer)

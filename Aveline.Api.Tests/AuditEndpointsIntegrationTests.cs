@@ -265,6 +265,23 @@ public class AuditEndpointsIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AuditList_ClampsAnOutOfRangePage()
+    {
+        var clerkId = $"audit_page_clamp_{Guid.NewGuid():N}";
+        await SeedActiveUserAsync(clerkId);
+        var token = CreateToken(clerkId, Roles.Admin);
+
+        // An unbounded page wrapped (page - 1) * pageSize to a negative OFFSET, which
+        // PostgreSQL rejects with a 500 (§3.8(a)).
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Get, "/api/v1/admin/audit?page=2147483647", token));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await BodyAsync(response);
+        Assert.Equal(10_000, body.GetProperty("page").GetInt32());
+    }
+
+    [Fact]
     public async Task UnknownId_Returns404WithMessage()
     {
         var clerkId = $"audit_missing_{Guid.NewGuid():N}";

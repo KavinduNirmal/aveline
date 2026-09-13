@@ -14,11 +14,11 @@ public sealed class IdempotencyService(
     private const int DefaultRetentionHours = 24;
 
     public async Task<IdempotencyReplay?> TryReplayAsync(
-        Guid? organizationId, string endpoint, string idempotencyKey, string requestHash, DateTime at,
-        CancellationToken cancellationToken = default)
+        Guid? organizationId, string endpoint, string httpMethod, string idempotencyKey,
+        string requestHash, DateTime at, CancellationToken cancellationToken = default)
     {
         var record = await repository.FindAsync(
-            organizationId, endpoint, idempotencyKey, cancellationToken);
+            organizationId, endpoint, httpMethod, idempotencyKey, cancellationToken);
 
         if (record is null || record.ExpiresAt <= at)
         {

@@ -328,4 +328,195 @@ public class EntitlementOverrideEndpointsIntegrationTests : IAsyncLifetime
         var body = await BodyAsync(response);
         Assert.False(string.IsNullOrWhiteSpace(body.GetProperty("message").GetString()));
     }
+
+    [Fact]
+    public async Task EffectiveTo_IsPersisted()
+    {
+        var suffix = Guid.NewGuid().ToString("N");
+        var (orgId, clerkId) = await SeedOrganizationAsync(suffix);
+        var token = CreateToken(clerkId, Roles.Admin);
+        var effectiveFrom = new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc);
+        var effectiveTo = new DateTime(2026, 12, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Patch,
+            $"/api/v1/admin/orgs/{orgId}/entitlement-overrides",
+            token,
+            new
+            {
+                overrides = new[]
+                {
+                    new
+                    {
+                        key = "staff.max",
+                        valueType = "Integer",
+                        value = 40m,
+                        reason = "Fixed-term amendment.",
+                        effectiveFrom,
+                        effectiveTo,
+                    },
+                },
+            }));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var context = CreateContext();
+        var row = Assert.Single(await context.PlanEntitlementOverrides
+            .Where(o => o.OrganizationId == orgId)
+            .ToListAsync());
+        Assert.Equal(effectiveTo, row.EffectiveTo);
+    }
+
+    [Fact]
+    public async Task EffectiveToBeforeEffectiveFrom_Returns400()
+    {
+        var suffix = Guid.NewGuid().ToString("N");
+        var (orgId, clerkId) = await SeedOrganizationAsync(suffix);
+        var token = CreateToken(clerkId, Roles.Admin);
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Patch,
+            $"/api/v1/admin/orgs/{orgId}/entitlement-overrides",
+            token,
+            new
+            {
+                overrides = new[]
+                {
+                    new
+                    {
+                        key = "staff.max",
+                        valueType = "Integer",
+                        value = 40m,
+                        reason = "Inverted window.",
+                        effectiveFrom = new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc),
+                        effectiveTo = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc),
+                    },
+                },
+            }));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task OverlappingOverrideWindow_Returns400AndLeavesTheOriginalIntact()
+    {
+        var suffix = Guid.NewGuid().ToString("N");
+        var (orgId, clerkId) = await SeedOrganizationAsync(suffix);
+        var token = CreateToken(clerkId, Roles.Admin);
+
+        object Body(DateTime from, decimal value) => new
+        {
+            overrides = new[]
+            {
+                new
+                {
+                    key = "staff.max",
+                    valueType = "Integer",
+                    value,
+                    reason = "Windowed amendment.",
+                    effectiveFrom = from,
+                },
+            },
+        };
+
+        var first = await _client.SendAsync(Authorized(
+            HttpMethod.Patch, $"/api/v1/admin/orgs/{orgId}/entitlement-overrides", token,
+            Body(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), 25m)));
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+
+        var overlapping = await _client.SendAsync(Authorized(
+            HttpMethod.Patch, $"/api/v1/admin/orgs/{orgId}/entitlement-overrides", token,
+            Body(new DateTime(2026, 6, 1, 0, 0, 0, DateTimeKind.Utc), 60m)));
+
+        Assert.Equal(HttpStatusCode.BadRequest, overlapping.StatusCode);
+
+        await using var context = CreateContext();
+        var row = Assert.Single(await context.PlanEntitlementOverrides
+            .Where(o => o.OrganizationId == orgId)
+            .ToListAsync());
+        Assert.Equal(25m, row.ValueDecimal);
+    }
+
+    [Fact]
+    public async Task ValueTypeThatDisagreesWithTheCatalog_Returns400()
+    {
+        var suffix = Guid.NewGuid().ToString("N");
+        var (orgId, clerkId) = await SeedOrganizationAsync(suffix);
+        var token = CreateToken(clerkId, Roles.Admin);
+
+        // api.access is a Boolean entitlement; storing it as a Decimal used to be accepted.
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Patch,
+            $"/api/v1/admin/orgs/{orgId}/entitlement-overrides",
+            token,
+            new
+            {
+                overrides = new[]
+                {
+                    new { key = "api.access", valueType = "Decimal", value = 1m, reason = "Wrong type." },
+                },
+            }));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task OverlongStringValue_Returns400RatherThan500()
+    {
+        var suffix = Guid.NewGuid().ToString("N");
+        var (orgId, clerkId) = await SeedOrganizationAsync(suffix);
+        var token = CreateToken(clerkId, Roles.Admin);
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Patch,
+            $"/api/v1/admin/orgs/{orgId}/entitlement-overrides",
+            token,
+            new
+            {
+                overrides = new[]
+                {
+                    new
+                    {
+                        key = "analytics.level",
+                        valueType = "String",
+                        value = new string('x', 201),
+                        reason = "Overlong value.",
+                    },
+                },
+            }));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task BatchWithOneInvalidEntry_CommitsNothing()
+    {
+        var suffix = Guid.NewGuid().ToString("N");
+        var (orgId, clerkId) = await SeedOrganizationAsync(suffix);
+        var token = CreateToken(clerkId, Roles.Admin);
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Patch,
+            $"/api/v1/admin/orgs/{orgId}/entitlement-overrides",
+            token,
+            new
+            {
+                overrides = new[]
+                {
+                    new { key = "staff.max", valueType = "Integer", value = 12m, reason = "Valid first entry." },
+                    new { key = "not.a.real.key", valueType = "Decimal", value = 1m, reason = "Invalid second." },
+                },
+            }));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        // The first override of a rejected batch must not be committed without its audit row.
+        await using var context = CreateContext();
+        Assert.Empty(await context.PlanEntitlementOverrides
+            .Where(o => o.OrganizationId == orgId)
+            .ToListAsync());
+        Assert.Empty(await context.AuditLogEntries
+            .Where(e => e.OrganizationId == orgId)
+            .ToListAsync());
+    }
 }

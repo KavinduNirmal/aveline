@@ -526,18 +526,26 @@ rules:
 
 | Name | Metric | Condition | Severity |
 | --- | --- | --- | --- |
-| `blossom.balance.negative` | `blossom.balance` | `< 0` for 5 min | Critical |
-| `blossom.ledger.drift` | `blossom.reconciliation.drift` | `!= 0` | Critical |
-| `blossom.runaway.org` | `blossom.consumed.rate` | `> 5× org baseline for 15 min` | Warning |
-| `api.error.rate` | `api.error_rate` | `> 5 % for 10 min` | Critical |
-| `api.latency.p95` | `api.latency.p95` | `> 2000 ms for 10 min` | Warning |
-| `agent.failure.rate` | `agent.success_rate` | `< 80 % for 15 min` | Warning |
-| `agent.run.stuck` | `agent.paused.count` | `> 10 for 60 min` | Warning |
-| `agent.step.runaway` | `agent.steps.per_run` | `> 200` | Warning |
-| `telemetry.dropped` | `aveline.api.telemetry.dropped` | `> 0 for 5 min` | Warning |
-| `db.pool.saturated` | `aveline.db.pool_in_use` | `> 90 % for 5 min` | Critical |
-| `queue.telemetry.backlog` | `aveline.queue.telemetry_channel` | `> 8000 for 5 min` | Warning |
-| `eventbus.failed` | `aveline.eventbus.failed` | `> 10/min` | Critical |
+| `blossom.balance.negative` | `aveline.blossom.balance` | `min < 0` for 5 min | Critical |
+| `blossom.ledger.drift` | `aveline.blossom.reconciliation.drift` | `max > 0` for 5 min | Critical |
+| `blossom.runaway.org` | `aveline.blossom.consumed_rate` | `avg > 5× org baseline` for 15 min | Warning |
+| `api.error.rate` | `aveline.api.error_rate` | `avg > 5 %` for 10 min | Critical |
+| `api.latency.p95` | `aveline.api.latency_p95` | `avg > 2000 ms` for 10 min | Warning |
+| `agent.failure.rate` | `aveline.agent.success_rate` | `avg < 80 %` for 15 min | Warning |
+| `agent.run.stuck` | `aveline.agent.paused_count` | `max > 10` for 60 min | Warning |
+| `agent.step.runaway` | `aveline.agent.steps_per_run` | `max > 200` | Warning |
+| `telemetry.dropped` | `aveline.api.telemetry.dropped` | `rate > 0` for 5 min | Warning |
+| `queue.telemetry.backlog` | `aveline.queue.telemetry_channel` | `max > 8000` for 5 min | Warning |
+| `eventbus.failed` | `aveline.eventbus.failed` | `rate > 10/min` | Critical |
+
+The authoritative seed is `Modules/Statistics/Models/SystemAlertRuleSeed.cs`; it
+ships **eleven** rules with the BR-7.8 `aveline.<subsystem>.<measure>` metric names
+above. The original `db.pool.saturated` rule (`aveline.db.pool_in_use`) is
+deliberately absent: the database connection-pool gauges are not instrumented
+(S-37), so there is no metric to watch. `SystemMetricCollectorTests` asserts every
+seeded rule references a metric the collector can emit. The `blossom.ledger.drift`
+rule is encoded as `max > 0` because the operator set has no `Ne`; the collector
+records the drift magnitude, so any non-zero drift breaches it.
 
 `blossom.ledger.drift` is the single most important rule in this list: it is the
 integrity check for the entire Blossom system.

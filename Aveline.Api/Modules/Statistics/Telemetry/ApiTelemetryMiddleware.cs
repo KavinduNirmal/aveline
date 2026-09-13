@@ -96,7 +96,7 @@ public sealed class ApiTelemetryMiddleware(
             ClientIpHash = MetricDimensionHasher.HashIp(
                 context.Connection.RemoteIpAddress?.ToString(), _options.IpHashSalt),
             UserAgentHash = MetricDimensionHasher.HashUserAgent(
-                request.Headers.UserAgent.ToString()),
+                request.Headers.UserAgent.ToString(), _options.IpHashSalt),
             ShouldPersistRaw = TelemetrySampling.ShouldPersistRaw(
                 statusCode, durationMs, _options.SlowRequestMs, _options.SuccessSampleRate,
                 Random.Shared.NextDouble()),

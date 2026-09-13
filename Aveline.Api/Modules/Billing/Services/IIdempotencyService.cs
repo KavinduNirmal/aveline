@@ -23,8 +23,8 @@ public interface IIdempotencyService
     /// <see cref="IdempotencyKeyReuseException"/> when the body differs.
     /// </summary>
     Task<IdempotencyReplay?> TryReplayAsync(
-        Guid? organizationId, string endpoint, string idempotencyKey, string requestHash, DateTime at,
-        CancellationToken cancellationToken = default);
+        Guid? organizationId, string endpoint, string httpMethod, string idempotencyKey,
+        string requestHash, DateTime at, CancellationToken cancellationToken = default);
 
     Task SaveAsync(
         Guid? organizationId, string endpoint, string httpMethod, string idempotencyKey,

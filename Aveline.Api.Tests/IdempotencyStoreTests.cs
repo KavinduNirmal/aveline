@@ -30,7 +30,7 @@ public class IdempotencyStoreTests
         var service = CreateService();
 
         var replay = await service.TryReplayAsync(
-            Guid.CreateVersion7(), "POST /x", "key-1", "hash-a", Now);
+            Guid.CreateVersion7(), "POST /x", "POST", "key-1", "hash-a", Now);
 
         Assert.Null(replay);
     }
@@ -42,7 +42,7 @@ public class IdempotencyStoreTests
         var service = CreateService();
         await service.SaveAsync(orgId, "POST /x", "POST", "key-1", "hash-a", 201, "{\"ok\":true}", Now);
 
-        var replay = await service.TryReplayAsync(orgId, "POST /x", "key-1", "hash-a", Now);
+        var replay = await service.TryReplayAsync(orgId, "POST /x", "POST", "key-1", "hash-a", Now);
 
         Assert.NotNull(replay);
         Assert.Equal(201, replay!.Status);
@@ -57,7 +57,7 @@ public class IdempotencyStoreTests
         await service.SaveAsync(orgId, "POST /x", "POST", "key-1", "hash-a", 201, "{}", Now);
 
         await Assert.ThrowsAsync<IdempotencyKeyReuseException>(() =>
-            service.TryReplayAsync(orgId, "POST /x", "key-1", "hash-b", Now));
+            service.TryReplayAsync(orgId, "POST /x", "POST", "key-1", "hash-b", Now));
     }
 
     [Fact]
@@ -69,7 +69,7 @@ public class IdempotencyStoreTests
             orgId, "POST /x", "POST", "key-failed", "hash-a", 409,
             "{\"code\":\"insufficient-balance\"}", Now);
 
-        var replay = await service.TryReplayAsync(orgId, "POST /x", "key-failed", "hash-a", Now);
+        var replay = await service.TryReplayAsync(orgId, "POST /x", "POST", "key-failed", "hash-a", Now);
 
         Assert.Null(replay);
     }
@@ -81,7 +81,21 @@ public class IdempotencyStoreTests
         var service = CreateService();
         await service.SaveAsync(orgId, "POST /x", "POST", "key-1", "hash-a", 201, "{}", Now.AddHours(-25));
 
-        var replay = await service.TryReplayAsync(orgId, "POST /x", "key-1", "hash-a", Now);
+        var replay = await service.TryReplayAsync(orgId, "POST /x", "POST", "key-1", "hash-a", Now);
+
+        Assert.Null(replay);
+    }
+
+    [Fact]
+    public async Task TryReplayAsync_DifferentHttpMethod_IsNotAReplay()
+    {
+        var orgId = Guid.CreateVersion7();
+        var service = CreateService();
+        await service.SaveAsync(orgId, "POST /x", "POST", "key-1", "hash-a", 201, "{}", Now);
+
+        // H-1(d): the unique key includes HttpMethod, so a DELETE with the same key and
+        // endpoint is a distinct operation and must not replay the POST response.
+        var replay = await service.TryReplayAsync(orgId, "POST /x", "DELETE", "key-1", "hash-a", Now);
 
         Assert.Null(replay);
     }

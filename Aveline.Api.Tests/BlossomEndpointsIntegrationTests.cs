@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Aveline.Api.Authorization;
 using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Shared.Models;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -308,6 +309,39 @@ public class BlossomEndpointsIntegrationTests : IAsyncLifetime
         var secondId = JsonDocument.Parse(await second.Content.ReadAsStringAsync())
             .RootElement.GetProperty("id").GetString();
         Assert.Equal(firstId, secondId);
+    }
+
+    [Fact]
+    public async Task ConcurrentCredits_WithTheSameKey_ExecuteExactlyOnce()
+    {
+        var (orgId, _) = await SeedBoutiqueAsync("concurrent");
+        await SeedAdminAsync("blossom_admin_concurrent");
+        var token = CreateToken("blossom_admin_concurrent", userRole: Roles.Admin);
+        var body = new { amount = 300m, reason = "Concurrent idempotent credit." };
+
+        var requests = Enumerable.Range(0, 2)
+            .Select(_ => Authorized(
+                HttpMethod.Post, $"/api/v1/admin/orgs/{orgId}/blossoms/credit", token, body, "concurrent-1"))
+            .ToArray();
+
+        var responses = await Task.WhenAll(requests.Select(request => _client.SendAsync(request)));
+
+        Assert.All(responses, response => Assert.Equal(HttpStatusCode.Created, response.StatusCode));
+        // Exactly one request executed; the other must have replayed its stored response.
+        Assert.Single(responses, response => response.Headers.Contains("Idempotency-Replayed"));
+
+        await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .Options);
+
+        // The per-key lease serialises the pair, so the second request replays the first
+        // response instead of crediting twice (§3.2).
+        var credits = await context.BlossomLedgerEntries
+            .Where(entry => entry.OrganizationId == orgId
+                            && entry.EntryType != BlossomLedgerEntryType.PeriodAllocation)
+            .ToListAsync();
+        var credit = Assert.Single(credits);
+        Assert.Equal(300m, credit.BlossomDelta);
     }
 
     [Fact]

@@ -109,7 +109,7 @@ sequenceDiagram
     rect rgb(250, 250, 250)
     Note over W: Step 6 — Finalize
     W->>A: POST /complete
-    A->>DB: activate org + owner (org:principal)
+    A->>DB: activate org + owner (org:boutique_owner)
     A->>DB: provision UsageAccount Blossoms
     A->>G: POST /agents/warmup (resilient)
     A-->>W: BlossomAllocation + AgentWarmedUp
@@ -168,7 +168,7 @@ to find the owner's single draft organization.
 | `SaveBoutiqueDetailsAsync`      | Creates (or updates) the draft org with the user as owner, slugifies the name, and adds an `org:boutique_owner` membership. Advances to step 3.           |
 | `SelectPlanAsync`               | Persists `PlanTier`; requires the org to exist first. Advances to step 4.                                                                                |
 | `SaveAiCustomizationAsync`      | Validates input against the tier (below), persists AI context, advances to step 5.                                                                       |
-| `CompleteOnboardingAsync`       | Activates org (`HasCompletedOnboarding=true`), sets the user to `owner` / `org:principal` / `Active`, provisions the `UsageAccount` Blossom allowance, invalidates user cache, and (resiliently) warms up agents. |
+| `CompleteOnboardingAsync`       | Activates org (`HasCompletedOnboarding=true`), sets the user to `owner` / `org:boutique_owner` / `Active`, provisions the `UsageAccount` Blossom allowance, invalidates user cache, and (resiliently) warms up agents. |
 
 ### 4.4 Tier-gated AI context
 
@@ -323,7 +323,7 @@ link land on `routes/InvitePage.tsx` (`/invite?code=…`).
   endpoints until the flow completes.
 - The `/agents/warmup` call is a service-to-service request authenticated by the internal
   token (see [ADR-009](../ADR/ADR-009-internal-service-authentication.md)).
-- The owner is the `org:principal`; staff join only via an invitation code accepted on their
+- The owner is the `org:boutique_owner`; staff join only via an invitation code accepted on their
   side.
 
 ---

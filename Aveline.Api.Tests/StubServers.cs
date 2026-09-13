@@ -98,6 +98,8 @@ public sealed class StubAgentServer : IAsyncDisposable
             ReceivedBody = await reader.ReadToEndAsync();
             return Results.Json(new { status = "ok", thread_id = "stub" }, statusCode: StatusCodes.Status200OK);
         });
+
+        _app.MapGet("/health/ready", () => Results.Json(new { status = "Healthy" }));
     }
 
     public const string InternalTokenHeaderName = "X-Internal-Token";

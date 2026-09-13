@@ -35,7 +35,11 @@ public static class CorsConfiguration
                       .AllowCredentials()
                       .AllowAnyHeader()
                       .AllowAnyMethod()
-                      .WithExposedHeaders("X-Completed-Onboarding", "X-Account-State"));
+                      .WithExposedHeaders(
+                          "X-Completed-Onboarding",
+                          "X-Account-State",
+                          "X-Request-Id",
+                          "X-Trace-Id"));
         });
 
         return services;

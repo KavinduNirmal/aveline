@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Infrastructure.Eventing;
@@ -47,7 +49,7 @@ public static class WebhookEndpoints
             }
 
             var expected = await GetVerifyTokenAsync(organizationId, integrationService, ct);
-            if (expected is null || !string.Equals(verifyToken, expected, StringComparison.Ordinal))
+            if (expected is null || !FixedTimeEquals(verifyToken, expected))
             {
                 return Results.Forbid();
             }
@@ -86,19 +88,10 @@ public static class WebhookEndpoints
                 }
             }
 
-            // Guardrail 2: rate-limit inbound webhooks per organization + IP to blunt replay/abuse.
-            var rateKey = $"webhook:whatsapp:{organizationId}:{clientIp}";
-            var allowedByRate = await rateLimiter.TryAllowAsync(
-                rateKey, limit: 120, window: TimeSpan.FromMinutes(1), ct);
-            if (!allowedByRate)
-            {
-                logger.LogWarning(
-                    "WhatsApp webhook rate limit exceeded. organizationId={OrganizationId} ip={Ip}",
-                    organizationId, clientIp);
-                return Results.StatusCode(StatusCodes.Status429TooManyRequests);
-            }
-
-            // Meta signs the raw body; enable buffering so we can read it once for HMAC.
+            // Guardrail 2: verify the Meta signature BEFORE charging the per-org rate
+            // limit. Otherwise an unauthenticated caller could exhaust a target's budget
+            // with unsigned replays (M-4). Meta signs the raw body, so enable buffering
+            // to read it once for the HMAC.
             httpContext.Request.EnableBuffering();
             byte[] body;
             using (var reader = new MemoryStream())
@@ -115,6 +108,19 @@ public static class WebhookEndpoints
                     "Rejected WhatsApp webhook with invalid signature. organizationId={OrganizationId}",
                     organizationId);
                 return Results.Unauthorized();
+            }
+
+            // Guardrail 3: rate-limit verified inbound webhooks per organization + IP to
+            // blunt replay/abuse. Only authentic traffic consumes the window.
+            var rateKey = $"webhook:whatsapp:{organizationId}:{clientIp}";
+            var allowedByRate = await rateLimiter.TryAllowAsync(
+                rateKey, limit: 120, window: TimeSpan.FromMinutes(1), ct);
+            if (!allowedByRate)
+            {
+                logger.LogWarning(
+                    "WhatsApp webhook rate limit exceeded. organizationId={OrganizationId} ip={Ip}",
+                    organizationId, clientIp);
+                return Results.StatusCode(StatusCodes.Status429TooManyRequests);
             }
 
             // Parse the Meta payload.
@@ -191,6 +197,22 @@ public static class WebhookEndpoints
         }).AllowAnonymous();
 
         return endpoints;
+    }
+
+    /// <summary>
+    /// Constant-time string comparison for secret material (the GET verify token), so a
+    /// caller cannot recover the token byte by byte through response timing (M-4).
+    /// </summary>
+    private static bool FixedTimeEquals(string? left, string? right)
+    {
+        if (left is null || right is null)
+        {
+            return false;
+        }
+
+        return CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(left),
+            Encoding.UTF8.GetBytes(right));
     }
 
     private static async Task<string?> GetVerifyTokenAsync(

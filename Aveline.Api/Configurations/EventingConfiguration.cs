@@ -20,7 +20,8 @@ public static class EventingConfiguration
     {
         services.AddSingleton<IEventSerializer, SystemTextJsonEventSerializer>();
         services.AddSingleton<EventBusMetrics>();
-        // Always register the health-check service so /health is available even without Redis.
+        // Health-check infrastructure is registered here so /health exists even without Redis.
+        // The redis check itself is registered by SystemHealthModule, which owns criticality.
         services.AddHealthChecks();
 
         var redisConn = CacheConfiguration.ResolveRedisConnectionString(configuration);
@@ -30,7 +31,6 @@ public static class EventingConfiguration
             services.AddSingleton<IEventBus>(sp => sp.GetRequiredService<RedisEventBus>());
             services.AddHostedService<RedisSubscriptionService>();
             services.AddHostedService<EventingMetricsExporter>();
-            services.AddHealthChecks().AddCheck<RedisHealthCheck>("redis");
         }
         else
         {

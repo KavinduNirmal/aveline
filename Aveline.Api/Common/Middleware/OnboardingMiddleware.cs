@@ -43,9 +43,10 @@ public class OnboardingMiddleware
 
     public async Task InvokeAsync(HttpContext context, IUserService userService)
     {
-        // Internal service calls (e.g. /internal/usage) and API-key machine clients do not
-        // have Clerk user accounts and must not create onboarding stubs.
+        // Internal service calls (e.g. /internal/usage, /internal/visual) and API-key machine
+        // clients do not have Clerk user accounts and must not create onboarding stubs.
         if (context.Request.Path.StartsWithSegments("/internal") ||
+            context.Request.Path.StartsWithSegments("/api/internal") ||
             context.User.IsInRole("InternalService") ||
             context.User.HasClaim(claim =>
                 claim.Type == Modules.ApiAccess.Authentication.ApiKeyClaimTypes.ApiKeyId))

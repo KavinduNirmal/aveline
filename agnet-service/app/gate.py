@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 logger = logging.getLogger("aveline.agent.gate")
 
 IntentType = Literal[
+    "order_placement",
     "item_search",
     "pricing_query",
     "customer_preference",
@@ -32,10 +33,12 @@ LLMClassifier = Callable[[str], Awaitable["IntentGateOutput | None"]]
 
 # Keyword -> intent type. Order matters: first match wins.
 _RULE_KEYWORDS: list[tuple[IntentType, tuple[str, ...]]] = [
+    # Purchase/order actions involve memory, visual verification, and commerce validation.
+    ("order_placement", ("purchase", "buy", "checkout", "order", "place order", "reserve")),
     # Pricing words are strong signals and often co-occur with item words
-    # (e.g. "how much is this dress?"), so they are checked first.
+    # (e.g. "how much is this dress?"), so they are checked next.
     ("pricing_query", ("price", "cost", "discount", "budget", "margin", "how much", "charge")),
-    ("item_search", ("dress", "saree", "blouse", "outfit", "party", "bluish", "size", "stock", "inventory", "item")),
+    ("item_search", ("dress", "saree", "blouse", "outfit", "party", "bluish", "size", "stock", "inventory", "item", "photo", "image", "picture", "matching")),
     ("customer_preference", ("remember", "prefer", "prefers", "likes", "favorite", "hates", "dislikes")),
     ("event_query", ("event", "wedding", "birthday", "anniversary", "occasion")),
 ]
@@ -54,6 +57,7 @@ _OUT_OF_SCOPE_KEYWORDS = (
 
 # Which agents handle each intent.
 _AGENT_ROUTING: dict[IntentType, list[AgentName]] = {
+    "order_placement": ["memory", "visual", "commerce"],
     "item_search": ["memory", "visual"],
     "pricing_query": ["memory", "commerce"],
     "customer_preference": ["memory"],

@@ -73,9 +73,15 @@ def test_agent_prompts_has_all_three_agents():
 
 
 def test_agent_prompts_are_placeholders():
-    # Memory (Slice 1) is implemented; visual and commerce remain placeholders for Slice 2/3.
-    for name in ("visual", "commerce"):
-        assert "PLACEHOLDER" in agent_prompts.AGENT_PROMPTS[name], f"{name} prompt must be a placeholder"
+    # Memory (Slice 1) & Visual (Slice 2) are implemented; commerce remains a placeholder for Slice 3.
+    assert "PLACEHOLDER" in agent_prompts.AGENT_PROMPTS["commerce"], "commerce prompt must be a placeholder"
+
+
+def test_visual_prompt_is_implemented():
+    prompt = agent_prompts.AGENT_PROMPTS["visual"]
+    assert "PLACEHOLDER" not in prompt
+    assert "Visual Insight Agent" in prompt
+    assert "Elle" in prompt
 
 
 def test_memory_prompt_is_implemented():
@@ -83,6 +89,7 @@ def test_memory_prompt_is_implemented():
     assert "PLACEHOLDER" not in prompt
     assert "Customer Memory Agent" in prompt
     assert "Ava" in prompt
+
 
 
 # ---------------------------------------------------------------------------

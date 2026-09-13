@@ -112,7 +112,9 @@ CodeCoverage/
 ScaffoldingReadMe.txt
 
 # Misc
+.dotnet/
 ~$*
+
 
 # =============================================================================
 # PYTHON
@@ -260,3 +262,6 @@ firebase-service-account.json
 
 # docs
 docs/.obsidian
+
+# Agents.md
+Agents.md

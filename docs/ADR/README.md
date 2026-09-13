@@ -32,6 +32,7 @@ control as an audit trail.
 | `ADR-018-realtime-conversation-delivery.md` | The Salon realtime delivery model — batched `message.created` cards + `agent.status` lifecycle (no token streaming yet); SignOff LangGraph resume and real specialist sub-graphs deferred |
 | `ADR-019-entity-mentions.md` | Explicit entity mentions (`@name`, `#phone`, …) for deterministic customer resolution; free-text extraction kept as fallback |
 | `ADR-020-multimodal-vision-provider.md` | Multimodal vision provider — centralized OpenAI-compatible `VisionService`, config resolution, ADR-010 Blossom usage tracking, deterministic offline fallback |
+| `ADR-021-per-user-salon-ownership.md` | Per-user ownership of the general Salon — supersedes ADR-016 decision 1 in part; customer-bound Salons stay organization-shared |
 
 ## ADR Template
 

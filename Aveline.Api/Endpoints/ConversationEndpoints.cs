@@ -76,7 +76,9 @@ public static class ConversationEndpoints
 
     private static async Task<IResult> ListAsync(
         Guid organizationId,
+        ClaimsPrincipal user,
         IConversationService conversations,
+        IUserRepository users,
         [Microsoft.AspNetCore.Mvc.FromQuery] int page = 1,
         [Microsoft.AspNetCore.Mvc.FromQuery] int pageSize = 50,
         CancellationToken cancellationToken = default)
@@ -84,7 +86,13 @@ public static class ConversationEndpoints
         page = Math.Max(page, 1);
         pageSize = Math.Clamp(pageSize, 1, 200);
 
-        var (items, total) = await conversations.ListAsync(organizationId, page, pageSize, cancellationToken);
+        var userId = await ResolveUserIdAsync(user, users, cancellationToken);
+        if (userId is null)
+        {
+            return Results.Unauthorized();
+        }
+
+        var (items, total) = await conversations.ListAsync(organizationId, userId.Value, page, pageSize, cancellationToken);
         return Results.Ok(new ConversationPage(items, total, page, pageSize));
     }
 
@@ -109,10 +117,18 @@ public static class ConversationEndpoints
     private static async Task<IResult> GetByIdAsync(
         Guid organizationId,
         Guid conversationId,
+        ClaimsPrincipal user,
         IConversationService conversations,
+        IUserRepository users,
         CancellationToken cancellationToken = default)
     {
-        var conversation = await conversations.GetAsync(organizationId, conversationId, cancellationToken);
+        var userId = await ResolveUserIdAsync(user, users, cancellationToken);
+        if (userId is null)
+        {
+            return Results.Unauthorized();
+        }
+
+        var conversation = await conversations.GetAsync(organizationId, userId.Value, conversationId, cancellationToken);
         return conversation is null
             ? Results.NotFound(new { message = "Conversation not found." })
             : Results.Ok(conversation);
@@ -121,7 +137,9 @@ public static class ConversationEndpoints
     private static async Task<IResult> ListMessagesAsync(
         Guid organizationId,
         Guid conversationId,
+        ClaimsPrincipal user,
         IConversationService conversations,
+        IUserRepository users,
         [Microsoft.AspNetCore.Mvc.FromQuery] int page = 1,
         [Microsoft.AspNetCore.Mvc.FromQuery] int pageSize = 50,
         [Microsoft.AspNetCore.Mvc.FromQuery] Guid? around = null,
@@ -130,7 +148,13 @@ public static class ConversationEndpoints
         page = Math.Max(page, 1);
         pageSize = Math.Clamp(pageSize, 1, 200);
 
-        var (items, total) = await conversations.ListMessagesAsync(organizationId, conversationId, page, pageSize, around, cancellationToken);
+        var userId = await ResolveUserIdAsync(user, users, cancellationToken);
+        if (userId is null)
+        {
+            return Results.Unauthorized();
+        }
+
+        var (items, total) = await conversations.ListMessagesAsync(organizationId, userId.Value, conversationId, page, pageSize, around, cancellationToken);
         return Results.Ok(new MessagePage(items, total, page, pageSize));
     }
 
@@ -202,7 +226,9 @@ public static class ConversationEndpoints
         Guid organizationId,
         Guid conversationId,
         SelectCustomerRequest request,
+        ClaimsPrincipal user,
         IConversationService conversations,
+        IUserRepository users,
         CancellationToken cancellationToken = default)
     {
         if (request.CustomerId == Guid.Empty)
@@ -210,8 +236,14 @@ public static class ConversationEndpoints
             return Results.BadRequest(new { message = "A customerId is required." });
         }
 
+        var userId = await ResolveUserIdAsync(user, users, cancellationToken);
+        if (userId is null)
+        {
+            return Results.Unauthorized();
+        }
+
         var conversation = await conversations.SelectCustomerAsync(
-            organizationId, conversationId, request.CustomerId, request.Query, cancellationToken);
+            organizationId, userId.Value, conversationId, request.CustomerId, request.Query, cancellationToken);
 
         return conversation is null
             ? Results.NotFound(new { message = "Conversation not found." })

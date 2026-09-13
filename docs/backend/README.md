@@ -308,7 +308,7 @@ invalidation mechanism. See [backend-requirements.md §3.6](backend-requirements
 
 | Issue | What landed |
 | --- | --- |
-| [#227](https://github.com/KavinduNirmal/aveline/issues/227) | M8: `SystemMetricSamples`, `SystemAlertRules`, `SystemAlerts`, the CHECK/unique indexes and the twelve seeded rules |
+| [#227](https://github.com/KavinduNirmal/aveline/issues/227) | M8: `SystemMetricSamples`, `SystemAlertRules`, `SystemAlerts`, the CHECK/unique indexes and the seeded rules (eleven after #239) |
 | [#228](https://github.com/KavinduNirmal/aveline/issues/228) | `SystemMetricCollector` (pure `BuildSamples`, bounded 100-sample retry buffer), `SystemMetricRetentionJob` (daily 03:30, 30 days), `ISystemMetricRepository` and the `Observability:SystemMetric*` keys |
 | [#229](https://github.com/KavinduNirmal/aveline/issues/229) | `IAlertService`/`AlertService` (Avg/Max/Min/Sum/Rate/Count over the window, cooldown aggregation, persisted consecutive-OK auto-resolution, critical notification, audit and `system.alert.*` events) and `AlertEvaluationJob` (60 s, lock-guarded) |
 | [#230](https://github.com/KavinduNirmal/aveline/issues/230) | `/api/v1/admin/statistics/system/{overview,metrics,queues,errors,throughput,eventbus,alerts}` and `POST /alerts/{alertId}/acknowledge` under `stats:system` |
@@ -316,10 +316,20 @@ invalidation mechanism. See [backend-requirements.md §3.6](backend-requirements
 
 **Confirmed deviations from the proposed plan:**
 
-1. **Collected metric names follow BR-7.8** (`aveline.<subsystem>.<measure>`, e.g.
-   `aveline.api.error_rate`, `aveline.agent.runs_running`). The seeded rules from #227 still
-   reference the short `api.*` / `agent.*` / `blossom.*` names for metrics the collector does
-   not produce, so those rules fire only when another producer supplies those names.
+1. **Every seeded rule watches a metric the collector actually produces.** The collector
+   writes BR-7.8 `aveline.<subsystem>.<measure>` names. The #227 seed referenced short
+   `api.*` / `agent.*` / `blossom.*` names that nothing wrote, so nine of the twelve rules
+   could never fire (C-5). The collector now derives the computable business signals from
+   existing tables — `aveline.blossom.balance` (minimum `UsageAccounts.BlossomRemaining`),
+   `aveline.blossom.reconciliation.drift` (maximum absolute ledger/projection drift, computed
+   with the same formula as `BlossomService.GetStatementAsync`),
+   `aveline.blossom.consumed_rate`, `aveline.agent.success_rate`, `aveline.agent.paused_count`,
+   `aveline.agent.steps_per_run` and `aveline.api.latency_p95` (bucket-interpolated from
+   `ApiRequestMetrics`) — and migration `20260913111104_FixSystemAlertRuleMetricNames`
+   rewrites the seeded rows onto the produced names. `SystemMetricCollectorTests` asserts that
+   every seeded rule's `MetricName` is one the collector can emit, so a rule can no longer
+   drift onto a dead metric. The `db.pool.saturated` rule is removed entirely because the
+   connection-pool gauges are not instrumented (S-37), leaving eleven rules.
 2. **The collector records CPU seconds with unit `count`.** The documented unit set
    (`count`, `ms`, `bytes`, `ratio`, `percent`) has no `seconds` member.
 3. **BR-7.11 is honoured only for organization-scoped critical alerts.**
@@ -338,6 +348,17 @@ invalidation mechanism. See [backend-requirements.md §3.6](backend-requirements
 7. **`Observability:SystemMetricCollectionSeconds` and `SystemMetricRetentionDays` are new
    config keys**; `AlertEvaluationSeconds` and `AutoResolveConsecutiveOk` were already in the
    plan's §10.2 list.
+8. **The alert cooldown elapses against the fire time (M-21).** `AlertService` measures
+   `now − FiredAt`; a sustained breach aggregates `OccurrenceCount` while inside the cooldown
+   and, once it elapses, re-fires — resetting `FiredAt`/`OccurrenceCount`, clearing
+   `NotificationRecordId` and publishing `system.alert.fired` (and re-notifying) again. The
+   three-consecutive-OK auto-resolution path is unchanged.
+9. **System metric samples are organisation-agnostic (M-22).** `SystemMetricSample` has no
+   organization column and the collector writes `{}` dimensions, so `LoadSamplesAsync` cannot
+   filter by organization. `EvaluateRuleAsync`'s `organizationId` only scopes the fired alert
+   (and its critical notification); a future org-scoped metric would carry the organization in
+   `DimensionsJson` and be selected through the rule's dimension filter.
+
 
 ---
 

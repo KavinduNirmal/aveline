@@ -2,6 +2,9 @@ using System.Diagnostics;
 using Aveline.Api.Common.Jobs;
 using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Infrastructure.Eventing;
+using Aveline.Api.Modules.Billing.Models;
+using Aveline.Api.Modules.Billing.Services;
+using Aveline.Api.Modules.Statistics.Domain;
 using Aveline.Api.Modules.Statistics.Models;
 using Aveline.Api.Modules.Statistics.Repositories;
 using Aveline.Api.Modules.Statistics.Telemetry;
@@ -42,6 +45,27 @@ public sealed record MetricSnapshot
     public double? ApiErrorRate { get; init; }
 
     public long? AgentRunsRunning { get; init; }
+
+    /// <summary>Minimum cached Blossom balance across usage accounts; negative when overdrawn.</summary>
+    public decimal? BlossomBalance { get; init; }
+
+    /// <summary>Maximum absolute difference between the cached and ledger-derived balance.</summary>
+    public decimal? BlossomReconciliationDrift { get; init; }
+
+    /// <summary>Blossoms consumed per minute over the last hour.</summary>
+    public double? BlossomConsumedRate { get; init; }
+
+    /// <summary>Terminal agent runs that succeeded, over the last hour.</summary>
+    public double? AgentSuccessRate { get; init; }
+
+    /// <summary>Agent runs currently paused for approval.</summary>
+    public long? AgentPausedCount { get; init; }
+
+    /// <summary>Mean step count of agent runs started in the last hour.</summary>
+    public double? AgentStepsPerRun { get; init; }
+
+    /// <summary>Bucket-interpolated p95 API latency over the current hour, in milliseconds.</summary>
+    public double? ApiLatencyP95Ms { get; init; }
 }
 
 /// <summary>
@@ -60,6 +84,34 @@ public class SystemMetricCollector(
 {
     /// <summary>Upper bound on the in-memory buffer that survives a database outage.</summary>
     public const int MaxBufferedSamples = 100;
+
+    /// <summary>
+    /// Every metric name <see cref="BuildSamples"/> can emit. The seeded alert rules must
+    /// reference only these names; a unit test compares the two so a rule cannot drift onto a
+    /// metric nothing produces (C-5).
+    /// </summary>
+    public static readonly IReadOnlyList<string> ProducedMetricNames =
+    [
+        "aveline.process.cpu_seconds",
+        "aveline.process.working_set_bytes",
+        "aveline.process.gc_heap_bytes",
+        "aveline.process.thread_count",
+        "aveline.process.threadpool_queue_length",
+        "aveline.queue.telemetry_channel",
+        "aveline.api.telemetry.dropped",
+        "aveline.eventbus.failed",
+        "aveline.eventbus.backlog",
+        "aveline.api.requests_per_second",
+        "aveline.api.error_rate",
+        "aveline.api.latency_p95",
+        "aveline.agent.runs_running",
+        "aveline.agent.success_rate",
+        "aveline.agent.paused_count",
+        "aveline.agent.steps_per_run",
+        "aveline.blossom.balance",
+        "aveline.blossom.reconciliation.drift",
+        "aveline.blossom.consumed_rate",
+    ];
 
     private readonly List<SystemMetricSample> _buffer = [];
     private readonly int _collectionSeconds =
@@ -146,6 +198,26 @@ public class SystemMetricCollector(
             });
         }
 
+        void AddDecimalExact(string metricName, decimal? value, string unit)
+        {
+            if (value is null)
+            {
+                return;
+            }
+
+            samples.Add(new SystemMetricSample
+            {
+                MetricName = metricName,
+                DimensionsJson = dimensionsJson,
+                DimensionHash = dimensionHash,
+                ValueDecimal = value.Value,
+                Unit = unit,
+                WindowStart = sampledAt,
+                WindowSize = "instant",
+                SampledAt = sampledAt,
+            });
+        }
+
         void AddBigint(string metricName, long? value, string unit)
         {
             if (value is null)
@@ -182,7 +254,14 @@ public class SystemMetricCollector(
             "count");
         AddDecimal("aveline.api.requests_per_second", snapshot.ApiRequestsPerSecond, "count");
         AddDecimal("aveline.api.error_rate", snapshot.ApiErrorRate, "ratio");
+        AddDecimal("aveline.api.latency_p95", snapshot.ApiLatencyP95Ms, "ms");
         AddBigint("aveline.agent.runs_running", snapshot.AgentRunsRunning, "count");
+        AddDecimal("aveline.agent.success_rate", snapshot.AgentSuccessRate, "ratio");
+        AddBigint("aveline.agent.paused_count", snapshot.AgentPausedCount, "count");
+        AddDecimal("aveline.agent.steps_per_run", snapshot.AgentStepsPerRun, "count");
+        AddDecimalExact("aveline.blossom.balance", snapshot.BlossomBalance, "count");
+        AddDecimalExact("aveline.blossom.reconciliation.drift", snapshot.BlossomReconciliationDrift, "count");
+        AddDecimal("aveline.blossom.consumed_rate", snapshot.BlossomConsumedRate, "count");
 
         return samples;
     }
@@ -255,7 +334,7 @@ public class SystemMetricCollector(
             var rows = await db.ApiRequestMetrics
                 .AsNoTracking()
                 .Where(metric => metric.WindowSize == "hour" && metric.WindowStart == hourStart)
-                .Select(metric => new { metric.RequestCount, metric.ErrorCount })
+                .Select(metric => new { metric.RequestCount, metric.ErrorCount, metric.BucketCounts })
                 .ToListAsync(cancellationToken);
 
             var requests = rows.Sum(row => row.RequestCount);
@@ -267,6 +346,21 @@ public class SystemMetricCollector(
                     ApiRequestsPerSecond = requests / elapsedSeconds,
                     ApiErrorRate = (double)rows.Sum(row => row.ErrorCount) / requests,
                 };
+
+                // The percentile is interpolated from the cumulative latency buckets (S-26).
+                var buckets = new int[ApiRequestMetric.BucketCount];
+                foreach (var row in rows)
+                {
+                    for (var i = 0; i < buckets.Length && i < row.BucketCounts.Length; i++)
+                    {
+                        buckets[i] += row.BucketCounts[i];
+                    }
+                }
+
+                snapshot = snapshot with
+                {
+                    ApiLatencyP95Ms = LatencyBuckets.Compute(buckets, requests, minSamples: 1).P95Ms,
+                };
             }
 
             snapshot = snapshot with
@@ -274,7 +368,13 @@ public class SystemMetricCollector(
                 AgentRunsRunning = await db.AgentWorkflowRuns
                     .AsNoTracking()
                     .LongCountAsync(run => run.Status == AgentRunStatus.Running, cancellationToken),
+                AgentPausedCount = await db.AgentWorkflowRuns
+                    .AsNoTracking()
+                    .LongCountAsync(run => run.Status == AgentRunStatus.PausedForApproval, cancellationToken),
             };
+
+            snapshot = await CaptureAgentRunsAsync(db, snapshot, now, cancellationToken);
+            snapshot = await CaptureBlossomAsync(db, snapshot, now, cancellationToken);
 
             update(snapshot);
         }
@@ -282,5 +382,86 @@ public class SystemMetricCollector(
         {
             // A transient read failure omits the database metrics for this pass (BR-7.10).
         }
+    }
+
+    /// <summary>Success rate and mean steps per run over the last hour (S-40).</summary>
+    private static async Task<MetricSnapshot> CaptureAgentRunsAsync(
+        AppDbContext db, MetricSnapshot snapshot, DateTime now, CancellationToken cancellationToken)
+    {
+        var windowStart = now.AddHours(-1);
+
+        var terminalRuns = await db.AgentWorkflowRuns
+            .AsNoTracking()
+            .Where(run => run.StartedAt >= windowStart)
+            .Where(run => run.Status == AgentRunStatus.Succeeded
+                          || run.Status == AgentRunStatus.Failed
+                          || run.Status == AgentRunStatus.Cancelled
+                          || run.Status == AgentRunStatus.TimedOut)
+            .Select(run => run.Status)
+            .ToListAsync(cancellationToken);
+
+        if (terminalRuns.Count > 0)
+        {
+            snapshot = snapshot with
+            {
+                AgentSuccessRate =
+                    (double)terminalRuns.Count(status => status == AgentRunStatus.Succeeded) / terminalRuns.Count,
+            };
+        }
+
+        var steps = await db.AgentWorkflowRuns
+            .AsNoTracking()
+            .Where(run => run.StartedAt >= windowStart)
+            .Select(run => run.StepCount)
+            .ToListAsync(cancellationToken);
+
+        if (steps.Count > 0)
+        {
+            snapshot = snapshot with { AgentStepsPerRun = steps.Average() };
+        }
+
+        return snapshot;
+    }
+
+    /// <summary>
+    /// Blossom balance, ledger/projection drift and consumption rate (S-30). Drift reuses
+    /// <see cref="BlossomService.ReconciliationDrift"/> so the alert and the statement agree.
+    /// </summary>
+    private static async Task<MetricSnapshot> CaptureBlossomAsync(
+        AppDbContext db, MetricSnapshot snapshot, DateTime now, CancellationToken cancellationToken)
+    {
+        var accounts = await db.UsageAccounts
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        if (accounts.Count > 0)
+        {
+            var ledgerSums = await db.BlossomLedgerEntries
+                .AsNoTracking()
+                .Where(entry => entry.EntryType != BlossomLedgerEntryType.PeriodAllocation)
+                .GroupBy(entry => entry.UsageAccountId)
+                .Select(group => new { UsageAccountId = group.Key, Total = group.Sum(entry => entry.BlossomDelta) })
+                .ToDictionaryAsync(row => row.UsageAccountId, row => row.Total, cancellationToken);
+
+            snapshot = snapshot with
+            {
+                BlossomBalance = accounts.Min(account => account.BlossomRemaining),
+                BlossomReconciliationDrift = accounts.Max(account => Math.Abs(
+                    BlossomService.ReconciliationDrift(
+                        account, ledgerSums.GetValueOrDefault(account.Id)))),
+            };
+        }
+
+        var consumed = await db.AiUsageRecords
+            .AsNoTracking()
+            .Where(record => record.CreatedAt >= now.AddHours(-1))
+            .SumAsync(record => (decimal?)record.BlossomUnits, cancellationToken);
+
+        if (consumed is > 0m)
+        {
+            snapshot = snapshot with { BlossomConsumedRate = (double)(consumed.Value / 60m) };
+        }
+
+        return snapshot;
     }
 }

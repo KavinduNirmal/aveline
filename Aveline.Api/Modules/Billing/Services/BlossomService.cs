@@ -26,6 +26,22 @@ public sealed class BlossomService(
     private const int MinReasonLength = 10;
     private const int MaxReasonLength = 500;
 
+    /// <summary>
+    /// The balance implied by the append-only ledger:
+    /// <c>MonthlyBlossomLimit + Σ non-allocation deltas − BlossomUsed</c>. Shared with the
+    /// system metric collector so the alerting drift signal is derived with exactly the
+    /// statement formula (BR-2.14, S-30).
+    /// </summary>
+    public static decimal LedgerDerivedBalance(UsageAccount account, decimal nonAllocationDeltas)
+        => account.MonthlyBlossomLimit + nonAllocationDeltas - account.BlossomUsed;
+
+    /// <summary>
+    /// The signed difference between the cached projection (<see cref="UsageAccount.BlossomRemaining"/>)
+    /// and <see cref="LedgerDerivedBalance"/>. A non-zero value is a reconciliation defect.
+    /// </summary>
+    public static decimal ReconciliationDrift(UsageAccount account, decimal nonAllocationDeltas)
+        => account.BlossomRemaining - LedgerDerivedBalance(account, nonAllocationDeltas);
+
     public async Task<BlossomLedgerEntry> CreditAsync(
         CreditBlossomsCommand command, CancellationToken cancellationToken = default)
     {
@@ -301,9 +317,8 @@ public sealed class BlossomService(
 
         var nonAllocationDeltas = await ledgerRepository.SumDeltasExcludingAsync(
             account.Id, BlossomLedgerEntryType.PeriodAllocation, cancellationToken);
-        var ledgerDerivedBalance =
-            account.MonthlyBlossomLimit + nonAllocationDeltas - account.BlossomUsed;
-        var drift = account.BlossomRemaining - ledgerDerivedBalance;
+        var ledgerDerivedBalance = LedgerDerivedBalance(account, nonAllocationDeltas);
+        var drift = ReconciliationDrift(account, nonAllocationDeltas);
 
         return new BlossomStatement(
             organizationId,

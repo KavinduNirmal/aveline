@@ -85,7 +85,7 @@ unless it appears in this catalog **and** in
 | Storage | on-the-fly, paginated |
 | Endpoint | `GET /api/v1/orgs/{organizationId}/blossoms/statement` |
 | Access | `billing:view` |
-| Notes | `drift != 0` raises a Critical `SystemAlert` (S-30). This is the primary integrity check of the whole Blossom system |
+| Notes | `drift != 0` raises a Critical `SystemAlert`. `SystemMetricCollector` emits `aveline.blossom.reconciliation.drift` (the maximum absolute drift across accounts) and `blossom.ledger.drift` watches it (S-30, #239). This is the primary integrity check of the whole Blossom system |
 
 ### S-4 · `blossomBurnRate`
 
@@ -739,27 +739,39 @@ unless it appears in this catalog **and** in
 | Endpoint | `GET /api/v1/admin/statistics/system/overview` |
 | Access | `stats:system` |
 
-> **Shipped note (Phase 6, issues #227–#230).** S-33–S-43 are implemented as documented,
-> with these deviations:
+> **Shipped note (Phase 6, issues #227–#230; alert pipeline corrected in #239).**
+> S-33–S-43 are implemented as documented, with these deviations:
 >
 > - **S-33 readiness** is returned verbatim from `HealthCheckService`; the
 >   `aveline.system.readiness` sample is not written by the collector (the readiness check
 >   is synchronous and already exposed on `/health/ready`).
 > - **S-34 uptime** is computed from `Process.StartTime`; `restarts` is not stored.
-> - **S-35/S-36/S-40/S-41** are produced by `SystemMetricCollector` under the
->   BR-7.8-compliant names `aveline.process.*`, `aveline.queue.telemetry_channel`,
->   `aveline.api.telemetry.dropped`, `aveline.eventbus.*`, `aveline.api.requests_per_second`,
->   `aveline.api.error_rate` and `aveline.agent.runs_running`. CPU seconds use the `count`
->   unit because the documented unit set has no `seconds` member.
+> - **S-35/S-36/S-39/S-40/S-41** are produced by `SystemMetricCollector`. It emits the
+>   BR-7.8-compliant process/queue/event-bus/throughput names (`aveline.process.*`,
+>   `aveline.queue.telemetry_channel`, `aveline.api.telemetry.dropped`, `aveline.eventbus.*`,
+>   `aveline.api.requests_per_second`, `aveline.api.error_rate`, `aveline.agent.runs_running`)
+>   and, since #239, also derives the business signals from existing tables:
+>   `aveline.blossom.balance` (minimum `UsageAccounts.BlossomRemaining`),
+>   `aveline.blossom.reconciliation.drift` (maximum absolute ledger/projection drift, the same
+>   formula as `BlossomService.GetStatementAsync`), `aveline.blossom.consumed_rate` (blossoms
+>   per minute over the last hour), `aveline.agent.success_rate` (succeeded / terminal runs
+>   over the last hour), `aveline.agent.paused_count` (runs paused for approval),
+>   `aveline.agent.steps_per_run` (mean `StepCount` of runs started in the last hour) and
+>   `aveline.api.latency_p95` (bucket-interpolated p95 from `ApiRequestMetrics`). CPU seconds
+>   use the `count` unit because the documented unit set has no `seconds` member.
 > - **S-36** omits `inbound_message_backlog`: `InboundMessageLog` has no processed marker.
 >   The response lists it in `omitted` (BR-7.10).
 > - **S-37/S-38** database pool and cache metrics are not collected yet; the endpoints do
->   not expose them.
+>   not expose them. Because there is no pool gauge to watch, the `db.pool.saturated` alert
+>   rule (implementation-plan.md §7.4) is not seeded; eleven rules remain.
 > - **S-39** reports the rate of `5xx` requests; unhandled-exception counts are not
 >   instrumented and are listed in `omitted`.
 > - **S-41** exposes the counter snapshot; `publish_latency_ms` is listed in `omitted`
 >   because `EventBusMetrics` keeps counters only.
 > - **S-43** composes the same statistics over a 15-minute window and is not cached.
+> - **S-42 rules.** Every seeded `SystemAlertRule.MetricName` is a name the collector
+>   produces; migration `20260913111104_FixSystemAlertRuleMetricNames` rewrites the rows M8
+>   seeded with dead names, and `SystemMetricCollectorTests` guards the invariant.
 
 ---
 

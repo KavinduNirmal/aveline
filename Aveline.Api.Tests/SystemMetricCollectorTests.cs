@@ -34,6 +34,36 @@ public class SystemMetricCollectorTests
         AgentRunsRunning = 3,
     };
 
+    /// <summary>A snapshot with a value for every field the collector can map.</summary>
+    private static MetricSnapshot MaximalSnapshot() => FullSnapshot() with
+    {
+        BlossomBalance = 120.5m,
+        BlossomReconciliationDrift = 0.25m,
+        BlossomConsumedRate = 3.5,
+        AgentSuccessRate = 0.9,
+        AgentPausedCount = 2,
+        AgentStepsPerRun = 7.5,
+        ApiLatencyP95Ms = 420,
+    };
+
+    [Fact]
+    public void BuildSamples_EmitsExactlyTheDeclaredProducedMetricNames()
+    {
+        var samples = SystemMetricCollector.BuildSamples(MaximalSnapshot());
+
+        Assert.Equal(
+            SystemMetricCollector.ProducedMetricNames.OrderBy(name => name, StringComparer.Ordinal),
+            samples.Select(sample => sample.MetricName).OrderBy(name => name, StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void ProducedMetricNames_CoversEverySeededAlertRule()
+    {
+        Assert.All(
+            SystemAlertRuleSeed.Rules,
+            rule => Assert.Contains(rule.MetricName, SystemMetricCollector.ProducedMetricNames));
+    }
+
     [Fact]
     public void BuildSamples_OmitsMetricsThatCannotBeDetermined()
     {

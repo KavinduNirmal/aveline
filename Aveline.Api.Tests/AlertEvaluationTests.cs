@@ -1,15 +1,19 @@
+using Aveline.Api.Common.Jobs;
 using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Infrastructure.Eventing;
 using Aveline.Api.Modules.Audit.Models;
 using Aveline.Api.Modules.Audit.Services;
+using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Notifications.Models;
 using Aveline.Api.Modules.Notifications.Repositories;
 using Aveline.Api.Modules.Notifications.Services;
+using Aveline.Api.Modules.Statistics.Jobs;
 using Aveline.Api.Modules.Statistics.Models;
 using Aveline.Api.Modules.Statistics.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Aveline.Api.Tests;
 
@@ -28,7 +32,7 @@ public class AlertEvaluationTests
     {
         var harness = Build();
         await SeedAsync(harness, SystemAlertRuleSeed.Rules.ToArray());
-        await SeedSampleAsync(harness, "blossom.reconciliation.drift", 0.25m);
+        await SeedSampleAsync(harness, "aveline.blossom.reconciliation.drift", 0.25m);
 
         using (var scope = harness.Provider.CreateScope())
         {
@@ -78,6 +82,84 @@ public class AlertEvaluationTests
         var alert = await context.SystemAlerts.SingleAsync();
         Assert.Equal(2, alert.OccurrenceCount);
         Assert.Equal(AlertStatus.Firing, alert.Status);
+    }
+
+    [Fact]
+    public async Task Cooldown_ReFiresAfterItElapsesAndKeepsAggregatingInsideIt()
+    {
+        var harness = Build();
+        var rule = Rule("test.cooldown.refire", AlertAggregation.Max, AlertComparisonOperator.Gt, 0m);
+        await SeedAsync(harness, rule);
+        await SeedSampleAsync(harness, "test.cooldown.refire", 1m);
+
+        await EvaluateOnceAsync(harness); // first fire
+        await EvaluateOnceAsync(harness); // sustained breach inside the cooldown
+
+        await using (var context = harness.Context())
+        {
+            var open = await context.SystemAlerts.SingleAsync();
+            Assert.Equal(2, open.OccurrenceCount);
+        }
+
+        // Move the fire time outside the cooldown, as a sustained breach would.
+        await using (var context = harness.Context())
+        {
+            var open = await context.SystemAlerts.SingleAsync();
+            open.FiredAt = DateTime.UtcNow.AddSeconds(-(rule.CooldownSeconds + 1));
+            await context.SaveChangesAsync();
+        }
+
+        await EvaluateOnceAsync(harness); // cooldown elapsed: re-fire
+
+        await using var verify = harness.Context();
+        var alert = await verify.SystemAlerts.SingleAsync();
+        Assert.Equal(AlertStatus.Firing, alert.Status);
+        Assert.Equal(1, alert.OccurrenceCount);
+        Assert.True(
+            alert.FiredAt > DateTime.UtcNow.AddSeconds(-30),
+            "the re-fire must reset FiredAt to the evaluation time");
+        Assert.Equal(2, harness.EventBus.PublishedEventTypes.Count(type => type == "system.alert.fired"));
+    }
+
+    [Fact]
+    public async Task BlossomLedgerDrift_FiresFromASampleProducedByTheCollector()
+    {
+        var harness = Build();
+        await SeedAsync(harness, SystemAlertRuleSeed.Rules.ToArray());
+
+        // A period account whose cached projection does not match its ledger-derived balance.
+        await using (var context = harness.Context())
+        {
+            context.UsageAccounts.Add(new UsageAccount
+            {
+                OrganizationId = Guid.CreateVersion7(),
+                PeriodStart = DateTime.UtcNow.AddDays(-1),
+                PeriodEnd = DateTime.UtcNow.AddDays(29),
+                MonthlyBlossomLimit = 100m,
+                BlossomUsed = 40m,
+                BlossomRemaining = 50m, // 100 - 40 = 60 derived; drift -10
+            });
+            await context.SaveChangesAsync();
+        }
+
+        var snapshot = await CollectRealSnapshotAsync(harness);
+        await using (var context = harness.Context())
+        {
+            context.SystemMetricSamples.AddRange(SystemMetricCollector.BuildSamples(snapshot));
+            await context.SaveChangesAsync();
+        }
+
+        using (var scope = harness.Provider.CreateScope())
+        {
+            Assert.True(await scope.ServiceProvider.GetRequiredService<IAlertService>().EvaluateAsync() > 0);
+        }
+
+        await using var verify = harness.Context();
+        var alert = await verify.SystemAlerts.SingleAsync();
+        Assert.Equal(DriftRuleId, alert.RuleId);
+        Assert.Equal(AlertStatus.Firing, alert.Status);
+        Assert.Equal(AlertSeverity.Critical, alert.Severity);
+        Assert.True(alert.ObservedValue > 0m);
     }
 
     [Fact]
@@ -234,6 +316,22 @@ public class AlertEvaluationTests
         Assert.Contains(harness.Audit.Entries, entry => entry.Action == "system.alert_rule.deleted");
     }
 
+    private static async Task<int> EvaluateOnceAsync(Harness harness)
+    {
+        using var scope = harness.Provider.CreateScope();
+        return await scope.ServiceProvider.GetRequiredService<IAlertService>().EvaluateAsync();
+    }
+
+    private static async Task<MetricSnapshot> CollectRealSnapshotAsync(Harness harness)
+    {
+        var collector = new RealCaptureCollector(
+            harness.Provider.GetRequiredService<IServiceScopeFactory>(),
+            new InMemoryDistributedJobLock());
+
+        using var scope = harness.Provider.CreateScope();
+        return await collector.CaptureForTestAsync(scope.ServiceProvider, CancellationToken.None);
+    }
+
     private static SystemAlertRule Rule(
         string name,
         AlertAggregation aggregation,
@@ -325,6 +423,20 @@ public class AlertEvaluationTests
     {
         public AppDbContext Context() => new(
             new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(DatabaseName).Options);
+    }
+
+    private sealed class RealCaptureCollector(
+        IServiceScopeFactory scopeFactory,
+        IDistributedJobLock jobLock)
+        : SystemMetricCollector(
+            scopeFactory,
+            jobLock,
+            NullLogger<SystemMetricCollector>.Instance,
+            new ConfigurationBuilder().Build())
+    {
+        public Task<MetricSnapshot> CaptureForTestAsync(
+            IServiceProvider services, CancellationToken cancellationToken)
+            => base.CaptureAsync(services, cancellationToken);
     }
 
     private sealed class RecordingEventBus : IEventBus

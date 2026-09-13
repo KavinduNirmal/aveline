@@ -203,21 +203,25 @@ public class SystemStatisticsEntityConfigurationTests
     }
 
     [Fact]
-    public void SeededRules_ContainTheTwelveDocumentedRulesWithStableGuids()
+    public void SeededRules_ContainTheElevenDocumentedRulesWithStableGuids()
     {
-        Assert.Equal(12, SystemAlertRuleSeed.Rules.Count);
-        Assert.Equal(12, SystemAlertRuleSeed.Rules.Select(r => r.Id).Distinct().Count());
-        Assert.Equal(12, SystemAlertRuleSeed.Rules.Select(r => r.Name).Distinct().Count());
+        Assert.Equal(11, SystemAlertRuleSeed.Rules.Count);
+        Assert.Equal(11, SystemAlertRuleSeed.Rules.Select(r => r.Id).Distinct().Count());
+        Assert.Equal(11, SystemAlertRuleSeed.Rules.Select(r => r.Name).Distinct().Count());
 
         Assert.Contains(SystemAlertRuleSeed.Rules, r =>
             r.Name == "blossom.ledger.drift"
-            && r.MetricName == "blossom.reconciliation.drift"
+            && r.MetricName == "aveline.blossom.reconciliation.drift"
             && r.Severity == AlertSeverity.Critical);
 
         Assert.Contains(SystemAlertRuleSeed.Rules, r =>
-            r.Name == "api.error.rate" && r.Severity == AlertSeverity.Critical);
-        Assert.Contains(SystemAlertRuleSeed.Rules, r =>
-            r.Name == "db.pool.saturated" && r.MetricName == "aveline.db.pool_in_use");
+            r.Name == "api.error.rate"
+            && r.MetricName == "aveline.api.error_rate"
+            && r.Severity == AlertSeverity.Critical);
+
+        // The database connection-pool gauge is not instrumented, so the rule is not seeded.
+        Assert.DoesNotContain(SystemAlertRuleSeed.Rules, r => r.Name == "db.pool.saturated");
+
         Assert.Contains(SystemAlertRuleSeed.Rules, r =>
             r.Name == "eventbus.failed" && r.MetricName == "aveline.eventbus.failed");
     }

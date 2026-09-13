@@ -97,7 +97,9 @@ public sealed class AlertService : IAlertService
 
         if (open is not null)
         {
-            var withinCooldown = now - open.LastObservedAt < TimeSpan.FromSeconds(rule.CooldownSeconds);
+            // The cooldown is measured from the last actual fire, not the last observation:
+            // a sustained breach must be able to re-fire once the cooldown elapses (BR-7.6).
+            var withinCooldown = now - open.FiredAt < TimeSpan.FromSeconds(rule.CooldownSeconds);
             open.LastObservedAt = now;
             open.ObservedValue = observedValue;
             open.Threshold = rule.Threshold;
@@ -110,6 +112,10 @@ public sealed class AlertService : IAlertService
                 return open;
             }
 
+            // The cooldown elapsed while the breach continued: re-fire and re-notify.
+            open.FiredAt = now;
+            open.OccurrenceCount = 1;
+            open.NotificationRecordId = null;
             await _db.SaveChangesAsync(cancellationToken);
             await FireAsync(rule, open, observedValue, cancellationToken);
             return open;
@@ -393,6 +399,14 @@ public sealed class AlertService : IAlertService
         }
     }
 
+    /// <summary>
+    /// Loads the samples a rule aggregates. <see cref="SystemMetricSample"/> has no
+    /// organization column and the collector writes org-agnostic <c>{}</c> dimensions, so
+    /// this query cannot and does not filter by organization (M-22). The
+    /// <c>organizationId</c> accepted by <see cref="EvaluateRuleAsync"/> only scopes the
+    /// alert it fires; a future org-scoped metric would carry the organization in
+    /// <c>DimensionsJson</c> and be selected through the rule's dimension filter.
+    /// </summary>
     private async Task<IReadOnlyList<SystemMetricSample>> LoadSamplesAsync(
         SystemAlertRule rule, DateTime now, CancellationToken cancellationToken)
     {

@@ -18,6 +18,10 @@ public interface IAlertService
     /// <summary>
     /// Evaluates one rule. <paramref name="organizationId"/> scopes a produced alert (and its
     /// critical notification) to an organization; the scheduled job evaluates system-wide.
+    /// System metric samples are org-agnostic (they have no organization column and carry
+    /// <c>{}</c> dimensions), so this parameter does not filter the aggregated samples — it
+    /// is reserved for the fired alert and would only scope a metric that carried the
+    /// organization in its dimensions (M-22).
     /// </summary>
     Task<SystemAlert?> EvaluateRuleAsync(
         SystemAlertRule rule, Guid? organizationId = null, CancellationToken cancellationToken = default);

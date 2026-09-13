@@ -31,6 +31,13 @@ The two slice-2 branches are integrated and the resulting branch is **green acro
 1. **`POST /api/v1/orgs/{organizationId}/catalog/analyze-image` is `.AllowAnonymous()`** (`Aveline.Api/Endpoints/CatalogEndpoints.cs:188`). Any unauthenticated caller can invoke the paid Vision AI provider and burn an arbitrary organization's usage budget.
 2. **`docker-compose.yml` was unparseable on `development`** (duplicate YAML keys) and the EF snapshot did not match the merged model. Both are fixed on this branch (see §2.3), but the underlying defects should also be fixed upstream on `development` and in PR #233 respectively.
 
+> **Resolution addendum (post-review).** Both must-fix items above have been actioned on this branch, which is the vehicle that carries them upstream into `development`:
+>
+> - **Item 1 — fixed** in `7bb2a9f`. `.AllowAnonymous()` was removed from `CatalogEndpoints.cs` so the route inherits the group's `BoutiqueAccessPolicy`; 401/403 response metadata was declared, and a regression test (`AnalyzeImage_WithoutAuth_ReturnsUnauthorized`) was added. The test was verified to fail against the previous code with `Expected 401, found 200`, confirming the exposure was real.
+> - **Item 2 — fixed** in this branch's integration commits (§2.3). Because PR #233 is superseded and closed, the snapshot correction lands here rather than in #233; once this branch reaches `development`, the duplicate-key defect is resolved upstream as well.
+>
+> The remaining P1/P2 items in §8 are **not** addressed and stay open for the owning slices.
+
 ---
 
 ## 2. Integration Details

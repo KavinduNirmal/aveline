@@ -77,7 +77,8 @@ public sealed class SubscriptionService(
 
         var currentLimit = await entitlementResolver.GetDecimalAsync(
             command.OrganizationId, BlossomsKey, 150m, at: null, cancellationToken);
-        var targetLimit = await ResolveTierLimitAsync(targetTier, currentLimit, cancellationToken);
+        var targetLimit = await ResolveTierLimitAsync(
+            command.OrganizationId, targetTier, currentLimit, cancellationToken);
 
         if (!isUpgrade && effectiveImmediate)
         {
@@ -237,25 +238,23 @@ public sealed class SubscriptionService(
             hardLimit);
 
     private async Task<decimal> ResolveTierLimitAsync(
-        PlanTier tier, decimal fallback, CancellationToken cancellationToken)
+        Guid organizationId, PlanTier tier, decimal fallback, CancellationToken cancellationToken)
     {
-        var value = PlanEntitlementDefaults.For(tier).TryGetValue(BlossomsKey, out var entitlement)
-            ? entitlement.Number
-            : null;
+        // A per-organisation override replaces the tier value whatever the tier (BR-2.15),
+        // so it also defines the effective allowance during a plan change (M-20).
+        var resolved = await entitlementResolver.GetAsync(
+            organizationId, BlossomsKey, at: null, cancellationToken);
 
-        if (value is not null)
+        if (resolved is { Number: { } overrideValue }
+            && string.Equals(resolved.Source, "Override", StringComparison.Ordinal))
         {
-            return value.Value;
+            return overrideValue;
         }
 
-        var row = await db.PlanEntitlements
-            .Where(e => e.PlanTier == tier && e.Key == BlossomsKey)
-            .Where(e => e.EffectiveFrom <= DateTime.UtcNow)
-            .Where(e => e.EffectiveTo == null || e.EffectiveTo > DateTime.UtcNow)
-            .OrderByDescending(e => e.EffectiveFrom)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        return row?.ValueDecimal ?? fallback;
+        // Otherwise resolve the target tier through the resolver (database rows beat the
+        // in-memory catalog) rather than reading the catalog directly.
+        return await entitlementResolver.GetTierDecimalAsync(
+            tier, BlossomsKey, fallback, at: null, cancellationToken);
     }
 
     private async Task<IReadOnlyList<PlanLimitViolation>> EvaluateDowngradeAsync(

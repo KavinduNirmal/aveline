@@ -289,26 +289,22 @@ public sealed class ClerkWebhookSyncService : IClerkWebhookSyncService
         return (localOrg, localUser);
     }
 
-    /// <summary>Maps a Clerk organization role onto a canonical boutique role.</summary>
+    /// <summary>
+    /// Maps a Clerk organization role onto a canonical boutique role. Only the canonical
+    /// Clerk role strings map to a privileged boutique role; anything else (including a
+    /// custom role whose name merely contains "owner") defaults to boutique staff (M-6).
+    /// </summary>
     public static string MapBoutiqueRole(string? clerkRole)
     {
         var role = clerkRole ?? string.Empty;
-        if (role.Contains("owner", StringComparison.OrdinalIgnoreCase))
+        return role switch
         {
-            return Roles.BoutiqueOwner;
-        }
-
-        if (role.Contains("supervisor", StringComparison.OrdinalIgnoreCase))
-        {
-            return Roles.BoutiqueSupervisor;
-        }
-
-        if (role.Contains("manager", StringComparison.OrdinalIgnoreCase))
-        {
-            return Roles.BoutiqueManager;
-        }
-
-        return Roles.BoutiqueStaff;
+            "org:boutique_owner" => Roles.BoutiqueOwner,
+            "org:boutique_supervisor" => Roles.BoutiqueSupervisor,
+            "org:boutique_manager" => Roles.BoutiqueManager,
+            "org:boutique_staff" => Roles.BoutiqueStaff,
+            _ => Roles.BoutiqueStaff,
+        };
     }
 
     private static string? ReadString(JsonElement element, string property)

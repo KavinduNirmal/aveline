@@ -7,6 +7,7 @@ using Aveline.Api.Authorization;
 using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Organizations.Models;
+using Aveline.Api.Modules.Shared.Models;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.JsonWebTokens;
@@ -94,6 +95,34 @@ public class AdminOrganizationEndpointsIntegrationTests : IAsyncLifetime
             Headers = { Authorization = new AuthenticationHeaderValue("Bearer", token) },
         };
 
+    /// <summary>
+    /// The account-state gate (M-15) requires a local Active user before an /admin route
+    /// beyond the onboarding exemption is reachable.
+    /// </summary>
+    private static async Task SeedActiveUserAsync(string clerkId, string role = Roles.Admin)
+    {
+        await using var context = CreateContext();
+        if (await context.Users.AnyAsync(u => u.ClerkId == clerkId))
+        {
+            return;
+        }
+
+        context.Users.Add(new User
+        {
+            Id = Guid.CreateVersion7(),
+            ClerkId = clerkId,
+            Email = $"{clerkId}@aveline.lk",
+            FirstName = "Org",
+            LastName = "Searcher",
+            Username = clerkId,
+            UserRole = role,
+            OrganizationRole = string.Empty,
+            HasCompletedOnboarding = true,
+            AccountState = AccountState.Active,
+        });
+        await context.SaveChangesAsync();
+    }
+
     private static async Task<JsonElement> BodyAsync(HttpResponseMessage response) =>
         JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
 
@@ -105,6 +134,7 @@ public class AdminOrganizationEndpointsIntegrationTests : IAsyncLifetime
             $"Admin Org {token}", $"admin-org-{token}", PlanTier.Orchid);
 
         var adminToken = CreateToken($"admin_orgs_{token}", Roles.Admin);
+        await SeedActiveUserAsync($"admin_orgs_{token}");
         var response = await _client.SendAsync(Authorized(
             HttpMethod.Get, $"/api/v1/admin/orgs?q={token}", adminToken));
 
@@ -127,6 +157,7 @@ public class AdminOrganizationEndpointsIntegrationTests : IAsyncLifetime
         await SeedOrganizationAsync($"AdminOrg Inactive {token}", $"admin-inactive-{token}", isActive: false);
 
         var adminToken = CreateToken($"admin_orgs_{token}", Roles.Admin);
+        await SeedActiveUserAsync($"admin_orgs_{token}");
         var response = await _client.SendAsync(Authorized(
             HttpMethod.Get, $"/api/v1/admin/orgs?q={token}&isActive=false", adminToken));
 
@@ -143,6 +174,7 @@ public class AdminOrganizationEndpointsIntegrationTests : IAsyncLifetime
         await SeedOrganizationAsync($"Moderator Org {token}", $"moderator-org-{token}");
 
         var moderatorToken = CreateToken($"admin_orgs_mod_{token}", Roles.Moderator);
+        await SeedActiveUserAsync($"admin_orgs_mod_{token}", Roles.Moderator);
         var response = await _client.SendAsync(Authorized(
             HttpMethod.Get, $"/api/v1/admin/orgs?q={token}", moderatorToken));
 
@@ -158,6 +190,7 @@ public class AdminOrganizationEndpointsIntegrationTests : IAsyncLifetime
         await SeedOrganizationAsync($"Owner Org {token}", $"owner-org-{token}");
 
         var ownerToken = CreateToken($"admin_orgs_owner_{token}", Roles.BoutiqueOwner);
+        await SeedActiveUserAsync($"admin_orgs_owner_{token}", Roles.BoutiqueOwner);
         var response = await _client.SendAsync(Authorized(
             HttpMethod.Get, $"/api/v1/admin/orgs?q={token}", ownerToken));
 

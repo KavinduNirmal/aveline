@@ -27,14 +27,12 @@ public sealed class EntitlementResolver(IEntitlementRepository repository) : IEn
 
         var resolved = new Dictionary<string, EntitlementValue>(StringComparer.Ordinal);
 
-        if (planRows.Count == 0)
+        // The documented defaults are always the floor. Seeding them unconditionally means
+        // a partially seeded catalog still resolves an unlisted key to its documented
+        // default instead of letting the caller's arbitrary fallback win (M-20).
+        foreach (var (key, value) in PlanEntitlementDefaults.For(tier))
         {
-            // Catalog not seeded (e.g. an in-memory test database): use the documented
-            // defaults until the authoritative rows exist.
-            foreach (var (key, value) in PlanEntitlementDefaults.For(tier))
-            {
-                resolved[key] = value;
-            }
+            resolved[key] = value;
         }
 
         foreach (var group in planRows.Where(row => row.IsEnabled).GroupBy(row => row.Key, StringComparer.Ordinal))
@@ -77,4 +75,42 @@ public sealed class EntitlementResolver(IEntitlementRepository repository) : IEn
 
         return decimal.TryParse(value.Text, out var parsed) ? parsed : fallback;
     }
+
+    public async Task<decimal> GetTierDecimalAsync(
+        PlanTier tier, string key, decimal fallback, DateTime? at = null,
+        CancellationToken cancellationToken = default)
+    {
+        var asOf = at ?? DateTime.UtcNow;
+        var planRows = await repository.ListEffectivePlanEntitlementsAsync(tier, asOf, cancellationToken);
+
+        var row = planRows
+            .Where(entry => entry.IsEnabled && string.Equals(entry.Key, key, StringComparison.Ordinal))
+            .OrderByDescending(entry => entry.EffectiveFrom)
+            .FirstOrDefault();
+
+        if (row is not null)
+        {
+            // A corrected database row wins over the in-memory catalog.
+            return Coerce(row.ValueType, row.ValueDecimal, row.ValueBool, row.ValueText, fallback);
+        }
+
+        if (PlanEntitlementDefaults.For(tier).TryGetValue(key, out var fallbackValue)
+            && fallbackValue.Number is { } number)
+        {
+            return number;
+        }
+
+        return fallback;
+    }
+
+    private static decimal Coerce(
+        EntitlementValueType valueType, decimal? number, bool? flag, string? text, decimal fallback) =>
+        valueType switch
+        {
+            EntitlementValueType.Decimal => number ?? fallback,
+            EntitlementValueType.Integer => number ?? fallback,
+            EntitlementValueType.Boolean => flag is { } value ? (value ? 1m : 0m) : fallback,
+            EntitlementValueType.String => decimal.TryParse(text, out var parsed) ? parsed : fallback,
+            _ => fallback,
+        };
 }

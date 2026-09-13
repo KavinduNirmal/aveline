@@ -1,8 +1,10 @@
 using Aveline.Api.Common.Jobs;
 using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Modules.Billing.Domain;
 using Aveline.Api.Modules.Billing.Jobs;
 using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Billing.Repositories;
+using Aveline.Api.Modules.Billing.Services;
 using Aveline.Api.Modules.Organizations.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -23,6 +25,8 @@ public class LedgerJobsTests
         services.AddSingleton(context);
         services.AddScoped<IBlossomLedgerRepository, BlossomLedgerRepository>();
         services.AddScoped<IIdempotencyRepository, IdempotencyRepository>();
+        services.AddScoped<IEntitlementRepository, EntitlementRepository>();
+        services.AddScoped<IEntitlementResolver, EntitlementResolver>();
         services.AddSingleton<IDistributedJobLock>(new InMemoryDistributedJobLock());
 
         return (services.BuildServiceProvider(), context);
@@ -119,6 +123,47 @@ public class LedgerJobsTests
             .Where(e => e.EntryType == BlossomLedgerEntryType.PeriodAllocation)
             .ToListAsync());
         Assert.Equal(150m, allocation.BlossomDelta);
+    }
+
+    [Fact]
+    public async Task RolloverJob_UsesThePerOrganizationOverrideForTheNextPeriod()
+    {
+        var (provider, context) = BuildProvider();
+        var (orgId, _) = await SeedOrgWithAccountAsync(
+            context, 150m, 0m, 0m, 0m, DateTime.UtcNow.AddMinutes(-1));
+
+        context.PlanEntitlementOverrides.Add(new PlanEntitlementOverride
+        {
+            OrganizationId = orgId,
+            Key = UsageTrackerService.MonthlyBlossomsKey,
+            ValueType = EntitlementValueType.Decimal,
+            ValueDecimal = 900m,
+            EffectiveFrom = DateTime.UtcNow.AddDays(-1),
+            Reason = "Negotiated contract allowance.",
+            CreatedByUserId = Guid.CreateVersion7(),
+            CreatedAt = DateTime.UtcNow.AddDays(-1),
+        });
+        await context.SaveChangesAsync();
+
+        var job = new BillingPeriodRolloverJob(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<IDistributedJobLock>(),
+            NullLogger<BillingPeriodRolloverJob>.Instance);
+
+        Assert.Equal(1, await job.RunAsync(CancellationToken.None));
+
+        context.ChangeTracker.Clear();
+
+        // M-20: the period allowance must come from the resolver, honouring the override.
+        var next = await context.UsageAccounts
+            .Where(a => a.OrganizationId == orgId && !a.IsClosed)
+            .SingleAsync();
+        Assert.Equal(900m, next.MonthlyBlossomLimit);
+
+        var allocation = Assert.Single(await context.BlossomLedgerEntries
+            .Where(e => e.EntryType == BlossomLedgerEntryType.PeriodAllocation)
+            .ToListAsync());
+        Assert.Equal(900m, allocation.BlossomDelta);
     }
 
     [Fact]

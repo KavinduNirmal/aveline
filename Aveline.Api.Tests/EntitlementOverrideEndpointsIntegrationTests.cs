@@ -121,6 +121,34 @@ public class EntitlementOverrideEndpointsIntegrationTests : IAsyncLifetime
     private static async Task<JsonElement> BodyAsync(HttpResponseMessage response) =>
         JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
 
+    /// <summary>
+    /// The account-state gate (M-15) requires a local Active user before an /admin route
+    /// beyond the onboarding exemption is reachable.
+    /// </summary>
+    private static async Task SeedActiveUserAsync(string clerkId, string role = Roles.Admin)
+    {
+        await using var context = CreateContext();
+        if (await context.Users.AnyAsync(u => u.ClerkId == clerkId))
+        {
+            return;
+        }
+
+        context.Users.Add(new User
+        {
+            Id = Guid.CreateVersion7(),
+            ClerkId = clerkId,
+            Email = $"{clerkId}@aveline.lk",
+            FirstName = "Entitlement",
+            LastName = "Admin",
+            Username = clerkId,
+            UserRole = role,
+            OrganizationRole = string.Empty,
+            HasCompletedOnboarding = true,
+            AccountState = AccountState.Active,
+        });
+        await context.SaveChangesAsync();
+    }
+
     [Fact]
     public async Task Admin_SetsOverride_AndResolvedEntitlementsReflectIt()
     {
@@ -214,6 +242,7 @@ public class EntitlementOverrideEndpointsIntegrationTests : IAsyncLifetime
         var suffix = Guid.NewGuid().ToString("N");
         var (orgId, _) = await SeedOrganizationAsync(suffix);
         var token = CreateToken($"boutique_owner_{suffix}", Roles.BoutiqueOwner);
+        await SeedActiveUserAsync($"boutique_owner_{suffix}", Roles.BoutiqueOwner);
 
         var response = await _client.SendAsync(Authorized(
             HttpMethod.Patch,
@@ -279,7 +308,9 @@ public class EntitlementOverrideEndpointsIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task UnknownOrganization_Returns404()
     {
-        var token = CreateToken($"ent_override_missing_{Guid.NewGuid():N}", Roles.Admin);
+        var clerkId = $"ent_override_missing_{Guid.NewGuid():N}";
+        await SeedActiveUserAsync(clerkId);
+        var token = CreateToken(clerkId, Roles.Admin);
 
         var response = await _client.SendAsync(Authorized(
             HttpMethod.Patch,

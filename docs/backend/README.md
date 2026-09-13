@@ -377,6 +377,26 @@ entitlements.
     `/staff/seats`) are consciously out of scope for the #241 fix. No route exists, so
     they return **404**; `docs/api/README.md` marks them as deferred.
 
+### Deferred medium findings (issue #242)
+
+The #242 hardening pass fixed the low-risk, high-value medium findings from
+[`docs/reports/admin-backend-api-verification.md`](../reports/admin-backend-api-verification.md)
+(M-1, M-3, M-4, M-6, M-7, M-13, M-14, M-15, M-20). The following were consciously
+deferred; each is a confirmed finding in that report.
+
+| ID | Deferred item | Why it is tolerated for now |
+| --- | --- | --- |
+| M-2 | The committed `AgentService:InternalToken` default (`appsettings.Development.json`, `docker-compose.yml`) | Development/compose only; the handler fails closed when the token is unset, and Production must inject a real secret. |
+| M-5 | No application-level rate limiting outside the two in-handler limiters | Tracked as accepted risk SEC-M2 in `docs/security/auth-security-review.md`; needs an infrastructure decision. |
+| M-8 | `GET /admin/pricing/price-book` returns a bare, unpaginated array | A contract change with frontend impact; deferred to a dedicated pagination pass. |
+| M-10 | `/admin/statistics/system/overview` is documented as cached server-side for 15 s but is not cached | A performance claim, not a correctness or security gap. |
+| M-11 | `GET /system/eventbus` ignores the documented `from`/`to` window | The response is instantaneous counters; honouring a window needs new storage. |
+| M-16 | The `/metrics` scheme requirement is not documented precisely | The behaviour is gated correctly by `MetricsPolicy`; documentation-only drift. |
+| M-17 | Ledger `201` bodies use `blossomBalanceAfter`/`createdAt` while the documented example uses `balanceAfter`/`occurredAt` | Frontend naming drift; the `docs/api/README.md` example is the mismatched side. |
+| H-5 | JWT audience validation is disabled, `azp` is never checked, and clock skew uses the 5-minute default | Accepted risk SEC-M1 in `docs/security/auth-security-review.md`; the API never reads the `__session` cookie and CORS is a strict origin allow-list. |
+
+See [`docs/reports/admin-backend-api-verification.md`](../reports/admin-backend-api-verification.md)
+for the evidence behind every row and the full finding set.
 
 ---
 

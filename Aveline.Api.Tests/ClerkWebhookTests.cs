@@ -217,7 +217,7 @@ public class ClerkWebhookTests : IAsyncLifetime
             {
               "type": "organizationMembership.created",
               "data": {
-                "role": "org:manager",
+                "role": "org:boutique_manager",
                 "organization": { "id": "{{clerkOrgId}}" },
                 "public_user_data": { "user_id": "{{clerkUserId}}" }
               }
@@ -242,5 +242,20 @@ public class ClerkWebhookTests : IAsyncLifetime
             """{ "type": "session.created", "data": { "id": "sess_x" } }"""));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("org:boutique_owner", Roles.BoutiqueOwner)]
+    [InlineData("org:boutique_supervisor", Roles.BoutiqueSupervisor)]
+    [InlineData("org:boutique_manager", Roles.BoutiqueManager)]
+    [InlineData("org:boutique_staff", Roles.BoutiqueStaff)]
+    [InlineData("org:not_the_owner", Roles.BoutiqueStaff)]
+    [InlineData("org:manager", Roles.BoutiqueStaff)]
+    [InlineData("owner", Roles.BoutiqueStaff)]
+    [InlineData("", Roles.BoutiqueStaff)]
+    [InlineData(null, Roles.BoutiqueStaff)]
+    public void MapBoutiqueRole_UsesExactCanonicalClerkRoles(string? clerkRole, string expected)
+    {
+        Assert.Equal(expected, ClerkWebhookSyncService.MapBoutiqueRole(clerkRole));
     }
 }

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Hosting;
 
 namespace Aveline.Api.Modules.SystemHealth.HealthChecks;
 
@@ -34,19 +35,30 @@ public static class HealthCheckResponseWriter
             })
             .ToArray();
 
-        var payload = new
+        // The deployment identity (git SHA, build time, environment) is anonymous debug
+        // detail. It is withheld in Production so the public probe cannot fingerprint the
+        // release (M-3); non-production environments keep it for operators.
+        var includeVersion = !string.Equals(
+            deployment.Environment, Environments.Production, StringComparison.OrdinalIgnoreCase);
+
+        var payload = new Dictionary<string, object?>
         {
-            status = report.Status.ToString(),
-            version = new
+            ["status"] = report.Status.ToString(),
+        };
+
+        if (includeVersion)
+        {
+            payload["version"] = new
             {
                 gitSha = deployment.GitSha,
                 buildTime = deployment.BuildTime,
                 assemblyVersion = deployment.AssemblyVersion,
                 environment = deployment.Environment,
-            },
-            totalDurationMs = (int)Math.Round(report.TotalDuration.TotalMilliseconds),
-            checks,
-        };
+            };
+        }
+
+        payload["totalDurationMs"] = (int)Math.Round(report.TotalDuration.TotalMilliseconds);
+        payload["checks"] = checks;
 
         context.Response.ContentType = "application/json; charset=utf-8";
         await context.Response.WriteAsync(JsonSerializer.Serialize(payload, SerializerOptions));

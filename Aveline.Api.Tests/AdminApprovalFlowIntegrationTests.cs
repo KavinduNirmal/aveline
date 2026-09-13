@@ -3,8 +3,12 @@ using System.Net.Http.Headers;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Aveline.Api.Authorization;
+using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Infrastructure.Integrations;
+using Aveline.Api.Modules.Shared.Models;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.IdentityModel.JsonWebTokens;
@@ -98,6 +102,37 @@ public class AdminApprovalFlowIntegrationTests : IAsyncLifetime
             Headers = { Authorization = new AuthenticationHeaderValue("Bearer", token) },
         };
 
+    /// <summary>
+    /// The account-state gate (M-15) requires a local Active user before the review routes
+    /// (`/admin/requests/{id}/*`) are reachable; submitting a request stays exempt.
+    /// </summary>
+    private static async Task SeedActiveUserAsync(string clerkId, string role = Roles.Admin)
+    {
+        await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .Options);
+
+        if (await context.Users.AnyAsync(u => u.ClerkId == clerkId))
+        {
+            return;
+        }
+
+        context.Users.Add(new User
+        {
+            Id = Guid.CreateVersion7(),
+            ClerkId = clerkId,
+            Email = $"{clerkId}@aveline.lk",
+            FirstName = "Review",
+            LastName = "Admin",
+            Username = clerkId,
+            UserRole = role,
+            OrganizationRole = string.Empty,
+            HasCompletedOnboarding = true,
+            AccountState = AccountState.Active,
+        });
+        await context.SaveChangesAsync();
+    }
+
     [Fact]
     public async Task User_SubmitsRequest_IsIdempotent()
     {
@@ -121,6 +156,7 @@ public class AdminApprovalFlowIntegrationTests : IAsyncLifetime
     public async Task NonReviewer_CannotListOrApprove()
     {
         var token = CreateToken("admin_req_staff", "staff", "plain.staff@aveline.lk");
+        await SeedActiveUserAsync("admin_req_staff", Roles.Staff);
 
         var list = await _client.SendAsync(
             Authorized(HttpMethod.Get, "/api/v1/admin/requests", token));
@@ -141,6 +177,7 @@ public class AdminApprovalFlowIntegrationTests : IAsyncLifetime
             .GetProperty("id").GetString();
 
         var reviewer = CreateToken("admin_reviewer_1", "admin", "reviewer@aveline.lk");
+        await SeedActiveUserAsync("admin_reviewer_1");
         var approve = await _client.SendAsync(
             Authorized(HttpMethod.Post, $"/api/v1/admin/requests/{id}/approve", reviewer));
 
@@ -154,6 +191,7 @@ public class AdminApprovalFlowIntegrationTests : IAsyncLifetime
     public async Task Moderator_CannotApproveTheirOwnRequest()
     {
         var token = CreateToken("admin_req_self", "moderator", "self.approver@aveline.lk");
+        await SeedActiveUserAsync("admin_req_self", Roles.Moderator);
 
         var submit = await _client.SendAsync(
             Authorized(HttpMethod.Post, "/api/v1/admin/requests", token));
@@ -178,6 +216,7 @@ public class AdminApprovalFlowIntegrationTests : IAsyncLifetime
             .GetProperty("id").GetString();
 
         var reviewer = CreateToken("admin_reviewer_2", "admin", "reviewer2@aveline.lk");
+        await SeedActiveUserAsync("admin_reviewer_2");
         var reject = await _client.SendAsync(
             Authorized(HttpMethod.Post, $"/api/v1/admin/requests/{id}/reject", reviewer));
         Assert.Equal(HttpStatusCode.OK, reject.StatusCode);
@@ -199,6 +238,7 @@ public class AdminApprovalFlowIntegrationTests : IAsyncLifetime
 
         _clerk.ShouldFail = true;
         var reviewer = CreateToken("admin_reviewer_3", "admin", "reviewer3@aveline.lk");
+        await SeedActiveUserAsync("admin_reviewer_3");
         var approve = await _client.SendAsync(
             Authorized(HttpMethod.Post, $"/api/v1/admin/requests/{id}/approve", reviewer));
 
@@ -206,6 +246,7 @@ public class AdminApprovalFlowIntegrationTests : IAsyncLifetime
         _clerk.ShouldFail = false;
 
         var reviewer2 = CreateToken("admin_reviewer_4", "admin", "reviewer4@aveline.lk");
+        await SeedActiveUserAsync("admin_reviewer_4");
         var list = await _client.SendAsync(
             Authorized(HttpMethod.Get, "/api/v1/admin/requests", reviewer2));
         var doc = JsonDocument.Parse(await list.Content.ReadAsStringAsync()).RootElement;

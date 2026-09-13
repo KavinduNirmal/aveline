@@ -101,6 +101,27 @@ public class FullAuthFlowIntegrationTests : IAsyncLifetime
         Assert.Equal("nosniff", response.Headers.GetValues("X-Content-Type-Options").Single());
         Assert.Equal("DENY", response.Headers.GetValues("X-Frame-Options").Single());
         Assert.Equal("no-referrer", response.Headers.GetValues("Referrer-Policy").Single());
+
+        var csp = response.Headers.GetValues("Content-Security-Policy").Single();
+        Assert.Contains("default-src 'none'", csp);
+        Assert.Contains("frame-ancestors 'none'", csp);
+
+        var permissions = response.Headers.GetValues("Permissions-Policy").Single();
+        Assert.Contains("camera=()", permissions);
+        Assert.Contains("geolocation=()", permissions);
+    }
+
+    [Fact]
+    public async Task HttpsResponses_Include_Hsts()
+    {
+        using var httpsClient = _factory.CreateClient(
+            new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://aveline.test") });
+
+        var response = await httpsClient.GetAsync("/health/live");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var hsts = response.Headers.GetValues("Strict-Transport-Security").Single();
+        Assert.Contains("max-age=", hsts);
     }
 
     [Fact]

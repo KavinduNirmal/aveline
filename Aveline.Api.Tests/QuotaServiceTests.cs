@@ -1,5 +1,6 @@
 using Aveline.Api.Infrastructure.Eventing;
 using Aveline.Api.Modules.Billing.Domain;
+using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Statistics.Services;
 using Aveline.Api.Modules.Statistics.Telemetry;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -26,6 +27,11 @@ public class QuotaServiceTests
 
         public Task<decimal> GetDecimalAsync(
             Guid organizationId, string key, decimal fallback, DateTime? at = null,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(limits.TryGetValue(key, out var limit) ? limit : fallback);
+
+        public Task<decimal> GetTierDecimalAsync(
+            PlanTier tier, string key, decimal fallback, DateTime? at = null,
             CancellationToken cancellationToken = default)
             => Task.FromResult(limits.TryGetValue(key, out var limit) ? limit : fallback);
     }

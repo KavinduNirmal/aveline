@@ -165,6 +165,61 @@ public class OnboardingMiddlewareTests
         Assert.Contains("onboarding-required", body);
     }
 
+    private (OnboardingMiddleware Middleware, DefaultHttpContext Context) CreatePendingRequest(string path)
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Path = path;
+        context.Response.Body = new MemoryStream();
+        context.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim(ClaimTypes.NameIdentifier, "clerk_pending_path_user")
+        }, "TestAuth"));
+
+        _fakeUserService.UserToReturn = new UserOnboardingCacheItem
+        {
+            Id = Guid.NewGuid(),
+            ClerkId = "clerk_pending_path_user",
+            HasCompletedOnboarding = false,
+            AccountState = AccountState.OnboardingPending,
+        };
+
+        return (new OnboardingMiddleware(NextMiddleware), context);
+    }
+
+    [Theory]
+    [InlineData("/api/v1/users/me")]
+    [InlineData("/api/v1/users/me/sessions")]
+    [InlineData("/api/v1/users/onboarding")]
+    [InlineData("/api/v1/onboarding/status")]
+    [InlineData("/api/v1/onboarding/owner")]
+    [InlineData("/api/v1/invitations/abc")]
+    [InlineData("/api/v1/auth/claims")]
+    [InlineData("/api/v1/admin/requests")]
+    public async Task PendingAccount_OnAllowedOnboardingPath_PassesThrough(string path)
+    {
+        var (middleware, context) = CreatePendingRequest(path);
+
+        await middleware.InvokeAsync(context, _fakeUserService);
+
+        Assert.True(_nextCalled);
+    }
+
+    [Theory]
+    [InlineData("/api/v1/admin")]
+    [InlineData("/api/v1/admin/users")]
+    [InlineData("/api/v1/admin/orgs")]
+    [InlineData("/api/v1/admin/audit")]
+    [InlineData("/api/v1/admin/requests/00000000-0000-0000-0000-000000000000/approve")]
+    public async Task PendingAccount_OnGatedAdminPath_Returns403(string path)
+    {
+        var (middleware, context) = CreatePendingRequest(path);
+
+        await middleware.InvokeAsync(context, _fakeUserService);
+
+        Assert.False(_nextCalled);
+        Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
+    }
+
     [Fact]
     public async Task SuspendedAccount_AnyPath_Returns403AccountSuspended()
     {

@@ -150,10 +150,14 @@ public sealed class BillingPeriodRolloverJob(
 
     protected override TimeSpan Interval => TimeSpan.FromHours(1);
 
+    /// <summary>Last-resort allowance when the resolver has no catalog entry at all.</summary>
+    private const decimal SeedFallbackBlossomLimit = 150m;
+
     public override async Task<int> RunAsync(CancellationToken cancellationToken)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var entitlements = scope.ServiceProvider.GetRequiredService<IEntitlementResolver>();
 
         var now = DateTime.UtcNow;
         var due = await db.UsageAccounts
@@ -180,9 +184,14 @@ public sealed class BillingPeriodRolloverJob(
                     .Select(org => (PlanTier?)org.PlanTier)
                     .FirstOrDefaultAsync(cancellationToken) ?? PlanTier.Seed;
 
-                var limit = PlanEntitlementDefaults.For(tier).TryGetValue(UsageTrackerService.MonthlyBlossomsKey, out var entitlement)
-                    ? entitlement.Number ?? 150m
-                    : 150m;
+                // Resolve through IEntitlementResolver so a per-organisation override (or a
+                // corrected catalog row) defines the next period's allowance (M-20).
+                var limit = await entitlements.GetDecimalAsync(
+                    account.OrganizationId,
+                    UsageTrackerService.MonthlyBlossomsKey,
+                    SeedFallbackBlossomLimit,
+                    at: null,
+                    cancellationToken);
 
                 var next = new UsageAccount
                 {

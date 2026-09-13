@@ -1,3 +1,4 @@
+using Aveline.Api.Common.Exceptions;
 using Aveline.Api.Common.Middleware;
 using Aveline.Api.Configurations;
 using Aveline.Api.Endpoints;
@@ -24,12 +25,16 @@ using Aveline.Api.Modules.Organizations.Services;
 using Aveline.Api.Modules.Shared.Repositories;
 using Aveline.Api.Modules.Shared.Services;
 using Aveline.Api.Modules.Statistics;
+using Aveline.Api.Modules.Statistics.Telemetry;
 using Aveline.Api.Modules.SystemHealth;
 using Aveline.Api.Modules.SystemHealth.Endpoints;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenApi();
+// A single handler turns every unhandled exception into a stable 500 envelope (M-7).
+builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
@@ -83,6 +88,15 @@ builder.Services.AddScoped<Aveline.Api.Modules.Organizations.Webhooks.IClerkWebh
 
 var app = builder.Build();
 
+// Fail fast when Production would hash client IPs with an empty salt (M-1).
+TelemetrySecurityGuard.EnsureIpHashSaltForProduction(app.Environment, app.Configuration);
+
+// Outermost middleware: it catches every downstream failure, including the security
+// header middleware, and writes the stable error envelope (M-7).
+app.UseExceptionHandler();
+// HSTS is emitted for HTTPS responses (the default excludes localhost) (M-13).
+app.UseHsts();
+
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi().AllowAnonymous();
@@ -117,7 +131,11 @@ app.MapPrometheusScrapingEndpoint("/metrics")
 
 var v1 = app.MapGroup("/api/v1");
 v1.MapAuthEndpoints();
-v1.MapAuthPolicyDemoEndpoints();
+if (app.Environment.IsDevelopment())
+{
+    // Demonstration endpoints only; never mapped in Production (M-14).
+    v1.MapAuthPolicyDemoEndpoints();
+}
 v1.MapAgentEndpoints();
 v1.MapUserEndpoints();
 v1.MapAdminUserEndpoints();

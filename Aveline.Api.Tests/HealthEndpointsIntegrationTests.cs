@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace Aveline.Api.Tests;
@@ -77,4 +78,48 @@ public class HealthEndpointsIntegrationTests : IAsyncLifetime
         var body = JsonDocument.Parse(await legacy.Content.ReadAsStringAsync()).RootElement;
         Assert.True(body.TryGetProperty("checks", out _));
     }
+
+    [Fact]
+    public async Task Ready_InProduction_OmitsTheVersionBlock()
+    {
+        // M-3: the anonymous readiness probe must not fingerprint the release in
+        // Production. The dependency checks and status stay.
+        await using var factory = CreateProductionFactory();
+        using var client = factory.CreateClient();
+
+        var response = await client.GetAsync("/health/ready");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.False(body.TryGetProperty("version", out _));
+        Assert.True(body.TryGetProperty("checks", out _));
+    }
+
+    [Fact]
+    public async Task Live_InProduction_StaysVersionFree()
+    {
+        await using var factory = CreateProductionFactory();
+        using var client = factory.CreateClient();
+
+        var response = await client.GetAsync("/health/live");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("Healthy", body.GetProperty("status").GetString());
+        Assert.False(body.TryGetProperty("version", out _));
+        Assert.False(body.TryGetProperty("checks", out _));
+    }
+
+    private WebApplicationFactory<Program> CreateProductionFactory() =>
+        new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.UseEnvironment("Production");
+                builder.UseSetting("Clerk:Authority", "https://clerk.invalid");
+                builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
+                builder.UseSetting("Telemetry:IpHashSalt", "test-production-ip-salt");
+                builder.UseSetting("AgentService:BaseUrl", _agentServer.BaseUrl);
+                builder.UseSetting("AgentService:InternalToken", "test-internal-token");
+                builder.UseSetting("Observability:AgentIsCritical", "false");
+            });
 }

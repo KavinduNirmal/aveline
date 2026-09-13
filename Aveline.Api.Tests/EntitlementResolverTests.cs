@@ -141,9 +141,32 @@ public class EntitlementResolverTests
 
         var all = await CreateResolver().GetAllAsync(orgId, Now);
 
-        Assert.Equal(3, all.Count);
+        // The seeded rows win.
         Assert.Equal(2000m, all["blossoms.monthly"].Number);
+        Assert.Equal(10m, all["staff.max"].Number);
         Assert.Equal("advanced", all["analytics.level"].Text);
+
+        // A partially seeded catalog still fills the unlisted keys from the documented
+        // defaults rather than omitting them (M-20).
+        Assert.Equal(PlanEntitlementDefaults.For(PlanTier.Orchid).Count, all.Count);
+        Assert.Equal(
+            PlanEntitlementDefaults.For(PlanTier.Orchid)["api.access"].Flag,
+            all["api.access"].Flag);
+    }
+
+    [Fact]
+    public async Task GetDecimalAsync_PartiallySeededCatalog_ReturnsTheCatalogDefault()
+    {
+        var orgId = await SeedOrganizationAsync(PlanTier.Bloom);
+        // Only one of the catalog keys is seeded, so the catalog is partial.
+        SeedPlan(PlanTier.Bloom, "blossoms.monthly", number: 999m);
+        await _context.SaveChangesAsync();
+
+        var value = await CreateResolver().GetDecimalAsync(orgId, "staff.max", 7m, Now);
+
+        // M-20: an unlisted key must resolve to the documented Bloom default (3), never to
+        // the caller's arbitrary fallback.
+        Assert.Equal(3m, value);
     }
 
     [Fact]

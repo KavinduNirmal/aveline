@@ -6,6 +6,7 @@ using System.Text.Json;
 using Aveline.Api.Authorization;
 using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Modules.Audit.Models;
+using Aveline.Api.Modules.Shared.Models;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.JsonWebTokens;
@@ -99,6 +100,34 @@ public class AuditEndpointsIntegrationTests : IAsyncLifetime
         return handler.CreateToken(descriptor);
     }
 
+    /// <summary>
+    /// The account-state gate (M-15) requires a local Active user before an /admin route
+    /// beyond the onboarding exemption is reachable.
+    /// </summary>
+    private static async Task SeedActiveUserAsync(string clerkId)
+    {
+        await using var context = CreateContext();
+        if (await context.Users.AnyAsync(u => u.ClerkId == clerkId))
+        {
+            return;
+        }
+
+        context.Users.Add(new User
+        {
+            Id = Guid.CreateVersion7(),
+            ClerkId = clerkId,
+            Email = $"{clerkId}@aveline.lk",
+            FirstName = "Audit",
+            LastName = "Admin",
+            Username = clerkId,
+            UserRole = Roles.Admin,
+            OrganizationRole = string.Empty,
+            HasCompletedOnboarding = true,
+            AccountState = AccountState.Active,
+        });
+        await context.SaveChangesAsync();
+    }
+
     private HttpRequestMessage Authorized(HttpMethod method, string path, string token) =>
         new(method, path)
         {
@@ -117,6 +146,7 @@ public class AuditEndpointsIntegrationTests : IAsyncLifetime
             entityType, "audit.test.created", DateTime.UtcNow.AddMinutes(-1));
 
         var token = CreateToken($"audit_admin_{suffix}", Roles.Admin);
+        await SeedActiveUserAsync($"audit_admin_{suffix}");
 
         var list = await _client.SendAsync(Authorized(
             HttpMethod.Get, $"/api/v1/admin/audit?entityType={entityType}", token));
@@ -188,6 +218,7 @@ public class AuditEndpointsIntegrationTests : IAsyncLifetime
             entityType, $"audit.page.newest.{suffix}", now.AddMinutes(-10), organizationId, actorUserId);
 
         var token = CreateToken($"audit_paging_{suffix}", Roles.Admin);
+        await SeedActiveUserAsync($"audit_paging_{suffix}");
 
         var firstPage = await _client.SendAsync(Authorized(
             HttpMethod.Get,
@@ -236,7 +267,9 @@ public class AuditEndpointsIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task UnknownId_Returns404WithMessage()
     {
-        var token = CreateToken($"audit_missing_{Guid.NewGuid():N}", Roles.Admin);
+        var clerkId = $"audit_missing_{Guid.NewGuid():N}";
+        await SeedActiveUserAsync(clerkId);
+        var token = CreateToken(clerkId, Roles.Admin);
 
         var response = await _client.SendAsync(Authorized(
             HttpMethod.Get, $"/api/v1/admin/audit/{Guid.CreateVersion7()}", token));

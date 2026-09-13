@@ -90,7 +90,8 @@ public class SubscriptionEndpointsIntegrationTests : IAsyncLifetime
     }
 
     private static async Task<(Guid OrgId, string OwnerClerk)> SeedBoutiqueAsync(
-        string suffix, PlanTier tier = PlanTier.Seed, decimal blossomUsed = 0m, decimal limit = 150m)
+        string suffix, PlanTier tier = PlanTier.Seed, decimal blossomUsed = 0m, decimal limit = 150m,
+        decimal? blossomOverride = null)
     {
         await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
             .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
@@ -141,6 +142,21 @@ public class SubscriptionEndpointsIntegrationTests : IAsyncLifetime
                 MonthlyBlossomLimit = limit,
                 BlossomUsed = blossomUsed,
                 BlossomRemaining = limit - blossomUsed,
+            });
+        }
+
+        if (blossomOverride is not null)
+        {
+            context.PlanEntitlementOverrides.Add(new PlanEntitlementOverride
+            {
+                OrganizationId = org.Id,
+                Key = "blossoms.monthly",
+                ValueType = EntitlementValueType.Decimal,
+                ValueDecimal = blossomOverride.Value,
+                EffectiveFrom = DateTime.UtcNow.AddDays(-1),
+                Reason = "Negotiated contract allowance.",
+                CreatedByUserId = owner.Id,
+                CreatedAt = DateTime.UtcNow.AddDays(-1),
             });
         }
 
@@ -213,6 +229,23 @@ public class SubscriptionEndpointsIntegrationTests : IAsyncLifetime
         Assert.Equal("plan-limit-violation", body.GetProperty("code").GetString());
         var violations = body.GetProperty("violations").EnumerateArray().ToArray();
         Assert.Contains(violations, v => v.GetProperty("key").GetString() == "blossoms.monthly");
+    }
+
+    [Fact]
+    public async Task ChangePlan_Downgrade_WithOverride_UsesTheOverrideAllowance()
+    {
+        // Rose -> Seed with 600 Blossoms already used. The Seed catalog allowance (150)
+        // would trip the downgrade guard; the per-org override of 1000 must win (M-20).
+        var (orgId, clerk) = await SeedBoutiqueAsync(
+            "downgrade-override", PlanTier.Rose, blossomUsed: 600m, limit: 5000m, blossomOverride: 1000m);
+        var token = CreateToken(clerk, orgRole: Roles.BoutiqueOwner);
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Post, $"/api/v1/orgs/{orgId}/subscription/change-plan", token,
+            new { planTier = "Seed", effective = "immediate" },
+            "change-plan-downgrade-override"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     [Fact]

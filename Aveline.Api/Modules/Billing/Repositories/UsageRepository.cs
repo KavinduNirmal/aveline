@@ -12,13 +12,12 @@ public sealed class UsageRepository(AppDbContext db) : IUsageRepository
     /// <inheritdoc/>
     public async Task AddUsageRecordAndUpdateAccountAsync(
         AiUsageRecord record,
+        decimal defaultBlossomLimit,
         CancellationToken cancellationToken = default)
     {
-        // The service has already calculated BlossomUnits; derive the current period
-        // to locate the ledger row.
         var now = DateTime.UtcNow;
         var periodStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
-        var periodEnd   = periodStart.AddMonths(1);
+        var periodEnd = periodStart.AddMonths(1);
 
         var isRelational = db.Database.IsRelational();
         Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? transaction = null;
@@ -29,49 +28,63 @@ public sealed class UsageRepository(AppDbContext db) : IUsageRepository
 
         try
         {
-            // 1. Insert the immutable usage record.
-            db.AiUsageRecords.Add(record);
+            var account = await db.UsageAccounts
+                .FirstOrDefaultAsync(
+                    a => a.OrganizationId == record.OrganizationId
+                      && a.PeriodStart    == periodStart,
+                    cancellationToken);
 
-        // 2. Get or create the billing period ledger row and increment the balance.
-        var account = await db.UsageAccounts
-            .FirstOrDefaultAsync(
-                a => a.OrganizationId == record.OrganizationId
-                  && a.PeriodStart    == periodStart,
-                cancellationToken);
-
-        if (account is null)
-        {
-            // Default limit — will be updated when subscription management is implemented.
-            account = new UsageAccount
+            if (account is null)
             {
-                OrganizationId      = record.OrganizationId,
-                PeriodStart         = periodStart,
-                PeriodEnd           = periodEnd,
-                MonthlyBlossomLimit = 150m, // Seed tier default
-                BlossomUsed         = 0m,
-                BlossomRemaining    = 150m,
-            };
-            db.UsageAccounts.Add(account);
+                account = new UsageAccount
+                {
+                    OrganizationId      = record.OrganizationId,
+                    PeriodStart         = periodStart,
+                    PeriodEnd           = periodEnd,
+                    MonthlyBlossomLimit = defaultBlossomLimit,
+                    BlossomUsed         = 0m,
+                    BlossomRemaining    = defaultBlossomLimit,
+                };
+                db.UsageAccounts.Add(account);
+            }
+
+            db.AiUsageRecords.Add(record);
+            await db.SaveChangesAsync(cancellationToken);
+
+            if (isRelational)
+            {
+                // Atomic increment: avoids the lost-update race entirely (defect D-3).
+                await db.UsageAccounts
+                    .Where(a => a.Id == account.Id)
+                    .ExecuteUpdateAsync(
+                        setters => setters
+                            .SetProperty(a => a.BlossomUsed, a => a.BlossomUsed + record.BlossomUnits)
+                            .SetProperty(a => a.BlossomRemaining, a => a.BlossomRemaining - record.BlossomUnits)
+                            .SetProperty(a => a.UpdatedAt, now),
+                        cancellationToken);
+            }
+            else
+            {
+                account.BlossomUsed += record.BlossomUnits;
+                account.BlossomRemaining =
+                    account.MonthlyBlossomLimit + account.BlossomGranted - account.BlossomAdjusted - account.BlossomUsed;
+                account.UpdatedAt = now;
+                await db.SaveChangesAsync(cancellationToken);
+            }
+
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync(cancellationToken);
+            }
         }
-
-        account.BlossomUsed      += record.BlossomUnits;
-        account.BlossomRemaining  = account.MonthlyBlossomLimit - account.BlossomUsed;
-        account.UpdatedAt         = DateTime.UtcNow;
-
-        await db.SaveChangesAsync(cancellationToken);
-        if (transaction is not null)
+        finally
         {
-            await transaction.CommitAsync(cancellationToken);
+            if (transaction is not null)
+            {
+                await transaction.DisposeAsync();
+            }
         }
     }
-    finally
-    {
-        if (transaction is not null)
-        {
-            await transaction.DisposeAsync();
-        }
-    }
-}
 
     /// <inheritdoc/>
     public async Task<UsageAccount> GetOrCreateAccountAsync(
@@ -117,6 +130,20 @@ public sealed class UsageRepository(AppDbContext db) : IUsageRepository
             .OrderByDescending(r => r.CreatedAt)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
+            .ToListAsync(cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<AiUsageRecord>> ListRecordsInWindowAsync(
+        Guid organizationId,
+        DateTime from,
+        DateTime to,
+        CancellationToken cancellationToken = default)
+    {
+        return await db.AiUsageRecords
+            .Where(r => r.OrganizationId == organizationId)
+            .Where(r => r.CreatedAt >= from && r.CreatedAt < to)
+            .OrderBy(r => r.CreatedAt)
             .ToListAsync(cancellationToken);
     }
 }

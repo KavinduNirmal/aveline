@@ -1,6 +1,10 @@
 using System.Text.RegularExpressions;
 using Aveline.Api.Authorization;
 using Aveline.Api.Infrastructure.Caching;
+using Aveline.Api.Infrastructure.Eventing;
+using Aveline.Api.Modules.Audit.Models;
+using Aveline.Api.Modules.Audit.Services;
+using Aveline.Api.Modules.Billing.Domain;
 using Aveline.Api.Modules.Organizations.DTOs;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Organizations.Repositories;
@@ -19,12 +23,27 @@ public partial class OrganizationService : IOrganizationService
     /// <summary>Default life of an invitation. Mirrors the code-store TTL so they never drift.</summary>
     private static readonly TimeSpan DefaultInviteValidity = TimeSpan.FromHours(24);
 
+    /// <summary>Every role a membership may hold. Owner is included but is not invitable.</summary>
+    private static readonly string[] BoutiqueRoles =
+    [
+        Roles.BoutiqueOwner,
+        Roles.BoutiqueSupervisor,
+        Roles.BoutiqueManager,
+        Roles.BoutiqueStaff,
+    ];
+
+    private const int MaxNameLength = 200;
+    private const int MaxMemberPageSize = 100;
+
     private readonly IOrganizationRepository _organizationRepository;
     private readonly IInvitationRepository _invitationRepository;
     private readonly IInvitationCodeStore _codeStore;
     private readonly IUserRepository _userRepository;
     private readonly IUserCacheService _userCacheService;
     private readonly ILogger<OrganizationService> _logger;
+    private readonly IEntitlementResolver? _entitlementResolver;
+    private readonly IAuditService? _auditService;
+    private readonly IEventBus? _eventBus;
 
     public OrganizationService(
         IOrganizationRepository organizationRepository,
@@ -32,7 +51,10 @@ public partial class OrganizationService : IOrganizationService
         IInvitationCodeStore codeStore,
         IUserRepository userRepository,
         IUserCacheService userCacheService,
-        ILogger<OrganizationService> logger)
+        ILogger<OrganizationService> logger,
+        IEntitlementResolver? entitlementResolver = null,
+        IAuditService? auditService = null,
+        IEventBus? eventBus = null)
     {
         _organizationRepository = organizationRepository;
         _invitationRepository = invitationRepository;
@@ -40,6 +62,9 @@ public partial class OrganizationService : IOrganizationService
         _userRepository = userRepository;
         _userCacheService = userCacheService;
         _logger = logger;
+        _entitlementResolver = entitlementResolver;
+        _auditService = auditService;
+        _eventBus = eventBus;
     }
 
     /// <summary>
@@ -402,9 +427,323 @@ public partial class OrganizationService : IOrganizationService
         await InvalidateUserCacheAsync(memberUserId, cancellationToken);
     }
 
-    /// <summary>Reactivates a membership (previously suspended or pending).</summary>
-    private async Task<OrganizationMembership> ActivateMembershipAsync(
+    public async Task<Organization> UpdateSettingsAsync(
         Guid organizationId,
+        UpdateOrganizationSettingsRequest request,
+        Guid actorUserId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var organization = await _organizationRepository.GetByIdAsync(organizationId, cancellationToken)
+            ?? throw new KeyNotFoundException($"Organization '{organizationId}' not found.");
+
+        if (request.Name is not null)
+        {
+            var name = request.Name.Trim();
+            if (name.Length is 0 or > MaxNameLength)
+            {
+                throw new ArgumentException($"The organization name must be 1..{MaxNameLength} characters.");
+            }
+
+            organization.Name = name;
+        }
+
+        if (request.Slug is not null)
+        {
+            var slug = OrgSlug.From(request.Slug);
+            if (string.IsNullOrEmpty(slug))
+            {
+                throw new ArgumentException("The boutique slug must contain letters or numbers.");
+            }
+
+            if (!string.Equals(slug, organization.Slug, StringComparison.Ordinal))
+            {
+                if (await _organizationRepository.ExistsBySlugAsync(slug, cancellationToken))
+                {
+                    throw new OrganizationSlugAlreadyInUseException(slug);
+                }
+
+                organization.Slug = slug;
+            }
+        }
+
+        await EnsureAiContextEntitledAsync(organization, request, cancellationToken);
+
+        organization.Address = Apply(request.Address, organization.Address);
+        organization.PhoneNumber = Apply(request.PhoneNumber, organization.PhoneNumber);
+        organization.Description = Apply(request.Description, organization.Description);
+        organization.LogoUrl = Apply(request.LogoUrl, organization.LogoUrl);
+        organization.BrandVoice = Apply(request.BrandVoice, organization.BrandVoice);
+        organization.BusinessRules = Apply(request.BusinessRules, organization.BusinessRules);
+        organization.PreferredColorsFabrics = Apply(request.PreferredColorsFabrics, organization.PreferredColorsFabrics);
+        organization.CustomerPreferences = Apply(request.CustomerPreferences, organization.CustomerPreferences);
+
+        if (request.BillingEmail is not null)
+        {
+            organization.BillingEmail = NormalizeEmail(request.BillingEmail, "billingEmail");
+        }
+
+        if (request.ContactEmail is not null)
+        {
+            organization.ContactEmail = NormalizeEmail(request.ContactEmail, "contactEmail");
+        }
+
+        if (request.Currency is not null)
+        {
+            var currency = request.Currency.Trim().ToUpperInvariant();
+            if (currency.Length != 3 || !currency.All(char.IsLetter))
+            {
+                throw new ArgumentException("Currency must be a 3-letter ISO-4217 code.");
+            }
+
+            organization.Currency = currency;
+        }
+
+        if (request.TimeZone is not null)
+        {
+            var timeZone = request.TimeZone.Trim();
+            try
+            {
+                TimeZoneInfo.FindSystemTimeZoneById(timeZone);
+            }
+            catch (Exception) when (timeZone.Length > 0)
+            {
+                throw new ArgumentException($"'{timeZone}' is not a known IANA time zone.");
+            }
+
+            organization.TimeZone = timeZone;
+        }
+
+        organization.UpdatedAt = DateTime.UtcNow;
+        await _organizationRepository.UpdateAsync(organization, cancellationToken);
+        _logger.LogInformation(
+            "Organization settings updated. organizationId={OrganizationId} actorUserId={ActorUserId}",
+            organizationId, actorUserId);
+
+        if (_auditService is not null)
+        {
+            await _auditService.RecordAsync(new AuditEntryRequest(
+                AuditAction.OrganizationSettingsUpdated,
+                "Organization",
+                organization.Id.ToString(),
+                OrganizationId: organization.Id,
+                ActorKind: AuditActorKind.User,
+                ActorUserId: actorUserId,
+                After: OrganizationSettingsDto.From(organization)), cancellationToken);
+        }
+
+        if (_eventBus is not null)
+        {
+            await _eventBus.PublishAsync(
+                "org.settings.updated",
+                organization.Id,
+                new { organizationId = organization.Id },
+                cancellationToken: cancellationToken);
+        }
+
+        return organization;
+    }
+
+    public async Task<PagedOrganizationMembers> ListMembersAsync(
+        Guid organizationId,
+        string? status,
+        string? role,
+        string? search,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken = default)
+    {
+        page = page < 1 ? 1 : page;
+        pageSize = pageSize is < 1 or > MaxMemberPageSize ? 20 : pageSize;
+
+        var memberships = await _organizationRepository.ListMembershipsWithUsersAsync(
+            organizationId, cancellationToken);
+
+        var query = memberships.AsEnumerable();
+
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            query = query.Where(m => string.Equals(m.Status.ToString(), status.Trim(), StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (!string.IsNullOrWhiteSpace(role))
+        {
+            query = query.Where(m => string.Equals(m.BoutiqueRole, role.Trim(), StringComparison.Ordinal));
+        }
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = search.Trim();
+            query = query.Where(m =>
+                Contains(m.User?.Email, term)
+                || Contains(m.User?.FirstName, term)
+                || Contains(m.User?.LastName, term)
+                || Contains(m.User?.DisplayName, term));
+        }
+
+        var filtered = query.ToList();
+        var items = filtered
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(MapMember)
+            .ToArray();
+
+        return new PagedOrganizationMembers(items, page, pageSize, filtered.Count);
+    }
+
+    public async Task<OrganizationMemberDto> ChangeMemberRoleAsync(
+        Guid organizationId,
+        Guid memberUserId,
+        string newRole,
+        Guid actingUserId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(newRole)
+            || !BoutiqueRoles.Contains(newRole.Trim(), StringComparer.Ordinal))
+        {
+            throw new InvalidBoutiqueRoleException(newRole ?? string.Empty);
+        }
+
+        var role = newRole.Trim();
+
+        var membership = await _organizationRepository.GetMembershipAsync(
+            organizationId, memberUserId, cancellationToken)
+            ?? throw new MembershipNotFoundException(organizationId, memberUserId);
+
+        if (memberUserId == actingUserId)
+        {
+            throw new CannotChangeOwnRoleException();
+        }
+
+        var actorMembership = await _organizationRepository.GetMembershipAsync(
+            organizationId, actingUserId, cancellationToken);
+        var actorRole = actorMembership?.BoutiqueRole;
+
+        if (membership.BoutiqueRole == Roles.BoutiqueOwner && role != Roles.BoutiqueOwner)
+        {
+            var memberships = await _organizationRepository.ListMembershipsForOrganizationAsync(
+                organizationId, cancellationToken);
+            var activeOwners = memberships.Count(m =>
+                m.BoutiqueRole == Roles.BoutiqueOwner && m.Status == MembershipStatus.Active);
+
+            if (activeOwners <= 1)
+            {
+                throw new CannotDemoteLastOwnerException();
+            }
+        }
+
+        if ((role == Roles.BoutiqueOwner || membership.BoutiqueRole == Roles.BoutiqueOwner)
+            && actorRole != Roles.BoutiqueOwner)
+        {
+            throw new OwnerRoleChangeNotPermittedException();
+        }
+
+        var previousRole = membership.BoutiqueRole;
+        membership.BoutiqueRole = role;
+        await _organizationRepository.UpdateMembershipAsync(membership, cancellationToken);
+
+        _logger.LogInformation(
+            "Membership role changed. organizationId={OrganizationId} userId={UserId} from={PreviousRole} to={Role}",
+            organizationId, memberUserId, previousRole, role);
+
+        await InvalidateUserCacheAsync(memberUserId, cancellationToken);
+
+        if (_auditService is not null)
+        {
+            await _auditService.RecordAsync(new AuditEntryRequest(
+                AuditAction.MembershipRoleChanged,
+                "OrganizationMembership",
+                membership.Id.ToString(),
+                OrganizationId: organizationId,
+                ActorKind: AuditActorKind.User,
+                ActorUserId: actingUserId,
+                Before: new { BoutiqueRole = previousRole },
+                After: new { BoutiqueRole = role }), cancellationToken);
+        }
+
+        if (_eventBus is not null)
+        {
+            await _eventBus.PublishAsync(
+                "membership.role.changed",
+                organizationId,
+                new { organizationId, userId = memberUserId, role },
+                cancellationToken: cancellationToken);
+        }
+
+        return MapMember(membership);
+    }
+
+    private async Task EnsureAiContextEntitledAsync(
+        Organization organization,
+        UpdateOrganizationSettingsRequest request,
+        CancellationToken cancellationToken)
+    {
+        var touchesAiContext = request.BrandVoice is not null
+                               || request.BusinessRules is not null
+                               || request.PreferredColorsFabrics is not null
+                               || request.CustomerPreferences is not null;
+
+        if (!touchesAiContext || _entitlementResolver is null)
+        {
+            return;
+        }
+
+        var customContext = (await _entitlementResolver.GetAsync(
+            organization.Id, "ai.customContext", at: null, cancellationToken))?.Text ?? "none";
+
+        if (customContext == "none")
+        {
+            throw new ArgumentException(
+                "Custom AI context is not available on the Seed plan. Please upgrade to Bloom or Orchid to configure bespoke brand voice and rules.");
+        }
+
+        if (customContext == "basic" && request.CustomerPreferences is not null)
+        {
+            throw new ArgumentException("Deep customer memory rules require Orchid or Rose plans.");
+        }
+    }
+
+    private static OrganizationMemberDto MapMember(OrganizationMembership membership)
+    {
+        var user = membership.User;
+        return new OrganizationMemberDto(
+            membership.UserId,
+            user?.Email ?? string.Empty,
+            user?.FirstName ?? string.Empty,
+            user?.LastName ?? string.Empty,
+            user?.DisplayName,
+            user?.ProfileImageUrl,
+            membership.BoutiqueRole,
+            membership.Status.ToString(),
+            membership.CreatedAt);
+    }
+
+    private static bool Contains(string? value, string term) =>
+        value is not null && value.Contains(term, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Empty string clears a nullable field; null leaves it unchanged.</summary>
+    private static string? Apply(string? value, string? current) =>
+        value is null ? current : string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string? NormalizeEmail(string value, string field)
+    {
+        var trimmed = value.Trim();
+        if (trimmed.Length == 0)
+        {
+            return null;
+        }
+
+        if (trimmed.Length > 254 || !trimmed.Contains('@'))
+        {
+            throw new ArgumentException($"'{field}' must be a valid email address.");
+        }
+
+        return trimmed.ToLowerInvariant();
+    }
+
+    /// <summary>Reactivates a membership (previously suspended or pending).</summary>
+    private async Task<OrganizationMembership> ActivateMembershipAsync(        Guid organizationId,
         Guid memberUserId,
         CancellationToken cancellationToken)
     {

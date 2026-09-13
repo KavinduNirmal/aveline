@@ -1,0 +1,5196 @@
+openapi: 3.0.3
+
+info:
+  title: Aveline API
+  version: "1.0.0"
+  description: |
+    Aveline's public HTTP API — a boutique concierge platform covering billing,
+    entitlements, statistics, users, and organizations.
+
+    ## Versioning
+    All user-facing routes are prefixed `/api/v1`. There is no versioning library:
+    the prefix is a literal route group. Additive changes do not bump the version;
+    clients MUST ignore unknown fields.
+
+    ## Authentication
+    Three schemes:
+    - `bearerAuth` — Clerk JWT. Default for every user-facing route.
+    - `internalToken` — `X-Internal-Token` shared secret. `/internal/**` only. NOT for frontend clients.
+    - `apiKeyAuth` — `X-Api-Key`. Customer server-to-server integrations on the Rose plan.
+
+    A route uses exactly one scheme.
+
+    ## Authorization
+    Two layers, failing closed:
+    1. A named policy for the required permission or role.
+    2. For any route containing `{organizationId}`, an `Active` OrganizationMembership
+       whose boutique role grants the required permission. A stale JWT cannot cross organizations.
+
+    ## Errors
+    A single global exception handler (`GlobalExceptionHandler`, registered as the
+    outermost middleware at `Program.cs:99`) turns every unhandled exception into a
+    stable `{ status, message, traceId }` `500` body. The shapes are:
+    - `400` field validation -> `ValidationProblemDetails`
+    - `400`/`404`/`409`/`502`/`503` -> `ErrorResponse` (`{ message }`)
+    - `401` -> empty body
+    - `403` -> empty body, or `ProblemDetails` for the account-state gate
+    - `429` -> `ErrorResponse`, or a `QuotaExceededError` for quota rejections
+    - `500` -> `{ status, message, traceId }` (the detail is log-only)
+
+    ## Pagination
+    `page` (default 1, minimum 1) and `pageSize` (default 50, 1..200). Responses use
+    the envelope `{ items, total, page, pageSize }`. The property is `total`, not `totalCount`.
+
+    ## Idempotency
+    Money-shaped POSTs require an `Idempotency-Key` header. A replay with the same key
+    and body returns the original response with `Idempotency-Replayed: true`. A replay
+    with a different body returns `409` with `code: idempotency-key-reuse`. Concurrent
+    requests carrying the same key are serialised: the first executes and the rest replay
+    its response, or receive `409` with `code: idempotency-key-in-flight` if the original
+    is still running when the wait budget expires. If the lease store is unreachable the
+    request is not executed and returns `503` with `code: idempotency-unavailable` (the
+    guard fails closed).
+
+    ## Statistics data quality
+    Several statistics depend on instrumentation that is not yet complete. Every
+    statistics response carries a `dataQuality` object. A client MUST NOT render a
+    metric whose corresponding flag is `false` as if it were a real zero.
+  contact:
+    name: Aveline backend
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:5091
+    description: Local development
+  - url: https://api.aveline.app
+    description: Production
+
+tags:
+  - name: Auth
+    description: Claims introspection.
+  - name: Users
+    description: The caller's own profile, devices, and sessions.
+  - name: Admin Users
+    description: Cross-organization user administration. Aveline team only.
+  - name: Organizations
+    description: Boutique CRUD, settings, and membership.
+  - name: Invitations
+    description: Staff invitation lifecycle.
+  - name: Onboarding
+    description: Six-step owner onboarding wizard.
+  - name: Notifications
+    description: Per-user notifications.
+  - name: Conversations
+    description: The Salon — unified agent-to-staff conversation inbox.
+  - name: Integrations
+    description: Per-organization integration credentials and health.
+  - name: Billing
+    description: Blossom balance, statement, top-ups, and plan.
+  - name: Admin Billing
+    description: Blossom credit, debit, revoke, and statement. Aveline team only.
+  - name: Admin Organizations
+    description: Cross-organization administration search and entitlement overrides. Aveline team only.
+  - name: Pricing
+    description: Blossom conversion rules and the LKR price book. Aveline team only.
+  - name: API Keys
+    description: Customer API key management.
+  - name: Agent Statistics
+    description: Agentic workflow statistics.
+  - name: API Statistics
+    description: API consumption statistics.
+  - name: System Statistics
+    description: Platform health, metrics, and alerts. Aveline team only.
+  - name: Audit
+    description: Audit log. Aveline team only.
+  - name: Health
+    description: Liveness, readiness, and metrics.
+
+security:
+  - bearerAuth: []
+
+paths:
+
+  # ---------------------------------------------------------------------------
+  # Auth
+  # ---------------------------------------------------------------------------
+  /api/v1/auth/claims:
+    get:
+      tags: [Auth]
+      summary: Read the caller's raw Clerk claims and resolved Aveline state
+      description: |
+        Returns the raw JWT claims plus the authoritative `accountState`, `userRole`,
+        and `organizationRole` resolved server-side from the Aveline read model.
+        Use this to debug authorization; do not gate UI on client-decoded JWT claims.
+      operationId: getAuthClaims
+      responses:
+        "200":
+          description: Claims resolved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthClaimsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ---------------------------------------------------------------------------
+  # Users
+  # ---------------------------------------------------------------------------
+  /api/v1/users/me:
+    get:
+      tags: [Users]
+      summary: Read the caller's Aveline user record
+      operationId: getCurrentUser
+      responses:
+        "200":
+          description: The user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Users]
+      summary: Update the caller's profile
+      description: Phase 3. Only the supplied fields are changed.
+      operationId: updateCurrentUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProfileRequest"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserDto"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [Users]
+      summary: Delete the caller's account (soft delete)
+      description: |
+        Phase 3. Sets `deletedAt`, `isActive=false`, `accountState=Suspended`,
+        revokes all memberships and API keys, and invalidates the cached
+        authorization snapshot. Telemetry rows are retained but de-identified.
+      operationId: deleteCurrentUser
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 500
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/users/me/devices:
+    post:
+      tags: [Users]
+      summary: Register a push notification device token
+      operationId: registerDevice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, platform]
+              properties:
+                token:
+                  type: string
+                  minLength: 1
+                platform:
+                  $ref: "#/components/schemas/DevicePlatform"
+      responses:
+        "200":
+          description: Registered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+                  platform: { $ref: "#/components/schemas/DevicePlatform" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/users/me/devices/{token}:
+    delete:
+      tags: [Users]
+      summary: Unregister a push notification device token
+      operationId: unregisterDevice
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Unregistered
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/users/me/sessions:
+    get:
+      tags: [Users]
+      summary: List the caller's active sessions
+      description: Phase 3. Proxied from the Clerk Backend API. Aveline does not store sessions.
+      operationId: listSessions
+      responses:
+        "200":
+          description: Sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SessionSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/users/me/sessions/revoke-all:
+    post:
+      tags: [Users]
+      summary: Revoke all sessions except optionally the current one
+      description: Phase 3.
+      operationId: revokeAllSessions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                exceptCurrent: { type: boolean, default: true }
+      responses:
+        "204":
+          description: Revoked
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ---------------------------------------------------------------------------
+  # Admin users
+  # ---------------------------------------------------------------------------
+  /api/v1/admin/users:
+    get:
+      tags: [Admin Users]
+      summary: Search users across organizations
+      description: Phase 3. Requires `admin:users:read`.
+      operationId: adminListUsers
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: q
+          in: query
+          schema: { type: string, maxLength: 200 }
+          description: Matches email, name, or username, case-insensitively
+        - name: accountState
+          in: query
+          schema: { $ref: "#/components/schemas/AccountState" }
+        - name: state
+          in: query
+          deprecated: true
+          schema: { $ref: "#/components/schemas/AccountState" }
+          description: |
+            Legacy alias of `accountState`; both are bound and either may be used. When
+            both are supplied, `accountState` wins.
+        - name: organizationId
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Users
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/users/{userId}/state:
+    patch:
+      tags: [Admin Users]
+      summary: Change a user's account state
+      description: Phase 3. Requires `admin:users:manage`. Invalidates the auth cache immediately.
+      operationId: adminSetUserState
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [accountState]
+              properties:
+                accountState:
+                  type: string
+                  enum: [OnboardingPending, Active, Suspended]
+                reason:
+                  type: string
+                  description: Optional justification persisted on the audit row (trimmed, no minimum length).
+                  maxLength: 500
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserDto"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------------------
+  # Admin access requests (existing)
+  # ---------------------------------------------------------------------------
+  /api/v1/admin/requests:
+    get:
+      tags: [Admin Users]
+      summary: List pending administrator access requests
+      description: |
+        SHIPPED. Requires the `AdminReview` policy (`moderator`, `admin`, or
+        `owner`). Backs the admin sign-up review flow from issue #59.
+      operationId: listAdminRequests
+      responses:
+        "200":
+          description: Pending requests
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AdminApprovalRequestSummary" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Admin Users]
+      summary: Submit an administrator access request
+      description: |
+        SHIPPED. Requires authentication only; the identity is read from the JWT,
+        not the body. Approval by an existing administrator grants the `admin`
+        role through the Clerk Backend API.
+      operationId: submitAdminRequest
+      responses:
+        "200":
+          description: Submitted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminApprovalRequestSummary" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/admin/requests/{requestId}/approve:
+    parameters:
+      - $ref: "#/components/parameters/AdminRequestId"
+    post:
+      tags: [Admin Users]
+      summary: Approve an administrator access request
+      description: SHIPPED. Requires the `AdminReview` policy. Grants the `admin` role via Clerk.
+      operationId: approveAdminRequest
+      responses:
+        "200":
+          description: Approved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminApprovalRequestSummary" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The request was already decided
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "502":
+          description: The Clerk Backend API call failed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/admin/requests/{requestId}/reject:
+    parameters:
+      - $ref: "#/components/parameters/AdminRequestId"
+    post:
+      tags: [Admin Users]
+      summary: Reject an administrator access request
+      description: SHIPPED. Requires the `AdminReview` policy.
+      operationId: rejectAdminRequest
+      responses:
+        "200":
+          description: Rejected
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminApprovalRequestSummary" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The request was already decided
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  # ---------------------------------------------------------------------------
+  # Organizations
+  # ---------------------------------------------------------------------------
+  /api/v1/orgs:
+    post:
+      tags: [Organizations]
+      summary: Create a boutique
+      description: |
+        `clerkOrgId` is deliberately NOT accepted — it is derived server-side from
+        the JWT `org_id` claim so a caller cannot bind a boutique to a Clerk
+        organization they do not control.
+      operationId: createOrganization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 200 }
+                slug: { type: string, maxLength: 100, nullable: true }
+      responses:
+        "200":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateOrganizationResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          description: User record does not exist in the Aveline database
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "409":
+          description: Slug already in use
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/orgs/my:
+    get:
+      tags: [Organizations]
+      summary: List the caller's organization memberships
+      operationId: listMyOrganizations
+      responses:
+        "200":
+          description: Memberships
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/OrganizationMembershipView" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/by-slug/{slug}:
+    get:
+      tags: [Organizations]
+      summary: Resolve a boutique by slug
+      description: |
+        Returns `404` both when the slug does not exist and when the caller is not a
+        member, deliberately, to prevent boutique-existence enumeration.
+      operationId: getOrganizationBySlug
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, maxLength: 100 }
+      responses:
+        "200":
+          description: Boutique and the caller's membership
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationProfileWithMembershipDto"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Organizations]
+      summary: Read a boutique profile
+      operationId: getOrganization
+      responses:
+        "200":
+          description: Profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrganizationProfileDto" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Organizations]
+      summary: Update boutique settings
+      description: |
+        Phase 3. Requires `settings:manage` on the organization. The AI-context
+        fields (`brandVoice`, `businessRules`, `preferredColorsFabrics`,
+        `customerPreferences`) are additionally gated by the plan entitlement
+        `ai.customContext`.
+      operationId: updateOrganization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateOrganizationRequest"
+      responses:
+        "200":
+          description: Updated profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrganizationProfileDto" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Slug collision
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/orgs/{organizationId}/settings:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Organizations]
+      summary: Read boutique settings and resolved entitlements
+      description: Phase 3. Requires `settings:manage`.
+      operationId: getOrganizationSettings
+      responses:
+        "200":
+          description: Settings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrganizationSettingsResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/members:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Organizations]
+      summary: List organization members
+      description: Phase 3. Requires `settings:manage`.
+      operationId: listOrganizationMembers
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/MembershipStatus" }
+        - name: role
+          in: query
+          schema: { $ref: "#/components/schemas/BoutiqueRole" }
+        - name: q
+          in: query
+          schema: { type: string, maxLength: 200 }
+      responses:
+        "200":
+          description: Members
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MemberPage" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/members/{userId}:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - $ref: "#/components/parameters/UserId"
+    patch:
+      tags: [Organizations]
+      summary: Change a member's boutique role
+      description: |
+        Phase 3. Requires `settings:manage`. Guards:
+        - a user may not change their own role (`409 self-role-change`);
+        - only `org:boutique_owner` may grant or revoke `org:boutique_owner` (`403 owner-role-requires-owner`);
+        - the last active owner may not be demoted (`409 last-owner`).
+      operationId: changeMemberRole
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [boutiqueRole]
+              properties:
+                boutiqueRole: { $ref: "#/components/schemas/BoutiqueRole" }
+      responses:
+        "200":
+          description: Updated membership
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MembershipView" }
+        "400":
+          description: Invalid role
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Role change blocked by a guard
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+    delete:
+      tags: [Organizations]
+      summary: Remove a member from the organization
+      operationId: removeMember
+      responses:
+        "204":
+          description: Removed
+        "400":
+          description: Cannot manage the owner's own membership
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/members/{userId}/suspend:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - $ref: "#/components/parameters/UserId"
+    post:
+      tags: [Organizations]
+      summary: Suspend a member
+      operationId: suspendMember
+      responses:
+        "200":
+          description: Updated membership
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MembershipView" }
+        "400":
+          description: Cannot manage the owner's own membership
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/members/{userId}/activate:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - $ref: "#/components/parameters/UserId"
+    post:
+      tags: [Organizations]
+      summary: Activate a member
+      operationId: activateMember
+      responses:
+        "200":
+          description: Updated membership
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MembershipView" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------------------
+  # Invitations
+  # ---------------------------------------------------------------------------
+  /api/v1/orgs/{organizationId}/invitations:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    post:
+      tags: [Invitations]
+      summary: Create a staff invitation
+      description: |
+        Requires `settings:manage`. The invitable roles are exactly
+        `org:boutique_supervisor`, `org:boutique_manager`, and `org:boutique_staff`;
+        the owner role is not invitable.
+      operationId: createInvitation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [boutiqueRole]
+              properties:
+                boutiqueRole: { $ref: "#/components/schemas/BoutiqueRole" }
+                recipientEmail:
+                  type: string
+                  format: email
+                  maxLength: 254
+                  nullable: true
+      responses:
+        "200":
+          description: Invitation created. The code is returned here and in the email.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateInvitationResponse" }
+        "400":
+          description: Not an invitable role
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: Invitation code store unavailable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+    get:
+      tags: [Invitations]
+      summary: List pending invitations
+      operationId: listInvitations
+      responses:
+        "200":
+          description: Pending invitations
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PendingInvitationDto" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/invitations/{invitationId}/revoke:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: invitationId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Invitations]
+      summary: Revoke a pending invitation
+      operationId: revokeInvitation
+      responses:
+        "204":
+          description: Revoked
+        "400":
+          description: The invitation was already accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/invitations/accept:
+    post:
+      tags: [Invitations]
+      summary: Accept a staff invitation
+      description: Rate limited per client IP (default 10/minute, `Invitations:AcceptRateLimit`).
+      operationId: acceptInvitation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AcceptInvitationResponse" }
+        "400":
+          description: Not acceptable, or recipient mismatch
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Membership already exists
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  # ---------------------------------------------------------------------------
+  # Onboarding
+  # ---------------------------------------------------------------------------
+  /api/v1/onboarding/status:
+    get:
+      tags: [Onboarding]
+      summary: Read onboarding progress
+      operationId: getOnboardingStatus
+      responses:
+        "200":
+          description: Status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OnboardingStatusResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/onboarding/owner:
+    post:
+      tags: [Onboarding]
+      summary: Submit boutique details (step 3)
+      operationId: saveBoutiqueDetails
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SaveBoutiqueDetailsRequest" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OnboardingOrganizationDto" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/onboarding/plan:
+    post:
+      tags: [Onboarding]
+      summary: Select a subscription plan (step 4)
+      description: Demo mode — no payment is taken.
+      operationId: selectPlan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [planTier]
+              properties:
+                planTier: { $ref: "#/components/schemas/PlanTier" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OnboardingOrganizationDto" }
+        "400":
+          description: Boutique details must be submitted first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/onboarding/customize:
+    post:
+      tags: [Onboarding]
+      summary: Save AI context (step 5, tier-gated)
+      operationId: saveAiCustomization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SaveAiCustomizationRequest" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OnboardingOrganizationDto" }
+        "400":
+          description: A field is not available on the selected plan
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/onboarding/complete:
+    post:
+      tags: [Onboarding]
+      summary: Complete onboarding (step 6)
+      description: |
+        Activates the organization and user, provisions the `UsageAccount` Blossom
+        allowance for the current period, and warms up the agent service. Agent
+        warm-up failure is non-fatal and reported as `agentWarmedUp: false`.
+      operationId: completeOnboarding
+      responses:
+        "200":
+          description: Completed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CompleteOnboardingResponse" }
+        "400":
+          description: Prerequisite steps incomplete
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ---------------------------------------------------------------------------
+  # Notifications
+  # ---------------------------------------------------------------------------
+  /api/v1/notifications:
+    get:
+      tags: [Notifications]
+      summary: List the caller's notifications
+      operationId: listNotifications
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: unreadOnly
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Notifications
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationPage" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/notifications/unread-count:
+    get:
+      tags: [Notifications]
+      summary: Count unread notifications
+      operationId: getUnreadNotificationCount
+      responses:
+        "200":
+          description: Count
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer, minimum: 0 }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/notifications/{id}:
+    parameters:
+      - $ref: "#/components/parameters/NotificationId"
+    get:
+      tags: [Notifications]
+      summary: Read one notification
+      operationId: getNotification
+      responses:
+        "200":
+          description: Notification
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserNotificationDto" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Notifications]
+      summary: Dismiss a notification
+      operationId: dismissNotification
+      responses:
+        "204":
+          description: Dismissed
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/notifications/{id}/read:
+    parameters:
+      - $ref: "#/components/parameters/NotificationId"
+    patch:
+      tags: [Notifications]
+      summary: Mark a notification as read (idempotent)
+      operationId: markNotificationRead
+      responses:
+        "204":
+          description: Marked
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/notifications/read-all:
+    post:
+      tags: [Notifications]
+      summary: Mark all notifications as read (idempotent)
+      operationId: markAllNotificationsRead
+      responses:
+        "200":
+          description: Marked
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ---------------------------------------------------------------------------
+  # Conversations
+  # ---------------------------------------------------------------------------
+  /api/v1/orgs/{organizationId}/conversations:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Conversations]
+      summary: List conversations
+      operationId: listConversations
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Conversations
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConversationPage" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Conversations]
+      summary: Create a conversation
+      operationId: createConversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                customerId: { type: string, format: uuid, nullable: true }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConversationDto" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/conversations/{conversationId}:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - $ref: "#/components/parameters/ConversationId"
+    get:
+      tags: [Conversations]
+      summary: Read a conversation
+      operationId: getConversation
+      responses:
+        "200":
+          description: Conversation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConversationDto" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/conversations/{conversationId}/messages:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - $ref: "#/components/parameters/ConversationId"
+    get:
+      tags: [Conversations]
+      summary: List messages
+      operationId: listMessages
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: around
+          in: query
+          schema: { type: string, format: uuid, nullable: true }
+          description: Deep-link anchor; returns a window centred on this message id
+      responses:
+        "200":
+          description: Messages
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessagePage" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Conversations]
+      summary: Send a staff message
+      operationId: sendMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Message
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageDto" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/conversations/{conversationId}/select-customer:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - $ref: "#/components/parameters/ConversationId"
+    post:
+      tags: [Conversations]
+      summary: Bind a customer to a conversation
+      operationId: selectConversationCustomer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customerId]
+              properties:
+                customerId: { type: string, format: uuid }
+                query: { type: string, nullable: true }
+      responses:
+        "200":
+          description: Bound
+        "400":
+          description: A customerId is required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/conversations/{conversationId}/messages/{messageId}/sign-off:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - $ref: "#/components/parameters/ConversationId"
+      - name: messageId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Conversations]
+      summary: Decide a sign-off request
+      description: |
+        The `contentHash` must match the hash of the message as the approver saw it.
+        A mismatch is rejected so an approval cannot be applied to edited content.
+      operationId: decideSignOff
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [approved, contentHash]
+              properties:
+                approved: { type: boolean }
+                contentHash: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Decided
+        "400":
+          description: Content hash missing or mismatched
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------------------
+  # Integrations
+  # ---------------------------------------------------------------------------
+  /api/v1/orgs/{organizationId}/integrations:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Integrations]
+      summary: List integrations and their health
+      operationId: listIntegrations
+      responses:
+        "200":
+          description: Integrations
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntegrationListResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/integrations/{type}:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: type
+        in: path
+        required: true
+        schema: { $ref: "#/components/schemas/IntegrationType" }
+    put:
+      tags: [Integrations]
+      summary: Configure an integration
+      description: |
+        Credentials are encrypted at rest with AES-256-GCM (ADR-011) and are never
+        returned by any read endpoint.
+      operationId: configureIntegration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: { type: string }
+              description: Provider-specific credential fields
+      responses:
+        "200":
+          description: Configured
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntegrationView" }
+        "400":
+          description: Unknown integration type
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      tags: [Integrations]
+      summary: Remove an integration
+      operationId: deleteIntegration
+      responses:
+        "204":
+          description: Removed
+        "400":
+          description: Unknown integration type
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/integrations/{type}/test:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: type
+        in: path
+        required: true
+        schema: { $ref: "#/components/schemas/IntegrationType" }
+    post:
+      tags: [Integrations]
+      summary: Test an integration's connectivity
+      operationId: testIntegration
+      responses:
+        "200":
+          description: Health result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntegrationView" }
+        "400":
+          description: Unknown integration type
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ---------------------------------------------------------------------------
+  # Billing — existing
+  # ---------------------------------------------------------------------------
+  /api/v1/orgs/{organizationId}/usage:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Billing]
+      summary: Read the current period Blossom usage summary
+      description: |
+        SHIPPED. Requires `catalog:view` via the `BoutiqueAccess` policy (the
+        balance is not yet gated by a dedicated `billing:view` permission).
+
+        KNOWN DEFECT: `monthlyBlossomLimit` is always created as the Seed tier value
+        (150) regardless of the organization's actual plan, and is not updated on a
+        plan change. Fixed in Phase 2.
+      operationId: getUsageSummary
+      responses:
+        "200":
+          description: Usage summary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UsageSummary" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ---------------------------------------------------------------------------
+  # Billing — new
+  # ---------------------------------------------------------------------------
+  /api/v1/orgs/{organizationId}/blossoms/balance:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Billing]
+      summary: Read the authoritative Blossom balance
+      description: |
+        Phase 2. Requires `billing:view`. Do not cache this value client-side; it is
+        the most correctness-sensitive read in the product.
+      operationId: getBlossomBalance
+      responses:
+        "200":
+          description: Balance
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlossomBalance" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/blossoms/usage:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Billing]
+      summary: Read Blossom consumption over a window
+      description: Phase 2. Requires `billing:view`.
+      operationId: getBlossomUsage
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: groupBy
+          in: query
+          schema:
+            type: string
+            enum: [day, provider, model, workflowId]
+            default: day
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Usage series
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlossomUsageResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/blossoms/statement:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Billing]
+      summary: Read the statement of account
+      description: |
+        Phase 2. Requires `billing:view`. Includes a `reconciliation` block that
+        compares the projected balance with the ledger-derived balance. A non-zero
+        `drift` is a Critical condition and must be surfaced, never hidden.
+      operationId: getBlossomStatement
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: entryType
+          in: query
+          schema:
+            type: string
+            enum: [all, entitlement, consumption]
+            default: all
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Statement
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlossomStatementResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/blossoms/top-ups:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    post:
+      tags: [Billing]
+      summary: Purchase a Blossom pack
+      description: Phase 2. Requires `billing:manage`. Requires `Idempotency-Key`.
+      operationId: purchaseBlossomTopUp
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [skuCode]
+              properties:
+                skuCode:
+                  type: string
+                  maxLength: 64
+                  example: blossom_pack_500
+                blossomQuantity: { type: number, nullable: true }
+                paymentReference: { type: string, maxLength: 128, nullable: true }
+      responses:
+        "201":
+          description: Top-up granted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlossomLedgerEntryResponse" }
+        "400":
+          description: Validation failure or unknown SKU
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Period closed, or idempotency key reuse
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  # ---------------------------------------------------------------------------
+  # Admin billing
+  # ---------------------------------------------------------------------------
+  /api/v1/admin/orgs/{organizationId}/blossoms/credit:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    post:
+      tags: [Admin Billing]
+      summary: Credit Blossoms to an organization
+      description: Phase 2. Requires `billing:adjust`. Requires `Idempotency-Key`.
+      operationId: adminCreditBlossoms
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminBlossomAdjustmentRequest" }
+      responses:
+        "201":
+          description: Ledger entry written
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlossomLedgerEntryResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Period closed, or idempotency key reuse
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/admin/orgs/{organizationId}/blossoms/debit:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    post:
+      tags: [Admin Billing]
+      summary: Debit Blossoms from an organization
+      description: Phase 2. Requires `billing:adjust`. Requires `Idempotency-Key`.
+      operationId: adminDebitBlossoms
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount, reason]
+              properties:
+                amount: { $ref: "#/components/schemas/BlossomAmount" }
+                reason: { $ref: "#/components/schemas/AdjustmentReason" }
+                allowNegative: { type: boolean, default: false }
+      responses:
+        "201":
+          description: Ledger entry written
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlossomLedgerEntryResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Insufficient balance, period closed, or idempotency key reuse
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InsufficientBalanceError" }
+
+  /api/v1/admin/orgs/{organizationId}/blossoms/revoke:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    post:
+      tags: [Admin Billing]
+      summary: Revoke a granted top-up
+      description: Phase 2. Requires `billing:adjust`. Requires `Idempotency-Key`. Full reversal only.
+      operationId: adminRevokeBlossomGrant
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ledgerEntryId, reason]
+              properties:
+                ledgerEntryId: { type: string, format: uuid }
+                reason: { $ref: "#/components/schemas/AdjustmentReason" }
+      responses:
+        "201":
+          description: Revocation entry written
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlossomLedgerEntryResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The grant is not revocable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/admin/orgs/{organizationId}/blossoms/statement:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Admin Billing]
+      summary: Read any organization's statement of account
+      description: Phase 2. Requires `billing:adjust`.
+      operationId: adminGetBlossomStatement
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Statement
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlossomStatementResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/admin/orgs:
+    get:
+      tags: [Admin Organizations]
+      summary: Search organizations across the platform
+      description: Phase 3. Requires the team-only `admin:orgs:read` permission (FR-4.8).
+      operationId: adminSearchOrganizations
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: q
+          in: query
+          schema: { type: string, maxLength: 200 }
+          description: Matches name or slug, case-insensitively
+        - name: isActive
+          in: query
+          schema: { type: boolean }
+        - name: planTier
+          in: query
+          schema: { $ref: "#/components/schemas/PlanTier" }
+      responses:
+        "200":
+          description: Organizations
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminOrganizationPage" }
+        "400":
+          description: Invalid `planTier`
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/orgs/{organizationId}/entitlement-overrides:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    patch:
+      tags: [Admin Organizations]
+      summary: Set per-organization entitlement overrides
+      description: |
+        Phase 3. Requires `billing:adjust`. Applies one or more overrides together
+        (FR-4.9), upserting each on `(organizationId, key, effectiveFrom)`, then
+        returns the organization's resolved entitlements. Used for Enterprise
+        contracts.
+      operationId: adminSetEntitlementOverrides
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetEntitlementOverridesRequest" }
+      responses:
+        "200":
+          description: Resolved entitlements after the overrides were applied
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EntitlementOverridesResponse" }
+        "400":
+          description: No overrides supplied, or an unknown key / valueType / mismatched value
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Unknown organization
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  # ---------------------------------------------------------------------------
+  # Subscription and entitlements
+  # ---------------------------------------------------------------------------
+  /api/v1/orgs/{organizationId}/subscription:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Billing]
+      summary: Read the current subscription
+      description: |
+        Phase 2. Requires `billing:view`. If no subscription row exists yet, returns
+        `200` with `status: "None"` and the tier derived from the organization, so a
+        valid organization never produces a 404 here.
+      operationId: getSubscription
+      responses:
+        "200":
+          description: Subscription
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Subscription" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/subscription/change-plan:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    post:
+      tags: [Billing]
+      summary: Upgrade or downgrade the plan
+      description: |
+        Phase 2. Requires `billing:manage`. Requires `Idempotency-Key`.
+
+        An upgrade takes effect immediately and writes a `PlanUpgradeProration`
+        ledger entry. A downgrade defaults to the next period and is blocked with
+        `409 plan-limit-violation` when current usage exceeds any target limit.
+      operationId: changePlan
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChangePlanRequest" }
+      responses:
+        "200":
+          description: Plan changed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChangePlanResponse" }
+        "400":
+          description: No-op plan change
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Plan limit violation, or idempotency key reuse
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlanLimitViolationError" }
+
+  /api/v1/orgs/{organizationId}/subscription/cancel:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    post:
+      tags: [Billing]
+      summary: Cancel at the end of the current period
+      description: Phase 2. Requires `billing:manage`.
+      operationId: cancelSubscription
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, maxLength: 500 }
+      responses:
+        "200":
+          description: Cancelled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Subscription" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Already cancelled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/orgs/{organizationId}/entitlements:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Billing]
+      summary: Read resolved entitlements for the organization
+      description: |
+        Phase 2. Requires `billing:view`. Frontends should drive ALL plan gating
+        from this endpoint rather than hardcoding a plan matrix.
+      operationId: getEntitlements
+      responses:
+        "200":
+          description: Entitlements
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EntitlementListResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/entitlements/usage:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Billing]
+      summary: Read observed usage against each limited entitlement
+      description: Phase 2. Requires `billing:view`.
+      operationId: getEntitlementUsage
+      responses:
+        "200":
+          description: Entitlement usage
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EntitlementUsageResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ---------------------------------------------------------------------------
+  # API keys
+  # ---------------------------------------------------------------------------
+  /api/v1/orgs/{organizationId}/api-keys:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [API Keys]
+      summary: List API keys
+      description: Phase 3. Requires `apikeys:view`. The secret and its hash are never returned.
+      operationId: listApiKeys
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/ApiKeyStatus" }
+      responses:
+        "200":
+          description: API keys
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiKeyPage" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [API Keys]
+      summary: Create an API key
+      description: |
+        Phase 3. Requires `apikeys:manage` and the `api.access` entitlement
+        (Rose and Enterprise only). The plaintext `secret` is returned **exactly
+        once** in this response and can never be retrieved again.
+      operationId: createApiKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateApiKeyRequest" }
+      responses:
+        "201":
+          description: Created. Store the secret immediately.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiKeyCreatedResponse" }
+        "400":
+          description: Validation failure, or a scope that cannot be delegated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Missing permission, or the plan does not include `api.access`
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/orgs/{organizationId}/api-keys/{keyId}/revoke:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - $ref: "#/components/parameters/ApiKeyId"
+    post:
+      tags: [API Keys]
+      summary: Revoke an API key
+      description: Phase 3. Requires `apikeys:manage`. Effective within 60 seconds on all instances.
+      operationId: revokeApiKey
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, maxLength: 300 }
+      responses:
+        "200":
+          description: Revoked
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiKey" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Already revoked
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/orgs/{organizationId}/api-keys/{keyId}:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - $ref: "#/components/parameters/ApiKeyId"
+    delete:
+      tags: [API Keys]
+      summary: Delete an unused API key
+      description: Phase 3. Requires `apikeys:manage`. Only permitted when the key has never been used.
+      operationId: deleteApiKey
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The key has been used and cannot be hard-deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  # ---------------------------------------------------------------------------
+  # Pricing — admin
+  # ---------------------------------------------------------------------------
+  /api/v1/admin/pricing/rules:
+    get:
+      tags: [Pricing]
+      summary: List Blossom conversion rules
+      description: Phase 1. Requires the team-only `PricingAdminRead` policy (Admin or Owner). Never available to boutique roles.
+      operationId: listPricingRules
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: scopeKind
+          in: query
+          schema: { $ref: "#/components/schemas/PricingScopeKind" }
+        - name: provider
+          in: query
+          schema: { type: string, maxLength: 64 }
+        - name: model
+          in: query
+          schema: { type: string, maxLength: 128 }
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/PricingRuleStatus" }
+        - name: activeAt
+          in: query
+          schema: { type: string, format: date-time }
+          description: Return the rule that would price usage at this instant
+      responses:
+        "200":
+          description: Rules
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PricingRulePage" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Pricing]
+      summary: Create a Blossom conversion rule
+      description: |
+        Phase 1. Requires `pricing:manage`. A past `effectiveFrom` additionally
+        requires `pricing:backdate`. The rule is created as `Draft`.
+      operationId: createPricingRule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreatePricingRuleRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PricingRule" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Missing `pricing:manage`, or a past effective date without `pricing:backdate`
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "409":
+          description: The effective window overlaps an existing rule for the same scope
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/admin/pricing/rules/{ruleId}:
+    parameters:
+      - $ref: "#/components/parameters/PricingRuleId"
+    get:
+      tags: [Pricing]
+      summary: Read one conversion rule
+      description: Phase 1. Requires the team-only `PricingAdminRead` policy (Admin or Owner).
+      operationId: getPricingRule
+      responses:
+        "200":
+          description: Rule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PricingRule" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Pricing]
+      summary: Edit a draft conversion rule
+      description: |
+        Phase 1. Requires `pricing:manage`. Only permitted while `status = Draft`.
+        A past `effectiveFrom` additionally requires `pricing:backdate` (403 otherwise).
+      operationId: updatePricingRule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdatePricingRuleRequest" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PricingRule" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            The rule is not a `Draft` (`code: rule-immutable`). Only a `Draft`
+            rule may be edited; supersede it with a new rule instead.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/admin/pricing/rules/{ruleId}/activate:
+    parameters:
+      - $ref: "#/components/parameters/PricingRuleId"
+    post:
+      tags: [Pricing]
+      summary: Activate a conversion rule
+      description: |
+        Phase 1. Requires `pricing:manage`. Atomically trims the predecessor's
+        `effectiveTo` to this rule's `effectiveFrom` and marks the predecessor
+        `Superseded`. A past `effectiveFrom` in the body additionally requires
+        `pricing:backdate` (403 otherwise).
+      operationId: activatePricingRule
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                effectiveFrom: { type: string, format: date-time, nullable: true }
+      responses:
+        "200":
+          description: Activated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PricingRule" }
+        "400":
+          description: The rule is not a Draft
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The effective window overlaps an existing rule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/admin/pricing/rules/{ruleId}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/PricingRuleId"
+    post:
+      tags: [Pricing]
+      summary: Cancel a draft conversion rule
+      description: Phase 1. Requires `pricing:manage`.
+      operationId: cancelPricingRule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { $ref: "#/components/schemas/AdjustmentReason" }
+      responses:
+        "200":
+          description: Cancelled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PricingRule" }
+        "400":
+          description: |
+            `code: rule-priced` when the rule is already `Active` and has priced
+            usage (activate a superseding rule instead); `code: validation` for a
+            bad reason.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/admin/pricing/rules/{ruleId}/recompute:
+    parameters:
+      - $ref: "#/components/parameters/PricingRuleId"
+    post:
+      tags: [Pricing]
+      summary: Re-price already-recorded usage affected by a rule
+      description: |
+        Requires `pricing:backdate`. **Not implemented yet:** the compensating-ledger
+        recompute job is not scheduled, so the handler always returns `501`, even
+        though the ledger itself has shipped. The intended behaviour is to write
+        compensating ledger entries and never mutate `AiUsageRecord`; when it ships,
+        the intended body is `{ asOf, dryRun }` and the intended `200` body records
+        `asOf`, `dryRun`, the affected providers/models, `recordCount`, the current
+        and recomputed Blossom totals, `deltaBlossoms`, `organizationsAffected` and
+        `ledgerEntriesWritten`. Always run it with `dryRun: true` first. The
+        handler ignores the request body today.
+      operationId: recomputePricingRule
+      responses:
+        "501":
+          description: Recompute is not available until the compensating-ledger job ships
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ---------------------------------------------------------------------------
+  # Price book
+  # ---------------------------------------------------------------------------
+  /api/v1/admin/pricing/price-book:
+    get:
+      tags: [Pricing]
+      summary: List price-book entries
+      description: |
+        Phase 1. Requires the team-only `PricingAdminRead` policy (Admin or Owner).
+
+        Returns a **bare array of entries — there is no `page`/`pageSize` and no
+        `{ items, total }` envelope** (finding M-8, a deliberate deviation from the
+        §A.4 pagination convention).
+      operationId: listPricingPriceEntries
+      parameters:
+        - name: skuKind
+          in: query
+          schema: { $ref: "#/components/schemas/PricingSkuKind" }
+        - name: planTier
+          in: query
+          schema: { $ref: "#/components/schemas/PlanTier" }
+        - name: organizationId
+          in: query
+          schema: { type: string, format: uuid }
+          description: |
+            Filter to this organization's override; omit to list global entries only.
+      responses:
+        "200":
+          description: Price-book entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PricingPriceEntry" }
+        "400":
+          description: Invalid `skuKind` or `planTier` filter
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Pricing]
+      summary: Create a price-book entry
+      description: Phase 1. Requires `pricing:manage`. Created as `Draft`.
+      operationId: createPricingPriceEntry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreatePriceEntryRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PricingPriceEntry" }
+        "400":
+          description: Field validation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/pricing/price-book/{entryId}:
+    parameters:
+      - $ref: "#/components/parameters/PricingEntryId"
+    get:
+      tags: [Pricing]
+      summary: Read one price-book entry
+      description: |
+        Phase 1. Requires the team-only `PricingAdminRead` policy (Admin or Owner).
+        A global entry (no `organizationId`) is always readable; a per-organization
+        override is readable only when the caller passes that same `organizationId`.
+      operationId: getPricingPriceEntry
+      parameters:
+        - name: organizationId
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Price-book entry
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PricingPriceEntry" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Pricing]
+      summary: Edit a price-book entry
+      description: Phase 1. Requires `pricing:manage`.
+      operationId: updatePricingPriceEntry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdatePriceEntryRequest" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PricingPriceEntry" }
+        "400":
+          description: Field validation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Pricing]
+      summary: Retire a price-book entry
+      description: |
+        Phase 1. Requires `pricing:manage`. Sets the entry's status to `Cancelled`;
+        returns `204 No Content`.
+      operationId: deletePricingPriceEntry
+      responses:
+        "204":
+          description: Retired
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------------------
+  # Agent statistics
+  # ---------------------------------------------------------------------------
+  /api/v1/orgs/{organizationId}/statistics/agents/runs:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Agent Statistics]
+      summary: List agent workflow runs
+      description: Phase 4. Requires `stats:view:agent` (owner and above).
+      operationId: listAgentRuns
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/AgentRunStatus" }
+        - name: agentKey
+          in: query
+          schema: { $ref: "#/components/schemas/AgentKey" }
+        - name: triggerKind
+          in: query
+          schema: { $ref: "#/components/schemas/AgentTriggerKind" }
+        - name: customerId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: conversationId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [startedAt, -startedAt, durationMs, -durationMs]
+            default: -startedAt
+      responses:
+        "200":
+          description: Runs
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentRunPage" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/statistics/agents/runs/{runId}:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: runId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Agent Statistics]
+      summary: Read one agent run with its step trace
+      description: Phase 4. Requires `stats:view:agent`.
+      operationId: getAgentRun
+      responses:
+        "200":
+          description: Run with steps
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentRunDetail" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/statistics/agents/reliability:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Agent Statistics]
+      summary: Read agent success and failure rates
+      description: Phase 4. Requires `stats:view:agent`.
+      operationId: getAgentReliability
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: groupBy
+          in: query
+          schema:
+            type: string
+            enum: [agentKey, triggerKind, nodeName, day, hour]
+            default: agentKey
+      responses:
+        "200":
+          description: Reliability series
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentReliabilityResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/statistics/agents/latency:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Agent Statistics]
+      summary: Read agent workflow latency percentiles
+      description: |
+        Phase 4. Requires `stats:view:agent`. Percentile fields are `null` with
+        `precision: insufficient-sample` when `sampleCount` is below
+        `Telemetry:MinSampleForPercentile` (default 20).
+      operationId: getAgentLatency
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: groupBy
+          in: query
+          schema:
+            type: string
+            enum: [agentKey, triggerKind, day, hour]
+            default: agentKey
+      responses:
+        "200":
+          description: Latency series
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PercentileSeriesResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/statistics/agents/tokens:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Agent Statistics]
+      summary: Read agent token usage
+      description: Phase 4. Requires `stats:view:agent`.
+      operationId: getAgentTokens
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: groupBy
+          in: query
+          schema:
+            type: string
+            enum: [agentKey, provider, model, workflowId, day, hour]
+            default: agentKey
+      responses:
+        "200":
+          description: Token usage series
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentTokenResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/statistics/agents/steps:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Agent Statistics]
+      summary: Read per-node agent step statistics
+      description: Phase 4. Requires `stats:view:agent`.
+      operationId: getAgentSteps
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: agentKey
+          in: query
+          schema: { $ref: "#/components/schemas/AgentKey" }
+        - name: nodeName
+          in: query
+          schema: { type: string, maxLength: 128 }
+      responses:
+        "200":
+          description: Step statistics
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentStepStatisticsResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/statistics/agents/cost:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Agent Statistics]
+      summary: Read agent AI cost
+      description: |
+        Phase 4. Requires `stats:view:agent`. `dataQuality.costIsEstimated` is
+        `true` until the agent service reports actual cost, which it does not today.
+      operationId: getAgentCost
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: groupBy
+          in: query
+          schema:
+            type: string
+            enum: [agentKey, provider, model, day]
+            default: day
+      responses:
+        "200":
+          description: Cost series
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentCostResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/statistics/agents/tools:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Agent Statistics]
+      summary: Read agent tool-call statistics
+      description: Phase 4. Requires `stats:view:agent`.
+      operationId: getAgentTools
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: toolName
+          in: query
+          schema: { type: string, maxLength: 128 }
+      responses:
+        "200":
+          description: Tool statistics
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentToolStatisticsResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/statistics/agents/failures:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Agent Statistics]
+      summary: Read agent failure breakdown
+      description: Phase 4. Requires `stats:view:agent`.
+      operationId: getAgentFailures
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: groupBy
+          in: query
+          schema:
+            type: string
+            enum: [errorCode, agentKey, nodeName, toolName, day]
+            default: errorCode
+      responses:
+        "200":
+          description: Failure breakdown
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentFailureResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/statistics/agents/approvals:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Agent Statistics]
+      summary: Read human-in-the-loop approval wait statistics
+      description: Phase 4. Requires `stats:view:agent`.
+      operationId: getAgentApprovals
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: groupBy
+          in: query
+          schema:
+            type: string
+            enum: [agentKey, day]
+            default: day
+      responses:
+        "200":
+          description: Approval wait statistics
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PercentileSeriesResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ---------------------------------------------------------------------------
+  # API consumption statistics
+  # ---------------------------------------------------------------------------
+  /api/v1/orgs/{organizationId}/statistics/api/requests:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [API Statistics]
+      summary: Read API request volume
+      description: Phase 5. Requires `stats:view`.
+      operationId: getApiRequestStatistics
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: groupBy
+          in: query
+          schema:
+            type: string
+            enum: [hour, day, routeTemplate, statusClass, apiKeyId, userId]
+            default: hour
+        - name: routeTemplate
+          in: query
+          schema: { type: string, maxLength: 200 }
+        - name: statusClass
+          in: query
+          schema: { type: string, enum: ["1xx", "2xx", "3xx", "4xx", "5xx"] }
+        - name: apiKeyId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: userId
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Request statistics
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiRequestStatisticsResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/statistics/api/errors:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [API Statistics]
+      summary: Read API error and throttle rates
+      description: |
+        Phase 5. Requires `stats:view`. Throttle rejections (429) are reported
+        separately from other 4xx so the UI can distinguish "you are being
+        throttled" from "you sent a bad request".
+      operationId: getApiErrorStatistics
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: groupBy
+          in: query
+          schema:
+            type: string
+            enum: [hour, day, routeTemplate, statusCode]
+            default: hour
+        - name: routeTemplate
+          in: query
+          schema: { type: string, maxLength: 200 }
+      responses:
+        "200":
+          description: Error statistics
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiErrorStatisticsResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/statistics/api/latency:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [API Statistics]
+      summary: Read API latency percentiles
+      description: |
+        Phase 5. Requires `stats:view`. Percentiles are interpolated from
+        histogram buckets, so `precision` is `bucket-interpolated` — surface that
+        in the UI rather than presenting the numbers as exact.
+      operationId: getApiLatencyStatistics
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: groupBy
+          in: query
+          schema:
+            type: string
+            enum: [hour, day, routeTemplate, statusClass]
+            default: routeTemplate
+        - name: routeTemplate
+          in: query
+          schema: { type: string, maxLength: 200 }
+      responses:
+        "200":
+          description: Latency statistics
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiLatencyResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/statistics/api/endpoints:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [API Statistics]
+      summary: Read per-endpoint usage
+      description: Phase 5. Requires `stats:view`.
+      operationId: getApiEndpointStatistics
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [count, -count, errorRate, -errorRate]
+            default: -count
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Endpoint usage
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiEndpointStatisticsResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/statistics/api/users:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [API Statistics]
+      summary: Read per-user API usage
+      description: Phase 5. Requires `stats:view`.
+      operationId: getApiUserStatistics
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: groupBy
+          in: query
+          schema:
+            type: string
+            enum: [userId, day]
+            default: userId
+      responses:
+        "200":
+          description: User usage
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiUserStatisticsResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/statistics/api/quota:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [API Statistics]
+      summary: Read quota status for the current period
+      description: Phase 5. Requires `stats:view`.
+      operationId: getApiQuotaStatus
+      responses:
+        "200":
+          description: Quota status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiQuotaStatusResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/statistics/api/slow-requests:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [API Statistics]
+      summary: List the slowest individual requests
+      description: |
+        Phase 5. Requires `stats:view`. Returns a correlation `requestId` per row
+        but never request or response bodies. Raw rows are retained 7 days.
+      operationId: getApiSlowRequests
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: minDurationMs
+          in: query
+          schema: { type: integer, minimum: 0, default: 1000 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: Slow requests
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/SlowRequest" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/statistics/api/billable:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [API Statistics]
+      summary: Read billable request count for a period
+      description: |
+        Phase 5. Requires `billing:view`. Excludes health checks, OpenAPI
+        documents, CORS preflight, and client-closed (499) requests.
+      operationId: getApiBillableRequests
+      parameters:
+        - name: month
+          in: query
+          required: false
+          schema: { type: string, pattern: "^[0-9]{4}-(0[1-9]|1[0-2])$" }
+          description: Defaults to the current month
+      responses:
+        "200":
+          description: Billable usage
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiBillableResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/statistics/api-keys:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [API Statistics]
+      summary: Read per-API-key consumption
+      description: Phase 5. Requires `stats:view`.
+      operationId: getApiKeyStatistics
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: groupBy
+          in: query
+          schema:
+            type: string
+            enum: [apiKeyId, day, endpoint]
+            default: apiKeyId
+      responses:
+        "200":
+          description: Key usage
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiKeyStatisticsResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ===========================================================================
+  # Planned / not yet implemented - NOT part of the normative contract.
+  # The three organization billing-statistics endpoints have no route;
+  # they return 404. Their intended shapes are preserved below as comments
+  # only, per the Phase 2 option-B decision.
+  # ===========================================================================
+#   /api/v1/orgs/{organizationId}/statistics/billing/burn-rate:
+#     parameters:
+#       - $ref: "#/components/parameters/OrganizationId"
+#     get:
+#       tags: [Billing]
+#       summary: Read Blossom burn rate and projected exhaustion
+#       description: Phase 2. Requires `billing:view`.
+#       operationId: getBlossomBurnRate
+#       parameters:
+#         - name: window
+#           in: query
+#           schema:
+#             type: string
+#             enum: [7d, 14d, 30d]
+#             default: 14d
+#       responses:
+#         "200":
+#           description: Burn rate
+#           content:
+#             application/json:
+#               schema: { $ref: "#/components/schemas/BlossomBurnRateResponse" }
+#         "401":
+#           $ref: "#/components/responses/Unauthorized"
+#         "403":
+#           $ref: "#/components/responses/Forbidden"
+#
+#   /api/v1/orgs/{organizationId}/statistics/customers/active:
+#     parameters:
+#       - $ref: "#/components/parameters/OrganizationId"
+#     get:
+#       tags: [Billing]
+#       summary: Read the active customer count against the plan limit
+#       description: |
+#         Phase 2. Requires `billing:view`. Active means an interaction, order, or
+#         profile update within 90 days (ADR-010).
+#       operationId: getActiveCustomerCount
+#       responses:
+#         "200":
+#           description: Active customers
+#           content:
+#             application/json:
+#               schema: { $ref: "#/components/schemas/EntitlementUsageResponse" }
+#         "401":
+#           $ref: "#/components/responses/Unauthorized"
+#         "403":
+#           $ref: "#/components/responses/Forbidden"
+#
+#   /api/v1/orgs/{organizationId}/statistics/staff/seats:
+#     parameters:
+#       - $ref: "#/components/parameters/OrganizationId"
+#     get:
+#       tags: [Billing]
+#       summary: Read the staff seat count against the plan limit
+#       description: Phase 2. Requires `billing:view`.
+#       operationId: getStaffSeatCount
+#       responses:
+#         "200":
+#           description: Staff seats
+#           content:
+#             application/json:
+#               schema: { $ref: "#/components/schemas/EntitlementUsageResponse" }
+#         "401":
+#           $ref: "#/components/responses/Unauthorized"
+#         "403":
+#           $ref: "#/components/responses/Forbidden"
+  # ===========================================================================
+  # End planned / not yet implemented: organization billing statistics
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # System statistics
+  # ---------------------------------------------------------------------------
+  /api/v1/admin/statistics/system/overview:
+    get:
+      tags: [System Statistics]
+      summary: Read the operations overview
+      description: Phase 6. Requires `stats:system`.
+      operationId: getSystemOverview
+      responses:
+        "200":
+          description: Overview
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemOverview" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/system/metrics:
+    get:
+      tags: [System Statistics]
+      summary: Read a named system metric time series
+      description: Phase 6. Requires `stats:system`.
+      operationId: getSystemMetrics
+      parameters:
+        - name: metric
+          in: query
+          required: true
+          schema: { type: string, maxLength: 100 }
+          example: aveline.db.pool_in_use
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: groupBy
+          in: query
+          schema: { type: string, maxLength: 100 }
+      responses:
+        "200":
+          description: Metric series
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemMetricResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/system/queues:
+    get:
+      tags: [System Statistics]
+      summary: Read queue depths
+      description: Phase 6. Requires `stats:system`.
+      operationId: getSystemQueues
+      responses:
+        "200":
+          description: Queue depths
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemQueueResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/system/errors:
+    get:
+      tags: [System Statistics]
+      summary: Read the system-wide error rate
+      description: Phase 6. Requires `stats:system`.
+      operationId: getSystemErrors
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: groupBy
+          in: query
+          schema:
+            type: string
+            enum: [minute, hour, routeTemplate, statusCode]
+            default: hour
+      responses:
+        "200":
+          description: Error rate
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiErrorStatisticsResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/system/throughput:
+    get:
+      tags: [System Statistics]
+      summary: Read system throughput
+      description: Phase 6. Requires `stats:system`.
+      operationId: getSystemThroughput
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: groupBy
+          in: query
+          schema:
+            type: string
+            enum: [minute, hour, day]
+            default: hour
+      responses:
+        "200":
+          description: Throughput series
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemThroughputResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/system/eventbus:
+    get:
+      tags: [System Statistics]
+      summary: Read Redis event bus health
+      description: |
+        Phase 6. Requires `stats:system`. Returns an instantaneous snapshot of the
+        cumulative `EventBusMetrics` counters — it is **not** a windowed series, and
+        the handler binds no `from`/`to` filter (finding M-11). `publish_latency_ms`
+        is omitted because the counters cannot measure it (BR-7.10).
+      operationId: getSystemEventBus
+      responses:
+        "200":
+          description: Event bus metrics
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemEventBusResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/system/alerts:
+    get:
+      tags: [System Statistics]
+      summary: List system alerts
+      description: Phase 6. Requires `stats:system`.
+      operationId: listSystemAlerts
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/AlertStatus" }
+        - name: severity
+          in: query
+          schema: { $ref: "#/components/schemas/AlertSeverity" }
+        - name: ruleId
+          in: query
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Alerts
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemAlertPage" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/system/alerts/{alertId}/acknowledge:
+    parameters:
+      - name: alertId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [System Statistics]
+      summary: Acknowledge a firing alert
+      description: Phase 6. Requires `stats:system`.
+      operationId: acknowledgeSystemAlert
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string, maxLength: 500, nullable: true }
+      responses:
+        "200":
+          description: Acknowledged
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemAlert" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The alert is not in a firing state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  # ===========================================================================
+  # Planned / not yet implemented - NOT part of the normative contract.
+  # The five /api/v1/admin/statistics/billing/* endpoints have no route;
+  # they return 404. Their intended shapes are preserved below as comments
+  # only, per the Phase 2 option-B decision.
+  # ===========================================================================
+#   # ---------------------------------------------------------------------------
+#   # Admin analytics
+#   # ---------------------------------------------------------------------------
+#   /api/v1/admin/statistics/billing/profitability:
+#     get:
+#       tags: [System Statistics]
+#       summary: Read internal AI cost versus Blossoms charged
+#       description: |
+#         Phase 2/5. Requires `stats:system`. `dataQuality.costIsEstimated` is `true`
+#         while the agent service reports no actual cost.
+#       operationId: getBillingProfitability
+#       parameters:
+#         - $ref: "#/components/parameters/From"
+#         - $ref: "#/components/parameters/To"
+#         - name: groupBy
+#           in: query
+#           schema:
+#             type: string
+#             enum: [planTier, organizationId, provider, model, day]
+#             default: day
+#       responses:
+#         "200":
+#           description: Profitability series
+#           content:
+#             application/json:
+#               schema: { $ref: "#/components/schemas/ProfitabilityResponse" }
+#         "401":
+#           $ref: "#/components/responses/Unauthorized"
+#         "403":
+#           $ref: "#/components/responses/Forbidden"
+#
+#   /api/v1/admin/statistics/billing/org-usage:
+#     get:
+#       tags: [System Statistics]
+#       summary: Rank organizations by Blossom consumption
+#       description: Phase 2. Requires `stats:system`.
+#       operationId: getOrgBlossomRanking
+#       parameters:
+#         - name: window
+#           in: query
+#           schema: { type: string, enum: [7d, 30d, month], default: month }
+#         - name: planTier
+#           in: query
+#           schema: { $ref: "#/components/schemas/PlanTier" }
+#         - $ref: "#/components/parameters/Page"
+#         - $ref: "#/components/parameters/PageSize"
+#       responses:
+#         "200":
+#           description: Ranking
+#           content:
+#             application/json:
+#               schema: { $ref: "#/components/schemas/OrgUsageRankingResponse" }
+#         "401":
+#           $ref: "#/components/responses/Unauthorized"
+#         "403":
+#           $ref: "#/components/responses/Forbidden"
+#
+#   /api/v1/admin/statistics/billing/adjustments:
+#     get:
+#       tags: [System Statistics]
+#       summary: Read Blossom adjustment activity
+#       description: Phase 2. Requires `stats:system`. The primary abuse-detection signal.
+#       operationId: getBlossomAdjustmentActivity
+#       parameters:
+#         - $ref: "#/components/parameters/From"
+#         - $ref: "#/components/parameters/To"
+#         - name: entryType
+#           in: query
+#           schema: { $ref: "#/components/schemas/BlossomLedgerEntryType" }
+#         - name: actorUserId
+#           in: query
+#           schema: { type: string, format: uuid }
+#       responses:
+#         "200":
+#           description: Adjustment activity
+#           content:
+#             application/json:
+#               schema: { $ref: "#/components/schemas/AdjustmentActivityResponse" }
+#         "401":
+#           $ref: "#/components/responses/Unauthorized"
+#         "403":
+#           $ref: "#/components/responses/Forbidden"
+#
+#   /api/v1/admin/statistics/billing/plan-changes:
+#     get:
+#       tags: [System Statistics]
+#       summary: Read plan change history
+#       description: Phase 2. Requires `stats:system`.
+#       operationId: getPlanChangeHistory
+#       parameters:
+#         - $ref: "#/components/parameters/From"
+#         - $ref: "#/components/parameters/To"
+#       responses:
+#         "200":
+#           description: Plan changes
+#           content:
+#             application/json:
+#               schema: { $ref: "#/components/schemas/PlanChangeHistoryResponse" }
+#         "401":
+#           $ref: "#/components/responses/Unauthorized"
+#         "403":
+#           $ref: "#/components/responses/Forbidden"
+#
+#   /api/v1/admin/statistics/billing/downgrades:
+#     get:
+#       tags: [System Statistics]
+#       summary: Read blocked downgrade statistics
+#       description: Phase 2. Requires `stats:system`.
+#       operationId: getDowngradeStatistics
+#       parameters:
+#         - $ref: "#/components/parameters/From"
+#         - $ref: "#/components/parameters/To"
+#       responses:
+#         "200":
+#           description: Downgrade statistics
+#           content:
+#             application/json:
+#               schema: { $ref: "#/components/schemas/DowngradeStatisticsResponse" }
+#         "401":
+#           $ref: "#/components/responses/Unauthorized"
+#         "403":
+#           $ref: "#/components/responses/Forbidden"
+  # ===========================================================================
+  # End planned / not yet implemented: admin billing statistics
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # Audit
+  # ---------------------------------------------------------------------------
+  /api/v1/admin/audit:
+    get:
+      tags: [Audit]
+      summary: Query the audit log
+      description: |
+        Phase 0/3. Requires `audit:view`. `before`/`after` snapshots are redacted at
+        write time: a secret never appears here.
+      operationId: listAuditEntries
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: organizationId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: actorUserId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: entityType
+          in: query
+          schema: { type: string, maxLength: 100 }
+        - name: entityId
+          in: query
+          schema: { type: string, maxLength: 128 }
+        - name: action
+          in: query
+          schema: { type: string, maxLength: 100 }
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+      responses:
+        "200":
+          description: Audit entries
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditPage" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/audit/{entryId}:
+    parameters:
+      - $ref: "#/components/parameters/AuditEntryId"
+    get:
+      tags: [Audit]
+      summary: Read one audit entry
+      description: Phase 0/3. Requires `audit:view`.
+      operationId: getAuditEntry
+      responses:
+        "200":
+          description: Audit entry
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditLogEntry" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Unknown audit entry
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  # ---------------------------------------------------------------------------
+  # Health
+  # ---------------------------------------------------------------------------
+  /health/live:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      description: Anonymous. Never checks a dependency; a live process with a dead database is still live.
+      operationId: getLiveness
+      security: []
+      responses:
+        "200":
+          description: The process is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [Healthy] }
+
+  /health/ready:
+    get:
+      tags: [Health]
+      summary: Readiness probe
+      description: |
+        Anonymous. Checks PostgreSQL, Redis, the agent service, and the Clerk JWKS.
+        Returns `503` when any critical check is `Unhealthy`. `Degraded` still
+        returns `200`. The payload never contains credentials, hostnames, or stack traces.
+      operationId: getReadiness
+      security: []
+      responses:
+        "200":
+          description: Ready, or ready with a degraded non-critical dependency
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthReport" }
+        "503":
+          description: Not ready
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthReport" }
+
+  /health:
+    get:
+      tags: [Health]
+      summary: Readiness probe (alias)
+      description: |
+        Anonymous. `/health` and `/health/ready` are both mapped with the same
+        `HealthCheckOptions` and `HealthCheckResponseWriter`, so they return the
+        identical JSON `HealthReport` — `/health` is a true alias, not a
+        `text/plain` status string. It checks PostgreSQL, the agent service and the
+        Clerk JWKS (plus Redis when a Redis connection string is configured), and
+        returns `503` when a critical check is `Unhealthy`; `Degraded` still returns
+        `200`. The `version` block is omitted in Production (finding M-3).
+      operationId: getHealth
+      security: []
+      responses:
+        "200":
+          description: Ready, or ready with a degraded non-critical dependency
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthReport" }
+        "503":
+          description: Not ready
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthReport" }
+
+  /metrics:
+    get:
+      tags: [Health]
+      summary: Prometheus metrics
+      description: |
+        Phase 0. Authenticated: `X-Internal-Token`, or `Authorization: Bearer
+        <Metrics:ScrapeToken>` when configured. Metric names use the `aveline.` prefix.
+      operationId: getMetrics
+      security:
+        - internalToken: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Prometheus exposition format
+          content:
+            text/plain:
+              schema: { type: string }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Clerk JWT from the `jwt-aveline-v1` template. Validated against the Clerk
+        JWKS (signature, `iss`, `exp`, `nbf`). `aud` is deliberately not validated.
+    internalToken:
+      type: apiKey
+      in: header
+      name: X-Internal-Token
+      description: |
+        Service-to-service shared secret. Required on `/internal/**` and `/metrics`.
+        Not for frontend clients.
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+      description: |
+        Customer API key, formatted `avl_live_<32 base62 characters>` or
+        `avl_test_<...>`. Phase 3. Available on the Rose plan and above.
+
+  parameters:
+    OrganizationId:
+      name: organizationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: |
+        The organization id. Its presence in the path is mandatory for
+        organization-scoped authorization: the handler reads only this route value.
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    AdminRequestId:
+      name: requestId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ConversationId:
+      name: conversationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    NotificationId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ApiKeyId:
+      name: keyId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    PricingRuleId:
+      name: ruleId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    PricingEntryId:
+      name: entryId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    AuditEntryId:
+      name: entryId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      name: pageSize
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    From:
+      name: from
+      in: query
+      required: true
+      schema: { type: string, format: date-time }
+      description: ISO 8601 UTC, inclusive
+    To:
+      name: to
+      in: query
+      required: true
+      schema: { type: string, format: date-time }
+      description: ISO 8601 UTC, exclusive
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9._:-]+$" }
+      description: |
+        Required on money-shaped POSTs. A replay with the same key and body returns
+        the original response with `Idempotency-Replayed: true`; a replay with a
+        different body returns `409` with `code: idempotency-key-reuse`. Concurrent
+        requests with the same key are serialised by a short lease, so exactly one
+        executes; `409` with `code: idempotency-key-in-flight` means the original was
+        still running when the wait budget expired, and `503` with
+        `code: idempotency-unavailable` means the lease store was unreachable so the
+        request was refused (the guard fails closed).
+
+  responses:
+    Unauthorized:
+      description: |
+        401. The body is **empty** for JWT failures. Send the client through
+        re-authentication.
+      content:
+        application/json:
+          schema:
+            description: Usually empty
+            nullable: true
+    Forbidden:
+      description: |
+        403. The body is **empty** for policy failures. For the account-state gate
+        the body is a `ProblemDetails`.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    NotFound:
+      description: Not found, or the caller is not a member of the target organization
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    ValidationError:
+      description: One or more request fields failed validation
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ValidationProblemDetails" }
+    RateLimited:
+      description: Rate limit or quota exceeded
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: "#/components/schemas/ErrorResponse"
+              - $ref: "#/components/schemas/QuotaExceededError"
+
+  schemas:
+
+    # --- primitives and enums ------------------------------------------------
+    ErrorResponse:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string }
+        code:
+          type: string
+          description: Machine-readable code. Present on Part C endpoints.
+          example: insufficient-balance
+        requestId:
+          type: string
+          description: Correlation id. Phase 0 onwards.
+    ValidationProblemDetails:
+      type: object
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        errors:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+    QuotaExceededError:
+      allOf:
+        - $ref: "#/components/schemas/ErrorResponse"
+        - type: object
+          properties:
+            quota:
+              type: object
+              properties:
+                metricKey: { type: string }
+                limit: { type: integer }
+                used: { type: integer }
+                resetsAt: { type: string, format: date-time }
+    InsufficientBalanceError:
+      allOf:
+        - $ref: "#/components/schemas/ErrorResponse"
+        - type: object
+          properties:
+            code: { type: string, enum: [insufficient-balance] }
+            available: { type: number }
+            requested: { type: number }
+    PlanLimitViolationError:
+      allOf:
+        - $ref: "#/components/schemas/ErrorResponse"
+        - type: object
+          properties:
+            code: { type: string, enum: [plan-limit-violation] }
+            violations:
+              type: array
+              items:
+                type: object
+                properties:
+                  key: { type: string }
+                  observed: { type: number }
+                  allowed: { type: number }
+
+    PlanTier:
+      type: string
+      enum: [Seed, Bloom, Orchid, Rose, Enterprise]
+    AccountState:
+      type: string
+      enum: [OnboardingPending, Active, Suspended]
+    ContactPreferences:
+      type: string
+      enum: [Email, Phone, SMS, WhatsApp, None]
+    DevicePlatform:
+      type: string
+      enum: [Ios, Android, Web]
+    MembershipStatus:
+      type: string
+      enum: [Pending, Active, Suspended]
+    BoutiqueRole:
+      type: string
+      enum: [org:boutique_owner, org:boutique_supervisor, org:boutique_manager, org:boutique_staff]
+    IntegrationType:
+      type: string
+      description: |
+        The integration types the API accepts. Required credential fields per type are
+        defined in `Modules/Integrations/Services/IntegrationService.cs:15-24`.
+      enum: [WhatsApp, Instagram, PaymentGateway]
+    AgentKey:
+      type: string
+      description: |
+        The registered agent keys. `commerce` currently has no graph — its work is
+        attributed to `orchestrator` until the Commerce agent is implemented.
+      enum: [orchestrator, customer_memory, visual_insight, commerce]
+    AgentTriggerKind:
+      type: string
+      enum: [WhatsAppInbound, WhatsAppOutbound, ApiRequest, Scheduled, Manual, Webhook]
+    AgentRunStatus:
+      type: string
+      enum: [Running, Succeeded, Failed, Cancelled, TimedOut, PausedForApproval]
+    AgentStepKind:
+      type: string
+      enum: [LlmCall, ToolCall, Decision, HumanInterrupt, Retrieval, Validation]
+    AgentStepStatus:
+      type: string
+      enum: [Succeeded, Failed, Skipped, TimedOut]
+    PricingScopeKind:
+      type: string
+      enum: [Global, Provider, ProviderModel]
+    PricingRuleStatus:
+      type: string
+      enum: [Draft, Active, Superseded, Cancelled]
+    RoundingMode:
+      type: string
+      enum: [Ceiling, HalfUp, Down, Up]
+    BlossomLedgerEntryType:
+      type: string
+      enum: [PeriodAllocation, TopUpGrant, AdminCredit, AdminDebit, TopUpRevocation, Expiry, PlanUpgradeProration, PlanDowngradeAdjustment, CorrectionRecompute]
+    ApiKeyStatus:
+      type: string
+      enum: [Active, Revoked, Expired]
+    AlertSeverity:
+      type: string
+      enum: [Info, Warning, Critical]
+    AlertStatus:
+      type: string
+      enum: [Firing, Acknowledged, Resolved]
+
+    PageMeta:
+      type: object
+      required: [total, page, pageSize]
+      properties:
+        total: { type: integer, minimum: 0 }
+        page: { type: integer, minimum: 1 }
+        pageSize: { type: integer, minimum: 1, maximum: 200 }
+
+    TimeWindow:
+      type: object
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        timezone: { type: string, default: UTC }
+
+    DataQuality:
+      type: object
+      description: |
+        Instrumentation status for the metric in this response. A client MUST NOT
+        render a metric as a real zero when its flag here is `false`.
+      properties:
+        costIsEstimated: { type: boolean }
+        latencyInstrumented: { type: boolean }
+        nodeFailuresObserved: { type: boolean }
+        perStepAttribution: { type: boolean }
+        toolInstrumented: { type: boolean }
+        retryInstrumented: { type: boolean }
+        materialisedCounts: { type: boolean }
+        streamingRunsIncluded: { type: boolean }
+        unattributedRunsExcluded: { type: boolean }
+
+    BlossomAmount:
+      type: number
+      description: Blossom quantity. Maximum 4 decimal places.
+      minimum: 0.0001
+
+    AdjustmentReason:
+      type: string
+      minLength: 10
+      maxLength: 500
+
+    # --- auth / users --------------------------------------------------------
+    AuthClaimsResponse:
+      type: object
+      properties:
+        userId: { type: string }
+        email: { type: string, nullable: true }
+        userRole: { type: string }
+        organizationRole: { type: string }
+        organizationId: { type: string, nullable: true }
+        accountState: { $ref: "#/components/schemas/AccountState" }
+        claims:
+          type: object
+          additionalProperties: { type: string }
+    UserDto:
+      type: object
+      required: [id, clerkId, email, firstName, lastName, username, userRole, organizationRole, accountState, isActive]
+      properties:
+        id: { type: string, format: uuid }
+        clerkId: { type: string }
+        email: { type: string, format: email }
+        firstName: { type: string }
+        lastName: { type: string }
+        displayName: { type: string, nullable: true }
+        username: { type: string }
+        phoneNumber: { type: string }
+        address: { type: string, nullable: true }
+        profileImageUrl: { type: string, nullable: true }
+        userRole: { type: string }
+        organizationRole: { type: string }
+        organizationId: { type: string }
+        hasCompletedOnboarding: { type: boolean }
+        accountState: { $ref: "#/components/schemas/AccountState" }
+        contactPreference: { $ref: "#/components/schemas/ContactPreferences" }
+        pushNotificationsEnabled: { type: boolean }
+        isActive: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    UpdateProfileRequest:
+      type: object
+      properties:
+        firstName: { type: string, maxLength: 100 }
+        lastName: { type: string, maxLength: 100 }
+        displayName: { type: string, maxLength: 200, nullable: true }
+        phoneNumber: { type: string, maxLength: 20 }
+        profileImageUrl: { type: string, maxLength: 1000, nullable: true }
+        contactPreference: { $ref: "#/components/schemas/ContactPreferences" }
+        pushNotificationsEnabled: { type: boolean }
+    SessionSummary:
+      type: object
+      properties:
+        id: { type: string }
+        ipAddressHash: { type: string, nullable: true }
+        userAgent: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        lastActiveAt: { type: string, format: date-time, nullable: true }
+        isCurrent: { type: boolean }
+    AdminApprovalRequestSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        clerkUserId: { type: string }
+        email: { type: string }
+        firstName: { type: string }
+        lastName: { type: string }
+        status: { type: string, enum: [Pending, Approved, Rejected] }
+        requestedAt: { type: string, format: date-time }
+        reviewedAt: { type: string, format: date-time, nullable: true }
+        reviewedByClerkUserId: { type: string, nullable: true }
+    AdminUserPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                allOf:
+                  - $ref: "#/components/schemas/UserDto"
+                  - type: object
+                    properties:
+                      organizationName: { type: string, nullable: true }
+
+    AdminOrganization:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        clerkOrgId: { type: string, nullable: true }
+        ownerUserId: { type: string, format: uuid }
+        planTier: { $ref: "#/components/schemas/PlanTier" }
+        isActive: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    AdminOrganizationPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/AdminOrganization" }
+
+    # --- organizations -------------------------------------------------------
+    OrganizationProfileDto:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        clerkOrgId: { type: string, nullable: true }
+        ownerUserId: { type: string, format: uuid }
+        address: { type: string, nullable: true }
+        phoneNumber: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        logoUrl: { type: string, nullable: true }
+        planTier: { $ref: "#/components/schemas/PlanTier" }
+        hasCompletedOnboarding: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    OrganizationMembershipView:
+      type: object
+      properties:
+        organizationId: { type: string, format: uuid }
+        organizationName: { type: string }
+        slug: { type: string }
+        boutiqueRole: { type: string }
+        status: { $ref: "#/components/schemas/MembershipStatus" }
+    OrganizationProfileWithMembershipDto:
+      type: object
+      properties:
+        organization: { $ref: "#/components/schemas/OrganizationProfileDto" }
+        membership: { $ref: "#/components/schemas/OrganizationMembershipView", nullable: true }
+    CreateOrganizationResponse:
+      type: object
+      properties:
+        organization:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+            slug: { type: string }
+            clerkOrgId: { type: string, nullable: true }
+            ownerUserId: { type: string, format: uuid }
+            createdAt: { type: string, format: date-time }
+        accountState: { type: string, nullable: true }
+    UpdateOrganizationRequest:
+      type: object
+      properties:
+        name: { type: string, maxLength: 200 }
+        address: { type: string, maxLength: 500, nullable: true }
+        phoneNumber: { type: string, maxLength: 50, nullable: true }
+        description: { type: string, maxLength: 1000, nullable: true }
+        logoUrl: { type: string, maxLength: 1000, nullable: true }
+        brandVoice: { type: string, maxLength: 500, nullable: true }
+        businessRules: { type: string, maxLength: 1000, nullable: true }
+        preferredColorsFabrics: { type: string, maxLength: 1000, nullable: true }
+        customerPreferences: { type: string, maxLength: 1000, nullable: true }
+    OrganizationSettingsResponse:
+      type: object
+      properties:
+        organization: { $ref: "#/components/schemas/OrganizationProfileDto" }
+        brandVoice: { type: string, nullable: true }
+        businessRules: { type: string, nullable: true }
+        preferredColorsFabrics: { type: string, nullable: true }
+        customerPreferences: { type: string, nullable: true }
+        entitlements: { $ref: "#/components/schemas/EntitlementListResponse" }
+    MembershipView:
+      type: object
+      properties:
+        organizationId: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        boutiqueRole: { type: string }
+        status: { $ref: "#/components/schemas/MembershipStatus" }
+    MemberPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/MemberView" }
+    MemberView:
+      type: object
+      properties:
+        userId: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        firstName: { type: string }
+        lastName: { type: string }
+        email: { type: string, format: email }
+        profileImageUrl: { type: string, nullable: true }
+        boutiqueRole: { type: string }
+        status: { $ref: "#/components/schemas/MembershipStatus" }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        lastActiveAt: { type: string, format: date-time, nullable: true }
+
+    # --- invitations ---------------------------------------------------------
+    CreateInvitationResponse:
+      type: object
+      properties:
+        invitationId: { type: string, format: uuid }
+        code: { type: string }
+        link: { type: string }
+        mobileLink: { type: string }
+        boutiqueRole: { type: string }
+        recipientEmail: { type: string, nullable: true }
+        expiresAt: { type: string, format: date-time }
+    PendingInvitationDto:
+      type: object
+      properties:
+        invitationId: { type: string, format: uuid }
+        boutiqueRole: { type: string }
+        recipientEmail: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+    AcceptInvitationResponse:
+      type: object
+      properties:
+        organizationId: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        boutiqueRole: { type: string }
+        clerkOrgId: { type: string, nullable: true }
+        accountState: { type: string, nullable: true }
+
+    # --- onboarding ----------------------------------------------------------
+    SaveBoutiqueDetailsRequest:
+      type: object
+      required: [name, address, phoneNumber]
+      properties:
+        name: { type: string, maxLength: 200 }
+        address: { type: string, maxLength: 500 }
+        phoneNumber: { type: string, maxLength: 50 }
+        description: { type: string, maxLength: 1000, nullable: true }
+        logoUrl: { type: string, maxLength: 1000, nullable: true }
+        slug: { type: string, maxLength: 100, nullable: true }
+    SaveAiCustomizationRequest:
+      type: object
+      description: Fields are tier-gated; a disallowed field returns 400.
+      properties:
+        brandVoice: { type: string, maxLength: 500, nullable: true }
+        businessRules: { type: string, maxLength: 1000, nullable: true }
+        preferredColorsFabrics: { type: string, maxLength: 1000, nullable: true }
+        customerPreferences: { type: string, maxLength: 1000, nullable: true }
+    OnboardingOrganizationDto:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        address: { type: string, nullable: true }
+        phoneNumber: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        logoUrl: { type: string, nullable: true }
+        planTier: { $ref: "#/components/schemas/PlanTier" }
+        brandVoice: { type: string, nullable: true }
+        businessRules: { type: string, nullable: true }
+        preferredColorsFabrics: { type: string, nullable: true }
+        customerPreferences: { type: string, nullable: true }
+        onboardingStep: { type: integer }
+        hasCompletedOnboarding: { type: boolean }
+    OnboardingStatusResponse:
+      type: object
+      properties:
+        hasCompletedOnboarding: { type: boolean }
+        currentStep: { type: integer }
+        organization: { $ref: "#/components/schemas/OnboardingOrganizationDto", nullable: true }
+    CompleteOnboardingResponse:
+      type: object
+      properties:
+        organization: { $ref: "#/components/schemas/OnboardingOrganizationDto" }
+        userRole: { type: string }
+        organizationRole: { type: string }
+        accountState: { type: string }
+        blossomAllocation: { type: number }
+        agentWarmedUp: { type: boolean }
+
+    # --- notifications -------------------------------------------------------
+    UserNotificationDto:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        notificationId: { type: string, format: uuid }
+        type: { type: string }
+        title: { type: string }
+        body: { type: string }
+        data:
+          type: object
+          additionalProperties: { type: string, nullable: true }
+        isRead: { type: boolean }
+        readAt: { type: string, format: date-time, nullable: true }
+        deliveredAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+    NotificationPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/UserNotificationDto" }
+
+    # --- conversations -------------------------------------------------------
+    ConversationDto:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string }
+        customerId: { type: string, format: uuid, nullable: true }
+        threadId: { type: string }
+        status: { type: string }
+        lastMessageAt: { type: string, format: date-time, nullable: true }
+    ConversationPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/ConversationDto" }
+    MessageDto:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        conversationId: { type: string, format: uuid }
+        authorKind: { type: string }
+        agentKey: { type: string, nullable: true }
+        authorUserId: { type: string, format: uuid, nullable: true }
+        kind: { type: string }
+        contentBlocks:
+          type: array
+          items: { type: object, additionalProperties: true }
+        contentHash: { type: string, nullable: true }
+        replyToMessageId: { type: string, format: uuid, nullable: true }
+        status: { type: string }
+        createdAt: { type: string, format: date-time }
+    MessagePage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/MessageDto" }
+
+    # --- integrations --------------------------------------------------------
+    IntegrationView:
+      type: object
+      properties:
+        type: { $ref: "#/components/schemas/IntegrationType" }
+        status: { type: string }
+        isConfigured: { type: boolean }
+        lastCheckedAt: { type: string, format: date-time, nullable: true }
+        message: { type: string, nullable: true }
+    IntegrationListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/IntegrationView" }
+
+    # --- billing -------------------------------------------------------------
+    UsageSummary:
+      type: object
+      properties:
+        organizationId: { type: string, format: uuid }
+        periodStart: { type: string, format: date-time }
+        periodEnd: { type: string, format: date-time }
+        monthlyBlossomLimit: { type: number }
+        blossomUsed: { type: number }
+        blossomRemaining: { type: number }
+        status: { type: string, enum: [Active, Suspended, Closed] }
+    BlossomBalance:
+      type: object
+      properties:
+        organizationId: { type: string, format: uuid }
+        periodStart: { type: string, format: date-time }
+        periodEnd: { type: string, format: date-time }
+        periodIsClosed: { type: boolean }
+        planTier: { $ref: "#/components/schemas/PlanTier" }
+        monthlyBlossomLimit: { type: number }
+        blossomGranted: { type: number }
+        blossomAdjusted: { type: number }
+        blossomUsed: { type: number }
+        blossomRemaining: { type: number }
+        percentUsed: { type: number }
+        lowBalanceThresholdPercent: { type: number }
+        status: { type: string, enum: [Active, Suspended, Closed] }
+        nextExpiringGrant:
+          type: object
+          nullable: true
+          properties:
+            blossomDelta: { type: number }
+            expiresAt: { type: string, format: date-time }
+        asOf: { type: string, format: date-time }
+    BlossomUsageResponse:
+      type: object
+      properties:
+        window: { $ref: "#/components/schemas/TimeWindow" }
+        totalBlossoms: { type: number }
+        totalNormalizedUnits: { type: integer }
+        series:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              blossoms: { type: number }
+              normalizedUnits: { type: integer }
+              workflowCount: { type: integer }
+        generatedAt: { type: string, format: date-time }
+    BlossomStatementResponse:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            organizationId: { type: string, format: uuid }
+            periodStart: { type: string, format: date-time }
+            periodEnd: { type: string, format: date-time }
+            openingBalance: { type: number }
+            closingBalance: { type: number }
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/BlossomStatementItem" }
+            reconciliation:
+              type: object
+              properties:
+                projectedBalance: { type: number }
+                ledgerDerivedBalance: { type: number }
+                drift: { type: number }
+                isConsistent: { type: boolean }
+            generatedAt: { type: string, format: date-time }
+    BlossomStatementItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        occurredAt: { type: string, format: date-time }
+        kind: { type: string, enum: [Entitlement, Consumption] }
+        entryType: { $ref: "#/components/schemas/BlossomLedgerEntryType", nullable: true }
+        blossomDelta: { type: number }
+        balanceAfter: { type: number }
+        reason: { type: string }
+        sourceKind: { type: string, nullable: true }
+        sourceRef: { type: string, nullable: true }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        createdByUserId: { type: string, format: uuid, nullable: true }
+    AdminBlossomAdjustmentRequest:
+      type: object
+      required: [amount, reason]
+      properties:
+        amount: { $ref: "#/components/schemas/BlossomAmount" }
+        reason: { $ref: "#/components/schemas/AdjustmentReason" }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        sourceKind:
+          type: string
+          enum: [Admin, PaymentProvider, PlanChange, Expiry, System]
+          nullable: true
+        sourceRef: { type: string, maxLength: 128, nullable: true }
+    BlossomLedgerEntryResponse:
+      type: object
+      properties:
+        ledgerEntryId: { type: string, format: uuid }
+        entryType: { $ref: "#/components/schemas/BlossomLedgerEntryType" }
+        blossomDelta: { type: number }
+        balanceAfter: { type: number }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        reason: { type: string }
+        skuCode: { type: string, nullable: true }
+        priceLkr: { type: number, nullable: true }
+        paymentReference: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+    BlossomBurnRateResponse:
+      type: object
+      properties:
+        window: { type: string }
+        burnRatePerDay: { type: number }
+        availableBlossoms: { type: number }
+        projectedExhaustionAt: { type: string, format: date-time, nullable: true }
+        confidence: { type: string, enum: [low, medium, high] }
+        sampleDays: { type: integer }
+
+    # --- subscription and entitlements ---------------------------------------
+    Subscription:
+      type: object
+      properties:
+        organizationId: { type: string, format: uuid }
+        planTier: { $ref: "#/components/schemas/PlanTier" }
+        billingCycle: { type: string, enum: [Monthly, Annual] }
+        status: { type: string, enum: [None, Trialing, Active, PastDue, Cancelled, Expired] }
+        currentPeriodStart: { type: string, format: date-time }
+        currentPeriodEnd: { type: string, format: date-time }
+        seatsIncluded: { type: integer }
+        priceLkr: { type: number }
+        currency: { type: string }
+        cancelAtPeriodEnd: { type: boolean }
+        cancelledAt: { type: string, format: date-time, nullable: true }
+        externalProvider: { type: string, nullable: true }
+    ChangePlanRequest:
+      type: object
+      required: [planTier]
+      properties:
+        planTier: { $ref: "#/components/schemas/PlanTier" }
+        effective:
+          type: string
+          enum: [immediate, nextPeriod]
+          description: Defaults to `immediate` for an upgrade and `nextPeriod` for a downgrade.
+        reason: { type: string, maxLength: 500, nullable: true }
+    ChangePlanResponse:
+      type: object
+      properties:
+        subscription: { $ref: "#/components/schemas/Subscription" }
+        previousPlanTier: { $ref: "#/components/schemas/PlanTier" }
+        blossomDelta: { type: number }
+        newBalance: { type: number }
+    EntitlementListResponse:
+      type: object
+      properties:
+        organizationId: { type: string, format: uuid }
+        planTier: { $ref: "#/components/schemas/PlanTier" }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Entitlement" }
+        generatedAt: { type: string, format: date-time }
+    Entitlement:
+      type: object
+      properties:
+        key: { type: string }
+        valueType: { type: string, enum: [Integer, Decimal, Boolean, String] }
+        value: {}
+        source: { type: string, enum: [Plan, Override] }
+        effectiveFrom: { type: string, format: date-time }
+    EntitlementUsageResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              observed: { type: number }
+              allowed: { type: number, nullable: true }
+              percentUsed: { type: number, nullable: true }
+              hardLimit: { type: boolean }
+        materialisedAt: { type: string, format: date-time }
+        dataQuality: { $ref: "#/components/schemas/DataQuality" }
+    EntitlementOverrideInput:
+      type: object
+      description: One per-organization entitlement override (FR-4.9).
+      required: [key, valueType, value, reason]
+      properties:
+        key: { type: string, maxLength: 64 }
+        valueType: { type: string, enum: [Integer, Decimal, Boolean, String] }
+        value: {}
+        reason: { type: string, minLength: 1, maxLength: 500 }
+        effectiveFrom: { type: string, format: date-time, nullable: true }
+        effectiveTo: { type: string, format: date-time, nullable: true }
+    SetEntitlementOverridesRequest:
+      type: object
+      required: [overrides]
+      properties:
+        overrides:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/EntitlementOverrideInput" }
+    EntitlementOverridesResponse:
+      type: object
+      properties:
+        organizationId: { type: string, format: uuid }
+        entitlements:
+          type: array
+          items: { $ref: "#/components/schemas/Entitlement" }
+
+    # --- API keys ------------------------------------------------------------
+    CreateApiKeyRequest:
+      type: object
+      required: [name, scopes]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        scopes:
+          type: array
+          minItems: 1
+          items: { type: string }
+          description: |
+            Subset of the permission catalog. `pricing:*`, `billing:adjust`, and
+            `admin:*` cannot be delegated to a key.
+        environment: { type: string, enum: [live, test], default: live }
+        expiresAt: { type: string, format: date-time, nullable: true }
+    ApiKey:
+      type: object
+      description: A key as returned by read endpoints. The secret and its hash are never included.
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        prefix: { type: string }
+        scopes:
+          type: array
+          items: { type: string }
+        environment: { type: string, enum: [live, test] }
+        status: { $ref: "#/components/schemas/ApiKeyStatus" }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        lastUsedAt: { type: string, format: date-time, nullable: true }
+        revokedAt: { type: string, format: date-time, nullable: true }
+        revokedReason: { type: string, nullable: true }
+        requestCount: { type: integer }
+    ApiKeyCreatedResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiKey"
+        - type: object
+          required: [secret]
+          properties:
+            secret:
+              type: string
+              description: Returned exactly once. Never retrievable again.
+              example: "avl_live_7Qk2mZpX9rT4vBnL6sW1cYhJ3dF8gAeU"
+            warning: { type: string }
+    ApiKeyPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/ApiKey" }
+
+    # --- pricing -------------------------------------------------------------
+    CreatePricingRuleRequest:
+      type: object
+      required: [scopeKind, unitsPerBlossom, effectiveFrom, changeReason]
+      properties:
+        scopeKind: { $ref: "#/components/schemas/PricingScopeKind" }
+        provider: { type: string, maxLength: 64, nullable: true }
+        model: { type: string, maxLength: 128, nullable: true }
+        unitsPerBlossom: { type: integer, minimum: 1, maximum: 10000000, default: 1000 }
+        minimumChargeBlossoms: { type: number, minimum: 0, default: 0.1 }
+        roundingMode: { $ref: "#/components/schemas/RoundingMode" }
+        roundingDecimals: { type: integer, minimum: 0, maximum: 6, default: 1 }
+        effectiveFrom: { type: string, format: date-time }
+        changeReason: { $ref: "#/components/schemas/AdjustmentReason" }
+    UpdatePricingRuleRequest:
+      type: object
+      description: Any subset of the create fields except `scopeKind`. Only permitted while the rule is a Draft.
+      properties:
+        unitsPerBlossom: { type: integer, minimum: 1, maximum: 10000000 }
+        minimumChargeBlossoms: { type: number, minimum: 0 }
+        roundingMode: { $ref: "#/components/schemas/RoundingMode" }
+        roundingDecimals: { type: integer, minimum: 0, maximum: 6 }
+        effectiveFrom: { type: string, format: date-time }
+        changeReason: { $ref: "#/components/schemas/AdjustmentReason" }
+    PricingRule:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        scopeKind: { $ref: "#/components/schemas/PricingScopeKind" }
+        provider: { type: string, nullable: true }
+        model: { type: string, nullable: true }
+        unitsPerBlossom: { type: integer }
+        minimumChargeBlossoms: { type: number }
+        roundingMode: { $ref: "#/components/schemas/RoundingMode" }
+        roundingDecimals: { type: integer }
+        effectiveFrom: { type: string, format: date-time }
+        effectiveTo: { type: string, format: date-time, nullable: true }
+        status: { $ref: "#/components/schemas/PricingRuleStatus" }
+        version: { type: integer }
+        changeReason: { type: string }
+        createdByUserId: { type: string, format: uuid }
+        approvedByUserId: { type: string, format: uuid, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PricingRulePage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/PricingRule" }
+    PricingSkuKind:
+      type: string
+      enum: [PlanAllowance, TopUpPack, OverageUsage]
+    PricingPriceEntry:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        planTier: { type: string, nullable: true }
+        organizationId: { type: string, format: uuid, nullable: true }
+        skuKind: { $ref: "#/components/schemas/PricingSkuKind" }
+        skuCode: { type: string, nullable: true }
+        blossomQuantity: { type: number }
+        priceLkr: { type: number }
+        effectiveFrom: { type: string, format: date-time }
+        effectiveTo: { type: string, format: date-time, nullable: true }
+        status: { $ref: "#/components/schemas/PricingRuleStatus" }
+        changeReason: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CreatePriceEntryRequest:
+      type: object
+      required: [skuKind, blossomQuantity, priceLkr, effectiveFrom, changeReason]
+      properties:
+        planTier: { $ref: "#/components/schemas/PlanTier" }
+        organizationId: { type: string, format: uuid, nullable: true }
+        skuKind: { $ref: "#/components/schemas/PricingSkuKind" }
+        skuCode: { type: string, maxLength: 64, nullable: true }
+        blossomQuantity: { type: number, minimum: 0, description: Must be greater than zero }
+        priceLkr: { type: number, minimum: 0 }
+        effectiveFrom: { type: string, format: date-time }
+        effectiveTo: { type: string, format: date-time, nullable: true }
+        changeReason: { $ref: "#/components/schemas/AdjustmentReason" }
+    UpdatePriceEntryRequest:
+      type: object
+      properties:
+        blossomQuantity: { type: number, minimum: 0, description: Must be greater than zero }
+        priceLkr: { type: number, minimum: 0 }
+        effectiveFrom: { type: string, format: date-time }
+        effectiveTo: { type: string, format: date-time, nullable: true }
+        changeReason: { $ref: "#/components/schemas/AdjustmentReason" }
+        status: { $ref: "#/components/schemas/PricingRuleStatus" }
+
+    # --- agent statistics ----------------------------------------------------
+    AgentWorkflowRun:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        workflowId: { type: string }
+        requestId: { type: string, nullable: true }
+        triggerKind: { $ref: "#/components/schemas/AgentTriggerKind" }
+        conversationId: { type: string, format: uuid, nullable: true }
+        customerId: { type: string, format: uuid, nullable: true }
+        initiatedByUserId: { type: string, format: uuid, nullable: true }
+        status: { $ref: "#/components/schemas/AgentRunStatus" }
+        agentsInvolved:
+          type: array
+          items: { $ref: "#/components/schemas/AgentKey" }
+        startedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time, nullable: true }
+        durationMs: { type: integer, nullable: true }
+        approvalWaitMs: { type: integer, nullable: true }
+        stepCount: { type: integer }
+        toolCallCount: { type: integer }
+        retryCount: { type: integer }
+        inputTokens: { type: integer }
+        outputTokens: { type: integer }
+        cachedTokens: { type: integer }
+        actualCostUsd: { type: number }
+        blossomUnits: { type: number }
+        errorCode: { type: string, nullable: true }
+        errorMessage: { type: string, nullable: true }
+        isUnattributed: { type: boolean }
+    AgentRunPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/AgentWorkflowRun" }
+            dataQuality: { $ref: "#/components/schemas/DataQuality" }
+            generatedAt: { type: string, format: date-time }
+    AgentStepRun:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        stepIndex: { type: integer }
+        agentKey: { $ref: "#/components/schemas/AgentKey" }
+        nodeName: { type: string }
+        stepKind: { $ref: "#/components/schemas/AgentStepKind" }
+        toolName: { type: string, nullable: true }
+        status: { $ref: "#/components/schemas/AgentStepStatus" }
+        attemptNumber: { type: integer }
+        startedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time, nullable: true }
+        durationMs: { type: integer, nullable: true }
+        provider: { type: string, nullable: true }
+        model: { type: string, nullable: true }
+        inputTokens: { type: integer }
+        outputTokens: { type: integer }
+        cachedTokens: { type: integer }
+        actualCostUsd: { type: number }
+        argsHash:
+          type: string
+          nullable: true
+          description: SHA-256 of the canonicalised tool arguments. The arguments themselves are never stored.
+        resultBytes: { type: integer, nullable: true }
+        errorCode: { type: string, nullable: true }
+    AgentRunDetail:
+      allOf:
+        - $ref: "#/components/schemas/AgentWorkflowRun"
+        - type: object
+          properties:
+            steps:
+              type: array
+              items: { $ref: "#/components/schemas/AgentStepRun" }
+    AgentReliabilityResponse:
+      type: object
+      properties:
+        series:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              totalRuns: { type: integer }
+              succeeded: { type: integer }
+              failed: { type: integer }
+              timedOut: { type: integer }
+              cancelled: { type: integer }
+              successRate: { type: number }
+              byErrorCode:
+                type: object
+                additionalProperties: { type: integer }
+        dataQuality: { $ref: "#/components/schemas/DataQuality" }
+        generatedAt: { type: string, format: date-time }
+    PercentileSeriesResponse:
+      type: object
+      properties:
+        series:
+          type: array
+          items: { $ref: "#/components/schemas/PercentileSample" }
+        precision:
+          type: string
+          enum: [exact, bucket-interpolated, insufficient-sample]
+        reason: { type: string, nullable: true }
+        dataQuality: { $ref: "#/components/schemas/DataQuality" }
+        generatedAt: { type: string, format: date-time }
+    PercentileSample:
+      type: object
+      properties:
+        key: { type: string }
+        sampleCount: { type: integer }
+        avgMs: { type: integer, nullable: true }
+        p50Ms: { type: integer, nullable: true }
+        p95Ms: { type: integer, nullable: true }
+        p99Ms: { type: integer, nullable: true }
+        maxMs: { type: integer, nullable: true }
+        pendingCount: { type: integer }
+    AgentTokenResponse:
+      type: object
+      properties:
+        series:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              inputTokens: { type: integer }
+              outputTokens: { type: integer }
+              cachedTokens: { type: integer }
+              totalTokens: { type: integer }
+              runCount: { type: integer }
+        dataQuality: { $ref: "#/components/schemas/DataQuality" }
+        generatedAt: { type: string, format: date-time }
+    AgentCostResponse:
+      type: object
+      properties:
+        series:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              actualCostUsd: { type: number }
+              avgCostPerRunUsd: { type: number }
+              blossomUnits: { type: number }
+              runCount: { type: integer }
+        dataQuality: { $ref: "#/components/schemas/DataQuality" }
+        generatedAt: { type: string, format: date-time }
+    AgentStepStatisticsResponse:
+      type: object
+      properties:
+        series:
+          type: array
+          items:
+            type: object
+            properties:
+              agentKey: { type: string }
+              nodeName: { type: string }
+              stepCount: { type: integer }
+              failedCount: { type: integer }
+              avgDurationMs: { type: integer, nullable: true }
+              p95DurationMs: { type: integer, nullable: true }
+        dataQuality: { $ref: "#/components/schemas/DataQuality" }
+        generatedAt: { type: string, format: date-time }
+    AgentToolStatisticsResponse:
+      type: object
+      properties:
+        series:
+          type: array
+          items:
+            type: object
+            properties:
+              toolName: { type: string }
+              callCount: { type: integer }
+              succeededCount: { type: integer }
+              failedCount: { type: integer }
+              successRate: { type: number }
+              avgDurationMs: { type: integer, nullable: true }
+        dataQuality: { $ref: "#/components/schemas/DataQuality" }
+        generatedAt: { type: string, format: date-time }
+    AgentFailureResponse:
+      type: object
+      properties:
+        series:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              failureCount: { type: integer }
+              share: { type: number }
+        dataQuality: { $ref: "#/components/schemas/DataQuality" }
+        generatedAt: { type: string, format: date-time }
+
+    # --- API statistics ------------------------------------------------------
+    ApiRequestStatisticsResponse:
+      type: object
+      properties:
+        window: { $ref: "#/components/schemas/TimeWindow" }
+        totals:
+          type: object
+          properties:
+            requestCount: { type: integer }
+            errorCount: { type: integer }
+            throttledCount: { type: integer }
+            billableRequestCount: { type: integer }
+        series:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              requestCount: { type: integer }
+              errorCount: { type: integer }
+              throttledCount: { type: integer }
+        generatedAt: { type: string, format: date-time }
+        freshness:
+          type: object
+          properties:
+            currentHourIsPartial: { type: boolean }
+            lastRollupAt: { type: string, format: date-time }
+    ApiErrorStatisticsResponse:
+      type: object
+      properties:
+        window: { $ref: "#/components/schemas/TimeWindow" }
+        series:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              clientErrorRate: { type: number }
+              serverErrorRate: { type: number }
+              throttleRate: { type: number }
+              requestCount: { type: integer }
+        generatedAt: { type: string, format: date-time }
+    ApiLatencyResponse:
+      type: object
+      properties:
+        window: { $ref: "#/components/schemas/TimeWindow" }
+        series:
+          type: array
+          items: { $ref: "#/components/schemas/PercentileSample" }
+        precision: { type: string, enum: [bucket-interpolated] }
+        bucketBoundsMs:
+          type: array
+          items: { type: integer, nullable: true }
+        generatedAt: { type: string, format: date-time }
+    ApiEndpointStatisticsResponse:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                type: object
+                properties:
+                  routeTemplate: { type: string }
+                  httpMethod: { type: string }
+                  requestCount: { type: integer }
+                  errorRate: { type: number }
+                  avgMs: { type: integer, nullable: true }
+    ApiUserStatisticsResponse:
+      type: object
+      properties:
+        series:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              userId: { type: string, format: uuid, nullable: true }
+              requestCount: { type: integer }
+              errorRate: { type: number }
+        generatedAt: { type: string, format: date-time }
+    ApiQuotaStatusResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              metricKey: { type: string }
+              apiKeyId: { type: string, format: uuid, nullable: true }
+              limit: { type: integer, nullable: true }
+              used: { type: integer }
+              remaining: { type: integer, nullable: true }
+              percentUsed: { type: number, nullable: true }
+              resetsAt: { type: string, format: date-time }
+        generatedAt: { type: string, format: date-time }
+    ApiKeyStatisticsResponse:
+      type: object
+      properties:
+        series:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              name: { type: string, nullable: true }
+              requestCount: { type: integer }
+              errorRate: { type: number }
+              avgMs: { type: integer, nullable: true }
+              lastUsedAt: { type: string, format: date-time, nullable: true }
+              topEndpoint: { type: string, nullable: true }
+        generatedAt: { type: string, format: date-time }
+    ApiBillableResponse:
+      type: object
+      properties:
+        month: { type: string }
+        billableRequestCount: { type: integer }
+        periodStart: { type: string, format: date-time }
+        periodEnd: { type: string, format: date-time }
+        generatedAt: { type: string, format: date-time }
+    SlowRequest:
+      type: object
+      properties:
+        occurredAt: { type: string, format: date-time }
+        routeTemplate: { type: string }
+        httpMethod: { type: string }
+        statusCode: { type: integer }
+        durationMs: { type: integer }
+        requestId: { type: string, nullable: true }
+        traceId: { type: string, nullable: true }
+        resourceType: { type: string, nullable: true }
+        resourceId: { type: string, nullable: true }
+        errorCode: { type: string, nullable: true }
+
+    # --- system statistics ---------------------------------------------------
+    HealthReport:
+      type: object
+      properties:
+        status: { type: string, enum: [Healthy, Degraded, Unhealthy] }
+        version:
+          type: object
+          properties:
+            gitSha: { type: string }
+            buildTime: { type: string, format: date-time }
+            assemblyVersion: { type: string }
+            environment: { type: string }
+        totalDurationMs: { type: integer }
+        checks:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              status: { type: string, enum: [Healthy, Degraded, Unhealthy] }
+              durationMs: { type: integer }
+              message: { type: string, nullable: true }
+    SystemOverview:
+      type: object
+      properties:
+        version: { type: object, additionalProperties: true }
+        readiness: { $ref: "#/components/schemas/HealthReport" }
+        uptimeSeconds: { type: integer }
+        alerts:
+          type: object
+          properties:
+            critical: { type: integer }
+            warning: { type: integer }
+            top:
+              type: array
+              items: { $ref: "#/components/schemas/SystemAlert" }
+        throughput:
+          type: object
+          properties:
+            requestsPerSecond: { type: number }
+            agentRunsPerMinute: { type: number }
+            blossomsPerHour: { type: number }
+        errors:
+          type: object
+          properties:
+            errorRate: { type: number }
+            unhandledExceptionsLast15m: { type: integer }
+        queues: { $ref: "#/components/schemas/SystemQueueResponse" }
+        generatedAt: { type: string, format: date-time }
+    SystemMetricResponse:
+      type: object
+      properties:
+        metricName: { type: string }
+        unit: { type: string }
+        series:
+          type: array
+          items:
+            type: object
+            properties:
+              windowStart: { type: string, format: date-time }
+              value: { type: number }
+              dimensions:
+                type: object
+                additionalProperties: { type: string }
+        generatedAt: { type: string, format: date-time }
+    SystemQueueResponse:
+      type: object
+      properties:
+        telemetryChannelDepth: { type: integer }
+        eventBusBacklog: { type: integer }
+        notificationBacklog: { type: integer }
+        inboundMessageBacklog: { type: integer }
+        agentRunsRunning: { type: integer }
+        samples: { type: integer }
+    SystemThroughputResponse:
+      type: object
+      properties:
+        window: { $ref: "#/components/schemas/TimeWindow" }
+        series:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              requestsPerSecond: { type: number }
+              agentRunsPerMinute: { type: number }
+              blossomsPerHour: { type: number }
+        generatedAt: { type: string, format: date-time }
+    SystemEventBusResponse:
+      type: object
+      properties:
+        published: { type: integer }
+        delivered: { type: integer }
+        failed: { type: integer }
+        publishLatencyAvgMs: { type: number, nullable: true }
+        publishLatencyP95Ms: { type: number, nullable: true }
+        byEventType:
+          type: object
+          additionalProperties: { type: integer }
+        generatedAt: { type: string, format: date-time }
+    SystemAlert:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        ruleId: { type: string, format: uuid, nullable: true }
+        ruleName: { type: string, nullable: true }
+        organizationId: { type: string, format: uuid, nullable: true }
+        metricName: { type: string }
+        severity: { $ref: "#/components/schemas/AlertSeverity" }
+        status: { $ref: "#/components/schemas/AlertStatus" }
+        title: { type: string }
+        detail: { type: string, nullable: true }
+        observedValue: { type: number, nullable: true }
+        threshold: { type: number, nullable: true }
+        occurrenceCount: { type: integer }
+        firedAt: { type: string, format: date-time }
+        lastObservedAt: { type: string, format: date-time }
+        acknowledgedAt: { type: string, format: date-time, nullable: true }
+        resolvedAt: { type: string, format: date-time, nullable: true }
+    SystemAlertPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/SystemAlert" }
+
+    # --- admin analytics -----------------------------------------------------
+    ProfitabilityResponse:
+      type: object
+      properties:
+        series:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              actualCostUsd: { type: number }
+              blossomsCharged: { type: number }
+              costPerBlossomUsd: { type: number, nullable: true }
+              revenueLkr: { type: number, nullable: true }
+              marginLkr: { type: number, nullable: true }
+              runCount: { type: integer }
+        dataQuality: { $ref: "#/components/schemas/DataQuality" }
+        generatedAt: { type: string, format: date-time }
+    OrgUsageRankingResponse:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            window: { type: string }
+            items:
+              type: array
+              items:
+                type: object
+                properties:
+                  rank: { type: integer }
+                  organizationId: { type: string, format: uuid }
+                  organizationName: { type: string }
+                  planTier: { $ref: "#/components/schemas/PlanTier" }
+                  blossomUsed: { type: number }
+                  blossomLimit: { type: number, nullable: true }
+                  percentUsed: { type: number, nullable: true }
+    AdjustmentActivityResponse:
+      type: object
+      properties:
+        series:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              entryType: { $ref: "#/components/schemas/BlossomLedgerEntryType" }
+              count: { type: integer }
+              totalBlossoms: { type: number }
+        byActor:
+          type: array
+          items:
+            type: object
+            properties:
+              actorUserId: { type: string, format: uuid, nullable: true }
+              count: { type: integer }
+              totalBlossoms: { type: number }
+        generatedAt: { type: string, format: date-time }
+    PlanChangeHistoryResponse:
+      type: object
+      properties:
+        series:
+          type: array
+          items:
+            type: object
+            properties:
+              day: { type: string, format: date }
+              upgradeCount: { type: integer }
+              downgradeCount: { type: integer }
+              blossomDelta: { type: number }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              organizationId: { type: string, format: uuid }
+              fromTier: { $ref: "#/components/schemas/PlanTier" }
+              toTier: { $ref: "#/components/schemas/PlanTier" }
+              occurredAt: { type: string, format: date-time }
+              blossomDelta: { type: number }
+        generatedAt: { type: string, format: date-time }
+    DowngradeStatisticsResponse:
+      type: object
+      properties:
+        attempted: { type: integer }
+        blocked: { type: integer }
+        blockedRate: { type: number }
+        byViolatedKey:
+          type: object
+          additionalProperties: { type: integer }
+        generatedAt: { type: string, format: date-time }
+
+    # --- audit ---------------------------------------------------------------
+    AuditLogEntry:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        occurredAt: { type: string, format: date-time }
+        organizationId: { type: string, format: uuid, nullable: true }
+        actorKind: { type: string, enum: [User, ApiKey, InternalService, System] }
+        actorUserId: { type: string, format: uuid, nullable: true }
+        actorRef: { type: string, nullable: true }
+        action: { type: string }
+        entityType: { type: string }
+        entityId: { type: string }
+        reason: { type: string, nullable: true }
+        requestId: { type: string, nullable: true }
+        before: { nullable: true }
+        after: { nullable: true }
+    AuditPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/AuditLogEntry" }

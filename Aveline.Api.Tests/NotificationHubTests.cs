@@ -63,6 +63,7 @@ public class NotificationHubTests
         public Task<User> CreateAsync(User user, CancellationToken cancellationToken = default) => Task.FromResult(user);
         public Task<User> UpdateAsync(User user, CancellationToken cancellationToken = default) => Task.FromResult(user);
         public Task<bool> ExistsByClerkIdAsync(string clerkId, CancellationToken cancellationToken = default) => Task.FromResult(false);
+        public Task<(IReadOnlyList<User> Items, int Total)> SearchAsync(string? term, AccountState? state, Guid? organizationId, int page, int pageSize, CancellationToken cancellationToken = default) => Task.FromResult<(IReadOnlyList<User>, int)>((user is null ? [] : [user], user is null ? 0 : 1));
     }
 
     private sealed class FakeOrganizationRepository(IReadOnlyList<OrganizationMembership> memberships) : IOrganizationRepository
@@ -74,6 +75,7 @@ public class NotificationHubTests
         public Task<Organization?> GetByOwnerUserIdAsync(Guid ownerUserId, CancellationToken cancellationToken = default) => Task.FromResult<Organization?>(null);
         public Task<Organization?> GetBySlugAsync(string slug, CancellationToken cancellationToken = default) => Task.FromResult<Organization?>(null);
         public Task<bool> ExistsBySlugAsync(string slug, CancellationToken cancellationToken = default) => Task.FromResult(false);
+        public Task<(IReadOnlyList<Organization> Items, int Total)> SearchAsync(string? term, bool? isActive, Aveline.Api.Modules.Billing.Models.PlanTier? planTier, int page, int pageSize, CancellationToken cancellationToken = default) => Task.FromResult<(IReadOnlyList<Organization>, int)>(([], 0));
         public Task<Organization> CreateAsync(Organization organization, CancellationToken cancellationToken = default) => Task.FromResult(organization);
         public Task<Organization> UpdateAsync(Organization organization, CancellationToken cancellationToken = default) => Task.FromResult(organization);
         public Task<OrganizationMembership?> GetMembershipAsync(Guid organizationId, Guid userId, CancellationToken cancellationToken = default) => Task.FromResult<OrganizationMembership?>(null);
@@ -82,6 +84,8 @@ public class NotificationHubTests
         public Task RemoveMembershipAsync(OrganizationMembership membership, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<bool> UserHasActiveMembershipAsync(Guid userId, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task<IReadOnlyList<OrganizationMembership>> ListMembershipsForOrganizationAsync(Guid organizationId, CancellationToken cancellationToken = default) => Task.FromResult(memberships);
+        public Task<IReadOnlyList<OrganizationMembership>> ListMembershipsWithUsersAsync(Guid organizationId, CancellationToken cancellationToken = default) => Task.FromResult(memberships);
+        public Task<int> RemoveAllMembershipsForUserAsync(Guid userId, CancellationToken cancellationToken = default) => Task.FromResult(0);
         public Task<IReadOnlyList<OrganizationMembership>> GetActiveMembersAsync(Guid organizationId, CancellationToken cancellationToken = default) => Task.FromResult(memberships);
     }
 

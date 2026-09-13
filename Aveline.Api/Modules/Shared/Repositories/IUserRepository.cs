@@ -9,4 +9,16 @@ public interface IUserRepository
     Task<User> CreateAsync(User user, CancellationToken cancellationToken = default);
     Task<User> UpdateAsync(User user, CancellationToken cancellationToken = default);
     Task<bool> ExistsByClerkIdAsync(string clerkId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Cross-organization paginated user search for Aveline support staff (FR-3.7).
+    /// <paramref name="organizationId"/> filters through the membership table.
+    /// </summary>
+    Task<(IReadOnlyList<User> Items, int Total)> SearchAsync(
+        string? term,
+        AccountState? state,
+        Guid? organizationId,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken = default);
 }

@@ -26,4 +26,7 @@ public enum NotificationType
 
     /// <summary>A connected integration's provider token has expired and needs reconnecting.</summary>
     IntegrationExpired,
+
+    /// <summary>A critical system alert fired (FR-7.11, BR-7.11).</summary>
+    SystemAlert,
 }

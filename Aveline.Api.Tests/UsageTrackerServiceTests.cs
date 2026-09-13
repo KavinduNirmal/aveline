@@ -51,6 +51,38 @@ public class UsageTrackerServiceTests
     }
 
     [Fact]
+    public void CalculateBlossomUnits_TotalAboveIntMax_IsNotWrapped()
+    {
+        // 2_000_000_000 + 147_483_648 + 1_000_000_000 = 3_147_483_648 tokens, which is
+        // 3_147_483.648 Blossom units. Summing the three ints wraps to a negative int
+        // before widening; summed in long the formula bills ceil(3_147_483.648, 1 dp)
+        // = 3_147_483.7, not the 0.1 minimum charge the wrapped sum produced.
+        var units = UsageTrackerService.CalculateBlossomUnits(2000000000, 147483648, 1000000000);
+
+        Assert.Equal(3_147_483.7m, units);
+    }
+
+    [Fact]
+    public async Task RecordWorkflowUsageAsync_TotalAboveIntMax_LogsUnwrappedTotal()
+    {
+        var request = new RecordUsageRequest(
+            OrganizationId: Guid.NewGuid(),
+            RequestId: "req-wrap",
+            WorkflowId: "wf-wrap",
+            Provider: "openai",
+            Model: "gpt-4o",
+            InputTokens: 2000000000,
+            OutputTokens: 147483648,
+            CachedTokens: 1000000000,
+            ActualCostUsd: 0.01m);
+
+        var result = await _service.RecordWorkflowUsageAsync(request);
+
+        Assert.Equal(3_147_483.7m, result.BlossomUnits);
+        Assert.Contains(_logger.Logs, log => log.Message.Contains("tokens=3147483648"));
+    }
+
+    [Fact]
     public async Task RecordWorkflowUsageAsync_ValidRequest_PersistsRecordAndUpdatesLedger()
     {
         var orgId = Guid.NewGuid();

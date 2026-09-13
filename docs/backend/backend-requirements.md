@@ -890,6 +890,12 @@ key-level forensics.
 
 ### 8.1 Current state
 
+> **Superseded by Phase 0/6.** The bullets below describe the baseline this plan
+> started from. As shipped, `/health` and `/health/ready` share a JSON
+> `HealthCheckResponseWriter` and run up to four checks (`database`, `redis`,
+> `agent-service`, `clerk-jwks`); the earlier `Program.cs:93` citation was to a
+> different line. See [api/README.md §B.12](../api/README.md).
+
 - `GET /health` is mapped `AllowAnonymous` and checks Redis only
   (`Program.cs:93`; `Configuration/EventingConfiguration.cs:24,33`; the only
   check implementation is `Infrastructure/Eventing/RedisHealthCheck.cs`).

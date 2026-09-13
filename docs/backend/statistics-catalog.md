@@ -735,7 +735,7 @@ unless it appears in this catalog **and** in
 | Freshness | `≤ 30 s` |
 | Retention | derived |
 | Source | composite |
-| Storage | on-the-fly, cached 15 s |
+| Storage | on-the-fly, **not cached** (the earlier "cached 15 s" claim is corrected in #243; see the shipped note) |
 | Endpoint | `GET /api/v1/admin/statistics/system/overview` |
 | Access | `stats:system` |
 
@@ -767,8 +767,11 @@ unless it appears in this catalog **and** in
 > - **S-39** reports the rate of `5xx` requests; unhandled-exception counts are not
 >   instrumented and are listed in `omitted`.
 > - **S-41** exposes the counter snapshot; `publish_latency_ms` is listed in `omitted`
->   because `EventBusMetrics` keeps counters only.
-> - **S-43** composes the same statistics over a 15-minute window and is not cached.
+>   because `EventBusMetrics` keeps counters only. `GET /system/eventbus` also ignores
+>   the documented `from`/`to` window — the response is instantaneous, not a windowed
+>   series (finding M-11).
+> - **S-43** composes the same statistics over a 15-minute window and is **not cached**
+>   server-side; the "cached 15 s" storage note above was stale (finding M-10).
 > - **S-42 rules.** Every seeded `SystemAlertRule.MetricName` is a name the collector
 >   produces; migration `20260913111104_FixSystemAlertRuleMetricNames` rewrites the rows M8
 >   seeded with dead names, and `SystemMetricCollectorTests` guards the invariant.

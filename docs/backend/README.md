@@ -59,7 +59,7 @@ a Clerk-backed auth model and organization-scoped authorization.
 
 | Feature area | State |
 | --- | --- |
-| 1 · Blossom price adjustment | **Implemented (Phase 1).** Effective-dated `BlossomConversionRules` and `BlossomPriceEntries` (M2), `BlossomCalculator`, `PricingService`, admin pricing endpoints, and ingest-time pricing behind `Pricing:UseLegacyFormula`. `POST /admin/pricing/rules/{id}/recompute` returns 501 until the Phase 2 ledger |
+| 1 · Blossom price adjustment | **Implemented (Phase 1).** Effective-dated `BlossomConversionRules` and `BlossomPriceEntries` (M2), `BlossomCalculator`, `PricingService`, admin pricing endpoints, and ingest-time pricing behind `Pricing:UseLegacyFormula`. **Decision (C-4):** `appsettings.json` ships `Pricing:UseLegacyFormula: true`, so the rule engine is inert — rules and price-book edits succeed but do **not** affect billing, and no FR-1.4 pricing snapshot is written, until the flag is flipped to `false`. That rollout gate is documented in [implementation-plan.md §10.6](implementation-plan.md#106-feature-flags). `POST /admin/pricing/rules/{id}/recompute` returns 501 until the compensating-ledger recompute job is scheduled |
 | 2 · Org Blossom operations | **Implemented (Phase 2).** Append-only `BlossomLedgerEntries` (M3) with the O(1) `UsageAccount` projection, idempotency replay store, `BlossomService` credit/debit/revoke, entitlement catalog + `IEntitlementResolver` (M4), org/admin Blossom endpoints, subscription/plan-change endpoints, and the expiry/rollover/cleanup jobs. **Fixes D-1, D-2, D-3, D-12** |
 | 3 · User management | **Implemented (Phase 3).** Profile update, soft delete with membership/API-key revocation, Clerk session list/revoke, and the cross-org admin user search + account-state endpoints. **#241:** audit read (`GET /admin/audit`, `/admin/audit/{entryId}`) and Aveline-team org search (`GET /admin/orgs`, FR-4.8) |
 | 4 · Organization management | **Implemented (Phase 3).** Settings update with AI-context entitlement gating, settings read with resolved entitlements, member list with filters, role change with the FR-3.4 guards, and the `ApiKeys` table + scheme/endpoints behind the `api.access` entitlement. **#241:** per-org entitlement overrides (`PATCH /admin/orgs/{id}/entitlement-overrides`, FR-4.9) |
@@ -147,8 +147,7 @@ catalog for any future boutique-facing read surface; it no longer reaches
 an optional `organizationId` and refuses a per-organization override outside that
 organization (global entries stay readable).
 
-**Deferred to Phase 2:** `AiUsageRecord` pricing-snapshot columns and
-`POST /admin/pricing/rules/{ruleId}/recompute` (which writes ledger corrections).
+**Deferred:** `POST /admin/pricing/rules/{ruleId}/recompute` still returns **501** because the compensating-ledger recompute job is not scheduled; the `AiUsageRecord` pricing-snapshot columns it needs shipped in Phase 2 (below). Note that while `Pricing:UseLegacyFormula` is `true` the snapshot columns stay `NULL`, because ingest never consults the rule engine at all (C-4).
 
 **Deviation (#240):** rule activation now runs the predecessor trim and the successor
 activation in one transaction (BR-1.8) and the optional `{ "effectiveFrom": ... }`
@@ -382,18 +381,21 @@ entitlements.
 The #242 hardening pass fixed the low-risk, high-value medium findings from
 [`docs/reports/admin-backend-api-verification.md`](../reports/admin-backend-api-verification.md)
 (M-1, M-3, M-4, M-6, M-7, M-13, M-14, M-15, M-20). The following were consciously
-deferred; each is a confirmed finding in that report.
+deferred; each is a confirmed finding in that report. The #243 documentation pass
+does not change the behaviour — for M-8, M-10, M-11, M-16 and M-17 it makes
+[`docs/api/README.md`](../api/README.md) state the shipped behaviour instead of the
+intended contract, so this list and the catalogue now agree.
 
-| ID | Deferred item | Why it is tolerated for now |
+| ID | Deferred item | Status after #243 |
 | --- | --- | --- |
-| M-2 | The committed `AgentService:InternalToken` default (`appsettings.Development.json`, `docker-compose.yml`) | Development/compose only; the handler fails closed when the token is unset, and Production must inject a real secret. |
-| M-5 | No application-level rate limiting outside the two in-handler limiters | Tracked as accepted risk SEC-M2 in `docs/security/auth-security-review.md`; needs an infrastructure decision. |
-| M-8 | `GET /admin/pricing/price-book` returns a bare, unpaginated array | A contract change with frontend impact; deferred to a dedicated pagination pass. |
-| M-10 | `/admin/statistics/system/overview` is documented as cached server-side for 15 s but is not cached | A performance claim, not a correctness or security gap. |
-| M-11 | `GET /system/eventbus` ignores the documented `from`/`to` window | The response is instantaneous counters; honouring a window needs new storage. |
-| M-16 | The `/metrics` scheme requirement is not documented precisely | The behaviour is gated correctly by `MetricsPolicy`; documentation-only drift. |
-| M-17 | Ledger `201` bodies use `blossomBalanceAfter`/`createdAt` while the documented example uses `balanceAfter`/`occurredAt` | Frontend naming drift; the `docs/api/README.md` example is the mismatched side. |
-| H-5 | JWT audience validation is disabled, `azp` is never checked, and clock skew uses the 5-minute default | Accepted risk SEC-M1 in `docs/security/auth-security-review.md`; the API never reads the `__session` cookie and CORS is a strict origin allow-list. |
+| M-2 | The committed `AgentService:InternalToken` default (`appsettings.Development.json`, `docker-compose.yml`) | Deferred; Development/compose only, the handler fails closed when the token is unset, and Production must inject a real secret. |
+| M-5 | No application-level rate limiting outside the two in-handler limiters | Deferred; tracked as accepted risk SEC-M2 in `docs/security/auth-security-review.md`; needs an infrastructure decision. |
+| M-8 | `GET /admin/pricing/price-book` returns a bare, unpaginated array | Behaviour deferred (a contract change with frontend impact); now explicitly documented in [api/README.md §C.1](../api/README.md). |
+| M-10 | `/admin/statistics/system/overview` is not cached server-side | **Claim corrected** in [api/README.md §D.3](../api/README.md); the cache itself remains unimplemented. |
+| M-11 | `GET /system/eventbus` ignores the documented `from`/`to` window | Behaviour deferred (the response is an instantaneous counter snapshot); now explicitly documented in [api/README.md §C.8](../api/README.md). |
+| M-16 | The `/metrics` scheme requirement was not documented precisely | **Documented** in [api/README.md §B.12 and §C.9](../api/README.md): `MetricsPolicy` accepts `X-Internal-Token` or `Authorization: Bearer <Metrics:ScrapeToken>`. |
+| M-17 | Ledger `201` bodies use `blossomBalanceAfter`/`createdAt` | **Documented** in [api/README.md §C.2](../api/README.md); the example now matches the shipped `BlossomLedgerEntryDto` and distinguishes it from the statement item shape. |
+| H-5 | JWT audience validation is disabled, `azp` is never checked, and clock skew uses the 5-minute default | Deferred; accepted risk SEC-M1 in `docs/security/auth-security-review.md`, the API never reads the `__session` cookie, and CORS is a strict origin allow-list. |
 
 See [`docs/reports/admin-backend-api-verification.md`](../reports/admin-backend-api-verification.md)
 for the evidence behind every row and the full finding set.

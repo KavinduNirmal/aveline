@@ -451,7 +451,7 @@ and module events, exactly as `ADR-014` established.
 | API key by prefix | `apikey:{prefix}` | 60 s | `apikey.revoked`, `apikey.deleted` |
 | User authorization snapshot | existing `UserCacheService` | existing | existing invalidation calls; **extend to role and account-state changes** |
 | Usage summary for an org | `usage:summary:{organizationId}` | **not cached** | Deliberately uncached: the balance is the most correctness-sensitive read in the product and a stale balance is worse than a database round-trip |
-| System overview | `stats:system:overview` | 15 s | TTL only |
+| System overview | `stats:system:overview` | 15 s | TTL only — **not implemented** in the Phase 6 shipment: `GET /admin/statistics/system/overview` is composed live on every call (finding M-10, corrected in #243) |
 | Latency percentiles | `stats:latency:{hash}` | 60 s | TTL only |
 | Quota counters | `quota:{org}:{key}:{period}` | period end | Redis `INCR`; durable copy written at rollover |
 

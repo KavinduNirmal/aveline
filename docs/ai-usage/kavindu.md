@@ -2339,3 +2339,128 @@ per issue and one commit per issue.
 - **The short seeded metric names** (`api.error_rate`, `agent.*`, `blossom.*`) have
   no producer yet, so those rules fire only when a producer supplies them.
 - `docs/api/openapi.yaml` reconciliation against generated output remains.
+
+## Session 2026-09-13 — Admin backend API, security review remediation
+
+**Student:** K.N. Delpachithra (Kavindu) · **ID:** IT24102532
+**Branch:** `feature/admin-backend-api` · **Issues:** #234–#243
+
+The read-only security review in
+[`docs/reports/admin-backend-api-verification.md`](../reports/admin-backend-api-verification.md)
+(against `e5a8f34`) found one privilege-escalation path, three other critical
+correctness defects, a set of high findings, and a long tail of medium
+documentation/contract drift. This session closed the critical and high findings
+test-first, one commit per issue, then reconciled the documentation against the
+shipped code. The suite grew from 1042 to **1132 passing tests, 0 failed**.
+
+### Work performed (one commit per issue)
+
+- [#234](https://github.com/KavinduNirmal/aveline/issues/234) (`ff46596`) — **self-approval
+  guard (C-2).** `AdminApprovalService.ApproveAsync` now rejects
+  `reviewerClerkUserId == request.ClerkUserId` with an `AdminDomainException`, so a
+  Moderator (who holds `AdminReviewPolicy`) can no longer approve their own request
+  and be granted the `admin` role in Clerk. `AdminApprovalFlowIntegrationTests` adds
+  the missing self-approval case.
+- [#235](https://github.com/KavinduNirmal/aveline/issues/235) (`24b6f74`) — **legacy
+  Blossom `int` overflow (C-3).** The legacy formula widens the three `int` token
+  counts to `long` before summing, so a ≈2.1 B-token workflow is no longer billed
+  the 0.1-Blossom floor. `UsageTrackerServiceTests` pins the boundary.
+- [#236](https://github.com/KavinduNirmal/aveline/issues/236) (`7eb0e80`) — **idempotency
+  hardening (H-1a/c).** `IdempotencyEndpointFilter` now requires the header, returning
+  `400 { code: "idempotency-key-required" }`, and `IdempotencyService` no longer
+  persists/replays failed responses, so a `409 insufficient-balance` is not cached for
+  the retention window. Covered by `BlossomEndpointsIntegrationTests` and
+  `IdempotencyStoreTests`.
+- [#237](https://github.com/KavinduNirmal/aveline/issues/237) (`8d9beaa`) — **pricing
+  scoping (H-4).** The admin pricing **reads** moved to the team-only
+  `PricingAdminRead` policy (Admin/Owner) and `GET /price-book/{entryId}` takes an
+  optional `organizationId` and refuses a per-organization override outside that
+  organization, so a boutique role can no longer read another tenant's negotiated
+  pricing.
+- [#238](https://github.com/KavinduNirmal/aveline/issues/238) (`140f8ac`) — **contract
+  drift (H-2, M-9, M-18, M-19).** `GET /admin/users` binds the documented
+  `accountState` (keeping `state` as an alias), accepts `organizationId`, and pages at
+  50/200; `PATCH /admin/users/{id}/state` carries `reason` into the audit entry; the
+  pricing DTOs now apply the documented `minimumChargeBlossoms`/`roundingMode`/
+  `roundingDecimals` defaults; and the pricing `400` bodies carry machine-readable
+  `code` values (`rule-not-draft`, `rule-priced`, `scope-inconsistent`, `validation`).
+- [#239](https://github.com/KavinduNirmal/aveline/issues/239) (`f1c701d`) — **alert
+  pipeline (C-5, M-21).** `SystemMetricCollector` now derives the business signals the
+  seeded rules watch (`aveline.blossom.balance`, `aveline.blossom.reconciliation.drift`,
+  `aveline.blossom.consumed_rate`, `aveline.agent.success_rate`,
+  `aveline.agent.paused_count`, `aveline.agent.steps_per_run`,
+  `aveline.api.latency_p95`); migration `20260913111104_FixSystemAlertRuleMetricNames`
+  rewrites the dead M8 names, the unmeasurable `db.pool.saturated` rule is removed
+  (eleven rules remain), and the cooldown now elapses against `FiredAt` instead of
+  never re-firing. `SystemMetricCollectorTests` guards the metric-name invariant.
+- [#240](https://github.com/KavinduNirmal/aveline/issues/240) (`f2f86b2`) — **atomic
+  activation (H-3).** `PricingService.ActivateRuleAsync` trims the predecessor and
+  activates the successor in one transaction, honours the optional `{ effectiveFrom }`
+  body, and publishes `pricing.rule.activated`/`pricing.rule.cancelled` on the event
+  bus. `PricingActivationPostgresTests` proves the rollback.
+- [#241](https://github.com/KavinduNirmal/aveline/issues/241) (`f7041d7`) — **the
+  deferred admin surfaces (C-1).** Added the audit read surface
+  (`IAuditRepository.GetByIdAsync`/`QueryAsync`, `GET /admin/audit` and
+  `/admin/audit/{entryId:guid}` under `audit:view`/`AuditViewPolicy`), the
+  Aveline-team organization search (`GET /admin/orgs`, FR-4.8) and per-organization
+  entitlement overrides (`PATCH /admin/orgs/{id}/entitlement-overrides`, FR-4.9). The
+  audit subsystem had been write-only. The five `/admin/statistics/billing/*` and the
+  org burn-rate/customers/staff statistics remain deferred and are now labelled so.
+- [#242](https://github.com/KavinduNirmal/aveline/issues/242) (`4fab08c`) — **security
+  hardening pass.** Global exception handler (M-7), Production version-block withholding
+  on `/health` (M-3), webhook signature-before-rate-limit and exact Clerk role mapping
+  (M-4, M-6), `TelemetrySecurityGuard` for the telemetry export path, conditional
+  access/onboarding path matching (M-15), security headers (M-13), the demo-policy
+  endpoint guard (M-14), and the entitlement-resolver precedence fix (M-20). The
+  remaining medium findings are recorded as deferred in `docs/backend/README.md`.
+- [#243](https://github.com/KavinduNirmal/aveline/issues/243) (this commit) — **this
+  documentation pass.** Reconciled the verification findings against the shipped code:
+  the `/health` and `/metrics` sections, the `Pricing:UseLegacyFormula` rollout caveat
+  linked to `implementation-plan.md §10.6`, the `recompute` 501 status, the bare
+  `price-book` array (M-8), the removed overview cache claim (M-10), the windowless
+  event bus (M-11), the ledger-entry field names (M-17), and the deferred billing
+  statistics. No code changed.
+
+### TDD approach
+
+Each fix started with a failing test that reproduced the finding, then the minimal
+change that made it pass, then the commit — one issue per commit with the Husky
+pre-commit gates green. The security-relevant cases that the original suite missed
+were added explicitly: self-approval, the `400` for a missing `Idempotency-Key`,
+activate-with-body plus the `pricing.rule.activated` event, the collector/rule
+metric-name invariant, the pricing-read authorization matrix, and the environment
+hardening guards. Postgres-backed tests (`PricingActivationPostgresTests`,
+`LedgerPostgresTests`, `ApiConsumptionPostgresTests`) cover the transactional and
+constraint behaviour the in-memory provider cannot.
+
+### Verification performed
+
+- Full suite after the fixes: **1132 passed, 0 failed** (the review baseline was
+  1042; the #234–#242 commits added 90 tests).
+- `dotnet build Aveline.Api/Aveline.Api.sln -c Release` succeeded; each issue was
+  committed separately.
+- The documentation pass changed only `docs/**` and was re-read against the cited
+  source files (`HealthCheckResponseWriter`, `HealthEndpoints`,
+  `ScrapeTokenAuthenticationHandler`, `InternalTokenAuthenticationHandler`,
+  `PricingEndpoints`, `SystemStatisticsEndpoints`, `BlossomDtos`).
+
+### Remaining deferred items
+
+- **Billing statistics.** The five `/admin/statistics/billing/*` endpoints
+  (`profitability`, `org-usage`, `adjustments`, `plan-changes`, `downgrades`) and the
+  org `burn-rate`/`customers/active`/`staff/seats` statistics are not routed (404).
+- **`POST /admin/pricing/rules/{id}/recompute` returns 501** until the
+  compensating-ledger recompute job is scheduled.
+- **`Pricing:UseLegacyFormula` ships `true`,** so the rule engine is inert and no
+  FR-1.4 snapshot is written until the flag is flipped (C-4). This is the documented
+  rollout gate, not a defect; the catalogue now says so.
+- **Deferred medium findings (issue #242):** M-2 (committed internal-token default),
+  M-5 (no app-level rate limiting), M-8 (bare `price-book` array), M-10 (overview not
+  cached), M-11 (windowless event bus), and H-5 (JWT audience/`azp`/clock-skew
+  accepted risk). M-16 (`/metrics` schemes) and M-17 (ledger field names) are now
+  documented precisely and are no longer open documentation drift.
+- **Cross-instance pricing-cache invalidation** is still not implemented; the
+  5-second TTL remains the only cross-instance mechanism, and the Phase 5 load-test
+  gate (5 000 req/s, p99 ≤ 1 ms) is still unmeasured.
+- **`docs/api/openapi.yaml`** was not regenerated/reconciled in this pass for the
+  #241 endpoints (`/admin/orgs` remains absent from the hand-authored spec).

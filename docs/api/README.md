@@ -675,19 +675,24 @@ Internal reads. `records` returns a **bare array** and does not clamp `page`.
 
 | Method | Path | Auth | Response |
 | --- | --- | --- | --- |
-| `GET` | `/health` | anonymous | **`text/plain`** — the literal string `Healthy`, `Degraded`, or `Unhealthy`. Currently checks **Redis only**. |
-| `GET` | `/health/live` | anonymous | **Phase 0** — JSON `{ "status": "Healthy" }` |
-| `GET` | `/health/ready` | anonymous | **Phase 0** — JSON `HealthReport`, `503` when unhealthy |
-| `GET` | `/metrics` | `InternalServicePolicy` or scrape token | **Phase 0** — Prometheus text format |
+| `GET` | `/health` | anonymous | **JSON** — the same `HealthReport` as `/health/ready`, `503` when unhealthy |
+| `GET` | `/health/ready` | anonymous | **JSON** `HealthReport`, `503` when unhealthy |
+| `GET` | `/health/live` | anonymous | JSON `{ "status": "Healthy" }` |
+| `GET` | `/metrics` | `MetricsPolicy`: `X-Internal-Token` **or** `Authorization: Bearer <Metrics:ScrapeToken>` | Prometheus text format |
 
-> **Content-type note.** `app.MapHealthChecks("/health")` is registered with no
-> options (`Program.cs:93`), so it uses the framework's default response writer,
-> which emits the status name as **`text/plain`**, not JSON. Phase 0 replaces it
-> with a JSON `HealthReport` writer and keeps `/health` as an alias of
-> `/health/ready`. A frontend must not assume JSON from `/health` today.
+> **Health note.** `/health` and `/health/ready` share one JSON writer
+> (`HealthCheckResponseWriter`), so `/health` is an alias of `/health/ready`, **not**
+> a `text/plain` string. It returns `application/json` with up to four checks in a
+> stable order — `database`, `redis` (registered only when a Redis connection string
+> is configured), `agent-service`, and `clerk-jwks` — plus `status` and
+> `totalDurationMs`. The `version` block is **omitted in Production** so the public
+> probe cannot fingerprint the release (finding M-3, fixed in #242); other
+> environments include it. §C.9 documents the full response.
 
-**Source:** `Program.cs:93`, `Configurations/EventingConfiguration.cs:24,33`,
-`Infrastructure/Eventing/RedisHealthCheck.cs`.
+**Source:** `Modules/SystemHealth/Endpoints/HealthEndpoints.cs:22-24`,
+`Modules/SystemHealth/HealthChecks/HealthCheckResponseWriter.cs`,
+`Modules/SystemHealth/SystemHealthModule.cs:28-51`,
+`Configurations/EventingConfiguration.cs:24,33`.
 
 ### B.13 Admin access requests (existing)
 
@@ -744,9 +749,22 @@ below is registered under the `/api/v1` group unless the path says otherwise.
 
 ### C.1 Blossom pricing — admin (Phase 1)
 
-> **Status: implemented** on `feature/admin-backend-api` (issue #186). The one
-> exception is `POST /rules/{ruleId}/recompute`, which returns `501` until the
-> Phase 2 ledger ships.
+> **Status: implemented, with two caveats.** The read/write rule and price-book
+> endpoints are live on `feature/admin-backend-api` (issue #186). The two caveats:
+>
+> 1. **Rules do not affect billing under the shipped configuration.**
+>    `appsettings.json` ships `"Pricing:UseLegacyFormula": true`, so ingest prices
+>    with the legacy ceil-to-1dp formula and ignores the rule engine entirely (and
+>    never writes the FR-1.4 pricing snapshot). Every endpoint below still returns
+>    `200/201` and persists a rule; a rule only starts pricing usage once the flag is
+>    flipped to `false`. This is the deliberate rollout gate recorded in
+>    [implementation-plan.md §10.6](../backend/implementation-plan.md#106-feature-flags)
+>    ("`true` on first deploy, flipped to `false` after the rule cache is verified
+>    warm"), not a rejected request. **Do not present a rule or price-book edit as a
+>    billing change until the flag is off.**
+> 2. **`POST /rules/{ruleId}/recompute` returns `501 Not Implemented`**, because the
+>    compensating-ledger recompute job is not scheduled yet. See the endpoint below
+>    for the status response and the intended contract.
 
 Permissions: `pricing:view` (read), `pricing:manage` (write), `pricing:backdate`
 (past effective dates). **Never available to boutique roles.** The read routes are
@@ -865,7 +883,8 @@ has already priced usage or is not a `Draft`.
 rule's `effectiveFrom` and marks the predecessor `Superseded`, atomically.
 **Body:** `{ "effectiveFrom": "<iso8601>" }` (optional override).
 **Response `200`:** the activated `PricingRule`.
-**Errors:** `400` if not a `Draft`; `403`; `404`; `409 rule-overlap`.
+**Errors:** `400 { "code": "rule-not-draft" }` if not a `Draft`; `403`; `404 { message }`;
+`409 { "code": "rule-overlap" }`.
 **Side effects:** publishes `pricing.rule.activated`; invalidates the pricing cache
 in-process immediately, and on other instances within the 5-second TTL safety net
 (no cross-instance event subscriber yet, see [../backend/README.md](../backend/README.md)).
@@ -873,15 +892,25 @@ in-process immediately, and on other instances within the 5-second TTL safety ne
 #### `POST /api/v1/admin/pricing/rules/{ruleId:guid}/cancel`
 
 **Body:** `{ "reason": string }` (10–500). **Response `200`.**
-**Errors:** `400` if already `Active` and it has priced usage → use a superseding
-rule instead; `409`.
+**Errors:** `400 { "code": "rule-priced" }` if the rule is already `Active` and has
+priced usage → use a superseding rule instead; `400 { "code": "validation" }` for a bad
+reason; `409`.
 
 #### `POST /api/v1/admin/pricing/rules/{ruleId:guid}/recompute`
 
-**Purpose:** Re-price already-recorded usage that the rule affects, writing
-compensating ledger entries. **Never mutates `AiUsageRecord`.**
-**Body:** `{ "asOf": "<iso8601>", "dryRun": true|false }`.
-**Response `200`:**
+> **Status: not implemented — returns `501`.** The handler exists but answers
+> `501 Not Implemented` with
+> `{ "message": "Pricing recompute is not available until the ledger (Phase 2) ships." }`
+> (`Modules/Billing/Endpoints/PricingEndpoints.cs`). The ledger *has* shipped; what
+> is still missing is the recompute job that would write the compensating
+> `BlossomLedgerEntries`, so the route remains an honest placeholder. The
+> `AiUsageRecord` pricing-snapshot columns it needs already exist (Phase 2,
+> `AddAiUsageRecordPricingSnapshot`).
+
+**Purpose (intended):** Re-price already-recorded usage that the rule affects,
+writing compensating ledger entries. **Never mutates `AiUsageRecord`.**
+**Body (intended):** `{ "asOf": "<iso8601>", "dryRun": true|false }`.
+**Response `200` (intended, not produced today):**
 
 ```json
 {
@@ -898,10 +927,10 @@ compensating ledger entries. **Never mutates `AiUsageRecord`.**
 }
 ```
 
-**Errors:** `400`, `403` (requires `pricing:backdate`), `404`, `503` if the
-recompute queue is full.
-**Notes:** always run `dryRun: true` first. This is the highest-impact
-administrative operation in the API.
+**Errors (today):** `401`, `403` (requires `pricing:backdate`), then `501`.
+**Errors (intended):** add `400`, `404`, `503` if the recompute queue is full.
+**Notes:** when implemented, always run `dryRun: true` first. This is the
+highest-impact administrative operation in the API.
 
 #### `GET` · `POST` · `PATCH` · `DELETE /api/v1/admin/pricing/price-book[/{entryId:guid}]`
 
@@ -910,6 +939,13 @@ rule. `POST` body: `{ planTier?, organizationId?, skuKind, skuCode?, blossomQuan
 priceLkr, effectiveFrom, changeReason }` where `skuKind` ∈
 `PlanAllowance | TopUpPack | OverageUsage`.
 **Errors:** identical set to the rules endpoints.
+
+`GET /price-book` accepts optional `skuKind`, `planTier` and `organizationId`
+filters and returns a **bare JSON array of entries — there is no `page`/`pageSize`
+and no `{ items, total }` envelope**. This is a known, deliberate deviation from the
+§A.4 pagination convention (finding M-8, deferred to a dedicated pagination pass);
+callers must not expect the page envelope here even though every neighbouring list
+endpoint returns one.
 
 `GET /price-book/{entryId:guid}` accepts an optional `organizationId` query filter.
 A global entry (no `organizationId`) is always readable; a per-organization override
@@ -1060,20 +1096,30 @@ balance.
 | `blossomQuantity` | number | — | Must equal the SKU's quantity; a mismatch is `400` |
 | `paymentReference` | string | — | Max 128; required when `Billing:RequirePaymentReference` is true |
 
-**Response `201`:**
+**Response `201` — the shipped `BlossomLedgerEntryDto`:**
 
 ```json
 {
-  "ledgerEntryId": "0198f3c2-...",
-  "skuCode": "blossom_pack_500",
+  "id": "0198f3c2-...",
+  "entryType": "TopUpGrant",
   "blossomDelta": 500.0,
-  "balanceAfter": 1117.6,
+  "blossomBalanceAfter": 1117.6,
+  "reason": "Top-up purchase blossom_pack_500 (500 Blossoms).",
+  "sourceKind": "PaymentProvider",
+  "sourceRef": null,
   "expiresAt": "2026-10-01T00:00:00Z",
-  "priceLkr": 2000.0,
-  "paymentReference": null,
+  "createdByUserId": "0198f3c2-...",
   "createdAt": "2026-09-11T09:35:00Z"
 }
 ```
+
+> **Field-name note.** The `201` body on every Blossom *grant* route (this top-up and
+> the four admin operations below) is the shipped `BlossomLedgerEntryDto`, whose
+> balance and timestamp fields are **`blossomBalanceAfter`** and **`createdAt`**. It
+> carries no `balanceAfter`, `occurredAt`, `kind`, `skuCode` or `priceLkr`. The
+> statement line items in §C.2 use a **different** DTO (`BlossomStatementItem`:
+> `occurredAt`, `kind`, `balanceAfter`). Do not deserialise one as the other; see
+> finding M-17.
 
 **Errors:** `400 validation`; `400 { "code": "unknown-sku" }`; `400` quantity
 mismatch; `401`; `403`; `409 { "code": "period-closed" }`;
@@ -1090,9 +1136,9 @@ All four require `billing:adjust` (Aveline team only) and `Idempotency-Key`.
 
 | Method | Path | Body | Response |
 | --- | --- | --- | --- |
-| `POST` | `/api/v1/admin/orgs/{organizationId:guid}/blossoms/credit` | `{ amount, reason, expiresAt?, sourceKind?, sourceRef? }` | `201` ledger entry |
-| `POST` | `/api/v1/admin/orgs/{organizationId:guid}/blossoms/debit` | `{ amount, reason, allowNegative? }` | `201` ledger entry |
-| `POST` | `/api/v1/admin/orgs/{organizationId:guid}/blossoms/revoke` | `{ ledgerEntryId, reason }` | `201` ledger entry |
+| `POST` | `/api/v1/admin/orgs/{organizationId:guid}/blossoms/credit` | `{ amount, reason, expiresAt?, sourceKind?, sourceRef? }` | `201` `BlossomLedgerEntryDto` (see the field-name note above) |
+| `POST` | `/api/v1/admin/orgs/{organizationId:guid}/blossoms/debit` | `{ amount, reason, allowNegative? }` | `201` `BlossomLedgerEntryDto` (see the field-name note above) |
+| `POST` | `/api/v1/admin/orgs/{organizationId:guid}/blossoms/revoke` | `{ ledgerEntryId, reason }` | `201` `BlossomLedgerEntryDto` (see the field-name note above) |
 | `GET` | `/api/v1/admin/orgs/{organizationId:guid}/blossoms/statement` | query: paging | same shape as the org statement |
 
 **Validation:**
@@ -1851,28 +1897,40 @@ lastUsedAt, topEndpoint }`. **Related statistics:** [S-28](../backend/statistics
 
 > **Status: partially implemented** on `feature/admin-backend-api` (issues #227–#230).
 > The schema, the metric collector and retention job, the alert evaluation service and
-> the **eight `/system/*` endpoints** in the table are live. The five
-> **`/billing/*` statistics endpoints are deferred** (see below).
+> the **eight `/system/*` endpoints listed in the table below** are live. The five
+> **`/billing/*` statistics endpoints are deferred** (see below); the earlier draft of
+> this section presented all thirteen rows as one "live" table, which was wrong — only
+> the `/system/*` eight exist.
 > Confirmed deviations: the metrics endpoint names its
 > granularity parameter `windowSize` (not `groupBy`) and accepts
 > `instant|minute|hour|day`; an unknown metric returns an empty series with a
 > `dataQuality.omitted` reason rather than a 400; `inbound_message_backlog` and
 > `publish_latency_ms` are reported in `omitted` because the current schema cannot measure
-> them; and only an organization-scoped critical alert creates a `NotificationRecord`
-> because `NotificationRecords.OrganizationId` is a required FK to `Organizations`.
+> them; `GET /system/eventbus` binds no `from`/`to` and returns instantaneous counters
+> (finding M-11); `GET /system/overview` is **not** cached server-side despite the
+> 15-second TTL this document previously claimed (finding M-10); and only an
+> organization-scoped critical alert creates a `NotificationRecord` because
+> `NotificationRecords.OrganizationId` is a required FK to `Organizations`.
 
 Base: `/api/v1/admin/statistics`. **Auth:** `stats:system` (Aveline team only).
 
 | Endpoint | Params | Returns |
 | --- | --- | --- |
 | `GET /system/overview` | — | Composite: readiness, uptime, version, top alerts, throughput, error rate, queue depths, running agent runs |
-| `GET /system/metrics` | `metric`, `from`, `to`, `groupBy?` | Time series for one named metric |
+| `GET /system/metrics` | `metric`, `from`, `to`, `windowSize?` | Time series for one named metric |
 | `GET /system/queues` | — | Queue depths, including running agent runs |
 | `GET /system/errors` | `from`, `to`, `groupBy` | Error rate and unhandled exception count |
 | `GET /system/throughput` | `from`, `to`, `groupBy` | RPS, agent runs/min, Blossoms/hour |
-| `GET /system/eventbus` | `from`, `to` | Published, delivered, failed, publish latency |
+| `GET /system/eventbus` | **none** (`from`/`to` are accepted but ignored) | Published, delivered, failed, publish latency — an instantaneous counter snapshot |
 | `GET /system/alerts` | `status?`, `severity?`, `ruleId?`, `page`, `pageSize` | `SystemAlertPage` |
 | `POST /system/alerts/{alertId:guid}/acknowledge` | body `{ "note": string? }` | Updated alert |
+
+> **`GET /system/eventbus` is windowless (M-11).** The handler binds only the
+> statistics service and the cancellation token, so the documented `from`/`to`
+> parameters are **ignored**, not honoured: the response is a direct
+> `EventBusMetrics.Snapshot()` of cumulative counters. Honouring a time window would
+> need new storage; the deviation is deliberate and tracked in
+> [backend/README.md](../backend/README.md#deferred-medium-findings-issue-242).
 
 > **Deferred (not implemented).** The five billing-analysis endpoints —
 > `GET /billing/profitability` (`from`, `to`, `groupBy`), `GET /billing/org-usage`
@@ -1965,11 +2023,22 @@ Never checks a dependency.
 `200`.** `message` never contains a connection string, hostname, credential, or
 stack trace.
 
+> **The `version` block is environment-dependent (M-3, #242).** It is included in
+> Development/Staging and **omitted in Production**, where `HealthCheckResponseWriter`
+> withholds the git SHA, build time and environment so the anonymous probe cannot
+> fingerprint the release. The example above is a non-Production payload.
+
 #### `GET /metrics`
 
-**Auth:** `InternalServicePolicy` or `Authorization: Bearer <Metrics:ScrapeToken>`
-when `Metrics:ScrapeToken` is configured. **Response `200`**
-`text/plain; version=0.0.4` (Prometheus exposition format).
+**Auth:** the `MetricsPolicy`, which accepts **either** of two credential schemes:
+
+- **Internal service token** — `X-Internal-Token: <AgentService:InternalToken>`
+  (scheme `InternalToken`, role `InternalService`); or
+- **Scrape token** — `Authorization: Bearer <Metrics:ScrapeToken>` (scheme
+  `ScrapeToken`). The scrape scheme yields no result when `Metrics:ScrapeToken` is
+  unset, so it can never authenticate by accident.
+
+**Response `200`** `text/plain; version=0.0.4` (Prometheus exposition format).
 `401` without credentials. Metric names use the `aveline.` prefix.
 
 ---
@@ -2008,7 +2077,7 @@ is exactly the drift this plan removes, and it would break on the next plan chan
 | `GET .../usage`, `.../statement` | 30 s | Cheap and safe |
 | `GET .../entitlements` | 5 min | Changes only on a plan change |
 | `GET .../statistics/**` | 60 s | Rollup-backed |
-| `GET /admin/statistics/system/overview` | 15 s | Deliberately cached server-side |
+| `GET /admin/statistics/system/overview` | client-side only | **Not cached server-side** despite the earlier 15 s claim (M-10); the composite read is assembled live on every call, so a client may cache it briefly |
 | `GET /health/**` | never | Liveness |
 
 ### D.4 Versioning and deprecation

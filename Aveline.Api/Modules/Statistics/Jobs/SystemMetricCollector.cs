@@ -1,0 +1,286 @@
+using System.Diagnostics;
+using Aveline.Api.Common.Jobs;
+using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Infrastructure.Eventing;
+using Aveline.Api.Modules.Statistics.Models;
+using Aveline.Api.Modules.Statistics.Repositories;
+using Aveline.Api.Modules.Statistics.Telemetry;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+
+namespace Aveline.Api.Modules.Statistics.Jobs;
+
+/// <summary>
+/// A point-in-time set of candidate metric values gathered by
+/// <see cref="SystemMetricCollector"/>. Every member is nullable: a metric the host cannot
+/// determine is left null and therefore omitted from the persisted samples (BR-7.10).
+/// </summary>
+public sealed record MetricSnapshot
+{
+    public double? ProcessCpuSeconds { get; init; }
+
+    public long? WorkingSetBytes { get; init; }
+
+    public long? GcHeapBytes { get; init; }
+
+    public int? ThreadCount { get; init; }
+
+    public long? ThreadPoolQueueLength { get; init; }
+
+    public long? TelemetryChannelDepth { get; init; }
+
+    public long? TelemetryDropped { get; init; }
+
+    public long? EventBusPublished { get; init; }
+
+    public long? EventBusReceived { get; init; }
+
+    public long? EventBusFailed { get; init; }
+
+    public double? ApiRequestsPerSecond { get; init; }
+
+    public double? ApiErrorRate { get; init; }
+
+    public long? AgentRunsRunning { get; init; }
+}
+
+/// <summary>
+/// Samples process, queue, event-bus and throughput metrics into
+/// <c>SystemMetricSamples</c> every <c>Observability:SystemMetricCollectionSeconds</c>
+/// (default 30 s) (FR-7.5–FR-7.10, S-35, S-36, S-40, S-41). The job never crashes the host:
+/// a failed database write buffers at most <see cref="MaxBufferedSamples"/> samples in memory
+/// and flushes them on the next successful pass.
+/// </summary>
+public class SystemMetricCollector(
+    IServiceScopeFactory scopeFactory,
+    IDistributedJobLock jobLock,
+    ILogger<SystemMetricCollector> logger,
+    IConfiguration configuration)
+    : StatisticsJobBase(scopeFactory, jobLock, logger)
+{
+    /// <summary>Upper bound on the in-memory buffer that survives a database outage.</summary>
+    public const int MaxBufferedSamples = 100;
+
+    private readonly List<SystemMetricSample> _buffer = [];
+    private readonly int _collectionSeconds =
+        Math.Max(1, configuration.GetValue("Observability:SystemMetricCollectionSeconds", 30));
+
+    private long _droppedSamples;
+
+    protected override string JobName => "system-metric-collector";
+
+    protected override TimeSpan Interval => TimeSpan.FromSeconds(_collectionSeconds);
+
+    /// <summary>Samples dropped because the in-memory buffer was already full.</summary>
+    public long DroppedSamples => Interlocked.Read(ref _droppedSamples);
+
+    /// <summary>Exposed for tests: samples currently held for the next successful flush.</summary>
+    internal int BufferedSampleCount => _buffer.Count;
+
+    public override async Task<int> RunAsync(CancellationToken cancellationToken)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var samples = BuildSamples(await CaptureAsync(scope.ServiceProvider, cancellationToken));
+
+        // Anything still buffered from an earlier failure is written together with this pass.
+        var pending = new List<SystemMetricSample>(_buffer);
+        pending.AddRange(samples);
+
+        var repository = scope.ServiceProvider.GetRequiredService<ISystemMetricRepository>();
+        try
+        {
+            var written = await repository.UpsertAsync(pending, cancellationToken);
+            _buffer.Clear();
+            return written;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(
+                exception,
+                "System metric write failed; buffering {Count} of {Buffered} samples.",
+                samples.Count, _buffer.Count);
+
+            foreach (var sample in samples)
+            {
+                if (_buffer.Count >= MaxBufferedSamples)
+                {
+                    Interlocked.Increment(ref _droppedSamples);
+                    continue;
+                }
+
+                _buffer.Add(sample);
+            }
+
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Pure sample construction so the mapping can be unit-tested without a host. A null
+    /// member yields no sample at all; nothing is ever recorded as zero by default (BR-7.10).
+    /// </summary>
+    public static IReadOnlyList<SystemMetricSample> BuildSamples(MetricSnapshot snapshot)
+    {
+        const string dimensionsJson = "{}";
+        var dimensionHash = MetricDimensionHasher.Hash(dimensionsJson);
+        var sampledAt = DateTime.UtcNow;
+        var samples = new List<SystemMetricSample>();
+
+        void AddDecimal(string metricName, double? value, string unit)
+        {
+            if (value is null)
+            {
+                return;
+            }
+
+            samples.Add(new SystemMetricSample
+            {
+                MetricName = metricName,
+                DimensionsJson = dimensionsJson,
+                DimensionHash = dimensionHash,
+                ValueDecimal = (decimal)value.Value,
+                Unit = unit,
+                WindowStart = sampledAt,
+                WindowSize = "instant",
+                SampledAt = sampledAt,
+            });
+        }
+
+        void AddBigint(string metricName, long? value, string unit)
+        {
+            if (value is null)
+            {
+                return;
+            }
+
+            samples.Add(new SystemMetricSample
+            {
+                MetricName = metricName,
+                DimensionsJson = dimensionsJson,
+                DimensionHash = dimensionHash,
+                ValueBigint = value.Value,
+                Unit = unit,
+                WindowStart = sampledAt,
+                WindowSize = "instant",
+                SampledAt = sampledAt,
+            });
+        }
+
+        AddDecimal("aveline.process.cpu_seconds", snapshot.ProcessCpuSeconds, "count");
+        AddBigint("aveline.process.working_set_bytes", snapshot.WorkingSetBytes, "bytes");
+        AddBigint("aveline.process.gc_heap_bytes", snapshot.GcHeapBytes, "bytes");
+        AddBigint("aveline.process.thread_count", snapshot.ThreadCount, "count");
+        AddBigint("aveline.process.threadpool_queue_length", snapshot.ThreadPoolQueueLength, "count");
+        AddBigint("aveline.queue.telemetry_channel", snapshot.TelemetryChannelDepth, "count");
+        AddBigint("aveline.api.telemetry.dropped", snapshot.TelemetryDropped, "count");
+        AddBigint("aveline.eventbus.failed", snapshot.EventBusFailed, "count");
+        AddBigint(
+            "aveline.eventbus.backlog",
+            snapshot.EventBusPublished is { } published && snapshot.EventBusReceived is { } received
+                ? published - received
+                : null,
+            "count");
+        AddDecimal("aveline.api.requests_per_second", snapshot.ApiRequestsPerSecond, "count");
+        AddDecimal("aveline.api.error_rate", snapshot.ApiErrorRate, "ratio");
+        AddBigint("aveline.agent.runs_running", snapshot.AgentRunsRunning, "count");
+
+        return samples;
+    }
+
+    /// <summary>
+    /// Gathers one snapshot. Virtual so a test can supply a deterministic snapshot without a
+    /// running host.
+    /// </summary>
+    protected virtual async Task<MetricSnapshot> CaptureAsync(
+        IServiceProvider services, CancellationToken cancellationToken)
+    {
+        var snapshot = new MetricSnapshot();
+
+        try
+        {
+            using var process = Process.GetCurrentProcess();
+            snapshot = snapshot with
+            {
+                ProcessCpuSeconds = process.TotalProcessorTime.TotalSeconds,
+                WorkingSetBytes = process.WorkingSet64,
+                ThreadCount = process.Threads.Count,
+                ThreadPoolQueueLength = ThreadPool.PendingWorkItemCount,
+                GcHeapBytes = GC.GetTotalMemory(forceFullCollection: false),
+            };
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // A host that refuses a process counter simply omits that metric (BR-7.10).
+        }
+
+        if (services.GetService<TelemetryChannel>() is { } channel)
+        {
+            snapshot = snapshot with
+            {
+                TelemetryChannelDepth = channel.PendingCount,
+                TelemetryDropped = channel.DroppedSamples,
+            };
+        }
+
+        if (services.GetService<EventBusMetrics>() is { } eventBus)
+        {
+            var counters = eventBus.Snapshot();
+            snapshot = snapshot with
+            {
+                EventBusPublished = counters.GetValueOrDefault("aveline.events.published"),
+                EventBusReceived = counters.GetValueOrDefault("aveline.events.received"),
+                EventBusFailed = counters.GetValueOrDefault("aveline.events.failed"),
+            };
+        }
+
+        if (services.GetService<AppDbContext>() is { } db)
+        {
+            await CaptureDatabaseAsync(db, snapshot, value => snapshot = value, cancellationToken);
+        }
+
+        return snapshot;
+    }
+
+    private static async Task CaptureDatabaseAsync(
+        AppDbContext db,
+        MetricSnapshot snapshot,
+        Action<MetricSnapshot> update,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var now = DateTime.UtcNow;
+            var hourStart = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0, DateTimeKind.Utc);
+
+            var rows = await db.ApiRequestMetrics
+                .AsNoTracking()
+                .Where(metric => metric.WindowSize == "hour" && metric.WindowStart == hourStart)
+                .Select(metric => new { metric.RequestCount, metric.ErrorCount })
+                .ToListAsync(cancellationToken);
+
+            var requests = rows.Sum(row => row.RequestCount);
+            if (requests > 0)
+            {
+                var elapsedSeconds = Math.Max(1d, (now - hourStart).TotalSeconds);
+                snapshot = snapshot with
+                {
+                    ApiRequestsPerSecond = requests / elapsedSeconds,
+                    ApiErrorRate = (double)rows.Sum(row => row.ErrorCount) / requests,
+                };
+            }
+
+            snapshot = snapshot with
+            {
+                AgentRunsRunning = await db.AgentWorkflowRuns
+                    .AsNoTracking()
+                    .LongCountAsync(run => run.Status == AgentRunStatus.Running, cancellationToken),
+            };
+
+            update(snapshot);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // A transient read failure omits the database metrics for this pass (BR-7.10).
+        }
+    }
+}

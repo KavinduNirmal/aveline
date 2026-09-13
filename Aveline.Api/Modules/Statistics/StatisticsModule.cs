@@ -32,6 +32,8 @@ public static class StatisticsModule
         services.AddScoped<IApiStatisticsService, ApiStatisticsService>();
         services.AddScoped<IQuotaService, QuotaService>();
 
+        services.AddScoped<ISystemMetricRepository, SystemMetricRepository>();
+
         // Atomic Redis counters when Redis is configured; the process-local fallback mirrors
         // InMemoryDistributedJobLock and is only for local development and tests.
         if (!string.IsNullOrWhiteSpace(CacheConfiguration.ResolveRedisConnectionString(configuration)))
@@ -56,6 +58,8 @@ public static class StatisticsModule
         services.AddHostedService<ApiStatsRetentionJob>();
         services.AddHostedService<ApiRequestLogPartitionJob>();
         services.AddHostedService(sp => sp.GetRequiredService<ApiKeyUsageAggregator>());
+        services.AddHostedService<SystemMetricCollector>();
+        services.AddHostedService<SystemMetricRetentionJob>();
 
         return services;
     }

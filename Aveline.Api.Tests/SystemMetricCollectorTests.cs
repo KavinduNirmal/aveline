@@ -1,0 +1,174 @@
+using Aveline.Api.Common.Jobs;
+using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Modules.Statistics.Jobs;
+using Aveline.Api.Modules.Statistics.Models;
+using Aveline.Api.Modules.Statistics.Repositories;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+
+namespace Aveline.Api.Tests;
+
+/// <summary>
+/// Issue #228 — the system metric collector. Verifies BR-7.10 (an unknown metric is omitted,
+/// never recorded as zero), the SHA-256 dimension hash contract and the bounded in-memory
+/// buffer that survives a database outage.
+/// </summary>
+public class SystemMetricCollectorTests
+{
+    private static MetricSnapshot FullSnapshot() => new()
+    {
+        ProcessCpuSeconds = 12.5,
+        WorkingSetBytes = 1024,
+        GcHeapBytes = 2048,
+        ThreadCount = 8,
+        ThreadPoolQueueLength = 3,
+        TelemetryChannelDepth = 4,
+        TelemetryDropped = 1,
+        EventBusPublished = 10,
+        EventBusReceived = 9,
+        EventBusFailed = 1,
+        ApiRequestsPerSecond = 2.5,
+        ApiErrorRate = 0.02,
+        AgentRunsRunning = 3,
+    };
+
+    [Fact]
+    public void BuildSamples_OmitsMetricsThatCannotBeDetermined()
+    {
+        Assert.Empty(SystemMetricCollector.BuildSamples(new MetricSnapshot()));
+    }
+
+    [Fact]
+    public void BuildSamples_RecordsOnlyProvidedMetrics()
+    {
+        var sample = Assert.Single(SystemMetricCollector.BuildSamples(new MetricSnapshot { ThreadCount = 8 }));
+
+        Assert.Equal("aveline.process.thread_count", sample.MetricName);
+        Assert.Equal(8, sample.ValueBigint);
+        Assert.Null(sample.ValueDecimal);
+        Assert.Equal("{}", sample.DimensionsJson);
+    }
+
+    [Fact]
+    public void BuildSamples_UsesSnakeCaseAvelineNamesAndKnownUnits()
+    {
+        var samples = SystemMetricCollector.BuildSamples(FullSnapshot());
+
+        Assert.All(samples, sample => Assert.StartsWith("aveline.", sample.MetricName));
+        Assert.All(samples, sample => Assert.Matches("^aveline(\\.[a-z0-9_]+)+$", sample.MetricName));
+        Assert.All(samples, sample => Assert.Contains(sample.Unit, new[] { "count", "ms", "bytes", "ratio", "percent" }));
+
+        // Names the seeded rules watch must be produced by the collector.
+        Assert.Contains(samples, sample => sample.MetricName == "aveline.queue.telemetry_channel");
+        Assert.Contains(samples, sample => sample.MetricName == "aveline.eventbus.failed");
+        Assert.Contains(samples, sample => sample.MetricName == "aveline.api.telemetry.dropped");
+    }
+
+    [Fact]
+    public void BuildSamples_HasExactValueColumnAndStableSixtyFourCharHash()
+    {
+        var first = SystemMetricCollector.BuildSamples(FullSnapshot());
+        var second = SystemMetricCollector.BuildSamples(FullSnapshot());
+
+        Assert.Equal(12, first.Count);
+        Assert.All(first, sample =>
+        {
+            Assert.Equal(64, sample.DimensionHash.Length);
+            Assert.Matches("^[0-9a-f]{64}$", sample.DimensionHash);
+            Assert.True(sample.ValueDecimal is not null ^ sample.ValueBigint is not null);
+        });
+        Assert.Equal(
+            first.Select(sample => sample.DimensionHash),
+            second.Select(sample => sample.DimensionHash));
+    }
+
+    [Fact]
+    public async Task RunAsync_BuffersAtMostOneHundredSamplesAndCountsTheDrops()
+    {
+        var repository = new StubSystemMetricRepository { Fail = true };
+        await using var provider = BuildProvider(repository);
+
+        var collector = new FixedSnapshotCollector(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<IDistributedJobLock>(),
+            new MetricSnapshot { ThreadCount = 1 });
+
+        for (var i = 0; i < 150; i++)
+        {
+            Assert.Equal(0, await collector.RunAsync(CancellationToken.None));
+        }
+
+        Assert.Equal(SystemMetricCollector.MaxBufferedSamples, collector.BufferedSampleCount);
+        Assert.Equal(50, collector.DroppedSamples);
+    }
+
+    [Fact]
+    public async Task RunAsync_FlushesTheBufferOnTheNextSuccessfulPass()
+    {
+        var repository = new StubSystemMetricRepository { Fail = true };
+        await using var provider = BuildProvider(repository);
+
+        var collector = new FixedSnapshotCollector(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<IDistributedJobLock>(),
+            new MetricSnapshot { ThreadCount = 1 });
+
+        Assert.Equal(0, await collector.RunAsync(CancellationToken.None));
+        Assert.Equal(1, collector.BufferedSampleCount);
+
+        repository.Fail = false;
+        Assert.Equal(2, await collector.RunAsync(CancellationToken.None));
+        Assert.Equal(0, collector.BufferedSampleCount);
+    }
+
+    private static ServiceProvider BuildProvider(ISystemMetricRepository repository)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<AppDbContext>(options =>
+            options.UseInMemoryDatabase($"SystemMetricCollector_{Guid.NewGuid()}"));
+        services.AddSingleton(repository);
+        services.AddSingleton<IDistributedJobLock>(new InMemoryDistributedJobLock());
+        return services.BuildServiceProvider();
+    }
+
+    private sealed class FixedSnapshotCollector(
+        IServiceScopeFactory scopeFactory,
+        IDistributedJobLock jobLock,
+        MetricSnapshot snapshot)
+        : SystemMetricCollector(
+            scopeFactory,
+            jobLock,
+            NullLogger<SystemMetricCollector>.Instance,
+            new ConfigurationBuilder().Build())
+    {
+        protected override Task<MetricSnapshot> CaptureAsync(IServiceProvider services, CancellationToken cancellationToken)
+            => Task.FromResult(snapshot);
+    }
+
+    private sealed class StubSystemMetricRepository : ISystemMetricRepository
+    {
+        public bool Fail { get; set; }
+
+        public Task<int> UpsertAsync(IReadOnlyList<SystemMetricSample> samples, CancellationToken cancellationToken = default)
+            => Fail
+                ? throw new InvalidOperationException("database unavailable")
+                : Task.FromResult(samples.Count);
+
+        public Task<int> DeleteSamplesOlderThanAsync(DateTime cutoff, CancellationToken cancellationToken = default)
+            => Task.FromResult(0);
+
+        public Task<IReadOnlyList<SystemMetricSample>> QueryAsync(
+            string metricName, DateTime from, DateTime to, string? windowSize = null,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<SystemMetricSample>>([]);
+
+        public Task<SystemMetricSample?> LatestAsync(string metricName, CancellationToken cancellationToken = default)
+            => Task.FromResult<SystemMetricSample?>(null);
+
+        public Task<IReadOnlyList<string>> ListMetricNamesAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<string>>([]);
+    }
+}

@@ -32,6 +32,9 @@ public sealed class TelemetryChannel
 
     public int Capacity { get; }
 
+    /// <summary>Samples currently buffered, sampled by the system metric collector (FR-7.6).</summary>
+    public long PendingCount => Interlocked.Read(ref _pending);
+
     /// <summary>Samples dropped because the buffer was full.</summary>
     public long DroppedSamples => Interlocked.Read(ref _dropped);
 

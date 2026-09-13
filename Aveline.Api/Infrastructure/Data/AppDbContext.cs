@@ -76,6 +76,16 @@ public class AppDbContext : DbContext
     public DbSet<Modules.Statistics.Models.ApiQuotaUsage> ApiQuotaUsage =>
         Set<Modules.Statistics.Models.ApiQuotaUsage>();
 
+    // Statistics Module (Phase 6 — system statistics and alerts, M8)
+    public DbSet<Modules.Statistics.Models.SystemMetricSample> SystemMetricSamples =>
+        Set<Modules.Statistics.Models.SystemMetricSample>();
+
+    public DbSet<Modules.Statistics.Models.SystemAlertRule> SystemAlertRules =>
+        Set<Modules.Statistics.Models.SystemAlertRule>();
+
+    public DbSet<Modules.Statistics.Models.SystemAlert> SystemAlerts =>
+        Set<Modules.Statistics.Models.SystemAlert>();
+
     public DbSet<IntegrationCredential> IntegrationCredentials => Set<IntegrationCredential>();
 
     public DbSet<InboundMessageLog> InboundMessageLogs => Set<InboundMessageLog>();

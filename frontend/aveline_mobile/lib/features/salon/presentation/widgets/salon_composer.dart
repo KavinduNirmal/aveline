@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 /// The message input at the bottom of the Salon. Enter sends; the send button
@@ -65,7 +67,12 @@ class _SalonComposerState extends State<SalonComposer> {
             const SizedBox(width: 8),
             IconButton.filled(
               onPressed: canSend ? _submit : null,
-              icon: const Icon(Icons.send_rounded),
+              // The paper-plane glyph points straight right, which reads as off-centre
+              // inside a circular button; tilting it 45° gives the familiar "sent" pose.
+              icon: Transform.rotate(
+                angle: -math.pi / 4,
+                child: const Icon(Icons.send_rounded),
+              ),
               tooltip: 'Send message',
             ),
           ],

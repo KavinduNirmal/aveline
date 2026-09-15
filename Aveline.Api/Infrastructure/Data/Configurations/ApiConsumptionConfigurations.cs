@@ -58,6 +58,7 @@ public class ApiRequestMetricConfiguration : IEntityTypeConfiguration<ApiRequest
                 m.HttpMethod,
                 m.StatusCode,
                 m.WindowStart,
+                m.WindowSize,
             })
             .IsUnique()
             .AreNullsDistinct(false)

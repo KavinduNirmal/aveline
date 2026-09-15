@@ -59,7 +59,7 @@ public static class SubscriptionEndpoints
             }
             catch (Exception exception)
             {
-                return MapProblem(exception);
+                return MapProblem(exception, http);
             }
         })
         .AddEndpointFilter<IdempotencyEndpointFilter>()
@@ -139,15 +139,10 @@ public static class SubscriptionEndpoints
         return user?.Id ?? Guid.Empty;
     }
 
-    private static IResult MapProblem(Exception exception) => exception switch
+    private static IResult MapProblem(Exception exception, HttpContext? http = null) => exception switch
     {
         BlossomOrganizationNotFoundException notFound => Results.NotFound(new { message = notFound.Message }),
-        PlanLimitViolationException violation => Results.Conflict(new
-        {
-            code = "plan-limit-violation",
-            message = violation.Message,
-            violations = violation.Violations.Select(v => new { key = v.Key, observed = v.Observed, allowed = v.Allowed }),
-        }),
+        PlanLimitViolationException violation => HandlePlanViolation(violation, http),
         NoOpPlanChangeException noOp => Results.BadRequest(new { code = "no-op-plan-change", message = noOp.Message }),
         BlossomValidationException validation => Results.BadRequest(new { message = validation.Message }),
         PeriodClosedException periodClosed => Results.Conflict(new
@@ -157,4 +152,22 @@ public static class SubscriptionEndpoints
         }),
         _ => throw exception,
     };
+
+    private static IResult HandlePlanViolation(PlanLimitViolationException violation, HttpContext? http)
+    {
+        if (http is not null)
+        {
+            var firstKey = violation.Violations.FirstOrDefault()?.Key ?? "plan_limit";
+            http.Items["TelemetryErrorCode"] = $"violation_{firstKey}";
+            http.Response.Headers["X-Error-Code"] = "plan-limit-violation";
+            http.Response.Headers["X-Violated-Keys"] = string.Join(",", violation.Violations.Select(v => v.Key));
+        }
+
+        return Results.Conflict(new
+        {
+            code = "plan-limit-violation",
+            message = violation.Message,
+            violations = violation.Violations.Select(v => new { key = v.Key, observed = v.Observed, allowed = v.Allowed }),
+        });
+    }
 }

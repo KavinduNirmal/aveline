@@ -3,8 +3,8 @@ fastapi
 uvicorn
 
 # LangGraph & LangChain
-langgraph
-langgraph-checkpoint-postgres
+langgraph==0.2.20
+langgraph-checkpoint-postgres==2.0.1
 langchain
 langchain-openai
 langchain-deepseek

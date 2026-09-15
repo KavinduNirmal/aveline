@@ -53,6 +53,13 @@ public sealed record UpdatePriceEntryCommand(
     BlossomRuleStatus? Status,
     Guid ActorUserId);
 
+public sealed record PricingRecomputeResult(
+    Guid RuleId,
+    int ProcessedRecords,
+    int AffectedOrganizations,
+    decimal TotalDelta,
+    DateTime RecomputedAt);
+
 /// <summary>Rule resolution and the administrative pricing lifecycle.</summary>
 public interface IPricingService
 {
@@ -86,6 +93,9 @@ public interface IPricingService
 
     Task<PricingRulePage> ListRulesAsync(
         PricingRuleFilter filter, int page, int pageSize, CancellationToken cancellationToken = default);
+
+    Task<PricingRecomputeResult> RecomputeRuleAsync(
+        Guid ruleId, Guid actorUserId, CancellationToken cancellationToken = default);
 
     Task<BlossomPriceEntry> CreatePriceEntryAsync(
         CreatePriceEntryCommand command, CancellationToken cancellationToken = default);

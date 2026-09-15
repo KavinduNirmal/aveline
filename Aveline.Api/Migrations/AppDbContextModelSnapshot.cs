@@ -279,7 +279,7 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("Status");
 
-                    b.ToTable("Approval_Queue", (string)null);
+                    b.ToTable("ApprovalQueue", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Commerce.Models.BusinessRule", b =>
@@ -328,7 +328,7 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("RuleType");
 
-                    b.ToTable("Business_Rules", (string)null);
+                    b.ToTable("BusinessRules", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Commerce.Models.DeliveryPlan", b =>
@@ -391,7 +391,7 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("TrackingNumber");
 
-                    b.ToTable("Delivery_Plans", (string)null);
+                    b.ToTable("DeliveryPlans", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Commerce.Models.Order", b =>
@@ -513,7 +513,7 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("OrganizationId");
 
-                    b.ToTable("Order_Items", (string)null);
+                    b.ToTable("OrderItems", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Commerce.Models.Payment", b =>
@@ -717,7 +717,7 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("OrganizationId");
 
-                    b.ToTable("SignOff_Decisions", (string)null);
+                    b.ToTable("SignOffDecisions", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.Customer", b =>
@@ -831,7 +831,7 @@ namespace Aveline.Api.Migrations
                     b.HasIndex("OrganizationId", "CustomerId")
                         .IsUnique();
 
-                    b.ToTable("Customer_Consent", (string)null);
+                    b.ToTable("CustomerConsent", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.CustomerEvent", b =>
@@ -882,7 +882,7 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("OrganizationId");
 
-                    b.ToTable("Customer_Events", (string)null);
+                    b.ToTable("CustomerEvents", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.CustomerInteraction", b =>
@@ -939,7 +939,7 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("CustomerId", "CreatedAt");
 
-                    b.ToTable("Customer_Interactions", (string)null);
+                    b.ToTable("CustomerInteractions", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.CustomerMemory", b =>
@@ -1007,7 +1007,7 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("OrganizationId");
 
-                    b.ToTable("Customer_Memory", (string)null);
+                    b.ToTable("CustomerMemory", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.CustomerPreference", b =>
@@ -1064,7 +1064,7 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("CustomerId", "PreferenceKey");
 
-                    b.ToTable("Customer_Preferences", (string)null);
+                    b.ToTable("CustomerPreferences", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.CustomerTag", b =>
@@ -1096,7 +1096,7 @@ namespace Aveline.Api.Migrations
                     b.HasIndex("CustomerId", "Tag")
                         .IsUnique();
 
-                    b.ToTable("Customer_Tags", (string)null);
+                    b.ToTable("CustomerTags", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Integrations.Models.InboundMessageLog", b =>
@@ -1675,7 +1675,7 @@ namespace Aveline.Api.Migrations
                     b.HasIndex("OrgId")
                         .HasDatabaseName("idx_matches_org");
 
-                    b.ToTable("customer_matches", (string)null);
+                    b.ToTable("CustomerMatches", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.VisualIntelligence.Models.InventoryImage", b =>
@@ -1735,7 +1735,7 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("OrgId", "ItemId");
 
-                    b.ToTable("inventory_images", (string)null);
+                    b.ToTable("InventoryImages", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.VisualIntelligence.Models.InventoryItem", b =>
@@ -1835,7 +1835,7 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("OrgId", "Status", "DeletedAt", "Category", "Color");
 
-                    b.ToTable("inventory_items", (string)null);
+                    b.ToTable("InventoryItems", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.VisualIntelligence.Models.OutfitComposition", b =>
@@ -1876,7 +1876,7 @@ namespace Aveline.Api.Migrations
                     b.HasIndex("OrgId")
                         .HasDatabaseName("idx_outfits_org");
 
-                    b.ToTable("outfit_compositions", (string)null);
+                    b.ToTable("OutfitCompositions", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.VisualIntelligence.Models.OutfitItem", b =>
@@ -1908,7 +1908,7 @@ namespace Aveline.Api.Migrations
                     b.HasIndex("OutfitId")
                         .HasDatabaseName("idx_outfit_items_outfit");
 
-                    b.ToTable("outfit_items", (string)null);
+                    b.ToTable("OutfitItems", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.VisualIntelligence.Models.SourcingRequest", b =>
@@ -1981,7 +1981,7 @@ namespace Aveline.Api.Migrations
                     b.HasIndex("Status")
                         .HasDatabaseName("idx_sourcing_status");
 
-                    b.ToTable("sourcing_requests", (string)null);
+                    b.ToTable("SourcingRequests", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.VisualIntelligence.Models.Supplier", b =>
@@ -2033,7 +2033,7 @@ namespace Aveline.Api.Migrations
                     b.HasIndex("OrgId")
                         .HasDatabaseName("idx_suppliers_org");
 
-                    b.ToTable("suppliers", (string)null);
+                    b.ToTable("Suppliers", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Attendance.Models.TimeEntry", b =>

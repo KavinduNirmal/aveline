@@ -65,6 +65,21 @@ public class Organization
 
     public bool IsActive { get; set; } = true;
 
+    /// <summary>Billing contact address; may differ from the owner's login email.</summary>
+    public string? BillingEmail { get; set; }
+
+    /// <summary>General contact address shown to customers.</summary>
+    public string? ContactEmail { get; set; }
+
+    /// <summary>ISO-4217 currency for prices displayed to this organization.</summary>
+    public string Currency { get; set; } = "LKR";
+
+    /// <summary>IANA time-zone id used for period boundaries and reports.</summary>
+    public string TimeZone { get; set; } = "UTC";
+
+    /// <summary>When the organization was suspended; null while active.</summary>
+    public DateTime? SuspendedAt { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

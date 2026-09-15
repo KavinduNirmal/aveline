@@ -17,15 +17,23 @@ public class OnboardingMiddleware
 {
     private readonly RequestDelegate _next;
 
-    private static readonly string[] AllowedPathsForOnboardingPending = new[]
+    // Profile, onboarding-wizard and invitation endpoints a pending account legitimately
+    // needs. Prefix matching keeps sub-resources (e.g. /users/me/sessions) available.
+    private static readonly string[] AllowedPrefixPathsForOnboardingPending = new[]
     {
         "/api/v1/users/me",
         "/api/v1/users/onboarding",
         "/api/v1/auth/claims",
-        "/api/v1/admin",
         "/api/v1/invitations",
         "/api/v1/onboarding",
         "/openapi",
+    };
+
+    // The one admin route a pending account may reach: submitting an access request.
+    // Matched exactly so every other /admin/* route stays behind the account-state gate.
+    private static readonly string[] AllowedExactPathsForOnboardingPending = new[]
+    {
+        "/api/v1/admin/requests",
     };
 
     public OnboardingMiddleware(RequestDelegate next)
@@ -35,10 +43,13 @@ public class OnboardingMiddleware
 
     public async Task InvokeAsync(HttpContext context, IUserService userService)
     {
-        // Internal service calls (e.g. /internal/usage, /internal/visual) do not have Clerk user accounts
+        // Internal service calls (e.g. /internal/usage, /internal/visual) and API-key machine
+        // clients do not have Clerk user accounts and must not create onboarding stubs.
         if (context.Request.Path.StartsWithSegments("/internal") ||
             context.Request.Path.StartsWithSegments("/api/internal") ||
-            context.User.IsInRole("InternalService"))
+            context.User.IsInRole("InternalService") ||
+            context.User.HasClaim(claim =>
+                claim.Type == Modules.ApiAccess.Authentication.ApiKeyClaimTypes.ApiKeyId))
         {
             await _next(context);
             return;
@@ -91,9 +102,11 @@ public class OnboardingMiddleware
                 // Raw /orgs endpoints are intentionally excluded so a caller cannot create an
                 // organization to short-circuit onboarding into an Active state.
                 var path = context.Request.Path.Value?.TrimEnd('/') ?? string.Empty;
-                var isAllowed = AllowedPathsForOnboardingPending.Any(p =>
-                    path.Equals(p, StringComparison.OrdinalIgnoreCase)
-                    || path.StartsWith(p + "/", StringComparison.OrdinalIgnoreCase));
+                var isAllowed = AllowedPrefixPathsForOnboardingPending.Any(p =>
+                        path.Equals(p, StringComparison.OrdinalIgnoreCase)
+                        || path.StartsWith(p + "/", StringComparison.OrdinalIgnoreCase))
+                    || AllowedExactPathsForOnboardingPending.Any(p =>
+                        path.Equals(p, StringComparison.OrdinalIgnoreCase));
 
                 if (!isAllowed)
                 {

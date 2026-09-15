@@ -1,3 +1,4 @@
+using System.Threading.Channels;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -11,6 +12,17 @@ namespace Aveline.Api.Infrastructure.Eventing;
 /// <c>Eventing:SubscribeEventTypes</c> (each mapped to the <c>aveline:*:&lt;event_type&gt;</c>
 /// pattern) and dispatches every received message into <see cref="RedisEventBus.DispatchAsync"/>,
 /// which fans it out to the handlers registered for that event type.
+///
+/// <para>
+/// Messages are handed to a single consumer that awaits each handler before taking the next
+/// message, so events reach handlers in the order Redis delivered them. Redis delivers pub/sub
+/// messages in publish order, but StackExchange.Redis invokes the subscriber callback as a
+/// synchronous <see cref="Action{T1,T2}"/> and never awaits it, so doing the async dispatch
+/// inside that callback makes every event race: the workflow's <c>agent.status</c> events and
+/// the <c>message.created</c> events they describe then arrive at clients interleaved or
+/// reversed (observed as a "thinking" state landing after the reply it belonged to, leaving a
+/// progress bubble hanging that nothing could close).
+/// </para>
 ///
 /// <para>
 /// StackExchange.Redis automatically re-establishes subscriptions when the connection is
@@ -48,26 +60,47 @@ public sealed class RedisSubscriptionService : BackgroundService
             return;
         }
 
+        // Unbounded on purpose: the Redis callback cannot block or signal back-pressure, and
+        // dropping events to stay bounded would silently lose messages.
+        var queue = Channel.CreateUnbounded<RedisMessage>(
+            new UnboundedChannelOptions { SingleReader = true });
+
         var subscriber = _connection.GetSubscriber();
         foreach (var eventType in _eventTypes)
         {
             var pattern = EventChannel.PatternForEventType(eventType);
             await subscriber.SubscribeAsync(
                 RedisChannel.Pattern(pattern),
-                (channel, value) => DispatchAsync(channel, value, stoppingToken));
+                // Enqueue only; the consumer below awaits handlers in arrival order.
+                (channel, value) => queue.Writer.TryWrite(new RedisMessage(channel.ToString(), value.ToString())));
             _logger.LogInformation("Subscribed to Redis event pattern {Pattern}.", pattern);
+        }
+
+        try
+        {
+            await foreach (var message in queue.Reader.ReadAllAsync(stoppingToken))
+            {
+                await DispatchAsync(message.Channel, message.Value, stoppingToken);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Host shutdown: stop draining. Undispatched messages are dropped with the process.
         }
     }
 
-    private async Task DispatchAsync(RedisChannel channel, RedisValue value, CancellationToken cancellationToken)
+    private async Task DispatchAsync(string channel, string value, CancellationToken cancellationToken)
     {
         try
         {
-            await _bus.DispatchAsync(channel.ToString(), value.ToString(), cancellationToken);
+            await _bus.DispatchAsync(channel, value, cancellationToken);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to dispatch Redis event on channel {Channel}.", channel);
         }
     }
+
+    /// <summary>A raw pub/sub message as received, queued for in-order dispatch.</summary>
+    private readonly record struct RedisMessage(string Channel, string Value);
 }

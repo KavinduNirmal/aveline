@@ -1921,10 +1921,12 @@ namespace Aveline.Api.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<string>("Category")
+                        .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
                     b.Property<string>("Color")
+                        .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 

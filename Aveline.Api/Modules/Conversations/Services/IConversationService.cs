@@ -37,24 +37,36 @@ public interface IConversationService
         Guid? customerId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Fetches a conversation the caller may see. Returns <c>null</c> when it does not exist in
+    /// the organization or belongs to another user (ADR-021).
+    /// </summary>
     Task<ConversationDto?> GetAsync(
         Guid orgId,
+        Guid userId,
         Guid conversationId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Lists the conversations visible to the caller: organization-shared Salons plus the
+    /// caller's own general Salon (ADR-021).
+    /// </summary>
     Task<(IReadOnlyList<ConversationDto> Items, int Total)> ListAsync(
         Guid orgId,
+        Guid userId,
         int page,
         int pageSize,
         CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Binds a Salon to a customer chosen from a resolution <c>choice</c> block (Issue #161)
-    /// and re-triggers the agent with that customer in context. Returns <c>null</c> when the
-    /// conversation does not exist in the org.
+    /// and re-triggers the agent with that customer in context. The Salon becomes
+    /// organization-shared. Returns <c>null</c> when the conversation does not exist in the org
+    /// or belongs to another user (ADR-021).
     /// </summary>
     Task<ConversationDto?> SelectCustomerAsync(
         Guid orgId,
+        Guid userId,
         Guid conversationId,
         Guid customerId,
         string? query,
@@ -62,6 +74,7 @@ public interface IConversationService
 
     Task<(IReadOnlyList<MessageDto> Items, int Total)> ListMessagesAsync(
         Guid orgId,
+        Guid userId,
         Guid conversationId,
         int page,
         int pageSize,

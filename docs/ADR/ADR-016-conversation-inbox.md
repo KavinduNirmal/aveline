@@ -1,7 +1,8 @@
 # ADR-016: The Salon — Agent-to-Staff Conversation Inbox
 
 ## Status
-Accepted
+Accepted — decision 1 superseded in part by [ADR-021](ADR-021-per-user-salon-ownership.md).
+The general Salon is now owned per user; customer-bound Salons stay organization-shared.
 
 ## Context
 

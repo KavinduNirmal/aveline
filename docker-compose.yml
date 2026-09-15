@@ -78,6 +78,10 @@ services:
       Eventing__SubscribeEventTypes__3: ${EVENTING_SUBSCRIBE_EVENT_TYPES_3:-agent.status}
       AgentService__BaseUrl: http://agent:8000
       AgentService__InternalToken: ${INTERNAL_API_TOKEN:-change-me-internal-token}
+      # Salt for the hashed client IP and user-agent telemetry dimensions. Required in
+      # Production: the API refuses to boot without it (M-1). The local default keeps the
+      # development profile salted too; set a high-entropy secret when deploying.
+      Telemetry__IpHashSalt: ${TELEMETRY_IP_HASH_SALT:-local-development-telemetry-salt}
       # OpenAI-compatible embeddings used by the Customer Memory agent (pgvector retrieval).
       Embeddings__ApiKey: ${EMBEDDINGS_API_KEY:-}
       Embeddings__BaseUrl: ${EMBEDDINGS_BASE_URL:-https://api.openai.com/v1}

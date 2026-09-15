@@ -43,23 +43,40 @@ Server-side enforcement sits on top of the role claims:
 - **`/auth/claims`.** Returns the raw Clerk claims plus the authoritative
   `AccountState`, `UserRole`, and `OrganizationRole` resolved by the middleware
   read model, for debugging without trusting client-side checks.
+- **Operational endpoints.** `/health`, `/health/live`, and `/health/ready` are
+  anonymous so an orchestrator can probe them without credentials. `/metrics`
+  (Prometheus) is guarded by the `Metrics` policy and accepts either the internal
+  service token (`X-Internal-Token`) or, when configured, a
+  `Authorization: Bearer <Metrics:ScrapeToken>` scraper token.
 
 ## Permission matrix
 
+> Generated from `Aveline.Api/Authorization/Permissions.cs` (the source of truth).
+> `PermissionsCatalogTests` enforces that every permission has a registered policy and
+> at least one role grant.
+
 | Role | Granted permissions |
 | --- | --- |
-| `staff` | `catalog:view` |
-| `customer_relations` | `catalog:view`, `customers:view` |
-| `moderator` | `catalog:view`, `customers:view`, `approvals:approve` |
-| `admin`, `owner` | All current permissions |
-| `org:boutique_staff` | `catalog:view`, `customers:view` |
-| `org:boutique_manager` | `catalog:view`, `customers:view`, `catalog:manage`, `reports:view` |
-| `org:boutique_supervisor` | Boutique-manager permissions plus `approvals:approve` |
-| `org:boutique_owner` | All current permissions |
+| `staff` | `catalog:view`, `conversations:view` |
+| `customer_relations` | `catalog:view`, `customers:view`, `conversations:view` |
+| `moderator` | `catalog:view`, `customers:view`, `approvals:approve`, `conversations:view`, `billing:view`, `stats:view`, `stats:view:agent`, `admin:orgs:read` |
+| `admin` | Every permission **except** `pricing:backdate` |
+| `owner` | Every permission |
+| `org:boutique_staff` | `catalog:view`, `customers:view`, `conversations:view` |
+| `org:boutique_manager` | `catalog:view`, `customers:view`, `catalog:manage`, `reports:view`, `conversations:view`, `billing:view`, `pricing:view`, `stats:view` |
+| `org:boutique_supervisor` | `catalog:view`, `customers:view`, `catalog:manage`, `approvals:approve`, `reports:view`, `conversations:view`, `stats:view` |
+| `org:boutique_owner` | `catalog:view`, `customers:view`, `catalog:manage`, `approvals:approve`, `payments:refund`, `reports:view`, `settings:manage`, `conversations:view`, `billing:view`, `billing:manage`, `pricing:view`, `apikeys:view`, `apikeys:manage`, `stats:view`, `stats:view:agent` |
 
-The current permission catalog is `catalog:view`, `customers:view`,
-`catalog:manage`, `approvals:approve`, `payments:refund`, `reports:view`, and
-`settings:manage`.
+Boutique roles deliberately never hold money-shaped permissions. `pricing:manage`,
+`pricing:backdate`, `billing:adjust`, `stats:system`, `admin:*` and `audit:view` are
+granted only to Aveline team roles, and `pricing:backdate` is owner-only.
+
+The current permission catalog is `catalog:view`, `customers:view`, `catalog:manage`,
+`approvals:approve`, `payments:refund`, `reports:view`, `settings:manage`,
+`conversations:view`, `billing:view`, `billing:manage`, `billing:adjust`,
+`pricing:view`, `pricing:manage`, `pricing:backdate`, `apikeys:view`, `apikeys:manage`,
+`stats:view`, `stats:view:agent`, `stats:system`, `admin:users:read`,
+`admin:users:manage`, `admin:orgs:read`, and `audit:view`.
 
 ## Compatibility
 

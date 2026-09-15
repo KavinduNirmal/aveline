@@ -20,9 +20,17 @@ class Blossom extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final effectiveColor = color ?? IconTheme.of(context).color ?? Colors.black;
-    return CustomPaint(
-      size: Size.square(size),
-      painter: _BlossomPainter(effectiveColor),
+    // A `Container(width: w, height: h, child: Blossom(...))` hands down TIGHT constraints,
+    // and a bare `CustomPaint(size:)` is overridden by them: the mark then paints at the
+    // container's size and `size` is ignored entirely (that is what made the dock blossom
+    // fill its whole circle). UnconstrainedBox lays the mark out at exactly `size` and
+    // centres it in the space the caller provided, while loose call sites (Stack, Row,
+    // Positioned) keep behaving precisely as before.
+    return UnconstrainedBox(
+      child: SizedBox.square(
+        dimension: size,
+        child: CustomPaint(painter: _BlossomPainter(effectiveColor)),
+      ),
     );
   }
 }

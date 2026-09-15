@@ -185,11 +185,12 @@ public static class CatalogEndpoints
             var analysis = await visualService.AnalyzeImageAsync(dto, cancellationToken);
             return Results.Ok(analysis);
         })
-        .AllowAnonymous()
         .WithName("CatalogAnalyzeImage")
         .WithSummary("Extract visual fashion attributes and tags using Elle Vision AI.")
         .Produces<ImageAnalysisResultDto>(StatusCodes.Status200OK)
-        .Produces(StatusCodes.Status400BadRequest);
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden);
 
         // --- Customer Matches ---
 

@@ -165,7 +165,7 @@ public class OnboardingEndpointsIntegrationTests : IAsyncLifetime
         Assert.True(completeBody.Organization.HasCompletedOnboarding);
         Assert.Equal(6, completeBody.Organization.OnboardingStep);
         Assert.Equal("owner", completeBody.UserRole);
-        Assert.Equal("org:principal", completeBody.OrganizationRole);
+        Assert.Equal(Roles.BoutiqueOwner, completeBody.OrganizationRole);
         Assert.Equal(AccountState.Active.ToString(), completeBody.AccountState);
         Assert.Equal(750m, completeBody.BlossomAllocation);
         Assert.True(completeBody.AgentWarmedUp);

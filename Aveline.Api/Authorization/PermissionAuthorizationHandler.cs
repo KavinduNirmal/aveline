@@ -13,6 +13,21 @@ public sealed class PermissionAuthorizationHandler : AuthorizationHandler<Permis
         AuthorizationHandlerContext context,
         PermissionRequirement requirement)
     {
+        // API keys carry permissions as scope claims rather than roles.
+        if (context.User.HasClaim(c => c.Type == Modules.ApiAccess.Authentication.ApiKeyClaimTypes.ApiKeyId))
+        {
+            var scopes = context.User
+                .FindAll(Modules.ApiAccess.Authentication.ApiKeyClaimTypes.Scope)
+                .Select(c => c.Value);
+
+            if (scopes.Contains(requirement.Permission, StringComparer.Ordinal))
+            {
+                context.Succeed(requirement);
+            }
+
+            return Task.CompletedTask;
+        }
+
         var userRoles = context.User
             .FindAll(ClaimTypes.Role)
             .Select(c => c.Value);

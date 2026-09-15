@@ -4,7 +4,11 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Modules.Shared.Models;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 
@@ -101,6 +105,27 @@ public class FullAuthFlowIntegrationTests : IAsyncLifetime
         Assert.Equal("nosniff", response.Headers.GetValues("X-Content-Type-Options").Single());
         Assert.Equal("DENY", response.Headers.GetValues("X-Frame-Options").Single());
         Assert.Equal("no-referrer", response.Headers.GetValues("Referrer-Policy").Single());
+
+        var csp = response.Headers.GetValues("Content-Security-Policy").Single();
+        Assert.Contains("default-src 'none'", csp);
+        Assert.Contains("frame-ancestors 'none'", csp);
+
+        var permissions = response.Headers.GetValues("Permissions-Policy").Single();
+        Assert.Contains("camera=()", permissions);
+        Assert.Contains("geolocation=()", permissions);
+    }
+
+    [Fact]
+    public async Task HttpsResponses_Include_Hsts()
+    {
+        using var httpsClient = _factory.CreateClient(
+            new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://aveline.test") });
+
+        var response = await httpsClient.GetAsync("/health/live");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var hsts = response.Headers.GetValues("Strict-Transport-Security").Single();
+        Assert.Contains("max-age=", hsts);
     }
 
     [Fact]
@@ -163,5 +188,69 @@ public class FullAuthFlowIntegrationTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         Assert.Null(_agentServer.ReceivedInternalToken);
+    }
+
+    [Fact]
+    public async Task Handled500_StillCarriesSecurityHeaders_AndStableEnvelope()
+    {
+        const string clerkId = "user_hardening_500";
+        await SeedActiveUserAsync(clerkId);
+        var token = CreateToken(clerkId, userRole: "staff");
+
+        // The failure probe is Development-only (M-14), so this test runs its own host.
+        await using var factory = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.UseEnvironment("Development");
+                builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
+                builder.UseSetting("AgentService:BaseUrl", _agentServer.BaseUrl + "/");
+                builder.UseSetting("AgentService:InternalToken", InternalToken);
+            });
+        using var client = factory.CreateClient();
+
+        var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/policies/fallback/unhandled");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        // The framework clears the response before invoking the handler, so these must be
+        // re-applied inside it (M-13 / reconciliation §3.6).
+        Assert.Equal("nosniff", response.Headers.GetValues("X-Content-Type-Options").Single());
+        Assert.Equal("DENY", response.Headers.GetValues("X-Frame-Options").Single());
+        Assert.Contains("default-src 'none'", response.Headers.GetValues("Content-Security-Policy").Single());
+
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("Deliberate Development-only failure probe", body);
+        var envelope = JsonDocument.Parse(body).RootElement;
+        Assert.Equal(500, envelope.GetProperty("status").GetInt32());
+        Assert.True(envelope.TryGetProperty("traceId", out _));
+    }
+
+    private static async Task SeedActiveUserAsync(string clerkId)
+    {
+        await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .Options);
+
+        if (await context.Users.AnyAsync(user => user.ClerkId == clerkId))
+        {
+            return;
+        }
+
+        context.Users.Add(new User
+        {
+            Id = Guid.CreateVersion7(),
+            ClerkId = clerkId,
+            Email = $"{clerkId}@aveline.lk",
+            FirstName = "Hardening",
+            LastName = "Probe",
+            Username = clerkId,
+            UserRole = "staff",
+            OrganizationRole = string.Empty,
+            HasCompletedOnboarding = true,
+            AccountState = AccountState.Active,
+        });
+        await context.SaveChangesAsync();
     }
 }

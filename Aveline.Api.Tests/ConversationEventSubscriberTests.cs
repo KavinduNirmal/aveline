@@ -27,13 +27,16 @@ public class ConversationEventSubscriberTests
         public Task<Conversation?> GetAsync(Guid orgId, Guid id, CancellationToken cancellationToken = default)
             => Task.FromResult<Conversation?>(null);
 
+        public Task<Conversation?> GetVisibleToUserAsync(Guid orgId, Guid id, Guid userId, CancellationToken cancellationToken = default)
+            => Task.FromResult<Conversation?>(null);
+
         public Task<Conversation?> GetByThreadIdAsync(string threadId, CancellationToken cancellationToken = default)
             => Task.FromResult(ByThread.GetValueOrDefault(threadId));
 
-        public Task<(IReadOnlyList<Conversation> Items, int Total)> ListAsync(Guid orgId, int page, int pageSize, CancellationToken cancellationToken = default)
+        public Task<(IReadOnlyList<Conversation> Items, int Total)> ListAsync(Guid orgId, Guid userId, int page, int pageSize, CancellationToken cancellationToken = default)
             => Task.FromResult<(IReadOnlyList<Conversation>, int)>(([], 0));
 
-        public Task<(Conversation Conversation, bool Created)> GetOrCreateSalonAsync(Guid orgId, Guid? customerId, string threadId, CancellationToken cancellationToken = default)
+        public Task<(Conversation Conversation, bool Created)> GetOrCreateSalonAsync(Guid orgId, Guid userId, Guid? customerId, string threadId, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
         public Task<Conversation> GetOrCreateSalonByExternalRefAsync(Guid orgId, string externalRef, string threadId, CancellationToken cancellationToken = default)
@@ -51,16 +54,16 @@ public class ConversationEventSubscriberTests
         public Task<ConversationDto> GetOrCreateSalonAsync(Guid orgId, Guid userId, Guid? customerId, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public Task<ConversationDto?> GetAsync(Guid orgId, Guid conversationId, CancellationToken cancellationToken = default)
+        public Task<ConversationDto?> GetAsync(Guid orgId, Guid userId, Guid conversationId, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public Task<(IReadOnlyList<ConversationDto> Items, int Total)> ListAsync(Guid orgId, int page, int pageSize, CancellationToken cancellationToken = default)
+        public Task<(IReadOnlyList<ConversationDto> Items, int Total)> ListAsync(Guid orgId, Guid userId, int page, int pageSize, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public Task<ConversationDto?> SelectCustomerAsync(Guid orgId, Guid conversationId, Guid customerId, string? query, CancellationToken cancellationToken = default)
+        public Task<ConversationDto?> SelectCustomerAsync(Guid orgId, Guid userId, Guid conversationId, Guid customerId, string? query, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public Task<(IReadOnlyList<MessageDto> Items, int Total)> ListMessagesAsync(Guid orgId, Guid conversationId, int page, int pageSize, Guid? around = null, CancellationToken cancellationToken = default)
+        public Task<(IReadOnlyList<MessageDto> Items, int Total)> ListMessagesAsync(Guid orgId, Guid userId, Guid conversationId, int page, int pageSize, Guid? around = null, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
         public Task<MessageDto> SendStaffNoteAsync(Guid orgId, Guid userId, Guid conversationId, string text, CancellationToken cancellationToken = default)

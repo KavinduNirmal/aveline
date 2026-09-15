@@ -14,16 +14,22 @@ public static class ServiceClientsConfiguration
         var baseUrl = configuration["AgentService:BaseUrl"]
             ?? throw new InvalidOperationException("AgentService:BaseUrl is not configured.");
 
+        // The correlation handler needs the current request; keep this method
+        // self-contained so it does not depend on the authorization registration.
+        services.AddHttpContextAccessor();
+
         // DelegatingHandlers must be transient: HttpClientFactory assigns InnerHandler
         // on each resolved handler, so a cached/singleton instance is invalid.
         services.AddTransient<InternalServiceAuthHandler>();
+        services.AddTransient<CorrelationIdDelegatingHandler>();
 
         services
             .AddHttpClient<IAgentServiceClient, AgentServiceClient>(client =>
             {
                 client.BaseAddress = new Uri(baseUrl);
             })
-            .AddHttpMessageHandler<InternalServiceAuthHandler>();
+            .AddHttpMessageHandler<InternalServiceAuthHandler>()
+            .AddHttpMessageHandler<CorrelationIdDelegatingHandler>();
 
         return services;
     }

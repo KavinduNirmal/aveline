@@ -8,7 +8,7 @@ public class BusinessRuleConfiguration : IEntityTypeConfiguration<BusinessRule>
 {
     public void Configure(EntityTypeBuilder<BusinessRule> builder)
     {
-        builder.ToTable("Business_Rules");
+        builder.ToTable("BusinessRules");
 
         builder.HasKey(b => b.Id);
 

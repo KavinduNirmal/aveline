@@ -8,7 +8,7 @@ public class SourcingRequestConfiguration : IEntityTypeConfiguration<SourcingReq
 {
     public void Configure(EntityTypeBuilder<SourcingRequest> builder)
     {
-        builder.ToTable("sourcing_requests");
+        builder.ToTable("SourcingRequests");
 
         builder.HasKey(x => x.Id);
 

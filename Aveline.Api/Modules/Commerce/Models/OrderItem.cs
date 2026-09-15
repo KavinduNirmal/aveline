@@ -5,7 +5,7 @@ using Aveline.Api.Modules.Organizations.Models;
 
 namespace Aveline.Api.Modules.Commerce.Models;
 
-[Table("Order_Items")]
+[Table("OrderItems")]
 public class OrderItem : ITenantEntity
 {
     [Key]

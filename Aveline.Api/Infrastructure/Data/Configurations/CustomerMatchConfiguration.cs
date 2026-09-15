@@ -8,7 +8,7 @@ public class CustomerMatchConfiguration : IEntityTypeConfiguration<CustomerMatch
 {
     public void Configure(EntityTypeBuilder<CustomerMatch> builder)
     {
-        builder.ToTable("customer_matches");
+        builder.ToTable("CustomerMatches");
 
         builder.HasKey(x => x.Id);
 

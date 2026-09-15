@@ -1801,3 +1801,58 @@
 ### Verification Performed
 - `bun x tsc -b`: Exited with code 0 (0 type errors).
 - `bun run test:coverage`: 25 test files passed, 158 tests passed, 91.59% line coverage (Threshold >= 80% met).
+
+## Session 2026-09-15 (Standardize Database Table Names to PascalCase & Branch Synchronization)
+
+**Task:** Standardize all database table naming conventions to uniform PascalCase across EF Core configurations, model attributes, repositories, and unit tests, and sync changes to `feature/visual-insight-agent`.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+1. **Database Table Name Standardization**:
+   - Refactored EF Core entity configurations to map tables uniformly to PascalCase (`ApprovalQueue`, `BusinessRules`, `CustomerConsents`, `CustomerEvents`, `CustomerInteractions`, `CustomerMatches`, `CustomerMemory`, `CustomerPreferences`, `CustomerTags`, `DeliveryPlans`, `InventoryImages`, `InventoryItems`, `OrderItems`, `OutfitCompositions`, `OutfitItems`, `SignOffDecisions`, `SourcingRequests`, `Suppliers`).
+   - Updated `[Table]` attributes across Commerce domain models (`ApprovalQueueEntry`, `BusinessRule`, `DeliveryPlan`, `OrderItem`).
+   - Updated raw SQL query strings in `CustomerMemoryRepository.cs` to reference `"CustomerMemory"`.
+   - Updated entity configuration test assertions in `CustomerConciergeEntityConfigurationTests.cs` and `VisualIntelligenceEntityConfigurationTests.cs`.
+2. **Flutter Web Integration**:
+   - Linked passkeys web bundle script in `frontend/aveline_mobile/web/index.html` for Clerk authentication support on web.
+3. **Verification**:
+   - Executed .NET unit test suite (`VisualIntelligenceEntityConfigurationTests` and `CustomerConciergeEntityConfigurationTests`) — all 30 tests passed.
+   - Executed frontend web test suite (`vitest`) — 25 test files / 158 tests passed.
+4. **Branch Synchronization**:
+   - Merged/synchronized `catalog` commits and latest database table standardization into `feature/visual-insight-agent` and pushed to remote `origin/feature/visual-insight-agent`.
+
+### Files Created or Modified
+- `Aveline.Api/Infrastructure/Data/Configurations/ApprovalQueueEntryConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/BusinessRuleConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/CustomerConsentConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/CustomerEventConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/CustomerInteractionConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/CustomerMatchConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/CustomerMemoryConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/CustomerPreferenceConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/CustomerTagConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/DeliveryPlanConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/InventoryImageConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/InventoryItemConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/OrderItemConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/OutfitCompositionConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/OutfitItemConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/SignOffDecisionConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/SourcingRequestConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/SupplierConfiguration.cs`
+- `Aveline.Api/Modules/Commerce/Models/ApprovalQueueEntry.cs`
+- `Aveline.Api/Modules/Commerce/Models/BusinessRule.cs`
+- `Aveline.Api/Modules/Commerce/Models/DeliveryPlan.cs`
+- `Aveline.Api/Modules/Commerce/Models/OrderItem.cs`
+- `Aveline.Api/Modules/CustomerConcierge/Repositories/CustomerMemoryRepository.cs`
+- `Aveline.Api.Tests/CustomerConciergeEntityConfigurationTests.cs`
+- `Aveline.Api.Tests/VisualIntelligenceEntityConfigurationTests.cs`
+- `frontend/aveline_mobile/web/index.html`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj --filter "FullyQualifiedName~VisualIntelligenceEntityConfigurationTests|FullyQualifiedName~CustomerConciergeEntityConfigurationTests"`: 30 tests passed, 0 failed.
+- `npm test` (`vitest run`): 25 test files passed, 158 tests passed.
+
+

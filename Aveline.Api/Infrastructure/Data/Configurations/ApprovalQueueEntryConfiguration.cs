@@ -9,7 +9,7 @@ public class ApprovalQueueEntryConfiguration : IEntityTypeConfiguration<Approval
 {
     public void Configure(EntityTypeBuilder<ApprovalQueueEntry> builder)
     {
-        builder.ToTable("Approval_Queue");
+        builder.ToTable("ApprovalQueue");
 
         builder.HasKey(a => a.Id);
 

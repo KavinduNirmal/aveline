@@ -10,7 +10,7 @@ public class SupplierConfiguration : IEntityTypeConfiguration<Supplier>
 {
     public void Configure(EntityTypeBuilder<Supplier> builder)
     {
-        builder.ToTable("suppliers");
+        builder.ToTable("Suppliers");
 
         builder.HasKey(x => x.Id);
 

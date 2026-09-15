@@ -8,7 +8,7 @@ public class SignOffDecisionConfiguration : IEntityTypeConfiguration<SignOffDeci
 {
     public void Configure(EntityTypeBuilder<SignOffDecision> builder)
     {
-        builder.ToTable("SignOff_Decisions");
+        builder.ToTable("SignOffDecisions");
 
         builder.HasKey(d => d.Id);
 

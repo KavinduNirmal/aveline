@@ -8,7 +8,7 @@ public class CustomerEventConfiguration : IEntityTypeConfiguration<CustomerEvent
 {
     public void Configure(EntityTypeBuilder<CustomerEvent> builder)
     {
-        builder.ToTable("Customer_Events");
+        builder.ToTable("CustomerEvents");
 
         builder.HasKey(e => e.Id);
 

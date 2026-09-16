@@ -1,6 +1,8 @@
 using System.Security.Claims;
 using Aveline.Api.Authorization;
 using Aveline.Api.Modules.Conversations.Hubs;
+using Aveline.Api.Modules.Conversations.Models;
+using Aveline.Api.Modules.Conversations.Repositories;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Organizations.Repositories;
 using Aveline.Api.Modules.Shared.Models;
@@ -46,13 +48,45 @@ public class ConversationHubTests
 
     private sealed class TestableHub : ConversationHub
     {
-        public TestableHub(IUserRepository users, IOrganizationRepository organizations)
-            : base(users, organizations)
+        public TestableHub(
+            IUserRepository users,
+            IOrganizationRepository organizations,
+            IConversationRepository conversations)
+            : base(users, organizations, conversations)
         {
         }
 
         public void SetContext(HubCallerContext context) => Context = context;
         public void SetGroups(IGroupManager groups) => Groups = groups;
+    }
+
+    /// <summary>
+    /// Stands in for the conversation repository. <paramref name="visible"/> is what
+    /// <see cref="IConversationRepository.GetVisibleToUserAsync"/> returns, so a test can model
+    /// either "this Salon is visible to the caller" or "it belongs to someone else" (ADR-021).
+    /// </summary>
+    private sealed class FakeConversationRepository(Conversation? visible) : IConversationRepository
+    {
+        public Task<Conversation?> GetAsync(Guid orgId, Guid id, CancellationToken cancellationToken = default)
+            => Task.FromResult(visible);
+
+        public Task<Conversation?> GetVisibleToUserAsync(Guid orgId, Guid id, Guid userId, CancellationToken cancellationToken = default)
+            => Task.FromResult(visible);
+
+        public Task<Conversation?> GetByThreadIdAsync(string threadId, CancellationToken cancellationToken = default)
+            => Task.FromResult<Conversation?>(null);
+
+        public Task<(IReadOnlyList<Conversation> Items, int Total)> ListAsync(Guid orgId, Guid userId, int page, int pageSize, CancellationToken cancellationToken = default)
+            => Task.FromResult<(IReadOnlyList<Conversation>, int)>(([], 0));
+
+        public Task<(Conversation Conversation, bool Created)> GetOrCreateSalonAsync(Guid orgId, Guid userId, Guid? customerId, string threadId, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        public Task<Conversation> GetOrCreateSalonByExternalRefAsync(Guid orgId, string externalRef, string threadId, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        public Task SaveAsync(Conversation conversation, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
     }
 
     private sealed class FakeUserRepository(User? user) : IUserRepository
@@ -108,7 +142,7 @@ public class ConversationHubTests
     [Fact]
     public async Task OnConnectedAsync_NoUserClaim_Throws()
     {
-        var hub = new TestableHub(new FakeUserRepository(null), new FakeOrganizationRepository([]));
+        var hub = new TestableHub(new FakeUserRepository(null), new FakeOrganizationRepository([]), new FakeConversationRepository(null));
         hub.SetContext(new FakeHubCallerContext(user: null));
         hub.SetGroups(new RecordingGroupManager());
 
@@ -128,7 +162,7 @@ public class ConversationHubTests
             new() { OrganizationId = Guid.NewGuid(), UserId = userId, Status = MembershipStatus.Suspended },
         };
 
-        var hub = new TestableHub(new FakeUserRepository(user), new FakeOrganizationRepository(memberships));
+        var hub = new TestableHub(new FakeUserRepository(user), new FakeOrganizationRepository(memberships), new FakeConversationRepository(null));
         hub.SetContext(new FakeHubCallerContext(new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", clerkId) }))));
         var groups = new RecordingGroupManager();
         hub.SetGroups(groups);
@@ -153,7 +187,10 @@ public class ConversationHubTests
             new() { OrganizationId = orgId, UserId = userId, Status = MembershipStatus.Active },
         };
 
-        var hub = new TestableHub(new FakeUserRepository(user), new FakeOrganizationRepository(memberships));
+        var hub = new TestableHub(
+            new FakeUserRepository(user),
+            new FakeOrganizationRepository(memberships),
+            new FakeConversationRepository(new Conversation { Id = conversationId, OrganizationId = orgId }));
         hub.SetContext(new FakeHubCallerContext(new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", clerkId) }))));
         var groups = new RecordingGroupManager();
         hub.SetGroups(groups);
@@ -171,7 +208,31 @@ public class ConversationHubTests
         var clerkId = "conv_hub_nonmember";
         var user = MakeUser(userId, clerkId);
 
-        var hub = new TestableHub(new FakeUserRepository(user), new FakeOrganizationRepository([]));
+        var hub = new TestableHub(new FakeUserRepository(user), new FakeOrganizationRepository([]), new FakeConversationRepository(null));
+        hub.SetContext(new FakeHubCallerContext(new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", clerkId) }))));
+        hub.SetGroups(new RecordingGroupManager());
+
+        await Assert.ThrowsAsync<HubException>(() => hub.JoinSalon(orgId, Guid.NewGuid()));
+    }
+
+    [Fact]
+    public async Task JoinSalon_MemberOfOrgButSalonNotVisible_Throws()
+    {
+        var userId = Guid.NewGuid();
+        var orgId = Guid.NewGuid();
+        var clerkId = "conv_hub_not_visible";
+        var user = MakeUser(userId, clerkId);
+        var memberships = new List<OrganizationMembership>
+        {
+            new() { OrganizationId = orgId, UserId = userId, Status = MembershipStatus.Active },
+        };
+
+        // Organization membership alone must not be enough: the repository reports the Salon as
+        // belonging to another user (ADR-021).
+        var hub = new TestableHub(
+            new FakeUserRepository(user),
+            new FakeOrganizationRepository(memberships),
+            new FakeConversationRepository(null));
         hub.SetContext(new FakeHubCallerContext(new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", clerkId) }))));
         hub.SetGroups(new RecordingGroupManager());
 

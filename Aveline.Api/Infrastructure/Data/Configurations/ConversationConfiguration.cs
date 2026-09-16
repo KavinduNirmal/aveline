@@ -1,5 +1,6 @@
 using Aveline.Api.Modules.Conversations.Models;
 using Aveline.Api.Modules.Organizations.Models;
+using Aveline.Api.Modules.Shared.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -42,14 +43,20 @@ public class ConversationConfiguration : IEntityTypeConfiguration<Conversation>
             .HasForeignKey(c => c.OrganizationId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        builder.HasOne<User>()
+            .WithMany()
+            .HasForeignKey(c => c.OwnerUserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         builder.HasMany(c => c.Messages)
             .WithOne(m => m.Conversation)
             .HasForeignKey(m => m.ConversationId)
             .OnDelete(DeleteBehavior.Cascade);
 
-        // Tenant isolation + one Salon per org + customer.
+        // Tenant isolation, plus one owner-scoped general Salon per (organization, user) and one
+        // organization-shared Salon per (organization, customer, kind) - see ADR-021.
         builder.HasIndex(c => c.OrganizationId);
-        builder.HasIndex(c => new { c.OrganizationId, c.CustomerId, c.Kind });
+        builder.HasIndex(c => new { c.OrganizationId, c.OwnerUserId, c.CustomerId, c.Kind });
         builder.HasIndex(c => c.ThreadId).IsUnique();
     }
 }

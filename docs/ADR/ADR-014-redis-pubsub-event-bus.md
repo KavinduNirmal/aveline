@@ -89,6 +89,17 @@ The API calls each consumer directly.
    `RedisSubscriptionService`, and `RedisHealthCheck`. Pure logic (envelope, channel,
    serializer, handler dispatch) remains covered by hand-written tests without Moq.
 
+8. **A live subscriber dispatches in publish order.** Fire-and-forget applies to event
+   *loss* (item 4), not to the order of the events a subscriber does receive. The
+   subscription host hands each received message to a single consumer that awaits the
+   registered handlers before taking the next message, so `agent.status` and
+   `message.created` reach handlers in the order the producer published them. Doing the
+   async dispatch directly inside the `StackExchange.Redis` callback is **not** equivalent:
+   that callback is a synchronous `Action` whose returned task is never awaited, so every
+   event races and a later event can overtake an earlier one. Clients then observe
+   interleaved or reversed conversations (a "thinking" state landing after the reply it
+   belonged to leaves a progress indicator hanging with nothing left to close it).
+
 ## Consequences
 
 - A cross-cutting `Infrastructure/Eventing` module is introduced in the API following the
@@ -99,6 +110,9 @@ The API calls each consumer directly.
   reuse one Redis connection.
 - Events are best-effort; consumers must tolerate loss and duplicate delivery (at-least
   semantics are not guaranteed by Pub/Sub).
+- Handlers registered on a subscriber run one after another, so a slow handler delays every
+  event behind it (head-of-line blocking). Handlers must do their own work and return rather
+  than wait on anything open-ended.
 - Redis Streams or a dedicated broker remain a future option if durable, replayable
   eventing is ever required; the `IEventBus` abstraction isolates call sites from that
   change.

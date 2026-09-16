@@ -15,6 +15,13 @@ public class Conversation : ITenantEntity
     /// <summary>The boutique organization this conversation belongs to (tenant scope).</summary>
     public Guid OrganizationId { get; set; }
 
+    /// <summary>
+    /// Owning staff member of the general Salon (<see cref="CustomerId"/> is null). <c>null</c>
+    /// for organization-shared Salons: customer-bound threads and inbound channel
+    /// conversations (ADR-021).
+    /// </summary>
+    public Guid? OwnerUserId { get; set; }
+
     public ConversationKind Kind { get; set; } = ConversationKind.Salon;
 
     /// <summary>Optional external customer this Salon concerns.</summary>

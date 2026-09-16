@@ -15,7 +15,8 @@
 - [ ] Shared Infrastructure / Cross-Cutting
 
 ## Quality Checklist
-- [ ] My branch is branched from and targeting `development` (unless hotfix/release).
+- [ ] My branch is branched from and targeting `development` (unless hotfix/release, or a chained `fix/*` branch — see `docs/git-flow.md` §1.1).
+- [ ] If this PR is the tip of a chained `fix/*` branch, the description lists every fix the chain carries.
 - [ ] I have pulled and rebased the latest changes from `development`.
 - [ ] No non-bun lockfiles (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`) are committed.
 - [ ] No `.env` or sensitive credentials are included.

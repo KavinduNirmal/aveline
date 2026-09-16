@@ -265,3 +265,8 @@ docs/.obsidian
 
 # Agents.md
 Agents.md
+
+# Backend cache
+backend/.cache
+
+opencode.json

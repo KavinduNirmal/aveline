@@ -127,44 +127,100 @@ export function CatalogPanel({
 
   // Handlers
   const handleSaveProduct = async (item: InventoryItemMock) => {
-    if (orgId) {
-      try {
-        if (editingItem) {
-          await updateCatalogItem(orgId, editingItem.id, {
-            itemName: item.name,
-            category: item.category,
-            color: item.color,
-            sizes: item.sizes,
-            price: item.price,
-            quantity: item.stockQuantity,
-            imageUrl: item.imageUrl,
-            sku: item.sku,
-            description: item.description,
-          })
-        } else {
-          await createCatalogItem(orgId, {
-            itemName: item.name,
-            category: item.category,
-            color: item.color,
-            sizes: item.sizes,
-            price: item.price,
-            quantity: item.stockQuantity,
-            imageUrl: item.imageUrl,
-            sku: item.sku,
-            description: item.description,
-          })
+    const effectiveOrgId = orgId || '00000000-0000-0000-0000-000000000001'
+    let savedItem = item
+
+    try {
+      if (editingItem) {
+        const updated = await updateCatalogItem(effectiveOrgId, editingItem.id, {
+          itemName: item.name,
+          category: item.category,
+          color: item.color,
+          fabric: item.fabric,
+          style: item.style,
+          sizes: item.sizes,
+          price: item.price,
+          cost: item.cost,
+          quantity: item.stockQuantity,
+          imageUrl: item.imageUrl,
+          sku: item.sku,
+          description: item.description,
+        })
+        if (updated) {
+          savedItem = {
+            ...item,
+            id: updated.id,
+            name: updated.name,
+            sku: updated.sku || item.sku,
+            category: updated.category,
+            color: updated.color,
+            colorHex: updated.colorHex || item.colorHex,
+            fabric: updated.fabric || item.fabric,
+            style: updated.style || item.style,
+            pattern: updated.pattern || item.pattern,
+            price: updated.price,
+            cost: updated.cost ?? item.cost,
+            stockQuantity: updated.stockQuantity,
+            imageUrl: updated.imageUrl || item.imageUrl,
+            description: updated.description || item.description,
+          }
         }
-      } catch {
-        // Continue with local optimistic update
+      } else {
+        const created = await createCatalogItem(effectiveOrgId, {
+          itemName: item.name,
+          category: item.category,
+          color: item.color,
+          fabric: item.fabric,
+          style: item.style,
+          sizes: item.sizes,
+          price: item.price,
+          cost: item.cost,
+          quantity: item.stockQuantity,
+          imageUrl: item.imageUrl,
+          sku: item.sku,
+          description: item.description,
+        })
+        if (created) {
+          savedItem = {
+            ...item,
+            id: created.id,
+            name: created.name,
+            sku: created.sku || item.sku,
+            category: created.category,
+            color: created.color,
+            colorHex: created.colorHex || item.colorHex,
+            fabric: created.fabric || item.fabric,
+            style: created.style || item.style,
+            pattern: created.pattern || item.pattern,
+            price: created.price,
+            cost: created.cost ?? item.cost,
+            stockQuantity: created.stockQuantity,
+            imageUrl: created.imageUrl || item.imageUrl,
+            description: created.description || item.description,
+          }
+        }
       }
+      toast.success(editingItem ? 'Piece updated in database' : 'New piece saved to database', {
+        description: `${savedItem.name} (${savedItem.sku || 'AVL'})`,
+      })
+    } catch (err: any) {
+      console.error('Failed to save catalog item to backend:', err)
+      const errorMsg =
+        err?.response?.data?.message ||
+        err?.response?.data?.error ||
+        err?.message ||
+        'Server error'
+      toast.error('Could not save to database. Retaining local draft.', {
+        description: errorMsg,
+      })
     }
 
     setInventory((prev) => {
-      const exists = prev.some((i) => i.id === item.id)
+      const exists = prev.some((i) => i.id === savedItem.id || (editingItem && i.id === editingItem.id))
       if (exists) {
-        return prev.map((i) => (i.id === item.id ? item : i))
+        return prev.map((i) => (i.id === savedItem.id || (editingItem && i.id === editingItem.id) ? savedItem : i))
       }
-      return [item, ...prev]
+      return [savedItem, ...prev]
     })
     setEditingItem(null)
   }

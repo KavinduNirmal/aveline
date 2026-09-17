@@ -2464,3 +2464,132 @@ constraint behaviour the in-memory provider cannot.
   gate (5 000 req/s, p99 ≤ 1 ms) is still unmeasured.
 - **`docs/api/openapi.yaml`** was not regenerated/reconciled in this pass for the
   #241 endpoints (`/admin/orgs` remains absent from the hand-authored spec).
+
+## Session 2026-09-16 — Mobile App Launch & Verification on Android
+
+**Student:** K.N. Delpachithra (Kavindu) · **ID:** IT24102532
+**Branch:** `feature/mobile-app-design-v1`
+**Tool used:** Antigravity (Gemini 3.8 Flash)
+**Task:** Launch and verify the Flutter mobile application (`aveline_mobile`) on the connected physical Android device (SM-A055F).
+
+### Intended work
+
+- Detect connected physical Android device via `adb` and `flutter devices`.
+- Verify build environment and dependencies for `frontend/aveline_mobile`.
+- Run the Flutter application on the target Android device (`R9WWB0CVRAV`).
+
+### Work performed
+
+- Configured Flutter SDK to point to the installed Android SDK at `/home/kavindu/Android` (`flutter config --android-sdk /home/kavindu/Android`).
+- Configured Flutter and Gradle to build using JDK 21 (`/usr/lib/jvm/java-21-openjdk`) instead of the system default JDK 26 via `flutter config --jdk-dir` and explicitly specifying `org.gradle.java.home=/usr/lib/jvm/java-21-openjdk` in `frontend/aveline_mobile/android/gradle.properties`.
+- Synchronized accepted Android SDK licenses to `/home/kavindu/Android/licenses`.
+- Configured ADB reverse socket forwarding (`adb reverse tcp:5091 tcp:5091`) so the mobile app can reach the host machine's backend API on port 5091.
+- Executed `flutter pub get` and built the debug APK (`app-debug.apk`).
+- Launched the application on the connected physical device `SM A055F` (`R9WWB0CVRAV`) with compile-time defines (`CLERK_PUBLISHABLE_KEY` and `API_BASE_URL=http://localhost:5091`).
+- Verified live connection, Impeller Vulkan backend initialization, and active hot-reload capability (`Reloaded 0 libraries in 524ms`).
+
+### Files created or modified
+
+- `frontend/aveline_mobile/android/gradle.properties`: Added `org.gradle.java.home=/usr/lib/jvm/java-21-openjdk` to pin the Gradle build JVM to JDK 21.
+- `docs/ai-usage/kavindu.md`: Recorded session start and end details.
+
+### Tests created or modified
+
+- None (environment setup and application launch session).
+
+### Important architectural decisions
+
+- **JDK 21 Pinning:** Gradle and Kotlin Gradle Plugin compatibility requires JDK 17–21; pinned `org.gradle.java.home` in `gradle.properties` to ensure reproducible builds independent of OS-level default Java switches.
+- **ADB Port Forwarding:** Used `adb reverse tcp:5091 tcp:5091` to allow the mobile device over USB to access localhost backend services without hardcoding changing LAN IP addresses.
+
+### Problems encountered
+
+- `adb` was initially not in default PATH (resolved by adding Android SDK platform-tools path).
+- Flutter doctor detected empty SDK platforms because Android SDK was located at `/home/kavindu/Android` rather than `/home/kavindu/Android/Sdk` (resolved via `flutter config --android-sdk`).
+- Build failure when attempting to build with Java 26 (fixed by configuring JDK 21 as per user guidance).
+- Missing accepted license files in `/home/kavindu/Android/licenses` (resolved by copying accepted licenses from the SDK cache).
+
+### Verification performed
+
+- `flutter doctor -v`: All Flutter and Android toolchain checks passing green.
+- `flutter build apk --debug`: Clean build generated `build/app/outputs/flutter-apk/app-debug.apk`.
+- `flutter run -d R9WWB0CVRAV`: Installed and launched `com.example.aveline_mobile` on the physical device.
+- Hot reload test: Sent `r` to the interactive session and confirmed live reload in 524ms.
+
+### Remaining work
+
+- Ensure the mobile device has active Wi-Fi or mobile data for Clerk authentication DNS lookup (`inspired-warthog-8208.clerk.accounts.dev`).
+
+
+## Session 2026-09-16 (evening)
+
+**Task:** Role-based UI Shell Architecture — Staff & Owner App Loader, Universal Header, Side Navigation, Search, Notifications
+**Tool used:** Antigravity AI Assistant (Claude Opus 4.6 Thinking)
+
+### Work Performed
+
+- Established the domain permission and role model mirroring backend `Permissions.cs` and `Roles.cs`:
+  - Defined all 23 canonical permissions and role-to-permission grants in `Permissions.dart`.
+  - Added role classification helpers (`isOwnerRole`, `isStaffRole`) in `app_roles.dart`.
+  - Created `PermissionGuard` widget for declarative conditional rendering based on user role grants.
+- Built screen configuration abstractions:
+  - Created `ScreenConfig` model for screen definitions.
+  - Implemented `staffScreens()` registry containing `Home`, `Catalog`, and `Conversations` (with permission checks).
+  - Stubbed `ownerScreens()` registry for future owner UI phase.
+  - Created `ConversationsScreen` and `NotificationsStubScreen` placeholders.
+- Created `AvelineHeader` universal top navigation header:
+  - Left: menu button (toggles drawer).
+  - Right: search button (triggers `SearchOverlay`), notification icon with `NotificationBadge` (routes to `/notifications`), and user profile avatar (routes to `/profile`).
+  - Supports `showHeader` parameter so individual screens can hide the header.
+- Created `AvelineDrawer` side navigation drawer:
+  - Can be opened via header menu icon or sliding from the screen's left edge.
+  - Displays user avatar, display name, and role chip in header.
+  - Filters navigation items dynamically using permissions.
+  - Highlights active route and provides a sign-out action at the bottom.
+- Created `AnimatedBlossom` brand centerpiece:
+  - Preserved the Aveline Blossom mark as a floating animated launcher at bottom-center.
+  - Smooth continuous breathing scale and radial glow.
+  - Tapping opens the concierge Salon.
+- Implemented `StaffAppShell` integrating header, drawer, content, and blossom.
+- Updated `MainShell` to delegate to `StaffAppShell`.
+- Created `SearchOverlay` global full-screen search component.
+- Registered `/catalog`, `/conversations`, `/profile`, and `/notifications` routes in `route_guards.dart` and `app.dart`.
+
+### Files Created or Modified
+
+- **Created:**
+  - `frontend/aveline_mobile/lib/core/auth/permissions.dart`
+  - `frontend/aveline_mobile/lib/core/auth/app_roles.dart`
+  - `frontend/aveline_mobile/lib/core/auth/permission_guard.dart`
+  - `frontend/aveline_mobile/lib/core/navigation/screen_config.dart`
+  - `frontend/aveline_mobile/lib/core/navigation/staff_screens.dart`
+  - `frontend/aveline_mobile/lib/core/navigation/owner_screens.dart`
+  - `frontend/aveline_mobile/lib/features/conversations/presentation/screens/conversations_screen.dart`
+  - `frontend/aveline_mobile/lib/features/notifications/presentation/screens/notifications_stub_screen.dart`
+  - `frontend/aveline_mobile/lib/shared/widgets/aveline_header.dart`
+  - `frontend/aveline_mobile/lib/shared/widgets/aveline_drawer.dart`
+  - `frontend/aveline_mobile/lib/shared/widgets/search_overlay.dart`
+  - `frontend/aveline_mobile/lib/shared/widgets/notification_badge.dart`
+  - `frontend/aveline_mobile/lib/shared/widgets/animated_blossom.dart`
+  - `frontend/aveline_mobile/lib/features/home/presentation/screens/staff_app_shell.dart`
+  - `frontend/aveline_mobile/test/core/auth/permissions_test.dart`
+  - `frontend/aveline_mobile/test/core/auth/permission_guard_test.dart`
+  - `frontend/aveline_mobile/test/shared/widgets/notification_badge_test.dart`
+  - `frontend/aveline_mobile/test/shared/widgets/search_overlay_test.dart`
+  - `frontend/aveline_mobile/test/shared/widgets/aveline_header_test.dart`
+  - `frontend/aveline_mobile/test/shared/widgets/aveline_drawer_test.dart`
+  - `frontend/aveline_mobile/test/shared/widgets/animated_blossom_test.dart`
+  - `frontend/aveline_mobile/test/features/home/staff_app_shell_test.dart`
+- **Modified:**
+  - `frontend/aveline_mobile/lib/features/home/presentation/screens/main_shell.dart`
+  - `frontend/aveline_mobile/lib/core/router/route_guards.dart`
+  - `frontend/aveline_mobile/lib/app.dart`
+  - `frontend/aveline_mobile/test/features/home/main_shell_test.dart`
+
+### Verification Performed
+
+- `flutter analyze --no-fatal-infos`: No issues found (0 warnings, 0 errors).
+- `flutter test`: Ran full test suite — all 130 tests passed.
+- Tested edge-swipe and hamburger menu drawer opening, permission filtering, search overlay, notification badge, and animated blossom salon launcher.
+
+

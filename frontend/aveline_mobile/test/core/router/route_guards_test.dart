@@ -189,5 +189,69 @@ void main() {
         '/',
       );
     });
+
+    test('moves a user whose profile failed to the connection screen', () {
+      // Otherwise the guards would hold them on whichever onboarding screen
+      // they were on, with no explanation and no way to retry.
+      expect(
+        RouteGuards.redirectForAuth(
+          '/account-type',
+          isSignedIn: true,
+          hasCompletedOnboarding: false,
+          profileFailed: true,
+        ),
+        '/connection',
+      );
+      expect(
+        RouteGuards.redirectForAuth(
+          '/onboarding',
+          isSignedIn: true,
+          hasCompletedOnboarding: true,
+          accountType: 'owner',
+          profileFailed: true,
+        ),
+        '/connection',
+      );
+    });
+
+    test('leaves a user on the connection screen while the profile is unknown', () {
+      expect(
+        RouteGuards.redirectForAuth(
+          '/connection',
+          isSignedIn: true,
+          profileFailed: true,
+        ),
+        isNull,
+      );
+    });
+
+    test('leaves the connection screen once the profile loads', () {
+      expect(
+        RouteGuards.redirectForAuth(
+          '/connection',
+          isSignedIn: true,
+          hasCompletedOnboarding: true,
+          accountState: 'Active',
+        ),
+        '/',
+      );
+      expect(
+        RouteGuards.redirectForAuth(
+          '/connection',
+          isSignedIn: true,
+          hasCompletedOnboarding: true,
+          accountState: 'OnboardingPending',
+          accountType: 'staff',
+        ),
+        '/org-setup',
+      );
+    });
+
+    test('sends a signed-out user on the connection screen back to sign in', () {
+      expect(
+        RouteGuards.redirectForAuth('/connection', isSignedIn: false),
+        '/auth',
+      );
+    });
   });
 }

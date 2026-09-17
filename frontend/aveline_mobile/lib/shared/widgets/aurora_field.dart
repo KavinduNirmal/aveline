@@ -39,8 +39,19 @@ class _AuroraBlobState extends State<_AuroraBlob>
     super.initState();
     _controller = AnimationController(vsync: this, duration: widget.duration)
       ..value = widget.phase
-      ..addListener(() => setState(() {}))
-      ..repeat();
+      ..addListener(() => setState(() {}));
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Ambient motion is decoration: when the platform asks for reduced motion
+    // the blobs hold their starting frame instead of drifting.
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _controller.stop();
+    } else if (!_controller.isAnimating) {
+      _controller.repeat();
+    }
   }
 
   @override
@@ -118,8 +129,18 @@ class _DriftingBlossomState extends State<_DriftingBlossom>
     super.initState();
     _controller = AnimationController(vsync: this, duration: widget.duration)
       ..value = widget.phase
-      ..addListener(() => setState(() {}))
-      ..repeat();
+      ..addListener(() => setState(() {}));
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // See _AuroraBlobState: the drift is ambient, not information.
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _controller.stop();
+    } else if (!_controller.isAnimating) {
+      _controller.repeat();
+    }
   }
 
   @override
@@ -224,4 +245,96 @@ class AuroraField extends StatelessWidget {
 
   double _flowerLeft(int i) => ((i * 37 + 9) % 96) / 100;
   double _flowerTop(int i) => ((i * 53 + 13) % 92) / 100;
+}
+
+/// The same brand atmosphere as [AuroraField], thinned and faded out below the
+/// header, for the top of a content screen.
+///
+/// The auth screens can afford a full field because there is little to read on
+/// them. A working screen cannot: this keeps three soft blooms and a handful of
+/// blossoms in the band behind the greeting, then dissolves, so the page carries
+/// the brand's weather without competing with the dockets underneath.
+class AuroraVeil extends StatelessWidget {
+  const AuroraVeil({super.key});
+
+  static const _blobColors = [
+    [Color(0xFFFFE1E5), Color(0xFFFFEDF2), Color(0x00FFEDF2)],
+    [Color(0xFFFDF3E1), Color(0xFFFBEAC6), Color(0x00FBEAC6)],
+    [Color(0xFFFCE9F0), Color(0xFFF8DAE7), Color(0x00F8DAE7)],
+  ];
+
+  static const _blossomColors = [
+    Color(0xFFB0566B),
+    Color(0xFFC9972B),
+    Color(0xFFD46A8B),
+    Color(0xFFEF7A68),
+  ];
+
+  /// Where the veil has dissolved to nothing, as a fraction of the screen.
+  ///
+  /// The greeting and the quick actions occupy roughly the first quarter, so the
+  /// fade is complete by just over that.
+  static const double _fadeEnd = 0.30;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: ClipRect(
+        child: ShaderMask(
+          blendMode: BlendMode.dstIn,
+          shaderCallback: (bounds) => const LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Colors.transparent,
+              Colors.black,
+              Colors.black,
+              Colors.transparent,
+            ],
+            // Nothing at the very top. The veil starts directly under the opaque
+            // header, so blooming at full strength there drew a hard line where
+            // the header's flat colour met the first blob.
+            stops: [0, 0.10, 0.20, _fadeEnd],
+          ).createShader(bounds),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final width = constraints.maxWidth;
+              final height = constraints.maxHeight;
+              return Stack(
+                children: [
+                  for (var i = 0; i < _blobColors.length; i++)
+                    _AuroraBlob(
+                      colors: _blobColors[i],
+                      left: _blobLeft(i) * width,
+                      top: _blobTop(i) * height,
+                      size: _blobSize(i),
+                      duration: Duration(seconds: 26 + i * 4),
+                      phase: (i * 0.21) % 1,
+                      opacity: 0.8,
+                    ),
+                  for (var i = 0; i < 5; i++)
+                    _DriftingBlossom(
+                      left: _flowerLeft(i) * width,
+                      top: (0.02 + i * 0.042) * height,
+                      size: 12 + ((i * 4) % 8).toDouble(),
+                      color: _blossomColors[i % _blossomColors.length],
+                      drift: 8 + ((i * 3) % 10).toDouble(),
+                      duration: Duration(seconds: 24 + ((i * 5) % 14)),
+                      phase: (i * 0.19) % 1,
+                      opacity: 0.34 + (i % 3) * 0.07,
+                    ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  double _blobLeft(int i) => [-16, 44, 16][i] / 100;
+  double _blobTop(int i) => [-20, -24, -8][i] / 100;
+  double _blobSize(int i) => [420, 400, 380][i].toDouble();
+
+  double _flowerLeft(int i) => ((i * 43 + 11) % 92) / 100;
 }

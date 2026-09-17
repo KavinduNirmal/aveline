@@ -10,6 +10,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import 'core/auth/clerk_bootstrap.dart';
+import 'core/auth/clerk_session_persistor.dart';
 import 'core/config/app_config.dart';
 import 'core/network/api_client.dart';
 import 'core/network/auth_token_provider.dart';
@@ -28,7 +30,11 @@ import 'features/auth/data/clerk_auth_repository.dart';
 import 'features/auth/domain/auth_repository.dart';
 import 'features/auth/domain/aveline_user.dart';
 import 'features/auth/presentation/screens/auth_screen.dart';
+import 'features/catalog/presentation/screens/catalog_screen.dart';
+import 'features/conversations/presentation/screens/conversations_screen.dart';
 import 'features/home/presentation/screens/main_shell.dart';
+import 'features/notifications/presentation/screens/notifications_stub_screen.dart';
+import 'features/profile/presentation/screens/profile_screen.dart';
 import 'features/onboarding/data/onboarding_preferences.dart';
 import 'features/onboarding/data/owner_onboarding_api.dart';
 import 'features/onboarding/presentation/screens/account_type_screen.dart';
@@ -37,23 +43,194 @@ import 'features/onboarding/presentation/screens/onboarding_screen.dart';
 import 'features/onboarding/presentation/screens/org_setup_screen.dart';
 import 'features/onboarding/presentation/screens/owner_onboarding_screen.dart';
 import 'features/onboarding/presentation/screens/suspended_screen.dart';
+import 'shared/widgets/aveline_loading_screen.dart';
 
-/// Root widget: wraps the app in Clerk, wires DI, and configures routing.
-class AvelineApp extends StatelessWidget {
-  const AvelineApp({super.key, required this.config, required this.preferences});
+/// Root widget: bootstraps Clerk behind an opening screen, wires DI, and
+/// configures routing.
+class AvelineApp extends StatefulWidget {
+  const AvelineApp({
+    super.key,
+    required this.config,
+    required this.preferences,
+    required this.sessionStore,
+  });
 
   final AppConfig config;
   final OnboardingPreferences preferences;
 
+  /// Where the Clerk session is kept between launches.
+  final ClerkSessionPersistor sessionStore;
+
+  @override
+  State<AvelineApp> createState() => _AvelineAppState();
+}
+
+class _AvelineAppState extends State<AvelineApp> {
+  /// Shortest time the opening screen stays up, so the blossom always finishes
+  /// unfurling even when Clerk answers immediately.
+  static const Duration _minimumOpening = Duration(milliseconds: 1600);
+
+  /// How long "Aveline is ready" stays up before the router takes over.
+  static const Duration _readyLinger = Duration(milliseconds: 700);
+
+  /// How long the opening screen will wait for the Clerk SDK to initialise
+  /// before treating it as a failure.
+  ///
+  /// The SDK awaits a session-token poll during initialisation, and against a
+  /// network whose lookups never answer that await can block indefinitely,
+  /// which would leave the opening screen spinning forever. Bounding it routes
+  /// the user into the drop-the-session retry instead.
+  static const Duration _authAttemptTimeout = Duration(seconds: 10);
+
+  late final ClerkAuthConfig _clerkConfig;
+  ClerkAuthState? _authState;
+
+  /// Built once the auth state exists, and reused on every retry. The profile
+  /// load below needs them, and every post-auth route depends on the profile,
+  /// so they belong to the bootstrap rather than to the shell.
+  AuthRepository? _authRepository;
+  Dio? _dio;
+  UserProvider? _userProvider;
+
+  AvelineBootStatus _status = AvelineBootStatus.preparing;
+  ClerkBootstrapFailure? _failure;
+  bool _handedOff = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _clerkConfig = ClerkAuthConfig(
+      publishableKey: widget.config.clerkPublishableKey,
+      // Aveline owns the store, so a session Clerk refuses to accept can be
+      // dropped here instead of stranding the app on the opening screen.
+      persistor: widget.sessionStore,
+    );
+    unawaited(_bootstrap());
+  }
+
+  /// Brings the app up behind the opening screen, and is also the opening
+  /// screen's retry action.
+  ///
+  /// The screen stays up until the account state is known, not merely until
+  /// Clerk is ready. The router cannot choose between the home screen and an
+  /// onboarding step while the account state is unknown, so handing off earlier
+  /// parks a returning user on the account-type picker for as long as the
+  /// profile takes to load.
+  Future<void> _bootstrap() async {
+    if (_status != AvelineBootStatus.preparing || _failure != null) {
+      setState(() {
+        _status = AvelineBootStatus.preparing;
+        _failure = null;
+      });
+    }
+
+    final startedAt = DateTime.now();
+    final failure = await _prepare();
+
+    // Hold the opening screen for at least the length of its entrance.
+    final elapsed = DateTime.now().difference(startedAt);
+    if (elapsed < _minimumOpening) {
+      await Future<void>.delayed(_minimumOpening - elapsed);
+    }
+    if (!mounted) {
+      return;
+    }
+
+    if (failure != null) {
+      setState(() {
+        _status = AvelineBootStatus.failed;
+        _failure = failure;
+      });
+      return;
+    }
+
+    setState(() => _status = AvelineBootStatus.ready);
+    await Future<void>.delayed(_readyLinger);
+    if (!mounted) {
+      return;
+    }
+    setState(() => _handedOff = true);
+  }
+
+  /// Creates whatever is still missing, returning the failure to show the user.
+  ///
+  /// Each step is skipped when it already succeeded, so a retry only repeats
+  /// the part that failed.
+  Future<ClerkBootstrapFailure?> _prepare() async {
+    if (_authState == null) {
+      try {
+        final authState = await createAuthStateWithRecovery(
+          config: _clerkConfig,
+          clearSession: widget.sessionStore.clear,
+          attemptTimeout: _authAttemptTimeout,
+          onStaleSession: (error, _) => debugPrint(
+            '[bootstrap] dropping the stored Clerk session after: $error',
+          ),
+        );
+        final authRepository = ClerkAuthRepository(
+          authState,
+          jwtTemplateName: widget.config.jwtTemplateName,
+        );
+        _authState = authState;
+        _authRepository = authRepository;
+        _dio = ApiClientFactory.create(
+          baseUrl: widget.config.apiBaseUrl,
+          tokenProvider: authRepository,
+        );
+        _userProvider = UserProvider();
+      } catch (error, stackTrace) {
+        debugPrint('[bootstrap] could not start Clerk: $error\n$stackTrace');
+        return describeBootstrapFailure(error);
+      }
+    }
+
+    final authRepository = _authRepository!;
+    final userProvider = _userProvider!;
+    if (authRepository.isSignedIn && userProvider.user == null) {
+      await userProvider.fetchUser(_dio!);
+      if (userProvider.hasLoadFailed) {
+        final detail = userProvider.errorMessage ?? 'unknown';
+        debugPrint('[bootstrap] could not load the profile: $detail');
+        return describeBootstrapFailure(detail);
+      }
+    }
+
+    return null;
+  }
+
+  @override
+  void dispose() {
+    _userProvider?.dispose();
+    _authState?.terminate();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final authState = _authState;
+    if (authState == null || !_handedOff) {
+      return MaterialApp(
+        title: 'Aveline',
+        theme: AppTheme.light,
+        debugShowCheckedModeBanner: false,
+        home: AvelineLoadingScreen(
+          status: _status,
+          failure: _failure,
+          onRetry: _status == AvelineBootStatus.failed ? _bootstrap : null,
+        ),
+      );
+    }
+
     return ClerkAuth(
-      config: ClerkAuthConfig(publishableKey: config.clerkPublishableKey),
+      authState: authState,
       child: ClerkAuthBuilder(
         builder: (context, authState) => AvelineAppShell(
-          config: config,
+          config: widget.config,
           clerkAuthState: authState,
-          preferences: preferences,
+          preferences: widget.preferences,
+          authRepository: _authRepository!,
+          userProvider: _userProvider!,
+          dio: _dio!,
         ),
       ),
     );
@@ -70,11 +247,20 @@ class AvelineAppShell extends StatefulWidget {
     required this.config,
     required this.clerkAuthState,
     required this.preferences,
+    required this.authRepository,
+    required this.userProvider,
+    required this.dio,
   });
 
   final AppConfig config;
   final ClerkAuthState clerkAuthState;
   final OnboardingPreferences preferences;
+
+  /// Owned by the bootstrap, which loads the signed-in profile with [dio]
+  /// before the shell exists.
+  final AuthRepository authRepository;
+  final UserProvider userProvider;
+  final Dio dio;
 
   @override
   State<AvelineAppShell> createState() => _AvelineAppShellState();
@@ -96,16 +282,10 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
   @override
   void initState() {
     super.initState();
-    _authRepository = ClerkAuthRepository(
-      widget.clerkAuthState,
-      jwtTemplateName: widget.config.jwtTemplateName,
-    );
-    _userProvider = UserProvider();
+    _authRepository = widget.authRepository;
+    _userProvider = widget.userProvider;
+    _dio = widget.dio;
     _onboardingProvider = OnboardingProvider(widget.preferences);
-    _dio = ApiClientFactory.create(
-      baseUrl: widget.config.apiBaseUrl,
-      tokenProvider: _authRepository,
-    );
     _ownerOnboardingProvider = OwnerOnboardingProvider(OwnerOnboardingApi(_dio));
     _notificationProvider = NotificationProvider();
     _pushNotificationService = PushNotificationService(
@@ -125,7 +305,8 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
 
     _syncOnboardingContext();
     if (_authRepository.isSignedIn) {
-      _userProvider.fetchUser(_dio);
+      // The bootstrap already loaded the profile for a restored session, so
+      // only the connection needs starting here.
       _startNotifications();
     }
 
@@ -193,7 +374,7 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
   void dispose() {
     widget.clerkAuthState.removeListener(_onAuthChanged);
     _appLinksSub?.cancel();
-    _userProvider.dispose();
+    // `_userProvider` is owned by the bootstrap and outlives this shell.
     _onboardingProvider.dispose();
     _ownerOnboardingProvider.dispose();
     _notificationProvider.dispose();
@@ -240,6 +421,17 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
           accountType: _authRepository.isSignedIn
               ? _onboardingProvider.accountType?.wireValue
               : null,
+          // A signed-in profile load can still fail after the bootstrap, for
+          // instance when signing in from the auth screen. Without this the
+          // guards would park the user on the account-type picker with no
+          // explanation and no way to retry.
+          //
+          // Only when no profile is held: the auth listener refetches the
+          // profile periodically, and a background refresh that fails must not
+          // pull a user who is already using the app onto the retry screen.
+          profileFailed: _authRepository.isSignedIn &&
+              _userProvider.user == null &&
+              _userProvider.hasLoadFailed,
         );
         debugPrint(
           '[router] ${state.matchedLocation} signedIn=${_authRepository.isSignedIn} '
@@ -256,9 +448,56 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
           builder: (context, state) => const MainShell(),
         ),
         GoRoute(
+          path: AppRoutes.catalog,
+          name: 'catalog',
+          builder: (context, state) => const MainShell(
+            child: CatalogScreen(),
+          ),
+        ),
+        GoRoute(
+          path: AppRoutes.conversations,
+          name: 'conversations',
+          builder: (context, state) => const MainShell(
+            child: ConversationsScreen(),
+          ),
+        ),
+        GoRoute(
+          path: AppRoutes.profile,
+          name: 'profile',
+          builder: (context, state) => const MainShell(
+            child: ProfileScreen(),
+          ),
+        ),
+        GoRoute(
+          path: AppRoutes.notifications,
+          name: 'notifications',
+          builder: (context, state) => const MainShell(
+            child: NotificationsStubScreen(),
+          ),
+        ),
+        GoRoute(
           path: AppRoutes.auth,
           name: 'auth',
           builder: (context, state) => const AuthScreen(),
+        ),
+        GoRoute(
+          path: AppRoutes.connection,
+          name: 'connection',
+          // Reuses the opening screen so a failed profile load looks and reads
+          // exactly like a failed start, retry included.
+          builder: (context, state) => Consumer<UserProvider>(
+            builder: (context, userProvider, _) => AvelineLoadingScreen(
+              status: userProvider.isLoading
+                  ? AvelineBootStatus.preparing
+                  : AvelineBootStatus.failed,
+              failure: describeBootstrapFailure(
+                userProvider.errorMessage ?? '',
+              ),
+              onRetry: userProvider.isLoading
+                  ? null
+                  : () => userProvider.fetchUser(context.read<Dio>()),
+            ),
+          ),
         ),
         GoRoute(
           path: AppRoutes.accountType,

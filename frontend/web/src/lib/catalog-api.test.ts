@@ -33,6 +33,8 @@ import {
   fetchSupplierCatalog,
   normalizeCategory,
   normalizeVisionAnalysis,
+  normalizeOutfitComposition,
+  getColorHex,
   uploadCatalogImage,
   uploadBase64Image,
 } from './catalog-api'
@@ -366,7 +368,9 @@ describe('catalog API client', () => {
       expect(normalizeCategory('shawl')).toBe('Drapes & Shawls')
       expect(normalizeCategory('dupatta')).toBe('Drapes & Shawls')
       expect(normalizeCategory('necklace')).toBe('Jewelry & Accessories')
+      expect(normalizeCategory('earring')).toBe('Jewelry & Accessories')
       expect(normalizeCategory('clutch')).toBe('Jewelry & Accessories')
+      expect(normalizeCategory('unknown')).toBe('Sarees')
       expect(normalizeCategory(undefined)).toBe('Sarees')
     })
   })
@@ -446,4 +450,44 @@ describe('catalog API client', () => {
       expect(result.url).toBe(`/api/v1/orgs/${ORG}/catalog/images/img-2`)
     })
   })
+
+  describe('getColorHex and normalizeOutfitComposition', () => {
+    it('getColorHex resolves exact, partial, and fallback hex values', () => {
+      expect(getColorHex(undefined)).toBe('#0f5132')
+      expect(getColorHex('')).toBe('#0f5132')
+      expect(getColorHex('emerald')).toBe('#0f5132')
+      expect(getColorHex('emerald green')).toBe('#0f5132')
+      expect(getColorHex('maroon')).toBe('#800000')
+      expect(getColorHex('unknown neon tone', '#123456')).toBe('#123456')
+    })
+
+    it('normalizeOutfitComposition handles raw objects with fallback defaults', () => {
+      const raw = {
+        id: 'outfit-1',
+        name: 'Royal Saree Ensemble',
+        occasion: 'Wedding',
+        totalPrice: '1200',
+        styleNotes: 'Rich festive drape',
+        heroImageUrl: 'http://example.com/img.jpg',
+        organizationId: ORG,
+        items: [
+          { id: 'it-1', itemId: 'it-1', name: 'Silk Saree', category: 'Sarees', price: 1000 },
+          { id: 'it-2', itemName: 'Gold Choker', price: '200' },
+        ],
+      }
+
+      const result = normalizeOutfitComposition(raw)
+      expect(result.id).toBe('outfit-1')
+      expect(result.totalPrice).toBe(1200)
+      expect(result.items).toHaveLength(2)
+      expect(result.items[1].name).toBe('Gold Choker')
+      expect(result.items[1].price).toBe(200)
+
+      const fallback = normalizeOutfitComposition({})
+      expect(fallback.name).toBe('Curated Ensemble')
+      expect(fallback.totalPrice).toBe(0)
+      expect(fallback.items).toEqual([])
+    })
+  })
 })
+

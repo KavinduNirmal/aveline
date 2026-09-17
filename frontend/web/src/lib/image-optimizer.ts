@@ -44,13 +44,25 @@ export function formatFileSize(bytes: number): string {
 /**
  * Converts a File or Blob into a base64 Data URL.
  */
-export function fileToDataUrl(file: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result as string)
-    reader.onerror = (err) => reject(err)
-    reader.readAsDataURL(file)
-  })
+export async function fileToDataUrl(file: Blob): Promise<string> {
+  if (typeof FileReader !== 'undefined') {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as string)
+      reader.onerror = (err) => reject(err)
+      reader.readAsDataURL(file)
+    })
+  }
+
+  const arrayBuffer = await file.arrayBuffer()
+  const bytes = new Uint8Array(arrayBuffer)
+  let binary = ''
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  const base64 = btoa(binary)
+  const mimeType = file.type || 'image/jpeg'
+  return `data:${mimeType};base64,${base64}`
 }
 
 /**

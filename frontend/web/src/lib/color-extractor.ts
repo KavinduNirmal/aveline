@@ -110,7 +110,7 @@ export function getClosestColorName(r: number, g: number, b: number): string {
   return closest
 }
 
-interface CanvasAnalysisMetrics {
+export interface CanvasAnalysisMetrics {
   color: ExtractedColorResult
   aspectRatio: number
   topMassWidth: number
@@ -123,7 +123,7 @@ interface CanvasAnalysisMetrics {
   isRoyalJewelTone: boolean
 }
 
-function analyzeCanvasMetrics(ctx: CanvasRenderingContext2D, width: number, height: number): CanvasAnalysisMetrics | null {
+export function analyzeCanvasMetrics(ctx: CanvasRenderingContext2D, width: number, height: number): CanvasAnalysisMetrics | null {
   try {
     const imageData = ctx.getImageData(0, 0, width, height)
     const data = imageData.data
@@ -279,37 +279,21 @@ export async function extractVisualAttributesAndColor(
   fileName?: string,
   contextHint?: string,
 ): Promise<VisualAttributesExtractionResult | null> {
-  if (typeof window === 'undefined' || !imageUrl) return null
+  if (!imageUrl) return null
 
-  // 1. Load image into Canvas to inspect pixel geometry
+  // 1. Load image into Canvas to inspect pixel geometry when browser DOM is available
   let metrics: CanvasAnalysisMetrics | null = null
 
-  try {
-    metrics = await new Promise<CanvasAnalysisMetrics | null>((resolve) => {
-      const img = new Image()
-      // Only set crossOrigin for remote HTTP URLs to prevent tainted canvas on data URLs
-      if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
-        img.crossOrigin = 'anonymous'
-      }
-
-      img.onload = () => {
-        try {
-          const canvas = document.createElement('canvas')
-          const size = 128
-          canvas.width = size
-          canvas.height = size
-          const ctx = canvas.getContext('2d', { willReadFrequently: true })
-          if (!ctx) return resolve(null)
-          ctx.drawImage(img, 0, 0, size, size)
-          resolve(analyzeCanvasMetrics(ctx, size, size))
-        } catch {
-          resolve(null)
+  if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+    try {
+      metrics = await new Promise<CanvasAnalysisMetrics | null>((resolve) => {
+        const img = new Image()
+        // Only set crossOrigin for remote HTTP URLs to prevent tainted canvas on data URLs
+        if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+          img.crossOrigin = 'anonymous'
         }
-      }
 
-      img.onerror = () => {
-        const fallback = new Image()
-        fallback.onload = () => {
+        img.onload = () => {
           try {
             const canvas = document.createElement('canvas')
             const size = 128
@@ -317,23 +301,54 @@ export async function extractVisualAttributesAndColor(
             canvas.height = size
             const ctx = canvas.getContext('2d', { willReadFrequently: true })
             if (!ctx) return resolve(null)
-            ctx.drawImage(fallback, 0, 0, size, size)
+            ctx.drawImage(img, 0, 0, size, size)
             resolve(analyzeCanvasMetrics(ctx, size, size))
           } catch {
             resolve(null)
           }
         }
-        fallback.onerror = () => resolve(null)
-        fallback.src = imageUrl
-      }
 
-      img.src = imageUrl
-    })
-  } catch {
-    // Continue with metadata parsing
+        img.onerror = () => {
+          const fallback = new Image()
+          fallback.onload = () => {
+            try {
+              const canvas = document.createElement('canvas')
+              const size = 128
+              canvas.width = size
+              canvas.height = size
+              const ctx = canvas.getContext('2d', { willReadFrequently: true })
+              if (!ctx) return resolve(null)
+              ctx.drawImage(fallback, 0, 0, size, size)
+              resolve(analyzeCanvasMetrics(ctx, size, size))
+            } catch {
+              resolve(null)
+            }
+          }
+          fallback.onerror = () => resolve(null)
+          fallback.src = imageUrl
+        }
+
+        img.src = imageUrl
+      })
+    } catch {
+      // Continue with metadata parsing
+    }
   }
 
-  // 2. Synthesize semantic metadata cues from filename & URL
+  return inferGarmentFromMetricsAndMetadata(metrics, imageUrl, fileName, contextHint)
+}
+
+/**
+ * Pure classifier synthesizing canvas metrics, pixel geometry, aspect ratios,
+ * and metadata keywords to produce visual attributes.
+ */
+export function inferGarmentFromMetricsAndMetadata(
+  metrics: CanvasAnalysisMetrics | null,
+  imageUrl: string,
+  fileName?: string,
+  contextHint?: string,
+): VisualAttributesExtractionResult {
+  // Synthesize semantic metadata cues from filename & URL
   const rawLower = imageUrl.startsWith('data:') ? '' : imageUrl.toLowerCase()
   const combined = `${rawLower} ${fileName || ''} ${contextHint || ''}`.toLowerCase()
 

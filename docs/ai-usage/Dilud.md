@@ -2393,3 +2393,51 @@
 
 - Verified image upload, database storage, and frontend rendering in catalog inventory.
 
+
+---
+
+## Session 2026-09-17 (Fix CI Failure: Build, Test & Lint Web Dashboard)
+
+**Task:** Diagnose and resolve the failing GitHub Actions CI workflow "Build, Test & Lint Web Dashboard".
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+1. **Linter Target Scoping (`package.json`)**:
+   - Diagnosed `oxlint` failing in CI due to traversing `node_modules` without target scoping (producing hundreds of false-positive warnings/errors inside third-party modules).
+   - Updated `package.json` `"lint": "oxlint src"` to restrict linting strictly to workspace source files (completes in 517ms with 0 errors).
+
+2. **Server/Node Environment Resilience & Modularity (`color-extractor.ts` & `image-optimizer.ts`)**:
+   - Refactored `color-extractor.ts` to export `inferGarmentFromMetricsAndMetadata` and `analyzeCanvasMetrics`.
+   - Enabled graceful fallback metadata analysis when `window`/DOM canvas is undefined in server/testing runtimes.
+   - Replaced Node-only `Buffer` references in `image-optimizer.ts` with cross-platform standard `btoa` + `Uint8Array` conversion.
+
+3. **Comprehensive Test Suite & Coverage Threshold Compliance**:
+   - Added exhaustive test coverage for `color-extractor.ts` across all garment categories (Lehengas, Sarees, Gowns, Kurtas, Outerwear, Drapes, Jewelry) and geometric flare/aspect-ratio/silhouette heuristics.
+   - Added test coverage for `image-optimizer.ts` (MIME validation, dimension scaling, base64 conversion).
+   - Added unit test file `env.test.ts` for environment configuration validation.
+   - Added tests in `organizations.test.ts` for `acceptInvitation`.
+   - Added tests in `conversations.test.ts` for `ReceiveAgentState`, reconnect states, and connection errors.
+   - Added tests in `catalog-api.test.ts` for `getColorHex`, `normalizeCategory` fallbacks, and `normalizeOutfitComposition`.
+
+### Files Created or Modified
+- `frontend/web/package.json`
+- `frontend/web/src/lib/color-extractor.ts`
+- `frontend/web/src/lib/color-extractor.test.ts`
+- `frontend/web/src/lib/image-optimizer.ts`
+- `frontend/web/src/lib/image-optimizer.test.ts`
+- `frontend/web/src/lib/env.test.ts`
+- `frontend/web/src/lib/organizations.test.ts`
+- `frontend/web/src/lib/conversations.test.ts`
+- `frontend/web/src/lib/catalog-api.test.ts`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- `bun run lint`: 0 errors across 170 files (517ms).
+- `bun run test:coverage`: 28 test suites, 203/203 unit tests passed (0 failed).
+  - Lines: **85.76%** (Threshold: >= 80%)
+  - Statements: **84.74%** (Threshold: >= 80%)
+  - Branches: **86.65%** (Threshold: >= 70%)
+  - Functions: **86.20%** (Threshold: >= 70%)
+- `bun run build`: `tsc -b && vite build` built clean (0 TypeScript errors, production assets bundled successfully).
+

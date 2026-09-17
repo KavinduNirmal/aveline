@@ -10,5 +10,7 @@ public interface IVisionService
     Task<ImageAnalysisResultDto> AnalyzeAsync(
         string imageUrl,
         Guid organizationId,
+        string? fileName = null,
+        string? contextHint = null,
         CancellationToken cancellationToken = default);
 }

@@ -9,5 +9,7 @@ public class AnalyzeImageDto
         set => OrganizationId = value;
     }
     public string ImageUrl { get; set; } = string.Empty;
+    public string? FileName { get; set; }
+    public string? ContextHint { get; set; }
     public string? Prompt { get; set; }
 }

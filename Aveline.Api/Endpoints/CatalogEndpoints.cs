@@ -1,5 +1,7 @@
 using Aveline.Api.Configurations;
 using Aveline.Api.Modules.VisualIntelligence.DTOs;
+using Aveline.Api.Modules.VisualIntelligence.Models;
+using Aveline.Api.Modules.VisualIntelligence.Repositories;
 using Aveline.Api.Modules.VisualIntelligence.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -350,6 +352,120 @@ public static class CatalogEndpoints
         .Produces<IReadOnlyList<SupplierCatalogItemDto>>(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status403Forbidden);
+
+        // --- Binary Media Storage (PostgreSQL bytea) ---
+
+        group.MapPost("/images/upload", async (
+            [FromRoute] Guid organizationId,
+            HttpRequest request,
+            [FromServices] IInventoryRepository repository,
+            CancellationToken cancellationToken) =>
+        {
+            byte[]? bytes = null;
+            string contentType = "image/jpeg";
+            string? fileName = null;
+            long fileSizeBytes = 0;
+
+            if (request.HasFormContentType)
+            {
+                var form = await request.ReadFormAsync(cancellationToken);
+                var file = form.Files.GetFile("file") ?? (form.Files.Count > 0 ? form.Files[0] : null);
+                if (file != null && file.Length > 0)
+                {
+                    using var ms = new MemoryStream();
+                    await file.CopyToAsync(ms, cancellationToken);
+                    bytes = ms.ToArray();
+                    contentType = string.IsNullOrWhiteSpace(file.ContentType) ? "image/jpeg" : file.ContentType;
+                    fileName = file.FileName;
+                    fileSizeBytes = file.Length;
+                }
+            }
+            else if (request.ContentType?.Contains("application/json", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                var payload = await request.ReadFromJsonAsync<UploadImagePayloadDto>(cancellationToken);
+                if (payload != null && !string.IsNullOrWhiteSpace(payload.ImageData))
+                {
+                    var raw = payload.ImageData.Trim();
+                    if (raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var commaIdx = raw.IndexOf(',');
+                        if (commaIdx > 0)
+                        {
+                            var mimePart = raw[5..commaIdx];
+                            if (mimePart.Contains(';'))
+                            {
+                                contentType = mimePart.Split(';')[0];
+                            }
+                            bytes = Convert.FromBase64String(raw[(commaIdx + 1)..]);
+                        }
+                    }
+                    else
+                    {
+                        bytes = Convert.FromBase64String(raw);
+                    }
+                    fileName = payload.FileName ?? $"upload_{DateTime.UtcNow.Ticks}.jpg";
+                    fileSizeBytes = bytes?.Length ?? 0;
+                }
+            }
+
+            if (bytes == null || bytes.Length == 0)
+            {
+                return Results.BadRequest(new { error = "No valid image data provided." });
+            }
+
+            var imageId = Guid.NewGuid();
+            var imageRecord = new InventoryImage
+            {
+                Id = imageId,
+                OrgId = organizationId,
+                ImageData = bytes,
+                ContentType = contentType,
+                FileName = fileName,
+                FileSizeBytes = fileSizeBytes,
+                ImageUrl = $"/api/v1/orgs/{organizationId}/catalog/images/{imageId}",
+                CreatedAtUtc = DateTime.UtcNow
+            };
+
+            await repository.AddImageAsync(imageRecord, cancellationToken);
+
+            return Results.Ok(new
+            {
+                id = imageRecord.Id,
+                url = imageRecord.ImageUrl,
+                fileName = imageRecord.FileName,
+                size = imageRecord.FileSizeBytes,
+                contentType = imageRecord.ContentType
+            });
+        })
+        .WithName("CatalogUploadImage")
+        .WithSummary("Upload and store an image binary directly in the PostgreSQL database.")
+        .Produces(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .DisableAntiforgery();
+
+        group.MapGet("/images/{imageId:guid}", async (
+            [FromRoute] Guid organizationId,
+            [FromRoute] Guid imageId,
+            [FromServices] IInventoryRepository repository,
+            HttpContext context,
+            CancellationToken cancellationToken) =>
+        {
+            var image = await repository.GetImageByIdAsync(imageId, organizationId, cancellationToken);
+            if (image == null || image.ImageData == null || image.ImageData.Length == 0)
+            {
+                return Results.NotFound(new { error = "Image not found." });
+            }
+
+            context.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
+            return Results.File(image.ImageData, image.ContentType);
+        })
+        .WithName("CatalogGetImage")
+        .WithSummary("Retrieve physical image binary from PostgreSQL.")
+        .Produces(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status404NotFound)
+        .AllowAnonymous();
 
         return endpoints;
     }

@@ -29,13 +29,13 @@ public class InventoryItemConfiguration : IEntityTypeConfiguration<InventoryItem
 
         builder.Property(i => i.Color)
             .IsRequired()
-            .HasMaxLength(50);
+            .HasMaxLength(100);
 
         builder.Property(i => i.Fabric)
-            .HasMaxLength(100);
+            .HasMaxLength(150);
 
         builder.Property(i => i.Style)
-            .HasMaxLength(100);
+            .HasMaxLength(150);
 
         builder.Property(i => i.Sizes)
             .HasConversion(
@@ -60,13 +60,13 @@ public class InventoryItemConfiguration : IEntityTypeConfiguration<InventoryItem
             .HasDefaultValue("available");
 
         builder.Property(i => i.ImageUrl)
-            .HasMaxLength(500);
+            .HasColumnType("text");
 
         builder.Property(i => i.Sku)
             .HasMaxLength(100);
 
         builder.Property(i => i.Description)
-            .HasMaxLength(2000);
+            .HasColumnType("text");
 
         builder.Property(i => i.Metadata)
             .HasConversion(

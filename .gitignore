@@ -190,6 +190,11 @@ frontend/aveline_mobile/android/key.properties
 frontend/aveline_mobile/android/app/*.jks
 frontend/aveline_mobile/android/app/google-services.json
 
+# JVM heap dumps — written by the JVM (and by Gradle's daemon) on OutOfMemoryError.
+# These run to hundreds of megabytes and must never enter git history.
+*.hprof
+*.hprof.gz
+
 # iOS
 frontend/aveline_mobile/ios/Pods/
 frontend/aveline_mobile/ios/.symlinks/
@@ -265,3 +270,10 @@ docs/.obsidian
 
 # Agents.md
 Agents.md
+
+# Backend cache
+backend/.cache
+
+opencode.json
+# Final academic documentation (presented at evaluation, kept untracked)
+docs/final_document/

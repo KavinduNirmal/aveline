@@ -15,6 +15,7 @@ Reusable UI components used by multiple features:
 
 ### `utils/`
 Pure Dart utility functions (no Flutter dependencies):
+- `greeting.dart` — Time-of-day salutations for personalized headings
 - `date_formatter.dart` — Date/time display helpers
 - `currency_formatter.dart` — LKR formatting
 - `validators.dart` — Phone number, email, required field validators

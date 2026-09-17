@@ -46,4 +46,40 @@ void main() {
 
     expect(paintedSize(tester), const Size(40, 40));
   });
+
+  group('petalReveal', () {
+    testWidgets('draws fully open when no reveal is given', (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(home: Center(child: Blossom(size: 48))),
+      );
+
+      expect(tester.widget<Blossom>(find.byType(Blossom)).petalReveal, isNull);
+    });
+
+    testWidgets('paints part-open petals without error', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Center(
+            child: Blossom(
+              size: 48,
+              petalReveal: List<double>.filled(8, 0.5),
+            ),
+          ),
+        ),
+      );
+
+      expect(tester.takeException(), isNull);
+    });
+
+    test('requires one reveal value per petal', () {
+      expect(
+        () => Blossom(petalReveal: const [1.0, 1.0]),
+        throwsAssertionError,
+      );
+      expect(
+        () => Blossom(petalReveal: List<double>.filled(9, 1)),
+        throwsAssertionError,
+      );
+    });
+  });
 }

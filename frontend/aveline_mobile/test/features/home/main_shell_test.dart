@@ -1,7 +1,11 @@
+import 'package:aveline_mobile/core/auth/app_roles.dart';
+import 'package:aveline_mobile/core/providers/user_provider.dart';
 import 'package:aveline_mobile/features/auth/domain/auth_repository.dart';
 import 'package:aveline_mobile/features/auth/domain/auth_user.dart';
+import 'package:aveline_mobile/features/auth/domain/aveline_user.dart';
 import 'package:aveline_mobile/features/home/presentation/screens/main_shell.dart';
-import 'package:aveline_mobile/shared/widgets/floating_dock.dart';
+import 'package:aveline_mobile/shared/widgets/animated_blossom.dart';
+import 'package:aveline_mobile/shared/widgets/aveline_header.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -64,33 +68,68 @@ class _FakeAuthRepository implements AuthRepository {
 }
 
 void main() {
-  Widget wrap() => Provider<AuthRepository>(
-        create: (_) => _FakeAuthRepository(),
-        child: const MaterialApp(home: MainShell()),
-      );
+  Widget wrap({bool showHeader = true}) {
+    final userProvider = UserProvider();
+    userProvider.setUser(
+      AvelineUser(
+        id: 'u1',
+        clerkId: 'c1',
+        email: 'kasun@example.com',
+        firstName: 'Kasun',
+        lastName: 'Peiris',
+        username: 'kasun',
+        userRole: AppRoles.staff,
+        organizationRole: '',
+        organizationId: 'org_1',
+        hasCompletedOnboarding: true,
+        accountState: AvelineAccountState.active,
+        contactPreference: 'email',
+        pushNotificationsEnabled: true,
+        isActive: true,
+        createdAt: DateTime(2025, 1, 1),
+        updatedAt: DateTime(2025, 1, 1),
+      ),
+    );
 
-  testWidgets('shows the Home tab and the floating dock by default',
+    return MultiProvider(
+      providers: [
+        Provider<AuthRepository>(create: (_) => _FakeAuthRepository()),
+        ChangeNotifierProvider<UserProvider>.value(value: userProvider),
+      ],
+      child: MaterialApp(
+        home: MainShell(showHeader: showHeader),
+      ),
+    );
+  }
+
+  testWidgets('shows the Home screen, universal header, and animated blossom by default',
       (tester) async {
     await tester.pumpWidget(wrap());
 
-    expect(find.textContaining('Good day'), findsOneWidget);
-    expect(find.byType(FloatingDock), findsOneWidget);
+    expect(
+      find.textContaining(RegExp(r'Good (morning|afternoon|evening), Kasun\.')),
+      findsOneWidget,
+    );
+    expect(find.byType(AvelineHeader), findsOneWidget);
+    expect(find.byType(AnimatedBlossom), findsOneWidget);
   });
 
-  testWidgets('switches to the Customers placeholder tab', (tester) async {
-    await tester.pumpWidget(wrap());
+  testWidgets('hides header when showHeader is false', (tester) async {
+    await tester.pumpWidget(wrap(showHeader: false));
 
-    await tester.tap(find.text('Customers'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Customer concierge & memory'), findsOneWidget);
+    expect(
+      find.textContaining(RegExp(r'Good (morning|afternoon|evening), Kasun\.')),
+      findsOneWidget,
+    );
+    expect(find.byType(AvelineHeader), findsNothing);
+    expect(find.byType(AnimatedBlossom), findsOneWidget);
   });
 
-  testWidgets('opens the full-screen Salon from the center launcher',
+  testWidgets('opens the full-screen Salon from the animated blossom launcher',
       (tester) async {
     await tester.pumpWidget(wrap());
 
-    await tester.tap(find.bySemanticsLabel('Open Salon'));
+    await tester.tap(find.byKey(const Key('animated_blossom_button')));
     // The Salon's blossom avatar animates continuously, so pump a fixed duration
     // rather than pumpAndSettle (which would never settle).
     await tester.pump();

@@ -12,6 +12,14 @@ abstract final class AppRoutes {
   static const String orgSetup = '/org-setup';
   static const String suspended = '/suspended';
   static const String invite = '/invite';
+
+  /// Shown when a signed-in user's profile could not be loaded, so the account
+  /// state is unknown and no other screen can be chosen honestly.
+  static const String connection = '/connection';
+  static const String catalog = '/catalog';
+  static const String conversations = '/conversations';
+  static const String profile = '/profile';
+  static const String notifications = '/notifications';
 }
 
 /// Pure auth/account-state redirect rules for the [GoRouter].
@@ -24,12 +32,18 @@ abstract final class RouteGuards {
   /// known (`null`) the legacy [hasCompletedOnboarding] flag drives profile
   /// routing only. [accountType] is the locally persisted onboarding path
   /// (`owner`/`staff`/`null`) used to branch a pending account.
+  ///
+  /// [profileFailed] reports that loading the signed-in user's profile failed,
+  /// which leaves [accountState] unknown. Without it the guards would hold the
+  /// user on the first onboarding screen with no explanation and no way to
+  /// retry, which is indistinguishable from being stuck.
   static String? redirectForAuth(
     String matchedLocation, {
     required bool isSignedIn,
     bool? hasCompletedOnboarding,
     String? accountState,
     String? accountType,
+    bool profileFailed = false,
   }) {
     final atAuthScreen = matchedLocation == AppRoutes.auth;
     final atAccountTypeScreen = matchedLocation == AppRoutes.accountType;
@@ -38,6 +52,7 @@ abstract final class RouteGuards {
     final atOrgSetupScreen = matchedLocation == AppRoutes.orgSetup;
     final atSuspendedScreen = matchedLocation == AppRoutes.suspended;
     final atInviteScreen = matchedLocation == AppRoutes.invite;
+    final atConnectionScreen = matchedLocation == AppRoutes.connection;
 
     if (!isSignedIn) {
       // Unauthenticated users may only reach the auth screen (and the invite
@@ -46,6 +61,10 @@ abstract final class RouteGuards {
         return null;
       }
       return AppRoutes.auth;
+    }
+
+    if (profileFailed) {
+      return atConnectionScreen ? null : AppRoutes.connection;
     }
 
     final state = accountState != null
@@ -67,7 +86,8 @@ abstract final class RouteGuards {
           atOnboardingScreen ||
           atOwnerOnboardingScreen ||
           atOrgSetupScreen ||
-          atSuspendedScreen) {
+          atSuspendedScreen ||
+          atConnectionScreen) {
         return AppRoutes.home;
       }
       return null;

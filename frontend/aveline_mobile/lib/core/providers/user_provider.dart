@@ -16,6 +16,14 @@ class UserProvider extends ChangeNotifier {
   bool get isAccountActive =>
       _user?.accountState == AvelineAccountState.active;
 
+  /// Whether loading the signed-in profile has failed and has not succeeded
+  /// since.
+  ///
+  /// Deliberately stays true while a retry is in flight: the retry screen keys
+  /// off this, and clearing it at the start of a fetch would bounce the user
+  /// back to an onboarding screen before the retry resolves.
+  bool get hasLoadFailed => _errorMessage != null;
+
   void setUser(AvelineUser? user) {
     _user = user;
     notifyListeners();
@@ -30,7 +38,6 @@ class UserProvider extends ChangeNotifier {
 
   Future<AvelineUser?> fetchUser(Dio dio) async {
     _isLoading = true;
-    _errorMessage = null;
     notifyListeners();
 
     try {
@@ -38,6 +45,7 @@ class UserProvider extends ChangeNotifier {
       if (response.statusCode == 200 && response.data != null) {
         final data = response.data as Map<String, dynamic>;
         _user = AvelineUser.fromJson(data);
+        _errorMessage = null;
         debugPrint(
           '[user] fetchUser OK: accountState=${_user!.accountState.wireValue} '
           'onboarded=${_user!.hasCompletedOnboarding} '
@@ -45,10 +53,11 @@ class UserProvider extends ChangeNotifier {
         );
         return _user;
       }
+      _errorMessage = 'The salon could not load your profile.';
       debugPrint('[user] fetchUser non-200: ${response.statusCode}');
       return null;
     } on DioException catch (e) {
-      _errorMessage = e.message ?? 'Failed to load user profile';
+      _errorMessage = _describeDioException(e);
       debugPrint('[user] fetchUser DioException: ${e.message} type=${e.type}');
       return null;
     } catch (e) {
@@ -59,6 +68,22 @@ class UserProvider extends ChangeNotifier {
       _isLoading = false;
       notifyListeners();
     }
+  }
+
+  /// Describes a [DioException] for the retry screen.
+  ///
+  /// Dio's own `message` is null whenever the failure came from an interceptor
+  /// rather than from the transport, which is what happens when the access
+  /// token cannot be minted. Keeping the underlying error preserves the
+  /// difference between an unreachable server and a rejected request, which is
+  /// what decides whether the user is told to check their connection.
+  String _describeDioException(DioException e) {
+    final cause = e.error;
+    final message = e.message;
+    if (message != null && message.isNotEmpty) {
+      return cause == null ? message : '$message ($cause)';
+    }
+    return cause?.toString() ?? 'Could not load your profile (${e.type.name}).';
   }
 
   Future<AvelineUser?> completeOnboarding(

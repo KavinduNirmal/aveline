@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app.dart';
+import 'core/auth/clerk_session_persistor.dart';
 import 'core/config/app_config.dart';
 import 'features/onboarding/data/onboarding_preferences.dart';
 
@@ -17,7 +18,14 @@ Future<void> main() async {
     // Firebase unavailable; push notifications are disabled but the app continues.
   }
 
-  final preferences = OnboardingPreferences(await SharedPreferences.getInstance());
+  final sharedPreferences = await SharedPreferences.getInstance();
+  final preferences = OnboardingPreferences(sharedPreferences);
   final config = AppConfig.fromEnvironment();
-  runApp(AvelineApp(config: config, preferences: preferences));
+  runApp(
+    AvelineApp(
+      config: config,
+      preferences: preferences,
+      sessionStore: ClerkSessionPersistor(sharedPreferences),
+    ),
+  );
 }

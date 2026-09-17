@@ -1,0 +1,179 @@
+import 'package:aveline_mobile/core/theme/app_theme.dart';
+import 'package:aveline_mobile/features/home/data/demo_client_highlights.dart';
+import 'package:aveline_mobile/features/home/domain/client_highlight.dart';
+import 'package:aveline_mobile/features/home/presentation/widgets/client_link_section.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+Widget _bed({List<ClientHighlight>? clients}) => MaterialApp(
+      theme: AppTheme.light,
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: ClientLinkSection(clients: clients ?? demoClientHighlights()),
+        ),
+      ),
+    );
+
+void _usePhoneSurface(WidgetTester tester) {
+  tester.view.physicalSize = const Size(1170, 2532);
+  tester.view.devicePixelRatio = 3.0;
+  addTearDown(tester.view.reset);
+}
+
+void main() {
+  group('demoClientHighlights', () {
+    test('offers more clients than the row shows', () {
+      final clients = demoClientHighlights();
+
+      expect(clients.length, greaterThan(ClientLinkSection.rowLimit));
+      expect(clients.map((client) => client.id).toSet(), hasLength(clients.length));
+      for (final client in clients) {
+        expect(client.name, isNotEmpty);
+        expect(client.activity, isNotEmpty);
+      }
+    });
+
+    test('shortens names for under an avatar', () {
+      const client = ClientHighlight(
+        id: 'c',
+        name: 'Eleanor Vane',
+        tier: ClientTier.vip,
+        activity: 'x',
+      );
+
+      expect(client.shortName, 'Eleanor V.');
+      expect(client.initials, 'EV');
+    });
+  });
+
+  group('ClientLinkSection', () {
+    testWidgets('leads with the walk-in slot and caps the row at five',
+        (tester) async {
+      _usePhoneSurface(tester);
+      await tester.pumpWidget(_bed());
+
+      expect(find.text('DIRECT CLIENT LINK'), findsOneWidget);
+      expect(find.text('See all'), findsOneWidget);
+      expect(find.text('Add New'), findsOneWidget);
+
+      for (final client in demoClientHighlights().take(4)) {
+        expect(
+          find.text(client.shortName),
+          findsOneWidget,
+          reason: 'missing ${client.shortName}',
+        );
+      }
+
+      // The sixth and seventh clients are behind "See all", not in the row.
+      expect(find.text('Nadia R.'), findsNothing);
+      expect(find.text('Hiruni B.'), findsNothing);
+
+      // The fifth is the last one the row holds; scrolling reaches it.
+      await tester.drag(find.byType(ListView), const Offset(-240, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('Chamari S.'), findsOneWidget);
+      expect(find.text('Nadia R.'), findsNothing);
+    });
+
+    testWidgets('shows each client value on their avatar', (tester) async {
+      _usePhoneSurface(tester);
+      await tester.pumpWidget(_bed());
+
+      // VIPs get the wine pill; everyone else gets the two-line level badge.
+      expect(find.text('VIP'), findsWidgets);
+      expect(find.text('LVL'), findsWidgets);
+      expect(find.text('3'), findsWidgets);
+      expect(find.text('2'), findsWidgets);
+      expect(find.text('1'), findsWidgets);
+    });
+
+    testWidgets('See all opens the rest of the clients', (tester) async {
+      _usePhoneSurface(tester);
+      await tester.pumpWidget(_bed());
+
+      await tester.tap(find.text('See all'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Clients'), findsOneWidget);
+      expect(find.text('Nadia Rahman'), findsOneWidget);
+      expect(find.text('Hiruni Bandara'), findsOneWidget);
+      expect(
+        find.text('First visit at the Colombo store yesterday.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('a walk-in can be added from the row', (tester) async {
+      _usePhoneSurface(tester);
+      await tester.pumpWidget(_bed());
+
+      await tester.tap(find.text('Add New'));
+      await tester.pumpAndSettle();
+      expect(find.text('Add a walk-in'), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField), 'Test Walkin');
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('quick_add_client_submit')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.text('Test W.'), findsOneWidget);
+      expect(find.textContaining('is on the client list'), findsOneWidget);
+    });
+
+    testWidgets('the walk-in form stays inert until a name is typed',
+        (tester) async {
+      _usePhoneSurface(tester);
+      await tester.pumpWidget(_bed());
+
+      await tester.tap(find.text('Add New'));
+      await tester.pumpAndSettle();
+
+      FilledButton submit() => tester.widget<FilledButton>(
+            find.byKey(const Key('quick_add_client_submit')),
+          );
+
+      expect(submit().onPressed, isNull);
+
+      await tester.enterText(find.byType(TextField), 'Maria');
+      await tester.pump();
+
+      expect(submit().onPressed, isNotNull);
+    });
+
+    testWidgets('only a client with something new carries an activity dot',
+        (tester) async {
+      _usePhoneSurface(tester);
+      const dot = Key('client_activity_dot');
+
+      await tester.pumpWidget(
+        _bed(
+          clients: const [
+            ClientHighlight(
+              id: 'seen',
+              name: 'Sophia Liyanage',
+              tier: ClientTier.level1,
+              activity: 'Sent a photo of the saree she wants matched.',
+            ),
+          ],
+        ),
+      );
+      expect(find.byKey(dot), findsNothing);
+
+      await tester.pumpWidget(
+        _bed(
+          clients: const [
+            ClientHighlight(
+              id: 'unseen',
+              name: 'Sophia Liyanage',
+              tier: ClientTier.level1,
+              activity: 'Sent a photo of the saree she wants matched.',
+              hasNewActivity: true,
+            ),
+          ],
+        ),
+      );
+      expect(find.byKey(dot), findsOneWidget);
+    });
+  });
+}

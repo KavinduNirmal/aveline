@@ -322,4 +322,96 @@ public class CatalogEndpointsIntegrationTests : IAsyncLifetime
             Authorized(HttpMethod.Get, $"/api/v1/orgs/{org.Id}/catalog/suppliers/{Guid.NewGuid()}/catalog", token));
         catalogResponse.StatusCode.Should().Be(HttpStatusCode.OK);
     }
+
+    [Fact]
+    public async Task Images_UploadAndGetBinary_PersistsAndStreamsSuccessfully()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_images");
+        var token = CreateToken(user.ClerkId);
+
+        // 1. Upload via multipart form
+        var fakeImageBytes = new byte[] { 0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46 };
+        var multipartContent = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(fakeImageBytes);
+        fileContent.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+        multipartContent.Add(fileContent, "file", "saree-photo.jpg");
+
+        var uploadResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Post, $"/api/v1/orgs/{org.Id}/catalog/images/upload", token, multipartContent));
+        uploadResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var uploadResult = (await uploadResponse.Content.ReadFromJsonAsync<Dictionary<string, object>>())!;
+        uploadResult.Should().ContainKey("id");
+        uploadResult.Should().ContainKey("url");
+        var imageId = uploadResult["id"].ToString()!;
+        var imageUrl = uploadResult["url"].ToString()!;
+        imageUrl.Should().Contain(imageId);
+
+        // 2. Stream image back from PostgreSQL
+        var getResponse = await _client.GetAsync($"/api/v1/orgs/{org.Id}/catalog/images/{imageId}");
+        getResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        getResponse.Content.Headers.ContentType?.MediaType.Should().Be("image/jpeg");
+        getResponse.Headers.CacheControl?.Public.Should().BeTrue();
+
+        var downloadedBytes = await getResponse.Content.ReadAsByteArrayAsync();
+        downloadedBytes.Should().Equal(fakeImageBytes);
+
+        // 3. Upload via Base64 JSON payload
+        var base64UploadDto = new UploadImagePayloadDto
+        {
+            ImageData = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+            FileName = "test-icon.png",
+            ContentType = "image/png"
+        };
+        var base64Response = await _client.SendAsync(
+            Authorized(HttpMethod.Post, $"/api/v1/orgs/{org.Id}/catalog/images/upload", token, JsonContent.Create(base64UploadDto)));
+        base64Response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var base64Result = (await base64Response.Content.ReadFromJsonAsync<Dictionary<string, object>>())!;
+        var base64ImageId = base64Result["id"].ToString()!;
+
+        var getPngResponse = await _client.GetAsync($"/api/v1/orgs/{org.Id}/catalog/images/{base64ImageId}");
+        getPngResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        getPngResponse.Content.Headers.ContentType?.MediaType.Should().Be("image/png");
+    }
+
+    [Fact]
+    public async Task CreateItem_WithBase64DataUrlImage_AutoOffloadsToInventoryImages_AndPersistsSuccessfully()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_base64_auto");
+        var token = CreateToken(user.ClerkId);
+
+        var base64DataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+        var createDto = new CreateInventoryItemDto
+        {
+            ItemName = "Handloom Silk Saree with AI Narrative",
+            Category = "Sarees",
+            Color = "Emerald Green / Antique Gold Zari",
+            Fabric = "Pure Handloom Mulberry Kanjeevaram Silk",
+            Style = "Traditional Heritage Temple Silhouette",
+            Price = 1850.00m,
+            Cost = 750.00m,
+            Quantity = 5,
+            Sizes = new List<string> { "Free Size", "Unstitched Blouse" },
+            ImageUrl = base64DataUrl,
+            Description = "Exquisite emerald green handloom silk saree woven from authentic mulberry silk, featuring an opulent gold zari brocade with a lustrous heirloom drape. Tailored with meticulous craftsmanship, making it a centerpiece for weddings, celebratory galas, and festive receptions. Styling: Accentuate with handcrafted polki or antique gold jewelry."
+        };
+
+        var postResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Post, $"/api/v1/orgs/{org.Id}/catalog/items", token, JsonContent.Create(createDto)));
+
+        postResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+        var created = await postResponse.Content.ReadFromJsonAsync<InventoryItemDto>();
+        created.Should().NotBeNull();
+        created!.ItemName.Should().Be("Handloom Silk Saree with AI Narrative");
+        created.OrganizationId.Should().Be(org.Id);
+        created.ImageUrl.Should().NotBeNullOrEmpty();
+        created.ImageUrl.Should().StartWith($"/api/v1/orgs/{org.Id}/catalog/images/");
+
+        // Verify the auto-offloaded image can be fetched from the database storage endpoint
+        var getImageResponse = await _client.GetAsync(created.ImageUrl);
+        getImageResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        getImageResponse.Content.Headers.ContentType?.MediaType.Should().Be("image/png");
+    }
 }

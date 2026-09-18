@@ -16,8 +16,11 @@ public class InventoryItemDto
     public string Color { get; set; } = string.Empty;
     public List<string> Sizes { get; set; } = new();
     public decimal Price { get; set; }
+    public decimal Cost { get; set; }
     public int Quantity { get; set; }
     public string Status { get; set; } = "available";
+    public string? Fabric { get; set; }
+    public string? Style { get; set; }
     public string? ImageUrl { get; set; }
     public string? Sku { get; set; }
     public string? Description { get; set; }
@@ -37,8 +40,11 @@ public class InventoryItemDto
             Color = item.Color,
             Sizes = item.Sizes?.ToList() ?? new List<string>(),
             Price = item.Price,
+            Cost = item.Cost,
             Quantity = item.Quantity,
             Status = item.Status,
+            Fabric = item.Fabric,
+            Style = item.Style,
             ImageUrl = item.ImageUrl,
             Sku = item.Sku,
             Description = item.Description,

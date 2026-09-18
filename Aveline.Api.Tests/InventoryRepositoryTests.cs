@@ -172,4 +172,79 @@ public class InventoryRepositoryTests
         page2.Should().HaveCount(1);
         page2[0].ItemName.Should().Be("Dress B");
     }
+
+    [Fact]
+    public async Task SearchAsync_WithFuzzyColorAndSubstring_MatchesVariedColorNames()
+    {
+        // Arrange
+        using var db = CreateInMemoryContext();
+        var repository = new InventoryRepository(db);
+        var orgId = Guid.NewGuid();
+
+        var item1 = new InventoryItem
+        {
+            Id = Guid.NewGuid(),
+            OrgId = orgId,
+            ItemName = "Emerald Green Kanchipuram Saree",
+            Category = "saree",
+            Color = "Emerald Green",
+            Price = 65000,
+            Quantity = 2,
+            Status = "available"
+        };
+
+        var item2 = new InventoryItem
+        {
+            Id = Guid.NewGuid(),
+            OrgId = orgId,
+            ItemName = "Sage Green Linen Dress",
+            Category = "dress",
+            Color = "Sage Green",
+            Price = 28000,
+            Quantity = 4,
+            Status = "available"
+        };
+
+        var item3 = new InventoryItem
+        {
+            Id = Guid.NewGuid(),
+            OrgId = orgId,
+            ItemName = "Mint Silk Saree",
+            Category = "saree",
+            Color = "Mint Green",
+            Price = 32000,
+            Quantity = 1,
+            Status = "available"
+        };
+
+        var item4 = new InventoryItem
+        {
+            Id = Guid.NewGuid(),
+            OrgId = orgId,
+            ItemName = "Royal Crimson Velvet Gown",
+            Category = "gown",
+            Color = "Deep Crimson",
+            Price = 85000,
+            Quantity = 3,
+            Status = "available"
+        };
+
+        await db.InventoryItems.AddRangeAsync(item1, item2, item3, item4);
+        await db.SaveChangesAsync();
+
+        // Act - search generic "green" matches all green shades
+        var greenResults = await repository.SearchAsync(orgId: orgId, color: "green");
+        var emeraldResults = await repository.SearchAsync(orgId: orgId, color: "emerald");
+        var crimsonResults = await repository.SearchAsync(orgId: orgId, color: "crimson");
+
+        // Assert
+        greenResults.Should().HaveCount(3);
+        greenResults.Select(x => x.ItemName).Should().Contain(new[] { "Emerald Green Kanchipuram Saree", "Sage Green Linen Dress", "Mint Silk Saree" });
+
+        emeraldResults.Should().HaveCount(1);
+        emeraldResults[0].ItemName.Should().Be("Emerald Green Kanchipuram Saree");
+
+        crimsonResults.Should().HaveCount(1);
+        crimsonResults[0].ItemName.Should().Be("Royal Crimson Velvet Gown");
+    }
 }

@@ -23,4 +23,7 @@ public interface IInventoryRepository
     Task AddAsync(InventoryItem item, CancellationToken cancellationToken = default);
     Task UpdateAsync(InventoryItem item, CancellationToken cancellationToken = default);
     Task DeleteAsync(Guid id, Guid orgId, CancellationToken cancellationToken = default);
+
+    Task<InventoryImage?> GetImageByIdAsync(Guid imageId, Guid orgId, CancellationToken cancellationToken = default);
+    Task AddImageAsync(InventoryImage image, CancellationToken cancellationToken = default);
 }

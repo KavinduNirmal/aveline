@@ -18,11 +18,24 @@ public class InventoryImageConfiguration : IEntityTypeConfiguration<InventoryIma
             .IsRequired();
 
         builder.Property(x => x.ItemId)
-            .IsRequired();
+            .IsRequired(false);
+
+        builder.Property(x => x.ImageData)
+            .HasColumnType("bytea");
+
+        builder.Property(x => x.ContentType)
+            .IsRequired()
+            .HasMaxLength(100)
+            .HasDefaultValue("image/jpeg");
+
+        builder.Property(x => x.FileName)
+            .HasMaxLength(255);
+
+        builder.Property(x => x.FileSizeBytes);
 
         builder.Property(x => x.ImageUrl)
             .IsRequired()
-            .HasMaxLength(500);
+            .HasMaxLength(1000);
 
         builder.Property(x => x.IsPrimary)
             .HasDefaultValue(false);

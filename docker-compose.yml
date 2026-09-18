@@ -88,8 +88,8 @@ services:
       Embeddings__Model: ${EMBEDDINGS_MODEL:-text-embedding-3-small}
       # OpenAI-compatible vision provider for Visual Intelligence (Elle, Slice 2 image analysis).
       Vision__ApiKey: ${VISION_API_KEY:-}
-      Vision__BaseUrl: ${VISION_BASE_URL:-https://api.openai.com}
-      Vision__Model: ${VISION_MODEL:-gpt-4o-mini}
+      Vision__BaseUrl: ${VISION_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai/}
+      Vision__Model: ${VISION_MODEL:-gemini-2.0-flash}
       # AES-256-GCM key for tenant integration credentials (base64, 32 bytes).
       Credentials__EncryptionKey: ${CREDENTIALS_ENCRYPTION_KEY:?CREDENTIALS_ENCRYPTION_KEY is required}
       # WhatsApp (Meta) integration gateway — base URL + API version (defaults used if unset).
@@ -146,10 +146,10 @@ services:
       # Event types this service consumes from the API (empty until a consumer lands).
       SUBSCRIBE_EVENT_TYPES: ${SUBSCRIBE_EVENT_TYPES:-}
       # LLM provider (openai | deepseek), switched at runtime.
-      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+      LLM_PROVIDER: ${LLM_PROVIDER:-deepseek}
       LLM_API_KEY: ${LLM_API_KEY:-}
-      LLM_BASE_URL: ${LLM_BASE_URL:-}
-      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
       # When false, reasoner-capable DeepSeek models skip the thinking pass.
       LLM_THINKING_ENABLED: ${LLM_THINKING_ENABLED:-false}
       # Master switch for invoking an LLM in agent workflows (also requires LLM_API_KEY + LLM_MODEL).

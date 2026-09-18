@@ -13,10 +13,10 @@ def _clear_settings_cache():
 def test_defaults_are_sane():
     settings = Settings()
     assert settings.app_name == "Aveline Agent Service"
-    assert settings.llm_provider == "openai"
+    assert settings.llm_provider == "deepseek"
     assert settings.llm_api_key == ""
-    assert settings.llm_base_url == ""
-    assert settings.llm_model == ""
+    assert settings.llm_base_url == "https://api.deepseek.com"
+    assert settings.llm_model == "deepseek-chat"
     assert settings.llm_thinking_enabled is False
     assert settings.agent_llm_enabled is True
     assert settings.agent_state_delay_ms == 0
@@ -26,10 +26,10 @@ def test_defaults_are_sane():
 
 
 def test_env_vars_map_to_settings(monkeypatch):
-    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.setenv("LLM_API_KEY", "sk-test")
-    monkeypatch.setenv("LLM_BASE_URL", "https://api.deepseek.com")
-    monkeypatch.setenv("LLM_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.openai.com/v1")
+    monkeypatch.setenv("LLM_MODEL", "gpt-4o")
     monkeypatch.setenv("LLM_THINKING_ENABLED", "true")
     monkeypatch.setenv("AGENT_STATE_DELAY_MS", "1200")
     monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://u:p@localhost:5432/db")
@@ -39,16 +39,15 @@ def test_env_vars_map_to_settings(monkeypatch):
 
     settings = Settings()
 
-    assert settings.llm_provider == "deepseek"
+    assert settings.llm_provider == "openai"
     assert settings.llm_api_key == "sk-test"
-    assert settings.llm_base_url == "https://api.deepseek.com"
-    assert settings.llm_model == "deepseek-v4-flash"
+    assert settings.llm_base_url == "https://api.openai.com/v1"
+    assert settings.llm_model == "gpt-4o"
     assert settings.llm_thinking_enabled is True
     assert settings.agent_state_delay_ms == 1200
     assert settings.database_url == "postgresql+asyncpg://u:p@localhost:5432/db"
     assert settings.otel_exporter_otlp_endpoint == "http://collector:4317"
     assert settings.otel_service_name == "aveline-agent-service"
-    assert settings.otel_trace_content is False
     assert settings.otel_trace_content is False
 
 

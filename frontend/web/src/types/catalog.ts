@@ -118,7 +118,10 @@ export interface VisionAnalysisResult {
   fabric: string
   style: string
   pattern?: string
+  garmentType?: string
+  suggestedItemName?: string
   confidenceScore: number
+  isFallback?: boolean
   visualAttributes: string[]
   summary: string
   description?: string
@@ -140,8 +143,11 @@ export interface CreateInventoryItemPayload {
   itemName: string
   category: string
   color: string
+  fabric?: string
+  style?: string
   sizes: string[]
   price: number
+  cost?: number
   quantity: number
   status?: string
   imageUrl?: string
@@ -153,8 +159,11 @@ export interface UpdateInventoryItemPayload {
   itemName?: string
   category?: string
   color?: string
+  fabric?: string
+  style?: string
   sizes?: string[]
   price?: number
+  cost?: number
   quantity?: number
   imageUrl?: string
   sku?: string

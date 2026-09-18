@@ -22,10 +22,10 @@ class Settings(BaseSettings):
     subscribe_event_types: Annotated[list[str], NoDecode] = []
 
     # --- LLM provider (OpenAI or DeepSeek, switched at runtime) ---
-    llm_provider: str = "openai"
+    llm_provider: str = "deepseek"
     llm_api_key: str = ""
-    llm_base_url: str = ""
-    llm_model: str = ""
+    llm_base_url: str = "https://api.deepseek.com"
+    llm_model: str = "deepseek-chat"
     # When False, DeepSeek reasoner-capable models are asked not to emit a thinking
     # (reasoning) pass. Only applied to the DeepSeek provider.
     llm_thinking_enabled: bool = False

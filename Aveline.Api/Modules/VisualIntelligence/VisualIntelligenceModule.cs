@@ -17,9 +17,15 @@ public static class VisualIntelligenceModule
         {
             var config = sp.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();
             var baseUrl = config["Vision:BaseUrl"] ?? config["Vision__BaseUrl"] ?? config["VISION_BASE_URL"];
-            client.BaseAddress = string.IsNullOrWhiteSpace(baseUrl)
-                ? new Uri("https://api.openai.com")
-                : new Uri(baseUrl);
+            if (string.IsNullOrWhiteSpace(baseUrl))
+            {
+                client.BaseAddress = new Uri("https://generativelanguage.googleapis.com/v1beta/openai/");
+            }
+            else
+            {
+                var normalized = baseUrl.TrimEnd('/') + "/";
+                client.BaseAddress = new Uri(normalized);
+            }
         });
 
         // Repositories

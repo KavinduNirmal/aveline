@@ -8,7 +8,7 @@ public class CustomerConsentConfiguration : IEntityTypeConfiguration<CustomerCon
 {
     public void Configure(EntityTypeBuilder<CustomerConsent> builder)
     {
-        builder.ToTable("Customer_Consent");
+        builder.ToTable("CustomerConsent");
 
         builder.HasKey(c => c.Id);
 

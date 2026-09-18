@@ -27,12 +27,12 @@ public class CustomerConciergeEntityConfigurationTests
 
     [Theory]
     [InlineData(typeof(Customer), "Customers")]
-    [InlineData(typeof(CustomerPreference), "Customer_Preferences")]
-    [InlineData(typeof(CustomerEvent), "Customer_Events")]
-    [InlineData(typeof(CustomerMemory), "Customer_Memory")]
-    [InlineData(typeof(CustomerInteraction), "Customer_Interactions")]
-    [InlineData(typeof(CustomerConsent), "Customer_Consent")]
-    [InlineData(typeof(CustomerTag), "Customer_Tags")]
+    [InlineData(typeof(CustomerPreference), "CustomerPreferences")]
+    [InlineData(typeof(CustomerEvent), "CustomerEvents")]
+    [InlineData(typeof(CustomerMemory), "CustomerMemory")]
+    [InlineData(typeof(CustomerInteraction), "CustomerInteractions")]
+    [InlineData(typeof(CustomerConsent), "CustomerConsent")]
+    [InlineData(typeof(CustomerTag), "CustomerTags")]
     public void Entity_MapsToExpectedTable(Type entityType, string expectedTable)
     {
         using var context = CreateContext();

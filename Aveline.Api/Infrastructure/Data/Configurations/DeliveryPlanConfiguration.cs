@@ -8,7 +8,7 @@ public class DeliveryPlanConfiguration : IEntityTypeConfiguration<DeliveryPlan>
 {
     public void Configure(EntityTypeBuilder<DeliveryPlan> builder)
     {
-        builder.ToTable("Delivery_Plans");
+        builder.ToTable("DeliveryPlans");
 
         builder.HasKey(d => d.Id);
 

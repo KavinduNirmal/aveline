@@ -160,3 +160,34 @@ public class AgentStepRunConfiguration : IEntityTypeConfiguration<AgentStepRun>
             .HasFilter("\"Status\" = 'Failed'");
     }
 }
+
+public class DailyAgentMetricConfiguration : IEntityTypeConfiguration<DailyAgentMetric>
+{
+    public void Configure(EntityTypeBuilder<DailyAgentMetric> builder)
+    {
+        builder.ToTable("DailyAgentMetrics");
+
+        builder.HasKey(m => m.Id);
+
+        builder.Property(m => m.AgentKey)
+            .IsRequired()
+            .HasMaxLength(64);
+
+        builder.Property(m => m.Day)
+            .IsRequired();
+
+        builder.Property(m => m.ActualCostUsd)
+            .HasPrecision(18, 8);
+
+        builder.Property(m => m.BlossomUnits)
+            .HasPrecision(18, 4);
+
+        builder.Property(m => m.CreatedAt)
+            .IsRequired();
+
+        builder.HasIndex(m => new { m.OrganizationId, m.AgentKey, m.Day })
+            .IsUnique()
+            .AreNullsDistinct(false)
+            .HasDatabaseName("IX_DailyAgentMetrics_Org_Agent_Day");
+    }
+}

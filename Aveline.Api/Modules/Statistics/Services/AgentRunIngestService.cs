@@ -247,6 +247,11 @@ public sealed class AgentRunIngestService(
 
     private static void ValidateSteps(IReadOnlyList<AgentStepReportRequest> steps)
     {
+        if (steps is null)
+        {
+            throw new AgentRunValidationException("Steps list must not be null.");
+        }
+
         var keys = new HashSet<(short Index, short Attempt)>();
         foreach (var step in steps)
         {

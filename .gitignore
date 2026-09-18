@@ -271,6 +271,8 @@ docs/.obsidian
 # Agents.md
 Agents.md
 
+admin-backend-api-deferred-implementation-plan.md
+
 # Backend cache
 backend/.cache
 

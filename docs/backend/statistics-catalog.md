@@ -164,7 +164,7 @@ unless it appears in this catalog **and** in
 | Granularity | day |
 | Freshness | `0 s` |
 | Retention | 400 days |
-| Source | `BlossomLedgerEntries` + `AuditLogEntries` (`org.subscription.changed`) |
+| Source | `BlossomLedgerEntries` + `AuditLogEntries` (`org.plan.changed`) |
 | Storage | on-the-fly |
 | Endpoint | `GET /api/v1/admin/statistics/billing/plan-changes` |
 | Access | `stats:system` |
@@ -775,6 +775,10 @@ unless it appears in this catalog **and** in
 > - **S-42 rules.** Every seeded `SystemAlertRule.MetricName` is a name the collector
 >   produces; migration `20260913111104_FixSystemAlertRuleMetricNames` rewrites the rows M8
 >   seeded with dead names, and `SystemMetricCollectorTests` guards the invariant.
+> - **S-5 `marginLkr`** is omitted by default pending an external USD→LKR FX conversion source;
+>   `ActualCostUsd` is reported directly in USD.
+> - **S-9 `byViolatedKey`** requires key attribution stamped from the entitlement exception handler
+>   into telemetry, as raw response bodies are deliberately never persisted in `ApiRequestLog`.
 
 ---
 

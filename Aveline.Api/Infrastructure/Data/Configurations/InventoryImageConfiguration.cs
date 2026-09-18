@@ -10,7 +10,7 @@ public class InventoryImageConfiguration : IEntityTypeConfiguration<InventoryIma
 {
     public void Configure(EntityTypeBuilder<InventoryImage> builder)
     {
-        builder.ToTable("inventory_images");
+        builder.ToTable("InventoryImages");
 
         builder.HasKey(x => x.Id);
 

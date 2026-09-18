@@ -9,7 +9,7 @@ public class CustomerInteractionConfiguration : IEntityTypeConfiguration<Custome
 {
     public void Configure(EntityTypeBuilder<CustomerInteraction> builder)
     {
-        builder.ToTable("Customer_Interactions");
+        builder.ToTable("CustomerInteractions");
 
         builder.HasKey(i => i.Id);
 

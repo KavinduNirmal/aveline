@@ -59,6 +59,9 @@ public class AiUsageRecordConfiguration : IEntityTypeConfiguration<AiUsageRecord
         builder.HasIndex(r => r.AgentWorkflowRunId)
             .IsUnique()
             .HasFilter("\"AgentWorkflowRunId\" IS NOT NULL");
+
+        builder.HasIndex(r => r.PricingRuleId)
+            .HasFilter("\"PricingRuleId\" IS NOT NULL");
     }
 }
 
@@ -123,5 +126,44 @@ public class UsageAccountConfiguration : IEntityTypeConfiguration<UsageAccount>
 
         builder.HasIndex(a => new { a.OrganizationId, a.IsClosed, a.PeriodStart })
             .IsDescending(false, false, true);
+    }
+}
+
+public class DailyBillingMetricConfiguration : IEntityTypeConfiguration<DailyBillingMetric>
+{
+    public void Configure(EntityTypeBuilder<DailyBillingMetric> builder)
+    {
+        builder.ToTable("DailyBillingMetrics");
+
+        builder.HasKey(m => m.Id);
+
+        builder.Property(m => m.PlanTier)
+            .IsRequired()
+            .HasConversion<string>()
+            .HasMaxLength(32);
+
+        builder.Property(m => m.Provider)
+            .IsRequired()
+            .HasMaxLength(64);
+
+        builder.Property(m => m.Model)
+            .IsRequired()
+            .HasMaxLength(128);
+
+        builder.Property(m => m.Day)
+            .IsRequired();
+
+        builder.Property(m => m.ActualCostUsd)
+            .HasPrecision(18, 8);
+
+        builder.Property(m => m.BlossomUnits)
+            .HasPrecision(18, 4);
+
+        builder.Property(m => m.CreatedAt)
+            .IsRequired();
+
+        builder.HasIndex(m => new { m.OrganizationId, m.Day, m.Provider, m.Model })
+            .IsUnique()
+            .HasDatabaseName("IX_DailyBillingMetrics_Org_Day_Provider_Model");
     }
 }

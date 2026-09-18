@@ -28,7 +28,7 @@ public sealed class ApiMetricRepository(AppDbContext db) : IApiMetricRepository
              @requestCount, @errorCount, @totalDurationMs, @maxDurationMs,
              @bucketCounts, @requestBytes, @responseBytes)
         ON CONFLICT ("OrganizationId", "ApiKeyId", "UserId", "RouteTemplate", "HttpMethod",
-                     "StatusCode", "WindowStart")
+                     "StatusCode", "WindowStart", "WindowSize")
         DO UPDATE SET
             "RequestCount" = "ApiRequestMetrics"."RequestCount" + EXCLUDED."RequestCount",
             "ErrorCount" = "ApiRequestMetrics"."ErrorCount" + EXCLUDED."ErrorCount",
@@ -118,7 +118,8 @@ public sealed class ApiMetricRepository(AppDbContext db) : IApiMetricRepository
                        && row.RouteTemplate == metric.RouteTemplate
                        && row.HttpMethod == metric.HttpMethod
                        && row.StatusCode == metric.StatusCode
-                       && row.WindowStart == metric.WindowStart,
+                       && row.WindowStart == metric.WindowStart
+                       && row.WindowSize == metric.WindowSize,
                 cancellationToken);
 
             if (existing is null)

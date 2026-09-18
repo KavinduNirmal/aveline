@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID, uuid4
 
@@ -13,7 +14,7 @@ from app.events.state_publisher import publish_agent_state
 from app.schemas.query import AgentQueryRequest, AgentQueryResponse
 from app.schemas.response import AgentResponse
 from app.schemas.state import AgentState
-from app.services.usage_reporter import report_usage
+from app.services.usage_reporter import report_agent_run, report_usage
 from app.workflows.concierge_workflow import build_concierge_graph, run_concierge
 
 logger = logging.getLogger("aveline.agent.api")
@@ -182,6 +183,58 @@ async def _report_usage_best_effort(
         logger.exception(
             "Failed to report usage for workflow %s (best-effort).", workflow_id,
             extra={"action": "report_usage", "workflow_id": workflow_id},
+        )
+
+    try:
+        now_iso = datetime.now(UTC).isoformat()
+        status_map = {
+            "success": "Succeeded",
+            "pending_approval": "PausedForApproval",
+            "out_of_scope": "Succeeded",
+            "error": "Failed",
+        }
+        run_status = status_map.get(str(response.status), "Succeeded")
+        duration = int(metadata.duration_ms or 0)
+        run_payload = {
+            "workflowId": workflow_id,
+            "organizationId": organization_id,
+            "requestId": request_id,
+            "triggerKind": "ApiRequest",
+            "status": run_status,
+            "agentsInvolved": ["customer_memory"] if "memory" in (metadata.model or "") else ["orchestrator"],
+            "startedAt": now_iso,
+            "completedAt": now_iso,
+            "durationMs": duration,
+            "toolCallCount": 0,
+            "retryCount": 0,
+            "inputTokens": int(metadata.input_tokens or 0),
+            "outputTokens": int(metadata.output_tokens or 0),
+            "cachedTokens": 0,
+            "actualCostUsd": 0.0,
+            "blossomUnits": float(metadata.blossoms_consumed or 0.0),
+            "steps": [
+                {
+                    "stepIndex": 0,
+                    "agentKey": "orchestrator",
+                    "nodeName": "concierge_pipeline",
+                    "stepKind": "NodeTransition",
+                    "status": "Succeeded" if run_status != "Failed" else "Failed",
+                    "attemptNumber": 1,
+                    "startedAt": now_iso,
+                    "completedAt": now_iso,
+                    "durationMs": duration,
+                    "provider": provider,
+                    "model": metadata.model,
+                    "inputTokens": int(metadata.input_tokens or 0),
+                    "outputTokens": int(metadata.output_tokens or 0),
+                }
+            ],
+        }
+        await report_agent_run(run_payload)
+    except Exception:  # noqa: BLE001 - agent run telemetry must never fail the agent query
+        logger.exception(
+            "Failed to report agent run telemetry for workflow %s (best-effort).", workflow_id,
+            extra={"action": "report_agent_run", "workflow_id": workflow_id},
         )
 
 

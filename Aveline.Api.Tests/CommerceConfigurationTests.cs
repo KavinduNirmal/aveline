@@ -45,7 +45,7 @@ public class CommerceConfigurationTests
     {
         var entityType = _context.Model.FindEntityType(typeof(OrderItem));
         Assert.NotNull(entityType);
-        Assert.Equal("Order_Items", entityType.GetTableName());
+        Assert.Equal("OrderItems", entityType.GetTableName());
 
         var unitPriceProp = entityType.FindProperty(nameof(OrderItem.UnitPrice));
         Assert.NotNull(unitPriceProp);
@@ -76,7 +76,7 @@ public class CommerceConfigurationTests
     {
         var entityType = _context.Model.FindEntityType(typeof(ApprovalQueueEntry));
         Assert.NotNull(entityType);
-        Assert.Equal("Approval_Queue", entityType.GetTableName());
+        Assert.Equal("ApprovalQueue", entityType.GetTableName());
 
         var statusProp = entityType.FindProperty(nameof(ApprovalQueueEntry.Status));
         Assert.NotNull(statusProp);
@@ -92,7 +92,7 @@ public class CommerceConfigurationTests
     {
         var entityType = _context.Model.FindEntityType(typeof(DeliveryPlan));
         Assert.NotNull(entityType);
-        Assert.Equal("Delivery_Plans", entityType.GetTableName());
+        Assert.Equal("DeliveryPlans", entityType.GetTableName());
 
         var costProp = entityType.FindProperty(nameof(DeliveryPlan.EstimatedCost));
         Assert.NotNull(costProp);
@@ -105,7 +105,7 @@ public class CommerceConfigurationTests
     {
         var entityType = _context.Model.FindEntityType(typeof(BusinessRule));
         Assert.NotNull(entityType);
-        Assert.Equal("Business_Rules", entityType.GetTableName());
+        Assert.Equal("BusinessRules", entityType.GetTableName());
 
         var nameProp = entityType.FindProperty(nameof(BusinessRule.RuleName));
         Assert.NotNull(nameProp);

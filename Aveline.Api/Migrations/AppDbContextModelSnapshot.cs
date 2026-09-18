@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using Aveline.Api.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -15,7 +14,6 @@ namespace Aveline.Api.Migrations
     [DbContext(typeof(AppDbContext))]
     partial class AppDbContextModelSnapshot : ModelSnapshot
     {
-        /// <inheritdoc />
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
@@ -366,6 +364,9 @@ namespace Aveline.Api.Migrations
                         .IsUnique()
                         .HasFilter("\"AgentWorkflowRunId\" IS NOT NULL");
 
+                    b.HasIndex("PricingRuleId")
+                        .HasFilter("\"PricingRuleId\" IS NOT NULL");
+
                     b.HasIndex("OrganizationId", "CreatedAt");
 
                     b.ToTable("AiUsageRecords", (string)null);
@@ -621,6 +622,65 @@ namespace Aveline.Api.Migrations
 
                             t.HasCheckConstraint("CK_BlossomPriceEntries_Range", "\"EffectiveTo\" IS NULL OR \"EffectiveTo\" > \"EffectiveFrom\"");
                         });
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Billing.Models.DailyBillingMetric", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("ActualCostUsd")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("numeric(18,8)");
+
+                    b.Property<decimal>("BlossomUnits")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<long>("CachedTokens")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("Day")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("InputTokens")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("OutputTokens")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("PlanTier")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("RequestCount")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "Day", "Provider", "Model")
+                        .IsUnique()
+                        .HasDatabaseName("IX_DailyBillingMetrics_Org_Day_Provider_Model");
+
+                    b.ToTable("DailyBillingMetrics", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Billing.Models.IdempotencyRecord", b =>
@@ -998,6 +1058,8 @@ namespace Aveline.Api.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ConversationId");
+
                     b.HasIndex("DecidedBy");
 
                     b.HasIndex("OrderId");
@@ -1006,7 +1068,9 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("Status");
 
-                    b.ToTable("Approval_Queue", (string)null);
+                    b.HasIndex("ThreadId");
+
+                    b.ToTable("ApprovalQueue", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Commerce.Models.BusinessRule", b =>
@@ -1055,7 +1119,7 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("RuleType");
 
-                    b.ToTable("Business_Rules", (string)null);
+                    b.ToTable("BusinessRules", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Commerce.Models.DeliveryPlan", b =>
@@ -1118,7 +1182,7 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("TrackingNumber");
 
-                    b.ToTable("Delivery_Plans", (string)null);
+                    b.ToTable("DeliveryPlans", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Commerce.Models.Order", b =>
@@ -1240,7 +1304,7 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("OrganizationId");
 
-                    b.ToTable("Order_Items", (string)null);
+                    b.ToTable("OrderItems", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Commerce.Models.Payment", b =>
@@ -1449,7 +1513,7 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("OrganizationId");
 
-                    b.ToTable("SignOff_Decisions", (string)null);
+                    b.ToTable("SignOffDecisions", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.Customer", b =>
@@ -1563,7 +1627,7 @@ namespace Aveline.Api.Migrations
                     b.HasIndex("OrganizationId", "CustomerId")
                         .IsUnique();
 
-                    b.ToTable("Customer_Consent", (string)null);
+                    b.ToTable("CustomerConsent", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.CustomerEvent", b =>
@@ -1614,7 +1678,7 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("OrganizationId");
 
-                    b.ToTable("Customer_Events", (string)null);
+                    b.ToTable("CustomerEvents", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.CustomerInteraction", b =>
@@ -1671,7 +1735,7 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("CustomerId", "CreatedAt");
 
-                    b.ToTable("Customer_Interactions", (string)null);
+                    b.ToTable("CustomerInteractions", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.CustomerMemory", b =>
@@ -1739,7 +1803,7 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("OrganizationId");
 
-                    b.ToTable("Customer_Memory", (string)null);
+                    b.ToTable("CustomerMemory", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.CustomerPreference", b =>
@@ -1796,7 +1860,7 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("CustomerId", "PreferenceKey");
 
-                    b.ToTable("Customer_Preferences", (string)null);
+                    b.ToTable("CustomerPreferences", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.CustomerTag", b =>
@@ -1828,7 +1892,7 @@ namespace Aveline.Api.Migrations
                     b.HasIndex("CustomerId", "Tag")
                         .IsUnique();
 
-                    b.ToTable("Customer_Tags", (string)null);
+                    b.ToTable("CustomerTags", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Integrations.Models.InboundMessageLog", b =>
@@ -1871,6 +1935,10 @@ namespace Aveline.Api.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("OrganizationId");
+
+                    b.HasIndex("OrganizationId", "ExternalId")
+                        .IsUnique()
+                        .HasFilter("\"ExternalId\" IS NOT NULL");
 
                     b.HasIndex("OrganizationId", "ReceivedAt");
 
@@ -2874,13 +2942,106 @@ namespace Aveline.Api.Migrations
                         .IsDescending(false, true)
                         .HasDatabaseName("IX_ApiRequestMetrics_Route_Window");
 
-                    b.HasIndex("OrganizationId", "ApiKeyId", "UserId", "RouteTemplate", "HttpMethod", "StatusCode", "WindowStart")
+                    b.HasIndex("OrganizationId", "ApiKeyId", "UserId", "RouteTemplate", "HttpMethod", "StatusCode", "WindowStart", "WindowSize")
                         .IsUnique()
                         .HasDatabaseName("IX_ApiRequestMetrics_Dimensions");
 
-                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("OrganizationId", "ApiKeyId", "UserId", "RouteTemplate", "HttpMethod", "StatusCode", "WindowStart"), false);
+                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("OrganizationId", "ApiKeyId", "UserId", "RouteTemplate", "HttpMethod", "StatusCode", "WindowStart", "WindowSize"), false);
 
                     b.ToTable("ApiRequestMetrics", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Statistics.Models.DailyAgentMetric", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("ActualCostUsd")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("numeric(18,8)");
+
+                    b.Property<string>("AgentKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<double?>("AvgDurationMs")
+                        .HasColumnType("double precision");
+
+                    b.Property<decimal>("BlossomUnits")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<long>("CachedTokens")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("CancelledCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("Day")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("FailedCount")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("InputTokens")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("MaxDurationMs")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("OutputTokens")
+                        .HasColumnType("bigint");
+
+                    b.Property<double?>("P50DurationMs")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("P95DurationMs")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("P99DurationMs")
+                        .HasColumnType("double precision");
+
+                    b.Property<int>("PausedCount")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("RetryCount")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("RunCount")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("StepCount")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("SucceededCount")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("TimedOutCount")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ToolCallCount")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("TotalDurationMs")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "AgentKey", "Day")
+                        .IsUnique()
+                        .HasDatabaseName("IX_DailyAgentMetrics_Org_Agent_Day");
+
+                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("OrganizationId", "AgentKey", "Day"), false);
+
+                    b.ToTable("DailyAgentMetrics", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Statistics.Models.SystemAlert", b =>
@@ -3168,7 +3329,7 @@ namespace Aveline.Api.Migrations
                     b.HasIndex("OrgId")
                         .HasDatabaseName("idx_matches_org");
 
-                    b.ToTable("customer_matches", (string)null);
+                    b.ToTable("CustomerMatches", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.VisualIntelligence.Models.InventoryImage", b =>
@@ -3228,7 +3389,7 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("OrgId", "ItemId");
 
-                    b.ToTable("inventory_images", (string)null);
+                    b.ToTable("InventoryImages", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.VisualIntelligence.Models.InventoryItem", b =>
@@ -3328,7 +3489,7 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("OrgId", "Status", "DeletedAt", "Category", "Color");
 
-                    b.ToTable("inventory_items", (string)null);
+                    b.ToTable("InventoryItems", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.VisualIntelligence.Models.OutfitComposition", b =>
@@ -3369,7 +3530,7 @@ namespace Aveline.Api.Migrations
                     b.HasIndex("OrgId")
                         .HasDatabaseName("idx_outfits_org");
 
-                    b.ToTable("outfit_compositions", (string)null);
+                    b.ToTable("OutfitCompositions", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.VisualIntelligence.Models.OutfitItem", b =>
@@ -3401,7 +3562,7 @@ namespace Aveline.Api.Migrations
                     b.HasIndex("OutfitId")
                         .HasDatabaseName("idx_outfit_items_outfit");
 
-                    b.ToTable("outfit_items", (string)null);
+                    b.ToTable("OutfitItems", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.VisualIntelligence.Models.SourcingRequest", b =>
@@ -3476,7 +3637,7 @@ namespace Aveline.Api.Migrations
                     b.HasIndex("Status")
                         .HasDatabaseName("idx_sourcing_status");
 
-                    b.ToTable("sourcing_requests", (string)null);
+                    b.ToTable("SourcingRequests", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.VisualIntelligence.Models.Supplier", b =>
@@ -3528,7 +3689,7 @@ namespace Aveline.Api.Migrations
                     b.HasIndex("OrgId")
                         .HasDatabaseName("idx_suppliers_org");
 
-                    b.ToTable("suppliers", (string)null);
+                    b.ToTable("Suppliers", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.ApiAccess.Models.ApiKey", b =>

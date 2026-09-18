@@ -77,7 +77,7 @@ services:
       Eventing__SubscribeEventTypes__2: ${EVENTING_SUBSCRIBE_EVENT_TYPES_2:-conversation.created}
       Eventing__SubscribeEventTypes__3: ${EVENTING_SUBSCRIBE_EVENT_TYPES_3:-agent.status}
       AgentService__BaseUrl: http://agent:8000
-      AgentService__InternalToken: ${INTERNAL_API_TOKEN:-change-me-internal-token}
+      AgentService__InternalToken: ${INTERNAL_API_TOKEN:-aveline-local-development-secret-token-2026}
       # Salt for the hashed client IP and user-agent telemetry dimensions. Required in
       # Production: the API refuses to boot without it (M-1). The local default keeps the
       # development profile salted too; set a high-entropy secret when deploying.
@@ -135,7 +135,7 @@ services:
     environment:
       DATABASE_URL: >-
         postgresql+asyncpg://${POSTGRES_USER:-aveline}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aveline}
-      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-change-me-internal-token}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-aveline-local-development-secret-token-2026}
       # ASP.NET Core internal endpoints the agent calls (ADR-009). The API service listens on
       # 8080 inside the compose network (ASPNETCORE_URLS=http://+:8080) — NOT localhost.
       # Base URL of the ASP.NET Core API so agent tool calls hit the internal endpoints

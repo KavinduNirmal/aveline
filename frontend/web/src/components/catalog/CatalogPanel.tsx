@@ -9,8 +9,12 @@ import {
   AlertTriangle,
   RefreshCw,
   TrendingUp,
+  Trash2,
+  X,
+  Loader2,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { Card } from '@/components/ui/card'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -31,6 +35,7 @@ import {
   fetchSuppliers,
   createCatalogItem,
   updateCatalogItem,
+  deleteCatalogItem,
   updateSourcingRequestStatus,
   createSourcingRequest,
 } from '@/lib/catalog-api'
@@ -42,6 +47,7 @@ import { SuppliersTab } from './SuppliersTab'
 import { AddProductModal } from './AddProductModal'
 import { CustomerMatchesDrawer } from './CustomerMatchesDrawer'
 import { ComposeOutfitModal } from './ComposeOutfitModal'
+import { ItemQrModal } from './ItemQrModal'
 
 export type CatalogSubTab = 'inventory' | 'lookbooks' | 'sourcing' | 'suppliers'
 
@@ -72,6 +78,9 @@ export function CatalogPanel({
   const [selectedMatchItem, setSelectedMatchItem] = useState<InventoryItemMock | null>(null)
   const [composeHeroItem, setComposeHeroItem] = useState<InventoryItemMock | null>(null)
   const [composeModalOpen, setComposeModalOpen] = useState(false)
+  const [selectedQrItem, setSelectedQrItem] = useState<InventoryItemMock | null>(null)
+  const [itemToDelete, setItemToDelete] = useState<InventoryItemMock | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   const orgId = organization?.id
 
@@ -126,6 +135,32 @@ export function CatalogPanel({
   ).length
 
   // Handlers
+  const handleConfirmDelete = async () => {
+    if (!itemToDelete) return
+    setIsDeleting(true)
+    const effectiveOrgId = orgId || '00000000-0000-0000-0000-000000000001'
+
+    try {
+      if (itemToDelete.id) {
+        await deleteCatalogItem(effectiveOrgId, itemToDelete.id)
+      }
+      setInventory((prev) => prev.filter((i) => i.id !== itemToDelete.id))
+      toast.success('Piece deleted from catalog', {
+        description: `${itemToDelete.sku} · ${itemToDelete.name}`,
+      })
+      const deletedId = itemToDelete.id
+      setItemToDelete(null)
+      if (editingItem?.id === deletedId) {
+        setAddModalOpen(false)
+        setEditingItem(null)
+      }
+    } catch {
+      toast.error('Failed to delete catalog piece')
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
   const handleSaveProduct = async (item: InventoryItemMock) => {
     const effectiveOrgId = orgId || '00000000-0000-0000-0000-000000000001'
     let savedItem = item
@@ -431,6 +466,8 @@ export function CatalogPanel({
             onViewMatches={handleViewMatches}
             onComposeOutfit={handleComposeOutfit}
             onEditItem={handleEditProduct}
+            onViewQr={(item) => setSelectedQrItem(item)}
+            onDeleteItem={(item) => setItemToDelete(item)}
           />
         )}
 
@@ -465,6 +502,7 @@ export function CatalogPanel({
           setEditingItem(null)
         }}
         onSave={handleSaveProduct}
+        onDelete={(item) => setItemToDelete(item)}
         editingItem={editingItem}
       />
 
@@ -494,6 +532,105 @@ export function CatalogPanel({
         }}
         onSaveOutfit={handleSaveOutfit}
       />
+
+      {/* Item QR Floor Tag Modal */}
+      <ItemQrModal
+        item={selectedQrItem}
+        open={selectedQrItem !== null}
+        organizationId={orgId}
+        onClose={() => setSelectedQrItem(null)}
+      />
+
+      {/* Delete Confirmation Modal */}
+      {itemToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <Card className="w-full max-w-md overflow-hidden border-border bg-card shadow-2xl">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-destructive/10 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="flex size-8 items-center justify-center rounded-lg bg-destructive/20 text-destructive border border-destructive/30">
+                  <Trash2 className="size-4" />
+                </div>
+                <div>
+                  <h3 className="font-serif text-base font-semibold text-foreground">
+                    Delete Catalog Piece
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    This action cannot be undone
+                  </p>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={isDeleting}
+                onClick={() => setItemToDelete(null)}
+                className="size-8 p-0 rounded-full hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer"
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="flex items-center gap-3.5 p-3 rounded-xl border border-border/80 bg-muted/20">
+                {itemToDelete.imageUrl && (
+                  <img
+                    src={itemToDelete.imageUrl}
+                    alt={itemToDelete.name}
+                    className="size-16 rounded-lg object-cover border border-border shrink-0 shadow-2xs"
+                  />
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold text-foreground truncate">
+                    {itemToDelete.name}
+                  </p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-[11px] font-mono text-muted-foreground bg-muted/60 px-1.5 py-0.5 rounded">
+                      {itemToDelete.sku}
+                    </span>
+                    <span className="text-xs font-semibold text-foreground">
+                      ${itemToDelete.price.toLocaleString()}
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-muted-foreground mt-0.5 block">
+                    {itemToDelete.category} · Stock: {itemToDelete.stockQuantity}
+                  </span>
+                </div>
+              </div>
+
+              <div className="rounded-lg bg-destructive/10 border border-destructive/20 p-3 text-xs text-destructive flex items-start gap-2">
+                <AlertTriangle className="size-4 shrink-0 mt-0.5" />
+                <p>
+                  Are you sure you want to delete this piece? It will be removed from active inventory, lookbook selections, and floor scans.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 px-6 py-3.5 border-t border-border bg-card shrink-0">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={isDeleting}
+                onClick={() => setItemToDelete(null)}
+                className="cursor-pointer"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                disabled={isDeleting}
+                onClick={handleConfirmDelete}
+                className="gap-1.5 cursor-pointer"
+              >
+                {isDeleting ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+                <span>{isDeleting ? 'Deleting...' : 'Delete Piece'}</span>
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
     </div>
   )
 }

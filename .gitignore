@@ -274,6 +274,9 @@ Agents.md
 # Backend cache
 backend/.cache
 
+# Stray nested clone of this repository (was accidentally committed as a gitlink)
+/aveline/
+
 opencode.json
 # Final academic documentation (presented at evaluation, kept untracked)
 docs/final_document/

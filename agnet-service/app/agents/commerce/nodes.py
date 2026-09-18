@@ -139,7 +139,6 @@ class CommerceAgent:
 
     async def pause_for_approval(self, state: CommerceAgentState) -> dict[str, Any]:
         """Human-in-the-Loop interrupt node when order exceeds business rules thresholds."""
-        order_id = state.get("order_id")
         reason = state.get("approval_reason") or "Order requires manager sign-off"
         approval_type = state.get("approval_type") or "high_value_order"
         total = state.get("total", 0.0)

@@ -1,10 +1,7 @@
 """Payment link generation and validation tools (Slice 3)."""
 
 import logging
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from app.tools.registry import ToolRegistry
+from typing import Any
 
 logger = logging.getLogger("aveline.agent.tools.commerce.payment")
 

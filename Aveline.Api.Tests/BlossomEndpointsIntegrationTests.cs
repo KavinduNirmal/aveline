@@ -152,12 +152,94 @@ public class BlossomEndpointsIntegrationTests : IAsyncLifetime
         await context.SaveChangesAsync();
     }
 
+    /// <summary>
+    /// Seeds a boutique whose only member holds <paramref name="boutiqueRole"/>, so a
+    /// role's own-org read can be exercised without an owner in the picture.
+    /// </summary>
+    private static async Task<(Guid OrgId, string ClerkId)> SeedMemberAsync(
+        string suffix, string boutiqueRole)
+    {
+        await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .Options);
+
+        var member = new User
+        {
+            Id = Guid.CreateVersion7(),
+            ClerkId = $"blossom_member_{suffix}",
+            Email = $"blossom_member_{suffix}@aveline.lk",
+            FirstName = "Blossom",
+            LastName = "Member",
+            Username = $"blossom_member_{suffix}",
+            UserRole = Roles.Staff,
+            OrganizationRole = string.Empty,
+            HasCompletedOnboarding = true,
+            AccountState = AccountState.Active,
+        };
+        context.Users.Add(member);
+        await context.SaveChangesAsync();
+
+        var org = new Organization
+        {
+            Name = $"Blossom Member Org {suffix}",
+            Slug = $"blossom-member-{suffix}",
+            OwnerUserId = member.Id,
+        };
+        context.Organizations.Add(org);
+
+        context.OrganizationMemberships.Add(new OrganizationMembership
+        {
+            OrganizationId = org.Id,
+            UserId = member.Id,
+            BoutiqueRole = boutiqueRole,
+            Status = MembershipStatus.Active,
+        });
+        await context.SaveChangesAsync();
+
+        return (org.Id, member.ClerkId);
+    }
+
     [Fact]
     public async Task GetBalance_WithoutToken_Returns401()
     {
         var response = await _client.GetAsync($"/api/v1/orgs/{Guid.CreateVersion7()}/blossoms/balance");
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(Roles.BoutiqueStaff)]
+    [InlineData(Roles.BoutiqueManager)]
+    [InlineData(Roles.BoutiqueSupervisor)]
+    [InlineData(Roles.BoutiqueOwner)]
+    public async Task GetBalance_AsOrgMember_ReturnsOk(string boutiqueRole)
+    {
+        // Decision D1 (b): every org role holds the self-service read, so an
+        // associate at the counter can see the shop's position. This was 403 for
+        // `boutique_staff` before the permission existed.
+        var suffix = "self_" + boutiqueRole.Replace(":", "_");
+        var (orgId, clerkId) = await SeedMemberAsync(suffix, boutiqueRole);
+        var token = CreateToken(clerkId, orgRole: boutiqueRole);
+
+        var response = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{orgId}/blossoms/balance", token));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetBalance_AsOrgMemberOfAnotherOrg_ReturnsForbidden()
+    {
+        // The decisive proof that the balance route is org-scoped rather than
+        // authorized by the JWT's role claim.
+        var (_, staffClerk) = await SeedMemberAsync("wrongorg_a", Roles.BoutiqueStaff);
+        var (otherOrgId, _) = await SeedMemberAsync("wrongorg_b", Roles.BoutiqueOwner);
+        var token = CreateToken(staffClerk, orgRole: Roles.BoutiqueStaff);
+
+        var response = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{otherOrgId}/blossoms/balance", token));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
     [Fact]

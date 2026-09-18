@@ -45,6 +45,8 @@ import 'features/customers/data/customer_repository.dart';
 import 'features/customers/data/demo_customer_repository.dart';
 import 'features/customers/presentation/screens/customer_screen.dart';
 import 'features/customers/presentation/screens/customers_screen.dart';
+import 'features/home/data/api_home_repository.dart';
+import 'features/home/presentation/home_controller.dart';
 import 'features/home/presentation/screens/main_shell.dart';
 import 'features/notifications/data/demo_notification_repository.dart';
 import 'features/notifications/presentation/notifications_controller.dart';
@@ -289,6 +291,11 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
   late final OwnerOnboardingProvider _ownerOnboardingProvider;
   late final NotificationProvider _notificationProvider;
   late final NotificationsController _notificationsController;
+
+  /// One source for the Home tab's three data blocks (the focus deck, the client
+  /// row and the Blossom meter), provided beside the other long-lived
+  /// controllers so the screen and the shell's pull-to-refresh read one state.
+  late final HomeController _homeController;
   late final PushNotificationService _pushNotificationService;
   late final RealtimeNotificationService _realtimeNotificationService;
 
@@ -324,6 +331,13 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
     _conversationRepository = DemoConversationRepository();
     _ownerOnboardingProvider = OwnerOnboardingProvider(OwnerOnboardingApi(_dio));
     _notificationProvider = NotificationProvider();
+    // Home reads the API through one repository: the derived focus feed, the
+    // client highlights and the Blossom balance. The organization id is read at
+    // call time because it arrives with `/orgs/my`, after this controller is
+    // built; until then the screen stays in its loading state.
+    _homeController = HomeController(
+      ApiHomeRepository(_dio, organizationId: () => _boutiqueProvider.organizationId),
+    );
     _notificationsController = NotificationsController(
       // The demo inbox stands in until the notification endpoints are live, the
       // same way the client book and the catalog do. Swapping in
@@ -687,6 +701,7 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
         ChangeNotifierProvider<NotificationsController>.value(
           value: _notificationsController,
         ),
+        ChangeNotifierProvider<HomeController>.value(value: _homeController),
         Provider<Dio>.value(value: _dio),
       ],
       child: MaterialApp.router(

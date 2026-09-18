@@ -38,6 +38,14 @@ public static class AuthorizationConfiguration
     public const string BoutiqueConversationAccessPolicy = "BoutiqueConversationAccess";
 
     /// <summary>
+    /// Org-scoped policy for the tenant-facing customer surface (the client book,
+    /// a client's profile and Home's client highlights): requires an active
+    /// membership in the target organization whose role grants
+    /// <c>customers:view</c>.
+    /// </summary>
+    public const string BoutiqueCustomerAccessPolicy = "BoutiqueCustomerAccess";
+
+    /// <summary>
     /// Policy for internal service-to-service calls using X-Internal-Token header (ADR-009).
     /// </summary>
     public const string InternalServicePolicy = "InternalServicePolicy";
@@ -47,6 +55,14 @@ public static class AuthorizationConfiguration
     /// membership granting <c>billing:view</c>.
     /// </summary>
     public const string BillingViewPolicy = "BillingView";
+
+    /// <summary>
+    /// Org-scoped policy for the self-service Blossom balance read: requires an active
+    /// membership granting <c>billing:view:self</c>, which every org role holds. It is
+    /// deliberately separate from <see cref="BillingViewPolicy"/> so that the management
+    /// read keeps meaning what it means.
+    /// </summary>
+    public const string BoutiqueBillingSelfViewPolicy = "BoutiqueBillingSelfView";
 
     /// <summary>
     /// Org-scoped policy for plan changes and top-up purchases: requires an active
@@ -153,10 +169,22 @@ public static class AuthorizationConfiguration
                 p.AddRequirements(new OrganizationScopeRequirement(Permissions.ConversationsView));
             });
 
+            options.AddPolicy(BoutiqueCustomerAccessPolicy, p =>
+            {
+                AllowBearerOrApiKey(p);
+                p.AddRequirements(new OrganizationScopeRequirement(Permissions.CustomersView));
+            });
+
             options.AddPolicy(BillingViewPolicy, p =>
             {
                 AllowBearerOrApiKey(p);
                 p.AddRequirements(new OrganizationScopeRequirement(Permissions.BillingView));
+            });
+
+            options.AddPolicy(BoutiqueBillingSelfViewPolicy, p =>
+            {
+                AllowBearerOrApiKey(p);
+                p.AddRequirements(new OrganizationScopeRequirement(Permissions.BillingViewSelf));
             });
 
             options.AddPolicy(BillingManagePolicy, p =>

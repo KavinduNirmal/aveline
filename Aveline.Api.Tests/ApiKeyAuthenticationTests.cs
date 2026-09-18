@@ -228,12 +228,26 @@ public class ApiKeyAuthenticationTests : IAsyncLifetime
     public async Task KeyWithTheRequiredScope_IsAuthorized()
     {
         var org = await SeedOrganizationAsync("scope-ok");
-        var (_, plaintext) = await SeedKeyAsync(org.Id, "scope-ok", Permissions.BillingView);
+        // The balance route is gated by the self-service read since decision D1(b),
+        // so a key must carry `billing:view:self` to reach it.
+        var (_, plaintext) = await SeedKeyAsync(org.Id, "scope-ok", Permissions.BillingViewSelf);
 
         var response = await _client.SendAsync(
             ApiKeyRequest(HttpMethod.Get, $"/api/v1/orgs/{org.Id}/blossoms/balance", plaintext));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ManagementBillingScope_DoesNotReachTheSelfServiceBalance()
+    {
+        var org = await SeedOrganizationAsync("scope-view");
+        var (_, plaintext) = await SeedKeyAsync(org.Id, "scope-view", Permissions.BillingView);
+
+        var response = await _client.SendAsync(
+            ApiKeyRequest(HttpMethod.Get, $"/api/v1/orgs/{org.Id}/blossoms/balance", plaintext));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
     [Fact]

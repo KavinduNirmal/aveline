@@ -151,4 +151,28 @@ public class PermissionsCatalogTests
         Assert.True(Permissions.IsGranted(Roles.BoutiqueOwner, Permissions.SettingsManage));
         Assert.True(Permissions.IsGranted(Roles.BoutiqueOwner, Permissions.PaymentsRefund));
     }
+
+    [Theory]
+    [InlineData(Roles.BoutiqueStaff)]
+    [InlineData(Roles.BoutiqueManager)]
+    [InlineData(Roles.BoutiqueSupervisor)]
+    [InlineData(Roles.BoutiqueOwner)]
+    public void BillingViewSelf_IsGrantedToEveryOrgRole(string role)
+    {
+        // Decision D1 (b): an associate may see how many Blossoms the shop has
+        // left, through a distinct self-service read rather than the management
+        // read.
+        Assert.True(Permissions.IsGranted(role, Permissions.BillingViewSelf));
+    }
+
+    [Fact]
+    public void BillingViewSelf_DoesNotWidenTheManagementRead()
+    {
+        // The new permission must not be mistaken for a widening of
+        // `billing:view`, which reaches usage statements and burn-rate.
+        Assert.False(Permissions.IsGranted(Roles.BoutiqueStaff, Permissions.BillingView));
+        Assert.False(Permissions.IsGranted(Roles.BoutiqueSupervisor, Permissions.BillingView));
+        Assert.True(Permissions.IsGranted(Roles.BoutiqueManager, Permissions.BillingView));
+        Assert.True(Permissions.IsGranted(Roles.BoutiqueOwner, Permissions.BillingView));
+    }
 }

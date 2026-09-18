@@ -38,6 +38,8 @@ public static class CustomerConciergeModule
         services.AddScoped<ICustomerConsentService, CustomerConsentService>();
         services.AddScoped<ICustomerEventService, CustomerEventService>();
         services.AddScoped<ICustomerLoyaltyService, CustomerLoyaltyService>();
+        services.AddScoped<ICustomerTenantService, CustomerTenantService>();
+        services.AddScoped<ICustomerVisitService, CustomerVisitService>();
         services.AddScoped<IEventReminderService, EventReminderService>();
         services.AddHostedService<EventReminderWorker>();
 

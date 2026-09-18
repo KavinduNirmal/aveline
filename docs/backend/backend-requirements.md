@@ -374,11 +374,16 @@ alternative.
 | Permission | Grant to | Purpose |
 | --- | --- | --- |
 | `billing:view` | `admin`, `owner`, `moderator`, `org:boutique_owner`, `org:boutique_manager` | Read balance, statement, and usage |
+| `billing:view:self` | `org:boutique_staff`, `org:boutique_manager`, `org:boutique_supervisor`, `org:boutique_owner` | Read the shop's Blossom balance only (the self-service read). Deliberately separate from `billing:view` so the associate who needs to know what the shop has left does not become a reader of statements and burn-rate. |
 | `billing:manage` | `admin`, `owner`, `org:boutique_owner` | Change own plan, purchase top-ups |
 | `billing:adjust` | `admin`, `owner` | Credit, debit, revoke, close a period, override entitlements |
 
-`org:boutique_supervisor` and below hold `billing:view` **not at all** — Blossom
-balance is commercially sensitive and there is no operational need.
+`org:boutique_supervisor` and below hold `billing:view` **not at all** — the
+management read (statement, burn-rate) is commercially sensitive and there is no
+operational need. The **balance** is different: an associate needs to know how
+many Blossoms the shop has left before asking the assistant for something
+expensive, so the balance route is gated by `billing:view:self` on a named
+org-scoped policy (`BoutiqueBillingSelfView`), not by `billing:view`.
 
 ### 4.7 Events, jobs, and webhooks
 
@@ -459,6 +464,35 @@ These are grouped because they share entities, permissions, and endpoints.
 | `GET`/`PUT`/`POST`/`DELETE` | `/api/v1/orgs/{organizationId:guid}/integrations...` | `BoutiqueMembershipManage` | `Endpoints/IntegrationEndpoints.cs:24-105` |
 | `GET`/`POST` | `/api/v1/onboarding/{status,owner,plan,customize,complete}` | authenticated | `Endpoints/OnboardingEndpoints.cs:16-124` |
 | `GET`/`POST`/`DELETE` | `/api/v1/users/me/devices...` | authenticated | `Endpoints/DeviceTokenEndpoints.cs:18-55` |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/stats/home` | `BoutiqueAccess` (`catalog:view` on an active membership) | `Modules/Home/Endpoints/HomeEndpoints.cs` |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/focus/dismissals` | `BoutiqueAccess` + required `Idempotency-Key` | `Modules/Home/Endpoints/HomeEndpoints.cs` |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/customers` | `BoutiqueCustomerAccess` (`customers:view` on an active membership) | `Endpoints/CustomerTenantEndpoints.cs` |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/customers/highlights` | `BoutiqueCustomerAccess` | `Endpoints/CustomerTenantEndpoints.cs` |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/customers` | `BoutiqueCustomerAccess` + required `Idempotency-Key` | `Endpoints/CustomerTenantEndpoints.cs` |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/interactions` | `BoutiqueCustomerAccess` + required `Idempotency-Key` | `Endpoints/CustomerTenantEndpoints.cs` |
+
+### 5.1b Functional requirements — Home focus surface
+
+| ID | Requirement |
+| --- | --- |
+| FR-8.1 | The focus feed is **derived on every read** from facts that already exist: `wardrobe` from inventory at or below the reorder line (`Home:LowStockThreshold`, default 5), `patron` from active customer events inside `Home:PatronWindowDays` (default 7), and `commerce` from `AgentWorkflowRuns` paused for approval — the last only when the caller's role holds `stats:view:agent`. |
+| FR-8.2 | `logistics` has no writer in the product. The feed reports `dataQuality.logisticsAvailable = false` rather than counting the domain as zero, so an absent column is explained rather than measured. |
+| FR-8.3 | The day boundary comes from `Organization.TimeZone` (IANA), never from the device. The window actually used is echoed as `window.localDate` / `window.timeZone`. |
+| FR-8.4 | A sign-off persists a **dismissal**, not a task state: `(OrganizationId, UserId, Domain, SourceKey)` with the decision and a server-computed content hash. The feed suppresses a docket only while the source key matches and the content hash is unchanged, so a changed fact reappears. |
+| FR-8.5 | A dismissal must name a docket present in the caller's own feed. A docket from another organization returns `404`, indistinguishable from one that does not exist, and an outsider gets `403` from the org-scope requirement before the lookup. |
+| FR-8.6 | A dismissal is idempotent by nature (dismissing twice is the same end state) and requires `Idempotency-Key`; a replay with the same body returns the stored response, and an unreachable lease store is `503`, never a silent apply. |
+
+### 5.1c Functional requirements — tenant customer surface
+
+| ID | Requirement |
+| --- | --- |
+| FR-8.7 | `GET /orgs/{organizationId}/customers` returns the whole narrowing in one call (the alphabet index must reach every letter), under `BoutiqueCustomerAccess`. The route is **not** in `/internal/customers`: that group accepts only the internal-token scheme and is for the agent service. |
+| FR-8.8 | `GET /orgs/{organizationId}/customers/highlights` returns the clients with something happening, with `activity` generated from a real `Customer_Interactions` row. There is **no** `hasNewActivity` flag: no read marker exists, and a dot that can never clear must not ship. |
+| FR-8.9 | `Customer.Level` is a nullable grade (`vip | level3 | level2 | level1`) with no default and no backfill; consumers omit the badge when it is null. |
+| FR-8.10 | `POST /orgs/{organizationId}/customers` creates a counter walk-in from a name alone (phone optional), de-duplicating on the normalised name within the organization. A duplicate answers `200` with `duplicateOfCustomerId` rather than creating a second client, and requires `Idempotency-Key`. |
+| FR-8.11 | `POST /orgs/{organizationId}/customers/{customerId}/interactions` records the interaction and, for an **inbound in-person** one, moves `VisitCount`, `LastVisitAt` and (when a purchase is given) `TotalSpent`, then recomputes `Status` through `CustomerLoyaltyService.RecommendStatus`. A message on another channel is recorded but does not count as a visit. |
+| FR-8.12 | The counter increment is a single atomic statement on a relational provider (`ExecuteUpdateAsync`), so two concurrent visits at the counter cannot lose one. `CustomerRepository.SaveAsync`'s read-modify-write must not be used for it. |
+| FR-8.13 | A visit is **not billable**: `blossomsCharged` is always `0`, and the response states it so the client cannot invent a charge. Consumption is an `AiUsageRecord` written after an agent workflow, and no rule debits a Blossom for a visit. |
 
 ### 5.2 Functional requirements — user management
 

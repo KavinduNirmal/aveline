@@ -1441,8 +1441,13 @@ paths:
       tags: [Billing]
       summary: Read the authoritative Blossom balance
       description: |
-        Phase 2. Requires `billing:view`. Do not cache this value client-side; it is
-        the most correctness-sensitive read in the product.
+        Phase 2. Requires the self-service balance read `billing:view:self`, held by
+        every organization role (`boutique_staff`, `boutique_manager`,
+        `boutique_supervisor`, `boutique_owner`), on an active membership for the
+        organization in the route. It is deliberately **not** `billing:view`: that is
+        the management read, which reaches usage statements and burn-rate and is held
+        only by managers and owners. Do not cache this value client-side; it is the
+        most correctness-sensitive read in the product.
       operationId: getBlossomBalance
       responses:
         "200":
@@ -1523,6 +1528,233 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/customers:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Customers]
+      summary: Read the boutique's client book
+      description: |
+        Requires an active membership for the organization in the route that
+        grants `customers:view` (`BoutiqueCustomerAccess`). One call returns the
+        whole narrowing, because the alphabet index has to reach every letter it
+        offers. `level` is the boutique's own grade and is **nullable**: the server
+        stores no grade until the shop sets one, and a default would invent a grade
+        for every client.
+      operationId: getCustomerBook
+      parameters:
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: level
+          in: query
+          schema: { type: string, enum: [vip, level3, level2, level1] }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+      responses:
+        "200":
+          description: The book
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerBookResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Customers]
+      summary: Create a counter walk-in
+      description: |
+        A name is enough to start a profile. The walk-in de-duplicates on the name
+        (the counter may not have a phone number), and a duplicate is reported with
+        `duplicateOfCustomerId` and `200` rather than creating a second client.
+        Requires `Idempotency-Key`.
+      operationId: createWalkInCustomer
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateWalkInCustomerRequest" }
+      responses:
+        "201":
+          description: The client was created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerCreated" }
+        "200":
+          description: The client already existed; `duplicateOfCustomerId` names them
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerCreated" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: The idempotency lease store is unreachable; the request was refused, not applied.
+
+  /api/v1/orgs/{organizationId}/customers/{customerId}/interactions:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: customerId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Customers]
+      summary: Record a counter interaction (and a visit)
+      description: |
+        The write path behind Home's `Log a visit`. An interaction is recorded on
+        every call; the customer's counters move only for an **inbound in-person**
+        interaction, because a WhatsApp reply is not someone at the counter. A
+        visit is **not billable**: consumption is an `AiUsageRecord` written after a
+        completed agent workflow, so `blossomsCharged` is always `0`. The counter
+        increment is a single atomic statement on a relational provider, so two
+        concurrent visits cannot lose one. Requires `Idempotency-Key`.
+      operationId: recordCustomerInteraction
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RecordCustomerInteractionRequest" }
+      responses:
+        "201":
+          description: The interaction was recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VisitReceipt" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: The idempotency lease store is unreachable; the request was refused, not applied.
+
+  /api/v1/orgs/{organizationId}/customers/highlights:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Customers]
+      summary: Read the clients with something happening right now
+      description: |
+        Home's `Direct client link` row, the `See all` sheet and the status ticker.
+        The `activity` sentence is generated server-side from a real
+        `Customer_Interactions` row, not authored prose. There is deliberately **no**
+        read/unread flag: the schema has no per-user marker, and a dot that can
+        never clear is worse than no dot.
+      operationId: getCustomerHighlights
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+        - name: activitySince
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: The highlights
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerHighlightsResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/stats/home:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Home]
+      summary: Read the derived focus deck for the organization's local day
+      description: |
+        Home's focus deck. Requires an active membership for the organization in
+        the route that grants `catalog:view` (`BoutiqueAccess`), so every staff
+        role can read the floor's work. The feed is **derived**, not stored:
+        `wardrobe` comes from inventory at or below the reorder line, `patron` from
+        upcoming customer events, and `commerce` from agent runs paused for a human
+        decision — the last only when the caller's role holds `stats:view:agent`,
+        which `dataQuality.commerceAvailable` reports. `logistics` has no writer in
+        the product yet and is reported unavailable rather than counted as zero.
+        The day comes from `Organization.TimeZone`, never from the device, and the
+        window actually used is echoed back. Do not assume the caller's order is
+        preserved: the deck is free to reorder locally.
+      operationId: getHomeFeed
+      responses:
+        "200":
+          description: The focus feed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HomeFeed" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/focus/dismissals:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    post:
+      tags: [Home]
+      summary: Record a human decision about one derived focus docket
+      description: |
+        The only persisted part of the focus deck. A dismissal is keyed by the
+        docket's `sourceKey` (the underlying fact, not the docket id) and is bound
+        to a server-computed hash of the docket's content, so a dismissal of
+        "reorder the raw silk" does not silently suppress a later, different
+        low-stock docket for the same item. Idempotent by nature: dismissing the
+        same fact twice is the same end state, so a repeat is a replay rather than
+        a conflict. The docket must be present in the caller's own feed; a docket
+        from another organization is therefore indistinguishable from one that does
+        not exist. Requires `Idempotency-Key`.
+      operationId: dismissFocusTask
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DismissFocusTaskRequest" }
+      responses:
+        "200":
+          description: The decision and the caller's refreshed counts
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FocusDismissalResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: The idempotency lease store is unreachable; the request was refused, not applied.
 
   /api/v1/orgs/{organizationId}/blossoms/top-ups:
     parameters:
@@ -5194,3 +5426,187 @@ components:
             items:
               type: array
               items: { $ref: "#/components/schemas/AuditLogEntry" }
+
+    HomeFeedCaps:
+      type: object
+      properties:
+        canComplete: { type: boolean }
+        canAssign: { type: boolean }
+
+    HomeFeedItem:
+      type: object
+      required: [id, sourceKey, domain, title, detail, actionLabel, doneMessage, contentHash, caps]
+      properties:
+        id:
+          type: string
+          description: Stable, opaque docket id. Addresses the docket, not the fact behind it.
+        sourceKey:
+          type: string
+          description: Stable identifier of the underlying fact (inventory item, customer event, agent run). This is what a dismissal is keyed to.
+        domain:
+          type: string
+          enum: [patron, logistics, wardrobe, commerce]
+        title: { type: string, maxLength: 120 }
+        detail: { type: string, maxLength: 300 }
+        dueAtUtc:
+          type: string
+          format: date-time
+          nullable: true
+          description: The source of truth for "next". The client formats the clock from this.
+        timeLabel:
+          type: string
+          nullable: true
+          description: Optional pre-formatted fallback. Prefer formatting from dueAtUtc.
+        actionLabel: { type: string, maxLength: 24 }
+        doneMessage: { type: string, maxLength: 160 }
+        contentHash:
+          type: string
+          description: Server hash of the docket's content. Echo only; the server recomputes it on dismissal.
+        caps: { $ref: "#/components/schemas/HomeFeedCaps" }
+
+    HomeFeedWindow:
+      type: object
+      properties:
+        localDate: { type: string, format: date }
+        timeZone: { type: string, description: The IANA zone the day was derived in. }
+
+    HomeFeedDataQuality:
+      type: object
+      properties:
+        wardrobeAvailable: { type: boolean }
+        patronAvailable: { type: boolean }
+        commerceAvailable: { type: boolean, description: False when the caller's role lacks stats:view:agent or no run is paused. }
+        logisticsAvailable: { type: boolean, description: False until a delivery/intake writer exists. }
+
+    HomeFeedCounts:
+      type: object
+      properties:
+        total: { type: integer }
+        overdue: { type: integer }
+        byDomain:
+          type: object
+          additionalProperties: { type: integer }
+
+    HomeFeed:
+      type: object
+      required: [generatedAt, window, dataQuality, items, counts]
+      properties:
+        generatedAt: { type: string, format: date-time }
+        window: { $ref: "#/components/schemas/HomeFeedWindow" }
+        dataQuality: { $ref: "#/components/schemas/HomeFeedDataQuality" }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/HomeFeedItem" }
+        counts: { $ref: "#/components/schemas/HomeFeedCounts" }
+
+    DismissFocusTaskRequest:
+      type: object
+      required: [sourceKey, domain, decision]
+      properties:
+        sourceKey: { type: string, maxLength: 200 }
+        domain: { type: string, enum: [patron, logistics, wardrobe, commerce] }
+        decision: { type: string, enum: [acknowledge, approve, reject, markReady, signOff] }
+        contentHash: { type: string, nullable: true, description: Echoed for audit; the server recomputes it. }
+        note: { type: string, maxLength: 500, nullable: true }
+
+    FocusDismissalResponse:
+      type: object
+      properties:
+        dismissalId: { type: string, format: uuid }
+        sourceKey: { type: string }
+        domain: { type: string }
+        decision: { type: string }
+        dismissedAtUtc: { type: string, format: date-time }
+        counts: { $ref: "#/components/schemas/HomeFeedCounts" }
+
+    CustomerBookItem:
+      type: object
+      required: [customerId, status, phoneNumber]
+      properties:
+        customerId: { type: string, format: uuid }
+        fullName: { type: string, nullable: true }
+        nickname: { type: string, nullable: true }
+        level:
+          type: string
+          nullable: true
+          enum: [vip, level3, level2, level1, null]
+          description: The boutique's own grade, or null when nobody has graded this client.
+        status: { type: string, enum: [new, returning, vip, dormant] }
+        phoneNumber: { type: string }
+        lastVisitAtUtc: { type: string, format: date-time, nullable: true }
+        visitCount: { type: integer }
+        totalSpent: { type: number }
+
+    CustomerBookResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/CustomerBookItem" }
+        total: { type: integer }
+        page: { type: integer }
+        pageSize: { type: integer }
+
+    CustomerHighlight:
+      type: object
+      required: [customerId, name, activity]
+      properties:
+        customerId: { type: string, format: uuid }
+        name: { type: string }
+        level: { type: string, nullable: true, enum: [vip, level3, level2, level1, null] }
+        activity: { type: string, maxLength: 160, description: Generated from a real Customer_Interactions row. }
+        lastActivityAtUtc: { type: string, format: date-time, nullable: true }
+
+    CustomerHighlightsResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/CustomerHighlight" }
+
+    CreateWalkInCustomerRequest:
+      type: object
+      required: [fullName]
+      properties:
+        fullName: { type: string, maxLength: 200 }
+        phoneNumber: { type: string, maxLength: 50, nullable: true, description: Optional; without one the client cannot be de-duplicated against a future identify. }
+        nickname: { type: string, nullable: true, description: Stored as a customer preference. }
+        source: { type: string, enum: [counter_walkin, phone, whatsapp, instagram], default: counter_walkin }
+
+    CustomerCreated:
+      type: object
+      properties:
+        customerId: { type: string, format: uuid }
+        fullName: { type: string, nullable: true }
+        level: { type: string, nullable: true, enum: [vip, level3, level2, level1, null] }
+        status: { type: string, enum: [new, returning, vip, dormant] }
+        consentStatus: { type: string, enum: [pending, granted, revoked, unknown] }
+        createdAtUtc: { type: string, format: date-time }
+        duplicateOfCustomerId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Set when the server matched an existing record instead of creating one.
+
+    RecordCustomerInteractionRequest:
+      type: object
+      required: [occurredAtUtc, channel]
+      properties:
+        occurredAtUtc: { type: string, format: date-time }
+        channel: { type: string, enum: [in_person, phone, whatsapp, instagram] }
+        direction: { type: string, enum: [inbound, outbound], default: inbound }
+        note: { type: string, maxLength: 4000, nullable: true }
+        purchaseTotal: { type: number, nullable: true, minimum: 0, description: When present, feeds TotalSpent and the loyalty rule. }
+
+    VisitReceipt:
+      type: object
+      properties:
+        visitId: { type: string, format: uuid }
+        customerId: { type: string, format: uuid }
+        occurredAtUtc: { type: string, format: date-time }
+        channel: { type: string }
+        countedAsVisit: { type: boolean }
+        visitCountAfter: { type: integer }
+        lastVisitAtUtcAfter: { type: string, format: date-time, nullable: true }
+        tierAfter: { type: string, enum: [new, returning, vip, dormant] }
+        blossomsCharged: { type: number, description: Always 0; a visit is not billable. }

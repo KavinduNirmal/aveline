@@ -3129,3 +3129,139 @@ constraint behaviour the in-memory provider cannot.
   confirmation flow.
 - `shared/widgets/floating_dock.dart` still lists a `profile` tab; it is unmounted dead
   code, so it was left alone.
+
+## Session 2026-09-18 (cont.) — Home tab: Flutter to backend (session start)
+
+**Task:** Implement the Home tab Flutter-to-backend feature across the phases defined in
+`.agents/plans/flutter-to-backend-home-implementation.ignore.md` and its strategy document.
+**Tool used:** DeepSeek Harness (deepseek-flash) coding agent
+
+### Plan read and reconciled
+
+- Read both plan documents in full (1,232 + 869 lines). The plan establishes that all six Home
+  blocks are fed from in-memory demo data, that three of them have **no server-side concept at
+  all** (focus task, customer activity, visit), that the one real endpoint
+  (`GET …/blossoms/balance`) is gated by `billing:view`, which plain staff does not hold, and that
+  `Customer.VisitCount`/`LastVisitAt`/`TotalSpent` have no writer anywhere outside migrations.
+- The strategy layer supplies what the plan lacks: four gated product decisions (D1–D4), the shared
+  contracts Home must consume rather than invent, and a six-slice order (S0–S6) in which no slice
+  leaves the app worse than it found it. The review markers select **D1 = (b)** (a distinct
+  self-service `billing:view:self`, not a widened `billing:view`), **D2 = (a)** (the activity dot
+  does not ship), **D3 = open** (the `logistics` column stays, the feed self-describes), and
+  **D4 = B** (derived feed + a `FocusDismissals` record keyed by `sourceKey` with a content hash).
+- Verified against the live repository before starting: `billing:view:self` does not exist yet,
+  `BoutiqueProvider` still discards the membership id, the tenant customer routes are absent, and
+  the sibling customer plans have not landed. That last finding matters: S5's gate is "the customer
+  surface has landed or is landing in the same release", so this session must build the minimal
+  org-scoped customer surface Home needs under the name the sibling plans already froze
+  (`BoutiqueCustomerAccess`).
+
+### Issues created (one per phase)
+
+- S0 [#274](https://github.com/KavinduNirmal/aveline/issues/274) — client truthfulness and gated client section
+- S1 [#275](https://github.com/KavinduNirmal/aveline/issues/275) — Home controller scaffolding refactor
+- S2 [#276](https://github.com/KavinduNirmal/aveline/issues/276) — organization context and named org-scoped policies
+- S3 [#277](https://github.com/KavinduNirmal/aveline/issues/277) — Blossom meter and the self-service balance read (D1)
+- S4 [#278](https://github.com/KavinduNirmal/aveline/issues/278) — focus deck feed and dismissal record (D4)
+- S5 [#279](https://github.com/KavinduNirmal/aveline/issues/279) — client row, log-visit picker and walk-in create (D2)
+- S6 [#280](https://github.com/KavinduNirmal/aveline/issues/280) — visit record and atomic customer counters
+
+Working on the current branch `feature/flutter-to-backend-home` throughout; no branch was created or
+switched.
+
+### Summary of work done
+
+**S0 — client truthfulness.** `Direct client link` is now wrapped in
+`PermissionGuard(customers:view)` at the screen, so a plain `staff` account hides a row whose only
+possible answer was `403`; it is `PermissionGuard`'s first production user. A client tile and a
+`See all` row push `/customers/<id>` instead of toasting that the profile is "not on mobile yet",
+and the More sheet's `Settings` row reaches `/settings`. `demo_focus_tasks_test.dart` is declared a
+fixture contract.
+
+**S1 — Home controller.** `HomeController` (the `NotificationsController` pattern: loading, error,
+stale-reply guard, optimistic completion with rollback) now owns the deck, the client row and the
+meter; `HomeScreen` reads it and renders a loading card or an error card with a retry. Home has **no
+demo fallback** — a failed read is shown as a failure. The initial load is deferred to a post-frame
+callback because the controller notifies synchronously and notifying during a build throws.
+
+**S2 — organization context.** `BoutiqueProvider` keeps `organizationId` and `boutiqueRole` from the
+**same active membership** as the name it already read, so a screen can build `/orgs/{id}/…` for the
+shop it is naming. On the server, the new named org-scoped policy `BoutiqueCustomerAccess` was added
+(`OrganizationScopeRequirement(customers:view)`), with a test proving a named policy carries the
+requirement while a bare per-permission policy does not.
+
+**S3 — Blossom meter (D1 = b).** A distinct `billing:view:self` permission was added and granted to
+all four org roles; the balance route now requires the named `BoutiqueBillingSelfView` policy, so a
+`boutique_staff` token gets `200` where it used to get `403`, while `billing:view` itself is
+unchanged and still denied to `BoutiqueStaff`. `BlossomUsage` moved from `int` to `double` (fractions
+are normal: the conversion rule charges a 0.1 minimum), the card gained loading and
+error-with-retry states that never render `0`, and the low-water note reads the server's
+`lowBalanceThresholdPercent` instead of a hard-coded `0.8`.
+
+**S4 — focus deck and dismissal (D4 = B).** The focus feed is **derived**:
+`GET /orgs/{id}/stats/home` builds the deck from low stock (`wardrobe`), upcoming customer events
+(`patron`) and paused agent runs (`commerce`, only for a caller holding `stats:view:agent`), takes
+the day boundary from `Organization.TimeZone` and reports per-domain `dataQuality` — `logistics` is
+reported unavailable rather than counted as zero. Sign-off persists a `FocusDismissals` row keyed by
+`sourceKey` and bound to a server-computed content hash, so a changed fact reappears instead of
+staying suppressed. The client gained `dueAtUtc`/`sourceKey`, a feed repository, and a strip that
+takes "next" from the timestamp rather than regex-parsing a display string.
+
+**S5 — client row, picker and walk-in (D2 = a).** The tenant customer surface landed under the frozen
+`BoutiqueCustomerAccess` name: the book, the highlights (with `activity` generated from a real
+`Customer_Interactions` row) and walk-in creation. `Customer.Level` is a nullable grade with no
+default. The row ships **no** activity dot and no `hasNewActivity` field, and an ungraded client
+wears no badge. A walk-in now returns the server's id, and the row prepends that id rather than an
+invented one; the log-visit picker reads the real book.
+
+**S6 — visit record and counters.** `POST /orgs/{id}/customers/{customerId}/interactions` records an
+interaction and, for an inbound in-person one, moves `VisitCount`/`LastVisitAt`/`TotalSpent` and
+recomputes `Status`. The increment is a single `ExecuteUpdateAsync` statement on a relational
+provider (the in-memory provider tests the functional path), which closes the silent defect where
+those three fields had no writer and every client stayed `new`. `blossomsCharged` is always `0`: a
+visit is not billable.
+
+### Verification Performed
+
+- `dotnet test Aveline.Api/Aveline.Api.sln`: **1273 passed, 0 failed** (4 m 41 s), including the new
+  `HomeFeedEndpointsTests` (8) and `CustomerTenantEndpointsTests` (12).
+- `flutter analyze --no-fatal-infos`: **No issues found**.
+- `flutter test`: **844 passed, 0 failed**.
+- Two EF Core migrations added and verified: `AddFocusDismissals` (`Focus_Dismissals` table) and
+  `AddCustomerLevelColumn` (`Customers.Level`, nullable, no default).
+- `docs/api/openapi.yaml` re-parsed as YAML after every addition; all new paths and schemas resolve.
+- One existing backend test changed deliberately: `ApiKeyAuthenticationTests` asserted an API key
+  scoped `billing:view` could read the balance. Since D1(b) moved that route to
+  `billing:view:self`, the test now scopes the key with the new permission and a companion test pins
+  that management `billing:view` does **not** reach the self-service balance.
+
+### Important Architectural Decisions Applied
+
+- **Derived feed, persisted decision.** No focus-task table: the docket points at the fact, and only
+  the human decision is stored. A dismissal is keyed to the fact's `sourceKey` and bound to a content
+  hash, following `SignOffDecision`'s precedent.
+- **A distinct self-service permission, never a widened management read.** `billing:view:self` is
+  separate so that reading a balance does not make an associate a reader of statements and burn-rate.
+- **Named org-scoped policies.** Every new tenant route names a policy carrying
+  `OrganizationScopeRequirement`; a bare per-permission policy would authorize from possibly-stale
+  JWT claims and never check membership.
+- **The server owns the day.** The day boundary comes from `Organization.TimeZone`; the client sends
+  nothing, and the window used is echoed back.
+- **No page without an owner.** The tenant customer routes were built under the name the sibling
+  customer plans froze, so those plans can converge on them rather than Home owning a private surface.
+
+### Remaining Work / Known Deviations
+
+- The `logistics` domain still has no writer; the feed reports it unavailable. This stays a data
+  question (does `Delivery_Plans` hold rows?), not a schema change.
+- `blossom_usage_card`'s "Request additional blossoms" is still UI-only: the top-up-request endpoint
+  and an owner-side review surface were not built, so no approval record exists for an owner to act
+  on. The copy remains what it was.
+- The concurrency guarantee for the visit counter is carried by the SQL (`ExecuteUpdateAsync`); the
+  integration test runs on the in-memory provider, which does not support `ExecuteUpdate`, so a
+  Testcontainers-Postgres concurrency test is still owed.
+- The customers-domain `Customer.level` is non-nullable, so the log-visit picker maps an ungraded
+  client to `level1`. Home's own row reads the nullable wire value and hides the badge; making the
+  customers domain's level nullable is the follow-up.
+- `CustomerDetail` mapping was not built: Home's picker needs only the book, so the new repository
+  implements the narrow `CustomerBookSource` rather than the whole customers repository.

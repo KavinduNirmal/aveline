@@ -5,6 +5,7 @@ using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Commerce.Models;
 using Aveline.Api.Modules.Conversations.Models;
 using Aveline.Api.Modules.CustomerConcierge.Models;
+using Aveline.Api.Modules.Home.Models;
 using Aveline.Api.Modules.Integrations.Models;
 using Aveline.Api.Modules.Notifications.Models;
 using Aveline.Api.Modules.Organizations.Models;
@@ -124,6 +125,9 @@ public class AppDbContext : DbContext
     public DbSet<CustomerInteraction> CustomerInteractions => Set<CustomerInteraction>();
     public DbSet<CustomerConsent> CustomerConsents => Set<CustomerConsent>();
     public DbSet<CustomerTag> CustomerTags => Set<CustomerTag>();
+
+    // Home module: the persisted half of the derived focus feed.
+    public DbSet<FocusDismissal> FocusDismissals => Set<FocusDismissal>();
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {

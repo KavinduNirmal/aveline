@@ -48,6 +48,37 @@ void main() {
       expect(empty.usedFraction, 0);
       expect(empty.remaining, 0);
     });
+
+    test('reads the low-water line from the server threshold', () {
+      // The server flags a low balance when the remaining allowance falls to
+      // `lowBalanceThresholdPercent` (default 20), not at a fixed 0.8.
+      const near = BlossomUsage(
+        used: 85,
+        allowance: 100,
+        renewsOn: '1 October',
+        lowBalanceThresholdPercent: 20,
+      );
+      const comfortable = BlossomUsage(
+        used: 25,
+        allowance: 100,
+        renewsOn: '1 October',
+        lowBalanceThresholdPercent: 20,
+      );
+
+      expect(near.isRunningLow, isTrue);
+      expect(comfortable.isRunningLow, isFalse);
+    });
+
+    test('honours a wider low-water threshold', () {
+      const usage = BlossomUsage(
+        used: 25,
+        allowance: 100,
+        renewsOn: '1 October',
+        lowBalanceThresholdPercent: 80,
+      );
+
+      expect(usage.isRunningLow, isTrue);
+    });
   });
 
   group('BlossomUsageCard', () {
@@ -87,6 +118,58 @@ void main() {
         find.text('Request sent to the owner for approval.'),
         findsOneWidget,
       );
+    });
+
+    testWidgets('shows a spinner while the balance is on its way', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(body: BlossomUsageCard.loading()),
+        ),
+      );
+
+      expect(find.byKey(const Key('blossom_usage_loading')), findsOneWidget);
+      expect(find.text('0'), findsNothing);
+      expect(find.text('of 0 left'), findsNothing);
+    });
+
+    testWidgets('shows an error and a retry instead of a zero', (tester) async {
+      var retries = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: BlossomUsageCard.unavailable(
+              errorMessage: 'Not available for your role.',
+              onRetry: () => retries++,
+            ),
+          ),
+        ),
+      );
+
+      expect(find.byKey(const Key('blossom_usage_error')), findsOneWidget);
+      expect(find.text('0'), findsNothing);
+      expect(find.text('Not available for your role.'), findsOneWidget);
+
+      await tester.tap(find.text('Try again'));
+      expect(retries, 1);
+    });
+
+    testWidgets('renders a fractional balance without truncating it', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _bed(
+          const BlossomUsage(
+            used: 168.5,
+            allowance: 200,
+            renewsOn: '1 October',
+          ),
+        ),
+      );
+
+      expect(find.text('31.5'), findsOneWidget);
+      expect(find.text('of 200 left'), findsOneWidget);
     });
   });
 }

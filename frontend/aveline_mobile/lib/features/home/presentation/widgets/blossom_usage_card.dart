@@ -12,13 +12,39 @@ import '../../domain/blossom_usage.dart';
 /// behind Home, clipped to its own corners — because this is the one figure on
 /// the page about the assistant itself rather than about the floor.
 ///
+/// There is no "0" state. A balance that could not be read says so and offers a
+/// retry, because `0` is a different and false statement about the shop.
+///
 /// The request action is UI only: it states what would happen and sends nothing.
 /// Wiring it needs an approval record the owner can act on, which does not exist
 /// yet.
 class BlossomUsageCard extends StatelessWidget {
-  const BlossomUsageCard({super.key, required this.usage});
+  const BlossomUsageCard({super.key, required this.usage})
+      : isLoading = false,
+        errorMessage = null,
+        onRetry = null;
 
-  final BlossomUsage usage;
+  /// The balance is on its way and nothing is known yet.
+  const BlossomUsageCard.loading({super.key})
+      : usage = null,
+        isLoading = true,
+        errorMessage = null,
+        onRetry = null;
+
+  /// The balance could not be read.
+  const BlossomUsageCard.unavailable({
+    super.key,
+    required this.errorMessage,
+    required this.onRetry,
+  })  : usage = null,
+        isLoading = false;
+
+  /// The loaded balance, or `null` while loading or after a failure.
+  final BlossomUsage? usage;
+
+  final bool isLoading;
+  final String? errorMessage;
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -54,40 +80,7 @@ class BlossomUsageCard extends StatelessWidget {
                   children: [
                     const SectionOverline('Blossom usage'),
                     const SizedBox(height: 10),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.baseline,
-                      textBaseline: TextBaseline.alphabetic,
-                      children: [
-                        Text(
-                          '${usage.remaining}',
-                          style: theme.textTheme.displayLarge?.copyWith(
-                            color: scheme.onSurface,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          'of ${usage.allowance} left',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    _Meter(fraction: usage.usedFraction),
-                    const SizedBox(height: 10),
-                    Text(
-                      '${usage.used} used this cycle · renews ${usage.renewsOn}',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    OutlinedButton.icon(
-                      onPressed: () => _requestMore(context),
-                      icon: const Icon(Icons.add_rounded, size: 18),
-                      label: const Text('Request additional blossoms'),
-                    ),
+                    _body(context),
                   ],
                 ),
               ),
@@ -98,8 +91,144 @@ class BlossomUsageCard extends StatelessWidget {
     );
   }
 
+  Widget _body(BuildContext context) {
+    final loaded = usage;
+    if (loaded != null) {
+      return _figures(context, loaded);
+    }
+    if (isLoading) {
+      return _loading(context);
+    }
+    return _error(context);
+  }
+
+  Widget _figures(BuildContext context, BlossomUsage loaded) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          textBaseline: TextBaseline.alphabetic,
+          children: [
+            Text(
+              _format(loaded.remaining),
+              style: theme.textTheme.displayLarge?.copyWith(
+                color: scheme.onSurface,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'of ${_format(loaded.allowance)} left',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        _Meter(fraction: loaded.usedFraction),
+        const SizedBox(height: 10),
+        Text(
+          '${_format(loaded.used)} used this cycle · renews ${loaded.renewsOn}',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        // The low-water line is the server's, not a hard-coded fraction, so the
+        // note appears exactly when the backend would raise its own threshold
+        // event.
+        if (loaded.isRunningLow) ...[
+          const SizedBox(height: 8),
+          Text(
+            'Running low on Blossoms.',
+            key: const Key('blossom_low_water'),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: scheme.primary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+        const SizedBox(height: 16),
+        OutlinedButton.icon(
+          onPressed: () => _requestMore(context),
+          icon: const Icon(Icons.add_rounded, size: 18),
+          label: const Text('Request additional blossoms'),
+        ),
+      ],
+    );
+  }
+
+  Widget _loading(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Padding(
+      key: const Key('blossom_usage_loading'),
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          const SizedBox(
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Text(
+              "Reading the shop's Blossoms...",
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _error(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Column(
+      key: const Key('blossom_usage_error'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Blossoms are not available right now.',
+          style: theme.textTheme.titleMedium,
+        ),
+        const SizedBox(height: 6),
+        Text(
+          errorMessage ?? 'Try again in a moment.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 16),
+        OutlinedButton.icon(
+          onPressed: onRetry,
+          icon: const Icon(Icons.refresh_rounded, size: 18),
+          label: const Text('Try again'),
+        ),
+      ],
+    );
+  }
+
   void _requestMore(BuildContext context) {
     AppToast.show(context, 'Request sent to the owner for approval.');
+  }
+
+  /// `32`, or `31.5` when the decimal is real: a fractional Blossom is normal
+  /// (the conversion rule charges a 0.1 minimum), and a trailing `.0` is noise.
+  static String _format(double value) {
+    if (value == value.roundToDouble()) {
+      return value.toStringAsFixed(0);
+    }
+    return value.toStringAsFixed(1);
   }
 }
 

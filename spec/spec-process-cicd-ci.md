@@ -115,6 +115,7 @@ artifacts: aveline-api | aveline-web | aveline-mobile-apk
 |------|------|---------|-------|
 | System Variable | `GITHUB_TOKEN` | Read-only checkout; `security-events` write for SARIF upload | Workflow |
 | Repository Secret | `VITE_CLERK_PUBLISHABLE_KEY` | Optional; inlined into the web bundle at build time | Web job |
+| Repository Secret | `GOOGLE_SERVICES_JSON_BASE64` | Optional on PRs, required on pushes; base64 of `android/app/google-services.json`, written into the checkout before the release APK build (the file is gitignored because it is per-project Firebase config) | `test-flutter` job |
 
 ## Execution Constraints
 

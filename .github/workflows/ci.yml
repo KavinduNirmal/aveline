@@ -5,6 +5,15 @@ on:
     branches: [main, master, development]
   pull_request:
     branches: [main, master, development]
+  # Manual runs only exist so the iOS job can be exercised without waiting for a
+  # master push: dispatch with ios_build_only=true to build the IPA and upload it
+  # as a workflow artifact. No GitHub Release is ever created outside master.
+  workflow_dispatch:
+    inputs:
+      ios_build_only:
+        description: "Build the iOS IPA and upload it as an artifact, without publishing a release."
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -194,10 +203,10 @@ jobs:
           path: frontend/web/dist
 
   # ---------------------------------------------------------------------------
-  # Job 5: Analyze, Test & Build — Flutter Mobile App
+  # Job 5: Analyze & Test — Flutter Mobile App
   # ---------------------------------------------------------------------------
   test-flutter:
-    name: Analyze, Test & Build Flutter App
+    name: Analyze & Test Flutter App
     runs-on: ubuntu-latest
     needs: hygiene
 
@@ -228,6 +237,34 @@ jobs:
         with:
           name: aveline-mobile-coverage
           path: frontend/aveline_mobile/coverage/lcov.info
+
+  # ---------------------------------------------------------------------------
+  # Job 5b: Build the release Android APK
+  #
+  # Split out of the job above on purpose: the Gradle build is the slowest and
+  # least reliable part of the pipeline, and while it lived in the test job a
+  # stalled APK build reported the Flutter tests as failed and held back every
+  # job that depends on them (including the iOS release below).
+  # ---------------------------------------------------------------------------
+  build-flutter-apk:
+    name: Build Flutter APK
+    runs-on: ubuntu-latest
+    needs: test-flutter
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: "stable"
+          cache: true
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+        working-directory: frontend/aveline_mobile
 
       # The Google Services Gradle plugin generates the Firebase string resources
       # (google_app_id, gcm_defaultSenderId, ...) from android/app/google-services.json.
@@ -397,7 +434,9 @@ jobs:
     # Only real pushes to the stable branch produce a release; PRs never do.
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
-    needs: test-flutter
+    # Gated on the APK build (not just the tests) because this job publishes the
+    # artifact that the build job uploads.
+    needs: build-flutter-apk
     permissions:
       contents: write
     steps:
@@ -441,3 +480,150 @@ jobs:
             --title "Aveline Mobile v${VERSION} (build #${RUN_NUMBER})" \
             --notes "Automated release from \`master\` at ${{ github.sha }}." \
             --target master
+
+  # ---------------------------------------------------------------------------
+  # Job 9: Publish unsigned iOS IPA GitHub Release (master pushes only)
+  # ---------------------------------------------------------------------------
+  release-ios:
+    name: Publish iOS App Release
+    # Same gate as the Android release: a real push to the stable branch, and only
+    # after the Flutter analyze/test job in this run has succeeded. The manual
+    # dispatch path is a dry run that uploads the artifact but never releases.
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.ios_build_only == 'true')
+    # iOS builds need a macOS runner. The repository is public, so macOS minutes are free.
+    runs-on: macos-latest
+    timeout-minutes: 60
+    needs: test-flutter
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: "stable"
+          cache: true
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+        working-directory: frontend/aveline_mobile
+
+      # firebase_core/firebase_messaging read ios/Runner/GoogleService-Info.plist at
+      # runtime. Dropping the file in place is not enough on its own: it also has to be
+      # referenced by Runner.xcodeproj to land in the app bundle, and it is not in this
+      # repository, so the build is honest about shipping without iOS push notifications.
+      - name: Warn when the iOS Firebase config is missing
+        working-directory: frontend/aveline_mobile
+        run: |
+          if [ ! -f ios/Runner/GoogleService-Info.plist ]; then
+            echo "::warning::ios/Runner/GoogleService-Info.plist is not in the repository, so Firebase cannot initialise on iOS and push notifications will not work in this build."
+          fi
+
+      - name: Derive app version from pubspec
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(sed -n 's/^version: *\(.*\)/\1/p' frontend/aveline_mobile/pubspec.yaml | head -1)"
+          if [ -z "$VERSION" ]; then
+            echo "::error::Unable to read version from frontend/aveline_mobile/pubspec.yaml"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "safe=${VERSION//+/.}" >> "$GITHUB_OUTPUT"
+
+      # --no-codesign because no Apple signing identity is available in CI: the tool
+      # builds and archives the app but skips the export step, so the step below packages
+      # the .ipa from the archive itself.
+      - name: Build iOS archive
+        run: flutter build ipa --release --no-codesign
+        working-directory: frontend/aveline_mobile
+
+      - name: Package unsigned IPA
+        working-directory: frontend/aveline_mobile
+        env:
+          SAFE_VERSION: ${{ steps.version.outputs.safe }}
+          RUN_NUMBER: ${{ github.run_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="$(find build/ios/archive -type d -name 'Runner.app' -path '*Products/Applications*' | head -1)"
+          if [ -z "$APP" ]; then
+            echo "::error::flutter build ipa did not produce Runner.app inside build/ios/archive."
+            exit 1
+          fi
+
+          ARCHIVE="$(cd "$(dirname "$APP")/../.." && pwd)"
+          IPA_DIR="$(pwd)/build/ios/ipa"
+          STAGE="$(pwd)/build/ios/unsigned-stage"
+          BASE="aveline-mobile-${SAFE_VERSION}-build.${RUN_NUMBER}"
+
+          rm -rf "$IPA_DIR" "$STAGE"
+          mkdir -p "$STAGE/Payload" "$IPA_DIR"
+          cp -R "$APP" "$STAGE/Payload/"
+          (cd "$STAGE" && zip -qry "$IPA_DIR/${BASE}-unsigned.ipa" Payload)
+
+          # dSYMs keep crash reports symbolicated and cost nothing to ship alongside.
+          if [ -d "$ARCHIVE/dSYMs" ]; then
+            (cd "$ARCHIVE/dSYMs" && zip -qry "$IPA_DIR/${BASE}-dSYMs.zip" .)
+          fi
+
+          ls -la "$IPA_DIR"
+
+      - name: Upload iOS artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aveline-mobile-ios
+          path: frontend/aveline_mobile/build/ios/ipa/*
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        # Never on the manual dry run, and never on pull requests.
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          SAFE="${{ steps.version.outputs.safe }}"
+          RUN_NUMBER="${{ github.run_number }}"
+          BASE="aveline-mobile-ios-${SAFE}-build.${RUN_NUMBER}"
+
+          # An iOS-specific tag keeps this release from colliding with the Android one,
+          # which the job above creates from the same master push.
+          TAG="ios-v${SAFE}-build.${RUN_NUMBER}"
+          IPA="$(find frontend/aveline_mobile/build/ios/ipa -name '*.ipa' -type f | head -1)"
+          DSYMS="$(find frontend/aveline_mobile/build/ios/ipa -name '*.zip' -type f | head -1)"
+          if [ -z "$IPA" ]; then
+            echo "::error::No IPA found to release."
+            exit 1
+          fi
+
+          NOTES_FILE="$RUNNER_TEMP/ios-release-notes.md"
+          {
+            echo "Automated **unsigned** iOS build from \`master\` at ${GITHUB_SHA}."
+            echo
+            echo "The IPA carries no Apple signing certificate, so it cannot be installed from"
+            echo "the App Store or by tapping it on a device. Install it with a sideloading tool"
+            echo "(AltStore, Sideloadly, or Xcode \`Devices and Simulators\`), or add signing"
+            echo "secrets to the workflow for a distributable build."
+            echo
+            echo "Push notifications additionally need \`ios/Runner/GoogleService-Info.plist\`"
+            echo "added to \`Runner.xcodeproj\`; the build logs a warning while it is missing."
+          } > "$NOTES_FILE"
+
+          ASSETS=("$IPA#${BASE}-unsigned.ipa")
+          if [ -n "$DSYMS" ]; then
+            ASSETS+=("$DSYMS#${BASE}-dSYMs.zip")
+          fi
+
+          gh release create "$TAG" "${ASSETS[@]}" \
+            --repo "${{ github.repository }}" \
+            --title "Aveline Mobile iOS v${VERSION} (build #${RUN_NUMBER})" \
+            --notes-file "$NOTES_FILE" \
+            --target master
+

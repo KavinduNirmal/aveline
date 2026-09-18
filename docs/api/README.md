@@ -550,7 +550,15 @@ carrying `UserNotificationDto`. `NotificationType` is serialised as a **string**
 | `POST` | `.../{conversationId:guid}/select-customer` | `{ customerId, query? }` | `200` |
 | `POST` | `.../messages/{messageId:guid}/sign-off` | `{ approved, contentHash }` | `200` |
 
-`ConversationDto`: `{ id, kind, customerId, threadId, status, lastMessageAt }`.
+`ConversationDto`: `{ id, kind, customerId, customerName, externalRef, threadId, status,
+lastMessageAt, lastMessagePreview, lastMessageKind, lastMessageBlock, lastMessageAuthor,
+lastMessageAgentKey, markers }`. The list row carries the client's name, a **block-aware**
+preview of the newest message, the block it came from (the row's category, because agent
+output is published as `kind: Note`), who spoke last in the client's vocabulary
+(`Staff`/`Agent`/`Customer`), the agent persona key, and the actionable `markers` set over the
+closed vocabulary `approval | choice | draft` in that priority. `kind` keeps its declared
+meaning; customer context is the separate `customerId` axis, and `externalRef` discloses a
+channel-created thread whose customer is not yet identified.
 `MessageDto`: `{ id, conversationId, authorKind, agentKey, authorUserId, kind,
 contentBlocks, contentHash, replyToMessageId, status, createdAt }`.
 
@@ -565,6 +573,13 @@ DTOs `Modules/Conversations/DTOs/*.cs`.
 **Realtime:** SignalR hub `/hubs/conversations`; events `conversation.created`,
 `message.created`, `message.updated`, `agent.status` (names from
 `Modules/Conversations/Services/ConversationEvents.cs`).
+Server→client methods: `ReceiveMessage` (a `MessageDto`), `ReceiveAgentState` (an
+`AgentStateDto`), and **`ReceiveConversationChanged`** (a `ConversationDto` - the inbox tile,
+so an open list updates without a re-list). The tile is broadcast to
+`org:{organizationId}` for organization-shared threads and to `user:{ownerUserId}` for a
+per-user general Salon, so a colleague's private thread never reaches the org group. The API
+broadcasts directly from its own creation sites (the WhatsApp webhook, `POST /conversations`,
+`select-customer`, and a staff message) because `conversation.created` has no publisher.
 
 ### B.8 Integrations
 

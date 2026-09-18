@@ -947,6 +947,35 @@ A visit is **not billable**. Consumption is an `AiUsageRecord` written after a
 completed agent workflow; in-person visits are customer interactions, not AI
 usage. The receipt returns `blossomsCharged: 0` so nothing can invent a charge.
 
+### 8.8 Conversations inbox row (no new table)
+
+The inbox list is a **derived read**, not a stored projection, and it adds **no
+table**. `ConversationRepository.ListAsync` joins the newest message and the
+customer's `FullName` onto each conversation under the unchanged visibility
+predicate, and one server-side mapper (`ConversationTileMapper`) derives the
+preview, the row's category and the marker set.
+
+- **Category is a content block.** Agent output is published as `kind: Note` for
+  every persona, so the row carries `lastMessageBlock` - the block type the
+  preview came from - and switches on that. The preview is mapped per block type,
+  including `client_message -> its text`.
+- **Markers are a derived set** over the closed vocabulary
+  `approval | choice | draft`, sorted `approval` -> `choice` -> `draft`. `approval`
+  is derived from a message-level `SignOff` with `Status == AwaitingSignOff`; the
+  write path sets both that and `Conversation.Status = AwaitingSignOff`, so the
+  producer (the commerce approval flow, ADR-018) lights the marker with no DTO or
+  client change when it ships.
+- **Customer context is a separate axis from `Kind`.** No `ConversationKind.Customer`
+  member exists, and none is added: `Kind` is the thread's nature, `CustomerId` is
+  the context it carries. The inbound path binds that context at creation through
+  `ICustomerRepository.GetByPhoneAsync`; an unresolved phone leaves `ExternalRef`
+  set and `CustomerId` null, which the client renders as an unnamed client.
+- **The ordering is total.** `OrderByDescending(LastMessageAt ?? CreatedAt)` gains
+  `.ThenByDescending(Id)` and a supporting index
+  `(OrganizationId, LastMessageAt DESC, Id DESC)` (migration
+  `AddConversationListRowSupport`, index only), so paging cannot duplicate or skip
+  a row when two threads share an effective timestamp.
+
 ---
 
 ## 9. Audit (shared, all feature areas)

@@ -38,8 +38,8 @@ import 'features/catalog/domain/catalog_filters.dart';
 import 'features/catalog/presentation/screens/catalog_filter_screen.dart';
 import 'features/catalog/presentation/screens/catalog_product_screen.dart';
 import 'features/catalog/presentation/screens/catalog_screen.dart';
+import 'features/conversations/data/api_conversation_repository.dart';
 import 'features/conversations/data/conversation_repository.dart';
-import 'features/conversations/data/demo_conversation_repository.dart';
 import 'features/conversations/presentation/screens/conversations_screen.dart';
 import 'features/customers/data/customer_repository.dart';
 import 'features/customers/data/demo_customer_repository.dart';
@@ -325,10 +325,15 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
     _onboardingProvider = OnboardingProvider(widget.preferences);
     _catalogRepository = DemoCatalogProductRepository();
     _customerRepository = DemoCustomerRepository();
-    // The demo inbox stands in until the conversations endpoint carries enough
-    // to draw a row; swapping in `ApiConversationRepository(_dio, ...)` is the
-    // whole change.
-    _conversationRepository = DemoConversationRepository();
+    // The inbox reads the API through one repository, the same way Home does. The
+    // organization id is read at call time because it arrives with `/orgs/my`,
+    // after this controller is built; until then the screen stays in its loading
+    // state rather than reporting an error it does not have. The id is the active
+    // membership's, never the JWT's `org_id` claim, which can be stale.
+    _conversationRepository = ApiConversationRepository(
+      _dio,
+      organizationId: () => _boutiqueProvider.organizationId,
+    );
     _ownerOnboardingProvider = OwnerOnboardingProvider(OwnerOnboardingApi(_dio));
     _notificationProvider = NotificationProvider();
     // Home reads the API through one repository: the derived focus feed, the

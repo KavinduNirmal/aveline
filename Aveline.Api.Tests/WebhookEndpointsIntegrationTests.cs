@@ -7,6 +7,9 @@ using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Infrastructure.RateLimiting;
 using Aveline.Api.Modules.Integrations.Models;
 using Aveline.Api.Modules.Integrations.Services;
+using Aveline.Api.Modules.Conversations.DTOs;
+using Aveline.Api.Modules.Conversations.Services;
+using Aveline.Api.Modules.CustomerConcierge.Models;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Shared.Models;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -34,6 +37,7 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
     private WebApplicationFactory<Program> _factory = null!;
     private HttpClient _client = null!;
     private readonly RecordingRateLimiter _rateLimiter = new();
+    private readonly RecordingBroadcaster _broadcaster = new();
 
     private sealed class RecordingRateLimiter : IRateLimiter
     {
@@ -51,6 +55,25 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
         }
     }
 
+    /// <summary>Records the inbox tiles the API broadcasts, so a new thread's arrival is visible
+    /// to a test without a live SignalR client.</summary>
+    private sealed class RecordingBroadcaster : IMessageBroadcaster
+    {
+        public List<ConversationTile> ConversationChanged { get; } = [];
+
+        public Task BroadcastMessageAsync(MessageDto message, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task BroadcastAgentStateAsync(AgentStateDto state, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task BroadcastConversationChangedAsync(ConversationTile tile, CancellationToken cancellationToken = default)
+        {
+            ConversationChanged.Add(tile);
+            return Task.CompletedTask;
+        }
+    }
+
     public async Task InitializeAsync()
     {
         _signingKey = new RsaSecurityKey(RSA.Create(2048)) { KeyId = "test-kid" };
@@ -65,8 +88,10 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
                 builder.UseSetting("Credentials:EncryptionKey", Base64Key);
                 builder.ConfigureTestServices(services =>
                 {
-                    // Observe whether a request ever reaches the rate limiter.
+                    // Observe whether a request ever reaches the rate limiter, and capture the
+                    // inbox tiles the API broadcasts.
                     services.AddSingleton<IRateLimiter>(_rateLimiter);
+                    services.AddSingleton<IMessageBroadcaster>(_broadcaster);
                 });
             });
         _client = _factory.CreateClient();
@@ -319,12 +344,77 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
             .FirstOrDefaultAsync(c => c.OrganizationId == orgId && c.ExternalRef == "+94779998888");
         Assert.NotNull(conversation);
 
+        // D1: the phone is not on file, so the thread stays unbound but identifiable as a channel
+        // thread - the client renders it as an unnamed client rather than pinning it.
+        Assert.Null(conversation.CustomerId);
+
         var message = await context.Messages
             .FirstOrDefaultAsync(m => m.ConversationId == conversation.Id);
         Assert.NotNull(message);
         Assert.Equal("ClientMessage", message.Kind.ToString());
         Assert.Equal("System", message.AuthorKind.ToString());
         Assert.Contains("red", message.ContentBlocksJson);
+
+        // The new thread reaches an already-open inbox without a re-list: the API broadcasts its
+        // tile from the creation site, because `message.created` alone carries a message for a
+        // conversation the client may never have seen.
+        var tile = Assert.Single(_broadcaster.ConversationChanged);
+        Assert.Equal(orgId, tile.OrganizationId);
+        Assert.Null(tile.OwnerUserId);
+        Assert.Equal("+94779998888", tile.Tile.ExternalRef);
+        Assert.Null(tile.Tile.CustomerId);
+        Assert.Equal("client_message", tile.Tile.LastMessageBlock);
+        Assert.Contains("red", tile.Tile.LastMessagePreview);
+    }
+
+    [Fact]
+    public async Task Post_ValidSignature_ForAPhoneOnFile_BindsTheCustomerToTheThread()
+    {
+        // D1: a thread created by the inbound path exists for the identified customer, so the
+        // server resolves the phone through the book and binds the context at creation.
+        var orgId = await SeedOrgWithWhatsAppAsync("wh_owner_h", "webhook-h");
+        const string phone = "+94771112222";
+        var customerId = await SeedCustomerAsync(orgId, phone, "Nadeesha Perera");
+
+        var body = MetaMessagePayload(messageId: "wamid.BIND1", from: phone);
+        var bytes = Encoding.UTF8.GetBytes(body);
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/webhooks/whatsapp/{orgId}")
+        {
+            Content = new ByteArrayContent(bytes),
+        };
+        request.Content.Headers.ContentType = new("application/json");
+        request.Headers.Add("X-Hub-Signature-256", Sign(bytes));
+
+        var response = await _client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var context = CreateContext();
+        var conversation = await context.Conversations
+            .FirstOrDefaultAsync(c => c.OrganizationId == orgId && c.ExternalRef == phone);
+        Assert.NotNull(conversation);
+        Assert.Equal(customerId, conversation.CustomerId);
+
+        // The broadcast tile carries the resolved client, so the list shows a name and not an
+        // unnamed channel thread.
+        var tile = Assert.Single(_broadcaster.ConversationChanged);
+        Assert.Equal(customerId, tile.Tile.CustomerId);
+        Assert.Equal("Nadeesha Perera", tile.Tile.CustomerName);
+    }
+
+    private static async Task<Guid> SeedCustomerAsync(Guid orgId, string phone, string fullName)
+    {
+        await using var context = CreateContext();
+        var customer = new Customer
+        {
+            Id = Guid.CreateVersion7(),
+            OrganizationId = orgId,
+            PhoneNumber = phone,
+            FullName = fullName,
+            Status = "returning",
+        };
+        context.Customers.Add(customer);
+        await context.SaveChangesAsync();
+        return customer.Id;
     }
 
     [Fact]

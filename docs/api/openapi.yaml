@@ -1118,6 +1118,15 @@ paths:
       tags: [Conversations]
       summary: List conversations
       operationId: listConversations
+      description: >-
+        The inbox, newest-first with an id tiebreak so paging is total. Page one holds
+        the newest threads. Each row carries the client's name, a block-aware preview of
+        the newest message, the block it came from (the row's category), who spoke last
+        and the actionable `markers` set. The same tile is pushed over the SignalR
+        `conversations` hub as **`ReceiveConversationChanged`** whenever a thread changes
+        or appears (to `org:{organizationId}` for shared threads and to
+        `user:{ownerUserId}` for a per-user general Salon), so an open inbox updates
+        without a re-list.
       parameters:
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/PageSize"
@@ -4431,11 +4440,55 @@ components:
       type: object
       properties:
         id: { type: string, format: uuid }
-        kind: { type: string }
+        kind:
+          type: string
+          description: >-
+            The thread's nature and audience. `Salon` is the agent-to-staff thread;
+            `Announcement` and `Digest` are reserved. Customer context is a separate axis
+            carried by `customerId`, and clients classify by that context first.
         customerId: { type: string, format: uuid, nullable: true }
+        customerName: { type: string, nullable: true }
+        externalRef:
+          type: string
+          nullable: true
+          description: >-
+            The channel reference (e.g. a WhatsApp phone number). Present on a
+            channel-created thread even when the customer is not yet identified, so the
+            client renders it as an unnamed client rather than pinning it as the concierge.
         threadId: { type: string }
         status: { type: string }
         lastMessageAt: { type: string, format: date-time, nullable: true }
+        lastMessagePreview:
+          type: string
+          nullable: true
+          description: >-
+            A block-aware summary of the newest message, truncated to 120 characters. Null
+            when the message carries no block the inbox knows how to summarise.
+        lastMessageKind:
+          type: string
+          nullable: true
+          description: The message kind as sent (`Note` for every agent persona).
+        lastMessageBlock:
+          type: string
+          nullable: true
+          description: >-
+            The content-block type the preview was derived from. This is the row's
+            category, because agent output is published as `kind: Note` and the category
+            lives in the blocks.
+        lastMessageAuthor:
+          type: string
+          nullable: true
+          description: One of `Staff`, `Agent`, `Customer`.
+        lastMessageAgentKey: { type: string, nullable: true }
+        markers:
+          type: array
+          description: >-
+            The row's actionable states, sorted by fixed priority
+            `approval` -> `choice` -> `draft`. A set rather than one value, because a
+            thread can hold more than one.
+          items:
+            type: string
+            enum: [approval, choice, draft]
     ConversationPage:
       allOf:
         - $ref: "#/components/schemas/PageMeta"

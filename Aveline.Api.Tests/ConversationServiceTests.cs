@@ -70,14 +70,25 @@ public class ConversationServiceTests
         public Task<Conversation?> GetByThreadIdAsync(string threadId, CancellationToken ct)
             => Task.FromResult(_conversations.FirstOrDefault(c => c.ThreadId == threadId));
 
-        public Task<(IReadOnlyList<Conversation> Items, int Total)> ListAsync(Guid orgId, Guid userId, int page, int pageSize, CancellationToken ct)
+        public Task<(IReadOnlyList<ConversationListRow> Items, int Total)> ListAsync(Guid orgId, Guid userId, int page, int pageSize, CancellationToken ct)
         {
             var scoped = _conversations
                 .Where(c => c.OrganizationId == orgId && (c.OwnerUserId == null || c.OwnerUserId == userId))
                 .OrderByDescending(c => c.LastMessageAt).ToList();
-            var items = scoped.Skip((page - 1) * pageSize).Take(pageSize).ToList();
-            return Task.FromResult<(IReadOnlyList<Conversation>, int)>((items, scoped.Count));
+            var rows = scoped
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(c => new ConversationListRow(c, null, null, false))
+                .ToList();
+            return Task.FromResult<(IReadOnlyList<ConversationListRow>, int)>((rows, scoped.Count));
         }
+
+        public Task<ConversationListRow?> GetRowAsync(Guid conversationId, CancellationToken ct)
+            => Task.FromResult(
+                _conversations
+                    .Where(c => c.Id == conversationId)
+                    .Select(c => new ConversationListRow(c, null, null, false))
+                    .FirstOrDefault());
 
         public Task<(Conversation Conversation, bool Created)> GetOrCreateSalonAsync(Guid orgId, Guid userId, Guid? customerId, string threadId, CancellationToken ct)
         {
@@ -103,11 +114,15 @@ public class ConversationServiceTests
             return Task.FromResult<(Conversation, bool)>((created, true));
         }
 
-        public Task<Conversation> GetOrCreateSalonByExternalRefAsync(Guid orgId, string externalRef, string threadId, CancellationToken ct)
+        public Task<Conversation> GetOrCreateSalonByExternalRefAsync(Guid orgId, string externalRef, string threadId, Guid? customerId, CancellationToken ct)
         {
             var existing = _conversations.FirstOrDefault(c => c.OrganizationId == orgId && c.ExternalRef == externalRef && c.Kind == ConversationKind.Salon);
             if (existing is not null)
             {
+                if (customerId is not null && existing.CustomerId is null)
+                {
+                    existing.CustomerId = customerId;
+                }
                 return Task.FromResult(existing);
             }
 
@@ -116,6 +131,7 @@ public class ConversationServiceTests
                 Id = Guid.CreateVersion7(),
                 OrganizationId = orgId,
                 Kind = ConversationKind.Salon,
+                CustomerId = customerId,
                 ExternalRef = externalRef,
                 ThreadId = threadId,
                 Status = ConversationStatus.Active,
@@ -254,7 +270,7 @@ public class ConversationServiceTests
         await _sut.GetOrCreateSalonAsync(orgId, userId, null, CancellationToken.None);
 
         var (items, _) = await _messages.ListAsync(
-            (await _conversations.ListAsync(orgId, userId, 1, 50, CancellationToken.None)).Items.Single().Id,
+            (await _conversations.ListAsync(orgId, userId, 1, 50, CancellationToken.None)).Items.Single().Conversation.Id,
             1, 50, null, CancellationToken.None);
         Assert.Single(items);
     }
@@ -367,11 +383,44 @@ public class ConversationServiceTests
             null,
             Guid.NewGuid());
         var message = await _sut.ApplyAgentMessageAsync(evt, CancellationToken.None);
-        // The agent publishes SignOff as AwaitingSignOff; simulate by flipping status.
+        // The write path stages a SignOff itself now; nothing is simulated by hand.
         var stored = await _messages.GetAsync(salon.Id, message.Id, CancellationToken.None);
-        stored!.Status = MessageStatus.AwaitingSignOff;
-        await _messages.SaveAsync(stored, CancellationToken.None);
-        return (orgId, userId, salon.Id, message.Id, stored.ContentHash!);
+        return (orgId, userId, salon.Id, message.Id, stored!.ContentHash!);
+    }
+
+    [Fact]
+    public async Task ApplyAgentMessageAsync_SignOff_StagesTheMessageAndPausesTheConversation()
+    {
+        // This is the whole point of building the marker infra before the producer: the two
+        // inputs the `approval` marker reads, and the guard DecideSignOffAsync uses, are set by
+        // the write path rather than faked.
+        var (orgId, _, conversationId, messageId, _) = await SeedSignOffAsync();
+
+        var stored = await _messages.GetAsync(conversationId, messageId, CancellationToken.None);
+        Assert.Equal(MessageStatus.AwaitingSignOff, stored!.Status);
+
+        var conversation = await _conversations.GetAsync(orgId, conversationId, CancellationToken.None);
+        Assert.Equal(ConversationStatus.AwaitingSignOff, conversation!.Status);
+    }
+
+    [Fact]
+    public async Task ApplyAgentMessageAsync_Note_StaysPublishedAndLeavesTheConversationActive()
+    {
+        var orgId = Guid.NewGuid();
+        var salon = await _sut.GetOrCreateSalonAsync(orgId, Guid.NewGuid(), null, CancellationToken.None);
+
+        var message = await _sut.ApplyAgentMessageAsync(new AgentMessageEvent(
+            salon.Id,
+            salon.ThreadId,
+            AgentKeys.Ava,
+            MessageKind.Note,
+            JsonSerializer.SerializeToElement(new[] { new { type = "text", text = "A note" } }),
+            null,
+            Guid.NewGuid()), CancellationToken.None);
+
+        Assert.Equal(MessageStatus.Published, message.Status);
+        var conversation = await _conversations.GetAsync(orgId, salon.Id, CancellationToken.None);
+        Assert.Equal(ConversationStatus.Active, conversation!.Status);
     }
 
     [Fact]
@@ -444,11 +493,42 @@ public class ConversationServiceTests
     {
         var orgId = Guid.NewGuid();
 
-        var message = await _sut.RecordInboundClientMessageAsync(orgId, "+94771234567", "+94771234567", "Do you have this in blue?", CancellationToken.None);
+        var message = await _sut.RecordInboundClientMessageAsync(orgId, "+94771234567", "+94771234567", "Do you have this in blue?", null, CancellationToken.None);
 
         Assert.Equal(MessageKind.ClientMessage, message.Kind);
         Assert.Equal("System", message.AuthorKind);
         Assert.Equal(1, _messages.SaveCount);
+    }
+
+    [Fact]
+    public async Task RecordInboundClientMessageAsync_BindsTheResolvedCustomer_OnTheThread()
+    {
+        // D1: the thread exists for the identified customer, so the caller's phone lookup is
+        // bound at creation rather than left to the agent to attempt later.
+        var orgId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
+
+        await _sut.RecordInboundClientMessageAsync(orgId, "+94771234567", "+94771234567", "Hello", customerId, CancellationToken.None);
+
+        var (rows, _) = await _conversations.ListAsync(orgId, Guid.NewGuid(), 1, 50, CancellationToken.None);
+        var conversation = Assert.Single(rows).Conversation;
+        Assert.Equal(customerId, conversation.CustomerId);
+        Assert.Equal("+94771234567", conversation.ExternalRef);
+    }
+
+    [Fact]
+    public async Task RecordInboundClientMessageAsync_LeavesAnUnknownCustomerUnbound_ButIdentifiable()
+    {
+        // A phone that is not on file is a rendered state, not a silent one: the thread keeps its
+        // external ref so the client can show it as an unnamed client rather than pinning it.
+        var orgId = Guid.NewGuid();
+
+        await _sut.RecordInboundClientMessageAsync(orgId, "+94770000000", "+94770000000", "Hello", null, CancellationToken.None);
+
+        var (rows, _) = await _conversations.ListAsync(orgId, Guid.NewGuid(), 1, 50, CancellationToken.None);
+        var conversation = Assert.Single(rows).Conversation;
+        Assert.Null(conversation.CustomerId);
+        Assert.Equal("+94770000000", conversation.ExternalRef);
     }
 
     [Fact]
@@ -457,8 +537,8 @@ public class ConversationServiceTests
         var orgId = Guid.NewGuid();
         const string number = "+94771234567";
 
-        await _sut.RecordInboundClientMessageAsync(orgId, number, number, "first", CancellationToken.None);
-        await _sut.RecordInboundClientMessageAsync(orgId, number, number, "second", CancellationToken.None);
+        await _sut.RecordInboundClientMessageAsync(orgId, number, number, "first", null, CancellationToken.None);
+        await _sut.RecordInboundClientMessageAsync(orgId, number, number, "second", null, CancellationToken.None);
 
         Assert.Equal(2, _messages.SaveCount);
         var (items, _) = await _conversations.ListAsync(orgId, Guid.NewGuid(), 1, 50, CancellationToken.None);
@@ -471,7 +551,7 @@ public class ConversationServiceTests
         var orgId = Guid.NewGuid();
         const string from = "+94771234567";
 
-        await _sut.RecordInboundClientMessageAsync(orgId, from, from, "Do you have this in blue?", CancellationToken.None);
+        await _sut.RecordInboundClientMessageAsync(orgId, from, from, "Do you have this in blue?", null, CancellationToken.None);
 
         // The inbound message must trigger an agent draft into the Salon (Issue #152), carrying
         // the client's phone so the memory agent can identify them.

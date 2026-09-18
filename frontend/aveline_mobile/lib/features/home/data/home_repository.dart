@@ -1,6 +1,11 @@
+import '../../../../core/network/org_context.dart';
 import '../domain/blossom_usage.dart';
 import '../domain/client_highlight.dart';
 import '../domain/focus_task.dart';
+
+// Re-exported so existing importers of this file keep seeing the one exception,
+// which now lives in core alongside the "not yet" contract it expresses.
+export '../../../../core/network/org_context.dart' show OrgContextUnavailable;
 
 /// Everything Home draws, from one read.
 ///
@@ -24,19 +29,6 @@ class HomeSnapshot {
   /// The shop's Blossom position for this cycle, or `null` when the caller's
   /// role may not read it. The card is hidden rather than showing a zero.
   final BlossomUsage? balance;
-}
-
-/// The signed-in account has no organization context yet.
-///
-/// Every org-scoped route is `/api/v1/orgs/{organizationId}/…`, and the canonical
-/// id arrives from `GET /orgs/my`. Until it does, there is nothing to call — but
-/// that is a "not yet", not a failure, so the screen keeps its loading state
-/// rather than showing an error card.
-class OrgContextUnavailable implements Exception {
-  const OrgContextUnavailable();
-
-  @override
-  String toString() => 'The boutique is still loading.';
 }
 
 /// The one source Home reads.

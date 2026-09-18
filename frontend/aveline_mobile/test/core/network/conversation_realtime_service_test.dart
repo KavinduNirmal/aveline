@@ -1,5 +1,6 @@
 import 'package:aveline_mobile/core/network/conversation_realtime_service.dart';
 import 'package:aveline_mobile/core/notifications/realtime_connection.dart';
+import 'package:aveline_mobile/features/conversations/domain/conversation.dart';
 import 'package:aveline_mobile/features/salon/domain/salon_message.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -145,6 +146,47 @@ void main() {
 
       await service.disconnect();
       expect(created!.stopped, isTrue);
+    });
+
+    test('a JoinSalon-free connect forwards conversation tiles', () async {
+      // The inbox has no single conversation to join: the hub adds the connection to the org
+      // and user groups on connect, and the tile arrives on one of those.
+      FakeRealtimeConnection? created;
+      final service = ConversationRealtimeService(
+        ({required url, required accessTokenFactory}) {
+          created = FakeRealtimeConnection();
+          return created!;
+        },
+      );
+
+      final tiles = <Conversation>[];
+      await service.connect(
+        baseUrl: 'https://api.example.com',
+        getToken: () async => 'token',
+        onConversationChanged: tiles.add,
+      );
+
+      expect(created!.started, isTrue);
+      expect(created!.invokedMethods, isNot(contains('JoinSalon')));
+
+      created!.emit('ReceiveConversationChanged', [
+        {
+          'id': 'cnv_1',
+          'kind': 'Salon',
+          'customerId': 'cus_9',
+          'customerName': 'Nadeesha Perera',
+          'lastMessagePreview': 'A draft is ready.',
+          'lastMessageBlock': 'suggestion',
+          'lastMessageAuthor': 'Agent',
+          'lastMessageAgentKey': 'ava',
+          'markers': ['draft'],
+        },
+      ]);
+
+      expect(tiles, hasLength(1));
+      expect(tiles.single.id, 'cnv_1');
+      expect(tiles.single.customerName, 'Nadeesha Perera');
+      expect(tiles.single.markers, [ConversationMarker.draft]);
     });
   });
 }

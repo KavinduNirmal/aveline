@@ -67,6 +67,8 @@ public static class WebhookEndpoints
             IConfiguration configuration,
             ILoggerFactory loggerFactory,
             Aveline.Api.Modules.Conversations.Services.IConversationService conversations,
+            Aveline.Api.Modules.Conversations.Services.IMessageBroadcaster broadcaster,
+            Aveline.Api.Modules.CustomerConcierge.Repositories.ICustomerRepository customers,
             CancellationToken ct) =>
         {
             var logger = loggerFactory.CreateLogger("Aveline.Webhooks.WhatsApp");
@@ -188,8 +190,22 @@ public static class WebhookEndpoints
             {
                 try
                 {
-                    await conversations.RecordInboundClientMessageAsync(
-                        organizationId, message.From, message.From, message.Text, ct);
+                    // D1: the thread exists for the identified customer, so the phone is resolved
+                    // synchronously at creation through the book rather than left to the agent.
+                    // A number that is not on file yields a null customer, and the thread is
+                    // created with only its external ref - the client renders that state.
+                    var customer = await customers.GetByPhoneAsync(organizationId, message.From, ct);
+                    var recorded = await conversations.RecordInboundClientMessageAsync(
+                        organizationId, message.From, message.From, message.Text, customer?.Id, ct);
+
+                    // An inbound message may have created the thread, and `message.created` alone
+                    // cannot deliver that: it carries a message for a conversation the client may
+                    // never have seen. So the tile is broadcast from the creation site itself.
+                    var tile = await conversations.GetTileAsync(recorded.ConversationId, ct);
+                    if (tile is not null)
+                    {
+                        await broadcaster.BroadcastConversationChangedAsync(tile, ct);
+                    }
                 }
                 catch (Exception ex)
                 {

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../../../../shared/utils/date_formatter.dart';
-import '../../../../shared/widgets/count_badge.dart';
 import '../../domain/conversation.dart';
 import 'conversation_avatar.dart';
 
@@ -30,7 +29,6 @@ class AvelineConversationTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final unread = conversation.isUnread;
 
     return Container(
       decoration: BoxDecoration(
@@ -100,17 +98,6 @@ class AvelineConversationTile extends StatelessWidget {
                               ),
                             ),
                           ),
-                          if (unread) ...[
-                            const SizedBox(width: 8),
-                            CountBadge(
-                              key: const Key('conversations_aveline_unread'),
-                              count: conversation.unreadCount,
-                              semanticLabel:
-                                  conversation.unreadCount == 1
-                                  ? '1 unread message'
-                                  : '${conversation.unreadCount} unread messages',
-                            ),
-                          ],
                         ],
                       ),
                     ],

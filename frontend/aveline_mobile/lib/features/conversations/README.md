@@ -4,9 +4,13 @@
 
 ## Status
 
-The tab reads as the boutique's message inbox: the shop's name in the title, the
-unread count under it, a field that searches the threads, and then the threads
-themselves.
+The tab reads as the boutique's message inbox: the shop's name in the title, a
+field that searches the threads, and then the threads themselves.
+
+**No read state ships.** There is no unread badge and no unread summary, on
+purpose (D2 = c): the release carries no per-user read model, so a mark that could
+never clear was removed rather than left asserting `All caught up` over a field no
+server sends.
 
 **The Salon is pinned at the top, always.** Every other thread is with a person.
 The concierge is the one channel that is always there and always answers, so it is
@@ -17,9 +21,7 @@ to do it would be a surprise.
 
 Under it come the client threads, newest word first, then the notices. Each row is
 laid out the way a phone's message inbox is: the face, the client's name, the last
-word, and when it landed. Read rows recede; an unread row wears a count at the foot
-of its trailing edge, so the column can be scanned for what still needs an answer
-without reading a word of it.
+word, and when it landed.
 
 Three details are worth pointing at:
 
@@ -29,7 +31,7 @@ Three details are worth pointing at:
   is not.
 - **A thread waiting on a signature wears a marker.** `AwaitingSignOff` is the one
   status where the thread is waiting on the associate rather than the other way
-  round, so it earns a mark an unread count cannot give it.
+  round, so it earns a mark a plain row cannot give it.
 - **A client has one colour.** The avatar tint comes from the shared
   `avatarTintFor`, the same one the client book uses, so a face does not change
   shade between the two screens.
@@ -74,22 +76,23 @@ else the client book already says better. This screen is the conversation.
 ## What the API carries today
 
 `Aveline.Api/Modules/Conversations` models one kind of conversation: the `Salon`.
-There is no thread per client yet, and `ConversationDto` has only `id`, `kind`,
-`customerId`, `threadId`, `status` and `lastMessageAt` - so a row drawn from the
-API has no client name, no preview and no unread count.
+`ConversationDto` now carries the whole list row: `id`, `kind`, `customerId`,
+`customerName`, `externalRef`, `threadId`, `status`, `lastMessageAt`, a block-aware
+`lastMessagePreview`, `lastMessageKind`, `lastMessageBlock` (the row's category),
+`lastMessageAuthor`, `lastMessageAgentKey` and the actionable `markers` set over
+`approval | choice | draft`.
 
-`Conversation.fromJson` treats those three as optional rather than inventing them,
-which is why the inbox can be designed against the demo repository today and
-repointed at `ApiConversationRepository` without changing the screen. Two things
-have to land on the server before that repoint is worth making:
+`kind` keeps its declared meaning - the thread's nature and audience - and customer
+context is the separate `customerId` axis. The client classifies by that context first:
+`customerId`, then `externalRef` (a channel thread whose customer is not yet identified),
+and only then a general `Salon`. That makes exactly one thread per caller the pinned
+concierge, whatever `kind` says.
 
-1. A kind for a client thread, or enough of one for `Conversation.fromJson`'s
-   classification rule to catch it. The rule already reads intent rather than
-   copying the string: a `Salon` is Aveline's, anything bound to a client is a
-   client's, and everything else is addressed to the shop - so it keeps working
-   when the kind is added.
-2. A name, a preview and an unread count on the list row. Without them the inbox
-   is a column of "Client" with no last word.
+The client tolerates every optional field being absent, so a row can be drawn from the list
+endpoint, from the realtime broadcast, or from a fixture without the screen knowing which.
+
+_(It carries no unread count, and none is coming: D2 = c removed the badge rather than
+leaving it unfillable.)_
 
 ## Layers
 
@@ -126,12 +129,17 @@ have to land on the server before that repoint is worth making:
 
 ### `data/`
 - `conversation_repository.dart` - the inbox contract: every thread the caller can
-  see, deliberately unordered.
-- `api_conversation_repository.dart` - the inbox contract over `Dio`, with the
-  three fields the endpoint does not carry yet documented at the top.
-- `demo_conversation_repository.dart` - the Salon, six client threads and a notice,
-  with read and unread rows, a thread awaiting a signature, and ages measured from
-  an injectable clock.
+  see, deliberately unordered. A null organization id surfaces as
+  `OrgContextUnavailable`, the shared "not yet".
+- `api_conversation_repository.dart` - the inbox contract over `Dio`. This is what
+  the app constructs: it reads the active membership's org id through a callback
+  at call time, because the id arrives from `GET /orgs/my` after the shell mounts.
+- `demo_conversation_repository.dart` - a fixture rather than a production
+  fallback: the Salon, six client threads and a notice, with a thread awaiting a
+  signature, and ages measured from an injectable clock. No production path
+  constructs it; the screen falls back to `EmptyConversationRepository`.
+- `empty_conversation_repository.dart` - an inbox with nothing in it, so a screen
+  built with no injection renders the honest empty state rather than a seed.
 - `thread_repository.dart` - the thread contract: a page of history, a send, and a
   sign-off decision. The decision takes the whole message rather than its id,
   because the API binds it to the hash of the content the approver was shown.
@@ -154,8 +162,8 @@ have to land on the server before that repoint is worth making:
 
 - `shared/widgets/avatar_tints.dart` - the one palette, so the client book and the
   inbox agree on a client's colour.
-- `shared/widgets/count_badge.dart` - the one count mark, worn by both the header's
-  notification badge and this inbox's unread counts.
+- `shared/widgets/count_badge.dart` - the one count mark, worn by the shell's
+  notification badge. The inbox does not use it: it has no count to show.
 
 ## Related
 
@@ -166,18 +174,25 @@ have to land on the server before that repoint is worth making:
 
 ## Known gaps
 
-- **Opening a thread does not mark it read.** The inbox row keeps its unread count
-  and the controller that owns it is a different object from the thread's, so this
-  needs a seam between them rather than a call from one to the other.
-- **No live messages.** The Salon already proves the realtime path
-  (`ConversationRealtimeService`, `JoinSalon`, `ReceiveMessage`); a client thread
-  needs the same wiring, and the thread on screen needs to take a message that
-  arrives while it is open.
+- **No read state at all.** There is no unread badge, no unread summary and no
+  per-user read model behind them (D2 = c). A thread cannot be marked read because
+  nothing tracks it; if the client-thread plan lands a read model, the badge can
+  return as its own slice consuming that aggregate.
+- **The list is live; a thread is not.** The inbox opens its own hub connection and
+  applies `ReceiveConversationChanged` tiles in place, re-reading the first page when
+  the tile names a thread it does not hold. The Salon already proves the per-thread
+  path (`ConversationRealtimeService`, `JoinSalon`, `ReceiveMessage`); a client
+  thread needs the same wiring, and the thread on screen needs to take a message
+  that arrives while it is open. Those are the client-thread plan's surfaces.
 - **Rich blocks render as their text.** `Look`, `Piece`, `AtAGlance`, `Payment`,
   `Courier` and `SignOff` all arrive as content blocks with more than a string in
   them, and the thread draws the first text block. Each deserves its own card.
-- No compose action on the inbox, and no search across threads.
-- The inbox reads one page; `ApiConversationRepository` asks for up to fifty.
+- No compose action on the inbox. Search narrows the threads that are loaded; it
+  is not a server-side search.
+- The inbox loads one page at a time and the footer says `Showing <loaded> of
+  <total>` until every thread is in. Search still narrows only what is loaded, and
+  the no-matches copy says so; a server-side `q` is the next step if that becomes
+  a real complaint.
 - `MessageStatus.draft` and `failed` are modelled but never produced by the
   backend, and a message stuck in `AwaitingSignOff` can only be decided from the
   thread it is in - there is no queue of everything waiting on the associate.

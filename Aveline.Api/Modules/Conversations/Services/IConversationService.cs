@@ -59,6 +59,16 @@ public interface IConversationService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Builds the inbox tile for a conversation, with the routing context the realtime broadcast
+    /// needs (the org, and the owner when the thread is a per-user general Salon). Returns
+    /// <c>null</c> when the conversation is unknown. Derived exactly like the list row, so a tile
+    /// that arrives over the hub equals the one a re-read returns.
+    /// </summary>
+    Task<ConversationTile?> GetTileAsync(
+        Guid conversationId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Binds a Salon to a customer chosen from a resolution <c>choice</c> block (Issue #161)
     /// and re-triggers the agent with that customer in context. The Salon becomes
     /// organization-shared. Returns <c>null</c> when the conversation does not exist in the org
@@ -117,11 +127,15 @@ public interface IConversationService
     /// <summary>
     /// Records an inbound customer message (e.g. WhatsApp) as a <see cref="MessageKind.ClientMessage"/>
     /// in the customer's Salon, creating the Salon by external channel reference when needed.
+    /// <paramref name="customerId"/> is the customer resolved from the channel handle at creation
+    /// (the caller owns the lookup); when it is null the thread is created with only its
+    /// <c>ExternalRef</c>, which is the rendered "not yet identified" state.
     /// </summary>
     Task<MessageDto> RecordInboundClientMessageAsync(
         Guid orgId,
         string externalRef,
         string from,
         string text,
+        Guid? customerId,
         CancellationToken cancellationToken = default);
 }

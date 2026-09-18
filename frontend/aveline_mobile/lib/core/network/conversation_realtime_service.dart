@@ -1,4 +1,5 @@
 import '../notifications/realtime_connection.dart';
+import '../../features/conversations/domain/conversation.dart';
 import '../../features/salon/domain/salon_message.dart';
 
 /// A single `ReceiveAgentState` payload from the conversation hub.
@@ -26,8 +27,9 @@ class AgentStatePayload {
 }
 
 /// Establishes a foreground realtime (SignalR) connection to the conversation hub and
-/// forwards incoming `ReceiveMessage` / `ReceiveAgentState` messages to callbacks. Connects
-/// on Salon open and disconnects when the Salon closes.
+/// forwards incoming `ReceiveMessage` / `ReceiveAgentState` / `ReceiveConversationChanged`
+/// messages to callbacks. Each screen constructs its own instance, so the Salon and the
+/// inbox can both be live without fighting over one connection.
 class ConversationRealtimeService {
   ConversationRealtimeService(this._connectionFactory);
 
@@ -35,15 +37,20 @@ class ConversationRealtimeService {
   RealtimeConnection? _connection;
 
   /// Connects to the conversation hub at [baseUrl]/hubs/conversations, authenticating with
-  /// [getToken], joins the Salon group for [conversationId], and delivers incoming agent
-  /// states to [onAgentState] and messages to [onMessage].
+  /// [getToken], and forwards the events the caller asked for.
+  ///
+  /// When [conversationId] is supplied the connection also invokes
+  /// `JoinSalon(organizationId, conversationId)`. The inbox omits both: the org and user
+  /// groups are joined on connect, so a `JoinSalon`-free connection already receives every
+  /// `ReceiveConversationChanged` tile the caller may see.
   Future<void> connect({
     required String baseUrl,
     required Future<String?> Function() getToken,
-    required String organizationId,
-    required String conversationId,
-    required void Function(AgentStatePayload) onAgentState,
+    String? organizationId,
+    String? conversationId,
+    void Function(AgentStatePayload)? onAgentState,
     void Function(SalonMessage)? onMessage,
+    void Function(Conversation)? onConversationChanged,
   }) async {
     await disconnect();
 
@@ -53,25 +60,43 @@ class ConversationRealtimeService {
     );
     _connection = connection;
 
-    connection.on('ReceiveAgentState', (arguments) {
-      final first = arguments?.isNotEmpty == true ? arguments!.first : null;
-      if (first is Map) {
-        onAgentState(AgentStatePayload.fromJson(first.cast<String, dynamic>()));
-      }
-    });
+    final agentState = onAgentState;
+    if (agentState != null) {
+      connection.on('ReceiveAgentState', (arguments) {
+        final first = arguments?.isNotEmpty == true ? arguments!.first : null;
+        if (first is Map) {
+          agentState(AgentStatePayload.fromJson(first.cast<String, dynamic>()));
+        }
+      });
+    }
 
-    if (onMessage != null) {
+    final message = onMessage;
+    if (message != null) {
       connection.on('ReceiveMessage', (arguments) {
         final first = arguments?.isNotEmpty == true ? arguments!.first : null;
         if (first is Map) {
-          onMessage(SalonMessage.fromJson(first.cast<String, dynamic>()));
+          message(SalonMessage.fromJson(first.cast<String, dynamic>()));
+        }
+      });
+    }
+
+    final conversationChanged = onConversationChanged;
+    if (conversationChanged != null) {
+      connection.on('ReceiveConversationChanged', (arguments) {
+        final first = arguments?.isNotEmpty == true ? arguments!.first : null;
+        if (first is Map) {
+          conversationChanged(
+            Conversation.fromJson(first.cast<String, dynamic>()),
+          );
         }
       });
     }
 
     await connection.start();
     // Best-effort join; the hub verifies membership before adding to the group.
-    await connection.invoke('JoinSalon', [organizationId, conversationId]);
+    if (organizationId != null && conversationId != null) {
+      await connection.invoke('JoinSalon', [organizationId, conversationId]);
+    }
   }
 
   /// Stops the connection if one is active.

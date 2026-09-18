@@ -101,6 +101,7 @@ public static class ConversationEndpoints
         CreateConversationRequest request,
         ClaimsPrincipal user,
         IConversationService conversations,
+        IMessageBroadcaster broadcaster,
         IUserRepository users,
         CancellationToken cancellationToken = default)
     {
@@ -111,6 +112,9 @@ public static class ConversationEndpoints
         }
 
         var conversation = await conversations.GetOrCreateSalonAsync(organizationId, userId.Value, request.CustomerId, cancellationToken);
+        // A brand-new thread has no event path of its own, so the API broadcasts its tile here
+        // rather than routing through the unpublished `conversation.created` event.
+        await BroadcastTileAsync(conversations, broadcaster, conversation.Id, cancellationToken);
         return Results.Ok(conversation);
     }
 
@@ -164,6 +168,7 @@ public static class ConversationEndpoints
         SendMessageRequest request,
         ClaimsPrincipal user,
         IConversationService conversations,
+        IMessageBroadcaster broadcaster,
         IUserRepository users,
         CancellationToken cancellationToken = default)
     {
@@ -181,6 +186,9 @@ public static class ConversationEndpoints
         try
         {
             var message = await conversations.SendStaffNoteAsync(organizationId, userId.Value, conversationId, request.Text, cancellationToken);
+            // The staff note moves the thread's preview, so the list is told directly rather
+            // than waiting for the agent's reply.
+            await BroadcastTileAsync(conversations, broadcaster, conversationId, cancellationToken);
             return Results.Ok(message);
         }
         catch (InvalidOperationException)
@@ -228,6 +236,7 @@ public static class ConversationEndpoints
         SelectCustomerRequest request,
         ClaimsPrincipal user,
         IConversationService conversations,
+        IMessageBroadcaster broadcaster,
         IUserRepository users,
         CancellationToken cancellationToken = default)
     {
@@ -245,9 +254,32 @@ public static class ConversationEndpoints
         var conversation = await conversations.SelectCustomerAsync(
             organizationId, userId.Value, conversationId, request.CustomerId, request.Query, cancellationToken);
 
-        return conversation is null
-            ? Results.NotFound(new { message = "Conversation not found." })
-            : Results.Ok(conversation);
+        if (conversation is null)
+        {
+            return Results.NotFound(new { message = "Conversation not found." });
+        }
+
+        // Binding a customer changes the row's name and unpins a channel thread, so the tile is
+        // broadcast from the site that made the change.
+        await BroadcastTileAsync(conversations, broadcaster, conversation.Id, cancellationToken);
+        return Results.Ok(conversation);
+    }
+
+    /// <summary>
+    /// Sends a conversation's inbox tile to the clients watching its list. A tile this instance
+    /// cannot resolve is skipped rather than failing the request that changed the row.
+    /// </summary>
+    private static async Task BroadcastTileAsync(
+        IConversationService conversations,
+        IMessageBroadcaster broadcaster,
+        Guid conversationId,
+        CancellationToken cancellationToken)
+    {
+        var tile = await conversations.GetTileAsync(conversationId, cancellationToken);
+        if (tile is not null)
+        {
+            await broadcaster.BroadcastConversationChangedAsync(tile, cancellationToken);
+        }
     }
 
     private static async Task<Guid?> ResolveUserIdAsync(

@@ -9,6 +9,7 @@ public class OrderService : IOrderService
 {
     private readonly IOrderRepository _orderRepository;
     private readonly IBusinessRulesService? _businessRulesService;
+    private readonly IApprovalRepository? _approvalRepository;
     private readonly ILogger<OrderService> _logger;
 
     private static readonly Dictionary<string, HashSet<string>> ValidTransitions = new(StringComparer.OrdinalIgnoreCase)
@@ -26,11 +27,13 @@ public class OrderService : IOrderService
     public OrderService(
         IOrderRepository orderRepository,
         ILogger<OrderService> logger,
-        IBusinessRulesService? businessRulesService = null)
+        IBusinessRulesService? businessRulesService = null,
+        IApprovalRepository? approvalRepository = null)
     {
         _orderRepository = orderRepository ?? throw new ArgumentNullException(nameof(orderRepository));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _businessRulesService = businessRulesService;
+        _approvalRepository = approvalRepository;
     }
 
     public async Task<OrderResponseDto> CreateOrderAsync(
@@ -136,6 +139,29 @@ public class OrderService : IOrderService
 
         var createdOrder = await _orderRepository.CreateAsync(order, cancellationToken);
         _logger.LogInformation("Created order {OrderId} for customer {CustomerName} with initial status {Status}", createdOrder.Id, createdOrder.CustomerName, createdOrder.Status);
+
+        if (initialStatus == "pending_approval" && _approvalRepository != null)
+        {
+            try
+            {
+                var approvalEntry = new ApprovalQueueEntry
+                {
+                    Id = Guid.NewGuid(),
+                    OrganizationId = organizationId,
+                    OrderId = createdOrder.Id,
+                    ApprovalType = "order_approval",
+                    Status = "pending",
+                    ThresholdExceeded = true,
+                    Reason = "Requires boutique owner review due to business rule threshold.",
+                    CreatedAt = DateTime.UtcNow
+                };
+                await _approvalRepository.AddAsync(approvalEntry, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to enqueue approval entry for order {OrderId}", createdOrder.Id);
+            }
+        }
 
         return MapToDto(createdOrder);
     }

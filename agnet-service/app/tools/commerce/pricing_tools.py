@@ -1,7 +1,6 @@
 """Pricing and profit margin calculation tools for the Commerce Agent (Slice 3)."""
 
 import logging
-from typing import Any
 
 logger = logging.getLogger("aveline.agent.tools.commerce.pricing")
 

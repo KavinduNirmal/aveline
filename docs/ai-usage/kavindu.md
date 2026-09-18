@@ -2593,3 +2593,25 @@ constraint behaviour the in-memory provider cannot.
 - Tested edge-swipe and hamburger menu drawer opening, permission filtering, search overlay, notification badge, and animated blossom salon launcher.
 
 
+
+## Session 2026-09-18 - Commerce Module Commit Prep
+
+**Student:** K.N. Delpachithra (Kavindu) - **ID:** IT24102532
+**Branch:** `feature/order-management-margins-lifecycle`
+**Tool used:** Antigravity (Claude Sonnet 4.6 Thinking)
+**Task:** Review unstaged changes across the Commerce module and prepare them for commit.
+
+### Summary of changes
+
+**Backend:** New Commerce module - CommerceModule.cs, ApprovalsController, DeliveriesController, PaymentsController, 12 new DTOs, ApprovalService, DeliveryService, PaymentService + interfaces, updated repositories (Approval, Delivery, Payment), extended OrderService, Program.cs registration.
+
+**Agent service:** Bug fixes and cleanup in commerce nodes, delivery/loyalty/payment/pricing/rules tools, concierge_workflow, and test_concierge_workflow.
+
+**Tests:** CommerceApprovalsTests.cs, CommerceDeliveriesTests.cs, CommercePaymentsTests.cs (new).
+
+**Mobile (build fix):** Removed stale Google Services plugin from build.gradle.kts that caused build failure due to missing google-services.json.
+
+### Verification performed
+
+- Reviewed git status and git diff --stat to confirm all changes are accounted for.
+- No secrets or credentials introduced.

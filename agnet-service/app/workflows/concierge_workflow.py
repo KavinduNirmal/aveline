@@ -219,6 +219,7 @@ async def run_commerce_agent(state: ConciergeState) -> dict[str, Any]:
                 "ran": True,
                 "status": "skipped",
                 "reason": "no organization context available",
+                "needs_approval": False,
             }
         }
 

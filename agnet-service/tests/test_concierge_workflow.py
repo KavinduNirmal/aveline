@@ -1,8 +1,8 @@
 """Tests for the top-level concierge orchestrator (app/workflows/concierge_workflow.py).
 
-The orchestrator runs the Intent Gate, delegates to the three agent sub-graphs
-(placeholder passthroughs for now), and formulates a final response. Routing is
-deterministic and testable without an LLM or a live database.
+The orchestrator runs the Intent Gate, delegates to the three agent sub-graphs,
+and formulates a final response. Routing is deterministic and testable without an
+LLM or a live database.
 """
 
 import pytest
@@ -61,15 +61,20 @@ async def test_visual_agent_emits_structured_output():
 
 
 
-async def test_commerce_stub_emits_structured_output():
+async def test_commerce_agent_skips_without_organization_context():
+    """The Commerce Agent needs an organization to price against.
+
+    Slice 3 replaced the old placeholder node with the real sub-graph, so a pricing
+    query with no org context now reports ``skipped`` instead of a stub envelope.
+    """
     result = await _invoke("How much is this dress?")
     commerce = result["commerce_output"]
 
     assert commerce is not None
     assert commerce["ran"] is True
-    assert commerce["status"] == "stub"
-    assert "note" in commerce
-    assert commerce["needs_approval"] is False
+    assert commerce["agent"] == "commerce"
+    assert commerce["status"] == "skipped"
+    assert commerce["reason"] == "no organization context available"
 
 
 async def test_out_of_scope_short_circuits():

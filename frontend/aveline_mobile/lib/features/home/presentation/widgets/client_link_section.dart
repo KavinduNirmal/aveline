@@ -2,11 +2,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../shared/widgets/app_toast.dart';
+import '../../../../shared/widgets/blossom_refresh.dart';
 import '../../../../shared/widgets/section_overline.dart';
 import '../../../../shared/widgets/trailing_fade.dart';
 import '../../domain/client_highlight.dart';
 import 'all_clients_sheet.dart';
 import 'client_highlight_tile.dart';
+import 'client_status_ticker.dart';
 import 'quick_add_client_sheet.dart';
 
 /// `Direct client link`: the clients with something happening right now,
@@ -29,6 +31,9 @@ class _ClientLinkSectionState extends State<ClientLinkSection> {
   final ScrollController _controller = ScrollController();
 
   late List<ClientHighlight> _clients = List.of(widget.clients);
+
+  /// The refresh revision the row was seeded at.
+  int _seededRevision = 0;
 
   @override
   void didUpdateWidget(covariant ClientLinkSection oldWidget) {
@@ -59,6 +64,14 @@ class _ClientLinkSectionState extends State<ClientLinkSection> {
 
   @override
   Widget build(BuildContext context) {
+    // A completed pull-to-refresh drops the walk-ins added at the counter, which
+    // is what re-seeding means for a row built from the caller's list.
+    final revision = RefreshScope.revisionOf(context);
+    if (revision != _seededRevision) {
+      _seededRevision = revision;
+      _clients = List.of(widget.clients);
+    }
+
     final visible = _clients.take(ClientLinkSection.rowLimit).toList();
 
     return Column(
@@ -83,7 +96,7 @@ class _ClientLinkSectionState extends State<ClientLinkSection> {
             child: ListView.separated(
               controller: _controller,
               scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 20),
+              padding: TrailingFade.endPadding(context),
               itemCount: visible.length + 1,
               separatorBuilder: (context, index) =>
                   const SizedBox(width: ClientLinkSection._tileGap),
@@ -100,6 +113,9 @@ class _ClientLinkSectionState extends State<ClientLinkSection> {
             ),
           ),
         ),
+        const SizedBox(height: 14),
+        // The sentence behind those activity dots, one client at a time.
+        ClientStatusTicker(clients: _clients),
       ],
     );
   }

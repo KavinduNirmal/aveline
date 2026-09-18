@@ -39,4 +39,24 @@ class FocusTask {
 
   /// Toast copy shown once the task is cleared, in the app's voice.
   final String doneMessage;
+
+  /// Minutes past midnight, parsed from [timeLabel], or `null` if the label does
+  /// not read as a clock time.
+  ///
+  /// A stand-in until the API sends a real timestamp. The deck only carries
+  /// display strings, and Home's strip needs to identify the next commitment on
+  /// the floor regardless of the order the pile happens to be cycling in.
+  int? get minutesOfDay {
+    final match =
+        RegExp(r'^(\d{1,2}):(\d{2})\s*([AaPp][Mm])$').firstMatch(timeLabel.trim());
+    if (match == null) {
+      return null;
+    }
+
+    final hour = int.parse(match.group(1)!);
+    final minute = int.parse(match.group(2)!);
+    final isPm = match.group(3)!.toUpperCase() == 'PM';
+
+    return (hour % 12 + (isPm ? 12 : 0)) * 60 + minute;
+  }
 }

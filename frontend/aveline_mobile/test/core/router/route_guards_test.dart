@@ -254,4 +254,20 @@ void main() {
       );
     });
   });
+
+  group('AppRoutes', () {
+    test('serves every personal destination the side panel carries', () {
+      expect(AppRoutes.notifications, '/notifications');
+      expect(AppRoutes.settings, '/settings');
+      expect(AppRoutes.conversations, '/conversations');
+    });
+
+    test('keeps the retired profile path declared', () {
+      // The screen is gone - the account it showed became a section of Settings -
+      // but the header's avatar and any stored link still name the old path, so
+      // the router forwards it rather than answering with nothing.
+      expect(AppRoutes.profile, '/profile');
+      expect(AppRoutes.profile, isNot(AppRoutes.settings));
+    });
+  });
 }

@@ -145,10 +145,8 @@ class _ClientRow extends StatelessWidget {
                       client.activity,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.labelSmall?.copyWith(
+                      style: theme.textTheme.bodySmall?.copyWith(
                         color: scheme.onSurfaceVariant,
-                        fontSize: 12,
-                        height: 1.4,
                       ),
                     ),
                   ],

@@ -1,9 +1,7 @@
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import '../../../../shared/widgets/app_toast.dart';
 import '../../../../shared/widgets/blossom.dart';
 import '../../../../shared/widgets/section_overline.dart';
 import '../../domain/focus_task.dart';
@@ -11,46 +9,47 @@ import 'focus_task_card.dart';
 
 /// `Today's focus` and its pile.
 ///
-/// Owns the local task list so clearing a docket is a real state change on this
-/// screen until the API takes over. Callers pass the demo lists from
-/// `demoFocusTasks`, which are const, so a parent rebuild does not disturb the
-/// pile; a freshly built list resets it.
-class FocusSection extends StatefulWidget {
-  const FocusSection({super.key, required this.tasks});
+/// Home owns the task list, so the header count, the pile and the strip above it
+/// all read the same list and move together when a docket is signed off. The
+/// deck keeps its own ordering of that list, because the pile cycles.
+class FocusSection extends StatelessWidget {
+  const FocusSection({
+    super.key,
+    required this.tasks,
+    required this.onComplete,
+  });
 
   final List<FocusTask> tasks;
 
-  @override
-  State<FocusSection> createState() => _FocusSectionState();
-}
-
-class _FocusSectionState extends State<FocusSection> {
-  late List<FocusTask> _tasks = List.of(widget.tasks);
-
-  @override
-  void didUpdateWidget(covariant FocusSection oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (!listEquals(oldWidget.tasks, widget.tasks)) {
-      _tasks = List.of(widget.tasks);
-    }
-  }
-
-  void _complete(FocusTask task) {
-    setState(() => _tasks.removeWhere((candidate) => candidate.id == task.id));
-    AppToast.show(context, task.doneMessage);
-  }
+  /// Called once a docket has been signed off and lifted away.
+  final ValueChanged<FocusTask> onComplete;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 20),
-          child: SectionOverline("Today's focus"),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Row(
+            children: [
+              const Expanded(child: SectionOverline("Today's focus")),
+              // How much is left is a fact about the list, so it belongs beside
+              // the section rather than on a card that cycles.
+              if (tasks.isNotEmpty)
+                Text(
+                  '${tasks.length} left',
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+            ],
+          ),
         ),
         const SizedBox(height: 10),
-        FocusDeck(tasks: _tasks, onComplete: _complete),
+        FocusDeck(tasks: tasks, onComplete: onComplete),
       ],
     );
   }
@@ -247,9 +246,6 @@ class _FocusDeckState extends State<FocusDeck>
 
     final size = MediaQuery.sizeOf(context);
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    final ordinals = {
-      for (var i = 0; i < widget.tasks.length; i++) widget.tasks[i].id: i + 1,
-    };
 
     return AnimatedBuilder(
       animation: _controller,
@@ -285,29 +281,32 @@ class _FocusDeckState extends State<FocusDeck>
         // tall as it is; the layers behind are positioned against it. A fixed
         // height would either clip a long docket or leave a band of empty card
         // under a short one.
+        final deck = Stack(
+          children: [
+            // Painted back to front so the docket in hand stays on top.
+            for (var index = deepest; index >= 1; index--)
+              _ghostLayer(index: index, depth: index - progress),
+            _frontLayer(
+              frontOffset: frontOffset,
+              frontRotation: frontRotation,
+              frontOpacity: frontOpacity,
+            ),
+          ],
+        );
+
+        // An `AnimatedSize` with a zero duration asserts in its own
+        // `performLayout`, so reduced motion drops the wrapper rather than
+        // shortening its animation. The layers inside are stateless, so the
+        // swap costs nothing.
+        if (reduceMotion) {
+          return deck;
+        }
+
         return AnimatedSize(
-          duration: reduceMotion
-              ? Duration.zero
-              : const Duration(milliseconds: 220),
+          duration: const Duration(milliseconds: 220),
           curve: Curves.easeOutCubic,
           alignment: Alignment.topCenter,
-          child: Stack(
-            children: [
-              // Painted back to front so the docket in hand stays on top.
-              for (var index = deepest; index >= 1; index--)
-                _ghostLayer(
-                  index: index,
-                  depth: index - progress,
-                  ordinals: ordinals,
-                ),
-              _frontLayer(
-                frontOffset: frontOffset,
-                frontRotation: frontRotation,
-                frontOpacity: frontOpacity,
-                ordinals: ordinals,
-              ),
-            ],
-          ),
+          child: deck,
         );
       },
     );
@@ -318,7 +317,6 @@ class _FocusDeckState extends State<FocusDeck>
     required Offset frontOffset,
     required double frontRotation,
     required double frontOpacity,
-    required Map<String, int> ordinals,
   }) {
     final task = _pile.first;
 
@@ -345,8 +343,6 @@ class _FocusDeckState extends State<FocusDeck>
                 onHorizontalDragEnd: _onHorizontalDragEnd,
                 child: FocusTaskCard(
                   task: task,
-                  ordinal: ordinals[task.id] ?? 1,
-                  total: _pile.length,
                   onNext: _pile.length > 1 ? _sendToBack : null,
                   onAction: _clearFront,
                 ),
@@ -358,17 +354,23 @@ class _FocusDeckState extends State<FocusDeck>
     );
   }
 
-  /// A docket behind the one in hand: plain paper, inert, matching its height.
-  Widget _ghostLayer({
-    required int index,
-    required double depth,
-    required Map<String, int> ordinals,
-  }) {
+  /// A docket behind the one in hand: an inert, tinted slab with its own height.
+  ///
+  /// Only the top `FocusDeck._lift` band of it is ever visible, and that band sits
+  /// inside the card's own padding — so a layer behind reads as a shape and can
+  /// never carry text.
+  ///
+  /// Deliberately positioned by `top` alone rather than stretched between `top`
+  /// and `bottom`. Stretching tied every layer's height to the docket in hand, so
+  /// a layer whose copy ran a line longer than the front one overflowed — and
+  /// while the deck animated between two heights, so did every layer at once.
+  /// Anything a layer hangs past the pile is clipped at the deck's own edge,
+  /// behind the docket in hand, so hugging its content changes nothing visible.
+  Widget _ghostLayer({required int index, required double depth}) {
     final task = _pile[index];
 
     return Positioned(
       top: FocusDeck._deckLift - depth * FocusDeck._lift,
-      bottom: depth * FocusDeck._lift,
       left: FocusDeck._pageInset + depth * FocusDeck._inset,
       right: FocusDeck._pageInset + depth * FocusDeck._inset,
       child: Transform.scale(
@@ -378,8 +380,6 @@ class _FocusDeckState extends State<FocusDeck>
           child: ExcludeSemantics(
             child: FocusTaskCard(
               task: task,
-              ordinal: ordinals[task.id] ?? index + 1,
-              total: _pile.length,
               prominence: (1 - depth).clamp(0.0, 1.0),
               onNext: null,
               onAction: _clearFront,
@@ -406,7 +406,7 @@ class _FocusEmptyCard extends StatelessWidget {
         padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
           color: scheme.surfaceContainerLowest,
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: scheme.outlineVariant.withValues(alpha: 0.5),
           ),

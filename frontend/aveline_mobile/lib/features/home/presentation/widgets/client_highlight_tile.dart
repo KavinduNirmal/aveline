@@ -42,11 +42,15 @@ Color _tintFor(String name) {
 
 /// The value ramp: VIP wears the brand wine, levels run dark to light so the
 /// stronger tier reads as the heavier badge.
+///
+/// Every step has to clear 4.5:1 against the white numeral it carries, which is
+/// what rules out the pale greys a ramp like this invites: the original level-1
+/// tone measured 3.1:1.
 Color clientTierColor(ClientTier tier, ColorScheme scheme) => switch (tier) {
       ClientTier.vip => scheme.primary,
       ClientTier.level3 => const Color(0xFF3B3030),
       ClientTier.level2 => const Color(0xFF6E6363),
-      ClientTier.level1 => const Color(0xFF9C9090),
+      ClientTier.level1 => const Color(0xFF7A6F6F),
     };
 
 String clientTierLabel(ClientTier tier) =>
@@ -82,6 +86,9 @@ class ClientAvatar extends StatelessWidget {
       ),
       child: Text(
         client.initials,
+        // Proportional to the avatar rather than a type role: the same widget
+        // serves the 64dp row tile and the 44dp sheet avatar, so the initials
+        // have to scale with the circle they sit in.
         style: theme.textTheme.headlineSmall?.copyWith(
           fontSize: size * 0.32,
           letterSpacing: 0.5,
@@ -145,6 +152,16 @@ class ClientTierBadge extends StatelessWidget {
   static const double _vipHeight = 18;
   static const double _levelDiameter = 30;
 
+  /// Badge type is sized to the badge, not to the text scale.
+  ///
+  /// These are graphic marks riding a 64dp avatar, so they carry their own
+  /// metrics rather than a `TextTheme` role — the `labelSmall` token (12) does
+  /// not fit a two-line stack inside a 30dp circle. The floor is 9: the `LVL`
+  /// kicker used to sit at 6.5, which is not a size a phone renders comfortably.
+  static const double _vipFontSize = 10;
+  static const double _kickerFontSize = 9;
+  static const double _levelFontSize = 12;
+
   /// How tall the badge is, so the tile can centre it on the avatar's edge.
   static double heightFor(ClientTier tier) =>
       tier.isVip ? _vipHeight : _levelDiameter;
@@ -167,7 +184,7 @@ class ClientTierBadge extends StatelessWidget {
           'VIP',
           style: theme.textTheme.labelSmall?.copyWith(
             color: scheme.onPrimary,
-            fontSize: 9.5,
+            fontSize: _vipFontSize,
             fontWeight: FontWeight.w700,
             letterSpacing: 0.8,
             height: 1,
@@ -187,29 +204,37 @@ class ClientTierBadge extends StatelessWidget {
           width: 1.5,
         ),
       ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(
-            'LVL',
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: scheme.onPrimary,
-              fontSize: 6.5,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.4,
-              height: 1.1,
+      // Scaled to the circle rather than laid out inside it. The two-line stack
+      // is taller than the 27dp the border leaves under the fallback font
+      // metrics the test harness and CI use, and it would overflow again under a
+      // large OS text scale. Scaling down keeps the badge a fixed graphic mark
+      // whatever the font does.
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'LVL',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.onPrimary,
+                fontSize: _kickerFontSize,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.4,
+                height: 1.1,
+              ),
             ),
-          ),
-          Text(
-            tier.level ?? '',
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: scheme.onPrimary,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              height: 1.1,
+            Text(
+              tier.level ?? '',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.onPrimary,
+                fontSize: _levelFontSize,
+                fontWeight: FontWeight.w700,
+                height: 1.1,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -237,7 +262,6 @@ class ClientTierChip extends StatelessWidget {
         clientTierLabel(tier).toUpperCase(),
         style: theme.textTheme.labelSmall?.copyWith(
           color: color,
-          fontSize: 9.5,
           fontWeight: FontWeight.w700,
           letterSpacing: 0.8,
         ),
@@ -302,7 +326,6 @@ class ClientHighlightTile extends StatelessWidget {
                   textAlign: TextAlign.center,
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: scheme.onSurface,
-                    fontSize: 12.5,
                     fontWeight: FontWeight.w500,
                     letterSpacing: 0.1,
                   ),
@@ -368,7 +391,6 @@ class AddClientTile extends StatelessWidget {
                   textAlign: TextAlign.center,
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: scheme.primary,
-                    fontSize: 12.5,
                     fontWeight: FontWeight.w600,
                     letterSpacing: 0.1,
                   ),

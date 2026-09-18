@@ -21,4 +21,24 @@ abstract final class AppRoles {
 
   /// True for any authenticated role that loads the Staff app shell.
   static bool isStaffRole(String role) => !isOwnerRole(role);
+
+  /// The words to show for [role] in the interface.
+  ///
+  /// The claims carry ids - `org:boutique_owner` - and those are not what an
+  /// associate should have to read on their own account. A grant this build does
+  /// not know is printed exactly as it arrived rather than hidden, so a role
+  /// added on the server is visible on screen before it is named here.
+  static String labelFor(String role) => _labels[role] ?? role;
+
+  static const Map<String, String> _labels = {
+    staff: 'Staff',
+    customerRelations: 'Customer relations',
+    moderator: 'Moderator',
+    admin: 'Admin',
+    owner: 'Owner',
+    boutiqueStaff: 'Boutique staff',
+    boutiqueManager: 'Boutique manager',
+    boutiqueSupervisor: 'Boutique supervisor',
+    boutiqueOwner: 'Boutique owner',
+  };
 }

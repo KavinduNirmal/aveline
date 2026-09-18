@@ -5,6 +5,7 @@ namespace Aveline.Api.Modules.VisualIntelligence.Repositories;
 public interface IInventoryRepository
 {
     Task<InventoryItem?> GetByIdAsync(Guid id, Guid orgId, CancellationToken cancellationToken = default);
+    Task<InventoryItem?> GetBySkuAsync(string sku, Guid orgId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<InventoryItem>> SearchAsync(
         Guid orgId,
         string? category = null,

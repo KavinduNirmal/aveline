@@ -37,6 +37,7 @@ public static class VisualIntelligenceModule
 
         // Services
         services.AddScoped<IInventoryService, InventoryService>();
+        services.AddScoped<IQrCodeService, QrCodeService>();
         services.AddScoped<IVisualService, VisualService>();
 
         return services;

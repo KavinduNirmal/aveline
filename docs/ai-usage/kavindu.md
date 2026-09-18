@@ -2464,3 +2464,668 @@ constraint behaviour the in-memory provider cannot.
   gate (5 000 req/s, p99 ≤ 1 ms) is still unmeasured.
 - **`docs/api/openapi.yaml`** was not regenerated/reconciled in this pass for the
   #241 endpoints (`/admin/orgs` remains absent from the hand-authored spec).
+
+## Session 2026-09-16 — Mobile App Launch & Verification on Android
+
+**Student:** K.N. Delpachithra (Kavindu) · **ID:** IT24102532
+**Branch:** `feature/mobile-app-design-v1`
+**Tool used:** Antigravity (Gemini 3.8 Flash)
+**Task:** Launch and verify the Flutter mobile application (`aveline_mobile`) on the connected physical Android device (SM-A055F).
+
+### Intended work
+
+- Detect connected physical Android device via `adb` and `flutter devices`.
+- Verify build environment and dependencies for `frontend/aveline_mobile`.
+- Run the Flutter application on the target Android device (`R9WWB0CVRAV`).
+
+### Work performed
+
+- Configured Flutter SDK to point to the installed Android SDK at `/home/kavindu/Android` (`flutter config --android-sdk /home/kavindu/Android`).
+- Configured Flutter and Gradle to build using JDK 21 (`/usr/lib/jvm/java-21-openjdk`) instead of the system default JDK 26 via `flutter config --jdk-dir` and explicitly specifying `org.gradle.java.home=/usr/lib/jvm/java-21-openjdk` in `frontend/aveline_mobile/android/gradle.properties`.
+- Synchronized accepted Android SDK licenses to `/home/kavindu/Android/licenses`.
+- Configured ADB reverse socket forwarding (`adb reverse tcp:5091 tcp:5091`) so the mobile app can reach the host machine's backend API on port 5091.
+- Executed `flutter pub get` and built the debug APK (`app-debug.apk`).
+- Launched the application on the connected physical device `SM A055F` (`R9WWB0CVRAV`) with compile-time defines (`CLERK_PUBLISHABLE_KEY` and `API_BASE_URL=http://localhost:5091`).
+- Verified live connection, Impeller Vulkan backend initialization, and active hot-reload capability (`Reloaded 0 libraries in 524ms`).
+
+### Files created or modified
+
+- `frontend/aveline_mobile/android/gradle.properties`: Added `org.gradle.java.home=/usr/lib/jvm/java-21-openjdk` to pin the Gradle build JVM to JDK 21.
+- `docs/ai-usage/kavindu.md`: Recorded session start and end details.
+
+### Tests created or modified
+
+- None (environment setup and application launch session).
+
+### Important architectural decisions
+
+- **JDK 21 Pinning:** Gradle and Kotlin Gradle Plugin compatibility requires JDK 17–21; pinned `org.gradle.java.home` in `gradle.properties` to ensure reproducible builds independent of OS-level default Java switches.
+- **ADB Port Forwarding:** Used `adb reverse tcp:5091 tcp:5091` to allow the mobile device over USB to access localhost backend services without hardcoding changing LAN IP addresses.
+
+### Problems encountered
+
+- `adb` was initially not in default PATH (resolved by adding Android SDK platform-tools path).
+- Flutter doctor detected empty SDK platforms because Android SDK was located at `/home/kavindu/Android` rather than `/home/kavindu/Android/Sdk` (resolved via `flutter config --android-sdk`).
+- Build failure when attempting to build with Java 26 (fixed by configuring JDK 21 as per user guidance).
+- Missing accepted license files in `/home/kavindu/Android/licenses` (resolved by copying accepted licenses from the SDK cache).
+
+### Verification performed
+
+- `flutter doctor -v`: All Flutter and Android toolchain checks passing green.
+- `flutter build apk --debug`: Clean build generated `build/app/outputs/flutter-apk/app-debug.apk`.
+- `flutter run -d R9WWB0CVRAV`: Installed and launched `com.example.aveline_mobile` on the physical device.
+- Hot reload test: Sent `r` to the interactive session and confirmed live reload in 524ms.
+
+### Remaining work
+
+- Ensure the mobile device has active Wi-Fi or mobile data for Clerk authentication DNS lookup (`inspired-warthog-8208.clerk.accounts.dev`).
+
+
+## Session 2026-09-16 (evening)
+
+**Task:** Role-based UI Shell Architecture — Staff & Owner App Loader, Universal Header, Side Navigation, Search, Notifications
+**Tool used:** Antigravity AI Assistant (Claude Opus 4.6 Thinking)
+
+### Work Performed
+
+- Established the domain permission and role model mirroring backend `Permissions.cs` and `Roles.cs`:
+  - Defined all 23 canonical permissions and role-to-permission grants in `Permissions.dart`.
+  - Added role classification helpers (`isOwnerRole`, `isStaffRole`) in `app_roles.dart`.
+  - Created `PermissionGuard` widget for declarative conditional rendering based on user role grants.
+- Built screen configuration abstractions:
+  - Created `ScreenConfig` model for screen definitions.
+  - Implemented `staffScreens()` registry containing `Home`, `Catalog`, and `Conversations` (with permission checks).
+  - Stubbed `ownerScreens()` registry for future owner UI phase.
+  - Created `ConversationsScreen` and `NotificationsStubScreen` placeholders.
+- Created `AvelineHeader` universal top navigation header:
+  - Left: menu button (toggles drawer).
+  - Right: search button (triggers `SearchOverlay`), notification icon with `NotificationBadge` (routes to `/notifications`), and user profile avatar (routes to `/profile`).
+  - Supports `showHeader` parameter so individual screens can hide the header.
+- Created `AvelineDrawer` side navigation drawer:
+  - Can be opened via header menu icon or sliding from the screen's left edge.
+  - Displays user avatar, display name, and role chip in header.
+  - Filters navigation items dynamically using permissions.
+  - Highlights active route and provides a sign-out action at the bottom.
+- Created `AnimatedBlossom` brand centerpiece:
+  - Preserved the Aveline Blossom mark as a floating animated launcher at bottom-center.
+  - Smooth continuous breathing scale and radial glow.
+  - Tapping opens the concierge Salon.
+- Implemented `StaffAppShell` integrating header, drawer, content, and blossom.
+- Updated `MainShell` to delegate to `StaffAppShell`.
+- Created `SearchOverlay` global full-screen search component.
+- Registered `/catalog`, `/conversations`, `/profile`, and `/notifications` routes in `route_guards.dart` and `app.dart`.
+
+### Files Created or Modified
+
+- **Created:**
+  - `frontend/aveline_mobile/lib/core/auth/permissions.dart`
+  - `frontend/aveline_mobile/lib/core/auth/app_roles.dart`
+  - `frontend/aveline_mobile/lib/core/auth/permission_guard.dart`
+  - `frontend/aveline_mobile/lib/core/navigation/screen_config.dart`
+  - `frontend/aveline_mobile/lib/core/navigation/staff_screens.dart`
+  - `frontend/aveline_mobile/lib/core/navigation/owner_screens.dart`
+  - `frontend/aveline_mobile/lib/features/conversations/presentation/screens/conversations_screen.dart`
+  - `frontend/aveline_mobile/lib/features/notifications/presentation/screens/notifications_stub_screen.dart`
+  - `frontend/aveline_mobile/lib/shared/widgets/aveline_header.dart`
+  - `frontend/aveline_mobile/lib/shared/widgets/aveline_drawer.dart`
+  - `frontend/aveline_mobile/lib/shared/widgets/search_overlay.dart`
+  - `frontend/aveline_mobile/lib/shared/widgets/notification_badge.dart`
+  - `frontend/aveline_mobile/lib/shared/widgets/animated_blossom.dart`
+  - `frontend/aveline_mobile/lib/features/home/presentation/screens/staff_app_shell.dart`
+  - `frontend/aveline_mobile/test/core/auth/permissions_test.dart`
+  - `frontend/aveline_mobile/test/core/auth/permission_guard_test.dart`
+  - `frontend/aveline_mobile/test/shared/widgets/notification_badge_test.dart`
+  - `frontend/aveline_mobile/test/shared/widgets/search_overlay_test.dart`
+  - `frontend/aveline_mobile/test/shared/widgets/aveline_header_test.dart`
+  - `frontend/aveline_mobile/test/shared/widgets/aveline_drawer_test.dart`
+  - `frontend/aveline_mobile/test/shared/widgets/animated_blossom_test.dart`
+  - `frontend/aveline_mobile/test/features/home/staff_app_shell_test.dart`
+- **Modified:**
+  - `frontend/aveline_mobile/lib/features/home/presentation/screens/main_shell.dart`
+  - `frontend/aveline_mobile/lib/core/router/route_guards.dart`
+  - `frontend/aveline_mobile/lib/app.dart`
+  - `frontend/aveline_mobile/test/features/home/main_shell_test.dart`
+
+### Verification Performed
+
+- `flutter analyze --no-fatal-infos`: No issues found (0 warnings, 0 errors).
+- `flutter test`: Ran full test suite — all 130 tests passed.
+- Tested edge-swipe and hamburger menu drawer opening, permission filtering, search overlay, notification badge, and animated blossom salon launcher.
+
+
+
+## Session 2026-09-18 — Mobile notifications tab (swipe, accordion, badge)
+
+**Task:** Design and build the Notifications tab in `frontend/aveline_mobile/`: swipe left to delete, swipe right to mark as read, and tap to unfold a notification like an accordion.
+**Tool used:** DeepSeek Harness (deepseek-flash) coding agent
+
+### Summary of Activities
+
+- **Reconnaissance first.** Read the existing `notifications_stub_screen.dart`, the
+  `core/notifications/` transport layer (payload, provider, SignalR + FCM services),
+  `AvelineHeader`, `NotificationBadge`, the `customers` feature slice, and the theme.
+  Read `docs/api/openapi.yaml` (the `Notifications` tag), the persisted
+  `Aveline.Api/Modules/Notifications/` models and repositories, and
+  `.agents/plans/notification_implementation.ignore.md`, which listed the in-app
+  inbox as explicitly out of scope for the gateway slice. No HTTP endpoints for the
+  inbox exist on the server yet, so the tab was built against the documented
+  contract with a demo repository standing in - the same pattern `customers` and
+  `catalog` already use.
+- **TDD, as the project rules require.** Wrote the failing tests first for the
+  domain, both repositories, the controller and the screen (confirmed red), then
+  implemented to green.
+- **Domain**: `AppNotification` (mirrors `UserNotificationDto`, keeps the raw `type`
+  and derives `kind`), `NotificationKind` (six kinds + `unknown`, so a newer backend
+  cannot break an older app), `NotificationPage` (the paged envelope).
+- **Data**: `NotificationRepository` (interface), `ApiNotificationRepository` (Dio,
+  matching the OpenAPI paths for list, unread-count, read, read-all, dismiss), and
+  `DemoNotificationRepository` (nine seeded notifications covering every kind, with
+  an injectable clock so ages are deterministic in tests).
+- **Presentation**: `NotificationsController` (optimistic mutations with rollback to
+  the original index, stale-reply guard, paging, and a delayed-commit delete so Undo
+  is a real undo), `NotificationsScreen`, `NotificationTile` (accordion + both
+  swipes), `NotificationSwipeBackground`, `NotificationKindVisuals`.
+- **Cross-cutting**: extended `NotificationProvider` with an unread count so the
+  header badge and the tab cannot disagree; `NotificationBadge` now wears the count
+  and falls back to the old dot until the inbox has been counted; `AppToast` gained
+  an optional action for the Undo; `date_formatter` gained `relativeMoment`.
+- **Wiring**: `app.dart` now creates and provides the controller, refreshes the
+  inbox when a realtime notification arrives, reports the count to the badge,
+  clears the inbox on sign-out, and routes `/notifications` to the real screen.
+  Deleted the stub screen and updated the `SectionPlaceholder` doc comment that
+  mentioned Notifications as a consumer.
+- **Design decisions recorded**: one-tile-at-a-time accordion; read tiles recede
+  rather than vanish; six warm accent hues because the design system only names
+  three agent states; the badge count replaces the dot rather than sitting beside it.
+
+### Files Created or Modified
+
+- **Created (lib):**
+  - `frontend/aveline_mobile/lib/features/notifications/domain/app_notification.dart`
+  - `frontend/aveline_mobile/lib/features/notifications/domain/notification_kind.dart`
+  - `frontend/aveline_mobile/lib/features/notifications/domain/notification_page.dart`
+  - `frontend/aveline_mobile/lib/features/notifications/data/notification_repository.dart`
+  - `frontend/aveline_mobile/lib/features/notifications/data/api_notification_repository.dart`
+  - `frontend/aveline_mobile/lib/features/notifications/data/demo_notification_repository.dart`
+  - `frontend/aveline_mobile/lib/features/notifications/presentation/notifications_controller.dart`
+  - `frontend/aveline_mobile/lib/features/notifications/presentation/screens/notifications_screen.dart`
+  - `frontend/aveline_mobile/lib/features/notifications/presentation/widgets/notification_tile.dart`
+  - `frontend/aveline_mobile/lib/features/notifications/presentation/widgets/notification_kind_visuals.dart`
+  - `frontend/aveline_mobile/lib/features/notifications/presentation/widgets/notification_swipe_background.dart`
+  - `frontend/aveline_mobile/lib/features/notifications/README.md`
+- **Created (test):**
+  - `frontend/aveline_mobile/test/features/notifications/notification_kind_test.dart`
+  - `frontend/aveline_mobile/test/features/notifications/app_notification_test.dart`
+  - `frontend/aveline_mobile/test/features/notifications/api_notification_repository_test.dart`
+  - `frontend/aveline_mobile/test/features/notifications/demo_notification_repository_test.dart`
+  - `frontend/aveline_mobile/test/features/notifications/notifications_controller_test.dart`
+  - `frontend/aveline_mobile/test/features/notifications/notifications_screen_test.dart`
+  - `frontend/aveline_mobile/test/shared/utils/date_formatter_test.dart`
+- **Modified:**
+  - `frontend/aveline_mobile/lib/app.dart`
+  - `frontend/aveline_mobile/lib/core/notifications/notification_provider.dart`
+  - `frontend/aveline_mobile/lib/shared/widgets/notification_badge.dart`
+  - `frontend/aveline_mobile/lib/shared/widgets/app_toast.dart`
+  - `frontend/aveline_mobile/lib/shared/utils/date_formatter.dart`
+  - `frontend/aveline_mobile/lib/shared/widgets/section_placeholder.dart`
+  - `frontend/aveline_mobile/test/core/notifications/notification_provider_test.dart`
+  - `frontend/aveline_mobile/test/shared/widgets/notification_badge_test.dart`
+- **Deleted:**
+  - `frontend/aveline_mobile/lib/features/notifications/presentation/screens/notifications_stub_screen.dart`
+    (replaced by the real screen; no references remained)
+
+### Important Architectural Decisions
+
+- The inbox lives in the feature's own controller, not in the core
+  `NotificationProvider`. The provider keeps only the badge's count, which the
+  controller reports up through `setUnreadCount`. That keeps the shared badge
+  depending on `core` rather than on a feature, and keeps one source of truth for
+  the unread number.
+- Deletion is held for a window before the API is told. The API has no un-dismiss
+  endpoint, so an immediate call would make Undo a local lie.
+- The stale-reply guard uses a monotonic request id; a page that arrives after the
+  narrowing changed is dropped rather than grafted onto the new list.
+- The unread count is fetched from its own endpoint rather than counted from the
+  loaded page, because the page is only part of the inbox. When that endpoint
+  fails, the badge degrades to a floor counted from the visible tiles instead of
+  claiming the inbox is clear.
+
+### Problems Encountered
+
+- `Dismissible` asserts "a dismissed Dismissible widget is still part of the tree"
+  when `resizeDuration` is `Duration.zero` under reduced motion: a zero-length
+  resize completes the controller before Dismissible's own build runs. Fixed by
+  passing `null`, which is what reduced motion wants anyway.
+- `AnimatedSize` with `Duration.zero` notifies its listeners from inside its own
+  `performLayout` (a zero-duration controller finishes on the spot), which Flutter
+  rejects as re-dirtying a render object mid-layout. Fixed with a 1 ms stand-in for
+  reduced motion, which takes the ordinary ticker path and is instant to the eye.
+- Collapsing an unfolded tile in the same frame it is removed laid out a disposed
+  render object; the tile now stays unfolded on its way out, which also means Undo
+  hands the notification back open, exactly as it was.
+- The API repository test initially failed with `type 'String' is not a subtype of
+  type 'Map<String, dynamic>?'` because the fake `HttpClientAdapter` did not
+  announce `application/json`, so Dio never decoded the body.
+- A `scrollUntilVisible` to the last unread tile carried the header off screen, so
+  the summary assertion could not find its `Text`; the test now scrolls back.
+- The swipe backgrounds are only built while a tile is displaced, so the test holds
+  the gesture mid-drag rather than flicking and then asserting.
+
+### Verification Performed
+
+- `flutter analyze`: **No issues found** (0 warnings, 0 errors).
+- `flutter test`: **598 passed, 1 failed**. The one failure is
+  `test/features/customers/customers_screen_test.dart` - "book opens the client
+  profile when a row is tapped" - which fails with **No Material widget found** for
+  the customers search field. It is pre-existing and unrelated: it was reproduced
+  with this session's only shared change that Customers imports
+  (`app_toast.dart`) stashed back to HEAD.
+- The notifications slice specifically: 117 tests, all passing (domain, demo and
+  API repositories, controller, screen, date formatter), plus the badge and
+  provider suites extended in this session.
+
+### Remaining Work
+
+- Map the five inbox endpoints on the server (`NotificationsModule` has the
+  repository but no `MapNotificationsEndpoints`), then swap
+  `DemoNotificationRepository()` for `ApiNotificationRepository(_dio)` in
+  `app.dart`. The repository and its tests are ready for that swap.
+- Per-notification deep links currently cover clients only. Order and thread
+  destinations need routes that do not exist yet.
+- The pre-existing customers screen test failure noted above is still open.
+
+## Session 2026-09-18 (cont.) — Customers test repair, then the Messages inbox
+
+**Task:** Fix the failing `customers_screen_test.dart` case, then design the Messages screen with the Aveline Salon pinned above the client threads, using a phone's message inbox as the reference.
+**Tool used:** DeepSeek Harness (deepseek-flash) coding agent
+
+### Summary of Activities
+
+- **Fixed the pre-existing failure** in `test/features/customers/customers_screen_test.dart` -
+  "opens the client profile when a row is tapped" - which threw **No Material widget
+  found** for the customers search field. The cause was in the test, not the screen:
+  that one case builds its own `GoRouter` and mounted the dock tab bare, while the
+  app always wraps a tab in the shell's `Scaffold` (and the same file's own `_wrap`
+  helper does too). The route builder now supplies the `Scaffold`, with a comment
+  saying which invariant it stands in for. All 21 tests in that file pass.
+- **Answered a design question first, with evidence.** Read the backend
+  `Conversations` module before designing: `ConversationKind` is
+  `Salon | Announcement | Digest`, and the class comment says only the Salon is used
+  today - there is no thread per client, and `ConversationDto` carries no client
+  name, no last message and no unread count. The inbox was therefore designed
+  against the demo repository with those three as optional domain fields, and the
+  gap documented at the top of the API repository rather than papered over.
+- **TDD again**: failing tests first for the domain, both repositories, the
+  controller and the screen, then implement to green.
+- **Domain**: `Conversation` (mirrors `ConversationDto` plus the row's extras),
+  `ConversationKind` (Aveline / client / notice, classified from the API's `kind`
+  plus whether a client is named), `ConversationStatus` and `ConversationAuthor`.
+- **Data**: `ConversationRepository` (deliberately unordered - the order is one
+  decision, made in one place), `ApiConversationRepository` (Dio, the documented
+  org path), `DemoConversationRepository` (the Salon, six client threads, a notice,
+  read and unread rows, a thread awaiting sign-off, injectable clock).
+- **Presentation**: `ConversationsController` (pins the Salon, sorts the rest by
+  the newest word, keeps a thread nobody has spoken in yet at the foot, narrows by
+  search without moving the pinned card), `ConversationsScreen`,
+  `AvelineConversationTile` (the pinned card), `ConversationTile` (the row, with the
+  sign-off marker), `ConversationAvatar`.
+- **Shared extractions**, so the two features cannot drift: `avatar_tints.dart`
+  (one palette, so a client is the same colour in the book and in the inbox) and
+  `count_badge.dart` (one count mark, worn by the header's notification badge and
+  by the inbox's unread counts). `customer_avatar.dart` and `notification_badge.dart`
+  now delegate to them.
+- **Wiring**: `app.dart` gains a `ConversationRepository` and routes
+  `/conversations` to the new screen through `MainShell`, replacing the placeholder.
+- **Design decisions recorded**: the Salon is pinned as a card, not a row, because
+  every other thread is with a person; the pinned card stays put during a search
+  because the concierge is not a result; staff and agent previews are prefixed with
+  who spoke, a client's is not; `AwaitingSignOff` earns a marker an unread count
+  cannot give it.
+
+### Files Created or Modified
+
+- **Created (lib):**
+  - `frontend/aveline_mobile/lib/features/conversations/domain/conversation.dart`
+  - `frontend/aveline_mobile/lib/features/conversations/data/conversation_repository.dart`
+  - `frontend/aveline_mobile/lib/features/conversations/data/api_conversation_repository.dart`
+  - `frontend/aveline_mobile/lib/features/conversations/data/demo_conversation_repository.dart`
+  - `frontend/aveline_mobile/lib/features/conversations/presentation/conversations_controller.dart`
+  - `frontend/aveline_mobile/lib/features/conversations/presentation/widgets/conversation_avatar.dart`
+  - `frontend/aveline_mobile/lib/features/conversations/presentation/widgets/conversation_tile.dart`
+  - `frontend/aveline_mobile/lib/features/conversations/presentation/widgets/aveline_conversation_tile.dart`
+  - `frontend/aveline_mobile/lib/features/conversations/README.md`
+  - `frontend/aveline_mobile/lib/shared/widgets/avatar_tints.dart`
+  - `frontend/aveline_mobile/lib/shared/widgets/count_badge.dart`
+- **Created (test):**
+  - `frontend/aveline_mobile/test/features/conversations/conversation_test.dart`
+  - `frontend/aveline_mobile/test/features/conversations/demo_conversation_repository_test.dart`
+  - `frontend/aveline_mobile/test/features/conversations/api_conversation_repository_test.dart`
+  - `frontend/aveline_mobile/test/features/conversations/conversations_controller_test.dart`
+  - `frontend/aveline_mobile/test/features/conversations/conversations_screen_test.dart`
+- **Modified:**
+  - `frontend/aveline_mobile/lib/features/conversations/presentation/screens/conversations_screen.dart`
+    (was the placeholder; now the Messages inbox)
+  - `frontend/aveline_mobile/lib/app.dart`
+  - `frontend/aveline_mobile/lib/features/customers/presentation/widgets/customer_avatar.dart`
+  - `frontend/aveline_mobile/lib/shared/widgets/notification_badge.dart`
+  - `frontend/aveline_mobile/test/features/customers/customers_screen_test.dart`
+
+### Important Architectural Decisions
+
+- The screen takes a `ConversationRepository` and owns its controller, the same seam
+  `CustomersScreen` uses. An earlier draft took a whole controller; that would have
+  been a second pattern for no gain, since nothing outside the screen needs the
+  inbox's state.
+- The repository returns an unordered list and the controller imposes the order. The
+  pin is a product rule, and a rule that lives in one place cannot be half-applied
+  by the next source added.
+- The row's extras (name, preview, unread) are optional domain fields rather than
+  invented defaults, so the same screen renders from the demo inbox today and from
+  the API the moment the endpoint carries them.
+
+### Problems Encountered
+
+- A relative age printed by a row is computed against `DateTime.now()`, so a screen
+  test that pinned only the seed's clock rendered every row as "Just now". The
+  screen test now measures the seed from the wall clock and asserts the age is in
+  minutes, leaving the exact wording to `date_formatter`'s own tests.
+- The conversations summary first read "4 unread messages" where the notification
+  inbox reads "4 unread"; the wording was aligned so the two counts read alike.
+- A typo (`Conversation.alavelineTitle`) surfaced only as a test-harness compile
+  failure, which is the TDD loop doing its job.
+- The analyzer flagged the pinned-element construction in `items`; it now uses the
+  null-aware element syntax already used elsewhere in the codebase.
+
+### Verification Performed
+
+- `flutter analyze`: **No issues found** (0 warnings, 0 errors).
+- `flutter test`: **all 663 tests passed**, including the customers case repaired at
+  the start of this session. 65 of them are this slice's.
+
+### Remaining Work
+
+- Repoint `app.dart` at `ApiConversationRepository` once the backend models a client
+  thread and the list row carries the client's name, a preview and an unread count.
+- A per-client thread screen, so a client row opens something.
+- Paging and a compose action.
+- The dock's side panel labels this destination **Conversations** while the screen
+  titles itself **Messages**; one of the two should move.
+
+## Session 2026-09-18 (cont.) — The client thread screens
+
+**Task:** Design the client thread screens: what a client row in the Messages inbox opens.
+**Tool used:** DeepSeek Harness (deepseek-flash) coding agent
+
+### Summary of Activities
+
+- **Read the wire contract before designing, and it changed the design.** Two facts in
+  `Aveline.Api/Modules/Conversations/` decided the screen:
+  1. `AuthorKind` documents that a boutique's customer is external and **never a
+     sender**: their inbound WhatsApp/Instagram content arrives as a
+     `MessageKind.ClientMessage` card authored by `System`. A thread that drew that
+     as a system notice would be lying about the conversation, so `ThreadMessage.fromJson`
+     promotes it to the client's own message.
+  2. `MessageStatus` separates `Published` (an internal note: visible in the thread,
+     sent nowhere) from `Sent`/`Delivered`/`Read` (outbound to the client) and
+     `AwaitingSignOff` (staged for approval). That is what makes the two axes below
+     meaningful.
+  Also confirmed the sign-off endpoint exists:
+  `POST .../messages/{messageId}/sign-off` with `{approved, contentHash}`, where a
+  hash mismatch is rejected so an approval cannot be applied to edited content.
+- **TDD again**: failing tests first for the domain, both repositories, the thread
+  controller and the screen, then implement to green.
+- **Domain**: `ThreadMessage` (mirrors `MessageDto`, promotes the first text block,
+  classifies the client's forwarded messages, carries the sign-off hash),
+  `MessageAuthor`, `MessageKind`, `MessageStatus`, `MessageDeliveryStatus`. Plus
+  `ThreadPage`, whose `pageCount` exists because history is served oldest first.
+- **Data**: `ThreadRepository` (a page of history, a send, a sign-off decision),
+  `ApiThreadRepository` (Dio, both documented paths, refuses to decide a draft it has
+  no hash for rather than sending a blank one), `DemoThreadRepository` (the exchanges
+  the inbox's previews promise, so opening a thread lands on the conversation that
+  was advertised).
+- **Presentation**: `ClientThreadController` (opens on the last page and walks
+  backwards, optimistic send with a failed state and retry, optimistic sign-off
+  decision with rollback), `ClientThreadScreen`, `ThreadMessageBubble`,
+  `ThreadComposer`.
+- **Wiring**: the inbox's client row now pushes the thread screen, and the thread
+  header opens the client's profile in the client book. The "not built yet" toast is
+  gone.
+
+### Important Architectural Decisions
+
+- **Two axes, deliberately independent**: the side of a bubble is *who spoke*, and
+  its treatment is *where it went*. A note that never left the shop is tinted and
+  labelled `NOT SENT`; a staged reply is labelled `AWAITING APPROVAL` and carries
+  its own Approve/Dismiss in the exact place it will sit once released. In a chat
+  between two people this would be decoration; here the thread is the shop's record
+  of what it told a client, and a note read as a sent message would be the record
+  lying.
+- **The draft lives in the flow, not in a separate card.** An earlier draft had a
+  decision card above the composer and a `pendingDraft` query on the controller;
+  rendering the draft where it belongs made both redundant, so the query was removed
+  rather than left as API nothing calls.
+- **The thread opens on its last page.** History is served oldest first, so page one
+  holds the *oldest* messages; opening there would open at the wrong end of the
+  story. Pages are then fetched backwards, which keeps the window contiguous.
+- **The sign-off decision travels with the whole message**, not its id, because the
+  API binds it to the hash of the content the approver was shown.
+- **Ticks follow the API's lifecycle** rather than inventing a second glyph: one tick
+  accepted, two delivered, two in the brand's colour read.
+
+### Files Created or Modified
+
+- **Created (lib):**
+  - `frontend/aveline_mobile/lib/features/conversations/domain/thread_message.dart`
+  - `frontend/aveline_mobile/lib/features/conversations/data/thread_repository.dart`
+  - `frontend/aveline_mobile/lib/features/conversations/data/api_thread_repository.dart`
+  - `frontend/aveline_mobile/lib/features/conversations/data/demo_thread_repository.dart`
+  - `frontend/aveline_mobile/lib/features/conversations/presentation/client_thread_controller.dart`
+  - `frontend/aveline_mobile/lib/features/conversations/presentation/widgets/thread_message_bubble.dart`
+  - `frontend/aveline_mobile/lib/features/conversations/presentation/widgets/thread_composer.dart`
+  - `frontend/aveline_mobile/lib/features/conversations/presentation/screens/client_thread_screen.dart`
+- **Created (test):**
+  - `frontend/aveline_mobile/test/features/conversations/thread_message_test.dart`
+  - `frontend/aveline_mobile/test/features/conversations/demo_thread_repository_test.dart`
+  - `frontend/aveline_mobile/test/features/conversations/api_thread_repository_test.dart`
+  - `frontend/aveline_mobile/test/features/conversations/client_thread_controller_test.dart`
+  - `frontend/aveline_mobile/test/features/conversations/client_thread_screen_test.dart`
+- **Modified:**
+  - `frontend/aveline_mobile/lib/features/conversations/presentation/screens/conversations_screen.dart`
+  - `frontend/aveline_mobile/lib/features/conversations/README.md`
+
+### Problems Encountered
+
+- Four screen tests failed because only the newest three messages were built. The
+  cause was not the code: under the test font every glyph is a square, so a
+  realistic message is several times taller than on a device and the thread does not
+  fit one viewport. Fixed by using a phone-shaped surface for the tests that need it,
+  and by giving the position assertions a four-message fixture with very short words
+  rather than realistic copy. The ordering test now measures what actually landed
+  instead of assuming the whole thread is on screen.
+- A composer test tripped the binding's pending-timer check, because the demo
+  repository's read latency was still in flight when the test ended; the test now
+  lets it land.
+- The analyzer caught an initializing formal and a test parameter left unused by an
+  edit; both were removed rather than silenced.
+
+### Verification Performed
+
+- `flutter analyze`: **No issues found** (0 warnings, 0 errors).
+- `flutter test`: **all 745 tests passed**, 147 of them in this feature (82 added or
+  changed this session).
+
+### Remaining Work
+
+- Opening a thread does not mark it read in the inbox: the two controllers are
+  separate objects and need a seam between them.
+- No live messages yet. The Salon already proves the realtime path
+  (`ConversationRealtimeService`, `JoinSalon`, `ReceiveMessage`); the thread needs the
+  same wiring plus a merge for a message that arrives while it is open.
+- The rich block kinds (`Look`, `Piece`, `AtAGlance`, `Payment`, `Courier`,
+  `SignOff`) render as their first text block; each deserves its own card.
+- Repoint `app.dart` at the API repositories once the backend models a client thread
+  and its list row carries a name, a preview and an unread count.
+
+## Session 2026-09-18 (cont.) — The Settings screen, the Profile merge, and the panel's missing routes
+
+**Task:** Design the settings screen; merge the user profile screen into it; add the missing routes to the side panel.
+**Tool used:** DeepSeek Harness (deepseek-flash) coding agent
+
+### Summary of Activities
+
+- **Two decisions were put to the user before building**, because both were hard to
+  undo: the side panel row that read **Conversations** while its screen titled itself
+  **Messages** (user chose to rename the row to Messages, keeping the route), and how
+  far the settings page should go (user chose account + live preferences + the gated
+  shop block).
+- **Read the API before designing.** `PATCH /api/v1/users/me` is implemented
+  (`Aveline.Api/Endpoints/UserEndpoints.cs`) over `UpdateUserProfileRequest`, so the
+  preferences are real fields rather than switches on a mock: `displayName`,
+  `phoneNumber`, `contactPreference`, `pushNotificationsEnabled`. Also found
+  `GET /users/me/sessions` and `POST /users/me/sessions/revoke-all` (deferred, see
+  Remaining Work) and `GET /orgs/{id}/settings`.
+- **Merged rather than sat side by side**: `lib/features/profile/` is deleted and
+  `/profile` now redirects to `/settings`, because the header's avatar and any stored
+  link still name the old path. The header's avatar points at `/settings` directly.
+- **The side panel now carries the whole app**: Home, Customers, Catalog, Messages,
+  Notifications, Settings. The two new rows are deliberately **ungated**, while the
+  Boutique block inside Settings answers to `settings:manage` - an associate without a
+  single shop-wide grant still owns their account, which is the reason the Profile tab
+  was merged in rather than dropped.
+- **Domain**: `ContactPreference` beside `AvelineUser` (the wire spelling, a label, a
+  description and a tolerant `fromWire`), plus `AvelineUser.preferredContact` and
+  `AvelineUser.nameForDisplay({fallback})`. The name rule moved to the entity and the
+  side panel's user card now reads it too, so a name cannot be one thing in the panel
+  and another on the page it opens.
+- **Provider**: `UserProvider.updateProfile` sends the narrowest body the API accepts,
+  replaces the held record with the server's answer, and reports a refusal through a
+  new `updateErrorMessage` rather than throwing. A save failure is deliberately not a
+  *load* failure: the router keys the retry screen off `hasLoadFailed`.
+- **Presentation**: `SettingsScreen` (Account, Notifications & contact, Boutique,
+  Session), `SettingsSection`, `SettingsRow`, `SettingsSwitchRow`, `SettingsAccountCard`,
+  and the two sheets (`edit_profile_sheet.dart`, `contact_preference_sheet.dart`).
+- **Docs**: new `lib/features/settings/README.md`; the resolved Conversations/Messages
+  gap removed from the conversations README; `lib/features/README.md` structure list
+  updated for the retired `profile/` and the added `settings/`, `notifications/` and
+  `conversations/` slices.
+- **Verified on a real device, not only in tests.** A throwaway entry point mounted the
+  shell with a staged account (`lib/preview_settings.dart`, deleted afterwards) and the
+  screen was captured on the SM A055F with real typography
+  (`.screenshots/settings_1..3.png`). That review caught the one thing the tests could
+  not: **`org:boutique_owner` was printed as a role**, twice, on a page of otherwise
+  human words. `AppRoles.labelFor` now names every role, and the account card's chips,
+  the Boutique row and the side panel's user card all read it.
+
+### Important Architectural Decisions
+
+- **The controls read the record, not themselves.** Every control on the page is a view
+  of the record `UserProvider` holds, and a save replaces that record with the server's
+  answer. A refused save therefore puts itself back with nothing to undo and no
+  optimistic value to reconcile; the screen only tracks which change is in flight.
+- **The destination is personal, the shop block is not.** Gating the whole Settings row
+  on `settings:manage` would have locked staff out of their own account, which is
+  exactly what the merge was meant to fix.
+- **A discarded sheet is not a choice.** The picker returns `null` for a dismissal and a
+  value for a choice, so closing it leaves the stored preference alone instead of being
+  read as `None`. The details sheet works the same way, and an unchanged save sends no
+  request at all.
+- **The wording for an account with no name is the screen's; the rule is the domain's.**
+  `nameForDisplay({fallback})` keeps one implementation for two different sentences
+  (`Staff Member` in the panel, `Welcome` on the card).
+- **A role is named, never pasted.** `AppRoles.labelFor` maps the claim ids to words and
+  passes an unknown grant through unchanged, so a role added on the server is visible
+  before it is named rather than hidden behind an empty chip.
+- **The chevron is only drawn where a tap does something**, so an inert row cannot
+  promise a destination it does not have.
+
+### Files Created or Modified
+
+- **Created (lib):**
+  - `frontend/aveline_mobile/lib/features/auth/domain/contact_preference.dart`
+  - `frontend/aveline_mobile/lib/features/settings/README.md`
+  - `frontend/aveline_mobile/lib/features/settings/presentation/screens/settings_screen.dart`
+  - `frontend/aveline_mobile/lib/features/settings/presentation/widgets/settings_section.dart`
+  - `frontend/aveline_mobile/lib/features/settings/presentation/widgets/settings_row.dart`
+  - `frontend/aveline_mobile/lib/features/settings/presentation/widgets/settings_switch_row.dart`
+  - `frontend/aveline_mobile/lib/features/settings/presentation/widgets/account_card.dart`
+  - `frontend/aveline_mobile/lib/features/settings/presentation/widgets/edit_profile_sheet.dart`
+  - `frontend/aveline_mobile/lib/features/settings/presentation/widgets/contact_preference_sheet.dart`
+- **Created (test):**
+  - `frontend/aveline_mobile/test/features/auth/domain/contact_preference_test.dart`
+  - `frontend/aveline_mobile/test/features/settings/settings_row_test.dart`
+  - `frontend/aveline_mobile/test/features/settings/settings_screen_test.dart`
+  - `frontend/aveline_mobile/test/core/navigation/staff_screens_test.dart`
+  - `frontend/aveline_mobile/test/core/auth/app_roles_test.dart`
+- **Deleted:**
+  - `frontend/aveline_mobile/lib/features/profile/` (screen and README: merged into Settings)
+  - `frontend/aveline_mobile/lib/preview_settings.dart` (throwaway device-preview entry point)
+- **Modified:**
+  - `frontend/aveline_mobile/lib/features/auth/domain/aveline_user.dart`
+  - `frontend/aveline_mobile/lib/core/providers/user_provider.dart`
+  - `frontend/aveline_mobile/lib/core/auth/app_roles.dart`
+  - `frontend/aveline_mobile/lib/core/router/route_guards.dart`
+  - `frontend/aveline_mobile/lib/core/navigation/staff_screens.dart`
+  - `frontend/aveline_mobile/lib/app.dart`
+  - `frontend/aveline_mobile/lib/shared/widgets/aveline_header.dart`
+  - `frontend/aveline_mobile/lib/shared/widgets/aveline_drawer.dart`
+  - `frontend/aveline_mobile/lib/features/README.md`
+  - `frontend/aveline_mobile/lib/features/conversations/README.md`
+  - `frontend/aveline_mobile/test/core/providers/user_provider_test.dart`
+  - `frontend/aveline_mobile/test/core/router/route_guards_test.dart`
+  - `frontend/aveline_mobile/test/features/auth/domain/aveline_user_test.dart`
+  - `frontend/aveline_mobile/test/shared/widgets/aveline_drawer_test.dart`
+
+### Problems Encountered
+
+- The first run of the new settings tests failed to compile, which was the expected
+  TDD failure; after implementing, six real failures surfaced:
+  - The picker's **Cancel** sat below the visible viewport: the sheet overflowed by
+    182px under the test font. The fix was a real one rather than a test tweak - the
+    options (and the detail fields) now scroll while the actions stay pinned, so a
+    sheet can never hide the way out.
+  - Two assertions were mine, not the code's: `ContactPreference.none.label` is
+    `No preference` (a row reading `Preferred contact: None` answers a different
+    question than the associate asked), and the contact row shows the **label**
+    (`Text message`) while the API is sent the **wire value** (`SMS`).
+  - The "profile still loading" test timed out in `pumpAndSettle` because it mounted
+    the screen without `disableAnimations`, leaving the ambient backdrop animating.
+  - The boutique-provider test hung: `fetchBoutique` is real async work outside the
+    widget tree, so it needs `tester.runAsync` - the fake clock the tests pump does
+    not drive Dio's own futures.
+  - A RenderFlex overflow inside the edit sheet under the test font, fixed by the same
+    scroll-and-pin treatment as the picker.
+- `AvelineUser.nameForDisplay` moved from a getter to a method with a `fallback`
+  parameter; the analyzer caught the one call site that was still using it as a
+  tear-off.
+- **The device review found what the tests could not.** Three captures of the running
+  screen on the SM A055F (`.screenshots/settings_1..3.png`) showed the page reading
+  well - heading, chips, switch, rows, notes, and the floating Blossom clearing the
+  last card - and also showed `Store role: org:boutique_owner` twice. That was a real
+  defect, not a test artifact: a claim id printed as a value.
+
+### Verification Performed
+
+- `flutter analyze`: **No issues found** (0 warnings, 0 errors).
+- `flutter test`: **all 800 tests passed**, 55 more than the 745 the suite held before
+  this session. The auth, drawer and settings files were re-run after the role-label
+  change: **69 passed**.
+- **Rendered on a real device** (SM A055F, Android 15) through a throwaway entry point
+  with real typography, reviewed at the top, middle and foot of the page. The device
+  dropped off USB before the role labels could be re-captured, so the chip layout with
+  the shorter labels is verified by test rather than by eye.
+
+### Remaining Work
+
+- No "where you're signed in" block. `GET /api/v1/users/me/sessions` and
+  `POST .../sessions/revoke-all` are implemented but proxy the Clerk admin API and
+  answer `502` when that call fails, so they need their own failure states.
+- The Boutique block carries only what the app already holds. `GET
+  /api/v1/orgs/{id}/settings` is the endpoint that would fill it, and it needs
+  reconciling first: the code answers `{ settings, entitlements }` while
+  `docs/api/openapi.yaml` documents `{ organization, brandVoice, businessRules,
+  preferredColorsFabrics, customerPreferences, entitlements }`.
+- The profile picture is not editable (no upload surface on mobile, and the Clerk
+  picture is what the header shows), and account deletion (`DELETE /users/me`) has no
+  confirmation flow.
+- `shared/widgets/floating_dock.dart` still lists a `profile` tab; it is unmounted dead
+  code, so it was left alone.

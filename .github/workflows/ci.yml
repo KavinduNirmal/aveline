@@ -229,6 +229,33 @@ jobs:
           name: aveline-mobile-coverage
           path: frontend/aveline_mobile/coverage/lcov.info
 
+      # The Google Services Gradle plugin generates the Firebase string resources
+      # (google_app_id, gcm_defaultSenderId, ...) from android/app/google-services.json.
+      # That file is gitignored because it is per-project config, so CI supplies it from a
+      # secret. The secret holds the file base64-encoded: GitHub preserves a multi-line value
+      # but not its exact quoting, and a mangled JSON blob fails inside Gradle with an error
+      # that says nothing about the secret.
+      - name: Write google-services.json from secret
+        working-directory: frontend/aveline_mobile/android/app
+        env:
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON_BASE64" ]; then
+            # A missing secret resolves to an empty string rather than failing, so this has to
+            # be explicit. Fork pull requests never receive secrets.
+            if [ "${{ github.event_name }}" != "pull_request" ]; then
+              echo "::error::GOOGLE_SERVICES_JSON_BASE64 is not set, so this build would publish an APK without Firebase push notifications."
+              exit 1
+            fi
+            echo "::notice::GOOGLE_SERVICES_JSON_BASE64 is not set (expected on fork PRs); building an APK without Firebase push."
+            exit 0
+          fi
+
+          printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | base64 --decode > google-services.json
+          head -c 1 google-services.json | grep -q '{' \
+            || { echo "::error::google-services.json did not decode to JSON. Is the GOOGLE_SERVICES_JSON_BASE64 secret base64-encoded?"; exit 1; }
+          echo "Wrote $(wc -c < google-services.json) bytes of Firebase config."
+
       - name: Build release APK
         run: flutter build apk --release
         working-directory: frontend/aveline_mobile

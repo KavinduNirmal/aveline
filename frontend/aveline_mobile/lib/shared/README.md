@@ -6,6 +6,17 @@ This folder contains **truly reusable** code that is not specific to any feature
 
 ### `widgets/`
 Reusable UI components used by multiple features:
+- `blossom_refresh.dart` — pull-to-refresh for the app shell: a blossom that
+  unfurls as the pull arms, plus the `RefreshScope` revision that screens holding
+  their own copy of the data re-seed from
+- `brand_section_title.dart` — `{boutique} - {section}` in the brand serif,
+  dissolving at the trailing edge only when the name overflows the line (the
+  Catalog and Customers headers)
+- `section_search_field.dart` — a screen's own search field, with the hint and
+  the clear affordance; scoped to that screen rather than the header's global
+  search
+- `filter_pill.dart` — one selectable pill, shared by the catalog's tag row and
+  filter groups and the customers level row so they cannot drift apart
 - `app_button.dart` — Primary/secondary/destructive button variants
 - `app_text_field.dart` — Styled text input
 - `loading_indicator.dart` — Spinner / shimmer placeholder
@@ -15,6 +26,7 @@ Reusable UI components used by multiple features:
 
 ### `utils/`
 Pure Dart utility functions (no Flutter dependencies):
+- `greeting.dart` — Time-of-day salutations for personalized headings
 - `date_formatter.dart` — Date/time display helpers
 - `currency_formatter.dart` — LKR formatting
 - `validators.dart` — Phone number, email, required field validators

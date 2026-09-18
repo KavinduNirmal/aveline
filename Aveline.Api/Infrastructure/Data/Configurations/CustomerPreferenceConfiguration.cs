@@ -8,7 +8,7 @@ public class CustomerPreferenceConfiguration : IEntityTypeConfiguration<Customer
 {
     public void Configure(EntityTypeBuilder<CustomerPreference> builder)
     {
-        builder.ToTable("Customer_Preferences");
+        builder.ToTable("CustomerPreferences");
 
         builder.HasKey(p => p.Id);
 

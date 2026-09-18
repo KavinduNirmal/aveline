@@ -845,6 +845,110 @@ CREATE INDEX "IX_SystemAlerts_Org_Fired"
 
 ---
 
+## 8.5 Home focus deck (Feature area 8)
+
+### 8.5.1 `FocusDismissal` → `Focus_Dismissals` (new)
+
+Home's focus deck is **derived**, not stored: every docket is recomputed on read
+from a fact that already exists (an inventory item at or below the reorder line, a
+customer event inside the preparation window, an agent run paused for a human
+decision). A persisted task table would re-store those facts and introduce
+source-drift as a failure mode.
+
+What is persisted is the only thing the server cannot derive: the **human
+decision**. This table is that record, and it is filtered out of the deciding
+user's feed.
+
+| Column | Type | Null | Notes |
+| --- | --- | --- | --- |
+| `Id` | `uuid` | no | PK, UUIDv7 |
+| `OrganizationId` | `uuid` | no | FK → `Organizations`, cascade |
+| `UserId` | `uuid` | no | The Aveline user who made the decision |
+| `Domain` | `varchar(32)` | no | `patron` \| `logistics` \| `wardrobe` \| `commerce` |
+| `SourceKey` | `varchar(200)` | no | The **fact's** id (inventory item, customer event, agent run), not the docket id |
+| `Decision` | `varchar(32)` | no | `signOff` \| `approve` \| `reject` \| `acknowledge` \| `markReady` |
+| `ContentHash` | `varchar(64)` | yes | Server-computed SHA-256 of the docket's title + detail at decision time |
+| `Note` | `varchar(500)` | yes | Reserved |
+| `DismissedAtUtc` | `timestamptz` | no | — |
+
+**Why `SourceKey` and `ContentHash` and not the docket id.** The docket id is
+recomputed (`wardrobe:{itemId}`), so it is stable, but the *content* is not: a
+low-stock item can be renamed or its count can change. A dismissal must suppress
+the docket it was made about and nothing else, so a dismissal only matches while
+`SourceKey` matches **and** either no content hash was recorded or the recorded
+hash still equals the docket's current hash. A dismissal of "reorder the raw
+silk" therefore stops suppressing the docket once the docket is about something
+different. This follows `SignOffDecision`'s precedent (an immutable, out-of-band
+record of a human decision bound to a content hash) and `SystemAlert`'s (a
+derived signal with a persisted acknowledgement).
+
+```sql
+CREATE TABLE "Focus_Dismissals" (
+  "Id" uuid PRIMARY KEY,
+  "OrganizationId" uuid NOT NULL REFERENCES "Organizations" ("Id") ON DELETE CASCADE,
+  "UserId" uuid NOT NULL,
+  "Domain" varchar(32) NOT NULL,
+  "SourceKey" varchar(200) NOT NULL,
+  "Decision" varchar(32) NOT NULL,
+  "ContentHash" varchar(64),
+  "Note" varchar(500),
+  "DismissedAtUtc" timestamptz NOT NULL
+);
+-- The feed's read path.
+CREATE INDEX "IX_Focus_Dismissals_OrganizationId_UserId"
+  ON "Focus_Dismissals" ("OrganizationId", "UserId");
+-- Re-dismissing the same fact is the same end state, so the write is an upsert.
+CREATE UNIQUE INDEX "IX_Focus_Dismissals_OrganizationId_UserId_Domain_SourceKey"
+  ON "Focus_Dismissals" ("OrganizationId", "UserId", "Domain", "SourceKey");
+```
+
+**Role split is capability-derived, not stored.** `commerce` dockets are only
+generated for a caller whose role holds `stats:view:agent`; the feed's
+`dataQuality.commerceAvailable` reports which sources were readable and non-empty,
+so an absent domain is explained rather than mistaken for a measured zero.
+
+### 8.6 `Customer.Level` (new, nullable)
+
+The boutique's own grade for a client: `vip | level3 | level2 | level1`. It is
+distinct from `Customer.Status`, which the loyalty rule derives from spend,
+visits and recency — the profile screen already documented that contradiction (a
+pill labelled a "grade" that printed `RETURNING`).
+
+| Column | Type | Null | Notes |
+| --- | --- | --- | --- |
+| `Level` | `varchar(16)` | **yes** | No default, no backfill |
+
+Nullable on purpose: a default would invent a grade for every client the shop has
+never graded, including those created before the column existed. Consumers render
+the badge when the level is present and omit it when it is null. This is
+`Customer`, not `Users` or `Organization*`.
+
+### 8.7 Customer visit counters (the silent data defect, fixed)
+
+`Customer.VisitCount`, `LastVisitAt` and `TotalSpent` had **no writer** outside
+migrations, so `CustomerLoyaltyService.RecommendStatus` read fields that never
+moved and every client stayed `new`. Three things close that:
+
+1. **A writer.** `ICustomerVisitService.RecordAsync` inserts a
+   `Customer_Interactions` row (the ledger) and moves the counters in the same
+   request. Only an **inbound in-person** interaction counts as a visit.
+2. **An atomic increment.** The counter update is one
+   `ExecuteUpdateAsync` statement on a relational provider
+   (`VisitCount = VisitCount + 1`, `TotalSpent = TotalSpent + @purchase`,
+   conditional `LastVisitAt`, recomputed `Status`). A read-modify-write loses one
+   of two concurrent visits at the counter. The in-memory provider used by tests
+   does not support `ExecuteUpdate`, so it takes the mutation path; the SQL is
+   what carries the guarantee.
+3. **A tier recompute.** `Status` is set from `RecommendStatus` in the same
+   statement, so the tier a screen shows and the counters it is derived from
+   cannot disagree.
+
+A visit is **not billable**. Consumption is an `AiUsageRecord` written after a
+completed agent workflow; in-person visits are customer interactions, not AI
+usage. The receipt returns `blossomsCharged: 0` so nothing can invent a charge.
+
+---
+
 ## 9. Audit (shared, all feature areas)
 
 ### 9.1 `AuditLogEntry` → `AuditLogEntries` (new, append-only)

@@ -37,9 +37,22 @@ public class InventoryRepository : IInventoryRepository
             .Where(x =>
                 x.OrgId == orgId &&
                 x.DeletedAt == null &&
-                x.Status == "available" &&
-                (color == null || x.Color == color) &&
-                (category == null || x.Category == category));
+                x.Status == "available");
+
+        if (!string.IsNullOrWhiteSpace(category))
+        {
+            var trimmedCategory = category.Trim().ToLower();
+            query = query.Where(x => x.Category.ToLower().Contains(trimmedCategory));
+        }
+
+        if (!string.IsNullOrWhiteSpace(color))
+        {
+            var trimmedColor = color.Trim().ToLower();
+            query = query.Where(x =>
+                x.Color.ToLower().Contains(trimmedColor) ||
+                (x.ItemName != null && x.ItemName.ToLower().Contains(trimmedColor)) ||
+                (x.Description != null && x.Description.ToLower().Contains(trimmedColor)));
+        }
 
         if (minPrice.HasValue)
         {
@@ -122,5 +135,19 @@ public class InventoryRepository : IInventoryRepository
             _db.InventoryItems.Update(item);
             await _db.SaveChangesAsync(cancellationToken);
         }
+    }
+
+    public async Task<InventoryImage?> GetImageByIdAsync(Guid imageId, Guid orgId, CancellationToken cancellationToken = default)
+    {
+        return await _db.InventoryImages
+            .AsNoTracking()
+            .FirstOrDefaultAsync(img => img.Id == imageId && img.OrgId == orgId, cancellationToken);
+    }
+
+    public async Task AddImageAsync(InventoryImage image, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        await _db.InventoryImages.AddAsync(image, cancellationToken);
+        await _db.SaveChangesAsync(cancellationToken);
     }
 }

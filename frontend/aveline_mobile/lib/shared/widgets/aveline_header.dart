@@ -12,7 +12,8 @@ import 'search_overlay.dart';
 /// - Left: Menu icon to toggle the side navigation drawer.
 /// - Right: Search button (opens full-screen [SearchOverlay]),
 ///          Notifications button (with [NotificationBadge] redirecting to `/notifications`),
-///          and Profile avatar button (redirecting to `/profile`).
+///          and Profile avatar button (redirecting to `/settings`, where the
+///          account lives now that the Profile screen has been merged into it).
 class AvelineHeader extends StatelessWidget implements PreferredSizeWidget {
   const AvelineHeader({
     super.key,
@@ -35,7 +36,7 @@ class AvelineHeader extends StatelessWidget implements PreferredSizeWidget {
   final VoidCallback? onNotificationsPressed;
 
   /// Optional override for profile navigation.
-  /// When `null`, navigates to `/profile`.
+  /// When `null`, navigates to `/settings`.
   final VoidCallback? onProfilePressed;
 
   @override
@@ -74,9 +75,9 @@ class AvelineHeader extends StatelessWidget implements PreferredSizeWidget {
       onProfilePressed!();
     } else {
       try {
-        GoRouter.of(context).push('/profile');
+        GoRouter.of(context).push('/settings');
       } catch (_) {
-        Navigator.of(context).pushNamed('/profile');
+        Navigator.of(context).pushNamed('/settings');
       }
     }
   }

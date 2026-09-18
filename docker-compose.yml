@@ -77,7 +77,7 @@ services:
       Eventing__SubscribeEventTypes__2: ${EVENTING_SUBSCRIBE_EVENT_TYPES_2:-conversation.created}
       Eventing__SubscribeEventTypes__3: ${EVENTING_SUBSCRIBE_EVENT_TYPES_3:-agent.status}
       AgentService__BaseUrl: http://agent:8000
-      AgentService__InternalToken: ${INTERNAL_API_TOKEN:-change-me-internal-token}
+      AgentService__InternalToken: ${INTERNAL_API_TOKEN:-aveline-local-development-secret-token-2026}
       # Salt for the hashed client IP and user-agent telemetry dimensions. Required in
       # Production: the API refuses to boot without it (M-1). The local default keeps the
       # development profile salted too; set a high-entropy secret when deploying.
@@ -88,8 +88,8 @@ services:
       Embeddings__Model: ${EMBEDDINGS_MODEL:-text-embedding-3-small}
       # OpenAI-compatible vision provider for Visual Intelligence (Elle, Slice 2 image analysis).
       Vision__ApiKey: ${VISION_API_KEY:-}
-      Vision__BaseUrl: ${VISION_BASE_URL:-https://api.openai.com}
-      Vision__Model: ${VISION_MODEL:-gpt-4o-mini}
+      Vision__BaseUrl: ${VISION_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai/}
+      Vision__Model: ${VISION_MODEL:-gemini-2.0-flash}
       # AES-256-GCM key for tenant integration credentials (base64, 32 bytes).
       Credentials__EncryptionKey: ${CREDENTIALS_ENCRYPTION_KEY:?CREDENTIALS_ENCRYPTION_KEY is required}
       # WhatsApp (Meta) integration gateway — base URL + API version (defaults used if unset).
@@ -135,7 +135,7 @@ services:
     environment:
       DATABASE_URL: >-
         postgresql+asyncpg://${POSTGRES_USER:-aveline}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aveline}
-      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-change-me-internal-token}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-aveline-local-development-secret-token-2026}
       # ASP.NET Core internal endpoints the agent calls (ADR-009). The API service listens on
       # 8080 inside the compose network (ASPNETCORE_URLS=http://+:8080) — NOT localhost.
       # Base URL of the ASP.NET Core API so agent tool calls hit the internal endpoints
@@ -146,10 +146,10 @@ services:
       # Event types this service consumes from the API (empty until a consumer lands).
       SUBSCRIBE_EVENT_TYPES: ${SUBSCRIBE_EVENT_TYPES:-}
       # LLM provider (openai | deepseek), switched at runtime.
-      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+      LLM_PROVIDER: ${LLM_PROVIDER:-deepseek}
       LLM_API_KEY: ${LLM_API_KEY:-}
-      LLM_BASE_URL: ${LLM_BASE_URL:-}
-      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
       # When false, reasoner-capable DeepSeek models skip the thinking pass.
       LLM_THINKING_ENABLED: ${LLM_THINKING_ENABLED:-false}
       # Master switch for invoking an LLM in agent workflows (also requires LLM_API_KEY + LLM_MODEL).

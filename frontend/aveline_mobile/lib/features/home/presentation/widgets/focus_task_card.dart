@@ -5,30 +5,25 @@ import '../../domain/focus_task.dart';
 /// One docket in the Home focus pile.
 ///
 /// The card earns its depth from [prominence]: at `1` it is the docket in hand
-/// — white, shadowed, fully legible. As it eases towards `0` its surface fades
-/// to the lighter paper of a layer behind, the shadow and hairline drop away,
-/// and the copy fades out, leaving the plain rounded shapes that peek above the
-/// docket in front.
+/// — white on tinted paper, shadowed and fully legible. As it eases towards `0`
+/// its surface steps down to the recessed container tone and the copy fades out,
+/// leaving a solid rounded slab behind the docket in front.
 ///
-/// Text scaling is clamped inside the card because the pile gives every docket
-/// the same height; past 1.2 the supporting line would be squeezed out rather
-/// than grow.
+/// The layer behind is tinted, not merely outlined. `surfaceContainerLow` is
+/// within a hair of the page colour, so a ghost built from it plus a 45%
+/// hairline measured 1.00:1 against the background and read as a stray arc
+/// rather than as a card. The recessed tone plus an `outline` border is what
+/// makes the pile legible as a pile.
 class FocusTaskCard extends StatelessWidget {
   const FocusTaskCard({
     super.key,
     required this.task,
-    required this.ordinal,
-    required this.total,
     required this.onAction,
     this.onNext,
     this.prominence = 1,
   });
 
   final FocusTask task;
-
-  /// 1-based place in the pile, shown as `2 of 4`.
-  final int ordinal;
-  final int total;
 
   /// Clears the task (the filled button).
   final VoidCallback onAction;
@@ -41,7 +36,9 @@ class FocusTaskCard extends StatelessWidget {
   /// behind the one in front.
   final double prominence;
 
-  static const double _radius = 20;
+  /// `DESIGN.md` sets 16 as the default radius for cards and primary
+  /// containers, which is also what `cardTheme` uses.
+  static const double _radius = 16;
 
   @override
   Widget build(BuildContext context) {
@@ -51,16 +48,23 @@ class FocusTaskCard extends StatelessWidget {
     final inHand = prominence.clamp(0.0, 1.0);
 
     return Container(
-      padding: const EdgeInsets.all(20),
+      // `DESIGN.md`: every card takes 24dp padding, which is what makes the
+      // information read as considered rather than crammed.
+      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
+        // In hand the docket is the lightest surface on the page; behind it the
+        // tone steps down, so the stack reads as depth.
         color: Color.lerp(
-          scheme.surfaceContainerLow,
+          scheme.surfaceContainerHigh,
           scheme.surfaceContainerLowest,
           inHand,
         ),
         borderRadius: BorderRadius.circular(_radius),
         border: Border.all(
-          color: scheme.outlineVariant.withValues(alpha: 0.45 * (1 - inHand)),
+          // Half the outline tone holds the shape at roughly 1.8:1 against the
+          // recessed fill, and fades out as the docket comes forward and its
+          // shadow takes over.
+          color: scheme.outline.withValues(alpha: 0.5 * (1 - inHand)),
         ),
         boxShadow: [
           BoxShadow(
@@ -87,22 +91,20 @@ class FocusTaskCard extends StatelessWidget {
                 const SizedBox(width: 10),
                 // Expanded rather than Spacer: on a narrow phone, or with the
                 // accessibility font sizes, the time yields before the row.
+                //
+                // The pile cycles, so a position (`2 of 4`) would read as
+                // progress that never advances. How many are left is a fact
+                // about the list, and it now sits in the section header.
                 Expanded(
                   child: Text(
-                    task.timeLabel,
+                    task.displayTimeLabel ?? '',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.end,
                     style: theme.textTheme.labelMedium?.copyWith(
                       color: scheme.onSurfaceVariant,
-                      fontSize: 13,
                     ),
                   ),
-                ),
-                const SizedBox(width: 10),
-                _Chip(
-                  label: '$ordinal of $total',
-                  foreground: scheme.primary,
-                  background: scheme.primary.withValues(alpha: 0.08),
                 ),
               ],
             ),
@@ -174,9 +176,8 @@ class _Chip extends StatelessWidget {
         uppercase ? label.toUpperCase() : label,
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
               color: foreground,
-              fontSize: 10,
               fontWeight: FontWeight.w700,
-              letterSpacing: 1.2,
+              letterSpacing: 0.6,
             ),
       ),
     );
@@ -282,7 +283,9 @@ class _DomainChipStyle {
           ),
         FocusDomain.wardrobe => const _DomainChipStyle(
             label: 'Wardrobe',
-            foreground: Color(0xFF8A6A1F),
+            // Darkened from #8A6A1F, which measured 4.37:1 on this fill and
+            // failed WCAG 1.4.3 for the chip's small text. This holds 6.1:1.
+            foreground: Color(0xFF6E5416),
             background: Color(0xFFF6EEDC),
           ),
         FocusDomain.commerce => const _DomainChipStyle(

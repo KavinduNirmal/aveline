@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
-import '../../../../shared/widgets/app_toast.dart';
+import '../../../../core/router/route_guards.dart';
 import '../../domain/client_highlight.dart';
 import 'client_highlight_tile.dart';
 
@@ -102,8 +103,12 @@ class _ClientRow extends StatelessWidget {
   final ClientHighlight client;
 
   void _open(BuildContext context) {
-    AppToast.show(context, "${client.shortName}'s profile is not on mobile yet.");
+    // Resolve the router and the destination before the sheet closes; the
+    // profile is a real route, so this is a push, not a toast.
+    final router = GoRouter.maybeOf(context);
+    final location = AppRoutes.customer(client.id);
     Navigator.of(context).pop();
+    router?.push(location);
   }
 
   @override
@@ -137,7 +142,8 @@ class _ClientRow extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        ClientTierChip(tier: client.tier),
+                        if (client.tier != null)
+                          ClientTierChip(tier: client.tier!),
                       ],
                     ),
                     const SizedBox(height: 2),
@@ -145,10 +151,8 @@ class _ClientRow extends StatelessWidget {
                       client.activity,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.labelSmall?.copyWith(
+                      style: theme.textTheme.bodySmall?.copyWith(
                         color: scheme.onSurfaceVariant,
-                        fontSize: 12,
-                        height: 1.4,
                       ),
                     ),
                   ],

@@ -50,6 +50,46 @@ const List<FocusTask> _ownerTasks = [
     actionLabel: 'Mark ready',
     doneMessage: 'Fitting room ready. Mrs. Perera arrives at 5:30 PM.',
   ),
+  FocusTask(
+    id: 'owner-linen',
+    domain: FocusDomain.logistics,
+    title: 'Book in the linen delivery from Colombo Textiles',
+    detail:
+        'Vendor: Colombo Textiles · 12 bolts against purchase order #AV-124 come off the 9:30 AM van.',
+    timeLabel: '9:30 AM',
+    actionLabel: 'Sign Off',
+    doneMessage: 'Linen booked in. The 9:30 AM van is clear.',
+  ),
+  FocusTask(
+    id: 'owner-viewing',
+    domain: FocusDomain.patron,
+    title: 'Prepare the private viewing for Mrs. Jayasuriya',
+    detail:
+        'Patron: Dilani Jayasuriya · She is bringing her daughter and asked for the bridal rail to be set aside.',
+    timeLabel: '2:00 PM',
+    actionLabel: 'Mark ready',
+    doneMessage: 'Viewing prepared. The bridal rail is set aside.',
+  ),
+  FocusTask(
+    id: 'owner-chase',
+    domain: FocusDomain.logistics,
+    title: 'Chase the courier holding order #AV-914',
+    detail:
+        'Order #AV-914 has sat at the depot since yesterday and the patron is asking for a date.',
+    timeLabel: '4:45 PM',
+    actionLabel: 'Sign Off',
+    doneMessage: 'Courier chased. The depot has promised a morning slot.',
+  ),
+  FocusTask(
+    id: 'owner-alterations',
+    domain: FocusDomain.wardrobe,
+    title: 'Sign off the alteration list for Friday',
+    detail:
+        'Six pieces are with the tailor and three of them need a decision before the Friday collection.',
+    timeLabel: '6:00 PM',
+    actionLabel: 'Sign Off',
+    doneMessage: 'Alteration list signed off. The tailor has the go-ahead.',
+  ),
 ];
 
 const List<FocusTask> _staffTasks = [
@@ -92,5 +132,45 @@ const List<FocusTask> _staffTasks = [
     timeLabel: '5:45 PM',
     actionLabel: 'Sign Off',
     doneMessage: 'Handover reviewed. The evening shift has the full picture.',
+  ),
+  FocusTask(
+    id: 'staff-linen',
+    domain: FocusDomain.logistics,
+    title: 'Take in the linen delivery from Colombo Textiles',
+    detail:
+        'Vendor: Colombo Textiles · 12 bolts against purchase order #AV-124 come off the 11:30 AM van.',
+    timeLabel: '11:30 AM',
+    actionLabel: 'Sign Off',
+    doneMessage: 'Linen taken in. 12 bolts are on the rail.',
+  ),
+  FocusTask(
+    id: 'staff-returns',
+    domain: FocusDomain.logistics,
+    title: 'Hand the returns box to the courier',
+    detail:
+        'Four pieces are going back to Nuwa Silks and the courier is on the 12:15 PM round.',
+    timeLabel: '12:15 PM',
+    actionLabel: 'Sign Off',
+    doneMessage: 'Returns handed over. Nuwa has the tracking number.',
+  ),
+  FocusTask(
+    id: 'staff-silk',
+    domain: FocusDomain.patron,
+    title: 'Set out the ivory silk for Mrs. Vane',
+    detail:
+        'Patron: Eleanor Vane · She asked for the ivory silk to be held until Friday and wants to see it when it lands.',
+    timeLabel: '2:30 PM',
+    actionLabel: 'Mark ready',
+    doneMessage: 'Ivory silk set out. Mrs. Vane is expected at 2:30 PM.',
+  ),
+  FocusTask(
+    id: 'staff-steam',
+    domain: FocusDomain.wardrobe,
+    title: 'Steam the two held evening looks',
+    detail:
+        'Two looks are on hold for the 5:30 PM fitting and need the steamer before they go to the room.',
+    timeLabel: '4:45 PM',
+    actionLabel: 'Sign Off',
+    doneMessage: 'Evening looks steamed and ready for the fitting.',
   ),
 ];

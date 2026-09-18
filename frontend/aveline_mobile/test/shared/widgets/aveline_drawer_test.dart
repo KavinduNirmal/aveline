@@ -110,7 +110,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Eleanor Vane'), findsOneWidget);
-      expect(find.text('staff'), findsOneWidget);
+      // The panel names the role rather than pasting the claim's id.
+      expect(find.text(AppRoles.labelFor(AppRoles.staff)), findsOneWidget);
     });
 
     testWidgets('filters screens by permission: shows Home and Catalog, hides Reports for staff', (tester) async {

@@ -190,13 +190,27 @@ public static class PricingEndpoints
             }
         }).RequireAuthorization(Permissions.PricingManage);
 
-        // The recompute job writes compensating ledger corrections, which are Phase 2.
-        // Until then the endpoint is honest about not being available yet.
-        group.MapPost("/rules/{ruleId:guid}/recompute", (Guid ruleId) =>
-            Results.Json(
-                new { message = "Pricing recompute is not available until the ledger (Phase 2) ships." },
-                statusCode: StatusCodes.Status501NotImplemented))
-            .RequireAuthorization(Permissions.PricingBackdate);
+        group.MapPost("/rules/{ruleId:guid}/recompute", async (
+            Guid ruleId,
+            ClaimsPrincipal principal,
+            IPricingService pricing,
+            IUserService users,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                var actorUserId = await ResolveActorUserIdAsync(principal, users, ct);
+                var result = await pricing.RecomputeRuleAsync(ruleId, actorUserId, ct);
+                return Results.Ok(result);
+            }
+            catch (Exception exception)
+            {
+                return MapProblem(exception);
+            }
+        })
+        .RequireAuthorization(Permissions.PricingBackdate)
+        .Produces<PricingRecomputeResult>(StatusCodes.Status200OK)
+        .WithSummary("Trigger compensating Blossom recompute for a backdated pricing rule.");
 
         group.MapGet("/price-book", async (
             string? skuKind,

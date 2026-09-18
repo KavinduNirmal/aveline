@@ -9,10 +9,12 @@ its own `data/`, `domain/`, and `presentation/` layers following clean architect
 features/
 ├── auth/          # Sign-in/up, sessions, JWT provisioning (Clerk)
 ├── catalog/       # Dock tab placeholder for visual intelligence & sourcing
+├── conversations/ # The boutique's inbox and the thread with each client
 ├── customers/     # Slice 1 — Customer profiles, interactions, memory
-├── home/          # Post-auth landing shell (floating dock) + Home tab
+├── home/          # Post-auth landing shell + Home tab
 ├── inventory/     # Slice 2 — Inventory browsing, image analysis, sourcing
-├── profile/       # Dock tab for the signed-in user's account
+├── notifications/ # The boutique's own notification inbox
+├── settings/      # The associate's account and preferences, plus the shop block
 ├── salon/         # The Salon conversation inbox (full-screen)
 └── commerce/      # Slice 3 — Orders, payments, approvals, delivery
 ```

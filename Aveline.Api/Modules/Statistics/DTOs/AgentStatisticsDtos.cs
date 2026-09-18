@@ -22,6 +22,26 @@ public sealed record AgentDataQualityDto(
         PerStepAttribution: false,
         ToolInstrumented: false,
         CostInstrumented: false);
+
+    /// <summary>Derives truthful data quality flags based on actual database evidence.</summary>
+    public static AgentDataQualityDto Derive(
+        IReadOnlyCollection<AgentWorkflowRun> runs,
+        IReadOnlyCollection<AgentStepRun>? steps = null)
+    {
+        var hasRuns = runs.Count > 0;
+        var latency = hasRuns && runs.Any(r => r.DurationMs.HasValue && r.DurationMs.Value > 0);
+        var failures = hasRuns && (runs.Any(r => r.Status == AgentRunStatus.Failed) || (steps?.Any(s => s.Status == AgentStepStatus.Failed) ?? false));
+        var perStep = (steps is not null && steps.Count > 0 && steps.Any(s => s.InputTokens > 0 || s.OutputTokens > 0)) || (hasRuns && runs.Any(r => r.StepCount > 0));
+        var tools = hasRuns && (runs.Any(r => r.ToolCallCount > 0) || (steps?.Any(s => s.ToolName is not null) ?? false));
+        var cost = hasRuns && runs.Any(r => r.ActualCostUsd > 0);
+
+        return new AgentDataQualityDto(
+            LatencyInstrumented: latency,
+            NodeFailuresObserved: failures,
+            PerStepAttribution: perStep,
+            ToolInstrumented: tools,
+            CostInstrumented: cost);
+    }
 }
 
 /// <summary>One run as it appears in the paged list (S-13, S-22 summary).</summary>

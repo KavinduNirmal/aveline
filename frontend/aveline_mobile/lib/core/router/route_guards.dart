@@ -17,7 +17,38 @@ abstract final class AppRoutes {
   /// state is unknown and no other screen can be chosen honestly.
   static const String connection = '/connection';
   static const String catalog = '/catalog';
+
+  /// The catalog's search filter options, pushed from the catalog screen.
+  static const String catalogFilters = '/catalog/filters';
+
+  /// Route pattern for a single piece. The location is built with
+  /// [catalogProduct]; the static `filters` segment above must stay declared
+  /// before this pattern so it is not swallowed as a product id.
+  static const String catalogProductPattern = '/catalog/:productId';
+
+  /// A single piece, addressed by its own id.
+  static String catalogProduct(String productId) => '/catalog/$productId';
+
+  /// The boutique's client book.
+  static const String customers = '/customers';
+
+  /// Route pattern for one client's profile. The location is built with
+  /// [customer]; the static `customers` segment above must stay declared before
+  /// this pattern so it is not swallowed as a client id.
+  static const String customerPattern = '/customers/:customerId';
+
+  /// One client, addressed by their own id.
+  static String customer(String customerId) => '/customers/$customerId';
   static const String conversations = '/conversations';
+
+  /// The associate's own account and preferences.
+  static const String settings = '/settings';
+
+  /// The retired Profile screen's path.
+  ///
+  /// The account it showed is a section of [settings] now. The path stays
+  /// declared because the header's avatar and any stored link still name it, so
+  /// the router forwards it rather than answering with nothing.
   static const String profile = '/profile';
   static const String notifications = '/notifications';
 }

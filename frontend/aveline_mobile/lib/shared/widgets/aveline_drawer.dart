@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/auth/app_roles.dart';
 import '../../core/auth/permissions.dart';
 import '../../core/navigation/screen_config.dart';
 import '../../core/providers/user_provider.dart';
@@ -112,10 +113,11 @@ class AvelineDrawer extends StatelessWidget {
       );
     }).toList();
 
-    final displayName = user?.displayName ??
-        ([user?.firstName, user?.lastName]
-            .where((part) => part != null && part.isNotEmpty)
-            .join(' '));
+    // The same rule the account card reads, so a name cannot be one thing in the
+    // panel and another on the page it opens. Only the words for an account with
+    // no name at all are the panel's own.
+    final displayName =
+        user?.nameForDisplay(fallback: 'Staff Member') ?? 'Staff Member';
     final profileImageUrl = user?.profileImageUrl;
 
     return Drawer(
@@ -148,7 +150,7 @@ class AvelineDrawer extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          displayName.isNotEmpty ? displayName : 'Staff Member',
+                          displayName,
                           style: theme.textTheme.titleMedium?.copyWith(
                             fontWeight: FontWeight.w600,
                           ),
@@ -167,7 +169,9 @@ class AvelineDrawer extends StatelessWidget {
                               borderRadius: BorderRadius.circular(999),
                             ),
                             child: Text(
-                              userRole,
+                              // Named the same way the account card names it, so a
+                              // role reads the same in the panel as on the page.
+                              AppRoles.labelFor(userRole),
                               style: theme.textTheme.labelSmall?.copyWith(
                                 color: scheme.primary,
                                 fontWeight: FontWeight.w500,

@@ -1,3 +1,5 @@
+import 'contact_preference.dart';
+
 /// Account lifecycle state mirrored from the API's `AccountState`.
 enum AvelineAccountState {
   onboardingPending('OnboardingPending'),
@@ -78,6 +80,30 @@ class AvelineUser {
   final bool isActive;
   final DateTime createdAt;
   final DateTime updatedAt;
+
+  /// The contact preference as the settings picker reads it.
+  ///
+  /// The stored [contactPreference] stays a string so the record round-trips
+  /// through JSON untouched; parsing it is the domain's job rather than a
+  /// widget's.
+  ContactPreference get preferredContact =>
+      ContactPreference.fromWire(contactPreference);
+
+  /// The name to show for this user: their chosen display name, or the parts of
+  /// their name joined, which is what the app falls back to when none is set.
+  ///
+  /// [fallback] is what a screen shows when the account has no name at all. It is
+  /// the caller's to choose because the right words differ by place - a user card
+  /// says `Staff Member`, an account card says `Welcome` - while the rule that
+  /// picks between them does not.
+  String nameForDisplay({String fallback = 'Welcome'}) {
+    final chosen = displayName?.trim();
+    if (chosen != null && chosen.isNotEmpty) {
+      return chosen;
+    }
+    final parts = [firstName, lastName].where((part) => part.trim().isNotEmpty);
+    return parts.isEmpty ? fallback : parts.join(' ');
+  }
 
   factory AvelineUser.fromJson(Map<String, dynamic> json) {
     final hasCompletedOnboarding =

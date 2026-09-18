@@ -5,6 +5,7 @@ using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Commerce.Models;
 using Aveline.Api.Modules.Conversations.Models;
 using Aveline.Api.Modules.CustomerConcierge.Models;
+using Aveline.Api.Modules.Home.Models;
 using Aveline.Api.Modules.Integrations.Models;
 using Aveline.Api.Modules.Notifications.Models;
 using Aveline.Api.Modules.Organizations.Models;
@@ -65,6 +66,8 @@ public class AppDbContext : DbContext
 
     public DbSet<OrganizationSubscription> OrganizationSubscriptions => Set<OrganizationSubscription>();
 
+    public DbSet<DailyBillingMetric> DailyBillingMetrics => Set<DailyBillingMetric>();
+
     public DbSet<AuditLogEntry> AuditLogEntries => Set<AuditLogEntry>();
 
     public DbSet<Modules.ApiAccess.Models.ApiKey> ApiKeys => Set<Modules.ApiAccess.Models.ApiKey>();
@@ -75,6 +78,9 @@ public class AppDbContext : DbContext
 
     public DbSet<Modules.Statistics.Models.AgentStepRun> AgentStepRuns =>
         Set<Modules.Statistics.Models.AgentStepRun>();
+
+    public DbSet<Modules.Statistics.Models.DailyAgentMetric> DailyAgentMetrics =>
+        Set<Modules.Statistics.Models.DailyAgentMetric>();
 
     // Statistics Module (Phase 5 — API consumption statistics, M7)
     public DbSet<Modules.Statistics.Models.ApiRequestMetric> ApiRequestMetrics =>
@@ -124,6 +130,9 @@ public class AppDbContext : DbContext
     public DbSet<CustomerInteraction> CustomerInteractions => Set<CustomerInteraction>();
     public DbSet<CustomerConsent> CustomerConsents => Set<CustomerConsent>();
     public DbSet<CustomerTag> CustomerTags => Set<CustomerTag>();
+
+    // Home module: the persisted half of the derived focus feed.
+    public DbSet<FocusDismissal> FocusDismissals => Set<FocusDismissal>();
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {

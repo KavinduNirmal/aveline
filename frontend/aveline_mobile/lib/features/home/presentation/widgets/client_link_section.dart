@@ -1,20 +1,35 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../../../core/router/route_guards.dart';
 import '../../../../shared/widgets/app_toast.dart';
+import '../../../../shared/widgets/blossom_refresh.dart';
 import '../../../../shared/widgets/section_overline.dart';
 import '../../../../shared/widgets/trailing_fade.dart';
 import '../../domain/client_highlight.dart';
 import 'all_clients_sheet.dart';
 import 'client_highlight_tile.dart';
+import 'client_status_ticker.dart';
 import 'quick_add_client_sheet.dart';
 
 /// `Direct client link`: the clients with something happening right now,
 /// leading with the walk-in slot so a new client can be added from the counter.
 class ClientLinkSection extends StatefulWidget {
-  const ClientLinkSection({super.key, required this.clients});
+  const ClientLinkSection({
+    super.key,
+    required this.clients,
+    this.onCreateWalkIn,
+  });
 
   final List<ClientHighlight> clients;
+
+  /// Creates a counter walk-in from the name the sheet collected, returning the
+  /// client as the server recorded them.
+  ///
+  /// The row prepends what this returns rather than a client invented here: an
+  /// id the profile route cannot resolve is worse than no new tile.
+  final Future<ClientHighlight?> Function(String fullName)? onCreateWalkIn;
 
   /// The row is a glance, not a directory; the rest live behind "See all".
   static const int rowLimit = 5;
@@ -29,6 +44,9 @@ class _ClientLinkSectionState extends State<ClientLinkSection> {
   final ScrollController _controller = ScrollController();
 
   late List<ClientHighlight> _clients = List.of(widget.clients);
+
+  /// The refresh revision the row was seeded at.
+  int _seededRevision = 0;
 
   @override
   void didUpdateWidget(covariant ClientLinkSection oldWidget) {
@@ -45,20 +63,42 @@ class _ClientLinkSectionState extends State<ClientLinkSection> {
   }
 
   Future<void> _addWalkIn() async {
-    final client = await showQuickAddClientSheet(context);
+    final fullName = await showQuickAddClientSheet(context);
+    if (fullName == null || !mounted) {
+      return;
+    }
+
+    // No create path means no client: an id invented here would resolve nowhere.
+    final create = widget.onCreateWalkIn;
+    if (create == null) {
+      return;
+    }
+
+    final client = await create(fullName);
     if (client == null || !mounted) {
       return;
     }
+
     setState(() => _clients = [client, ..._clients]);
     AppToast.show(context, 'Added. ${client.shortName} is on the client list.');
   }
 
   void _openClient(ClientHighlight client) {
-    AppToast.show(context, "${client.shortName}'s profile is not on mobile yet.");
+    // The profile is a real route, addressed by the highlight's own id. A toast
+    // here would be a dead end dressed up as an answer.
+    GoRouter.maybeOf(context)?.push(AppRoutes.customer(client.id));
   }
 
   @override
   Widget build(BuildContext context) {
+    // A completed pull-to-refresh drops the walk-ins added at the counter, which
+    // is what re-seeding means for a row built from the caller's list.
+    final revision = RefreshScope.revisionOf(context);
+    if (revision != _seededRevision) {
+      _seededRevision = revision;
+      _clients = List.of(widget.clients);
+    }
+
     final visible = _clients.take(ClientLinkSection.rowLimit).toList();
 
     return Column(
@@ -83,7 +123,7 @@ class _ClientLinkSectionState extends State<ClientLinkSection> {
             child: ListView.separated(
               controller: _controller,
               scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 20),
+              padding: TrailingFade.endPadding(context),
               itemCount: visible.length + 1,
               separatorBuilder: (context, index) =>
                   const SizedBox(width: ClientLinkSection._tileGap),
@@ -100,6 +140,9 @@ class _ClientLinkSectionState extends State<ClientLinkSection> {
             ),
           ),
         ),
+        const SizedBox(height: 14),
+        // The sentence behind those activity dots, one client at a time.
+        ClientStatusTicker(clients: _clients),
       ],
     );
   }

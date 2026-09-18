@@ -49,6 +49,80 @@ void main() {
     });
   });
 
+  group('NotificationProvider unread count', () {
+    test('starts with no count, so the badge knows to fall back to a dot', () {
+      final provider = NotificationProvider();
+
+      expect(provider.unreadCount, 0);
+      expect(provider.hasUnreadCount, isFalse);
+    });
+
+    test('reports the count the inbox handed it, and notifies', () {
+      final provider = NotificationProvider();
+      var notified = 0;
+      provider.addListener(() => notified++);
+
+      provider.setUnreadCount(3);
+
+      expect(provider.unreadCount, 3);
+      expect(provider.hasUnreadCount, isTrue);
+      expect(notified, 1);
+    });
+
+    test('the same count twice is not news, so it does not notify again', () {
+      final provider = NotificationProvider();
+      provider.setUnreadCount(3);
+      var notified = 0;
+      provider.addListener(() => notified++);
+
+      provider.setUnreadCount(3);
+
+      expect(notified, 0);
+    });
+
+    test('a count that moves to zero is still worth notifying', () {
+      // This is the mark-all-read: the dot has to go, and that is a change.
+      final provider = NotificationProvider();
+      provider.setUnreadCount(3);
+      var notified = 0;
+      provider.addListener(() => notified++);
+
+      provider.setUnreadCount(0);
+
+      expect(provider.unreadCount, 0);
+      expect(notified, 1);
+    });
+
+    test('a negative count reads as nothing unread rather than as a negative', () {
+      final provider = NotificationProvider();
+
+      provider.setUnreadCount(-4);
+
+      expect(provider.unreadCount, 0);
+    });
+
+    test('clear forgets the count, so the next session waits for its own', () {
+      final provider = NotificationProvider();
+      provider.setUnreadCount(3);
+
+      provider.clear();
+
+      expect(provider.unreadCount, 0);
+      expect(provider.hasUnreadCount, isFalse);
+    });
+
+    test('clear still notifies when only the count was known', () {
+      final provider = NotificationProvider();
+      provider.setUnreadCount(3);
+      var notified = 0;
+      provider.addListener(() => notified++);
+
+      provider.clear();
+
+      expect(notified, 1);
+    });
+  });
+
   group('NotificationPayload.fromJson', () {
     test('parses type, title, body and data', () {
       final payload = NotificationPayload.fromJson({

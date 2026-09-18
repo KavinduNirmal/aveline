@@ -78,13 +78,13 @@ Maps directly to the database tables owned by this slice:
 
 | Model | Table |
 |---|---|
-| `InventoryItem` | `Inventory_Items` |
-| `InventoryImage` | `Inventory_Images` |
-| `OutfitComposition` | `Outfit_Compositions` |
-| `OutfitItem` | `Outfit_Items` |
-| `SourcingRequest` | `Sourcing_Requests` |
+| `InventoryItem` | `InventoryItems` |
+| `InventoryImage` | `InventoryImages` |
+| `OutfitComposition` | `OutfitCompositions` |
+| `OutfitItem` | `OutfitItems` |
+| `SourcingRequest` | `SourcingRequests` |
 | `Supplier` | `Suppliers` |
-| `CustomerMatch` | `Customer_Matches` |
+| `CustomerMatch` | `CustomerMatches` |
 
 **Do not include:**
 - Models from other modules

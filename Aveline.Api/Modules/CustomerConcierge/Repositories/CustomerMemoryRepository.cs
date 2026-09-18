@@ -47,7 +47,7 @@ public class CustomerMemoryRepository : ICustomerMemoryRepository
         // Serialize the vector in pgvector literal form: [a,b,c].
         var literal = "[" + string.Join(",", embedding) + "]";
         await _context.Database.ExecuteSqlRawAsync(
-            "UPDATE \"Customer_Memory\" SET embedding = CAST({0} AS vector) " +
+            "UPDATE \"CustomerMemory\" SET embedding = CAST({0} AS vector) " +
             "WHERE \"OrganizationId\" = {1} AND \"Id\" = {2}",
             new object[] { literal, orgId, memoryId },
             cancellationToken);
@@ -70,7 +70,7 @@ public class CustomerMemoryRepository : ICustomerMemoryRepository
         var sql = """
                   SELECT "Id", "CustomerId", "Content", "Category", "Confidence", "IsExplicit",
                          1 - (embedding <=> CAST({0} AS vector)) AS "Similarity"
-                  FROM "Customer_Memory"
+                  FROM "CustomerMemory"
                   WHERE "OrganizationId" = {1}
                     AND "CustomerId" = {2}
                     AND "DeletedAt" IS NULL

@@ -7,6 +7,9 @@ import '../../../../shared/widgets/trailing_fade.dart';
 /// [unavailableMessage] is the honest answer for actions whose slice is not on
 /// mobile yet, so a tap never lands on nothing.
 enum QuickAction {
+  // The one floor tool that is about the client standing at the counter rather
+  // than about the shop's own records, so it leads the row.
+  logVisit('Log a visit', Icons.storefront_outlined, null),
   clockIn('Clock in', Icons.access_time_rounded, 'Clock-in is not on mobile yet.'),
   loyaltyCard(
     'Loyalty card',
@@ -14,11 +17,7 @@ enum QuickAction {
     'Loyalty card scanning is not on mobile yet.',
   ),
   catalog('Catalog', Icons.checkroom_outlined, null),
-  customers(
-    'Customers',
-    Icons.people_outline,
-    'Customer memory is not on mobile yet.',
-  ),
+  customers('Customers', Icons.people_outline, null),
   messages('Messages', Icons.chat_bubble_outline_rounded, null),
   more('More', Icons.more_horiz_rounded, null);
 
@@ -68,9 +67,9 @@ class _QuickActionsRowState extends State<QuickActionsRow> {
         child: ListView.separated(
           controller: _controller,
           scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 20),
+          padding: TrailingFade.endPadding(context),
           itemCount: QuickAction.values.length,
-          separatorBuilder: (context, index) => const SizedBox(width: 10),
+          separatorBuilder: (context, index) => const SizedBox(width: 8),
           itemBuilder: (context, index) {
             final action = QuickAction.values[index];
             return _QuickActionButton(
@@ -109,7 +108,10 @@ class _QuickActionButton extends StatelessWidget {
           onTap: onTap,
           borderRadius: BorderRadius.circular(28),
           child: SizedBox(
-            width: 58,
+            // Wide enough for the longest label (`Customers`) to stay on one
+            // line at the 12pt label token. Narrower and it breaks mid-word,
+            // which reads as a typo rather than as a wrap.
+            width: 64,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -140,7 +142,6 @@ class _QuickActionButton extends StatelessWidget {
                   textAlign: TextAlign.center,
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: scheme.onSurfaceVariant,
-                    fontSize: 10.5,
                     height: 1.15,
                     letterSpacing: 0.1,
                   ),

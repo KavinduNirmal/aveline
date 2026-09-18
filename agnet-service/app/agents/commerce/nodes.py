@@ -65,7 +65,6 @@ class CommerceAgent:
                     "ran": True,
                     "status": SKIPPED,
                     "reason": "organization context is missing",
-                    "needs_approval": False,
                 },
             }
 

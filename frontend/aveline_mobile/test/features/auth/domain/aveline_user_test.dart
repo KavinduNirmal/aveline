@@ -131,4 +131,58 @@ void main() {
       expect(inactive.accountState, AvelineAccountState.suspended);
     });
   });
+
+  group('AvelineUser.nameForDisplay', () {
+    AvelineUser named({
+      String? displayName,
+      String firstName = '',
+      String lastName = '',
+    }) => AvelineUser.fromJson({
+      'id': 'usr-name',
+      'clerkId': 'user_name',
+      'email': 'name@aveline.lk',
+      'firstName': firstName,
+      'lastName': lastName,
+      'displayName': displayName,
+      'username': 'name',
+      'userRole': 'staff',
+      'organizationRole': 'org:boutique_staff',
+      'organizationId': 'org_colombo',
+      'hasCompletedOnboarding': true,
+      'accountState': 'Active',
+    });
+
+    test('prefers the display name the associate chose', () {
+      expect(
+        named(displayName: 'Charlotte T.', firstName: 'Charlotte')
+            .nameForDisplay(),
+        'Charlotte T.',
+      );
+    });
+
+    test('joins the name parts when no display name is set', () {
+      expect(
+        named(firstName: 'Charlotte', lastName: 'Tilbury').nameForDisplay(),
+        'Charlotte Tilbury',
+      );
+    });
+
+    test('ignores a display name that is only whitespace', () {
+      expect(
+        named(
+          displayName: '   ',
+          firstName: 'Charlotte',
+          lastName: 'Tilbury',
+        ).nameForDisplay(),
+        'Charlotte Tilbury',
+      );
+    });
+
+    test('shows the caller words for an account with no name at all', () {
+      // The rule is the domain's, the wording is the screen's: the side panel's
+      // user card says `Staff Member`, an account card says `Welcome`.
+      expect(named().nameForDisplay(), 'Welcome');
+      expect(named().nameForDisplay(fallback: 'Staff Member'), 'Staff Member');
+    });
+  });
 }

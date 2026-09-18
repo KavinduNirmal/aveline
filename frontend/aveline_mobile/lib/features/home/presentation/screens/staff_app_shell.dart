@@ -1,9 +1,14 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../../../../core/navigation/staff_screens.dart';
+import '../../../../core/providers/boutique_provider.dart';
+import '../../../../core/providers/user_provider.dart';
 import '../../../../shared/widgets/animated_blossom.dart';
 import '../../../../shared/widgets/aveline_drawer.dart';
 import '../../../../shared/widgets/aveline_header.dart';
+import '../../../../shared/widgets/blossom_refresh.dart';
 import '../../../../shared/widgets/quit_confirmation_dialog.dart';
 
 /// Primary UI shell scaffold for the Staff application.
@@ -97,6 +102,42 @@ class _StaffAppShellState extends State<StaffAppShell> {
     }
   }
 
+  /// Reads a provider if one is above this shell.
+  ///
+  /// The shell is mounted directly by widget tests that supply no providers, so a
+  /// missing one has to degrade rather than throw.
+  T? _providerOrNull<T extends Object>() {
+    try {
+      return context.read<T>();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// What a pull-to-refresh re-fetches.
+  ///
+  /// The account and the boutique are the only state under the shell that comes
+  /// from the API; the floor's own screens are seeded from demo data, and they
+  /// re-seed themselves off the [BlossomRefresh] revision.
+  Future<void> _refresh() async {
+    final dio = _providerOrNull<Dio>();
+    if (dio == null) {
+      return;
+    }
+
+    final user = _providerOrNull<UserProvider>();
+    if (user != null) {
+      await user.fetchUser(dio);
+    }
+
+    // Not `else`: the boutique load is independent of the profile, and a
+    // profile that failed to load must not leave the shop name stale too.
+    final boutique = _providerOrNull<BoutiqueProvider>();
+    if (boutique != null) {
+      await boutique.fetchBoutique(dio);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -111,7 +152,14 @@ class _StaffAppShellState extends State<StaffAppShell> {
         drawerEdgeDragWidth: StaffAppShell.drawerEdgeDragWidth,
         body: Stack(
           children: [
-            Positioned.fill(child: widget.child),
+            // One wrapper for every screen the shell hosts, so the gesture is the
+            // same on all of them.
+            Positioned.fill(
+              child: BlossomRefresh(
+                onRefresh: _refresh,
+                child: widget.child,
+              ),
+            ),
             if (widget.showBlossom)
               const Align(
                 alignment: Alignment.bottomCenter,

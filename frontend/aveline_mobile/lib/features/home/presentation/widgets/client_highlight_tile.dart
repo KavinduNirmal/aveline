@@ -42,35 +42,38 @@ Color _tintFor(String name) {
 
 /// The value ramp: VIP wears the brand wine, levels run dark to light so the
 /// stronger tier reads as the heavier badge.
+///
+/// Every step has to clear 4.5:1 against the white numeral it carries, which is
+/// what rules out the pale greys a ramp like this invites: the original level-1
+/// tone measured 3.1:1.
 Color clientTierColor(ClientTier tier, ColorScheme scheme) => switch (tier) {
       ClientTier.vip => scheme.primary,
       ClientTier.level3 => const Color(0xFF3B3030),
       ClientTier.level2 => const Color(0xFF6E6363),
-      ClientTier.level1 => const Color(0xFF9C9090),
+      ClientTier.level1 => const Color(0xFF7A6F6F),
     };
 
 String clientTierLabel(ClientTier tier) =>
     tier.isVip ? 'VIP' : 'LVL ${tier.level}';
 
 /// A client's initials in a tinted circle, ringed in wine for VIPs, with a mint
-/// dot when something new has arrived.
+/// The circular avatar, tinted from the client's own name, with the wine ring
+/// a VIP wears.
 class ClientAvatar extends StatelessWidget {
   const ClientAvatar({
     super.key,
     required this.client,
     this.size = ClientTileMetrics.avatarSize,
-    this.showActivityDot = true,
   });
 
   final ClientHighlight client;
   final double size;
-  final bool showActivityDot;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final isVip = client.tier.isVip;
+    final isVip = client.tier?.isVip ?? false;
 
     final circle = Container(
       width: size,
@@ -82,6 +85,9 @@ class ClientAvatar extends StatelessWidget {
       ),
       child: Text(
         client.initials,
+        // Proportional to the avatar rather than a type role: the same widget
+        // serves the 64dp row tile and the 44dp sheet avatar, so the initials
+        // have to scale with the circle they sit in.
         style: theme.textTheme.headlineSmall?.copyWith(
           fontSize: size * 0.32,
           letterSpacing: 0.5,
@@ -90,7 +96,7 @@ class ClientAvatar extends StatelessWidget {
       ),
     );
 
-    final ringed = Container(
+    return Container(
       padding: EdgeInsets.all(isVip ? 2 : 0),
       decoration: BoxDecoration(
         shape: BoxShape.circle,
@@ -102,35 +108,6 @@ class ClientAvatar extends StatelessWidget {
         ),
       ),
       child: circle,
-    );
-
-    if (!showActivityDot || !client.hasNewActivity) {
-      return ringed;
-    }
-
-    final dot = (size * 0.2).clamp(9.0, 13.0);
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        ringed,
-        Positioned(
-          top: 0,
-          right: 0,
-          child: Container(
-            key: const Key('client_activity_dot'),
-            width: dot,
-            height: dot,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: const Color(0xFF2E6B58),
-              border: Border.all(
-                color: scheme.surfaceContainerLowest,
-                width: 2,
-              ),
-            ),
-          ),
-        ),
-      ],
     );
   }
 }
@@ -144,6 +121,16 @@ class ClientTierBadge extends StatelessWidget {
 
   static const double _vipHeight = 18;
   static const double _levelDiameter = 30;
+
+  /// Badge type is sized to the badge, not to the text scale.
+  ///
+  /// These are graphic marks riding a 64dp avatar, so they carry their own
+  /// metrics rather than a `TextTheme` role — the `labelSmall` token (12) does
+  /// not fit a two-line stack inside a 30dp circle. The floor is 9: the `LVL`
+  /// kicker used to sit at 6.5, which is not a size a phone renders comfortably.
+  static const double _vipFontSize = 10;
+  static const double _kickerFontSize = 9;
+  static const double _levelFontSize = 12;
 
   /// How tall the badge is, so the tile can centre it on the avatar's edge.
   static double heightFor(ClientTier tier) =>
@@ -167,7 +154,7 @@ class ClientTierBadge extends StatelessWidget {
           'VIP',
           style: theme.textTheme.labelSmall?.copyWith(
             color: scheme.onPrimary,
-            fontSize: 9.5,
+            fontSize: _vipFontSize,
             fontWeight: FontWeight.w700,
             letterSpacing: 0.8,
             height: 1,
@@ -187,29 +174,37 @@ class ClientTierBadge extends StatelessWidget {
           width: 1.5,
         ),
       ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(
-            'LVL',
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: scheme.onPrimary,
-              fontSize: 6.5,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.4,
-              height: 1.1,
+      // Scaled to the circle rather than laid out inside it. The two-line stack
+      // is taller than the 27dp the border leaves under the fallback font
+      // metrics the test harness and CI use, and it would overflow again under a
+      // large OS text scale. Scaling down keeps the badge a fixed graphic mark
+      // whatever the font does.
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'LVL',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.onPrimary,
+                fontSize: _kickerFontSize,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.4,
+                height: 1.1,
+              ),
             ),
-          ),
-          Text(
-            tier.level ?? '',
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: scheme.onPrimary,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              height: 1.1,
+            Text(
+              tier.level ?? '',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.onPrimary,
+                fontSize: _levelFontSize,
+                fontWeight: FontWeight.w700,
+                height: 1.1,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -237,7 +232,6 @@ class ClientTierChip extends StatelessWidget {
         clientTierLabel(tier).toUpperCase(),
         style: theme.textTheme.labelSmall?.copyWith(
           color: color,
-          fontSize: 9.5,
           fontWeight: FontWeight.w700,
           letterSpacing: 0.8,
         ),
@@ -263,9 +257,13 @@ class ClientHighlightTile extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
+    final tier = client.tier;
+
     return Semantics(
       button: true,
-      label: '${client.shortName}, ${clientTierLabel(client.tier)}',
+      label: tier == null
+          ? client.shortName
+          : '${client.shortName}, ${clientTierLabel(tier)}',
       child: Material(
         type: MaterialType.transparency,
         child: InkWell(
@@ -284,13 +282,15 @@ class ClientHighlightTile extends StatelessWidget {
                     alignment: Alignment.center,
                     children: [
                       ClientAvatar(client: client),
-                      Positioned(
-                        // Centred on the avatar's bottom edge, so the badge
-                        // straddles the circle the way a wax seal would.
-                        bottom: ClientTileMetrics.avatarInset -
-                            ClientTierBadge.heightFor(client.tier) / 2,
-                        child: ClientTierBadge(tier: client.tier),
-                      ),
+                      // No grade, no badge: an ungraded client is not Level 1.
+                      if (tier != null)
+                        Positioned(
+                          // Centred on the avatar's bottom edge, so the badge
+                          // straddles the circle the way a wax seal would.
+                          bottom: ClientTileMetrics.avatarInset -
+                              ClientTierBadge.heightFor(tier) / 2,
+                          child: ClientTierBadge(tier: tier),
+                        ),
                     ],
                   ),
                 ),
@@ -302,7 +302,6 @@ class ClientHighlightTile extends StatelessWidget {
                   textAlign: TextAlign.center,
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: scheme.onSurface,
-                    fontSize: 12.5,
                     fontWeight: FontWeight.w500,
                     letterSpacing: 0.1,
                   ),
@@ -368,7 +367,6 @@ class AddClientTile extends StatelessWidget {
                   textAlign: TextAlign.center,
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: scheme.primary,
-                    fontSize: 12.5,
                     fontWeight: FontWeight.w600,
                     letterSpacing: 0.1,
                   ),

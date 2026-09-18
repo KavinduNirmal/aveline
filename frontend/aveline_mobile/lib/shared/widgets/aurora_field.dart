@@ -338,3 +338,90 @@ class AuroraVeil extends StatelessWidget {
 
   double _flowerLeft(int i) => ((i * 43 + 11) % 92) / 100;
 }
+
+/// The brand atmosphere as a working screen's backdrop.
+///
+/// A whisper of warmth down the page with [AuroraVeil] held behind the top band:
+/// the landing page's weather, thinned so it never competes with what the screen
+/// has to say. Callers place it at the bottom of a [Stack] behind their content.
+class BrandBackdrop extends StatelessWidget {
+  const BrandBackdrop({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    // Derived from the tokens rather than a magic hex: a 4.5% rose wash over
+    // the surface, enough to stop the page reading as one flat field.
+    final wash = Color.alphaBlend(
+      scheme.primary.withValues(alpha: 0.045),
+      scheme.surface,
+    );
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [scheme.surface, scheme.surface, wash],
+          stops: const [0, 0.42, 1],
+        ),
+      ),
+      child: const AuroraVeil(),
+    );
+  }
+}
+
+/// The brand atmosphere sized to a container rather than to the screen.
+///
+/// The same drifting blobs and blossoms as the full-page veil, placed as
+/// fractions of the box they fill so they read the same inside a card as they do
+/// behind Home. It paints outside its own bounds, so the caller is expected to
+/// clip it — that is what lets a card keep its own corners.
+class BlossomWash extends StatelessWidget {
+  const BlossomWash({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final height = constraints.maxHeight;
+
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            for (var i = 0; i < AuroraVeil._blobColors.length; i++)
+              _AuroraBlob(
+                colors: AuroraVeil._blobColors[i],
+                left: _blobLeft(i) * width,
+                top: _blobTop(i) * height,
+                size: width * _blobScale(i),
+                duration: Duration(seconds: 26 + i * 5),
+                phase: (i * 0.27) % 1,
+                opacity: 0.75,
+              ),
+            for (var i = 0; i < 3; i++)
+              _DriftingBlossom(
+                left: _flowerLeft(i) * width,
+                top: (0.12 + i * 0.32) * height,
+                size: 11 + ((i * 3) % 5).toDouble(),
+                color: AuroraVeil
+                    ._blossomColors[i % AuroraVeil._blossomColors.length],
+                drift: 7 + ((i * 4) % 8).toDouble(),
+                duration: Duration(seconds: 22 + ((i * 6) % 12)),
+                phase: (i * 0.23) % 1,
+                opacity: 0.30 + (i % 3) * 0.06,
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Blobs sit mostly above the box so only their soft lower half shows.
+  double _blobLeft(int i) => [-22, 46, 12][i] / 100;
+  double _blobTop(int i) => [-46, -60, -30][i] / 100;
+  double _blobScale(int i) => [0.86, 0.78, 0.70][i];
+
+  double _flowerLeft(int i) => ((i * 37 + 9) % 88) / 100;
+}

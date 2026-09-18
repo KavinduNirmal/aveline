@@ -16,6 +16,7 @@ vi.mock('@/lib/api', () => ({
 }))
 
 import {
+  acceptInvitation,
   createOrganization,
   fetchMyOrganizations,
   fetchOrganizationBySlug,
@@ -104,4 +105,23 @@ describe('organizations client', () => {
       slug: 'boutique',
     })
   })
+
+  it('acceptInvitation posts invitation code to invitations/accept endpoint', async () => {
+    postMock.mockResolvedValue({
+      data: {
+        organizationId: 'org-1',
+        userId: 'u-1',
+        boutiqueRole: 'org:boutique_staff',
+        clerkOrgId: null,
+        accountState: 'Active',
+      },
+    })
+    const result = await acceptInvitation('INV-12345')
+    expect(postMock).toHaveBeenCalledWith('/api/v1/invitations/accept', {
+      code: 'INV-12345',
+    })
+    expect(result.organizationId).toBe('org-1')
+    expect(result.boutiqueRole).toBe('org:boutique_staff')
+  })
 })
+

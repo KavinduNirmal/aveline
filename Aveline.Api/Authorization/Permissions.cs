@@ -26,6 +26,14 @@ public static class Permissions
 
     // Billing and pricing.
     public const string BillingView = "billing:view";
+
+    /// <summary>
+    /// The self-service read of a shop's Blossom position. Distinct from
+    /// <see cref="BillingView"/> so that the associate who needs to know how many
+    /// Blossoms the shop has left does not thereby become a reader of usage
+    /// statements and burn-rate; both are backed by the same balance service.
+    /// </summary>
+    public const string BillingViewSelf = "billing:view:self";
     public const string BillingManage = "billing:manage";
     public const string BillingAdjust = "billing:adjust";
     public const string PricingView = "pricing:view";
@@ -58,6 +66,7 @@ public static class Permissions
         SettingsManage,
         ConversationsView,
         BillingView,
+        BillingViewSelf,
         BillingManage,
         BillingAdjust,
         PricingView,
@@ -98,17 +107,17 @@ public static class Permissions
             [Roles.Admin] = Grant(All.Where(permission => permission != PricingBackdate).ToArray()),
             [Roles.Owner] = All,
 
-            [Roles.BoutiqueStaff] = Grant(CatalogView, CustomersView, ConversationsView),
+            [Roles.BoutiqueStaff] = Grant(CatalogView, CustomersView, ConversationsView, BillingViewSelf),
             [Roles.BoutiqueManager] = Grant(
                 CatalogView, CustomersView, CatalogManage, ReportsView, ConversationsView,
-                BillingView, PricingView, StatsView),
+                BillingView, BillingViewSelf, PricingView, StatsView),
             [Roles.BoutiqueSupervisor] = Grant(
                 CatalogView, CustomersView, CatalogManage, ApprovalsApprove, ReportsView, ConversationsView,
-                StatsView),
+                BillingViewSelf, StatsView),
             [Roles.BoutiqueOwner] = Grant(
                 CatalogView, CustomersView, CatalogManage, ApprovalsApprove, PaymentsRefund,
                 ReportsView, SettingsManage, ConversationsView,
-                BillingView, BillingManage, PricingView, ApiKeysView, ApiKeysManage,
+                BillingView, BillingViewSelf, BillingManage, PricingView, ApiKeysView, ApiKeysManage,
                 StatsView, StatsViewAgent),
         };
 

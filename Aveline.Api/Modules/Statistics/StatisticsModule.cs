@@ -53,6 +53,7 @@ public static class StatisticsModule
         services.AddSingleton<IApiKeyUsageSink>(sp => sp.GetRequiredService<ApiKeyUsageAggregator>());
 
         services.AddHostedService<AgentStatsRetentionJob>();
+        services.AddHostedService<AgentStatsRollupJob>();
         services.AddHostedService<StaleAgentRunJob>();
         services.AddHostedService<ApiTelemetryWriter>();
         services.AddHostedService<ApiQuotaResetJob>();

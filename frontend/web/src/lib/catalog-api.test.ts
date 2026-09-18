@@ -31,6 +31,12 @@ import {
   updateSourcingRequestStatus,
   fetchSuppliers,
   fetchSupplierCatalog,
+  normalizeCategory,
+  normalizeVisionAnalysis,
+  normalizeOutfitComposition,
+  getColorHex,
+  uploadCatalogImage,
+  uploadBase64Image,
 } from './catalog-api'
 
 const ORG = 'org-123'
@@ -151,11 +157,13 @@ describe('catalog API client', () => {
     }
     postMock.mockResolvedValue({ data: analysis })
 
-    const result = await analyzeProductImage(ORG, 'https://example.com/saree.jpg')
+    const result = await analyzeProductImage(ORG, 'https://example.com/saree.jpg', 'emerald_saree.jpg')
 
     expect(postMock).toHaveBeenCalledWith(`/api/v1/orgs/${ORG}/catalog/analyze-image`, {
       imageUrl: 'https://example.com/saree.jpg',
       organizationId: ORG,
+      fileName: 'emerald_saree.jpg',
+      contextHint: undefined,
     })
     expect(result.fabric).toBe('Mulberry Silk')
   })
@@ -342,4 +350,144 @@ describe('catalog API client', () => {
     })
     expect(catalog).toHaveLength(1)
   })
+
+  describe('normalizeCategory', () => {
+    it('normalizes singular and synonym variants into canonical catalog categories', () => {
+      expect(normalizeCategory('saree')).toBe('Sarees')
+      expect(normalizeCategory('sari')).toBe('Sarees')
+      expect(normalizeCategory('lehenga')).toBe('Lehengas')
+      expect(normalizeCategory('ghagra choli')).toBe('Lehengas')
+      expect(normalizeCategory('gown')).toBe('Gowns')
+      expect(normalizeCategory('maxi dress')).toBe('Gowns')
+      expect(normalizeCategory('evening gown')).toBe('Gowns')
+      expect(normalizeCategory('kurta')).toBe('Kurtas & Tunics')
+      expect(normalizeCategory('anarkali')).toBe('Kurtas & Tunics')
+      expect(normalizeCategory('blouse')).toBe('Kurtas & Tunics')
+      expect(normalizeCategory('blazer')).toBe('Outerwear')
+      expect(normalizeCategory('jacket')).toBe('Outerwear')
+      expect(normalizeCategory('shawl')).toBe('Drapes & Shawls')
+      expect(normalizeCategory('dupatta')).toBe('Drapes & Shawls')
+      expect(normalizeCategory('necklace')).toBe('Jewelry & Accessories')
+      expect(normalizeCategory('earring')).toBe('Jewelry & Accessories')
+      expect(normalizeCategory('clutch')).toBe('Jewelry & Accessories')
+      expect(normalizeCategory('unknown')).toBe('Sarees')
+      expect(normalizeCategory(undefined)).toBe('Sarees')
+    })
+  })
+
+  describe('normalizeVisionAnalysis', () => {
+    it('normalizes category, garmentType, suggestedItemName, and default description', () => {
+      const raw = {
+        category: 'saree',
+        garment_type: 'Kanjeevaram Silk Saree',
+        suggested_item_name: 'Royal Emerald Zari Brocade Silk Saree',
+        primary_color: 'Emerald Green',
+        color_hex: '#0F5132',
+        fabric: 'Mulberry Silk',
+        pattern: 'Gold Zari Brocade',
+        style: 'Traditional Heirloom',
+      }
+
+      const normalized = normalizeVisionAnalysis(raw)
+
+      expect(normalized.category).toBe('Sarees')
+      expect(normalized.garmentType).toBe('Kanjeevaram Silk Saree')
+      expect(normalized.suggestedItemName).toBe('Royal Emerald Zari Brocade Silk Saree')
+      expect(normalized.detectedColor).toBe('Emerald Green')
+      expect(normalized.colorHex).toBe('#0F5132')
+      expect(normalized.fabric).toBe('Mulberry Silk')
+      expect(normalized.pattern).toBe('Gold Zari Brocade')
+      expect(normalized.summary).toContain('Emerald Green')
+    })
+  })
+
+  describe('uploadCatalogImage and uploadBase64Image', () => {
+    it('uploadCatalogImage posts multipart form data to images/upload', async () => {
+      postMock.mockResolvedValue({
+        data: {
+          id: 'img-1',
+          url: `/api/v1/orgs/${ORG}/catalog/images/img-1`,
+          fileName: 'saree.jpg',
+        },
+      })
+
+      const blob = new Blob(['fake image bytes'], { type: 'image/jpeg' })
+      const result = await uploadCatalogImage(ORG, blob, 'saree.jpg')
+
+      expect(postMock).toHaveBeenCalledWith(
+        `/api/v1/orgs/${ORG}/catalog/images/upload`,
+        expect.any(FormData),
+        {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        },
+      )
+      expect(result.id).toBe('img-1')
+      expect(result.url).toBe(`/api/v1/orgs/${ORG}/catalog/images/img-1`)
+    })
+
+    it('uploadBase64Image posts base64 payload to images/upload', async () => {
+      postMock.mockResolvedValue({
+        data: {
+          id: 'img-2',
+          url: `/api/v1/orgs/${ORG}/catalog/images/img-2`,
+          fileName: 'garment.jpg',
+        },
+      })
+
+      const dataUrl = 'data:image/jpeg;base64,12345'
+      const result = await uploadBase64Image(ORG, dataUrl, 'garment.jpg')
+
+      expect(postMock).toHaveBeenCalledWith(
+        `/api/v1/orgs/${ORG}/catalog/images/upload`,
+        {
+          imageData: dataUrl,
+          fileName: 'garment.jpg',
+        },
+      )
+      expect(result.id).toBe('img-2')
+      expect(result.url).toBe(`/api/v1/orgs/${ORG}/catalog/images/img-2`)
+    })
+  })
+
+  describe('getColorHex and normalizeOutfitComposition', () => {
+    it('getColorHex resolves exact, partial, and fallback hex values', () => {
+      expect(getColorHex(undefined)).toBe('#0f5132')
+      expect(getColorHex('')).toBe('#0f5132')
+      expect(getColorHex('emerald')).toBe('#0f5132')
+      expect(getColorHex('emerald green')).toBe('#0f5132')
+      expect(getColorHex('maroon')).toBe('#800000')
+      expect(getColorHex('unknown neon tone', '#123456')).toBe('#123456')
+    })
+
+    it('normalizeOutfitComposition handles raw objects with fallback defaults', () => {
+      const raw = {
+        id: 'outfit-1',
+        name: 'Royal Saree Ensemble',
+        occasion: 'Wedding',
+        totalPrice: '1200',
+        styleNotes: 'Rich festive drape',
+        heroImageUrl: 'http://example.com/img.jpg',
+        organizationId: ORG,
+        items: [
+          { id: 'it-1', itemId: 'it-1', name: 'Silk Saree', category: 'Sarees', price: 1000 },
+          { id: 'it-2', itemName: 'Gold Choker', price: '200' },
+        ],
+      }
+
+      const result = normalizeOutfitComposition(raw)
+      expect(result.id).toBe('outfit-1')
+      expect(result.totalPrice).toBe(1200)
+      expect(result.items).toHaveLength(2)
+      expect(result.items[1].name).toBe('Gold Choker')
+      expect(result.items[1].price).toBe(200)
+
+      const fallback = normalizeOutfitComposition({})
+      expect(fallback.name).toBe('Curated Ensemble')
+      expect(fallback.totalPrice).toBe(0)
+      expect(fallback.items).toEqual([])
+    })
+  })
 })
+

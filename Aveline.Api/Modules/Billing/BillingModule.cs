@@ -23,11 +23,14 @@ public static class BillingModule
         services.AddScoped<IEntitlementRepository, EntitlementRepository>();
         services.AddScoped<IEntitlementResolver, EntitlementResolver>();
         services.AddScoped<IEntitlementOverrideService, EntitlementOverrideService>();
+        services.AddScoped<IBillingStatisticsService, BillingStatisticsService>();
         services.AddSingleton<PricingRuleCache>();
         services.AddHostedService<PricingRuleCacheWarmer>();
         services.AddHostedService<Jobs.BlossomExpiryJob>();
         services.AddHostedService<Jobs.BillingPeriodRolloverJob>();
         services.AddHostedService<Jobs.IdempotencyRecordCleanupJob>();
+        services.AddHostedService<Jobs.BillingRollupJob>();
+        services.AddHostedService<Jobs.EntitlementCountingJob>();
 
         return services;
     }

@@ -5,9 +5,11 @@ outfit composition, and supplier sourcing.
 """
 
 import logging
+import re
 from typing import Any
 
 from app.agents.visual_insight.state import VisualAgentState
+from app.core.config import get_settings
 from app.prompts.assembly import assemble_system_prompt
 from app.schemas.visual_insight import (
     ImageAttributes,
@@ -181,23 +183,71 @@ class VisualInsightAgent:
 
         # Extract occasion keywords
         occasion = None
-        for occ in ["wedding", "gala", "cocktail", "dinner", "reception", "beach", "party", "office"]:
+        for occ in ["wedding", "gala", "cocktail", "dinner", "reception", "beach", "party", "office", "festive", "evening", "celebration"]:
             if occ in msg:
                 occasion = occ.capitalize()
                 break
 
-        # Extract color hints
+        # Comprehensive fashion color taxonomy & theme palette mapping
         color = None
-        for col in ["peach", "gold", "navy", "black", "white", "ivory", "red", "emerald", "silk", "linen"]:
-            if col in msg:
-                color = col.capitalize()
+        color_theme = None
+
+        # 1. Palette Themes mapping
+        theme_keywords = {
+            "pastel": ("Pastels", ["blush", "lavender", "mint", "powder blue", "peach", "sage"]),
+            "jewel": ("Jewel Tones", ["emerald", "ruby", "sapphire", "amethyst", "garnet"]),
+            "earthy": ("Earthy Neutrals", ["terracotta", "rust", "olive", "ochre", "camel", "mustard"]),
+            "monochrome": ("Classic Monochrome", ["black", "white", "ivory", "charcoal", "slate grey"]),
+            "metallic": ("Festive Metallics", ["gold", "silver", "bronze", "copper", "rose gold"]),
+            "berry": ("Rich Berries", ["burgundy", "maroon", "crimson", "magenta", "plum", "wine"]),
+            "oceanic": ("Oceanic Spectrum", ["teal", "turquoise", "aqua", "indigo", "peacock"]),
+        }
+        for theme_key, (theme_name, _) in theme_keywords.items():
+            if theme_key in msg:
+                color_theme = theme_name
                 break
+
+        # 2. Comprehensive Fashion Shades (ordered from compound to generic)
+        fashion_colors = [
+            # Pastels & Soft Hues
+            "sage green", "mint green", "powder blue", "baby blue", "sky blue", "blush pink", "dusty rose",
+            "rose pink", "lavender", "lilac", "peach", "buttercup", "apricot",
+            # Earthy & Warm Neutrals
+            "burnt terracotta", "terracotta", "mustard ochre", "mustard", "deep olive", "olive", "rust",
+            "camel", "taupe", "sand", "khaki", "ochre", "espresso",
+            # Jewel Tones
+            "emerald green", "emerald", "ruby red", "ruby", "midnight sapphire", "sapphire",
+            "deep crimson", "crimson", "deep amethyst", "amethyst", "topaz", "jade",
+            # Festive Metallics
+            "champagne gold", "antique gold", "rose gold", "zari gold", "gold", "silver", "platinum",
+            "copper", "bronze", "pewter",
+            # Rich Berries & Sunset
+            "royal burgundy", "burgundy", "deep maroon", "maroon", "wine", "plum", "magenta", "fuchsia",
+            "coral", "tangerine", "orange",
+            # Oceanic & Deep Blues
+            "peacock teal", "teal", "turquoise", "aqua", "midnight navy", "navy", "royal blue", "cobalt",
+            "indigo", "blue",
+            # Classic Monochrome & Neutrals
+            "midnight black", "charcoal", "black", "heirloom ivory", "off-white", "ivory", "cream",
+            "pearl", "white", "slate grey", "grey", "gray",
+            # General / Classics
+            "red", "green", "yellow", "pink", "purple", "brown"
+        ]
+
+        for col in fashion_colors:
+            if re.search(r"\b" + re.escape(col) + r"\b", msg):
+                color = col.title()
+                break
+
+        if not color and color_theme:
+            color = color_theme
 
         criteria = {
             "organizationId": org_id,
             "query": state.get("message", ""),
             "occasion": occasion,
             "color": color,
+            "color_theme": color_theme,
         }
 
         return {"search_criteria": criteria}
@@ -373,12 +423,13 @@ class VisualInsightAgent:
         completion_tokens = state.get("completion_tokens") or 0
         if (prompt_tokens + completion_tokens) > 0 and state.get("org_id"):
             try:
+                settings = get_settings()
                 await report_usage(
                     organization_id=str(state["org_id"]),
                     request_id=str(state.get("customer_id") or "visual-req"),
                     workflow_id="visual_insight",
-                    provider="openai",
-                    model="visual-llm",
+                    provider=settings.llm_provider,
+                    model=settings.llm_model or "deepseek-chat",
                     input_tokens=prompt_tokens,
                     output_tokens=completion_tokens,
                 )

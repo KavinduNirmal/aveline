@@ -62,6 +62,9 @@ public class ApiRequestMetricEntityConfigurationTests
                 nameof(ApiRequestMetric.HttpMethod),
                 nameof(ApiRequestMetric.StatusCode),
                 nameof(ApiRequestMetric.WindowStart),
+                // The daily compaction rollup can share a WindowStart with the hourly
+                // rollup (both start at midnight), so WindowSize is part of the key.
+                nameof(ApiRequestMetric.WindowSize),
             }));
 
         Assert.True(index.IsUnique);

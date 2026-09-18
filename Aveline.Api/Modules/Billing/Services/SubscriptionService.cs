@@ -209,8 +209,14 @@ public sealed class SubscriptionService(
         var staffCount = await db.OrganizationMemberships
             .CountAsync(m => m.OrganizationId == organizationId && m.Status == MembershipStatus.Active,
                 cancellationToken);
-        var customerCount = await db.Customers
-            .CountAsync(c => c.OrganizationId == organizationId, cancellationToken);
+        var cutoff = DateTime.UtcNow.AddDays(-90);
+        var customerCount = await db.CustomerInteractions
+            .Where(i => i.OrganizationId == organizationId && i.CreatedAt >= cutoff)
+            .Select(i => i.CustomerId)
+            .Union(db.Orders.Where(o => o.OrganizationId == organizationId && o.CreatedAt >= cutoff).Select(o => o.CustomerId))
+            .Union(db.Customers.Where(c => c.OrganizationId == organizationId && (c.UpdatedAt >= cutoff || c.CreatedAt >= cutoff)).Select(c => c.Id))
+            .Distinct()
+            .CountAsync(cancellationToken);
 
         var blossomAllowed = await entitlementResolver.GetDecimalAsync(
             organizationId, BlossomsKey, balance.MonthlyBlossomLimit, at: null, cancellationToken);

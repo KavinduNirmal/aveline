@@ -76,11 +76,11 @@ Maps directly to the database tables owned by this slice:
 | Model | Table |
 |---|---|
 | `Order` | `Orders` |
-| `OrderItem` | `Order_Items` |
+| `OrderItem` | `OrderItems` |
 | `Payment` | `Payments` |
-| `ApprovalQueueEntry` | `Approval_Queue` |
-| `DeliveryPlan` | `Delivery_Plans` |
-| `BusinessRule` | `Business_Rules` |
+| `ApprovalQueueEntry` | `ApprovalQueue` |
+| `DeliveryPlan` | `DeliveryPlans` |
+| `BusinessRule` | `BusinessRules` |
 
 **Do not include:**
 - Models from other modules

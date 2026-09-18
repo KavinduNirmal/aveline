@@ -35,7 +35,12 @@ public sealed class ApiStatsRollupJob(
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
         var closedHour = TruncateToHour(DateTime.UtcNow).AddHours(-1);
-        return await RecomputeHourAsync(db, closedHour, cancellationToken);
+        var count = await RecomputeHourAsync(db, closedHour, cancellationToken);
+        if (closedHour.Hour == 23)
+        {
+            await RecomputeDayAsync(db, closedHour.Date, cancellationToken);
+        }
+        return count;
     }
 
     /// <summary>Recompute-and-replace one hour. Public so tests and repairs can drive it.</summary>
@@ -65,7 +70,7 @@ public sealed class ApiStatsRollupJob(
                 row.StatusCode,
             })
             .Select(group => Rebuild(group.Key.OrganizationId, group.Key.ApiKeyId, group.Key.UserId,
-                group.Key.RouteTemplate, group.Key.HttpMethod, group.Key.StatusCode, start, group))
+                group.Key.RouteTemplate, group.Key.HttpMethod, group.Key.StatusCode, start, group, "hour"))
             .ToList();
 
         // Delete and insert in two statements so the unique dimension index cannot trip on
@@ -79,9 +84,55 @@ public sealed class ApiStatsRollupJob(
         return recomputed.Count;
     }
 
+    /// <summary>Recomputes the 24 hour rows for a closed day into daily ("day") summary rows.</summary>
+    public static async Task<int> RecomputeDayAsync(
+        AppDbContext db, DateTime dayStart, CancellationToken cancellationToken = default)
+    {
+        var start = new DateTime(dayStart.Year, dayStart.Month, dayStart.Day, 0, 0, 0, DateTimeKind.Utc);
+        var end = start.AddDays(1);
+
+        var hourRows = await db.ApiRequestMetrics
+            .Where(row => row.WindowSize == "hour" && row.WindowStart >= start && row.WindowStart < end)
+            .ToListAsync(cancellationToken);
+
+        if (hourRows.Count == 0)
+        {
+            return 0;
+        }
+
+        var existingDayRows = await db.ApiRequestMetrics
+            .Where(row => row.WindowSize == "day" && row.WindowStart == start)
+            .ToListAsync(cancellationToken);
+
+        var recomputed = hourRows
+            .GroupBy(row => new
+            {
+                row.OrganizationId,
+                row.ApiKeyId,
+                row.UserId,
+                row.RouteTemplate,
+                row.HttpMethod,
+                row.StatusCode,
+            })
+            .Select(group => Rebuild(group.Key.OrganizationId, group.Key.ApiKeyId, group.Key.UserId,
+                group.Key.RouteTemplate, group.Key.HttpMethod, group.Key.StatusCode, start, group, "day"))
+            .ToList();
+
+        if (existingDayRows.Count > 0)
+        {
+            db.ApiRequestMetrics.RemoveRange(existingDayRows);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        db.ApiRequestMetrics.AddRange(recomputed);
+        await db.SaveChangesAsync(cancellationToken);
+
+        return recomputed.Count;
+    }
+
     private static ApiRequestMetric Rebuild(
         Guid? organizationId, Guid? apiKeyId, Guid? userId, string routeTemplate, string httpMethod,
-        short statusCode, DateTime windowStart, IEnumerable<ApiRequestMetric> rows)
+        short statusCode, DateTime windowStart, IEnumerable<ApiRequestMetric> rows, string windowSize = "hour")
     {
         var buckets = new int[ApiRequestMetric.BucketCount];
         var list = rows.ToList();
@@ -120,7 +171,7 @@ public sealed class ApiStatsRollupJob(
             StatusClass = $"{statusCode / 100}xx",
             IsThrottled = statusCode == 429,
             WindowStart = windowStart,
-            WindowSize = "hour",
+            WindowSize = windowSize,
             RequestCount = requestCount,
             ErrorCount = list.Sum(row => row.StatusCode >= 400 ? row.RequestCount : 0),
             TotalDurationMs = list.Sum(row => row.TotalDurationMs),

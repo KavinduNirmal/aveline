@@ -1,14 +1,12 @@
 import 'package:flutter/material.dart';
 
-import '../../domain/client_highlight.dart';
-
 /// Collects just enough to start a walk-in client's profile.
 ///
-/// Returns the client to add, or `null` when the sheet is dismissed. Creating
-/// them for real is the customer concierge API's job; this is the counter-side
-/// shortcut the associate needs while the client is still standing there.
-Future<ClientHighlight?> showQuickAddClientSheet(BuildContext context) {
-  return showModalBottomSheet<ClientHighlight>(
+/// Returns the name the associate typed, or `null` when the sheet is dismissed.
+/// The **caller** creates the client, because a client invented here would have
+/// an id nothing can resolve; the sheet only collects what the create call needs.
+Future<String?> showQuickAddClientSheet(BuildContext context) {
+  return showModalBottomSheet<String>(
     context: context,
     backgroundColor: Colors.transparent,
     isScrollControlled: true,
@@ -40,17 +38,7 @@ class _QuickAddClientSheetState extends State<_QuickAddClientSheet> {
       return;
     }
 
-    Navigator.of(context).pop(
-      ClientHighlight(
-        id: 'walk-in-${DateTime.now().microsecondsSinceEpoch}',
-        name: name,
-        // A walk-in has no history to rank yet, so they start at the entry tier
-        // and the API can lift them once they have spent something.
-        tier: ClientTier.level1,
-        activity: 'Walk-in added at the counter.',
-        hasNewActivity: true,
-      ),
-    );
+    Navigator.of(context).pop(name);
   }
 
   @override

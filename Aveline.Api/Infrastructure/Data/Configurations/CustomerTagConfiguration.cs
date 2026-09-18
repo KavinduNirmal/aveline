@@ -8,7 +8,7 @@ public class CustomerTagConfiguration : IEntityTypeConfiguration<CustomerTag>
 {
     public void Configure(EntityTypeBuilder<CustomerTag> builder)
     {
-        builder.ToTable("Customer_Tags");
+        builder.ToTable("CustomerTags");
 
         builder.HasKey(t => t.Id);
 

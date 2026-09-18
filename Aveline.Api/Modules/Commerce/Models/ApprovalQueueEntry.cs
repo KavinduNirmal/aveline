@@ -6,7 +6,7 @@ using Aveline.Api.Modules.Shared.Models;
 
 namespace Aveline.Api.Modules.Commerce.Models;
 
-[Table("Approval_Queue")]
+[Table("ApprovalQueue")]
 public class ApprovalQueueEntry : ITenantEntity
 {
     [Key]

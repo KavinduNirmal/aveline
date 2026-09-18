@@ -5,7 +5,7 @@ using Aveline.Api.Modules.Organizations.Models;
 
 namespace Aveline.Api.Modules.Commerce.Models;
 
-[Table("Delivery_Plans")]
+[Table("DeliveryPlans")]
 public class DeliveryPlan : ITenantEntity
 {
     [Key]

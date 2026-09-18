@@ -30,13 +30,13 @@ public class VisualIntelligenceEntityConfigurationTests
     }
 
     [Theory]
-    [InlineData(typeof(InventoryItem), "inventory_items")]
-    [InlineData(typeof(InventoryImage), "inventory_images")]
-    [InlineData(typeof(CustomerMatch), "customer_matches")]
-    [InlineData(typeof(OutfitComposition), "outfit_compositions")]
-    [InlineData(typeof(OutfitItem), "outfit_items")]
-    [InlineData(typeof(SourcingRequest), "sourcing_requests")]
-    [InlineData(typeof(Supplier), "suppliers")]
+    [InlineData(typeof(InventoryItem), "InventoryItems")]
+    [InlineData(typeof(InventoryImage), "InventoryImages")]
+    [InlineData(typeof(CustomerMatch), "CustomerMatches")]
+    [InlineData(typeof(OutfitComposition), "OutfitCompositions")]
+    [InlineData(typeof(OutfitItem), "OutfitItems")]
+    [InlineData(typeof(SourcingRequest), "SourcingRequests")]
+    [InlineData(typeof(Supplier), "Suppliers")]
     public void Entity_MapsToExpectedTable(Type entityType, string expectedTable)
     {
         using var context = CreateContext();

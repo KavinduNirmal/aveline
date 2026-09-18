@@ -72,10 +72,10 @@ Maps directly to the database tables owned by this slice:
 | Model | Table |
 |---|---|
 | `Customer` | `Customers` |
-| `CustomerPreference` | `Customer_Preferences` |
-| `CustomerEvent` | `Customer_Events` |
-| `CustomerMemory` | `Customer_Memory` (has `vector` column) |
-| `CustomerInteraction` | `Customer_Interactions` |
+| `CustomerPreference` | `CustomerPreferences` |
+| `CustomerEvent` | `CustomerEvents` |
+| `CustomerMemory` | `CustomerMemory` (has `vector` column) |
+| `CustomerInteraction` | `CustomerInteractions` |
 
 **Do not include:**
 - Models for tables owned by other slices

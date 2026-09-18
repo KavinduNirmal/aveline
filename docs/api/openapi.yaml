@@ -2497,28 +2497,26 @@ paths:
       - $ref: "#/components/parameters/PricingRuleId"
     post:
       tags: [Pricing]
-      summary: Re-price already-recorded usage affected by a rule
+      summary: Re-price already-recorded usage affected by a backdated rule
       description: |
-        Requires `pricing:backdate`. **Not implemented yet:** the compensating-ledger
-        recompute job is not scheduled, so the handler always returns `501`, even
-        though the ledger itself has shipped. The intended behaviour is to write
-        compensating ledger entries and never mutate `AiUsageRecord`; when it ships,
-        the intended body is `{ asOf, dryRun }` and the intended `200` body records
-        `asOf`, `dryRun`, the affected providers/models, `recordCount`, the current
-        and recomputed Blossom totals, `deltaBlossoms`, `organizationsAffected` and
-        `ledgerEntriesWritten`. Always run it with `dryRun: true` first. The
-        handler ignores the request body today.
+        Requires `pricing:backdate`. Calculates pricing differences for affected AI usage
+        records, writes compensating `BlossomLedgerEntry` (CorrectionRecompute) entries,
+        updates the organization `UsageAccount`, and emits `pricing.rule.recomputed` events.
       operationId: recomputePricingRule
       responses:
-        "501":
-          description: Recompute is not available until the compensating-ledger job ships
+        "200":
+          description: Recompute result
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              schema: { $ref: "#/components/schemas/PricingRecomputeResult" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   # ---------------------------------------------------------------------------
   # Price book
@@ -3255,80 +3253,80 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
-  # ===========================================================================
-  # Planned / not yet implemented - NOT part of the normative contract.
-  # The three organization billing-statistics endpoints have no route;
-  # they return 404. Their intended shapes are preserved below as comments
-  # only, per the Phase 2 option-B decision.
-  # ===========================================================================
-#   /api/v1/orgs/{organizationId}/statistics/billing/burn-rate:
-#     parameters:
-#       - $ref: "#/components/parameters/OrganizationId"
-#     get:
-#       tags: [Billing]
-#       summary: Read Blossom burn rate and projected exhaustion
-#       description: Phase 2. Requires `billing:view`.
-#       operationId: getBlossomBurnRate
-#       parameters:
-#         - name: window
-#           in: query
-#           schema:
-#             type: string
-#             enum: [7d, 14d, 30d]
-#             default: 14d
-#       responses:
-#         "200":
-#           description: Burn rate
-#           content:
-#             application/json:
-#               schema: { $ref: "#/components/schemas/BlossomBurnRateResponse" }
-#         "401":
-#           $ref: "#/components/responses/Unauthorized"
-#         "403":
-#           $ref: "#/components/responses/Forbidden"
-#
-#   /api/v1/orgs/{organizationId}/statistics/customers/active:
-#     parameters:
-#       - $ref: "#/components/parameters/OrganizationId"
-#     get:
-#       tags: [Billing]
-#       summary: Read the active customer count against the plan limit
-#       description: |
-#         Phase 2. Requires `billing:view`. Active means an interaction, order, or
-#         profile update within 90 days (ADR-010).
-#       operationId: getActiveCustomerCount
-#       responses:
-#         "200":
-#           description: Active customers
-#           content:
-#             application/json:
-#               schema: { $ref: "#/components/schemas/EntitlementUsageResponse" }
-#         "401":
-#           $ref: "#/components/responses/Unauthorized"
-#         "403":
-#           $ref: "#/components/responses/Forbidden"
-#
-#   /api/v1/orgs/{organizationId}/statistics/staff/seats:
-#     parameters:
-#       - $ref: "#/components/parameters/OrganizationId"
-#     get:
-#       tags: [Billing]
-#       summary: Read the staff seat count against the plan limit
-#       description: Phase 2. Requires `billing:view`.
-#       operationId: getStaffSeatCount
-#       responses:
-#         "200":
-#           description: Staff seats
-#           content:
-#             application/json:
-#               schema: { $ref: "#/components/schemas/EntitlementUsageResponse" }
-#         "401":
-#           $ref: "#/components/responses/Unauthorized"
-#         "403":
-#           $ref: "#/components/responses/Forbidden"
-  # ===========================================================================
-  # End planned / not yet implemented: organization billing statistics
-  # ===========================================================================
+  # ---------------------------------------------------------------------------
+  # Organization billing & entitlement statistics
+  # ---------------------------------------------------------------------------
+  /api/v1/orgs/{organizationId}/billing/burn-rate:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Billing]
+      summary: Read Blossom burn rate and projected exhaustion
+      description: Phase 2. Requires `billing:view`. Calculates historical consumption and projected exhaustion date.
+      operationId: getBlossomBurnRate
+      parameters:
+        - name: window
+          in: query
+          schema:
+            type: string
+            enum: [7d, 14d, 30d]
+            default: 30d
+      responses:
+        "200":
+          description: Burn rate
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlossomBurnRateResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/customers/active:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Billing]
+      summary: Read the active customer count against the plan limit
+      description: |
+        Phase 2. Requires `billing:view`. Active means an interaction, order, or
+        profile update within 90 days (ADR-010).
+      operationId: getActiveCustomerCount
+      responses:
+        "200":
+          description: Active customers
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActiveCustomersResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/staff/seats:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Billing]
+      summary: Read the staff seat count against the plan limit
+      description: Phase 2. Requires `billing:view`.
+      operationId: getStaffSeatCount
+      responses:
+        "200":
+          description: Staff seats
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StaffSeatsResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   # ---------------------------------------------------------------------------
   # System statistics
@@ -3454,11 +3452,12 @@ paths:
       tags: [System Statistics]
       summary: Read Redis event bus health
       description: |
-        Phase 6. Requires `stats:system`. Returns an instantaneous snapshot of the
-        cumulative `EventBusMetrics` counters — it is **not** a windowed series, and
-        the handler binds no `from`/`to` filter (finding M-11). `publish_latency_ms`
-        is omitted because the counters cannot measure it (BR-7.10).
+        Phase 6. Requires `stats:system`. Returns an instantaneous snapshot or windowed
+        summary of the `EventBusMetrics` counters bounded by `from`/`to` filters.
       operationId: getSystemEventBus
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
       responses:
         "200":
           description: Event bus metrics
@@ -3536,137 +3535,130 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
 
-  # ===========================================================================
-  # Planned / not yet implemented - NOT part of the normative contract.
-  # The five /api/v1/admin/statistics/billing/* endpoints have no route;
-  # they return 404. Their intended shapes are preserved below as comments
-  # only, per the Phase 2 option-B decision.
-  # ===========================================================================
-#   # ---------------------------------------------------------------------------
-#   # Admin analytics
-#   # ---------------------------------------------------------------------------
-#   /api/v1/admin/statistics/billing/profitability:
-#     get:
-#       tags: [System Statistics]
-#       summary: Read internal AI cost versus Blossoms charged
-#       description: |
-#         Phase 2/5. Requires `stats:system`. `dataQuality.costIsEstimated` is `true`
-#         while the agent service reports no actual cost.
-#       operationId: getBillingProfitability
-#       parameters:
-#         - $ref: "#/components/parameters/From"
-#         - $ref: "#/components/parameters/To"
-#         - name: groupBy
-#           in: query
-#           schema:
-#             type: string
-#             enum: [planTier, organizationId, provider, model, day]
-#             default: day
-#       responses:
-#         "200":
-#           description: Profitability series
-#           content:
-#             application/json:
-#               schema: { $ref: "#/components/schemas/ProfitabilityResponse" }
-#         "401":
-#           $ref: "#/components/responses/Unauthorized"
-#         "403":
-#           $ref: "#/components/responses/Forbidden"
-#
-#   /api/v1/admin/statistics/billing/org-usage:
-#     get:
-#       tags: [System Statistics]
-#       summary: Rank organizations by Blossom consumption
-#       description: Phase 2. Requires `stats:system`.
-#       operationId: getOrgBlossomRanking
-#       parameters:
-#         - name: window
-#           in: query
-#           schema: { type: string, enum: [7d, 30d, month], default: month }
-#         - name: planTier
-#           in: query
-#           schema: { $ref: "#/components/schemas/PlanTier" }
-#         - $ref: "#/components/parameters/Page"
-#         - $ref: "#/components/parameters/PageSize"
-#       responses:
-#         "200":
-#           description: Ranking
-#           content:
-#             application/json:
-#               schema: { $ref: "#/components/schemas/OrgUsageRankingResponse" }
-#         "401":
-#           $ref: "#/components/responses/Unauthorized"
-#         "403":
-#           $ref: "#/components/responses/Forbidden"
-#
-#   /api/v1/admin/statistics/billing/adjustments:
-#     get:
-#       tags: [System Statistics]
-#       summary: Read Blossom adjustment activity
-#       description: Phase 2. Requires `stats:system`. The primary abuse-detection signal.
-#       operationId: getBlossomAdjustmentActivity
-#       parameters:
-#         - $ref: "#/components/parameters/From"
-#         - $ref: "#/components/parameters/To"
-#         - name: entryType
-#           in: query
-#           schema: { $ref: "#/components/schemas/BlossomLedgerEntryType" }
-#         - name: actorUserId
-#           in: query
-#           schema: { type: string, format: uuid }
-#       responses:
-#         "200":
-#           description: Adjustment activity
-#           content:
-#             application/json:
-#               schema: { $ref: "#/components/schemas/AdjustmentActivityResponse" }
-#         "401":
-#           $ref: "#/components/responses/Unauthorized"
-#         "403":
-#           $ref: "#/components/responses/Forbidden"
-#
-#   /api/v1/admin/statistics/billing/plan-changes:
-#     get:
-#       tags: [System Statistics]
-#       summary: Read plan change history
-#       description: Phase 2. Requires `stats:system`.
-#       operationId: getPlanChangeHistory
-#       parameters:
-#         - $ref: "#/components/parameters/From"
-#         - $ref: "#/components/parameters/To"
-#       responses:
-#         "200":
-#           description: Plan changes
-#           content:
-#             application/json:
-#               schema: { $ref: "#/components/schemas/PlanChangeHistoryResponse" }
-#         "401":
-#           $ref: "#/components/responses/Unauthorized"
-#         "403":
-#           $ref: "#/components/responses/Forbidden"
-#
-#   /api/v1/admin/statistics/billing/downgrades:
-#     get:
-#       tags: [System Statistics]
-#       summary: Read blocked downgrade statistics
-#       description: Phase 2. Requires `stats:system`.
-#       operationId: getDowngradeStatistics
-#       parameters:
-#         - $ref: "#/components/parameters/From"
-#         - $ref: "#/components/parameters/To"
-#       responses:
-#         "200":
-#           description: Downgrade statistics
-#           content:
-#             application/json:
-#               schema: { $ref: "#/components/schemas/DowngradeStatisticsResponse" }
-#         "401":
-#           $ref: "#/components/responses/Unauthorized"
-#         "403":
-#           $ref: "#/components/responses/Forbidden"
-  # ===========================================================================
-  # End planned / not yet implemented: admin billing statistics
-  # ===========================================================================
+  # ---------------------------------------------------------------------------
+  # Admin billing statistics
+  # ---------------------------------------------------------------------------
+  /api/v1/admin/statistics/billing/profitability:
+    get:
+      tags: [Admin Billing]
+      summary: Read internal AI cost versus Blossoms charged
+      description: |
+        Phase 2/5. Requires `stats:system`. `dataQuality.costIsEstimated` is `true`
+        while the agent service reports estimated cost.
+      operationId: getBillingProfitability
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: groupBy
+          in: query
+          schema:
+            type: string
+            enum: [provider, model, day]
+            default: day
+      responses:
+        "200":
+          description: Profitability series
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProfitabilityResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/billing/org-usage:
+    get:
+      tags: [Admin Billing]
+      summary: Rank organizations by Blossom consumption
+      description: Phase 2. Requires `stats:system`.
+      operationId: getOrgBlossomRanking
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Ranking
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrgUsageRankingResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/billing/adjustments:
+    get:
+      tags: [Admin Billing]
+      summary: Read Blossom adjustment activity
+      description: Phase 2. Requires `stats:system`. The primary abuse-detection signal.
+      operationId: getBlossomAdjustmentActivity
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: organizationId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: actorUserId
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Adjustment activity
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdjustmentActivityResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/billing/plan-changes:
+    get:
+      tags: [Admin Billing]
+      summary: Read plan change history
+      description: Phase 2. Requires `stats:system`.
+      operationId: getPlanChangeHistory
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: organizationId
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Plan changes
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlanChangeHistoryResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/billing/downgrades:
+    get:
+      tags: [Admin Billing]
+      summary: Read blocked downgrade statistics
+      description: Phase 2. Requires `stats:system`.
+      operationId: getDowngradeStatistics
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: organizationId
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Downgrade statistics
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DowngradeStatisticsResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   # ---------------------------------------------------------------------------
   # Audit
@@ -5427,6 +5419,35 @@ components:
               type: array
               items: { $ref: "#/components/schemas/AuditLogEntry" }
 
+    # --- pricing recompute & billing entitlement statistics -------------------
+    PricingRecomputeResult:
+      type: object
+      properties:
+        ruleId: { type: string, format: uuid }
+        processedRecords: { type: integer }
+        affectedOrganizations: { type: integer }
+        totalDelta: { type: number }
+        recomputedAt: { type: string, format: date-time }
+
+    ActiveCustomersResponse:
+      type: object
+      properties:
+        organizationId: { type: string, format: uuid }
+        activeCount: { type: integer }
+        totalCount: { type: integer }
+        asOf: { type: string, format: date-time }
+        inactivityThresholdDays: { type: integer }
+
+    StaffSeatsResponse:
+      type: object
+      properties:
+        organizationId: { type: string, format: uuid }
+        activeSeats: { type: integer }
+        allowedSeats: { type: integer }
+        roleBreakdown:
+          type: object
+          additionalProperties: { type: integer }
+        asOf: { type: string, format: date-time }
     HomeFeedCaps:
       type: object
       properties:

@@ -260,6 +260,97 @@ const COLOR_HEX_MAP: Record<string, string> = {
   brown: '#78350f',
 }
 
+export const CATALOG_CATEGORIES = [
+  'Sarees',
+  'Lehengas',
+  'Gowns',
+  'Kurtas & Tunics',
+  'Outerwear',
+  'Drapes & Shawls',
+  'Jewelry & Accessories',
+] as const
+
+export type CatalogCategory = (typeof CATALOG_CATEGORIES)[number]
+
+/**
+ * Normalizes raw category string (or singular variants/synonyms) into canonical catalog categories.
+ */
+export function normalizeCategory(rawCategory?: string): CatalogCategory {
+  if (!rawCategory) return 'Sarees'
+  const trimmed = rawCategory.trim()
+  const matchedExact = CATALOG_CATEGORIES.find(
+    (c) => c.toLowerCase() === trimmed.toLowerCase(),
+  )
+  if (matchedExact) return matchedExact
+
+  const lower = trimmed.toLowerCase()
+  if (lower.includes('saree') || lower.includes('sari')) return 'Sarees'
+  if (lower.includes('lehenga') || lower.includes('ghagra') || lower.includes('choli')) return 'Lehengas'
+  if (
+    lower.includes('gown') ||
+    lower.includes('dress') ||
+    lower.includes('maxi') ||
+    lower.includes('midi') ||
+    lower.includes('frock') ||
+    lower.includes('jumpsuit') ||
+    lower.includes('romper')
+  ) {
+    return 'Gowns'
+  }
+  if (
+    lower.includes('kurta') ||
+    lower.includes('kurti') ||
+    lower.includes('kurtis') ||
+    lower.includes('tunic') ||
+    lower.includes('top') ||
+    lower.includes('shirt') ||
+    lower.includes('blouse') ||
+    lower.includes('anarkali') ||
+    lower.includes('sherwani')
+  ) {
+    return 'Kurtas & Tunics'
+  }
+  if (
+    lower.includes('outerwear') ||
+    lower.includes('blazer') ||
+    lower.includes('jacket') ||
+    lower.includes('coat') ||
+    lower.includes('shrug') ||
+    lower.includes('cardigan') ||
+    lower.includes('suit') ||
+    lower.includes('trench')
+  ) {
+    return 'Outerwear'
+  }
+  if (
+    lower.includes('drape') ||
+    lower.includes('shawl') ||
+    lower.includes('dupatta') ||
+    lower.includes('stole') ||
+    lower.includes('scarf') ||
+    lower.includes('wrap') ||
+    lower.includes('pallu')
+  ) {
+    return 'Drapes & Shawls'
+  }
+  if (
+    lower.includes('jewel') ||
+    lower.includes('accessor') ||
+    lower.includes('necklace') ||
+    lower.includes('earring') ||
+    lower.includes('bangle') ||
+    lower.includes('bag') ||
+    lower.includes('clutch') ||
+    lower.includes('footwear') ||
+    lower.includes('heel') ||
+    lower.includes('shoe')
+  ) {
+    return 'Jewelry & Accessories'
+  }
+
+  return 'Sarees'
+}
+
 export function getColorHex(colorName?: string, fallback = '#0f5132'): string {
   if (!colorName) return fallback
   const trimmed = colorName.trim().toLowerCase()
@@ -276,13 +367,15 @@ export function getColorHex(colorName?: string, fallback = '#0f5132'): string {
 export function normalizeVisionAnalysis(raw: any): VisionAnalysisResult {
   const color = raw.detectedColor || raw.primaryColor || raw.color || 'Emerald Green'
   const hex = raw.colorHex || raw.color_hex || getColorHex(color)
-  const fabric = raw.fabric || 'Mulberry Silk'
-  const category = raw.category || 'Sarees'
-  const pattern = raw.pattern || 'Handcrafted Embellishment'
+  const fabric = raw.fabric || 'Pure Mulberry Silk'
+  const category = normalizeCategory(raw.category)
+  const garmentType = raw.garmentType || raw.garment_type || undefined
+  const suggestedItemName = raw.suggestedItemName || raw.suggested_item_name || undefined
+  const pattern = raw.pattern || 'Gold Zari Brocade'
   const style = raw.style || 'Contemporary Luxe'
 
   const formattedColor = color.charAt(0).toUpperCase() + color.slice(1)
-  const defaultDesc = `Exquisite ${formattedColor} ${category.toLowerCase()} crafted from premium ${fabric.toLowerCase()} featuring an elegant ${pattern.toLowerCase()} aesthetic with fluid drape. Styling: Pair with fine jewelry, tonal evening accessories, and structured footwear for a polished boutique statement.`
+  const defaultDesc = `Exquisite ${formattedColor} ${garmentType || category.toLowerCase()} crafted from premium ${fabric.toLowerCase()} featuring an elegant ${pattern.toLowerCase()} aesthetic with fluid drape. Styling: Pair with fine jewelry, tonal evening accessories, and structured footwear for a polished boutique statement.`
 
   const desc = raw.description || raw.summary || defaultDesc
 
@@ -292,8 +385,11 @@ export function normalizeVisionAnalysis(raw: any): VisionAnalysisResult {
     colorHex: hex,
     fabric,
     style,
-    pattern: raw.pattern || undefined,
+    pattern: raw.pattern || pattern,
+    garmentType,
+    suggestedItemName,
     confidenceScore: typeof raw.confidenceScore === 'number' ? raw.confidenceScore : 0.95,
+    isFallback: Boolean(raw.isFallback || raw.is_fallback || false),
     visualAttributes: raw.visualAttributes || raw.suggestedKeywords || [color, fabric, pattern],
     summary: desc,
     description: desc,
@@ -307,10 +403,12 @@ export function normalizeVisionAnalysis(raw: any): VisionAnalysisResult {
 export async function analyzeProductImage(
   organizationId: string,
   imageUrl: string,
+  fileName?: string,
+  contextHint?: string,
 ): Promise<VisionAnalysisResult> {
   const response = await apiClient.post<any>(
     `${catalogBase(organizationId)}/analyze-image`,
-    { imageUrl, organizationId },
+    { imageUrl, organizationId, fileName, contextHint },
   )
   return normalizeVisionAnalysis(response.data)
 }
@@ -455,3 +553,53 @@ export async function fetchSupplierCatalog(
   )
   return response.data || []
 }
+
+export interface UploadImageResult {
+  id: string
+  url: string
+  fileName?: string
+  size?: number
+  contentType?: string
+}
+
+/**
+ * Uploads a physical image file to PostgreSQL database storage.
+ */
+export async function uploadCatalogImage(
+  organizationId: string,
+  file: File | Blob,
+  fileName?: string,
+): Promise<UploadImageResult> {
+  const formData = new FormData()
+  formData.append('file', file, fileName || (file instanceof File ? file.name : 'upload.jpg'))
+
+  const response = await apiClient.post<UploadImageResult>(
+    `${catalogBase(organizationId)}/images/upload`,
+    formData,
+    {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    },
+  )
+  return response.data
+}
+
+/**
+ * Uploads a Base64 Data URL to PostgreSQL database storage.
+ */
+export async function uploadBase64Image(
+  organizationId: string,
+  dataUrl: string,
+  fileName?: string,
+): Promise<UploadImageResult> {
+  const response = await apiClient.post<UploadImageResult>(
+    `${catalogBase(organizationId)}/images/upload`,
+    {
+      imageData: dataUrl,
+      fileName: fileName || 'garment.jpg',
+    },
+  )
+  return response.data
+}
+

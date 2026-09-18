@@ -6,6 +6,7 @@ using Aveline.Api.Modules.Statistics.DTOs;
 using Aveline.Api.Modules.Statistics.Models;
 using Aveline.Api.Modules.Statistics.Services;
 using Aveline.Api.Modules.Statistics.Telemetry;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 
 namespace Aveline.Api.Modules.Statistics.Endpoints;
@@ -91,8 +92,12 @@ public static class SystemStatisticsEndpoints
             return Results.Ok(await statistics.GetThroughputAsync(start, end, parsedWindow, ct));
         });
 
-        group.MapGet("/eventbus", async (ISystemStatisticsService statistics, CancellationToken ct) =>
-            Results.Ok(await statistics.GetEventBusAsync(ct)));
+        group.MapGet("/eventbus", async (
+            [FromQuery] DateTime? from,
+            [FromQuery] DateTime? to,
+            ISystemStatisticsService statistics,
+            CancellationToken ct) =>
+            Results.Ok(await statistics.GetEventBusAsync(from, to, ct)));
 
         group.MapGet("/alerts", async (
             string? status, string? severity, Guid? ruleId, int? page, int? pageSize,

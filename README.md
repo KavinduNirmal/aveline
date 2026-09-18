@@ -78,9 +78,9 @@ graph TD
 
 | Slice | Domain & Ownership | Key Responsibilities | Core Entities |
 |---|---|---|---|
-| **Slice 1: Customer Concierge & Memory** | Customer relationships, messaging & preferences *(Student 1)* | WhatsApp webhook handling, customer profile management, semantic memory search via pgvector, interaction brief generation. | `Customers`, `Customer_Preferences`, `Customer_Events`, `Customer_Memory`, `Customer_Interactions` |
-| **Slice 2: Visual Intelligence & Sourcing** | Inventory, visual analysis & sourcing *(Student 2)* | Product image attribute extraction, customer-to-item matching, outfit composition, sourcing requests, supplier catalogs. | `Inventory_Items`, `Inventory_Images`, `Outfit_Compositions`, `Sourcing_Requests`, `Suppliers`, `Customer_Matches` |
-| **Slice 3: Commerce Validation & Optimization** | Pricing, payments, approvals & delivery *(Student 3)* | Margin calculation, dynamic business rules, payment link generation, approval queue state machine, delivery planning. | `Orders`, `Order_Items`, `Payments`, `Approval_Queue`, `Delivery_Plans`, `Business_Rules` |
+| **Slice 1: Customer Concierge & Memory** | Customer relationships, messaging & preferences *(Student 1)* | WhatsApp webhook handling, customer profile management, semantic memory search via pgvector, interaction brief generation. | `Customers`, `CustomerPreferences`, `CustomerEvents`, `CustomerMemory`, `CustomerInteractions` |
+| **Slice 2: Visual Intelligence & Sourcing** | Inventory, visual analysis & sourcing *(Student 2)* | Product image attribute extraction, customer-to-item matching, outfit composition, sourcing requests, supplier catalogs. | `InventoryItems`, `InventoryImages`, `OutfitCompositions`, `SourcingRequests`, `Suppliers`, `CustomerMatches` |
+| **Slice 3: Commerce Validation & Optimization** | Pricing, payments, approvals & delivery *(Student 3)* | Margin calculation, dynamic business rules, payment link generation, approval queue state machine, delivery planning. | `Orders`, `OrderItems`, `Payments`, `ApprovalQueue`, `DeliveryPlans`, `BusinessRules` |
 
 ---
 

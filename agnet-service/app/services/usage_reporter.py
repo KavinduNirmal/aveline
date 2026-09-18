@@ -104,3 +104,69 @@ async def report_usage(
     finally:
         if should_close_client:
             await client.aclose()
+
+
+async def report_agent_run(
+    payload: dict[str, Any],
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> dict[str, Any] | None:
+    """Submit a complete agent workflow run and steps to the .NET API (/internal/agent-runs).
+
+    Args:
+        payload: camelCase dictionary matching AgentRunReportRequest DTO.
+        client: Optional httpx.AsyncClient for testing or reuse.
+
+    Returns:
+        JSON response dict from the API if successful, or None.
+    """
+    settings = get_settings()
+    endpoint = f"{settings.api_base_url.rstrip('/')}/internal/agent-runs"
+
+    headers = {
+        "Content-Type": "application/json",
+        "X-Internal-Token": settings.internal_api_token,
+    }
+
+    should_close_client = False
+    if client is None:
+        client = httpx.AsyncClient(timeout=10.0)
+        should_close_client = True
+
+    try:
+        response = await client.post(endpoint, json=payload, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        logger.info(
+            "Agent run telemetry reported successfully",
+            extra={
+                "workflow_id": payload.get("workflowId"),
+                "status": payload.get("status"),
+                "step_count": len(payload.get("steps") or []),
+            },
+        )
+        return data
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "HTTP error reporting agent run telemetry: %s - %s",
+            exc.response.status_code,
+            exc.response.text,
+            extra={
+                "workflow_id": payload.get("workflowId"),
+                "status_code": exc.response.status_code,
+            },
+        )
+        raise
+    except httpx.RequestError as exc:
+        logger.error(
+            "Network error reporting agent run telemetry: %s",
+            str(exc),
+            extra={
+                "workflow_id": payload.get("workflowId"),
+            },
+        )
+        raise
+    finally:
+        if should_close_client:
+            await client.aclose()
+

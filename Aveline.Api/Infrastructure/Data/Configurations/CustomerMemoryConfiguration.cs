@@ -8,7 +8,7 @@ public class CustomerMemoryConfiguration : IEntityTypeConfiguration<CustomerMemo
 {
     public void Configure(EntityTypeBuilder<CustomerMemory> builder)
     {
-        builder.ToTable("Customer_Memory");
+        builder.ToTable("CustomerMemory");
 
         builder.HasKey(m => m.Id);
 

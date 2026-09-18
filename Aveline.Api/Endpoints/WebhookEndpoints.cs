@@ -144,18 +144,28 @@ public static class WebhookEndpoints
             }
 
             // Persist a minimal audit record.
-            db.InboundMessageLogs.Add(new InboundMessageLog
+            try
             {
-                OrganizationId = organizationId,
-                Channel = "whatsapp",
-                Direction = "inbound",
-                ExternalId = message.Id,
-                From = message.From,
-                To = message.To,
-                Content = message.Text,
-                ReceivedAt = DateTime.UtcNow,
-            });
-            await db.SaveChangesAsync(ct);
+                db.InboundMessageLogs.Add(new InboundMessageLog
+                {
+                    OrganizationId = organizationId,
+                    Channel = "whatsapp",
+                    Direction = "inbound",
+                    ExternalId = message.Id,
+                    From = message.From,
+                    To = message.To,
+                    Content = message.Text,
+                    ReceivedAt = DateTime.UtcNow,
+                });
+                await db.SaveChangesAsync(ct);
+            }
+            catch (DbUpdateException ex)
+            {
+                logger.LogInformation(
+                    ex, "Duplicate inbound message acknowledged and dropped. externalId={ExternalId} orgId={OrgId}",
+                    message.Id, organizationId);
+                return Results.Ok(new { status = "duplicate_ignored" });
+            }
 
             // Publish to the agent service for processing (fire-and-forget).
             await eventBus.PublishAsync(

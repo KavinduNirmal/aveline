@@ -41,7 +41,7 @@ dependencies:
   # HTTP client; powers the auth token interceptor.
   dio: ^5.7.0
   # Declarative routing with auth guards.
-  go_router: ^16.0.0
+  go_router: ^18.0.1
   # DI + ChangeNotifier state management.
   provider: ^6.1.0
   # Brand fonts (Playfair Display, Hanken Grotesk).

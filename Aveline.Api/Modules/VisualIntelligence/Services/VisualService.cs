@@ -85,7 +85,7 @@ public class VisualService : IVisualService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(dto);
-        return await _visionService.AnalyzeAsync(dto.ImageUrl, dto.OrgId, cancellationToken);
+        return await _visionService.AnalyzeAsync(dto.ImageUrl, dto.OrgId, dto.FileName, dto.ContextHint, cancellationToken);
     }
 
     public async Task<IReadOnlyList<CustomerMatchDto>> GetCustomerMatchesAsync(
@@ -380,7 +380,11 @@ public class VisualService : IVisualService
 
         if (!string.IsNullOrWhiteSpace(color))
         {
-            query = query.Where(x => x.Color.Equals(color, StringComparison.OrdinalIgnoreCase));
+            var trimmedColor = color.Trim();
+            query = query.Where(x =>
+                x.Color.Contains(trimmedColor, StringComparison.OrdinalIgnoreCase) ||
+                trimmedColor.Contains(x.Color, StringComparison.OrdinalIgnoreCase) ||
+                (!string.IsNullOrEmpty(x.ItemName) && x.ItemName.Contains(trimmedColor, StringComparison.OrdinalIgnoreCase)));
         }
 
         if (maxPrice.HasValue)

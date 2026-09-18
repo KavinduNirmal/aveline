@@ -265,3 +265,57 @@ public sealed class IdempotencyRecordCleanupJob(
         return await repository.DeleteExpiredAsync(DateTime.UtcNow, cancellationToken);
     }
 }
+
+/// <summary>
+/// Periodically calculates and materializes StaffCount and ActiveCustomerCount on active UsageAccount rows (T-4.12).
+/// </summary>
+public sealed class EntitlementCountingJob(
+    IServiceScopeFactory scopeFactory,
+    Common.Jobs.IDistributedJobLock jobLock,
+    ILogger<EntitlementCountingJob> logger)
+    : LedgerJobBase(scopeFactory, jobLock, logger)
+{
+    protected override string JobName => "entitlement-counts-materializer";
+
+    protected override TimeSpan Interval => TimeSpan.FromMinutes(5);
+
+    public override async Task<int> RunAsync(CancellationToken cancellationToken)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var accounts = await db.UsageAccounts
+            .Where(a => !a.IsClosed && a.Status == UsageAccountStatus.Active)
+            .ToListAsync(cancellationToken);
+
+        if (accounts.Count == 0)
+        {
+            return 0;
+        }
+
+        var cutoff = DateTime.UtcNow.AddDays(-90);
+        var updated = 0;
+
+        foreach (var account in accounts)
+        {
+            var staffCount = await db.OrganizationMemberships
+                .CountAsync(m => m.OrganizationId == account.OrganizationId && m.Status == Organizations.Models.MembershipStatus.Active, cancellationToken);
+
+            var activeCustomerCount = await db.CustomerInteractions
+                .Where(i => i.OrganizationId == account.OrganizationId && i.CreatedAt >= cutoff)
+                .Select(i => i.CustomerId)
+                .Union(db.Orders.Where(o => o.OrganizationId == account.OrganizationId && o.CreatedAt >= cutoff).Select(o => o.CustomerId))
+                .Union(db.Customers.Where(c => c.OrganizationId == account.OrganizationId && (c.UpdatedAt >= cutoff || c.CreatedAt >= cutoff)).Select(c => c.Id))
+                .Distinct()
+                .CountAsync(cancellationToken);
+
+            account.StaffCount = staffCount;
+            account.ActiveCustomerCount = activeCustomerCount;
+            account.UpdatedAt = DateTime.UtcNow;
+            updated++;
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+        return updated;
+    }
+}

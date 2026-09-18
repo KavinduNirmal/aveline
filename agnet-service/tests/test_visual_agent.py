@@ -97,3 +97,26 @@ class TestVisualAgent:
 
         assert result["status"] == "success"
         assert result["outfit_proposal"]["total_price"] == 65000
+
+    @pytest.mark.asyncio
+    async def test_parse_visual_intent_detects_diverse_shades_and_themes(self):
+        agent = VisualInsightAgent(tools=AsyncMock(), llm=None)
+
+        # 1. Pastel Lavender
+        res1 = await agent.parse_visual_intent({"message": "Find me a lavender dress for a wedding", "org_id": "org-1"})
+        assert res1["search_criteria"]["color"] == "Lavender"
+        assert res1["search_criteria"]["occasion"] == "Wedding"
+
+        # 2. Earthy Terracotta
+        res2 = await agent.parse_visual_intent({"message": "Looking for a burnt terracotta saree", "org_id": "org-1"})
+        assert res2["search_criteria"]["color"] == "Burnt Terracotta"
+
+        # 3. Rich Berries Burgundy
+        res3 = await agent.parse_visual_intent({"message": "Show me royal burgundy gowns for a gala", "org_id": "org-1"})
+        assert res3["search_criteria"]["color"] == "Royal Burgundy"
+        assert res3["search_criteria"]["occasion"] == "Gala"
+
+        # 4. Pastel Theme Palette Mapping
+        res4 = await agent.parse_visual_intent({"message": "I need pastel lehengas for a reception", "org_id": "org-1"})
+        assert res4["search_criteria"]["color_theme"] == "Pastels"
+        assert res4["search_criteria"]["occasion"] == "Reception"

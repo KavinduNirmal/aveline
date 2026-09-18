@@ -164,4 +164,51 @@ describe('startConversations', () => {
     await vi.waitFor(() => expect(onConnected).toHaveBeenCalled())
     expect(onConnected).toHaveBeenCalledWith(connection)
   })
+
+  it('invokes onAgentState when ReceiveAgentState event arrives', () => {
+    const connection = makeConnection()
+    const onMessage = vi.fn()
+    const onStateChange = vi.fn()
+    const onAgentState = vi.fn()
+
+    startConversations(connection as never, { onMessage, onStateChange, onAgentState })
+
+    const agentPayload = {
+      conversationId: 'c1',
+      state: 'Thinking',
+      agentKey: 'elle',
+      traceId: 'tr-1',
+    }
+    connection.handlers['ReceiveAgentState']?.(agentPayload)
+
+    expect(onAgentState).toHaveBeenCalledWith(agentPayload)
+  })
+
+  it('updates state on reconnecting and reconnected events', () => {
+    const connection = makeConnection()
+    const onMessage = vi.fn()
+    const onStateChange = vi.fn()
+
+    startConversations(connection as never, { onMessage, onStateChange })
+
+    connection.state = 'Reconnecting'
+    connection.stateHandlers.reconnecting?.()
+    expect(onStateChange).toHaveBeenCalledWith('Reconnecting')
+
+    connection.state = 'Connected'
+    connection.stateHandlers.reconnected?.()
+    expect(onStateChange).toHaveBeenCalledWith('Connected')
+  })
+
+  it('reports Disconnected when connection.start fails', async () => {
+    const connection = makeConnection()
+    connection.start.mockRejectedValue(new Error('Network error'))
+    const onMessage = vi.fn()
+    const onStateChange = vi.fn()
+
+    startConversations(connection as never, { onMessage, onStateChange })
+
+    await vi.waitFor(() => expect(onStateChange).toHaveBeenCalledWith('Disconnected'))
+  })
 })
+

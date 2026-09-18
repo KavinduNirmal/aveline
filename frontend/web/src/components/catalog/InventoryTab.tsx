@@ -129,9 +129,10 @@ export function InventoryTab({
           </select>
 
           <Button
+            type="button"
             size="sm"
             onClick={onAddNewPiece}
-            className="gap-1.5 rounded-xl text-xs h-9 px-4 shadow-sm"
+            className="gap-1.5 rounded-xl text-xs h-9 px-4 shadow-sm cursor-pointer"
           >
             <Plus className="size-4" />
             <span>Add Piece</span>

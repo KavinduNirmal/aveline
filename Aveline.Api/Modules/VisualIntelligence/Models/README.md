@@ -4,12 +4,12 @@ EF Core entity classes that map to database tables owned by this slice:
 
 | Model | Table |
 |---|---|
-| `InventoryItem.cs` | `Inventory_Items` |
-| `InventoryImage.cs` | `Inventory_Images` |
-| `OutfitComposition.cs` | `Outfit_Compositions` |
-| `OutfitItem.cs` | `Outfit_Items` |
-| `SourcingRequest.cs` | `Sourcing_Requests` |
+| `InventoryItem.cs` | `InventoryItems` |
+| `InventoryImage.cs` | `InventoryImages` |
+| `OutfitComposition.cs` | `OutfitCompositions` |
+| `OutfitItem.cs` | `OutfitItems` |
+| `SourcingRequest.cs` | `SourcingRequests` |
 | `Supplier.cs` | `Suppliers` |
-| `CustomerMatch.cs` | `Customer_Matches` |
+| `CustomerMatch.cs` | `CustomerMatches` |
 
 Models contain no business logic — they are pure data structure definitions.

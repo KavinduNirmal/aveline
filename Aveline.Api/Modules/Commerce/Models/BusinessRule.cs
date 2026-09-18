@@ -5,7 +5,7 @@ using Aveline.Api.Modules.Organizations.Models;
 
 namespace Aveline.Api.Modules.Commerce.Models;
 
-[Table("Business_Rules")]
+[Table("BusinessRules")]
 public class BusinessRule : ITenantEntity
 {
     [Key]

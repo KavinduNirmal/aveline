@@ -23,7 +23,8 @@ public interface ISystemStatisticsService
     Task<ThroughputDto> GetThroughputAsync(
         DateTime from, DateTime to, string windowSize, CancellationToken cancellationToken = default);
 
-    Task<EventBusStatsDto> GetEventBusAsync(CancellationToken cancellationToken = default);
+    Task<EventBusStatsDto> GetEventBusAsync(
+        DateTime? from = null, DateTime? to = null, CancellationToken cancellationToken = default);
 
     Task<SystemAlertPageDto> GetAlertsAsync(
         string? status, string? severity, Guid? ruleId, int page, int pageSize,

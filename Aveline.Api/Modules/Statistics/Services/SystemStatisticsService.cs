@@ -8,6 +8,7 @@ using Aveline.Api.Modules.Statistics.Repositories;
 using Aveline.Api.Modules.Statistics.Telemetry;
 using Aveline.Api.Modules.SystemHealth.HealthChecks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace Aveline.Api.Modules.Statistics.Services;
@@ -27,6 +28,7 @@ public sealed class SystemStatisticsService : ISystemStatisticsService
     private readonly EventBusMetrics _eventBus;
     private readonly HealthCheckService _health;
     private readonly DeploymentInfoProvider _deployment;
+    private readonly IMemoryCache? _cache;
 
     public SystemStatisticsService(
         AppDbContext db,
@@ -34,7 +36,8 @@ public sealed class SystemStatisticsService : ISystemStatisticsService
         TelemetryChannel telemetry,
         EventBusMetrics eventBus,
         HealthCheckService health,
-        DeploymentInfoProvider deployment)
+        DeploymentInfoProvider deployment,
+        IMemoryCache? cache = null)
     {
         _db = db;
         _metrics = metrics;
@@ -42,9 +45,23 @@ public sealed class SystemStatisticsService : ISystemStatisticsService
         _eventBus = eventBus;
         _health = health;
         _deployment = deployment;
+        _cache = cache;
     }
 
     public async Task<SystemOverviewDto> GetOverviewAsync(CancellationToken cancellationToken = default)
+    {
+        const string cacheKey = "system_overview_stats";
+        if (_cache is not null && _cache.TryGetValue(cacheKey, out SystemOverviewDto? cached) && cached is not null)
+        {
+            return cached;
+        }
+
+        var result = await BuildOverviewAsync(cancellationToken);
+        _cache?.Set(cacheKey, result, TimeSpan.FromSeconds(15));
+        return result;
+    }
+
+    private async Task<SystemOverviewDto> BuildOverviewAsync(CancellationToken cancellationToken)
     {
         var now = DateTime.UtcNow;
         var readiness = await GetReadinessAsync(cancellationToken);
@@ -182,7 +199,8 @@ public sealed class SystemStatisticsService : ISystemStatisticsService
             runs.Count > 0 ? [] : ["blossoms_per_hour"]);
     }
 
-    public Task<EventBusStatsDto> GetEventBusAsync(CancellationToken cancellationToken = default)
+    public Task<EventBusStatsDto> GetEventBusAsync(
+        DateTime? from = null, DateTime? to = null, CancellationToken cancellationToken = default)
     {
         var counters = _eventBus.Snapshot();
         var published = counters.GetValueOrDefault("aveline.events.published");

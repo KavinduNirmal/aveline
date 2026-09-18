@@ -77,7 +77,13 @@ public sealed class ApiTelemetryMiddleware(
         var statusCode = (short)Math.Clamp(context.Response.StatusCode, 0, short.MaxValue);
 
         var (organizationId, apiKeyId, userId) = RequestPrincipal.Resolve(context.User);
-        var request = context.Request;
+        var errorCode = context.Items["TelemetryErrorCode"] as string
+            ?? (context.Response.Headers.TryGetValue("X-Error-Code", out var codeHeader) ? codeHeader.ToString() : null)
+            ?? (context.Items["ErrorCode"] as string)
+            ?? (statusCode >= 400 ? $"http_{statusCode}" : null);
+
+        var resourceType = context.Items["TelemetryResourceType"] as string;
+        var resourceId = context.Items["TelemetryResourceId"] as string;
 
         var sample = new ApiRequestSample
         {
@@ -86,17 +92,20 @@ public sealed class ApiTelemetryMiddleware(
             ApiKeyId = apiKeyId,
             UserId = userId,
             RouteTemplate = RouteTemplateResolver.Resolve(context),
-            HttpMethod = request.Method,
+            HttpMethod = context.Request.Method,
             StatusCode = statusCode,
             DurationMs = durationMs,
-            RequestBytes = ClampBytes(request.ContentLength),
+            RequestBytes = ClampBytes(context.Request.ContentLength),
             ResponseBytes = ClampBytes(context.Response.ContentLength),
             RequestId = context.TraceIdentifier,
             TraceId = Guid.TryParse(Activity.Current?.TraceId.ToString(), out var traceId) ? traceId : null,
             ClientIpHash = MetricDimensionHasher.HashIp(
                 context.Connection.RemoteIpAddress?.ToString(), _options.IpHashSalt),
             UserAgentHash = MetricDimensionHasher.HashUserAgent(
-                request.Headers.UserAgent.ToString(), _options.IpHashSalt),
+                context.Request.Headers.UserAgent.ToString(), _options.IpHashSalt),
+            ErrorCode = errorCode,
+            ResourceType = resourceType,
+            ResourceId = resourceId,
             ShouldPersistRaw = TelemetrySampling.ShouldPersistRaw(
                 statusCode, durationMs, _options.SlowRequestMs, _options.SuccessSampleRate,
                 Random.Shared.NextDouble()),

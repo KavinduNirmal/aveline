@@ -7,7 +7,11 @@ public class InventoryImage
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid OrgId { get; set; }
-    public Guid ItemId { get; set; }
+    public Guid? ItemId { get; set; }
+    public byte[]? ImageData { get; set; }
+    public string ContentType { get; set; } = "image/jpeg";
+    public string? FileName { get; set; }
+    public long? FileSizeBytes { get; set; }
     public string ImageUrl { get; set; } = string.Empty;
     public bool IsPrimary { get; set; }
     public string? DominantColor { get; set; }

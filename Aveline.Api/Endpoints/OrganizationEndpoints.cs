@@ -344,6 +344,136 @@ public static class OrganizationEndpoints
             }
         }).RequireAuthorization(AuthorizationConfiguration.BoutiqueMembershipManagePolicy);
 
+        orgGroup.MapPatch("/{organizationId:guid}", async (
+            Guid organizationId,
+            UpdateOrganizationSettingsRequest request,
+            ClaimsPrincipal principal,
+            IUserService userService,
+            IOrganizationService organizationService,
+            CancellationToken ct) =>
+        {
+            var profile = await ResolveProfileAsync(principal, userService, ct);
+            if (profile is null)
+            {
+                return Results.NotFound(new { message = "User record does not exist in Aveline database." });
+            }
+
+            try
+            {
+                var organization = await organizationService.UpdateSettingsAsync(
+                    organizationId, request, profile.Id, ct);
+                return Results.Ok(OrganizationSettingsDto.From(organization));
+            }
+            catch (OrganizationSlugAlreadyInUseException)
+            {
+                return Results.Conflict(new { message = "An organization with that slug already exists." });
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound(new { message = "Organization not found." });
+            }
+        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueMembershipManagePolicy);
+
+        orgGroup.MapGet("/{organizationId:guid}/settings", async (
+            Guid organizationId,
+            IOrganizationRepository organizationRepository,
+            Aveline.Api.Modules.Billing.Domain.IEntitlementResolver entitlements,
+            CancellationToken ct) =>
+        {
+            var organization = await organizationRepository.GetByIdAsync(organizationId, ct);
+            if (organization is null)
+            {
+                return Results.NotFound(new { message = "Organization not found." });
+            }
+
+            var resolved = await entitlements.GetAllAsync(organizationId, null, ct);
+            var entitlementList = resolved.Values
+                .OrderBy(value => value.Key, StringComparer.Ordinal)
+                .Select(value => new
+                {
+                    value.Key,
+                    ValueType = value.ValueType.ToString(),
+                    Value = value.Number is not null
+                        ? (object)value.Number
+                        : value.Flag ?? (object?)value.Text,
+                    value.Source,
+                    value.EffectiveFrom,
+                });
+
+            return Results.Ok(new
+            {
+                settings = OrganizationSettingsDto.From(organization),
+                entitlements = entitlementList,
+            });
+        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueMembershipManagePolicy);
+
+        orgGroup.MapGet("/{organizationId:guid}/members", async (
+            Guid organizationId,
+            string? status,
+            string? role,
+            string? q,
+            int? page,
+            int? pageSize,
+            IOrganizationService organizationService,
+            CancellationToken ct) =>
+        {
+            var members = await organizationService.ListMembersAsync(
+                organizationId, status, role, q, page ?? 1, pageSize ?? 20, ct);
+            return Results.Ok(members);
+        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueMembershipManagePolicy);
+
+        orgGroup.MapPatch("/{organizationId:guid}/members/{userId:guid}", async (
+            Guid organizationId,
+            Guid userId,
+            ChangeMemberRoleRequest request,
+            ClaimsPrincipal principal,
+            IUserService userService,
+            IOrganizationService organizationService,
+            CancellationToken ct) =>
+        {
+            var profile = await ResolveProfileAsync(principal, userService, ct);
+            if (profile is null)
+            {
+                return Results.NotFound(new { message = "User record does not exist in Aveline database." });
+            }
+
+            try
+            {
+                var member = await organizationService.ChangeMemberRoleAsync(
+                    organizationId, userId, request.BoutiqueRole, profile.Id, ct);
+                return Results.Ok(member);
+            }
+            catch (InvalidBoutiqueRoleException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+            catch (CannotChangeOwnRoleException ex)
+            {
+                return Results.Conflict(new { message = ex.Message });
+            }
+            catch (CannotDemoteLastOwnerException ex)
+            {
+                return Results.Conflict(new { message = ex.Message });
+            }
+            catch (OwnerRoleChangeNotPermittedException ex)
+            {
+                return Results.Json(
+                    new { message = ex.Message }, statusCode: StatusCodes.Status403Forbidden);
+            }
+            catch (MembershipNotFoundException)
+            {
+                return Results.NotFound(new { message = "Organization or membership not found." });
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound(new { message = "Organization or membership not found." });
+            }
+        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueMembershipManagePolicy);
+
         var inviteGroup = endpoints.MapGroup("/invitations");
 
         inviteGroup.MapPost("/accept", async (

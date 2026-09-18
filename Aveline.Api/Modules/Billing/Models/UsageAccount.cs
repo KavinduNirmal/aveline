@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Aveline.Api.Modules.Organizations.Models;
 
 namespace Aveline.Api.Modules.Billing.Models;
 
@@ -52,12 +53,30 @@ public class UsageAccount
     /// <summary>Running total of Blossoms consumed in this period.</summary>
     public decimal BlossomUsed { get; set; }
 
+    /// <summary>Sum of positive non-consumption ledger deltas (credits, top-ups, proration).</summary>
+    public decimal BlossomGranted { get; set; }
+
+    /// <summary>Magnitude of negative non-consumption ledger deltas (debits, revocations, expiry).</summary>
+    public decimal BlossomAdjusted { get; set; }
+
     /// <summary>
-    /// Cached remaining balance: <c>MonthlyBlossomLimit - BlossomUsed</c>.
+    /// Cached remaining balance:
+    /// <c>MonthlyBlossomLimit + BlossomGranted - BlossomAdjusted - BlossomUsed</c>.
     /// Updated on every usage record write. May temporarily be negative if the limit
     /// is not yet enforced.
     /// </summary>
     public decimal BlossomRemaining { get; set; }
+
+    /// <summary>Plan at the time this period was opened; <c>null</c> for pre-M3 rows.</summary>
+    public PlanTier? PlanTierSnapshot { get; set; }
+
+    /// <summary>Whether the period has been closed to entitlement mutations (BR-2.13).</summary>
+    public bool IsClosed { get; set; }
+
+    public DateTime? ClosedAt { get; set; }
+
+    /// <summary>Optimistic concurrency token mapped to PostgreSQL's <c>xmin</c> (BR-2.14).</summary>
+    public uint ConcurrencyToken { get; set; }
 
     /// <summary>
     /// Count of active customers at last update.
@@ -72,4 +91,7 @@ public class UsageAccount
     public UsageAccountStatus Status { get; set; } = UsageAccountStatus.Active;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>The organisation that owns this usage ledger row.</summary>
+    public Organization? Organization { get; set; }
 }

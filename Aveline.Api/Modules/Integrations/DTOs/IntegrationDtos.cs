@@ -18,7 +18,27 @@ public record SaveIntegrationRequest(
 /// </summary>
 public record IntegrationStatusDto(
     IntegrationType Type,
+    IntegrationStatus Status,
     bool Connected,
     string? MaskedPreview,
     string? Metadata,
+    DateTime? LastConnectedAt,
+    string? LastError,
     DateTime UpdatedAt);
+
+/// <summary>Result of a "Test &amp; Connect" attempt against a provider.</summary>
+public record IntegrationTestResultDto(
+    bool IsValid,
+    string? Error,
+    IntegrationStatusDto Status);
+
+/// <summary>Safe view of a single inbound/outbound message log entry (no secrets).</summary>
+public record InboundMessageLogDto(
+    Guid Id,
+    string Channel,
+    string Direction,
+    string? ExternalId,
+    string? From,
+    string? To,
+    string? Content,
+    DateTime ReceivedAt);

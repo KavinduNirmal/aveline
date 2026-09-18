@@ -112,7 +112,9 @@ CodeCoverage/
 ScaffoldingReadMe.txt
 
 # Misc
+.dotnet/
 ~$*
+
 
 # =============================================================================
 # PYTHON
@@ -188,6 +190,11 @@ frontend/aveline_mobile/android/key.properties
 frontend/aveline_mobile/android/app/*.jks
 frontend/aveline_mobile/android/app/google-services.json
 
+# JVM heap dumps — written by the JVM (and by Gradle's daemon) on OutOfMemoryError.
+# These run to hundreds of megabytes and must never enter git history.
+*.hprof
+*.hprof.gz
+
 # iOS
 frontend/aveline_mobile/ios/Pods/
 frontend/aveline_mobile/ios/.symlinks/
@@ -254,3 +261,23 @@ temp/
 .agents/skills/
 .claude/
 USER_INFORMATION_FOR_AGENT.md
+
+# Firebase service account key (never commit)
+firebase-service-account.json
+
+# docs
+docs/.obsidian
+
+# Agents.md
+Agents.md
+admin-backend-api-deferred-implementation-plan.md
+
+# Backend cache
+backend/.cache
+
+# Stray nested clone of this repository (was accidentally committed as a gitlink)
+/aveline/
+
+opencode.json
+# Final academic documentation (presented at evaluation, kept untracked)
+docs/final_document/

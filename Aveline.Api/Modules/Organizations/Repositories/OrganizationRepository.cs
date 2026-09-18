@@ -1,4 +1,5 @@
 using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Organizations.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -36,6 +37,43 @@ public class OrganizationRepository : IOrganizationRepository
     {
         return await _context.Organizations
             .AnyAsync(o => o.Slug == slug, cancellationToken);
+    }
+
+    public async Task<(IReadOnlyList<Organization> Items, int Total)> SearchAsync(
+        string? term,
+        bool? isActive,
+        PlanTier? planTier,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken = default)
+    {
+        var query = _context.Organizations.AsNoTracking().AsQueryable();
+
+        if (!string.IsNullOrWhiteSpace(term))
+        {
+            var trimmed = term.Trim();
+            query = query.Where(o => o.Name.Contains(trimmed) || o.Slug.Contains(trimmed));
+        }
+
+        if (isActive is not null)
+        {
+            query = query.Where(o => o.IsActive == isActive);
+        }
+
+        if (planTier is not null)
+        {
+            query = query.Where(o => o.PlanTier == planTier);
+        }
+
+        var total = await query.CountAsync(cancellationToken);
+        var items = await query
+            .OrderByDescending(o => o.CreatedAt)
+            .ThenByDescending(o => o.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        return (items, total);
     }
 
     public async Task<Organization> CreateAsync(Organization organization, CancellationToken cancellationToken = default)
@@ -126,5 +164,47 @@ public class OrganizationRepository : IOrganizationRepository
             .Where(m => m.OrganizationId == organizationId)
             .OrderBy(m => m.CreatedAt)
             .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<OrganizationMembership>> ListMembershipsWithUsersAsync(
+        Guid organizationId,
+        CancellationToken cancellationToken = default)
+    {
+        return await _context.OrganizationMemberships
+            .AsNoTracking()
+            .Include(m => m.User)
+            .Where(m => m.OrganizationId == organizationId)
+            .OrderBy(m => m.CreatedAt)
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<OrganizationMembership>> GetActiveMembersAsync(
+        Guid organizationId,
+        CancellationToken cancellationToken = default)
+    {
+        return await _context.OrganizationMemberships
+            .AsNoTracking()
+            .Include(m => m.User)
+            .Where(m => m.OrganizationId == organizationId && m.Status == MembershipStatus.Active)
+            .OrderBy(m => m.CreatedAt)
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<int> RemoveAllMembershipsForUserAsync(
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        var memberships = await _context.OrganizationMemberships
+            .Where(m => m.UserId == userId)
+            .ToListAsync(cancellationToken);
+
+        if (memberships.Count == 0)
+        {
+            return 0;
+        }
+
+        _context.OrganizationMemberships.RemoveRange(memberships);
+        await _context.SaveChangesAsync(cancellationToken);
+        return memberships.Count;
     }
 }

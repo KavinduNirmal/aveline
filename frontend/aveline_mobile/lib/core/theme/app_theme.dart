@@ -46,18 +46,39 @@ abstract final class AppTheme {
       );
 
   /// Brand typography: Playfair Display for display/headlines,
-  /// DM Sans for UI and body. Sizes are tuned for phone screens.
+  /// DM Sans for UI and body. Sizes follow the `typography` tokens in
+  /// `.agents/brain/DESIGN.md`.
+  ///
+  /// Every slot is filled deliberately, including the ones no widget names
+  /// today. `ThemeData` merges this theme over `Typography.material2021`, whose
+  /// styles name Roboto explicitly, so a slot left null silently renders its
+  /// widget in Roboto. That is how the filled buttons fell out of the brand
+  /// face: `FilledButton` takes its label style from `labelLarge`, which this
+  /// theme did not define.
   static TextTheme get textTheme => TextTheme(
+        // Display — the emotive voice. Reserved for greetings and key numbers,
+        // so it stays rare enough to mean something.
         displayLarge: GoogleFonts.playfairDisplay(
-          fontSize: 34,
+          fontSize: 32,
           fontWeight: FontWeight.w500,
           height: 1.2,
-          letterSpacing: -0.5,
+          letterSpacing: -0.32,
         ),
-        displaySmall: GoogleFonts.playfairDisplay(
+        displayMedium: GoogleFonts.playfairDisplay(
           fontSize: 28,
           fontWeight: FontWeight.w500,
           height: 1.2,
+          letterSpacing: -0.28,
+        ),
+        displaySmall: GoogleFonts.playfairDisplay(
+          fontSize: 24,
+          fontWeight: FontWeight.w500,
+          height: 1.2,
+        ),
+        headlineLarge: GoogleFonts.playfairDisplay(
+          fontSize: 26,
+          fontWeight: FontWeight.w500,
+          height: 1.3,
         ),
         headlineMedium: GoogleFonts.playfairDisplay(
           fontSize: 24,
@@ -69,8 +90,9 @@ abstract final class AppTheme {
           fontWeight: FontWeight.w500,
           height: 1.3,
         ),
+        // Titles, body and labels — the functional voice.
         titleLarge: GoogleFonts.dmSans(
-          fontSize: 18,
+          fontSize: 20,
           fontWeight: FontWeight.w600,
           height: 1.4,
         ),
@@ -79,24 +101,39 @@ abstract final class AppTheme {
           fontWeight: FontWeight.w600,
           height: 1.4,
         ),
+        titleSmall: GoogleFonts.dmSans(
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          height: 1.4,
+        ),
         bodyLarge: GoogleFonts.dmSans(
-          fontSize: 16,
+          fontSize: 18,
           fontWeight: FontWeight.w400,
-          height: 1.5,
+          height: 1.6,
         ),
         bodyMedium: GoogleFonts.dmSans(
-          fontSize: 14,
+          fontSize: 16,
           fontWeight: FontWeight.w400,
-          height: 1.5,
+          height: 1.6,
+        ),
+        bodySmall: GoogleFonts.dmSans(
+          fontSize: 12,
+          fontWeight: FontWeight.w400,
+          height: 1.4,
+        ),
+        labelLarge: GoogleFonts.dmSans(
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+          height: 1.2,
         ),
         labelMedium: GoogleFonts.dmSans(
-          fontSize: 13,
+          fontSize: 14,
           fontWeight: FontWeight.w500,
           height: 1.2,
-          letterSpacing: 0.5,
+          letterSpacing: 0.7,
         ),
         labelSmall: GoogleFonts.dmSans(
-          fontSize: 11,
+          fontSize: 12,
           fontWeight: FontWeight.w600,
           height: 1.2,
         ),

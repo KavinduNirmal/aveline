@@ -30,6 +30,18 @@ Defined in `app/tools/inventory/`:
 
 Defined in `app/schemas/visual_insight.py`.
 
+## Current stub state (Issue #151)
+
+No `graph.py` exists yet; this folder is owned by **Student 2**. The top-level concierge
+workflow (`app/workflows/concierge_workflow.py`) runs a **stub** `run_visual_agent` node
+that declares the structured output shape with `status: "stub"` and empty
+`items`/`looks`/`suggestion`, so the Salon never shows fabricated product data.
+
+The block mapping for this agent is already implemented and tested in
+`app/events/block_builders.py::build_elle_blocks`: when the real graph emits
+`items`/`looks`/a `suggestion` with `status != "stub"`, the Salon renders `piece`, `look`,
+and `suggestion` blocks attributed to the `elle` persona.
+
 ## What belongs in this folder
 
 - `graph.py` — The LangGraph `StateGraph` definition for this agent

@@ -1,15 +1,28 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:app_links/app_links.dart';
 import 'package:clerk_flutter/clerk_flutter.dart';
 import 'package:dio/dio.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import 'core/auth/clerk_bootstrap.dart';
+import 'core/auth/clerk_session_persistor.dart';
 import 'core/config/app_config.dart';
 import 'core/network/api_client.dart';
 import 'core/network/auth_token_provider.dart';
+import 'core/notifications/device_token_api.dart';
+import 'core/notifications/firebase_push_token_source.dart';
+import 'core/notifications/notification_payload.dart';
+import 'core/notifications/notification_provider.dart';
+import 'core/notifications/push_notification_service.dart';
+import 'core/notifications/realtime_connection_factory.dart';
+import 'core/notifications/realtime_notification_service.dart';
+import 'core/providers/boutique_provider.dart';
 import 'core/providers/onboarding_provider.dart';
 import 'core/providers/owner_onboarding_provider.dart';
 import 'core/providers/user_provider.dart';
@@ -19,7 +32,24 @@ import 'features/auth/data/clerk_auth_repository.dart';
 import 'features/auth/domain/auth_repository.dart';
 import 'features/auth/domain/aveline_user.dart';
 import 'features/auth/presentation/screens/auth_screen.dart';
-import 'features/home/presentation/screens/home_screen.dart';
+import 'features/catalog/data/catalog_product_repository.dart';
+import 'features/catalog/data/demo_catalog_product_repository.dart';
+import 'features/catalog/domain/catalog_filters.dart';
+import 'features/catalog/presentation/screens/catalog_filter_screen.dart';
+import 'features/catalog/presentation/screens/catalog_product_screen.dart';
+import 'features/catalog/presentation/screens/catalog_screen.dart';
+import 'features/conversations/data/conversation_repository.dart';
+import 'features/conversations/data/demo_conversation_repository.dart';
+import 'features/conversations/presentation/screens/conversations_screen.dart';
+import 'features/customers/data/customer_repository.dart';
+import 'features/customers/data/demo_customer_repository.dart';
+import 'features/customers/presentation/screens/customer_screen.dart';
+import 'features/customers/presentation/screens/customers_screen.dart';
+import 'features/home/presentation/screens/main_shell.dart';
+import 'features/notifications/data/demo_notification_repository.dart';
+import 'features/notifications/presentation/notifications_controller.dart';
+import 'features/notifications/presentation/screens/notifications_screen.dart';
+import 'features/settings/presentation/screens/settings_screen.dart';
 import 'features/onboarding/data/onboarding_preferences.dart';
 import 'features/onboarding/data/owner_onboarding_api.dart';
 import 'features/onboarding/presentation/screens/account_type_screen.dart';
@@ -28,23 +58,194 @@ import 'features/onboarding/presentation/screens/onboarding_screen.dart';
 import 'features/onboarding/presentation/screens/org_setup_screen.dart';
 import 'features/onboarding/presentation/screens/owner_onboarding_screen.dart';
 import 'features/onboarding/presentation/screens/suspended_screen.dart';
+import 'shared/widgets/aveline_loading_screen.dart';
 
-/// Root widget: wraps the app in Clerk, wires DI, and configures routing.
-class AvelineApp extends StatelessWidget {
-  const AvelineApp({super.key, required this.config, required this.preferences});
+/// Root widget: bootstraps Clerk behind an opening screen, wires DI, and
+/// configures routing.
+class AvelineApp extends StatefulWidget {
+  const AvelineApp({
+    super.key,
+    required this.config,
+    required this.preferences,
+    required this.sessionStore,
+  });
 
   final AppConfig config;
   final OnboardingPreferences preferences;
 
+  /// Where the Clerk session is kept between launches.
+  final ClerkSessionPersistor sessionStore;
+
+  @override
+  State<AvelineApp> createState() => _AvelineAppState();
+}
+
+class _AvelineAppState extends State<AvelineApp> {
+  /// Shortest time the opening screen stays up, so the blossom always finishes
+  /// unfurling even when Clerk answers immediately.
+  static const Duration _minimumOpening = Duration(milliseconds: 1600);
+
+  /// How long "Aveline is ready" stays up before the router takes over.
+  static const Duration _readyLinger = Duration(milliseconds: 700);
+
+  /// How long the opening screen will wait for the Clerk SDK to initialise
+  /// before treating it as a failure.
+  ///
+  /// The SDK awaits a session-token poll during initialisation, and against a
+  /// network whose lookups never answer that await can block indefinitely,
+  /// which would leave the opening screen spinning forever. Bounding it routes
+  /// the user into the drop-the-session retry instead.
+  static const Duration _authAttemptTimeout = Duration(seconds: 10);
+
+  late final ClerkAuthConfig _clerkConfig;
+  ClerkAuthState? _authState;
+
+  /// Built once the auth state exists, and reused on every retry. The profile
+  /// load below needs them, and every post-auth route depends on the profile,
+  /// so they belong to the bootstrap rather than to the shell.
+  AuthRepository? _authRepository;
+  Dio? _dio;
+  UserProvider? _userProvider;
+
+  AvelineBootStatus _status = AvelineBootStatus.preparing;
+  ClerkBootstrapFailure? _failure;
+  bool _handedOff = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _clerkConfig = ClerkAuthConfig(
+      publishableKey: widget.config.clerkPublishableKey,
+      // Aveline owns the store, so a session Clerk refuses to accept can be
+      // dropped here instead of stranding the app on the opening screen.
+      persistor: widget.sessionStore,
+    );
+    unawaited(_bootstrap());
+  }
+
+  /// Brings the app up behind the opening screen, and is also the opening
+  /// screen's retry action.
+  ///
+  /// The screen stays up until the account state is known, not merely until
+  /// Clerk is ready. The router cannot choose between the home screen and an
+  /// onboarding step while the account state is unknown, so handing off earlier
+  /// parks a returning user on the account-type picker for as long as the
+  /// profile takes to load.
+  Future<void> _bootstrap() async {
+    if (_status != AvelineBootStatus.preparing || _failure != null) {
+      setState(() {
+        _status = AvelineBootStatus.preparing;
+        _failure = null;
+      });
+    }
+
+    final startedAt = DateTime.now();
+    final failure = await _prepare();
+
+    // Hold the opening screen for at least the length of its entrance.
+    final elapsed = DateTime.now().difference(startedAt);
+    if (elapsed < _minimumOpening) {
+      await Future<void>.delayed(_minimumOpening - elapsed);
+    }
+    if (!mounted) {
+      return;
+    }
+
+    if (failure != null) {
+      setState(() {
+        _status = AvelineBootStatus.failed;
+        _failure = failure;
+      });
+      return;
+    }
+
+    setState(() => _status = AvelineBootStatus.ready);
+    await Future<void>.delayed(_readyLinger);
+    if (!mounted) {
+      return;
+    }
+    setState(() => _handedOff = true);
+  }
+
+  /// Creates whatever is still missing, returning the failure to show the user.
+  ///
+  /// Each step is skipped when it already succeeded, so a retry only repeats
+  /// the part that failed.
+  Future<ClerkBootstrapFailure?> _prepare() async {
+    if (_authState == null) {
+      try {
+        final authState = await createAuthStateWithRecovery(
+          config: _clerkConfig,
+          clearSession: widget.sessionStore.clear,
+          attemptTimeout: _authAttemptTimeout,
+          onStaleSession: (error, _) => debugPrint(
+            '[bootstrap] dropping the stored Clerk session after: $error',
+          ),
+        );
+        final authRepository = ClerkAuthRepository(
+          authState,
+          jwtTemplateName: widget.config.jwtTemplateName,
+        );
+        _authState = authState;
+        _authRepository = authRepository;
+        _dio = ApiClientFactory.create(
+          baseUrl: widget.config.apiBaseUrl,
+          tokenProvider: authRepository,
+        );
+        _userProvider = UserProvider();
+      } catch (error, stackTrace) {
+        debugPrint('[bootstrap] could not start Clerk: $error\n$stackTrace');
+        return describeBootstrapFailure(error);
+      }
+    }
+
+    final authRepository = _authRepository!;
+    final userProvider = _userProvider!;
+    if (authRepository.isSignedIn && userProvider.user == null) {
+      await userProvider.fetchUser(_dio!);
+      if (userProvider.hasLoadFailed) {
+        final detail = userProvider.errorMessage ?? 'unknown';
+        debugPrint('[bootstrap] could not load the profile: $detail');
+        return describeBootstrapFailure(detail);
+      }
+    }
+
+    return null;
+  }
+
+  @override
+  void dispose() {
+    _userProvider?.dispose();
+    _authState?.terminate();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final authState = _authState;
+    if (authState == null || !_handedOff) {
+      return MaterialApp(
+        title: 'Aveline',
+        theme: AppTheme.light,
+        debugShowCheckedModeBanner: false,
+        home: AvelineLoadingScreen(
+          status: _status,
+          failure: _failure,
+          onRetry: _status == AvelineBootStatus.failed ? _bootstrap : null,
+        ),
+      );
+    }
+
     return ClerkAuth(
-      config: ClerkAuthConfig(publishableKey: config.clerkPublishableKey),
+      authState: authState,
       child: ClerkAuthBuilder(
         builder: (context, authState) => AvelineAppShell(
-          config: config,
+          config: widget.config,
           clerkAuthState: authState,
-          preferences: preferences,
+          preferences: widget.preferences,
+          authRepository: _authRepository!,
+          userProvider: _userProvider!,
+          dio: _dio!,
         ),
       ),
     );
@@ -61,11 +262,20 @@ class AvelineAppShell extends StatefulWidget {
     required this.config,
     required this.clerkAuthState,
     required this.preferences,
+    required this.authRepository,
+    required this.userProvider,
+    required this.dio,
   });
 
   final AppConfig config;
   final ClerkAuthState clerkAuthState;
   final OnboardingPreferences preferences;
+
+  /// Owned by the bootstrap, which loads the signed-in profile with [dio]
+  /// before the shell exists.
+  final AuthRepository authRepository;
+  final UserProvider userProvider;
+  final Dio dio;
 
   @override
   State<AvelineAppShell> createState() => _AvelineAppShellState();
@@ -74,8 +284,25 @@ class AvelineAppShell extends StatefulWidget {
 class _AvelineAppShellState extends State<AvelineAppShell> {
   late final AuthRepository _authRepository;
   late final UserProvider _userProvider;
+  late final BoutiqueProvider _boutiqueProvider;
   late final OnboardingProvider _onboardingProvider;
   late final OwnerOnboardingProvider _ownerOnboardingProvider;
+  late final NotificationProvider _notificationProvider;
+  late final NotificationsController _notificationsController;
+  late final PushNotificationService _pushNotificationService;
+  late final RealtimeNotificationService _realtimeNotificationService;
+
+  /// One paged source for the whole catalog, so the grid and the detail screen
+  /// read the same pool rather than each building their own.
+  late final CatalogProductRepository _catalogRepository;
+
+  /// One source for the client book, for the same reason: the tab and whatever
+  /// opens a client from it must read the same clients.
+  late final CustomerRepository _customerRepository;
+
+  /// One source for the message inbox, so the tab and whatever opens a thread
+  /// from it read the same conversations.
+  late final ConversationRepository _conversationRepository;
   late final Dio _dio;
   late final GoRouter _router;
   final AppLinks _appLinks = AppLinks();
@@ -84,22 +311,50 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
   @override
   void initState() {
     super.initState();
-    _authRepository = ClerkAuthRepository(
-      widget.clerkAuthState,
-      jwtTemplateName: widget.config.jwtTemplateName,
-    );
-    _userProvider = UserProvider();
+    _authRepository = widget.authRepository;
+    _userProvider = widget.userProvider;
+    _dio = widget.dio;
+    _boutiqueProvider = BoutiqueProvider();
     _onboardingProvider = OnboardingProvider(widget.preferences);
-    _dio = ApiClientFactory.create(
-      baseUrl: widget.config.apiBaseUrl,
-      tokenProvider: _authRepository,
-    );
+    _catalogRepository = DemoCatalogProductRepository();
+    _customerRepository = DemoCustomerRepository();
+    // The demo inbox stands in until the conversations endpoint carries enough
+    // to draw a row; swapping in `ApiConversationRepository(_dio, ...)` is the
+    // whole change.
+    _conversationRepository = DemoConversationRepository();
     _ownerOnboardingProvider = OwnerOnboardingProvider(OwnerOnboardingApi(_dio));
+    _notificationProvider = NotificationProvider();
+    _notificationsController = NotificationsController(
+      // The demo inbox stands in until the notification endpoints are live, the
+      // same way the client book and the catalog do. Swapping in
+      // `ApiNotificationRepository(_dio)` is the whole change.
+      DemoNotificationRepository(),
+    );
+    // The header's badge and the inbox are the same number: the controller owns
+    // it and reports it up, so a notification read on the tab clears the dot that
+    // sent the associate there.
+    _notificationsController.addListener(_syncUnreadBadge);
+    _pushNotificationService = PushNotificationService(
+      // Firebase is initialized best-effort in `main()`. When it is unavailable
+      // (no `google-services.json`, no network at startup) fall back to a no-op
+      // source so push is disabled instead of crashing the whole shell.
+      Firebase.apps.isEmpty
+          ? const NoopPushTokenSource()
+          : FirebasePushTokenSource(FirebaseMessaging.instance),
+      DioDeviceTokenApi(_dio),
+      Platform.isIOS ? 'IOS' : 'Android',
+    );
+    _realtimeNotificationService = RealtimeNotificationService(
+      defaultRealtimeConnectionFactory,
+    );
     _router = _buildRouter();
 
     _syncOnboardingContext();
     if (_authRepository.isSignedIn) {
-      _userProvider.fetchUser(_dio);
+      // The bootstrap already loaded the profile for a restored session, so
+      // only the connection and the boutique identity are left to fetch here.
+      _startNotifications();
+      _boutiqueProvider.fetchBoutique(_dio);
     }
 
     widget.clerkAuthState.addListener(_onAuthChanged);
@@ -127,12 +382,57 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
   void _onAuthChanged() {
     if (_authRepository.isSignedIn) {
       _userProvider.fetchUser(_dio);
+      _boutiqueProvider.fetchBoutique(_dio);
       _syncOnboardingContext();
+      _startNotifications();
     } else {
       _userProvider.clear();
+      _boutiqueProvider.clear();
       _onboardingProvider.clear();
       _ownerOnboardingProvider.reset();
+      _stopNotifications();
     }
+  }
+
+  /// Starts push registration and the foreground realtime connection for the signed-in user.
+  void _startNotifications() {
+    _pushNotificationService.initialize();
+    _realtimeNotificationService.connect(
+      baseUrl: widget.config.apiBaseUrl,
+      getToken: _authRepository.getToken,
+      onNotification: _onNotificationReceived,
+    );
+    // A restored session opens on an inbox that is already stale. A sign-in that
+    // fires again while the inbox is loaded only re-reads it, so the tab does not
+    // blank out under a token refresh.
+    if (_notificationsController.hasLoadedOnce) {
+      _notificationsController.refresh();
+    } else {
+      _notificationsController.load();
+    }
+  }
+
+  /// Records a notification that arrived while the app was open.
+  ///
+  /// The payload is a live event with no inbox id, so it cannot be read or
+  /// dismissed from here. It is surfaced for the banner and the inbox is
+  /// re-read, which is what puts the persisted row on the tab.
+  void _onNotificationReceived(NotificationPayload payload) {
+    _notificationProvider.push(payload);
+    _notificationsController.refresh();
+  }
+
+  /// Reports the inbox's unread count to the header badge.
+  void _syncUnreadBadge() {
+    _notificationProvider.setUnreadCount(_notificationsController.unreadCount);
+  }
+
+  /// Stops the realtime connection and unregisters the push token on sign-out.
+  void _stopNotifications() {
+    _realtimeNotificationService.disconnect();
+    _pushNotificationService.unregister();
+    _notificationProvider.clear();
+    _notificationsController.clearInbox();
   }
 
   /// Loads the persisted onboarding account-type choice for the signed-in user.
@@ -147,9 +447,14 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
   void dispose() {
     widget.clerkAuthState.removeListener(_onAuthChanged);
     _appLinksSub?.cancel();
-    _userProvider.dispose();
+    // `_userProvider` is owned by the bootstrap and outlives this shell.
     _onboardingProvider.dispose();
     _ownerOnboardingProvider.dispose();
+    _boutiqueProvider.dispose();
+    _notificationsController
+      ..removeListener(_syncUnreadBadge)
+      ..dispose();
+    _notificationProvider.dispose();
     super.dispose();
   }
 
@@ -193,6 +498,17 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
           accountType: _authRepository.isSignedIn
               ? _onboardingProvider.accountType?.wireValue
               : null,
+          // A signed-in profile load can still fail after the bootstrap, for
+          // instance when signing in from the auth screen. Without this the
+          // guards would park the user on the account-type picker with no
+          // explanation and no way to retry.
+          //
+          // Only when no profile is held: the auth listener refetches the
+          // profile periodically, and a background refresh that fails must not
+          // pull a user who is already using the app onto the retry screen.
+          profileFailed: _authRepository.isSignedIn &&
+              _userProvider.user == null &&
+              _userProvider.hasLoadFailed,
         );
         debugPrint(
           '[router] ${state.matchedLocation} signedIn=${_authRepository.isSignedIn} '
@@ -206,12 +522,113 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
         GoRoute(
           path: AppRoutes.home,
           name: 'home',
-          builder: (context, state) => const HomeScreen(),
+          builder: (context, state) => const MainShell(),
+        ),
+        GoRoute(
+          path: AppRoutes.catalog,
+          name: 'catalog',
+          builder: (context, state) => MainShell(
+            child: CatalogScreen(repository: _catalogRepository),
+          ),
+        ),
+        GoRoute(
+          path: AppRoutes.catalogFilters,
+          name: 'catalogFilters',
+          // A full-screen editor rather than a panel: it is reached from the
+          // field row, returns its draft to the catalog, and carries its own
+          // back affordance so it does not need the shell's header.
+          builder: (context, state) => CatalogFilterScreen(
+            initial: state.extra is CatalogFilters
+                ? state.extra as CatalogFilters
+                : null,
+          ),
+        ),
+        GoRoute(
+          path: AppRoutes.catalogProductPattern,
+          name: 'catalogProduct',
+          // Declared after the static `/catalog/filters` route so that segment
+          // is not read as a product id.
+          //
+          // The piece is deliberately not passed as `extra`: the router
+          // re-parses its location whenever the auth or profile listenable
+          // fires, and `extra` does not survive that, so the screen resolves
+          // the piece from the id the location already carries.
+          builder: (context, state) => CatalogProductScreen(
+            productId: state.pathParameters['productId'] ?? '',
+            repository: _catalogRepository,
+          ),
+        ),
+        GoRoute(
+          path: AppRoutes.customers,
+          name: 'customers',
+          builder: (context, state) => MainShell(
+            child: CustomersScreen(repository: _customerRepository),
+          ),
+        ),
+        GoRoute(
+          path: AppRoutes.customerPattern,
+          name: 'customer',
+          // Declared after the static `/customers` route so that segment is not
+          // read as a client id.
+          //
+          // The client is deliberately not passed as `extra`: the router
+          // re-parses its location whenever the auth or profile listenable
+          // fires, and `extra` does not survive that, so the screen resolves the
+          // profile from the id the location already carries.
+          builder: (context, state) => CustomerScreen(
+            customerId: state.pathParameters['customerId'] ?? '',
+            repository: _customerRepository,
+          ),
+        ),
+        GoRoute(
+          path: AppRoutes.conversations,
+          name: 'conversations',
+          builder: (context, state) => MainShell(
+            child: ConversationsScreen(repository: _conversationRepository),
+          ),
+        ),
+        GoRoute(
+          path: AppRoutes.settings,
+          name: 'settings',
+          builder: (context, state) => const MainShell(child: SettingsScreen()),
+        ),
+        GoRoute(
+          // Profile was merged into Settings, so the old path forwards rather than
+          // serving a second screen with the same content on it. The header's
+          // avatar and any stored link still name it.
+          path: AppRoutes.profile,
+          redirect: (context, state) => AppRoutes.settings,
+        ),
+        GoRoute(
+          path: AppRoutes.notifications,
+          name: 'notifications',
+          builder: (context, state) => const MainShell(
+            child: NotificationsScreen(),
+          ),
         ),
         GoRoute(
           path: AppRoutes.auth,
           name: 'auth',
           builder: (context, state) => const AuthScreen(),
+        ),
+        GoRoute(
+          path: AppRoutes.connection,
+          name: 'connection',
+          // Reuses the opening screen so a failed profile load looks and reads
+          // exactly like a failed start, retry included.
+          builder: (context, state) => Consumer<UserProvider>(
+            builder: (context, userProvider, _) => AvelineLoadingScreen(
+              status: userProvider.isLoading
+                  ? AvelineBootStatus.preparing
+                  : AvelineBootStatus.failed,
+              failure: describeBootstrapFailure(
+                userProvider.errorMessage ?? '',
+              ),
+              onRetry: userProvider.isLoading
+                  ? null
+                  : () => userProvider.fetchUser(context.read<Dio>()),
+            ),
+          ),
         ),
         GoRoute(
           path: AppRoutes.accountType,
@@ -255,11 +672,20 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
         Provider<AuthRepository>.value(value: _authRepository),
         Provider<AuthTokenProvider>.value(value: _authRepository),
         ChangeNotifierProvider<UserProvider>.value(value: _userProvider),
+        ChangeNotifierProvider<BoutiqueProvider>.value(
+          value: _boutiqueProvider,
+        ),
         ChangeNotifierProvider<OnboardingProvider>.value(
           value: _onboardingProvider,
         ),
         ChangeNotifierProvider<OwnerOnboardingProvider>.value(
           value: _ownerOnboardingProvider,
+        ),
+        ChangeNotifierProvider<NotificationProvider>.value(
+          value: _notificationProvider,
+        ),
+        ChangeNotifierProvider<NotificationsController>.value(
+          value: _notificationsController,
         ),
         Provider<Dio>.value(value: _dio),
       ],

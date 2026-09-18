@@ -32,6 +32,30 @@ public class CorsConfigurationTests
         Assert.Equal(
             new[] { "http://localhost:5173", "https://app.aveline.dev" },
             policy!.Origins);
+
+        // SignalR's browser client sends credentials (cookies) by default
+        // (xhr.withCredentials = true), so the policy must allow credentials.
+        Assert.True(policy!.SupportsCredentials);
+    }
+
+    [Fact]
+    public async Task Registers_Policy_Exposing_Correlation_Headers()
+    {
+        var config = TestConfig(new Dictionary<string, string?>
+        {
+            ["Cors:AllowedOrigins:0"] = "http://localhost:5173",
+        });
+
+        var provider = new ServiceCollection()
+            .AddAvelineCors(config)
+            .BuildServiceProvider();
+
+        var policyProvider = provider.GetRequiredService<ICorsPolicyProvider>();
+        var policy = await policyProvider.GetPolicyAsync(new DefaultHttpContext(), CorsConfiguration.DefaultPolicy);
+
+        // The React dashboard cannot read these response headers unless they are exposed.
+        Assert.Contains("X-Request-Id", policy!.ExposedHeaders);
+        Assert.Contains("X-Trace-Id", policy!.ExposedHeaders);
     }
 
     [Fact]

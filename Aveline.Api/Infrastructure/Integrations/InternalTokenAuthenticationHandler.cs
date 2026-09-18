@@ -37,10 +37,10 @@ public class InternalTokenAuthenticationHandler(
         }
 
         var configuredToken = configuration["AgentService:InternalToken"];
-        if (string.IsNullOrWhiteSpace(configuredToken))
+        if (string.IsNullOrWhiteSpace(configuredToken) || configuredToken.Equals("change-me-internal-token", StringComparison.OrdinalIgnoreCase))
         {
-            Logger.LogError("AgentService:InternalToken is not configured in API settings.");
-            return Task.FromResult(AuthenticateResult.Fail("Internal token not configured on server."));
+            Logger.LogError("AgentService:InternalToken is missing or configured with insecure placeholder value.");
+            return Task.FromResult(AuthenticateResult.Fail("Internal token not configured or insecure on server."));
         }
 
         // Constant-time comparison to prevent timing attacks

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  AlertTriangle,
   ArrowRight,
   Check,
   ChevronDown,
@@ -812,6 +813,17 @@ export function PlansPage() {
                 Questions? Contact us.
               </Link>
             </p>
+          </Reveal>
+
+          <Reveal delay={0.12}>
+            <div className="mt-8 flex items-start gap-3 rounded-2xl border border-dashed border-amber-300/70 bg-amber-50/70 px-5 py-4">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
+              <p className="text-sm leading-relaxed text-amber-900">
+                <span className="font-semibold">Pricing and features are subject to change.</span>{' '}
+                Aveline is in alpha development, so plan prices, Blossom allowances, and included
+                features shown here are provisional and may be adjusted before the full launch.
+              </p>
+            </div>
           </Reveal>
         </div>
       </section>

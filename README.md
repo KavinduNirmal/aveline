@@ -50,6 +50,7 @@ graph TD
     Api <--> DB
     Api <--> Cache
     Api <-->|Internal HTTP / RPC| AgentSvc
+    Api <-.->|Redis Pub/Sub event bus| AgentSvc
     AgentSvc --> Agent1 & Agent2 & Agent3
     Agent1 & Agent2 & Agent3 <--> DB
 
@@ -77,9 +78,9 @@ graph TD
 
 | Slice | Domain & Ownership | Key Responsibilities | Core Entities |
 |---|---|---|---|
-| **Slice 1: Customer Concierge & Memory** | Customer relationships, messaging & preferences *(Student 1)* | WhatsApp webhook handling, customer profile management, semantic memory search via pgvector, interaction brief generation. | `Customers`, `Customer_Preferences`, `Customer_Events`, `Customer_Memory`, `Customer_Interactions` |
-| **Slice 2: Visual Intelligence & Sourcing** | Inventory, visual analysis & sourcing *(Student 2)* | Product image attribute extraction, customer-to-item matching, outfit composition, sourcing requests, supplier catalogs. | `Inventory_Items`, `Inventory_Images`, `Outfit_Compositions`, `Sourcing_Requests`, `Suppliers`, `Customer_Matches` |
-| **Slice 3: Commerce Validation & Optimization** | Pricing, payments, approvals & delivery *(Student 3)* | Margin calculation, dynamic business rules, payment link generation, approval queue state machine, delivery planning. | `Orders`, `Order_Items`, `Payments`, `Approval_Queue`, `Delivery_Plans`, `Business_Rules` |
+| **Slice 1: Customer Concierge & Memory** | Customer relationships, messaging & preferences *(Student 1)* | WhatsApp webhook handling, customer profile management, semantic memory search via pgvector, interaction brief generation. | `Customers`, `CustomerPreferences`, `CustomerEvents`, `CustomerMemory`, `CustomerInteractions` |
+| **Slice 2: Visual Intelligence & Sourcing** | Inventory, visual analysis & sourcing *(Student 2)* | Product image attribute extraction, customer-to-item matching, outfit composition, sourcing requests, supplier catalogs. | `InventoryItems`, `InventoryImages`, `OutfitCompositions`, `SourcingRequests`, `Suppliers`, `CustomerMatches` |
+| **Slice 3: Commerce Validation & Optimization** | Pricing, payments, approvals & delivery *(Student 3)* | Margin calculation, dynamic business rules, payment link generation, approval queue state machine, delivery planning. | `Orders`, `OrderItems`, `Payments`, `ApprovalQueue`, `DeliveryPlans`, `BusinessRules` |
 
 ---
 
@@ -90,7 +91,7 @@ graph TD
 | **Public Backend** | ASP.NET Core 10 (C#) | Modular Monolith API, business validation, data persistence, integrations |
 | **Agentic AI Subsystem** | Python 3.12 + FastAPI + LangGraph | Multi-agent orchestration, stateful graph execution, human-in-the-loop pauses |
 | **Database** | PostgreSQL 16 + `pgvector` | Relational business data + vector embeddings for semantic memory |
-| **Cache** | Redis 7 | High-performance session & query caching |
+| **Cache** | Redis 7 | High-performance session & query caching + Pub/Sub event bus (ADR-014) |
 | **Mobile App** | Flutter (Dart SDK 3.13+) | Boutique floor associate mobile interface (Clean Architecture) |
 | **Web Dashboard** | React 19 / Vite 8 + TypeScript (`@clerk/react`, React Router) | Boutique owner & manager dashboard for approvals, analytics, and rules |
 | **Authentication** | Clerk | Unified JWT authentication & role-based authorization |
@@ -161,6 +162,9 @@ All pull requests and commits targeting `development`, `main`, and `master` trig
 - [Developer Setup & Onboarding Guide](GET_STARTED.md)
 - [Running Aveline Locally with Authentication](docs/guides/local-auth-development.md)
 - [Authentication Architecture](docs/architecture/authentication.md)
+- [Redis Pub/Sub Event Bus Architecture](docs/architecture/eventing.md)
+- [The Salon — Conversation Inbox Architecture](docs/architecture/inbox.md)
+- [Customer Memory Agent (AVA) Architecture](docs/architecture/customer-memory.md)
 - [Authentication Security Review](docs/security/auth-security-review.md)
 - [Owner Onboarding Flow Architecture](docs/architecture/onboarding-flow.md)
 - [Test Suite Documentation](docs/tests/README.md)

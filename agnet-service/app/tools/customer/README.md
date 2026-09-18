@@ -1,25 +1,26 @@
 # Tools: Customer Memory Agent
 
-This folder contains tool implementations for the **Customer Memory Agent** (Slice 1).
+> This directory no longer holds per-tool Python files.
 
-## What belongs here
+The Customer Memory Agent (Slice 1) calls the ASP.NET Core backend through a single shared
+**`ToolRegistry`** (`agnet-service/app/tools/registry.py`) which is a thin, authenticated wrapper
+over the backend internal endpoints. There is intentionally **no** `@tool`/per-tool file split —
+the registry methods map 1:1 onto the `/internal/customers/*` endpoints.
 
-One Python file per tool (or a logical grouping). Each tool is a Python function decorated
-with `@tool` from LangChain, enabling the agent to call it:
+## Registry methods the memory agent uses
 
-| Tool | File | Description |
+| ToolRegistry method | Internal endpoint | Purpose |
 |---|---|---|
-| `search_customer_profile` | `profile_tools.py` | Fetch customer record + preferences from DB |
-| `get_customer_memory` | `memory_tools.py` | Semantic search via pgvector embeddings |
-| `save_customer_memory` | `memory_tools.py` | Persist new memory, generate embedding |
-| `extract_entities_from_message` | `nlp_tools.py` | Parse intent/occasion/color from raw text |
-| `generate_interaction_brief` | `brief_tools.py` | Generate staff-facing summary for the associate |
-| `send_whatsapp_message` | `messaging_tools.py` | Call WhatsApp Business API via backend |
+| `identify_customer` | `POST /internal/customers/identify` | Look up by phone, create `new` when absent |
+| `lookup_customers` | `POST /internal/customers/lookup` | Read-only lookup by name/phone/email |
+| `search_customer_profile` | `GET /internal/customers/{id}/profile` | Full profile (preferences, tags, consent) |
+| `get_customer_memories` | `POST /internal/customers/memories/search` | pgvector semantic search |
+| `save_customer_memory` | `POST /internal/customers/{id}/memories` | Persist a semantic memory |
+| `record_customer_interaction` | `POST /internal/customers/{id}/interactions` | Log an inbound/outbound interaction |
+| `add_customer_event` | `POST /internal/customers/{id}/events` | Persist a structured event |
+| `get_customer_events` | `GET /internal/customers/{id}/events` | List a customer's structured events |
+| `generate_interaction_brief` | `GET /internal/customers/{id}/brief` | Staff-facing interaction brief |
+| `get_customer_consent` | `GET /internal/customers/{id}/consent` | Consent status |
 
-## Rules
-
-- Each tool must have a clear docstring — LangGraph uses this as the tool description
-- Tools must validate their inputs using Pydantic `@tool` argument schemas
-- Tools must never call other tools directly — the agent graph handles sequencing
-- All DB access goes through `app/db/` — never import raw psycopg2 here
-- All HTTP calls go through `app/services/` — no `httpx` calls directly in tool files
+The registry shares `InternalApiClient` for transport (attaches the `X-Internal-Token` header,
+ADR-009). It never talks to the database or third parties directly.

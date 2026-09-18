@@ -5,10 +5,12 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using Aveline.Api.Authorization;
 using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Modules.Integrations.Services.Providers;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Shared.Models;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using Xunit;
@@ -40,6 +42,14 @@ public class IntegrationEndpointsIntegrationTests : IAsyncLifetime
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.UseSetting("Credentials:EncryptionKey", Base64Key);
+            })
+            .WithWebHostBuilder(builder =>
+            {
+                // Replace the real WhatsApp provider with a fake so tests never hit Meta.
+                builder.ConfigureServices(services =>
+                {
+                    services.AddSingleton<IWhatsAppService, FakeWhatsAppService>();
+                });
             });
         _client = _factory.CreateClient();
     }
@@ -132,7 +142,13 @@ public class IntegrationEndpointsIntegrationTests : IAsyncLifetime
 
         var put = await _client.SendAsync(AuthorizedJson(HttpMethod.Put,
             $"/api/v1/orgs/{org.Id}/integrations/whatsapp", token,
-            new { credentials = new Dictionary<string, string> { ["accessToken"] = "wa-secret-token" } }));
+            new { credentials = new Dictionary<string, string>
+            {
+                ["accessToken"] = "wa-secret-token",
+                ["phoneNumberId"] = "111",
+                ["appSecret"] = "app-secret",
+                ["webhookVerifyToken"] = "verify-token",
+            } }));
         Assert.Equal(HttpStatusCode.OK, put.StatusCode);
 
         var get = await _client.SendAsync(Authorized(HttpMethod.Get,
@@ -199,11 +215,100 @@ public class IntegrationEndpointsIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Forbidden, put.StatusCode);
     }
 
+    [Fact]
+    public async Task Owner_TestConnection_ReturnsConnectedStatus()
+    {
+        var (owner, org) = await SeedActiveOwnerAsync("int_owner_test", "integrations-test");
+        var token = CreateToken(owner.ClerkId, owner.Email);
+
+        var put = await _client.SendAsync(AuthorizedJson(HttpMethod.Put,
+            $"/api/v1/orgs/{org.Id}/integrations/whatsapp", token,
+            new { credentials = new Dictionary<string, string>
+            {
+                ["accessToken"] = "wa-secret-token",
+                ["phoneNumberId"] = "111",
+                ["appSecret"] = "app-secret",
+                ["webhookVerifyToken"] = "verify-token",
+            } }));
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+
+        var test = await _client.SendAsync(Authorized(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/integrations/whatsapp/test", token));
+        Assert.Equal(HttpStatusCode.OK, test.StatusCode);
+        var body = await test.Content.ReadAsStringAsync();
+        Assert.Contains("Connected", body);
+        Assert.DoesNotContain("wa-secret-token", body);
+    }
+
+    [Fact]
+    public async Task Owner_TestConnection_WhenNotConfigured_Returns400()
+    {
+        var (owner, org) = await SeedActiveOwnerAsync("int_owner_test2", "integrations-test2");
+        var token = CreateToken(owner.ClerkId, owner.Email);
+
+        var test = await _client.SendAsync(Authorized(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/integrations/whatsapp/test", token));
+        Assert.Equal(HttpStatusCode.BadRequest, test.StatusCode);
+    }
+
+    [Fact]
+    public async Task Owner_ListsInboundMessageLogs()
+    {
+        var (owner, org) = await SeedActiveOwnerAsync("int_owner_logs", "integrations-logs");
+        var token = CreateToken(owner.ClerkId, owner.Email);
+
+        await using (var context = CreateContext())
+        {
+            context.InboundMessageLogs.Add(new Aveline.Api.Modules.Integrations.Models.InboundMessageLog
+            {
+                OrganizationId = org.Id,
+                Channel = "whatsapp",
+                Direction = "inbound",
+                ExternalId = "wamid.LOG1",
+                From = "+94771234567",
+                Content = "Hi, is this available?",
+                ReceivedAt = DateTime.UtcNow,
+            });
+            await context.SaveChangesAsync();
+        }
+
+        var get = await _client.SendAsync(Authorized(HttpMethod.Get,
+            $"/api/v1/orgs/{org.Id}/integrations/messages", token));
+        Assert.Equal(HttpStatusCode.OK, get.StatusCode);
+        var body = await get.Content.ReadAsStringAsync();
+        Assert.Contains("wamid.LOG1", body);
+        Assert.Contains("available", body);
+    }
+
+    [Fact]
+    public async Task Owner_CannotListAnotherOrgsMessages_Returns403()
+    {
+        var (ownerA, orgA) = await SeedActiveOwnerAsync("int_owner_logs_a", "integrations-logs-a");
+        var (_, orgB) = await SeedActiveOwnerAsync("int_owner_logs_b", "integrations-logs-b");
+        var tokenA = CreateToken(ownerA.ClerkId, ownerA.Email);
+
+        var get = await _client.SendAsync(Authorized(HttpMethod.Get,
+            $"/api/v1/orgs/{orgB.Id}/integrations/messages", tokenA));
+        Assert.Equal(HttpStatusCode.Forbidden, get.StatusCode);
+    }
+
     private static AppDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
             .Options;
         return new AppDbContext(options);
+    }
+
+    /// <summary>Offline WhatsApp provider used to keep endpoint tests free of network calls.</summary>
+    private sealed class FakeWhatsAppService : IWhatsAppService
+    {
+        public Task<WhatsAppTestResult> TestConnectionAsync(
+            string accessToken, string phoneNumberId, CancellationToken cancellationToken = default)
+            => Task.FromResult(new WhatsAppTestResult(IsValid: true));
+
+        public Task<WhatsAppSendResult> SendMessageAsync(
+            string accessToken, string phoneNumberId, string to, string text, CancellationToken cancellationToken = default)
+            => Task.FromResult(new WhatsAppSendResult(IsSuccess: true, MessageId: "wamid.test"));
     }
 }

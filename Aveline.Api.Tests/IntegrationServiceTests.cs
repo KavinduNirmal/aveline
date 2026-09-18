@@ -3,6 +3,7 @@ using Aveline.Api.Modules.Integrations.DTOs;
 using Aveline.Api.Modules.Integrations.Models;
 using Aveline.Api.Modules.Integrations.Repositories;
 using Aveline.Api.Modules.Integrations.Services;
+using Aveline.Api.Modules.Integrations.Services.Providers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -16,6 +17,7 @@ public class IntegrationServiceTests
     private readonly IntegrationService _sut;
     private readonly IntegrationCredentialRepository _repository;
     private readonly CredentialEncryptionService _encryption;
+    private readonly FakeWhatsAppService _whatsApp;
 
     public IntegrationServiceTests()
     {
@@ -33,11 +35,33 @@ public class IntegrationServiceTests
 
         _repository = new IntegrationCredentialRepository(_context);
         _encryption = new CredentialEncryptionService(config);
-        _sut = new IntegrationService(_repository, _encryption, NullLogger<IntegrationService>.Instance);
+        _whatsApp = new FakeWhatsAppService();
+        _sut = new IntegrationService(_repository, _encryption, _whatsApp, NullLogger<IntegrationService>.Instance);
+    }
+
+    private sealed class FakeWhatsAppService : IWhatsAppService
+    {
+        public bool Valid { get; set; } = true;
+
+        public Task<WhatsAppTestResult> TestConnectionAsync(
+            string accessToken, string phoneNumberId, CancellationToken cancellationToken = default)
+            => Task.FromResult(Valid
+                ? new WhatsAppTestResult(IsValid: true)
+                : new WhatsAppTestResult(IsValid: false, Error: "Invalid token"));
+
+        public Task<WhatsAppSendResult> SendMessageAsync(
+            string accessToken, string phoneNumberId, string to, string text, CancellationToken cancellationToken = default)
+            => Task.FromResult(new WhatsAppSendResult(IsSuccess: true, MessageId: "wamid.test"));
     }
 
     private static SaveIntegrationRequest WhatsApp(string token = "wa-access-token") =>
-        new(new Dictionary<string, string> { ["accessToken"] = token }, Metadata: "{\"phoneNumberId\":\"111\"}");
+        new(new Dictionary<string, string>
+        {
+            ["accessToken"] = token,
+            ["phoneNumberId"] = "111",
+            ["appSecret"] = "app-secret",
+            ["webhookVerifyToken"] = "verify-token",
+        }, Metadata: "{\"phoneNumberId\":\"111\"}");
 
     private static SaveIntegrationRequest Instagram() =>
         new(new Dictionary<string, string>
@@ -57,7 +81,9 @@ public class IntegrationServiceTests
 
         var status = await _sut.SaveAsync(orgId, IntegrationType.WhatsApp, WhatsApp());
 
-        Assert.True(status.Connected);
+        // A plain save leaves the integration Pending until it is validated/connected.
+        Assert.Equal(IntegrationStatus.Pending, status.Status);
+        Assert.False(status.Connected);
 
         var row = await _repository.GetAsync(orgId, IntegrationType.WhatsApp);
         Assert.NotNull(row);
@@ -119,7 +145,7 @@ public class IntegrationServiceTests
 
         var status = Assert.Single(list);
         Assert.Equal(IntegrationType.Instagram, status.Type);
-        Assert.True(status.Connected);
+        Assert.Equal(IntegrationStatus.Pending, status.Status);
         Assert.NotNull(status.MaskedPreview);
         Assert.DoesNotContain("ig-access-token", status.MaskedPreview);
     }
@@ -167,5 +193,99 @@ public class IntegrationServiceTests
 
         await Assert.ThrowsAsync<InvalidIntegrationCredentialsException>(
             () => _sut.SaveAsync(orgId, IntegrationType.Instagram, partial));
+    }
+
+    [Fact]
+    public async Task MarkConnectedAsync_SetsConnectedAndRecordsLastConnectedAt()
+    {
+        var orgId = Guid.NewGuid();
+        await _sut.SaveAsync(orgId, IntegrationType.WhatsApp, WhatsApp());
+
+        var status = await _sut.MarkConnectedAsync(orgId, IntegrationType.WhatsApp);
+
+        Assert.Equal(IntegrationStatus.Connected, status.Status);
+        Assert.True(status.Connected);
+        Assert.NotNull(status.LastConnectedAt);
+        Assert.Null(status.LastError);
+    }
+
+    [Fact]
+    public async Task MarkFailedAsync_SetsErrorWithMessage()
+    {
+        var orgId = Guid.NewGuid();
+        await _sut.SaveAsync(orgId, IntegrationType.WhatsApp, WhatsApp());
+
+        var status = await _sut.MarkFailedAsync(orgId, IntegrationType.WhatsApp, "Invalid token");
+
+        Assert.Equal(IntegrationStatus.Error, status.Status);
+        Assert.False(status.Connected);
+        Assert.Equal("Invalid token", status.LastError);
+    }
+
+    [Fact]
+    public async Task MarkExpiredAsync_SetsExpiredWithMessage()
+    {
+        var orgId = Guid.NewGuid();
+        await _sut.SaveAsync(orgId, IntegrationType.WhatsApp, WhatsApp());
+
+        var status = await _sut.MarkExpiredAsync(orgId, IntegrationType.WhatsApp, "Token expired");
+
+        Assert.Equal(IntegrationStatus.Expired, status.Status);
+        Assert.False(status.Connected);
+        Assert.Equal("Token expired", status.LastError);
+    }
+
+    [Fact]
+    public async Task MarkConnectedAsync_WhenNotConfigured_Throws()
+    {
+        await Assert.ThrowsAsync<IntegrationNotConfiguredException>(
+            () => _sut.MarkConnectedAsync(Guid.NewGuid(), IntegrationType.WhatsApp));
+    }
+
+    [Fact]
+    public async Task TestConnectionAsync_WhatsAppValid_MarksConnected()
+    {
+        var orgId = Guid.NewGuid();
+        await _sut.SaveAsync(orgId, IntegrationType.WhatsApp, WhatsApp());
+        _whatsApp.Valid = true;
+
+        var result = await _sut.TestConnectionAsync(orgId, IntegrationType.WhatsApp);
+
+        Assert.True(result.IsValid);
+        Assert.Equal(IntegrationStatus.Connected, result.Status.Status);
+        Assert.True(result.Status.Connected);
+    }
+
+    [Fact]
+    public async Task TestConnectionAsync_WhatsAppInvalid_MarksError()
+    {
+        var orgId = Guid.NewGuid();
+        await _sut.SaveAsync(orgId, IntegrationType.WhatsApp, WhatsApp());
+        _whatsApp.Valid = false;
+
+        var result = await _sut.TestConnectionAsync(orgId, IntegrationType.WhatsApp);
+
+        Assert.False(result.IsValid);
+        Assert.Equal(IntegrationStatus.Error, result.Status.Status);
+        Assert.NotNull(result.Status.LastError);
+    }
+
+    [Fact]
+    public async Task TestConnectionAsync_NonWhatsApp_MarksConnectedWithoutProviderCheck()
+    {
+        var orgId = Guid.NewGuid();
+        await _sut.SaveAsync(orgId, IntegrationType.PaymentGateway, Payment());
+
+        var result = await _sut.TestConnectionAsync(orgId, IntegrationType.PaymentGateway);
+
+        Assert.True(result.IsValid);
+        Assert.Equal(IntegrationStatus.Connected, result.Status.Status);
+    }
+
+    [Fact]
+    public async Task TestConnectionAsync_WhenNotConfigured_Throws()
+    {
+        await Assert.ThrowsAsync<IntegrationNotConfiguredException>(
+            () => _sut.TestConnectionAsync(Guid.NewGuid(), IntegrationType.WhatsApp));
     }
 }

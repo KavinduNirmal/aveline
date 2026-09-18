@@ -1,10 +1,12 @@
 using Aveline.Api.Configurations;
+using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Modules.Integrations.DTOs;
 using Aveline.Api.Modules.Integrations.Models;
 using Aveline.Api.Modules.Integrations.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.EntityFrameworkCore;
 
 namespace Aveline.Api.Endpoints;
 
@@ -30,6 +32,29 @@ public static class IntegrationEndpoints
             return Results.Ok(status);
         }).RequireAuthorization(AuthorizationConfiguration.BoutiqueMembershipManagePolicy);
 
+        group.MapGet("/messages", async (
+            Guid organizationId,
+            AppDbContext db,
+            CancellationToken ct) =>
+        {
+            var logs = await db.InboundMessageLogs
+                .Where(m => m.OrganizationId == organizationId)
+                .OrderByDescending(m => m.ReceivedAt)
+                .Take(50)
+                .Select(m => new InboundMessageLogDto(
+                    m.Id,
+                    m.Channel,
+                    m.Direction,
+                    m.ExternalId,
+                    m.From,
+                    m.To,
+                    m.Content,
+                    m.ReceivedAt))
+                .ToListAsync(ct);
+
+            return Results.Ok(logs);
+        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueMembershipManagePolicy);
+
         group.MapPut("/{type:alpha}", async (
             Guid organizationId,
             string type,
@@ -44,10 +69,34 @@ public static class IntegrationEndpoints
 
             try
             {
-                var status = await integrationService.SaveAsync(organizationId, integrationType, request, ct);
-                return Results.Ok(status);
+                await integrationService.SaveAsync(organizationId, integrationType, request, ct);
+                // Auto-connect: validate the freshly saved credentials against the provider.
+                var test = await integrationService.TestConnectionAsync(organizationId, integrationType, ct);
+                return Results.Ok(test.Status);
             }
             catch (InvalidIntegrationCredentialsException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueMembershipManagePolicy);
+
+        group.MapPost("/{type:alpha}/test", async (
+            Guid organizationId,
+            string type,
+            IIntegrationService integrationService,
+            CancellationToken ct) =>
+        {
+            if (!TryParseType(type, out var integrationType))
+            {
+                return Results.BadRequest(new { message = $"Unknown integration type '{type}'." });
+            }
+
+            try
+            {
+                var test = await integrationService.TestConnectionAsync(organizationId, integrationType, ct);
+                return Results.Ok(test);
+            }
+            catch (IntegrationNotConfiguredException ex)
             {
                 return Results.BadRequest(new { message = ex.Message });
             }

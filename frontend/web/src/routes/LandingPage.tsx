@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  AlertTriangle,
   ArrowRight,
   Check,
   HeartHandshake,
@@ -17,6 +19,14 @@ import { AuroraField } from '@/components/site/AuroraField'
 import { Reveal } from '@/components/site/Reveal'
 import { SitePage } from '@/components/site/SitePage'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { PhoneMockup } from '@/components/site/PhoneMockup'
 import { HeroSlideshow } from '@/components/site/HeroSlideshow'
 import { SocialProofBar } from '@/components/site/SocialProofBar'
@@ -435,11 +445,55 @@ function MessageMarquee() {
   )
 }
 
+/** Alpha-development notice shown once per session when a visitor lands. */
+function AlphaNoticeDialog() {
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    if (sessionStorage.getItem('aveline:alpha-dialog-seen') === '1') return
+    setOpen(true)
+  }, [])
+
+  const acknowledge = () => {
+    sessionStorage.setItem('aveline:alpha-dialog-seen', '1')
+    setOpen(false)
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => (next ? undefined : acknowledge())}>
+      <DialogContent className="border-amber-200 bg-[#fffdf7]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 font-serif text-xl font-medium text-amber-900">
+            <AlertTriangle className="size-5 text-amber-600" aria-hidden />
+            Welcome to the Aveline AI preview
+          </DialogTitle>
+          <DialogDescription className="pt-2 text-[15px] leading-relaxed text-neutral-600">
+            Aveline AI is currently in <strong className="text-neutral-900">alpha development</strong>,
+            and this is only a preview build. There might be unexpected changes and mistakes. We hope
+            for your understanding — and if you notice any bugs, please do report them.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button asChild variant="outline" className="rounded-full">
+            <Link to="/contact" onClick={acknowledge}>
+              Report a bug
+            </Link>
+          </Button>
+          <Button onClick={acknowledge} className="rounded-full bg-primary text-white hover:bg-primary/90">
+            I understand
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 export function LandingPage() {
   const reduceMotion = useReducedMotion()
 
   return (
     <SitePage>
+      <AlphaNoticeDialog />
       {/* ------------------------------------------------ 1. Hero Section */}
       <section className="relative overflow-hidden">
         <AuroraField />

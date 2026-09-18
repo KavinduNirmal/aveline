@@ -39,6 +39,21 @@ dashboard calls the resume endpoint when the owner decides.
 
 Defined in `app/schemas/commerce.py`.
 
+## Current stub state (Issue #151)
+
+No `graph.py` exists yet; this folder is owned by **Student 3**. The top-level concierge
+workflow (`app/workflows/concierge_workflow.py`) runs a **stub** `run_commerce_agent` node
+that declares the structured output shape with `status: "stub"`, `needs_approval: False`,
+and empty `summary`/`payment`/`courier`, so the Salon never shows fabricated payment or
+approval data.
+
+The block mapping for this agent is already implemented and tested in
+`app/events/block_builders.py::build_lina_blocks`: when the real graph emits a `summary`
+(with `status != "stub"`), the Salon renders `text`, `payment`, and `courier` blocks
+attributed to the `lina` persona. A SignOff is deliberately not emitted by the generic
+builder - it is a first-class human-in-the-loop message (`kind == SignOff`) created by the
+commerce approval flow (see "Human-in-the-Loop" above).
+
 ## What belongs in this folder
 
 - `graph.py` — The LangGraph `StateGraph` definition for this agent

@@ -38,6 +38,7 @@ public sealed class IntegrationCredentialRepository(AppDbContext db) : IIntegrat
         IntegrationType type,
         string encryptedValue,
         string? metadata,
+        IntegrationStatus status,
         CancellationToken cancellationToken = default)
     {
         var existing = await GetAsync(organizationId, type, cancellationToken);
@@ -47,6 +48,8 @@ public sealed class IntegrationCredentialRepository(AppDbContext db) : IIntegrat
         {
             existing.EncryptedValue = encryptedValue;
             existing.Metadata = metadata;
+            existing.Status = status;
+            existing.LastError = null;
             existing.UpdatedAt = now;
             db.IntegrationCredentials.Update(existing);
         }
@@ -58,11 +61,38 @@ public sealed class IntegrationCredentialRepository(AppDbContext db) : IIntegrat
                 IntegrationType = type,
                 EncryptedValue = encryptedValue,
                 Metadata = metadata,
+                Status = status,
                 CreatedAt = now,
                 UpdatedAt = now,
             });
         }
 
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    public async Task UpdateStatusAsync(
+        Guid organizationId,
+        IntegrationType type,
+        IntegrationStatus status,
+        string? lastError = null,
+        CancellationToken cancellationToken = default)
+    {
+        var existing = await GetAsync(organizationId, type, cancellationToken);
+        if (existing is null)
+        {
+            return;
+        }
+
+        existing.Status = status;
+        existing.LastError = lastError;
+        if (status == IntegrationStatus.Connected)
+        {
+            existing.LastConnectedAt = DateTime.UtcNow;
+        }
+
+        existing.UpdatedAt = DateTime.UtcNow;
+        db.IntegrationCredentials.Update(existing);
         await db.SaveChangesAsync(cancellationToken);
     }
 

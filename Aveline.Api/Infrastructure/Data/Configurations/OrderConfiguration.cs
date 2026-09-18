@@ -1,4 +1,5 @@
 using Aveline.Api.Modules.Commerce.Models;
+using Aveline.Api.Modules.Shared.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -66,6 +67,10 @@ public class OrderConfiguration : IEntityTypeConfiguration<Order>
         builder.Property(o => o.CreatedAt)
             .IsRequired();
 
+        builder.HasOne(o => o.CreatedByUser)
+            .WithMany()
+            .HasForeignKey(o => o.CreatedBy)
+            .OnDelete(DeleteBehavior.Restrict);
         // Relationships
         builder.HasMany(o => o.Items)
             .WithOne(i => i.Order)

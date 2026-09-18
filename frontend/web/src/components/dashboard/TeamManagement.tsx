@@ -248,7 +248,7 @@ export function TeamManagement({ organization }: TeamManagementProps) {
                   if (val) setSelectedRole(val as BoutiqueStaffRole)
                 }}
                 variant="outline"
-                className="flex flex-wrap gap-2 justify-start"
+                className="flex flex-wrap justify-start"
               >
                 {INVITABLE_ROLES.map((r) => (
                   <ToggleGroupItem key={r.value} value={r.value}>
@@ -270,7 +270,7 @@ export function TeamManagement({ organization }: TeamManagementProps) {
                   if (val) setValidityHours(Number(val))
                 }}
                 variant="outline"
-                className="flex flex-wrap gap-2 justify-start"
+                className="flex flex-wrap justify-start"
               >
                 {EXPIRATION_OPTIONS.map((opt: ExpirationOption) => (
                   <ToggleGroupItem key={opt.hours} value={String(opt.hours)}>

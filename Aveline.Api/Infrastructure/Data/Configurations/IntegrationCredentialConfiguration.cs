@@ -1,4 +1,5 @@
 using Aveline.Api.Modules.Integrations.Models;
+using Aveline.Api.Modules.Organizations.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -22,11 +23,23 @@ public class IntegrationCredentialConfiguration : IEntityTypeConfiguration<Integ
         builder.Property(c => c.Metadata)
             .HasColumnType("jsonb");
 
+        builder.Property(c => c.Status)
+            .HasConversion<string>()
+            .HasMaxLength(32);
+
+        builder.Property(c => c.LastError)
+            .HasColumnType("text");
+
         builder.Property(c => c.CreatedAt)
             .IsRequired();
 
         builder.Property(c => c.UpdatedAt)
             .IsRequired();
+
+        builder.HasOne(c => c.Organization)
+            .WithMany()
+            .HasForeignKey(c => c.OrganizationId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         // One credential per organization per integration type.
         builder.HasIndex(c => new { c.OrganizationId, c.IntegrationType })

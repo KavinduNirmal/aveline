@@ -364,6 +364,9 @@ namespace Aveline.Api.Migrations
                         .IsUnique()
                         .HasFilter("\"AgentWorkflowRunId\" IS NOT NULL");
 
+                    b.HasIndex("PricingRuleId")
+                        .HasFilter("\"PricingRuleId\" IS NOT NULL");
+
                     b.HasIndex("OrganizationId", "CreatedAt");
 
                     b.ToTable("AiUsageRecords", (string)null);
@@ -619,6 +622,65 @@ namespace Aveline.Api.Migrations
 
                             t.HasCheckConstraint("CK_BlossomPriceEntries_Range", "\"EffectiveTo\" IS NULL OR \"EffectiveTo\" > \"EffectiveFrom\"");
                         });
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Billing.Models.DailyBillingMetric", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("ActualCostUsd")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("numeric(18,8)");
+
+                    b.Property<decimal>("BlossomUnits")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<long>("CachedTokens")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("Day")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("InputTokens")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("OutputTokens")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("PlanTier")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("RequestCount")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "Day", "Provider", "Model")
+                        .IsUnique()
+                        .HasDatabaseName("IX_DailyBillingMetrics_Org_Day_Provider_Model");
+
+                    b.ToTable("DailyBillingMetrics", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Billing.Models.IdempotencyRecord", b =>
@@ -996,6 +1058,8 @@ namespace Aveline.Api.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ConversationId");
+
                     b.HasIndex("DecidedBy");
 
                     b.HasIndex("OrderId");
@@ -1003,6 +1067,8 @@ namespace Aveline.Api.Migrations
                     b.HasIndex("OrganizationId");
 
                     b.HasIndex("Status");
+
+                    b.HasIndex("ThreadId");
 
                     b.ToTable("ApprovalQueue", (string)null);
                 });
@@ -1869,6 +1935,10 @@ namespace Aveline.Api.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("OrganizationId");
+
+                    b.HasIndex("OrganizationId", "ExternalId")
+                        .IsUnique()
+                        .HasFilter("\"ExternalId\" IS NOT NULL");
 
                     b.HasIndex("OrganizationId", "ReceivedAt");
 
@@ -2872,13 +2942,106 @@ namespace Aveline.Api.Migrations
                         .IsDescending(false, true)
                         .HasDatabaseName("IX_ApiRequestMetrics_Route_Window");
 
-                    b.HasIndex("OrganizationId", "ApiKeyId", "UserId", "RouteTemplate", "HttpMethod", "StatusCode", "WindowStart")
+                    b.HasIndex("OrganizationId", "ApiKeyId", "UserId", "RouteTemplate", "HttpMethod", "StatusCode", "WindowStart", "WindowSize")
                         .IsUnique()
                         .HasDatabaseName("IX_ApiRequestMetrics_Dimensions");
 
-                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("OrganizationId", "ApiKeyId", "UserId", "RouteTemplate", "HttpMethod", "StatusCode", "WindowStart"), false);
+                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("OrganizationId", "ApiKeyId", "UserId", "RouteTemplate", "HttpMethod", "StatusCode", "WindowStart", "WindowSize"), false);
 
                     b.ToTable("ApiRequestMetrics", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Statistics.Models.DailyAgentMetric", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("ActualCostUsd")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("numeric(18,8)");
+
+                    b.Property<string>("AgentKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<double?>("AvgDurationMs")
+                        .HasColumnType("double precision");
+
+                    b.Property<decimal>("BlossomUnits")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<long>("CachedTokens")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("CancelledCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("Day")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("FailedCount")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("InputTokens")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("MaxDurationMs")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("OutputTokens")
+                        .HasColumnType("bigint");
+
+                    b.Property<double?>("P50DurationMs")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("P95DurationMs")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("P99DurationMs")
+                        .HasColumnType("double precision");
+
+                    b.Property<int>("PausedCount")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("RetryCount")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("RunCount")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("StepCount")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("SucceededCount")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("TimedOutCount")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ToolCallCount")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("TotalDurationMs")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "AgentKey", "Day")
+                        .IsUnique()
+                        .HasDatabaseName("IX_DailyAgentMetrics_Org_Agent_Day");
+
+                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("OrganizationId", "AgentKey", "Day"), false);
+
+                    b.ToTable("DailyAgentMetrics", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Statistics.Models.SystemAlert", b =>

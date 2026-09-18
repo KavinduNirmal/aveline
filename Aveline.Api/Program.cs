@@ -163,6 +163,7 @@ v1.MapConversationEndpoints();
 v1.MapPricingEndpoints();
 v1.MapBlossomEndpoints();
 v1.MapSubscriptionEndpoints();
+v1.MapBillingStatisticsEndpoints();
 v1.MapApiAccessEndpoints();
 v1.MapStatisticsEndpoints();
 v1.MapCatalogEndpoints();

@@ -38,5 +38,9 @@ public class InboundMessageLogConfiguration : IEntityTypeConfiguration<InboundMe
         // Tenant isolation + chronological lookups.
         builder.HasIndex(m => new { m.OrganizationId, m.ReceivedAt });
         builder.HasIndex(m => m.OrganizationId);
+
+        builder.HasIndex(m => new { m.OrganizationId, m.ExternalId })
+            .IsUnique()
+            .HasFilter("\"ExternalId\" IS NOT NULL");
     }
 }

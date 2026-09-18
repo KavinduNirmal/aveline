@@ -1,9 +1,11 @@
+using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Infrastructure.Eventing;
 using Aveline.Api.Modules.Audit.Models;
 using Aveline.Api.Modules.Audit.Services;
 using Aveline.Api.Modules.Billing.Domain;
 using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Billing.Repositories;
+using Microsoft.EntityFrameworkCore;
 
 namespace Aveline.Api.Modules.Billing.Services;
 
@@ -11,13 +13,41 @@ namespace Aveline.Api.Modules.Billing.Services;
 /// Default <see cref="IPricingService"/>. Resolution reads through a short-TTL L1 cache
 /// (FR-1.10); every mutation invalidates that cache and writes an audit entry (FR-1.3).
 /// </summary>
-public sealed class PricingService(
-    IPricingRepository repository,
-    PricingRuleCache cache,
-    IAuditService auditService,
-    ILogger<PricingService> logger,
-    IEventBus? eventBus = null) : IPricingService
+public sealed class PricingService : IPricingService
 {
+    private readonly IPricingRepository repository;
+    private readonly PricingRuleCache cache;
+    private readonly IAuditService auditService;
+    private readonly ILogger<PricingService> logger;
+    private readonly IEventBus? eventBus;
+    private readonly AppDbContext? db;
+
+    public PricingService(
+        IPricingRepository repository,
+        PricingRuleCache cache,
+        IAuditService auditService,
+        ILogger<PricingService> logger,
+        IEventBus? eventBus = null)
+        : this(repository, cache, auditService, logger, db: null, eventBus)
+    {
+    }
+
+    public PricingService(
+        IPricingRepository repository,
+        PricingRuleCache cache,
+        IAuditService auditService,
+        ILogger<PricingService> logger,
+        AppDbContext? db,
+        IEventBus? eventBus = null)
+    {
+        this.repository = repository;
+        this.cache = cache;
+        this.auditService = auditService;
+        this.logger = logger;
+        this.db = db;
+        this.eventBus = eventBus;
+    }
+
     private const int MinChangeReasonLength = 10;
     private const int MaxChangeReasonLength = 500;
     private const int MaxUnitsPerBlossom = 10_000_000;
@@ -230,6 +260,101 @@ public sealed class PricingService(
         var total = await repository.CountRulesAsync(filter, cancellationToken);
 
         return new PricingRulePage(items, total, safePage, safePageSize);
+    }
+
+    public async Task<PricingRecomputeResult> RecomputeRuleAsync(
+        Guid ruleId, Guid actorUserId, CancellationToken cancellationToken = default)
+    {
+        var rule = await GetOrThrowAsync(ruleId, cancellationToken);
+        if (rule.Status != BlossomRuleStatus.Active && rule.Status != BlossomRuleStatus.Superseded)
+        {
+            throw new PricingValidationException("Only Active or Superseded rules can be recomputed.");
+        }
+
+        var start = rule.EffectiveFrom;
+        var end = rule.EffectiveTo ?? DateTime.UtcNow;
+
+        var query = db.AiUsageRecords
+            .Where(r => r.CreatedAt >= start && r.CreatedAt < end);
+
+        if (rule.ScopeKind == BlossomRuleScopeKind.Provider && !string.IsNullOrWhiteSpace(rule.Provider))
+        {
+            query = query.Where(r => r.Provider == rule.Provider);
+        }
+        else if (rule.ScopeKind == BlossomRuleScopeKind.ProviderModel)
+        {
+            query = query.Where(r => r.Provider == rule.Provider && r.Model == rule.Model);
+        }
+
+        var records = await query.ToListAsync(cancellationToken);
+        if (records.Count == 0)
+        {
+            return new PricingRecomputeResult(ruleId, 0, 0, 0m, DateTime.UtcNow);
+        }
+
+        var affectedOrgs = new Dictionary<Guid, decimal>();
+        var totalDelta = 0m;
+
+        foreach (var record in records)
+        {
+            var totalUnits = (long)record.InputTokens + record.OutputTokens + record.CachedTokens;
+            var newBlossom = BlossomCalculator.Calculate(
+                totalUnits,
+                rule.UnitsPerBlossom,
+                rule.RoundingMode,
+                rule.RoundingDecimals,
+                rule.MinimumChargeBlossoms);
+
+            var delta = newBlossom - record.BlossomUnits;
+            if (delta != 0)
+            {
+                record.BlossomUnits = newBlossom;
+                record.PricingRuleId = rule.Id;
+                record.PricingRuleVersion = rule.Version;
+                record.UnitsPerBlossom = rule.UnitsPerBlossom;
+                record.RoundingMode = rule.RoundingMode;
+                record.RoundingDecimals = (short)rule.RoundingDecimals;
+
+                totalDelta += delta;
+                affectedOrgs[record.OrganizationId] = affectedOrgs.GetValueOrDefault(record.OrganizationId) + delta;
+            }
+        }
+
+        foreach (var (orgId, netDelta) in affectedOrgs)
+        {
+            if (netDelta == 0) continue;
+
+            var account = await db.UsageAccounts.FirstOrDefaultAsync(a => a.OrganizationId == orgId, cancellationToken);
+            if (account is not null)
+            {
+                account.BlossomUsed += netDelta;
+                account.BlossomRemaining -= netDelta;
+                account.UpdatedAt = DateTime.UtcNow;
+
+                var entry = new BlossomLedgerEntry
+                {
+                    Id = Guid.CreateVersion7(),
+                    OrganizationId = orgId,
+                    UsageAccountId = account.Id,
+                    EntryType = BlossomLedgerEntryType.CorrectionRecompute,
+                    BlossomDelta = -netDelta,
+                    BlossomBalanceAfter = account.BlossomRemaining,
+                    Reason = $"Correction recompute for pricing rule {rule.Id} (v{rule.Version})",
+                    SourceKind = BlossomSourceKind.Admin,
+                    CreatedByUserId = actorUserId == Guid.Empty ? null : actorUserId,
+                    CreatedAt = DateTime.UtcNow,
+                };
+                db.BlossomLedgerEntries.Add(entry);
+            }
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+
+        await RecordAuditAsync(AuditAction.PricingRuleRecomputed, rule, actorUserId, cancellationToken);
+        await PublishAsync("pricing.rule.recomputed", new { ruleId = rule.Id, actorUserId, processedRecords = records.Count, totalDelta }, cancellationToken);
+        await PublishAsync("pricing.rule.changed", new { ruleId = rule.Id, actorUserId }, cancellationToken);
+
+        return new PricingRecomputeResult(rule.Id, records.Count, affectedOrgs.Count, totalDelta, DateTime.UtcNow);
     }
 
     public async Task<BlossomPriceEntry> CreatePriceEntryAsync(

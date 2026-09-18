@@ -65,6 +65,8 @@ public class AppDbContext : DbContext
 
     public DbSet<OrganizationSubscription> OrganizationSubscriptions => Set<OrganizationSubscription>();
 
+    public DbSet<DailyBillingMetric> DailyBillingMetrics => Set<DailyBillingMetric>();
+
     public DbSet<AuditLogEntry> AuditLogEntries => Set<AuditLogEntry>();
 
     public DbSet<Modules.ApiAccess.Models.ApiKey> ApiKeys => Set<Modules.ApiAccess.Models.ApiKey>();
@@ -75,6 +77,9 @@ public class AppDbContext : DbContext
 
     public DbSet<Modules.Statistics.Models.AgentStepRun> AgentStepRuns =>
         Set<Modules.Statistics.Models.AgentStepRun>();
+
+    public DbSet<Modules.Statistics.Models.DailyAgentMetric> DailyAgentMetrics =>
+        Set<Modules.Statistics.Models.DailyAgentMetric>();
 
     // Statistics Module (Phase 5 — API consumption statistics, M7)
     public DbSet<Modules.Statistics.Models.ApiRequestMetric> ApiRequestMetrics =>

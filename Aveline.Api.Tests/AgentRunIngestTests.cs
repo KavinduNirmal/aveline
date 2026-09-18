@@ -247,4 +247,19 @@ public class AgentRunIngestTests : IAsyncLifetime
         Assert.Equal(0, steps[0].GetProperty("stepIndex").GetInt32());
         Assert.Equal(1, steps[1].GetProperty("stepIndex").GetInt32());
     }
+
+    [Fact]
+    public async Task AppendSteps_WithNullStepsArray_Returns400()
+    {
+        var workflowId = $"wf-null-steps-{Guid.NewGuid():N}";
+        var organizationId = Guid.CreateVersion7();
+
+        var created = await _client.SendAsync(Request(HttpMethod.Post, "/internal/agent-runs",
+            RunBody(organizationId, workflowId, "Running")));
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+
+        var append = await _client.SendAsync(Request(HttpMethod.Post, $"/internal/agent-runs/{workflowId}/steps",
+            new { organizationId, steps = (object[]?)null }));
+        Assert.Equal(HttpStatusCode.BadRequest, append.StatusCode);
+    }
 }

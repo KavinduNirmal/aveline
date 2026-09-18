@@ -1,4 +1,5 @@
 using Aveline.Api.Configurations;
+using Aveline.Api.Modules.VisualIntelligence;
 using Aveline.Api.Modules.VisualIntelligence.DTOs;
 using Aveline.Api.Modules.VisualIntelligence.Models;
 using Aveline.Api.Modules.VisualIntelligence.Repositories;
@@ -362,7 +363,7 @@ public static class CatalogEndpoints
             CancellationToken cancellationToken) =>
         {
             byte[]? bytes = null;
-            string contentType = "image/jpeg";
+            string contentType = ImageContentTypes.DefaultImage;
             string? fileName = null;
             long fileSizeBytes = 0;
 
@@ -375,7 +376,7 @@ public static class CatalogEndpoints
                     using var ms = new MemoryStream();
                     await file.CopyToAsync(ms, cancellationToken);
                     bytes = ms.ToArray();
-                    contentType = string.IsNullOrWhiteSpace(file.ContentType) ? "image/jpeg" : file.ContentType;
+                    contentType = ImageContentTypes.Normalize(file.ContentType);
                     fileName = file.FileName;
                     fileSizeBytes = file.Length;
                 }
@@ -394,7 +395,7 @@ public static class CatalogEndpoints
                             var mimePart = raw[5..commaIdx];
                             if (mimePart.Contains(';'))
                             {
-                                contentType = mimePart.Split(';')[0];
+                                contentType = ImageContentTypes.Normalize(mimePart.Split(';')[0]);
                             }
                             bytes = Convert.FromBase64String(raw[(commaIdx + 1)..]);
                         }
@@ -459,7 +460,10 @@ public static class CatalogEndpoints
             }
 
             context.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
-            return Results.File(image.ImageData, image.ContentType);
+            // The stored content type comes from the uploader, so never let the browser
+            // sniff or render a non-image payload (e.g. text/html) from this origin.
+            context.Response.Headers.XContentTypeOptions = "nosniff";
+            return Results.File(image.ImageData, ImageContentTypes.SafeServe(image.ContentType));
         })
         .WithName("CatalogGetImage")
         .WithSummary("Retrieve physical image binary from PostgreSQL.")

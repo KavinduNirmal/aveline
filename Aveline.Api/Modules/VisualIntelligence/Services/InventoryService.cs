@@ -129,10 +129,10 @@ public class InventoryService : IInventoryService
                 if (commaIdx > 0)
                 {
                     var mimePart = trimmed[5..commaIdx];
-                    var contentType = "image/jpeg";
+                    var contentType = ImageContentTypes.DefaultImage;
                     if (mimePart.Contains(';'))
                     {
-                        contentType = mimePart.Split(';')[0];
+                        contentType = ImageContentTypes.Normalize(mimePart.Split(';')[0]);
                     }
                     var bytes = Convert.FromBase64String(trimmed[(commaIdx + 1)..]);
                     var imageId = Guid.NewGuid();

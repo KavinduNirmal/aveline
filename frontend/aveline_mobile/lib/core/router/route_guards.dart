@@ -12,6 +12,45 @@ abstract final class AppRoutes {
   static const String orgSetup = '/org-setup';
   static const String suspended = '/suspended';
   static const String invite = '/invite';
+
+  /// Shown when a signed-in user's profile could not be loaded, so the account
+  /// state is unknown and no other screen can be chosen honestly.
+  static const String connection = '/connection';
+  static const String catalog = '/catalog';
+
+  /// The catalog's search filter options, pushed from the catalog screen.
+  static const String catalogFilters = '/catalog/filters';
+
+  /// Route pattern for a single piece. The location is built with
+  /// [catalogProduct]; the static `filters` segment above must stay declared
+  /// before this pattern so it is not swallowed as a product id.
+  static const String catalogProductPattern = '/catalog/:productId';
+
+  /// A single piece, addressed by its own id.
+  static String catalogProduct(String productId) => '/catalog/$productId';
+
+  /// The boutique's client book.
+  static const String customers = '/customers';
+
+  /// Route pattern for one client's profile. The location is built with
+  /// [customer]; the static `customers` segment above must stay declared before
+  /// this pattern so it is not swallowed as a client id.
+  static const String customerPattern = '/customers/:customerId';
+
+  /// One client, addressed by their own id.
+  static String customer(String customerId) => '/customers/$customerId';
+  static const String conversations = '/conversations';
+
+  /// The associate's own account and preferences.
+  static const String settings = '/settings';
+
+  /// The retired Profile screen's path.
+  ///
+  /// The account it showed is a section of [settings] now. The path stays
+  /// declared because the header's avatar and any stored link still name it, so
+  /// the router forwards it rather than answering with nothing.
+  static const String profile = '/profile';
+  static const String notifications = '/notifications';
 }
 
 /// Pure auth/account-state redirect rules for the [GoRouter].
@@ -24,12 +63,18 @@ abstract final class RouteGuards {
   /// known (`null`) the legacy [hasCompletedOnboarding] flag drives profile
   /// routing only. [accountType] is the locally persisted onboarding path
   /// (`owner`/`staff`/`null`) used to branch a pending account.
+  ///
+  /// [profileFailed] reports that loading the signed-in user's profile failed,
+  /// which leaves [accountState] unknown. Without it the guards would hold the
+  /// user on the first onboarding screen with no explanation and no way to
+  /// retry, which is indistinguishable from being stuck.
   static String? redirectForAuth(
     String matchedLocation, {
     required bool isSignedIn,
     bool? hasCompletedOnboarding,
     String? accountState,
     String? accountType,
+    bool profileFailed = false,
   }) {
     final atAuthScreen = matchedLocation == AppRoutes.auth;
     final atAccountTypeScreen = matchedLocation == AppRoutes.accountType;
@@ -38,6 +83,7 @@ abstract final class RouteGuards {
     final atOrgSetupScreen = matchedLocation == AppRoutes.orgSetup;
     final atSuspendedScreen = matchedLocation == AppRoutes.suspended;
     final atInviteScreen = matchedLocation == AppRoutes.invite;
+    final atConnectionScreen = matchedLocation == AppRoutes.connection;
 
     if (!isSignedIn) {
       // Unauthenticated users may only reach the auth screen (and the invite
@@ -46,6 +92,10 @@ abstract final class RouteGuards {
         return null;
       }
       return AppRoutes.auth;
+    }
+
+    if (profileFailed) {
+      return atConnectionScreen ? null : AppRoutes.connection;
     }
 
     final state = accountState != null
@@ -67,7 +117,8 @@ abstract final class RouteGuards {
           atOnboardingScreen ||
           atOwnerOnboardingScreen ||
           atOrgSetupScreen ||
-          atSuspendedScreen) {
+          atSuspendedScreen ||
+          atConnectionScreen) {
         return AppRoutes.home;
       }
       return null;

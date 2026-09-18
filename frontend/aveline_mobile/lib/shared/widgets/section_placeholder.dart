@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
 /// A "coming soon" panel for dock tabs that depend on slices that are not built
-/// yet (Customers, Catalog). Mirrors the web `SectionPlaceholder` in the quiet
-/// luxury style: an overline label, a serif heading, and a soft card.
+/// yet (Conversations). Mirrors the web `SectionPlaceholder` in the quiet luxury
+/// style: an overline label, a serif heading, and a soft card.
 class SectionPlaceholder extends StatelessWidget {
   const SectionPlaceholder({
     super.key,
@@ -22,6 +22,9 @@ class SectionPlaceholder extends StatelessWidget {
 
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      // Always scrollable, so the shell's pull-to-refresh still arms on a tab
+      // whose placeholder is shorter than the viewport.
+      physics: const AlwaysScrollableScrollPhysics(),
       children: [
         Text(
           title.toUpperCase(),

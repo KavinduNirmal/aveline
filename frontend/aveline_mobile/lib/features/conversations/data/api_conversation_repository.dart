@@ -1,6 +1,5 @@
 import 'package:dio/dio.dart';
 
-import '../domain/conversation.dart';
 import 'conversation_repository.dart';
 
 /// The message inbox, over the Aveline API.
@@ -8,16 +7,19 @@ import 'conversation_repository.dart';
 /// Follows `docs/api/openapi.yaml`:
 /// `GET /api/v1/orgs/{organizationId}/conversations`, paged.
 ///
-/// **What the endpoint carries today.** `ConversationDto` has the identity of a
-/// thread - `id`, `kind`, `customerId`, `threadId`, `status`, `lastMessageAt` -
-/// and nothing else, so rows drawn from the API can show a client's thread and
-/// when it last moved, but not the client's name, a preview of the last message
-/// or an unread count. `Conversation.fromJson` treats all three as optional, so
-/// this repository needs no change when the backend adds them; until then the
-/// rows lean on [Conversation.unnamedClientTitle] and read quietly.
+/// **The organization id is read at call time, not captured.** It arrives from
+/// `GET /orgs/my` after the shell mounts, so the constructor takes a callback
+/// (the same shape `ApiHomeRepository` uses) and a null id raises
+/// [OrgContextUnavailable] - a "not yet" the screen keeps as a loading state.
+/// The id is always the active membership's, never the JWT's `org_id` claim,
+/// which can be stale; the server's authorization handler deliberately ignores
+/// the claim and reads the route value instead.
 ///
-/// The one thread the backend models today is the Salon, which
-/// `Conversation.fromJson` classifies as Aveline's and the inbox pins.
+/// **What the endpoint carries.** The list row is complete: the client's name, a
+/// block-aware preview of the newest message, the block it came from (the row's
+/// category), who spoke last, the agent persona and the actionable marker set.
+/// `Conversation.fromJson` treats every one of them as optional, so a payload
+/// that predates them still draws.
 class ApiConversationRepository implements ConversationRepository {
   ApiConversationRepository(
     this._dio, {
@@ -27,31 +29,29 @@ class ApiConversationRepository implements ConversationRepository {
 
   final Dio _dio;
 
-  /// The shop whose inbox is being read. Every conversation is scoped to an org
-  /// on the server, so the caller has to name one.
-  final String organizationId;
+  /// The shop whose inbox is being read, resolved at call time. Every
+  /// conversation is scoped to an org on the server, so the caller has to name
+  /// one; until the id is known there is nothing to call.
+  final String? Function() organizationId;
 
   /// How many threads one read asks for.
   ///
-  /// The inbox draws one unpaged column, so this is a ceiling rather than a page
-  /// size: a boutique with more open threads than this needs the paging the
-  /// endpoint already supports, and a footer that says how many are left.
+  /// The inbox pages with load-more: the envelope's `total` is what tells the
+  /// controller whether another page exists.
   final int pageSize;
 
   @override
-  Future<List<Conversation>> fetchConversations() async {
+  Future<ConversationPage> fetchConversations({int page = 1}) async {
+    final organizationId = this.organizationId();
+    if (organizationId == null || organizationId.isEmpty) {
+      throw const OrgContextUnavailable();
+    }
+
     final response = await _dio.get<Map<String, dynamic>>(
       '/api/v1/orgs/$organizationId/conversations',
-      queryParameters: {'page': 1, 'pageSize': pageSize},
+      queryParameters: {'page': page, 'pageSize': pageSize},
     );
 
-    final items = response.data?['items'];
-    if (items is! List) {
-      return const [];
-    }
-    return [
-      for (final item in items)
-        if (item is Map) Conversation.fromJson(Map<String, dynamic>.from(item)),
-    ];
+    return ConversationPage.fromJson(response.data ?? const {});
   }
 }

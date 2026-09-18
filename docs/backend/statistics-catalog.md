@@ -835,6 +835,30 @@ per-plan `S-n` numbering (plan strategy §5.7).
 [domain-model.md](domain-model.md). It is not a metric source on its own beyond
 the completion-rate numerator above.
 
+### Conversations inbox metrics (proposed — no `S-n` allocated here)
+
+Recorded by **name and formula only**; identifiers are allocated centrally at
+merge, per the same series decision as the Home block above. The inbox releases
+(`docs/architecture/inbox.md` §5.2) ships the read model; **no statistics route is
+built yet**, so the endpoint column names the intended exposure rather than a
+route that exists.
+
+| Metric | Formula | Dimensions | Granularity | Endpoint | Access |
+| --- | --- | --- | --- | --- | --- |
+| `conversationOpenCount` | `COUNT(*) FROM Conversations WHERE OrganizationId = @org AND Status NOT IN ('Resolved','Archived')` | `organizationId`, `kind` | real-time | `GET /api/v1/orgs/{organizationId}/stats/conversations` (intended) | `stats:view` |
+| `inboxFirstResponseLatency` | percentile of `firstStaffOrAgentReplyAt − firstClientMessageAt`, per conversation. `firstClientMessageAt` is the first message with `Kind = ClientMessage`; the reply is the first later `User` or `Agent` message. Percentiles must be `null` with a `reason` below `Telemetry:MinSampleForPercentile` (default 20) | `organizationId`, `kind`, `p50`/`p90` | day | same | `stats:view` |
+| `conversationSignOffWaitTime` | percentile of `SignOffDecision.DecidedAt − Message.CreatedAt` for `Kind = SignOff`. **Blocked on the producer**: nothing emits a `SignOff` yet (ADR-018); the write path that stages it is complete, so this needs no redefinition when the commerce flow ships. The agent-side analogue is `S-21 agentApprovalWaitTime` | `organizationId`, `approved`/`rejected` | day | same | `stats:view` |
+| `conversationMessageVolume` | `COUNT(*)` of `Messages` joined to their conversation, grouped by the message's `AuthorKind` and the first meaningful content-block type (`lastMessageBlock`'s vocabulary) | `organizationId`, `authorKind`, `blockType` | hour | same | `stats:view` |
+| `conversationRealtimeDeliveries` | `COUNT(*)` of `ReceiveConversationChanged` sends, grouped by event, target group (`org:{id}` vs `user:{id}`) and routing outcome | `organizationId`, `event`, `group` | hour | same | `stats:system` (admin only) |
+
+**Alert worth defining** (needs an alert-catalog entry, not invented here):
+`conversationRealtimeDeliveries` dropping to zero while `conversationMessageVolume`
+is non-zero — the signal that the inbox's broadcast has stopped working.
+
+**Withdrawn:** `conversationUnreadTotal` was proposed alongside the read-state model
+that D2 = (c) declined to ship. There is no read state to aggregate, so the metric is
+withdrawn, not deferred.
+
 ---
 
 ## 9. Retention and aggregation summary

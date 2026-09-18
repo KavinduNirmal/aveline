@@ -128,8 +128,21 @@ public class ConversationService : IConversationService
         int pageSize,
         CancellationToken cancellationToken = default)
     {
-        var (items, total) = await _conversations.ListAsync(orgId, userId, page, pageSize, cancellationToken);
-        return (items.Select(ConversationDto.From).ToList(), total);
+        var (rows, total) = await _conversations.ListAsync(orgId, userId, page, pageSize, cancellationToken);
+        return (rows.Select(ConversationTileMapper.ToDto).ToList(), total);
+    }
+
+    public async Task<ConversationTile?> GetTileAsync(
+        Guid conversationId,
+        CancellationToken cancellationToken = default)
+    {
+        var row = await _conversations.GetRowAsync(conversationId, cancellationToken);
+        return row is null
+            ? null
+            : new ConversationTile(
+                ConversationTileMapper.ToDto(row),
+                row.Conversation.OrganizationId,
+                row.Conversation.OwnerUserId);
     }
 
     public async Task<(IReadOnlyList<MessageDto> Items, int Total)> ListMessagesAsync(
@@ -201,6 +214,8 @@ public class ConversationService : IConversationService
             ? "[]"
             : evt.ContentBlocks.GetRawText();
 
+        var isSignOff = evt.Kind == MessageKind.SignOff;
+
         var message = new Message
         {
             // The agent's message.created payload only carries a thread_id, so the
@@ -213,14 +228,22 @@ public class ConversationService : IConversationService
             ContentBlocksJson = contentBlocksJson,
             // Bind a SignOff to the exact payload the human will approve, so a later edit
             // to the message cannot change what was approved.
-            ContentHash = evt.Kind == MessageKind.SignOff ? ContentHash.Compute(contentBlocksJson) : null,
+            ContentHash = isSignOff ? ContentHash.Compute(contentBlocksJson) : null,
             ReplyToMessageId = evt.ReplyToMessageId,
             WorkflowRunId = evt.WorkflowRunId,
-            Status = MessageStatus.Published,
+            // A SignOff is staged until a human decides it; everything else is visible at once.
+            Status = isSignOff ? MessageStatus.AwaitingSignOff : MessageStatus.Published,
         };
         await _messages.SaveAsync(message, cancellationToken);
 
         conversation.LastMessageAt = DateTime.UtcNow;
+        if (isSignOff)
+        {
+            // Pause the thread on the associate. This is what lights the row's `approval`
+            // marker, makes the thread's decision affordance appear, and lets
+            // DecideSignOffAsync's guard pass - all three read this state.
+            conversation.Status = ConversationStatus.AwaitingSignOff;
+        }
         await _conversations.SaveAsync(conversation, cancellationToken);
 
         return MessageDto.From(message);
@@ -334,10 +357,14 @@ public class ConversationService : IConversationService
         string externalRef,
         string from,
         string text,
+        Guid? customerId,
         CancellationToken cancellationToken = default)
     {
         var threadId = Guid.NewGuid().ToString("N");
-        var conversation = await _conversations.GetOrCreateSalonByExternalRefAsync(orgId, externalRef, threadId, cancellationToken);
+        // The customer context is bound at creation (D1): the thread exists for the identified
+        // customer, and a phone that is not on file is a rendered state rather than a silent one.
+        var conversation = await _conversations.GetOrCreateSalonByExternalRefAsync(
+            orgId, externalRef, threadId, customerId, cancellationToken);
 
         var message = new Message
         {

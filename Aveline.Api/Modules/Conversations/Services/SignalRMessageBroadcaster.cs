@@ -29,4 +29,19 @@ public class SignalRMessageBroadcaster : IMessageBroadcaster
             .Group(GroupName.ForSalon(state.ConversationId))
             .SendAsync("ReceiveAgentState", state, cancellationToken);
     }
+
+    public async Task BroadcastConversationChangedAsync(
+        ConversationTile tile,
+        CancellationToken cancellationToken = default)
+    {
+        // An organization-shared thread is visible to every active member; a per-user general
+        // Salon is visible only to its owner, so its tile must never reach the org group.
+        var group = tile.OwnerUserId is { } ownerUserId
+            ? GroupName.ForUser(ownerUserId)
+            : GroupName.ForOrganization(tile.OrganizationId);
+
+        await _hubContext.Clients
+            .Group(group)
+            .SendAsync("ReceiveConversationChanged", tile.Tile, cancellationToken);
+    }
 }

@@ -171,6 +171,44 @@ Tapping an option calls `POST /orgs/{orgId}/conversations/{id}/select-customer`
 (`{ customerId, query }`), which binds the Salon's `CustomerId` and re-triggers the agent
 with that customer in context so Ava pulls up their profile/events.
 
+### 5.2 The inbox row (list-tile contract)
+
+The list endpoint (`GET /orgs/{orgId}/conversations`) returns a tile per thread that is rich
+enough to draw a row without a second request: the client's name, the newest message's
+preview, **the block the preview came from**, who spoke last, the persona key, and the
+actionable `markers` set. The derivation lives in one server-side place
+(`ConversationTileMapper`), so a tile that arrives over the realtime hub is the same tile a
+re-read returns.
+
+**The row's category is a content block, not the message kind.** Agent output is published
+as `kind: Note` for every persona (`agnet-service/app/events/message_publisher.py`), so
+`lastMessageBlock` is what the row switches on. The preview is derived per block type -
+notably `client_message -> its text`, because an inbound message is a block whose *type* is
+`client_message`, not `text`. A rule that looked for a block of type `text` would render the
+customer's own words as `No messages yet`.
+
+**Markers** are a derived set over the closed vocabulary `approval | choice | draft`, sorted
+by fixed priority `approval` -> `choice` -> `draft`:
+
+| Marker | Derived from | Producer |
+|---|---|---|
+| `approval` | the conversation holds a message with `Kind == SignOff` and `Status == AwaitingSignOff` | the commerce approval flow (ADR-018); the write path is complete, the producer is deferred |
+| `choice` | the newest message carries a `choice` block (Aveline's clarification) | reachable today |
+| `draft` | the newest message carries a `suggestion` block (Ava's `draft_response`, Elle's) | reachable today |
+
+**Customer context is a separate axis from `kind`.** `ConversationKind` keeps its declared
+meaning (the thread's nature and audience); the customer a thread carries rides
+`CustomerId`. Clients classify by that context first (`customerId`, then `ExternalRef`), so
+exactly one thread per caller is the general concierge and a channel thread whose customer
+is not yet identified is rendered rather than pinned. The inbound path binds the context at
+creation through the existing phone lookup (`ICustomerRepository.GetByPhoneAsync`); see §6.2.
+
+**The list is paged and the ordering is total.** `page`/`pageSize` are clamped, page one
+holds the newest threads, and the order is `OrderByDescending(LastMessageAt ?? CreatedAt)`
+with `.ThenByDescending(Id)`, so a page boundary cannot duplicate or skip a row. The client
+loads further pages on demand and states how much of the inbox is on screen; search narrows
+only what is loaded, and the copy says so.
+
 ---
 
 ## 6. Flows
@@ -183,17 +221,24 @@ client so the reply types in live. `WorkflowRunId`/`TraceId` are recorded for au
 
 ### 6.2 WhatsApp inbound
 Webhook (`/api/v1/webhooks/whatsapp/{orgId}`, ADR-015) → persist `InboundMessageLog` →
-publish `message.received` → API creates a `Message` of kind `ClientMessage` in the
-customer's Salon (so staff see it immediately) → the API then asks the agent service to
+publish `message.received` → the API resolves the sender's phone against the customer book
+(`ICustomerRepository.GetByPhoneAsync`) and creates a `Message` of kind `ClientMessage` in
+that customer's Salon, binding `CustomerId` at thread creation (so staff see it immediately
+and the thread carries the context it exists for) → the API then asks the agent service to
 draft a response into the same thread (`/agents/query` with the conversation's `threadId`
-and the client's phone in `org_context`), so the memory agent can try to identify the
-customer. Both steps are best-effort and never delay the webhook `200`.
+and the client's phone in `org_context`), so the memory agent can refine the identification.
+A phone that is not on file yields a thread with `ExternalRef` set and `CustomerId` null -
+the rendered "not yet identified" state, resolvable through `select-customer` (§5.1.1).
+Both steps are best-effort and never delay the webhook `200`.
 
 ### 6.3 Human-in-the-loop sign-off
 Commerce agent issues an interrupt (`pause_for_approval`, `agnet-service/app/agents/commerce/README.md`)
-→ agent emits a `SignOff` content event → API persists a `Message` of kind `SignOff`
-(`AwaitingSignOff`) → staff approve or reject inline; the API records the decision (bound to a
-content hash) and updates the message/conversation status.
+→ agent emits a `SignOff` content event → API persists a `Message` of kind `SignOff` and
+stages it: the message is written `AwaitingSignOff` and the conversation is set
+`AwaitingSignOff`, which is what lights the row's `approval` marker and makes the thread's
+decision affordance appear → staff approve or reject inline; the API records the decision
+(bound to a content hash) and updates the message/conversation status (`Published`/`Cancelled`
+and `Active`/`Resolved`).
 
 > **Deferred (ADR-018):** resuming the paused LangGraph workflow via `threadId`, writing
 > `ApprovalQueueEntry` (`threadId` + `conversationId`), and dispatching an `ApprovalNeeded`
@@ -232,6 +277,20 @@ Lina:   Message 5  (reply to Message 3)
   `blocks` to the persisted message and rebroadcasts it. Editing a SignOff's payload
   re-binds its `contentHash` to the revised content. Unknown messages are skipped without
   failing the listener.
+- **Inbox tiles (`ReceiveConversationChanged`)**: after an agent message is applied, and from
+  the API's own creation/change sites (the WhatsApp webhook, `POST /conversations`,
+  `select-customer`, a staff message), the API broadcasts the conversation's tile so an open
+  inbox updates without a re-list. The payload is exactly the list's `ConversationDto`,
+  derived by the same `ConversationTileMapper`. A brand-new thread needs this: `message.created`
+  carries a message for a conversation the client may never have seen, and
+  `conversation.created` has no publisher.
+- **Routing is a correctness rule.** The tile goes to `org:{organizationId}` for an
+  organization-shared thread (`OwnerUserId == null`) and to `user:{ownerUserId}` for a
+  per-user general Salon. The org group is joined by every active member on connect, so
+  sending a private Salon's tile there would leak its existence to colleagues.
+- **One connection per screen.** The Salon and the inbox each construct their own
+  `ConversationRealtimeService` and disconnect on dispose, so neither steals the other's
+  connection; the inbox's connect joins no Salon.
 
 ---
 

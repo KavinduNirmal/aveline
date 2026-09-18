@@ -3265,3 +3265,138 @@ visit is not billable.
   customers domain's level nullable is the follow-up.
 - `CustomerDetail` mapping was not built: Home's picker needs only the book, so the new repository
   implements the narrow `CustomerBookSource` rather than the whole customers repository.
+
+## Session 2026-09-18 (cont.) — Conversations inbox: Flutter to backend (session start)
+
+**Task:** Execute the finalized conversations-inbox plan
+(`.agents/plans/flutter-to-backend-conversations-inbox-implementation.ignore.md`, strategy revision 4)
+end to end on the current branch `feature/flutter-to-backend-conversations-inbox`.
+**Tool used:** DeepSeek Harness (deepseek-flash) coding agent
+**Status:** In progress
+
+### Intended Work (session start)
+
+- Read both plan files in full, then execute the six slices (S0–S5) in order, staying on the current
+  branch (no branch creation, no switching).
+- **S0** — client truthfulness: remove the unread badge and summary (D2 = c), replace the demo fallback
+  with an explicit empty repository (D5 = b), fix the stale README line, convert seed assertions to
+  fakes.
+- **S1** — the list row tells the truth (backend): `customerName`, `externalRef`, block-aware
+  `lastMessagePreview`, `lastMessageBlock`, `lastMessageKind`, `lastMessageAuthor`,
+  `lastMessageAgentKey`, derived `markers` set; the completed SignOff write path; total ordering plus
+  index; inbound customer binding; OpenAPI and web mirror; client marker rendering.
+- **S2** — wire `ApiConversationRepository` into `app.dart` with the lazy org-id callback.
+- **S3** — paging (`ConversationPage` mirroring `ThreadPage`) and an honest footer.
+- **S4** — live list updates: org/user-targeted broadcasts, new-thread broadcast at the API's creation
+  sites, a `JoinSalon`-free connect for the inbox.
+- **S5** — metrics and documentation.
+- TDD throughout: failing test first, implement, refactor. One GitHub issue per phase. Documentation
+  (general, API, OpenAPI) updated at the end of every delivered phase. `kavindu.md` updated at session
+  start (this entry) and at session end.
+
+### Notes
+
+- Baseline: commit `ddc53f0` (`feat(home): wire the Home tab to the backend (S0-S6) (#281)`), HEAD
+  `015f7b0`. Only `frontend/aveline_mobile/android/gradle.properties` was dirty at session start.
+- Plan decisions applied without re-deriving: D1 = (c) axis separation; D2 = (c) no read state;
+  D3 = (B) load-more; D4 = (B) org broadcasts with a new-thread path; D5 = (b) empty repository;
+  §4.1 full marker infrastructure with the SignOff write path completed.
+
+### Work Delivered
+
+**GitHub issues, one per phase:** [#283](https://github.com/KavinduNirmal/aveline/issues/283) (S0),
+[#284](https://github.com/KavinduNirmal/aveline/issues/284) (S1),
+[#285](https://github.com/KavinduNirmal/aveline/issues/285) (S2),
+[#286](https://github.com/KavinduNirmal/aveline/issues/286) (S3),
+[#287](https://github.com/KavinduNirmal/aveline/issues/287) (S4),
+[#288](https://github.com/KavinduNirmal/aveline/issues/288) (S5). No branch was created or switched;
+everything is on `feature/flutter-to-backend-conversations-inbox`, uncommitted.
+
+**S0 — client truthfulness (D2 = c, D5 = b).** Removed the unread badge, the unread summary and the
+`unreadCount` / `isUnread` / `unreadTotal` fields; replaced the demo fallback with an
+`EmptyConversationRepository` on both the screen and the app route; converted the screen test from the
+demo seed to explicit fakes; fixed the stale "no search across threads" README line. TDD: the
+"summary is absent" and "registry-built screen renders the empty state" tests were written first, failed
+against the shipped code, then passed.
+
+**S1 — the list row tells the truth.** Backend: `ConversationDto` gained `customerName`, `externalRef`,
+`lastMessagePreview`, `lastMessageKind`, `lastMessageBlock`, `lastMessageAuthor`, `lastMessageAgentKey`
+and `markers`; one `ConversationTileMapper` derives the block-aware preview and the marker set
+(`approval | choice | draft`, sorted) so the list and the realtime tile share one derivation;
+`ListAsync` joins the newest message and the customer's name under the unchanged visibility predicate
+with a total ordering (`ThenByDescending(Id)`); migration `AddConversationListRowSupport` adds the
+`(OrganizationId, LastMessageAt DESC, Id DESC)` index; the inbound WhatsApp path resolves the customer
+from the phone at creation (`GetByPhoneAsync`) and binds `CustomerId`, leaving an unknown phone a
+rendered `externalRef` state; the SignOff write path now sets `MessageStatus.AwaitingSignOff` and
+`Conversation.Status = AwaitingSignOff` when a `SignOff` is persisted, so `DecideSignOffAsync`'s guard
+can finally pass. Client: D1's context axis is read first (`customerId`, then `externalRef`, then
+`kind == Salon`), the persona-aware preview prefix and the three marker labels render. OpenAPI and the
+web `ConversationDto` mirror extended.
+
+**S2 — wire the repository.** `app.dart` constructs
+`ApiConversationRepository(_dio, organizationId: () => _boutiqueProvider.organizationId)`; the
+repository reads the id at call time and raises the shared `OrgContextUnavailable` when it is null, which
+the controller keeps as a "not yet" loading state rather than the error card; the stale doc comments
+were corrected; `OrgContextUnavailable` moved to `core/network/org_context.dart` and is re-exported by
+Home so the distinction is made once.
+
+**S3 — paging.** `ConversationPage` mirrors `ThreadPage`; the repository returns it; the controller holds
+`total`, accumulates pages and exposes `hasMore` / `loadMore`; the footer prints
+`Showing <loaded> of <total>` with a load-more affordance and prints the end-of-list line only when
+everything is loaded; the no-matches copy states that search covers only what is loaded.
+
+**S4 — live list updates.** `IMessageBroadcaster` gained `BroadcastConversationChangedAsync` with the
+routing rule (org group when `OwnerUserId == null`, user group for a per-user general Salon, so a
+colleague's private thread never reaches the org group); the hub's documented client contract gained
+`ReceiveConversationChanged`; the two agent-event handlers and the API's own change sites (the webhook,
+`POST /conversations`, `select-customer`, a staff note) broadcast the tile; the Flutter
+`ConversationRealtimeService` gained a `JoinSalon`-free connect with an `onConversationChanged` callback,
+and the inbox opens its own connection while mounted and disconnects on dispose.
+
+**S5 — metrics and documentation.** The statistics catalog records the inbox metrics by name and formula
+with no `S-n` allocated, and withdraws `conversationUnreadTotal`; OpenAPI documents the new `lastMessage*`
+/ `markers` fields and the `ReceiveConversationChanged` contract; the feature README's "What the API
+carries today" and "Known gaps", `docs/architecture/inbox.md` (§5.2, §6.2, §6.3, §7) and
+`docs/backend/domain-model.md` §8.8 were rewritten.
+
+### Verification Performed
+
+- `dotnet test Aveline.Api/Aveline.Api.sln -c Release`: **1382 passed, 0 failed** (6 m 7 s), including the
+  new `ConversationTileMapperTests`, the extended `ConversationServiceTests`,
+  `ConversationRepositoryTests`, `SignalRMessageBroadcasterTests`, `ConversationEventSubscriberTests` and
+  `WebhookEndpointsIntegrationTests`.
+- `flutter analyze --no-fatal-infos`: **No issues found!**
+- `flutter test`: **871 passed, 1 failed**. The single failure is a pre-existing, environment-dependent
+  flake in the sibling client-thread plan's file
+  (`client_thread_screen_test.dart: ClientThreadScreen thread opens a day with the day it was`): its stub
+  thread is pinned to `DateTime.utc(2026, 9, 18, 12)` while `relativeDay` compares local calendar days,
+  so it fails whenever the local date is ahead of that UTC instant. Deliberately not modified (the
+  client-thread plan owns that screen).
+- `bun run build` and `bun run test` in `frontend/web`: build passes, **203 tests passed**.
+- `docs/api/openapi.yaml` re-parsed as YAML after every addition; the new migration was inspected
+  (index only, descending as intended).
+
+### Decisions Applied / Deviations
+
+- D1 = (c), D2 = (c), D3 = (B), D4 = (B), D5 = (b) and §4.1's full marker infrastructure were applied as
+  decided, without re-deriving.
+- `ApiConversationRepository.organizationId` became a `String? Function()` rather than a `String`: the
+  plan's S2 passes a callback, and only a call-time read lets a null id be a "not yet" instead of an
+  error. The strategy's "the constructor does not change" was read as "no new capability", not a literal
+  signature freeze.
+- S0 replaces the demo repository on the app route as well as the screen's fallback, so the plan's
+  `grep "DemoConversationRepository()" lib/` acceptance holds literally; S2 then swaps it for the API
+  repository.
+- S4 also broadcasts the tile after a staff note (the list's preview moves without waiting for the agent's
+  reply); the plan's trigger list did not name that site.
+- `conversation.created` was left unpublished. The API broadcasts from its own creation sites instead,
+  which is the plan's preferred option.
+
+### Remaining Work / Known Deviations
+
+- The `approval` marker stays unlit until the commerce approval flow (ADR-018) emits a `SignOff`. The read
+  derivation, the DTO field, the client rendering and the write-path statuses are all complete.
+- No statistics route is built; the catalog records the inbox metrics by name and formula only, and their
+  identifiers are left for central allocation at merge.
+- Nothing was committed; all changes are in the working tree on
+  `feature/flutter-to-backend-conversations-inbox`.

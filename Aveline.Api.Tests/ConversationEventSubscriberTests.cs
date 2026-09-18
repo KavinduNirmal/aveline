@@ -33,13 +33,16 @@ public class ConversationEventSubscriberTests
         public Task<Conversation?> GetByThreadIdAsync(string threadId, CancellationToken cancellationToken = default)
             => Task.FromResult(ByThread.GetValueOrDefault(threadId));
 
-        public Task<(IReadOnlyList<Conversation> Items, int Total)> ListAsync(Guid orgId, Guid userId, int page, int pageSize, CancellationToken cancellationToken = default)
-            => Task.FromResult<(IReadOnlyList<Conversation>, int)>(([], 0));
+        public Task<(IReadOnlyList<ConversationListRow> Items, int Total)> ListAsync(Guid orgId, Guid userId, int page, int pageSize, CancellationToken cancellationToken = default)
+            => Task.FromResult<(IReadOnlyList<ConversationListRow>, int)>(([], 0));
+
+        public Task<ConversationListRow?> GetRowAsync(Guid conversationId, CancellationToken cancellationToken = default)
+            => Task.FromResult<ConversationListRow?>(null);
 
         public Task<(Conversation Conversation, bool Created)> GetOrCreateSalonAsync(Guid orgId, Guid userId, Guid? customerId, string threadId, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public Task<Conversation> GetOrCreateSalonByExternalRefAsync(Guid orgId, string externalRef, string threadId, CancellationToken cancellationToken = default)
+        public Task<Conversation> GetOrCreateSalonByExternalRefAsync(Guid orgId, string externalRef, string threadId, Guid? customerId, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
         public Task SaveAsync(Conversation conversation, CancellationToken cancellationToken = default)
@@ -59,6 +62,33 @@ public class ConversationEventSubscriberTests
 
         public Task<(IReadOnlyList<ConversationDto> Items, int Total)> ListAsync(Guid orgId, Guid userId, int page, int pageSize, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
+
+        public List<Guid> TilesRequested { get; } = [];
+
+        public Task<ConversationTile?> GetTileAsync(Guid conversationId, CancellationToken cancellationToken = default)
+        {
+            TilesRequested.Add(conversationId);
+            return Task.FromResult<ConversationTile?>(new ConversationTile(
+                new ConversationDto(
+                    conversationId,
+                    "Salon",
+                    null,
+                    null,
+                    null,
+                    "thread-1",
+                    "Active",
+                    null,
+                    "A preview",
+                    "Note",
+                    "text",
+                    "Agent",
+                    AgentKeys.Ava,
+                    []),
+                OrganizationId,
+                null));
+        }
+
+        public static readonly Guid OrganizationId = Guid.Parse("22222222-2222-2222-2222-222222222222");
 
         public Task<ConversationDto?> SelectCustomerAsync(Guid orgId, Guid userId, Guid conversationId, Guid customerId, string? query, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
@@ -88,7 +118,7 @@ public class ConversationEventSubscriberTests
         public Task<MessageDto> DecideSignOffAsync(Guid orgId, Guid userId, Guid conversationId, Guid messageId, bool approved, string contentHash, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public Task<MessageDto> RecordInboundClientMessageAsync(Guid orgId, string externalRef, string from, string text, CancellationToken cancellationToken = default)
+        public Task<MessageDto> RecordInboundClientMessageAsync(Guid orgId, string externalRef, string from, string text, Guid? customerId, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
     }
 
@@ -96,6 +126,7 @@ public class ConversationEventSubscriberTests
     {
         public List<MessageDto> Broadcast { get; } = [];
         public List<AgentStateDto> StateBroadcast { get; } = [];
+        public List<ConversationTile> ConversationChanged { get; } = [];
 
         public Task BroadcastMessageAsync(MessageDto message, CancellationToken cancellationToken = default)
         {
@@ -106,6 +137,12 @@ public class ConversationEventSubscriberTests
         public Task BroadcastAgentStateAsync(AgentStateDto state, CancellationToken cancellationToken = default)
         {
             StateBroadcast.Add(state);
+            return Task.CompletedTask;
+        }
+
+        public Task BroadcastConversationChangedAsync(ConversationTile tile, CancellationToken cancellationToken = default)
+        {
+            ConversationChanged.Add(tile);
             return Task.CompletedTask;
         }
     }
@@ -167,6 +204,10 @@ public class ConversationEventSubscriberTests
         Assert.Equal(AgentKeys.Aveline, applied.AgentKey);
         Assert.Equal(MessageKind.Note, applied.Kind);
         Assert.Single(broadcaster.Broadcast);
+        // The list is live too: the same handler broadcasts the conversation's inbox tile so an
+        // open inbox updates without a re-list.
+        var tile = Assert.Single(broadcaster.ConversationChanged);
+        Assert.Equal(FakeConversationService.OrganizationId, tile.OrganizationId);
     }
 
     [Fact]
@@ -242,6 +283,7 @@ public class ConversationEventSubscriberTests
         Assert.Equal(messageId, updated.MessageId);
         Assert.Equal(MessageStatus.Sent, updated.Status);
         Assert.Single(broadcaster.Broadcast);
+        Assert.Single(broadcaster.ConversationChanged);
     }
 
     [Fact]

@@ -43,7 +43,7 @@ public static class BlossomEndpoints
             {
                 return MapProblem(exception);
             }
-        }).RequireAuthorization(AuthorizationConfiguration.BillingViewPolicy);
+        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueBillingSelfViewPolicy);
 
         group.MapGet("/usage", async (
             Guid organizationId, DateTime? from, DateTime? to, string? groupBy,

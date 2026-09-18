@@ -31,14 +31,14 @@ class _ClientStatusTickerState extends State<ClientStatusTicker> {
 
   int _index = 0;
 
-  /// The statuses worth rotating: the clients with something new. Falls back to
-  /// everyone when nothing is new, so the card is never empty.
-  late List<ClientHighlight> _statuses = _pick(widget.clients);
+  /// The statuses worth rotating: everyone in the row.
+  ///
+  /// There is no read marker in the schema, so there is no "new" subset to
+  /// prefer; a dot that can never clear would be a worse lie than no dot.
+  late List<ClientHighlight> _statuses = List.of(widget.clients);
 
-  static List<ClientHighlight> _pick(List<ClientHighlight> clients) {
-    final withNews = clients.where((client) => client.hasNewActivity).toList();
-    return withNews.isEmpty ? List.of(clients) : withNews;
-  }
+  static List<ClientHighlight> _pick(List<ClientHighlight> clients) =>
+      List.of(clients);
 
   @override
   void didChangeDependencies() {
@@ -157,7 +157,7 @@ class _Snapshot extends StatelessWidget {
       children: [
         Row(
           children: [
-            ClientAvatar(client: client, size: 32, showActivityDot: false),
+            ClientAvatar(client: client, size: 32),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
@@ -167,14 +167,15 @@ class _Snapshot extends StatelessWidget {
                 style: theme.textTheme.titleMedium,
               ),
             ),
-            Text(
-              clientTierLabel(client.tier),
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: clientTierColor(client.tier, scheme),
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.6,
+            if (client.tier != null)
+              Text(
+                clientTierLabel(client.tier!),
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: clientTierColor(client.tier!, scheme),
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.6,
+                ),
               ),
-            ),
           ],
         ),
         const SizedBox(height: 8),

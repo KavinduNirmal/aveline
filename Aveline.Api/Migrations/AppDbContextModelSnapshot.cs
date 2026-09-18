@@ -1542,6 +1542,10 @@ namespace Aveline.Api.Migrations
                     b.Property<DateTime?>("LastVisitAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("Level")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
                     b.Property<Guid>("OrganizationId")
                         .HasColumnType("uuid");
 
@@ -1893,6 +1897,54 @@ namespace Aveline.Api.Migrations
                         .IsUnique();
 
                     b.ToTable("CustomerTags", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Home.Models.FocusDismissal", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ContentHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Decision")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTime>("DismissedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Domain")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SourceKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "UserId");
+
+                    b.HasIndex("OrganizationId", "UserId", "Domain", "SourceKey")
+                        .IsUnique();
+
+                    b.ToTable("Focus_Dismissals", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Integrations.Models.InboundMessageLog", b =>
@@ -4082,6 +4134,15 @@ namespace Aveline.Api.Migrations
                     b.Navigation("Customer");
 
                     b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Home.Models.FocusDismissal", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Integrations.Models.IntegrationCredential", b =>

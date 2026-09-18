@@ -17,6 +17,8 @@ using Aveline.Api.Modules.Billing.Endpoints;
 using Aveline.Api.Modules.Conversations;
 using Aveline.Api.Modules.Conversations.Hubs;
 using Aveline.Api.Modules.CustomerConcierge;
+using Aveline.Api.Modules.Home;
+using Aveline.Api.Modules.Home.Endpoints;
 using Aveline.Api.Modules.Integrations;
 using Aveline.Api.Modules.Notifications;
 using Aveline.Api.Modules.Notifications.Hubs;
@@ -70,6 +72,7 @@ builder.Services.AddSignalR()
 builder.Services.AddNotificationsModule(builder.Configuration);
 builder.Services.AddConversationsModule(builder.Configuration);
 builder.Services.AddCustomerConciergeModule();
+builder.Services.AddHomeModule();
 builder.Services.AddSystemHealthModule(builder.Configuration);
 builder.Services.AddStatisticsModule(builder.Configuration);
 
@@ -167,6 +170,8 @@ v1.MapBillingStatisticsEndpoints();
 v1.MapApiAccessEndpoints();
 v1.MapStatisticsEndpoints();
 v1.MapCatalogEndpoints();
+v1.MapHomeEndpoints();
+v1.MapCustomerTenantEndpoints();
 
 app.MapBillingEndpoints();
 app.MapCustomerConciergeEndpoints();

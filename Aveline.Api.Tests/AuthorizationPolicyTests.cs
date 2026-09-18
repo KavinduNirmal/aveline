@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Aveline.Api.Authorization;
 using Aveline.Api.Configurations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.DependencyInjection;
@@ -143,5 +144,25 @@ public class AuthorizationPolicyTests
     public void SettingsManage_Denies_Manager()
     {
         Assert.False(IsAuthorized(Principal("org:boutique_supervisor"), "settings:manage"));
+    }
+
+    [Theory]
+    [InlineData(AuthorizationConfiguration.BoutiqueCustomerAccessPolicy, Permissions.CustomersView)]
+    [InlineData(AuthorizationConfiguration.BoutiqueBillingSelfViewPolicy, Permissions.BillingViewSelf)]
+    public void NamedOrgScopedPolicies_CarryAnOrganizationScopeRequirement(
+        string policyName,
+        string permission)
+    {
+        // A bare per-permission policy (registered for every name in the catalog)
+        // has no organization scope: it would authorize on the JWT's possibly-stale
+        // role claims and never consult the `organizationId` route value. Tenant
+        // routes must therefore name a policy that carries the requirement.
+        var provider = Services.GetRequiredService<IAuthorizationPolicyProvider>();
+        var policy = provider.GetPolicyAsync(policyName).GetAwaiter().GetResult();
+
+        Assert.NotNull(policy);
+        var requirement = Assert.Single(
+            policy!.Requirements.OfType<OrganizationScopeRequirement>());
+        Assert.Equal(permission, requirement.Permission);
     }
 }

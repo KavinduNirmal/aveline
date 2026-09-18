@@ -53,8 +53,8 @@ unless it appears in this catalog **and** in
 | Source | `UsageAccounts` |
 | Storage | on-the-fly (single-row read) |
 | Endpoint | `GET /api/v1/orgs/{organizationId}/blossoms/balance` |
-| Access | `billing:view` |
-| Notes | Verified against the ledger by the `reconciliation` block in S-3 |
+| Access | `billing:view:self` — every organization role holds it. The management read (`billing:view`) still governs the statement and burn-rate; the balance alone is self-service, so the associate at the counter can see what the shop has left. |
+| Notes | Verified against the ledger by the `reconciliation` block in S-3. Home's Blossom meter (S-1) renders `blossomRemaining`, with the low-water note driven by `lowBalanceThresholdPercent`, not a client constant. |
 
 ### S-2 · `blossomUsage`
 
@@ -814,6 +814,26 @@ shrinking the definition to what happens to work today.
 > `streamingRunsIncluded` and `unattributedRunsExcluded` are not emitted yet. A
 > false `latencyInstrumented` makes `GET /latency` return a null series rather than
 > zeros. See [README.md](README.md#implementation-status-phase-4--agentic-statistics).
+
+### Home focus feed metrics (proposed — no `S-n` allocated here)
+
+The Home focus feed is derived on every read (`GET /orgs/{id}/stats/home`), so
+these are computed from the same generators rather than from a new table. Their
+identifiers are allocated centrally at merge, per the series decision to stop
+per-plan `S-n` numbering (plan strategy §5.7).
+
+| Metric | Formula | Dimensions | Granularity | Endpoint | Access |
+| --- | --- | --- | --- | --- | --- |
+| `focusTaskBacklog` | `COUNT(*)` of the derived feed, grouped by `domain`; `COUNT(*) WHERE dueAtUtc < now` as `overdue` | `organizationId`, `domain`, `overdue` | real-time | `GET /api/v1/orgs/{organizationId}/stats/home` (`counts`) | `catalog:view` on an active membership (the feed's own gate) |
+| `focusTaskCompletionRate` | `dismissals / (dismissals + dockets that left the feed without one)` over a window; `p50`/`p95` of `DismissedAtUtc − first seen`. Percentiles must be `null` with a `reason` below `Telemetry:MinSampleForPercentile` (default 20) | `organizationId`, `domain`, `window` | day | derived from `Focus_Dismissals` + the feed | `stats:view` |
+| `homeFeedLatency` | p50/p95 server duration of the feed route | `organizationId`, `route` | hour | telemetry-derived; prefer the generic S-26 `apiLatency` unless a budget is needed | `stats:view` |
+| `customerVisitCount` | `COUNT(*) FROM Customer_Interactions WHERE Channel = 'in_person' AND Direction = 'inbound' AND CreatedAt ∈ [from, to)` | `organizationId`, `channel`, `staffMemberId`, `day` | hour | derived from `Customer_Interactions` | `customers:view` |
+| `customerVisitRecencyDistribution` | histogram of `now − LastVisitAt` bucketed (≤ 7 d, 8–30, 31–90, > 90) | `organizationId`, `bucket` | day | derived from `Customers` | `customers:view` |
+| `walkInCreationCount` | `COUNT(*)` of customers whose create source is `counter_walkin` | `organizationId`, `day` | day | derived from `Customers.CreatedAt` + the create audit | `customers:view` |
+
+`Focus_Dismissals` is the only new storage the feed adds; see
+[domain-model.md](domain-model.md). It is not a metric source on its own beyond
+the completion-rate numerator above.
 
 ---
 

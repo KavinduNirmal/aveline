@@ -35,6 +35,10 @@ public class CustomerConfiguration : IEntityTypeConfiguration<Customer>
             .HasPrecision(18, 2)
             .HasDefaultValue(0m);
 
+        // Nullable with no default: a default would grade every existing client.
+        builder.Property(c => c.Level)
+            .HasMaxLength(16);
+
         builder.Property(c => c.VisitCount)
             .HasDefaultValue(0);
 

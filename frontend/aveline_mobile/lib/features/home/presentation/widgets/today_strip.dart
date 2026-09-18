@@ -33,11 +33,27 @@ class TodayStrip extends StatelessWidget {
   int _countOf(FocusDomain domain) =>
       tasks.where((task) => task.domain == domain).length;
 
-  /// The earliest labelled docket still on the deck.
+  /// The earliest docket still on the deck.
   ///
   /// The pile cycles, so the docket in hand is not necessarily the next thing
-  /// due; this reads the clock labels rather than the pile's order.
+  /// due. The server's `dueAtUtc` is the source of truth; a docket the feed sent
+  /// without a timestamp falls back to its clock label, which is the
+  /// compatibility path for older fixtures.
   FocusTask? get _nextUp {
+    FocusTask? earliestDue;
+    for (final task in tasks) {
+      final due = task.dueAtUtc;
+      if (due == null) {
+        continue;
+      }
+      if (earliestDue == null || due.isBefore(earliestDue.dueAtUtc!)) {
+        earliestDue = task;
+      }
+    }
+    if (earliestDue != null) {
+      return earliestDue;
+    }
+
     FocusTask? earliest;
     for (final task in tasks) {
       final minutes = task.minutesOfDay;
@@ -120,7 +136,7 @@ class TodayStrip extends StatelessWidget {
                   // left" beside a dash is noise, and when the deck empties the
                   // focus section's own empty state says it better than a row of
                   // zeroes would.
-                  if (nextUp != null) ...[
+                  if (nextUp != null && nextUp.displayTimeLabel != null) ...[
                     const SizedBox(height: 16),
                     Container(
                       height: 1,
@@ -147,7 +163,7 @@ class TodayStrip extends StatelessWidget {
                         ),
                         const SizedBox(width: 8),
                         Text(
-                          nextUp.timeLabel,
+                          nextUp.displayTimeLabel!,
                           style: theme.textTheme.headlineSmall,
                         ),
                       ],

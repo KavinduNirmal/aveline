@@ -22,7 +22,7 @@ import '../../../customers/presentation/widgets/customer_level_badge.dart';
 /// can actually open.
 Future<void> showLogVisitSheet(
   BuildContext context, {
-  required CustomerRepository repository,
+  required CustomerBookSource repository,
   required ValueChanged<String> onClientSelected,
 }) {
   return showModalBottomSheet<void>(
@@ -42,7 +42,7 @@ class _LogVisitSheet extends StatefulWidget {
     required this.onClientSelected,
   });
 
-  final CustomerRepository repository;
+  final CustomerBookSource repository;
   final ValueChanged<String> onClientSelected;
 
   @override

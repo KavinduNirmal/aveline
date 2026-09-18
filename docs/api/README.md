@@ -144,6 +144,7 @@ endpoint code:
 | `BoutiqueAccess` | authenticated **and** an `Active` membership in the org in the route that grants `catalog:view` |
 | `BoutiqueMembershipManage` | same, grants `settings:manage` |
 | `BoutiqueConversationAccess` | same, grants `conversations:view` |
+| `BoutiqueCustomerAccess` | same, grants `customers:view` (the tenant customer surface: the client book, a client profile and Home's client highlights) |
 | `InternalServicePolicy` | `X-Internal-Token` + role `InternalService` |
 | *one per permission* | policy name **is** the permission string, e.g. `catalog:view` |
 
@@ -2046,6 +2047,97 @@ stack trace.
 
 **Response `200`** `text/plain; version=0.0.4` (Prometheus exposition format).
 `401` without credentials. Metric names use the `aveline.` prefix.
+
+---
+
+### C.10 Home focus surface (Phase 7 — Home tab)
+
+The Home tab's deck is served by a **derived** feed and one write route. There is
+no task table: every docket points at a fact that already exists.
+
+#### `GET /api/v1/orgs/{organizationId}/stats/home`
+
+**Auth:** the `BoutiqueAccess` policy — an active membership for the organization
+in the route whose role grants `catalog:view`, which every staff role holds.
+
+**Response `200`:**
+
+| Field | Meaning |
+| --- | --- |
+| `generatedAt` | Server time the feed was derived. |
+| `window.localDate` / `window.timeZone` | The organization-local day actually used, from `Organization.TimeZone`. |
+| `dataQuality.*` | Which sources were readable and non-empty (`wardrobeAvailable`, `patronAvailable`, `commerceAvailable`, `logisticsAvailable`). An absent domain is explained, not measured as zero. |
+| `items[]` | Dockets: `id`, `sourceKey`, `domain`, `title`, `detail`, `dueAtUtc`, optional `timeLabel`, `actionLabel`, `doneMessage`, `contentHash`, `caps`. |
+| `counts` | `total`, `overdue`, `byDomain` — authoritative for the same filter set the items came from. |
+
+`commerce` dockets are generated only for a caller whose role holds
+`stats:view:agent`; `logistics` has no writer and is always reported unavailable.
+
+`401` without a token; `403` for a non-member.
+
+#### `POST /api/v1/orgs/{organizationId}/focus/dismissals`
+
+**Auth:** `BoutiqueAccess`, plus a required `Idempotency-Key`.
+
+```json
+{ "sourceKey": "<fact id>", "domain": "wardrobe",
+  "decision": "signOff", "contentHash": "<echo>", "note": null }
+```
+
+**Response `200`:** `{ dismissalId, sourceKey, domain, decision, dismissedAtUtc, counts }`.
+The `counts` are the caller's refreshed feed counts, so the client does not have
+to trust its own optimistic removal.
+
+`404` when the docket is not in the caller's feed (a docket from another
+organization is indistinguishable from one that does not exist); `403` for a
+non-member; `503` when the idempotency lease store is unreachable.
+
+The dismissal is keyed to `sourceKey` and bound to the server's own
+`contentHash`, so a dismissal of one version of a fact does not suppress a later,
+different docket for the same underlying row.
+
+---
+
+### C.11 Tenant customer surface (Phase 7 — Home and the client book)
+
+All three routes are under the named `BoutiqueCustomerAccess` policy
+(`OrganizationScopeRequirement(customers:view)`), which every boutique role
+holds. They are deliberately **not** in `/internal/customers`.
+
+#### `GET /api/v1/orgs/{organizationId}/customers`
+
+The client book, in one call: the alphabet index has to reach every letter, so
+`pageSize` defaults to 200. `level` is nullable — the server stores no grade
+until the shop sets one.
+
+#### `GET /api/v1/orgs/{organizationId}/customers/highlights`
+
+Home's `Direct client link` row, the `See all` sheet and the status ticker. Each
+item carries `customerId`, `name`, nullable `level`, `activity` (generated from a
+real `Customer_Interactions` row) and `lastActivityAtUtc`. There is **no**
+`hasNewActivity`: no read marker exists in the schema, and a dot that can never
+clear is worse than no dot.
+
+#### `POST /api/v1/orgs/{organizationId}/customers`
+
+Walk-in creation. `{ "fullName": "...", "source": "counter_walkin" }` plus a
+required `Idempotency-Key`. A name is enough; `phoneNumber` is optional and its
+absence is reported honestly.
+
+`201` with `{ customerId, fullName, level, status, consentStatus, createdAtUtc,
+duplicateOfCustomerId }`. A duplicate answers `200` with
+`duplicateOfCustomerId` set rather than creating a second client.
+
+#### `POST /api/v1/orgs/{organizationId}/customers/{customerId}/interactions`
+
+The write path behind Home's `Log a visit`. `{ occurredAtUtc, channel, direction,
+note, purchaseTotal }` plus a required `Idempotency-Key`.
+
+Every call records an interaction; the customer's counters move only for an
+**inbound in-person** interaction. `201` with `{ visitId, customerId,
+occurredAtUtc, channel, countedAsVisit, visitCountAfter, lastVisitAtUtcAfter,
+tierAfter, blossomsCharged }`. `blossomsCharged` is **always `0`** — a visit is
+not billable. `404` when the client is not in this boutique.
 
 ---
 

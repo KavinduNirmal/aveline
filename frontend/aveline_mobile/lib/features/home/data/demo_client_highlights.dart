@@ -12,21 +12,18 @@ const List<ClientHighlight> _clients = [
     name: 'Eleanor Vane',
     tier: ClientTier.vip,
     activity: 'Asked for the ivory silk to be held until Friday.',
-    hasNewActivity: true,
   ),
   ClientHighlight(
     id: 'client-isabella',
     name: 'Isabella Ranatunga',
     tier: ClientTier.level3,
     activity: 'Replied about the evening fitting on Thursday.',
-    hasNewActivity: true,
   ),
   ClientHighlight(
     id: 'client-maya',
     name: 'Maya Tennakoon',
     tier: ClientTier.level2,
     activity: 'Waiting on the restock date for the linen shift.',
-    hasNewActivity: true,
   ),
   ClientHighlight(
     id: 'client-sophia',
@@ -39,7 +36,6 @@ const List<ClientHighlight> _clients = [
     name: 'Chamari Silva',
     tier: ClientTier.vip,
     activity: 'Order #AV-902 is still waiting on her approval.',
-    hasNewActivity: true,
   ),
   ClientHighlight(
     id: 'client-nadia',
@@ -52,6 +48,5 @@ const List<ClientHighlight> _clients = [
     name: 'Hiruni Bandara',
     tier: ClientTier.level3,
     activity: 'First visit at the Colombo store yesterday.',
-    hasNewActivity: true,
   ),
 ];

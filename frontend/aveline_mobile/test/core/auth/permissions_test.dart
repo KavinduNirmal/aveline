@@ -4,8 +4,10 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('Permissions', () {
-    test('contains all 23 canonical permissions matching backend catalog', () {
-      expect(Permissions.all, hasLength(23));
+    test('contains all 24 canonical permissions matching backend catalog', () {
+      // Derived rather than restated: the explicit assertions below name every
+      // permission, so the count is the only thing that needs to move.
+      expect(Permissions.all, hasLength(24));
       expect(Permissions.catalogView, 'catalog:view');
       expect(Permissions.customersView, 'customers:view');
       expect(Permissions.catalogManage, 'catalog:manage');
@@ -15,6 +17,7 @@ void main() {
       expect(Permissions.settingsManage, 'settings:manage');
       expect(Permissions.conversationsView, 'conversations:view');
       expect(Permissions.billingView, 'billing:view');
+      expect(Permissions.billingViewSelf, 'billing:view:self');
       expect(Permissions.billingManage, 'billing:manage');
       expect(Permissions.billingAdjust, 'billing:adjust');
       expect(Permissions.pricingView, 'pricing:view');
@@ -29,6 +32,27 @@ void main() {
       expect(Permissions.adminUsersManage, 'admin:users:manage');
       expect(Permissions.adminOrgsRead, 'admin:orgs:read');
       expect(Permissions.auditView, 'audit:view');
+    });
+
+    test('every org role can read the self-service balance', () {
+      for (final role in [
+        AppRoles.boutiqueStaff,
+        AppRoles.boutiqueManager,
+        AppRoles.boutiqueSupervisor,
+        AppRoles.boutiqueOwner,
+      ]) {
+        expect(
+          Permissions.isGranted(role, Permissions.billingViewSelf),
+          isTrue,
+          reason: '$role should hold billing:view:self',
+        );
+      }
+    });
+
+    test('the self-service read does not widen billing:view', () {
+      expect(Permissions.isGranted(AppRoles.boutiqueStaff, Permissions.billingView), isFalse);
+      expect(Permissions.isGranted(AppRoles.boutiqueSupervisor, Permissions.billingView), isFalse);
+      expect(Permissions.isGranted(AppRoles.boutiqueManager, Permissions.billingView), isTrue);
     });
 
     test('Staff role grants catalog:view and conversations:view only', () {

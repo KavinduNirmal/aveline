@@ -97,7 +97,7 @@ class FocusTaskCard extends StatelessWidget {
                 // about the list, and it now sits in the section header.
                 Expanded(
                   child: Text(
-                    task.timeLabel,
+                    task.displayTimeLabel ?? '',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.end,

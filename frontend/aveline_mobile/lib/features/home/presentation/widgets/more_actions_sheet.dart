@@ -52,7 +52,7 @@ class _MoreActionsSheet extends StatelessWidget {
     _MoreAction(
       'Settings',
       Icons.tune_rounded,
-      unavailableMessage: 'Settings is not on mobile yet.',
+      route: AppRoutes.settings,
     ),
   ];
 

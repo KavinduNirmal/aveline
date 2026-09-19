@@ -425,13 +425,14 @@ field errors (`Endpoints/UserEndpoints.cs:53`).
 #### `POST /api/v1/users/me/devices`
 
 Register a push token. **Body:** `{ "token": string, "platform": "Ios" | "Android" | "Web" }`.
-**Response `200`:** `{ token, platform }`. **Errors:** `400` missing token,
-`401` empty, `404` no user record.
+**Response `200`:** an empty body (the handler returns `Results.Ok()` with no payload).
+**Errors:** `400` missing token, `401` empty, `404` no user record.
 **Source:** `Endpoints/DeviceTokenEndpoints.cs:20`.
 
 #### `DELETE /api/v1/users/me/devices/{token}`
 
-Unregister a push token. **Response `204`.** **Source:** `Endpoints/DeviceTokenEndpoints.cs:55`.
+Unregister a push token. **Response `204`.** **Errors:** `401` empty, `404` no user record.
+**Source:** `Endpoints/DeviceTokenEndpoints.cs:55`.
 
 ### B.3 Organizations
 
@@ -528,13 +529,36 @@ are per user, not per org.
 | `DELETE` | `/api/v1/notifications/{id:guid}` | — | `204` |
 
 `UserNotificationDto`: `{ id, notificationId, type, title, body, data, isRead,
-readAt, deliveredAt, createdAt }` where `data` is `Record<string, string|null>`.
+readAt, deliveredAt, createdAt, organizationId, organizationName }` where `data`
+is `Record<string, string|null>` and `organizationName` is null when the
+dispatching organisation could not be loaded. `organizationId`/`organizationName`
+are the per-row boutique label (a projection, not a filter: the inbox stays
+merged).
 **Errors:** `401` empty; `404 { "message": "Notification not found." }`.
 **Source:** `Endpoints/NotificationEndpoints.cs:19-181`, DTO
 `Modules/Notifications/DTOs/UserNotificationDto.cs`.
 
-**Realtime:** SignalR hub at `/hubs/notifications`, event `ReceiveNotification`
-carrying `UserNotificationDto`. `NotificationType` is serialised as a **string**.
+**Realtime:** SignalR hub at `/hubs/notifications`. Server→client event
+`ReceiveNotification` carries a `NotificationDto`
+(`{ type, title, body, data, notificationId, unreadCount }`), with
+`NotificationType` serialised as a **string**. `notificationId` is the per-user
+inbox row (`UserNotification.Id`); `unreadCount` is that recipient's count after
+the row was written. Both are additive: a client that receives neither behaves as
+before. The hub is client-callable in one direction only: `SubscribeAsync` (no
+arguments, idempotent) re-joins the connection to `user:{id}` and every active
+`org:{id}` group. SignalR does not preserve group membership across a reconnect,
+so a client must invoke `SubscribeAsync` from its `onreconnected` handler.
+**Source:** `Modules/Notifications/Hubs/NotificationHub.cs`,
+`Modules/Notifications/Models/NotificationDto.cs`.
+
+**Push (FCM):** the same notification is delivered to a recipient's registered
+device tokens. The FCM `data` map carries the notification's own keys plus
+`type` (the `NotificationType` name) and `notificationId` (the per-user inbox
+row). Values are strings and null values are dropped by the sender, so every key
+is optional to the consumer. Registration is via `/api/v1/users/me/devices`
+(see the Device tokens section). **Source:**
+`Modules/Notifications/Channels/FcmPushChannel.cs`,
+`Modules/Notifications/Channels/FirebaseMessagingClient.cs`.
 
 ### B.7 Conversations (The Salon)
 
@@ -550,7 +574,15 @@ carrying `UserNotificationDto`. `NotificationType` is serialised as a **string**
 | `POST` | `.../{conversationId:guid}/select-customer` | `{ customerId, query? }` | `200` |
 | `POST` | `.../messages/{messageId:guid}/sign-off` | `{ approved, contentHash }` | `200` |
 
-`ConversationDto`: `{ id, kind, customerId, threadId, status, lastMessageAt }`.
+`ConversationDto`: `{ id, kind, customerId, customerName, externalRef, threadId, status,
+lastMessageAt, lastMessagePreview, lastMessageKind, lastMessageBlock, lastMessageAuthor,
+lastMessageAgentKey, markers }`. The list row carries the client's name, a **block-aware**
+preview of the newest message, the block it came from (the row's category, because agent
+output is published as `kind: Note`), who spoke last in the client's vocabulary
+(`Staff`/`Agent`/`Customer`), the agent persona key, and the actionable `markers` set over the
+closed vocabulary `approval | choice | draft` in that priority. `kind` keeps its declared
+meaning; customer context is the separate `customerId` axis, and `externalRef` discloses a
+channel-created thread whose customer is not yet identified.
 `MessageDto`: `{ id, conversationId, authorKind, agentKey, authorUserId, kind,
 contentBlocks, contentHash, replyToMessageId, status, createdAt }`.
 
@@ -565,6 +597,13 @@ DTOs `Modules/Conversations/DTOs/*.cs`.
 **Realtime:** SignalR hub `/hubs/conversations`; events `conversation.created`,
 `message.created`, `message.updated`, `agent.status` (names from
 `Modules/Conversations/Services/ConversationEvents.cs`).
+Server→client methods: `ReceiveMessage` (a `MessageDto`), `ReceiveAgentState` (an
+`AgentStateDto`), and **`ReceiveConversationChanged`** (a `ConversationDto` - the inbox tile,
+so an open list updates without a re-list). The tile is broadcast to
+`org:{organizationId}` for organization-shared threads and to `user:{ownerUserId}` for a
+per-user general Salon, so a colleague's private thread never reaches the org group. The API
+broadcasts directly from its own creation sites (the WhatsApp webhook, `POST /conversations`,
+`select-customer`, and a staff message) because `conversation.created` has no publisher.
 
 ### B.8 Integrations
 

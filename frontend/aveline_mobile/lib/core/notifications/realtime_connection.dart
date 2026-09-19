@@ -12,6 +12,16 @@ abstract interface class RealtimeConnection {
 
   /// Stops the connection.
   Future<void> stop();
+
+  /// Registers a handler for a successful reconnection.
+  ///
+  /// `withAutomaticReconnect` rebuilds the socket, but a rebuilt socket is no longer in
+  /// any group the old one joined, so a caller with group membership has to re-join.
+  /// Without this hook the connection looks alive and silently receives nothing.
+  void onReconnected(void Function() handler);
+
+  /// Registers a handler for the connection closing, with the error when there was one.
+  void onClosed(void Function(Object? error) handler);
 }
 
 /// Builds a [RealtimeConnection] for a hub URL, authenticating with the supplied token.

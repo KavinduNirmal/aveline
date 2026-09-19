@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   X,
   Sparkles,
@@ -9,6 +9,13 @@ import {
   Link as LinkIcon,
   Trash2,
   RotateCw,
+  QrCode,
+  Download,
+  Printer,
+  Copy,
+  ChevronDown,
+  ChevronUp,
+  CheckCheck,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -17,11 +24,13 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
+import { QrCodeSvg } from '@/components/ui/QrCodeSvg'
 import {
   analyzeProductImage,
   getColorHex,
   normalizeCategory,
   uploadBase64Image,
+  generateQrCode,
   CATALOG_CATEGORIES,
   type CatalogCategory,
 } from '@/lib/catalog-api'
@@ -38,6 +47,7 @@ interface AddProductModalProps {
   organizationId?: string
   onClose: () => void
   onSave: (item: InventoryItemMock) => void
+  onDelete?: (item: InventoryItemMock) => void
   editingItem?: InventoryItemMock | null
 }
 
@@ -48,6 +58,7 @@ export function AddProductModal({
   organizationId,
   onClose,
   onSave,
+  onDelete,
   editingItem,
 }: AddProductModalProps) {
   const [name, setName] = useState(editingItem?.name ?? '')
@@ -90,6 +101,252 @@ export function AddProductModal({
   const [selectedFileSize, setSelectedFileSize] = useState<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isSaving, setIsSaving] = useState(false)
+
+  // QR Floor Tag Studio states
+  const [showQrStudio, setShowQrStudio] = useState(true)
+  const [isDownloadingPng, setIsDownloadingPng] = useState(false)
+  const [isDownloadingSvg, setIsDownloadingSvg] = useState(false)
+  const [copiedPayload, setCopiedPayload] = useState(false)
+  const [qrFormatType, setQrFormatType] = useState<'json' | 'url' | 'sku'>('json')
+
+  const effectiveItemId = editingItem?.id || 'prospective-piece'
+  const effectiveOrgId = organizationId || '00000000-0000-0000-0000-000000000001'
+
+  const activeQrPayload = useMemo(() => {
+    if (qrFormatType === 'sku') {
+      return sku || 'AVL-000'
+    }
+    if (qrFormatType === 'url') {
+      const origin = typeof window !== 'undefined' ? window.location.origin : 'https://aveline.app'
+      return `${origin}/catalog/items/${effectiveItemId}`
+    }
+    return JSON.stringify({
+      type: 'aveline_inventory_item',
+      orgId: effectiveOrgId,
+      itemId: effectiveItemId,
+      sku: sku || 'AVL-000',
+      url: `/catalog/items/${effectiveItemId}`,
+      v: 1,
+    })
+  }, [qrFormatType, sku, effectiveItemId, effectiveOrgId])
+
+  const handleCopyPayload = () => {
+    navigator.clipboard.writeText(activeQrPayload)
+    setCopiedPayload(true)
+    toast.success('QR payload copied to clipboard', {
+      description: `${sku || 'Piece'} · Format: ${qrFormatType.toUpperCase()}`,
+    })
+    setTimeout(() => setCopiedPayload(false), 2000)
+  }
+
+  const handleDownloadPng = async () => {
+    setIsDownloadingPng(true)
+    try {
+      const res = await generateQrCode(effectiveOrgId, {
+        payload: activeQrPayload,
+        format: 'json',
+        size: 600,
+        eccLevel: 'M',
+        quietZone: 2,
+      })
+
+      if (res?.dataUrl) {
+        const link = document.createElement('a')
+        link.href = res.dataUrl
+        link.download = `${sku || 'piece'}_floor_tag.png`
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        toast.success('High-resolution QR code downloaded (PNG 600px)')
+      } else {
+        throw new Error('No image payload returned')
+      }
+    } catch {
+      toast.error('Failed to download PNG QR code')
+    } finally {
+      setIsDownloadingPng(false)
+    }
+  }
+
+  const handleDownloadSvg = async () => {
+    setIsDownloadingSvg(true)
+    try {
+      const res = await generateQrCode(effectiveOrgId, {
+        payload: activeQrPayload,
+        format: 'svg',
+        size: 300,
+        eccLevel: 'M',
+        quietZone: 2,
+      })
+
+      const svgContent = res?.svg
+      if (svgContent) {
+        const blob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = `${sku || 'piece'}_floor_tag.svg`
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        URL.revokeObjectURL(url)
+        toast.success('Vector QR code downloaded (SVG)')
+      } else {
+        throw new Error('No SVG payload returned')
+      }
+    } catch {
+      toast.error('Failed to download SVG QR code')
+    } finally {
+      setIsDownloadingSvg(false)
+    }
+  }
+
+  const handlePrintTag = () => {
+    const activeName = name || 'Boutique Collection Piece'
+    const activePrice = price ? `$${Number(price).toLocaleString()}` : '$0.00'
+    const activeSku = sku || 'AVL-000'
+    const activeCategory = category || 'Haute Couture'
+    const activeFabric = fabric ? `Fabric: ${fabric}` : ''
+    const activeColor = color ? `Color: ${color}` : ''
+
+    const printWindow = window.open('', '_blank', 'width=420,height=600')
+    if (!printWindow) {
+      toast.error('Pop-up blocked. Please allow pop-ups to print garment tags.')
+      return
+    }
+
+    const svgElement = document.getElementById('modal-qr-preview-svg')
+    const svgHtml = svgElement ? svgElement.outerHTML : ''
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Garment Floor Tag - ${activeSku}</title>
+          <style>
+            * { box-sizing: border-box; margin: 0; padding: 0; }
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              min-height: 100vh;
+              background: #fafafa;
+              padding: 20px;
+            }
+            .tag {
+              width: 320px;
+              background: #ffffff;
+              border: 2px solid #18181b;
+              border-radius: 16px;
+              padding: 24px 20px;
+              text-align: center;
+              box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+            }
+            .brand {
+              font-size: 13px;
+              font-weight: 800;
+              letter-spacing: 3px;
+              text-transform: uppercase;
+              color: #18181b;
+            }
+            .category-badge {
+              display: inline-block;
+              font-size: 10px;
+              font-weight: 600;
+              letter-spacing: 1px;
+              text-transform: uppercase;
+              color: #71717a;
+              margin-top: 4px;
+              margin-bottom: 14px;
+              padding-bottom: 12px;
+              border-bottom: 1px dashed #e4e4e7;
+              width: 100%;
+            }
+            .qr-container {
+              display: flex;
+              justify-content: center;
+              margin: 10px 0 16px;
+            }
+            .item-title {
+              font-size: 15px;
+              font-weight: 700;
+              color: #18181b;
+              line-height: 1.3;
+              margin-bottom: 6px;
+            }
+            .sku-pill {
+              display: inline-block;
+              font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+              font-size: 12px;
+              font-weight: 600;
+              background: #f4f4f5;
+              color: #3f3f46;
+              padding: 2px 10px;
+              border-radius: 6px;
+              margin-bottom: 12px;
+            }
+            .meta {
+              font-size: 11px;
+              color: #71717a;
+              margin-bottom: 14px;
+              line-height: 1.4;
+            }
+            .price-box {
+              border-top: 1px dashed #e4e4e7;
+              padding-top: 14px;
+            }
+            .price-label {
+              font-size: 9px;
+              text-transform: uppercase;
+              letter-spacing: 1.5px;
+              color: #a1a1aa;
+            }
+            .price-val {
+              font-size: 22px;
+              font-weight: 800;
+              color: #18181b;
+              margin-top: 2px;
+            }
+            .footer-note {
+              font-size: 9px;
+              color: #a1a1aa;
+              margin-top: 14px;
+              letter-spacing: 0.5px;
+            }
+            @media print {
+              body { background: #fff; padding: 0; }
+              .tag { border: 2px solid #000; box-shadow: none; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="tag">
+            <div class="brand">Aveline Boutique</div>
+            <div class="category-badge">${activeCategory} · Floor Collection</div>
+            <div class="qr-container">
+              ${svgHtml}
+            </div>
+            <div class="item-title">${activeName}</div>
+            <div class="sku-pill">${activeSku}</div>
+            ${activeColor || activeFabric ? `<div class="meta">${[activeColor, activeFabric].filter(Boolean).join(' · ')}</div>` : ''}
+            <div class="price-box">
+              <div class="price-label">Retail Price</div>
+              <div class="price-val">${activePrice}</div>
+            </div>
+            <div class="footer-note">Scan with Aveline floor app for live stock & VIP styling</div>
+          </div>
+          <script>
+            window.onload = function() {
+              window.print();
+              setTimeout(function() { window.close(); }, 500);
+            };
+          </script>
+        </body>
+      </html>
+    `)
+    printWindow.document.close()
+  }
 
   useEffect(() => {
     if (open) {
@@ -826,18 +1083,217 @@ export function AddProductModal({
               rows={3}
               className="w-full rounded-md border border-input bg-background p-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 leading-relaxed"
             />
+          </div>
+
+          {/* Boutique QR Floor Tag Studio */}
+          <div className="rounded-xl border border-border bg-card/70 overflow-hidden transition-all shadow-2xs">
+            <div
+              onClick={() => setShowQrStudio(!showQrStudio)}
+              className="flex items-center justify-between p-3.5 bg-muted/20 hover:bg-muted/30 cursor-pointer select-none transition-colors"
+            >
+              <div className="flex items-center gap-2.5">
+                <div className="flex size-7 items-center justify-center rounded-lg bg-primary/10 text-primary border border-primary/20">
+                  <QrCode className="size-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs font-semibold text-foreground">Boutique QR Floor Tag</h4>
+                    <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-primary/30 text-primary font-normal">
+                      Scan & Print Ready
+                    </Badge>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">
+                    Physical tag barcode for garment labeling, fitting rooms, and POS scanning
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-mono text-muted-foreground hidden sm:inline">
+                  {sku || 'AVL-000'}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="size-7 p-0 text-muted-foreground hover:text-foreground"
+                >
+                  {showQrStudio ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
+                </Button>
+              </div>
             </div>
+
+            {showQrStudio && (
+              <div className="p-4 border-t border-border/60 space-y-4 bg-background/50">
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+                  {/* Left: Luxury Tag Card Visual Preview */}
+                  <div className="md:col-span-5 flex justify-center">
+                    <div className="w-56 bg-card border-2 border-border/90 rounded-2xl p-4 text-center shadow-xs flex flex-col items-center relative overflow-hidden">
+                      <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-primary/80 via-primary to-primary/80" />
+                      <span className="text-[10px] font-bold tracking-[0.2em] uppercase text-foreground/80 mt-1">
+                        Aveline Atelier
+                      </span>
+                      <span className="text-[9px] text-muted-foreground tracking-wider uppercase mb-2">
+                        {category} · Floor Piece
+                      </span>
+
+                      {/* Dynamic Vector QR Code Preview */}
+                      <div className="p-2 bg-white rounded-xl shadow-inner my-1.5 border border-border/40">
+                        <div id="modal-qr-preview-svg">
+                          <QrCodeSvg value={activeQrPayload} size={140} className="rounded-md" />
+                        </div>
+                      </div>
+
+                      <p className="text-xs font-semibold text-foreground mt-2 truncate w-full px-1">
+                        {name || 'Untitled Garment'}
+                      </p>
+                      <span className="text-[11px] font-mono font-medium text-muted-foreground bg-muted/60 px-2 py-0.5 rounded-md mt-1">
+                        {sku || 'AVL-000'}
+                      </span>
+
+                      <div className="w-full mt-3 pt-2.5 border-t border-dashed border-border/80 flex items-center justify-between text-xs px-1">
+                        <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Retail</span>
+                        <span className="font-bold text-sm text-foreground">
+                          {price ? `$${Number(price).toLocaleString()}` : '$0.00'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right: Studio Controls & Exports */}
+                  <div className="md:col-span-7 space-y-3.5">
+                    {/* Format Selector */}
+                    <div className="space-y-1.5">
+                      <Label className="text-[11px] text-muted-foreground font-medium">QR Payload Encoding</Label>
+                      <div className="grid grid-cols-3 gap-1.5 bg-muted/30 p-1 rounded-lg border border-border/60 text-xs">
+                        <button
+                          type="button"
+                          onClick={() => setQrFormatType('json')}
+                          className={`py-1 px-2 rounded-md font-medium text-[11px] transition-all ${
+                            qrFormatType === 'json'
+                              ? 'bg-background text-foreground shadow-2xs border border-border/50'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          Structured JSON
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setQrFormatType('url')}
+                          className={`py-1 px-2 rounded-md font-medium text-[11px] transition-all ${
+                            qrFormatType === 'url'
+                              ? 'bg-background text-foreground shadow-2xs border border-border/50'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          Boutique URL
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setQrFormatType('sku')}
+                          className={`py-1 px-2 rounded-md font-medium text-[11px] transition-all ${
+                            qrFormatType === 'sku'
+                              ? 'bg-background text-foreground shadow-2xs border border-border/50'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          Raw SKU
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Encoded Preview String */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-muted-foreground font-medium">Active Encoded Data</span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={handleCopyPayload}
+                          className="h-5 px-1.5 text-[10px] gap-1 text-primary hover:text-primary hover:bg-primary/10"
+                        >
+                          {copiedPayload ? <CheckCheck className="size-3 text-emerald-500" /> : <Copy className="size-3" />}
+                          <span>{copiedPayload ? 'Copied' : 'Copy'}</span>
+                        </Button>
+                      </div>
+                      <div className="p-2 rounded-lg bg-muted/40 border border-border/50 font-mono text-[10px] text-muted-foreground break-all max-h-16 overflow-y-auto leading-relaxed">
+                        {activeQrPayload}
+                      </div>
+                    </div>
+
+                    {/* Export Action Buttons */}
+                    <div className="grid grid-cols-3 gap-2 pt-1">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={isDownloadingPng}
+                        onClick={handleDownloadPng}
+                        className="h-8 text-[11px] gap-1.5 border-border hover:border-primary/50 hover:bg-primary/5 hover:text-primary"
+                      >
+                        {isDownloadingPng ? <Loader2 className="size-3 animate-spin" /> : <Download className="size-3" />}
+                        <span>PNG (600px)</span>
+                      </Button>
+
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={isDownloadingSvg}
+                        onClick={handleDownloadSvg}
+                        className="h-8 text-[11px] gap-1.5 border-border hover:border-primary/50 hover:bg-primary/5 hover:text-primary"
+                      >
+                        {isDownloadingSvg ? <Loader2 className="size-3 animate-spin" /> : <Download className="size-3" />}
+                        <span>Vector SVG</span>
+                      </Button>
+
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={handlePrintTag}
+                        className="h-8 text-[11px] gap-1.5 bg-primary/10 text-primary hover:bg-primary/20 border border-primary/30 font-medium"
+                      >
+                        <Printer className="size-3" />
+                        <span>Print Tag</span>
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
           </div>
 
           {/* Actions */}
-          <div className="flex items-center justify-end gap-2.5 px-6 py-4 border-t border-border bg-card shrink-0">
-            <Button type="button" variant="outline" size="sm" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button type="submit" size="sm" className="gap-1.5" disabled={isSaving}>
-              {isSaving ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
-              <span>{isSaving ? 'Saving...' : editingItem ? 'Save Changes' : 'Add to Catalog'}</span>
-            </Button>
+          <div className="flex items-center justify-between gap-2.5 px-6 py-4 border-t border-border bg-card shrink-0">
+            <div>
+              {editingItem && onDelete && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    onDelete(editingItem)
+                  }}
+                  className="gap-1.5 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive cursor-pointer"
+                >
+                  <Trash2 className="size-3.5" />
+                  <span>Delete Piece</span>
+                </Button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2.5">
+              <Button type="button" variant="outline" size="sm" onClick={onClose} className="cursor-pointer">
+                Cancel
+              </Button>
+              <Button type="submit" size="sm" className="gap-1.5 cursor-pointer" disabled={isSaving}>
+                {isSaving ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+                <span>{isSaving ? 'Saving...' : editingItem ? 'Save Changes' : 'Add to Catalog'}</span>
+              </Button>
+            </div>
           </div>
         </form>
       </Card>

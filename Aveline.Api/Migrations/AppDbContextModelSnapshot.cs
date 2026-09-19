@@ -20,7 +20,7 @@ namespace Aveline.Api.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.11")
+                .HasAnnotation("ProductVersion", "10.0.12")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -1420,9 +1420,45 @@ namespace Aveline.Api.Migrations
                     b.HasIndex("ThreadId")
                         .IsUnique();
 
+                    b.HasIndex("OrganizationId", "LastMessageAt", "Id")
+                        .IsDescending(false, true, true);
+
                     b.HasIndex("OrganizationId", "OwnerUserId", "CustomerId", "Kind");
 
                     b.ToTable("Conversations", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Conversations.Models.ConversationReadState", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("LastReadAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("LastReadMessageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConversationId");
+
+                    b.HasIndex("OrganizationId", "UserId");
+
+                    b.HasIndex("OrganizationId", "UserId", "ConversationId")
+                        .IsUnique();
+
+                    b.ToTable("ConversationReadStates", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Conversations.Models.Message", b =>
@@ -1440,6 +1476,9 @@ namespace Aveline.Api.Migrations
                         .HasColumnType("text");
 
                     b.Property<Guid?>("AuthorUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ClientMessageId")
                         .HasColumnType("uuid");
 
                     b.Property<string>("ContentBlocksJson")
@@ -1475,9 +1514,87 @@ namespace Aveline.Api.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ConversationId", "CreatedAt");
+                    b.HasIndex("ConversationId", "ClientMessageId")
+                        .IsUnique()
+                        .HasFilter("\"ClientMessageId\" IS NOT NULL");
+
+                    b.HasIndex("ConversationId", "CreatedAt", "Id");
 
                     b.ToTable("Messages", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Conversations.Models.MessageAttachment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("BoundAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<int?>("Height")
+                        .HasColumnType("integer");
+
+                    b.Property<byte[]>("ImageData")
+                        .HasColumnType("bytea");
+
+                    b.Property<Guid?>("MessageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("StorageKey")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("StorageProvider")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<Guid?>("UploadedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Url")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<int?>("Width")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConversationId");
+
+                    b.HasIndex("MessageId");
+
+                    b.HasIndex("MessageId", "CreatedAtUtc")
+                        .HasFilter("\"MessageId\" IS NULL");
+
+                    b.HasIndex("OrganizationId", "ConversationId");
+
+                    b.ToTable("MessageAttachments", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Conversations.Models.SignOffDecision", b =>
@@ -1485,9 +1602,6 @@ namespace Aveline.Api.Migrations
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
-
-                    b.Property<bool>("Approved")
-                        .HasColumnType("boolean");
 
                     b.Property<string>("ContentHash")
                         .IsRequired()
@@ -1502,6 +1616,11 @@ namespace Aveline.Api.Migrations
 
                     b.Property<Guid?>("DecidedBy")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
 
                     b.Property<Guid>("MessageId")
                         .HasColumnType("uuid");
@@ -3988,6 +4107,21 @@ namespace Aveline.Api.Migrations
                     b.Navigation("Organization");
                 });
 
+            modelBuilder.Entity("Aveline.Api.Modules.Conversations.Models.ConversationReadState", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.Conversations.Models.Conversation", null)
+                        .WithMany()
+                        .HasForeignKey("ConversationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Aveline.Api.Modules.Conversations.Models.Message", b =>
                 {
                     b.HasOne("Aveline.Api.Modules.Conversations.Models.Conversation", "Conversation")
@@ -3997,6 +4131,21 @@ namespace Aveline.Api.Migrations
                         .IsRequired();
 
                     b.Navigation("Conversation");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Conversations.Models.MessageAttachment", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.Conversations.Models.Conversation", null)
+                        .WithMany()
+                        .HasForeignKey("ConversationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.Customer", b =>

@@ -347,8 +347,8 @@ entitlements.
    `NotificationRecords.OrganizationId` is a required FK to `Organizations` and the scheduled
    rules are system-wide, so a system-wide critical alert logs that no notification was
    created rather than writing an invalid FK. `IAlertService.EvaluateRuleAsync` accepts an
-   optional organization id, so an org-scoped alert does create the record through
-   `IRecipientResolver`.
+   optional organization id, so an org-scoped alert does notify through
+   `INotificationDispatcher` (record + one inbox row per recipient).
 4. **`inbound_message_backlog` and `publish_latency_ms` are unmeasurable today.**
    `InboundMessageLog` has no processed marker and `EventBusMetrics` exposes counters only;
    both appear in each response's `omitted` list instead of as zero (BR-7.10).
@@ -361,8 +361,9 @@ entitlements.
    plan's §10.2 list.
 8. **The alert cooldown elapses against the fire time (M-21).** `AlertService` measures
    `now − FiredAt`; a sustained breach aggregates `OccurrenceCount` while inside the cooldown
-   and, once it elapses, re-fires — resetting `FiredAt`/`OccurrenceCount`, clearing
-   `NotificationRecordId` and publishing `system.alert.fired` (and re-notifying) again. The
+   and, once it elapses, re-fires — resetting `FiredAt`/`OccurrenceCount` and publishing
+   `system.alert.fired` again. The record id is **no longer cleared** (issue #309, Q6), so a
+   sustained breach notifies once per rule rather than on every cooldown. The
    three-consecutive-OK auto-resolution path is unchanged.
 9. **System metric samples are organisation-agnostic (M-22).** `SystemMetricSample` has no
    organization column and the collector writes `{}` dimensions, so `LoadSamplesAsync` cannot
@@ -375,6 +376,58 @@ entitlements.
     statistics (`/orgs/{id}/statistics/billing/burn-rate`, `/customers/active`,
     `/staff/seats`) are consciously out of scope for the #241 fix. No route exists, so
     they return **404**; `docs/api/README.md` marks them as deferred.
+
+### Implementation status (notifications inbox — backend slices)
+
+The Flutter-to-backend notifications plan
+(`.agents/plans/flutter-to-backend-notifications-implementation.ignore.md`, S0–S9) wired the
+associate's inbox to the live API and enabled the backend surfaces it reads. The backend
+slices, one issue per phase:
+
+| Issue | What landed |
+| --- | --- |
+| [#306](https://github.com/KavinduNirmal/aveline/issues/306) | `NotificationHub.SubscribeAsync` — an idempotent, client-callable re-join of `user:{id}` and the active `org:{id}` groups, invoked on reconnect. SignalR does not preserve group membership across a rebuilt socket, so without it a reconnected app received nothing, silently and permanently. |
+| [#307](https://github.com/KavinduNirmal/aveline/issues/307) | `NotificationDto` gains `notificationId` (the `UserNotification` row) and `unreadCount` (the recipient's count **after** the row was written). `IRealtimeChannel.SendAsync` takes both; `IPushChannel.SendAsync` takes the id; `NotificationDispatcher` computes the count per recipient. |
+| [#308](https://github.com/KavinduNirmal/aveline/issues/308) | The FCM `data` map gains `type` (the `NotificationType` name) and `notificationId`, so a closed app renders the right kind and a tap can mark that notification read. `EventReminderService` now requests `Push` as well as `Realtime | Email` (Q8). |
+| [#309](https://github.com/KavinduNirmal/aveline/issues/309) | `INotificationDispatcher.DispatchAsync` returns the `NotificationRecord` it wrote (or `null`); `AlertService` dispatches through it instead of writing an orphan record, and a sustained breach notifies **once** per rule. Before this, a Critical `SystemAlert` created no inbox row and invoked no channel. |
+| [#310](https://github.com/KavinduNirmal/aveline/issues/310) | `NotificationRetentionJob` — dismissed inbox rows after `Notifications:DismissedRetentionDays` (30), read rows after `Notifications:ReadRetentionDays` (180), lock-guarded and idempotent. The `NotificationRecord`/`NotificationDelivery` audit trail is never purged. |
+
+**Notes:**
+
+1. **A critical alert reaches the inbox once per rule per breach.** `NotificationDispatcher`
+   is the only code that creates `UserNotification` rows; one dispatch writes one record and
+   one inbox row per resolved recipient, and `AlertService` stores the returned record id.
+   A re-fire inside the same breach publishes `system.alert.fired` but creates nothing new.
+2. **`unreadCount` is named forward-compatibly.** It means "the recipient's open work under
+   the model in force", so a fan-out producer can redefine it to "work items not acted upon"
+   with no rename and no client change.
+
+#### Deferred and not built by this work
+
+D1 = B ships the inbox, not a producer. The list below is the deliberate scope boundary: each
+item is gated on the thing that unblocks it, and none of it leaves client or contract work for
+the producer to do.
+
+| Item | Why it is deferred | What unblocks it |
+| --- | --- | --- |
+| `NewMessage` producer | Producers belong to the module that owns the event. The inbox is ready to receive it. | The conversations module: dispatch on the inbound persist (`WebhookEndpoints`/`ConversationService`), emit `conversationId` (+ `messageId`, `customerId`), and implement D5 (one per unread conversation, appended) and D12 (fan-out + count). |
+| `NewMatch` producer | Same, and no recipient rule exists today — the match-completion path captures no user identity. | The visual-intelligence plan, at match completion; needs a recipient rule and D12. |
+| `VipAtRisk` producer | Q4 re-frames it as **Ava's baseline-deviation insight**, not a scheduled threshold job. | An identifiable Ava at-risk output: a recognised block while applying an agent message, or a subscriber on the documented-but-unbuilt `aveline:<org>:notification` channel. |
+| `ApprovalNeeded` producer | Blocked: no written `ApprovalQueueEntry`, `IApprovalRepository` is an empty file, and there is no real `pause_for_approval` interrupt. | The Commerce approval flow. |
+| `PaymentConfirmed` producer | Blocked: nothing actually confirms a payment (`PaymentRepository`/`IPaymentRepository` are empty files; the Python tool calls a route that does not exist). Q5: the kind waits. | A verifying payment path (a gateway webhook or `PaymentService`). |
+| D12 fan-out schema (nullable `ResolvedAt`/`ResolvedByUserId` on `NotificationRecord`), the append/update path on `INotificationRepository`, and the count's re-definition to "work items not acted upon" | No fan-out producer exists yet, so there is nothing to exercise the model; shipping it now would be unverifiable. The contract is frozen in the plan so the first producer inherits it. | The first fan-out producer. |
+| The D12 race guard (a row-version conditional update plus a uniqueness backstop, loser gets 409) | The guard belongs to the domain transition that owns the decision; the shipped sign-off path is a read-check-write with no token and a non-unique decision index. Reported as a conversations defect, not fixed here. | The conversations plan (sign-off) and the Commerce approval queue. |
+| The `notification*` metric endpoints | D9/Q9: record everything, build nothing. The catalog is the naming authority and nothing may be exposed until it appears in the catalog **and** in `openapi.yaml`. | A metrics plan or an operator requirement. |
+| The notification **hub** in OpenAPI | OpenAPI documents HTTP routes; the SignalR contract (`SubscribeAsync`, `ReceiveNotification`) is documented in [`docs/api/README.md`](../api/README.md) §B.6 and the hub's XML doc. | A decision to publish an AsyncAPI document. |
+| A restore route (Undo after the toast) | Five seconds of convenience for a route, an OpenAPI entry and a foreign-id test. Undo stays client-side and the README says so. | A product requirement that a dismissal be undoable after the toast. |
+| An org filter on the inbox | The inbox is `/users/me`-shaped; filtering would hide work rather than label it, and today's staff accounts are single-boutique (Q1). | The owner-with-several-boutiques feature plus an in-app org switcher. |
+| A local-notification stack | The OS already draws the notification when the app is not foregrounded. | A requirement for app-styled foreground banners. |
+| Fixing the Commerce module wiring (no `AddCommerceModule`, no DI for `IOrderService`/`IBusinessRulesService`, `MapBusinessRulesEndpoints()` never called) | Real defects, but another module's plan. Reported here, not fixed. | Whoever owns Commerce. |
+| FCM credential provisioning | Deployment, not code; the `fcmCredentialConfigured` metric reports it. | Ops. |
+
+Client-side deferrals (conversation-grouped UX, rendering the per-row label, the org switcher
+and the local-notification stack) are recorded in
+[`frontend/aveline_mobile/lib/features/notifications/README.md`](../../frontend/aveline_mobile/lib/features/notifications/README.md).
 
 ### Deferred medium findings (issue #242)
 

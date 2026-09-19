@@ -43,13 +43,13 @@ public sealed class NotificationDispatcher : INotificationDispatcher
         _logger = logger;
     }
 
-    public async Task DispatchAsync(Notification notification, CancellationToken cancellationToken = default)
+    public async Task<NotificationRecord?> DispatchAsync(Notification notification, CancellationToken cancellationToken = default)
     {
         var recipients = await _resolver.ResolveAsync(notification, cancellationToken);
         if (recipients.Count == 0)
         {
             _logger.LogInformation("Notification {Type} resolved to no recipients; nothing dispatched.", notification.Type);
-            return;
+            return null;
         }
 
         var record = await _repository.AddAsync(new NotificationRecord
@@ -72,10 +72,16 @@ public sealed class NotificationDispatcher : INotificationDispatcher
                 NotificationRecordId = record.Id,
             }, cancellationToken);
 
-            await TrySendAsync(record, inboxItem, recipient, notification, allowed, NotificationChannel.Realtime, _realtime, cancellationToken);
-            await TrySendAsync(record, inboxItem, recipient, notification, allowed, NotificationChannel.Push, _push, cancellationToken);
-            await TrySendAsync(record, inboxItem, recipient, notification, allowed, NotificationChannel.Email, _email, cancellationToken);
+            // Computed after this recipient's row is written, so the payload's count means
+            // "open work after this arrival", not before it.
+            var unreadCount = await _inbox.GetUnreadCountAsync(recipient.UserId, cancellationToken);
+
+            await TrySendAsync(record, inboxItem, recipient, notification, allowed, NotificationChannel.Realtime, _realtime, unreadCount, cancellationToken);
+            await TrySendAsync(record, inboxItem, recipient, notification, allowed, NotificationChannel.Push, _push, unreadCount, cancellationToken);
+            await TrySendAsync(record, inboxItem, recipient, notification, allowed, NotificationChannel.Email, _email, unreadCount, cancellationToken);
         }
+
+        return record;
     }
 
     private async Task TrySendAsync(
@@ -86,6 +92,7 @@ public sealed class NotificationDispatcher : INotificationDispatcher
         NotificationChannel allowed,
         NotificationChannel channel,
         object channelService,
+        int unreadCount,
         CancellationToken cancellationToken)
     {
         if ((allowed & channel) == 0)
@@ -103,7 +110,7 @@ public sealed class NotificationDispatcher : INotificationDispatcher
 
         try
         {
-            await SendAsync(channelService, recipient, notification, cancellationToken);
+            await SendAsync(channelService, recipient, notification, inboxItem.Id, unreadCount, cancellationToken);
             delivery.Status = DeliveryStatus.Delivered;
             await _inbox.SetDeliveredAsync(inboxItem.Id, recipient.UserId, cancellationToken);
         }
@@ -121,10 +128,12 @@ public sealed class NotificationDispatcher : INotificationDispatcher
         object channelService,
         ResolvedRecipient recipient,
         Notification notification,
+        Guid inboxItemId,
+        int unreadCount,
         CancellationToken cancellationToken) => channelService switch
     {
-        IRealtimeChannel realtime => realtime.SendAsync(recipient, notification, cancellationToken),
-        IPushChannel push => push.SendAsync(recipient, notification, cancellationToken),
+        IRealtimeChannel realtime => realtime.SendAsync(recipient, notification, inboxItemId, unreadCount, cancellationToken),
+        IPushChannel push => push.SendAsync(recipient, notification, inboxItemId, cancellationToken),
         IEmailChannel email => email.SendAsync(recipient, notification, cancellationToken),
         _ => Task.CompletedTask,
     };

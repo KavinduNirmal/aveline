@@ -218,14 +218,7 @@ paths:
                   $ref: "#/components/schemas/DevicePlatform"
       responses:
         "200":
-          description: Registered
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  token: { type: string }
-                  platform: { $ref: "#/components/schemas/DevicePlatform" }
+          description: Registered. The handler returns an empty body.
         "400":
           $ref: "#/components/responses/ValidationError"
         "401":
@@ -248,6 +241,8 @@ paths:
           description: Unregistered
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /api/v1/users/me/sessions:
     get:
@@ -1046,10 +1041,7 @@ paths:
           description: Count
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  count: { type: integer, minimum: 0 }
+              schema: { $ref: "#/components/schemas/UnreadCountResponse" }
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -1105,6 +1097,9 @@ paths:
       responses:
         "200":
           description: Marked
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MarkAllReadResponse" }
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -1118,6 +1113,15 @@ paths:
       tags: [Conversations]
       summary: List conversations
       operationId: listConversations
+      description: >-
+        The inbox, newest-first with an id tiebreak so paging is total. Page one holds
+        the newest threads. Each row carries the client's name, a block-aware preview of
+        the newest message, the block it came from (the row's category), who spoke last
+        and the actionable `markers` set. The same tile is pushed over the SignalR
+        `conversations` hub as **`ReceiveConversationChanged`** whenever a thread changes
+        or appears (to `org:{organizationId}` for shared threads and to
+        `user:{ownerUserId}` for a per-user general Salon), so an open inbox updates
+        without a re-list.
       parameters:
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/PageSize"
@@ -1183,13 +1187,24 @@ paths:
       tags: [Conversations]
       summary: List messages
       operationId: listMessages
+      description: |
+        Oldest first, with `page` one holding the *oldest* messages; a client that wants the
+        newest words asks for the last page. Ordering is total: `CreatedAt` then `Id`, so a tied
+        timestamp cannot duplicate or skip a row across a page seam. The response echoes the
+        clamped `pageSize` (1..200), which is the value a client must use to work out the last
+        page. A conversation the caller cannot see is a `404`, never a `500`.
+
+        `around` opens the page that **holds** that message rather than `page`, which is how a
+        notification deep-link lands on the words it was about. The served page is echoed, so
+        `hasEarlier` (`page > 1`) and `hasMore` (`page * pageSize < total`) follow from the
+        response alone. An anchor that is not in the conversation serves page 1.
       parameters:
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/PageSize"
         - name: around
           in: query
           schema: { type: string, format: uuid, nullable: true }
-          description: Deep-link anchor; returns a window centred on this message id
+          description: Deep-link anchor; serves the page that holds this message id
       responses:
         "200":
           description: Messages
@@ -1200,10 +1215,21 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     post:
       tags: [Conversations]
       summary: Send a staff message
       operationId: sendMessage
+      description: |
+        Records an internal staff note and triggers the agent. The note is stored `Published`,
+        which means it is visible in the Salon and was not delivered to the customer's channel.
+
+        `clientMessageId` makes the send idempotent. It is a client-generated UUIDv4, stable for
+        one composed message across the send and every retry. A replay with the same key and the
+        same text returns the stored message with `200` and does **not** trigger the agent a
+        second time. Reusing a key for different text is a `409` with
+        `code: message-idempotency-conflict`, because the key promises exactly one message.
       requestBody:
         required: true
         content:
@@ -1213,6 +1239,20 @@ paths:
               required: [text]
               properties:
                 text: { type: string, minLength: 1 }
+                clientMessageId:
+                  type: string
+                  format: uuid
+                  nullable: true
+                  description: Client-generated idempotency key, stable across retries
+                attachmentIds:
+                  type: array
+                  maxItems: 5
+                  description: |
+                    Ids of attachments uploaded for this conversation and not yet bound. All of
+                    them must belong to this conversation and be unbound; a bad id fails the
+                    whole send with `400` rather than half-binding, so the uploads stay
+                    sweepable.
+                  items: { type: string, format: uuid }
       responses:
         "200":
           description: Message
@@ -1227,6 +1267,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
 
   /api/v1/orgs/{organizationId}/conversations/{conversationId}/select-customer:
     parameters:
@@ -1275,6 +1317,11 @@ paths:
       description: |
         The `contentHash` must match the hash of the message as the approver saw it.
         A mismatch is rejected so an approval cannot be applied to edited content.
+
+        **Authorization.** This is a human-in-the-loop release gate for an above-limit
+        commitment, so the route requires the `BoutiqueConversationApproval` policy —
+        active membership **plus** `approvals:approve` — on top of the group's
+        `conversations:view`. An ordinary staff member therefore receives `403`.
       operationId: decideSignOff
       requestBody:
         required: true
@@ -1291,6 +1338,182 @@ paths:
           description: Decided
         "400":
           description: Content hash missing or mismatched
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/conversations/{conversationId}/messages/{messageId}/sign-off/revoke:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - $ref: "#/components/parameters/ConversationId"
+      - name: messageId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Conversations]
+      summary: Revoke an approved SignOff
+      description: |
+        Takes an approval back. Appends a `revoked` row to the immutable decision log — the
+        original approval is **not** mutated — and sets both the message and the conversation
+        back to `AwaitingSignOff`, so the SignOff is decidable again and the inbox's derived
+        `approval` marker lights again. No LangGraph action is taken: ADR-018 leaves the resume
+        unwired, so there is nothing to undo.
+
+        Requires the `BoutiqueConversationApproval` policy (`approvals:approve`), like the
+        decide route. A SignOff whose newest decision is not an approval is a `400`.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, nullable: true }
+      responses:
+        "200":
+          description: The revoked message, back in `AwaitingSignOff`
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageDto" }
+        "400":
+          description: Not a SignOff, or its newest decision is not an approval
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/conversations/{conversationId}/attachments:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - $ref: "#/components/parameters/ConversationId"
+    post:
+      tags: [Conversations]
+      summary: Upload a thread attachment
+      operationId: uploadConversationAttachment
+      description: |
+        Stores one image or PDF against a conversation, **unbound**. The send then names the id
+        in `attachmentIds`, and the same idempotent insert that creates the message binds it; an
+        upload that is never sent is swept after the TTL.
+
+        Accepts `multipart/form-data` with a `file` field, or JSON with `imageData` (raw base64
+        or a `data:` URL). The allow-list is images plus `application/pdf`; audio and video are
+        refused. The cap is 5 MB per file and 5 files per message. A file over the cap or of a
+        disallowed type is refused **before anything is written**.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
+          application/json:
+            schema:
+              type: object
+              required: [imageData]
+              properties:
+                imageData: { type: string }
+                fileName: { type: string, nullable: true }
+                width: { type: integer, nullable: true }
+                height: { type: integer, nullable: true }
+      responses:
+        "200":
+          description: The stored attachment
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AttachmentDto" }
+        "400":
+          description: No data, a disallowed type, or over the 5 MB cap
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/conversations/{conversationId}/attachments/{attachmentId}:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - $ref: "#/components/parameters/ConversationId"
+      - name: attachmentId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Conversations]
+      summary: Serve an attachment's bytes
+      operationId: getConversationAttachment
+      description: |
+        **Authenticated**, unlike the catalog's anonymous image GET, which is deliberately not
+        copied for a customer's file: the route is under `conversations:view` and the conversation
+        must be visible to the caller. The response carries `X-Content-Type-Options: nosniff` and
+        the stored type is re-checked against the allow-list, so a spoofed upload can never be
+        rendered as HTML or script from the API origin.
+      responses:
+        "200":
+          description: The bytes
+          content:
+            image/*:
+              schema: { type: string, format: binary }
+            application/pdf:
+              schema: { type: string, format: binary }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/conversations/{conversationId}/read:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - $ref: "#/components/parameters/ConversationId"
+    patch:
+      tags: [Conversations]
+      summary: Mark a conversation read
+      operationId: markConversationRead
+      description: |
+        Advances the **caller's own** read marker for one conversation. The marker is
+        monotonic: it is ordered by `(createdAt, id)` and a write that would move it backwards
+        is accepted (`204`) but changes nothing, so a second device re-opening an older
+        position cannot un-read what the first device read.
+
+        An absent row means **nothing has been read** — there is no coalesce to an epoch. One
+        row exists per `(organization, user, conversation)`, so a colleague on the same
+        organization-shared thread has an independent marker. The inbox draws no badge today;
+        when it wants one it reads this table's aggregate rather than growing a second model.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lastReadMessageId]
+              properties:
+                lastReadMessageId:
+                  type: string
+                  format: uuid
+                  description: The newest message the caller has seen, in this conversation
+      responses:
+        "204":
+          description: The marker advanced, or was already at least this far along
+        "400":
+          description: The message does not belong to this conversation
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -3950,6 +4173,13 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ValidationProblemDetails" }
+    Conflict:
+      description: |
+        409. The request conflicts with stored state. The body carries a machine-readable
+        `code` (for example `message-idempotency-conflict`) beside a `message`.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
     RateLimited:
       description: Rate limit or quota exceeded
       content:
@@ -4417,6 +4647,20 @@ components:
         readAt: { type: string, format: date-time, nullable: true }
         deliveredAt: { type: string, format: date-time, nullable: true }
         createdAt: { type: string, format: date-time }
+        organizationId: { type: string, format: uuid }
+        organizationName: { type: string, nullable: true }
+    UnreadCountResponse:
+      type: object
+      required: [count]
+      properties:
+        count: { type: integer, minimum: 0 }
+
+    MarkAllReadResponse:
+      type: object
+      required: [updated]
+      properties:
+        updated: { type: integer, minimum: 0 }
+
     NotificationPage:
       allOf:
         - $ref: "#/components/schemas/PageMeta"
@@ -4431,11 +4675,55 @@ components:
       type: object
       properties:
         id: { type: string, format: uuid }
-        kind: { type: string }
+        kind:
+          type: string
+          description: >-
+            The thread's nature and audience. `Salon` is the agent-to-staff thread;
+            `Announcement` and `Digest` are reserved. Customer context is a separate axis
+            carried by `customerId`, and clients classify by that context first.
         customerId: { type: string, format: uuid, nullable: true }
+        customerName: { type: string, nullable: true }
+        externalRef:
+          type: string
+          nullable: true
+          description: >-
+            The channel reference (e.g. a WhatsApp phone number). Present on a
+            channel-created thread even when the customer is not yet identified, so the
+            client renders it as an unnamed client rather than pinning it as the concierge.
         threadId: { type: string }
         status: { type: string }
         lastMessageAt: { type: string, format: date-time, nullable: true }
+        lastMessagePreview:
+          type: string
+          nullable: true
+          description: >-
+            A block-aware summary of the newest message, truncated to 120 characters. Null
+            when the message carries no block the inbox knows how to summarise.
+        lastMessageKind:
+          type: string
+          nullable: true
+          description: The message kind as sent (`Note` for every agent persona).
+        lastMessageBlock:
+          type: string
+          nullable: true
+          description: >-
+            The content-block type the preview was derived from. This is the row's
+            category, because agent output is published as `kind: Note` and the category
+            lives in the blocks.
+        lastMessageAuthor:
+          type: string
+          nullable: true
+          description: One of `Staff`, `Agent`, `Customer`.
+        lastMessageAgentKey: { type: string, nullable: true }
+        markers:
+          type: array
+          description: >-
+            The row's actionable states, sorted by fixed priority
+            `approval` -> `choice` -> `draft`. A set rather than one value, because a
+            thread can hold more than one.
+          items:
+            type: string
+            enum: [approval, choice, draft]
     ConversationPage:
       allOf:
         - $ref: "#/components/schemas/PageMeta"
@@ -4444,6 +4732,27 @@ components:
             items:
               type: array
               items: { $ref: "#/components/schemas/ConversationDto" }
+    AttachmentDto:
+      type: object
+      description: One stored thread attachment.
+      properties:
+        attachmentId: { type: string, format: uuid }
+        url:
+          type: string
+          description: |
+            Where a reader fetches the bytes. The database provider stores the authenticated
+            conversations attachment route; a CDN provider would store its own secure URL, which
+            is why every reader uses this field rather than building a path.
+        contentType: { type: string }
+        fileName: { type: string }
+        sizeBytes: { type: integer, format: int64 }
+        width: { type: integer, nullable: true }
+        height: { type: integer, nullable: true }
+        messageId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Null until a send binds the attachment to its message.
     MessageDto:
       type: object
       properties:
@@ -4460,6 +4769,19 @@ components:
         replyToMessageId: { type: string, format: uuid, nullable: true }
         status: { type: string }
         createdAt: { type: string, format: date-time }
+        clientMessageId:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            The client-generated idempotency key this message was stored under, echoed so a
+            client can reconcile the realtime broadcast of its own optimistic row. Null for
+            anything the server authored.
+        workflowRunId:
+          type: string
+          format: uuid
+          nullable: true
+          description: The LangGraph run that produced this message, for bubble-to-run correlation.
     MessagePage:
       allOf:
         - $ref: "#/components/schemas/PageMeta"

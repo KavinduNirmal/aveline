@@ -1,5 +1,10 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 
+import '../../../core/network/org_context.dart';
+import '../domain/thread_attachment.dart';
 import '../domain/thread_message.dart';
 import 'thread_repository.dart';
 
@@ -17,37 +22,139 @@ class ApiThreadRepository implements ThreadRepository {
 
   final Dio _dio;
 
-  /// The shop whose conversation is being read. Every conversation is scoped to
-  /// an org on the server, so the caller has to name one.
-  final String organizationId;
+  /// The shop whose conversation is being read, read **at call time**.
+  ///
+  /// A callback rather than a value because the canonical id arrives from
+  /// `GET /orgs/my` after the shell mounts: a repository built before it is known
+  /// has to see the later value. A null or blank id is [OrgContextUnavailable] — a
+  /// "not yet", which the controller keeps as a loading state — rather than an
+  /// error card, which is reserved for the server's own refusal.
+  final String? Function() organizationId;
+
+  /// The active membership's org id, or a "not yet".
+  String get _organizationId {
+    final id = organizationId();
+    if (id == null || id.isEmpty) {
+      throw const OrgContextUnavailable();
+    }
+    return id;
+  }
+
+  /// Every route in this module takes `{conversationId:guid}` (and the sign-off
+  /// route `{messageId:guid}`), so a non-UUID id would come back as an opaque 400
+  /// from the route constraint with nothing in it an associate could act on.
+  /// Refusing here names the offending id instead.
+  static final RegExp _uuid = RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+  );
+
+  static void _requireUuid(String value, String name) {
+    if (!_uuid.hasMatch(value)) {
+      throw ArgumentError.value(value, name, 'must be a UUID');
+    }
+  }
+
+  String _conversationPath(String conversationId) {
+    _requireUuid(conversationId, 'conversationId');
+    return '/api/v1/orgs/$_organizationId/conversations/$conversationId';
+  }
 
   String _messagesPath(String conversationId) =>
-      '/api/v1/orgs/$organizationId/conversations/$conversationId/messages';
+      '${_conversationPath(conversationId)}/messages';
 
   @override
   Future<ThreadPage> fetchMessages(
     String conversationId, {
     int page = 1,
     int pageSize = 50,
+    String? around,
   }) async {
+    if (around != null) {
+      _requireUuid(around, 'around');
+    }
+
     final response = await _dio.get<Map<String, dynamic>>(
       _messagesPath(conversationId),
-      queryParameters: {'page': page, 'pageSize': pageSize},
+      queryParameters: {
+        'page': page,
+        'pageSize': pageSize,
+        'around': ?around,
+      },
     );
     return ThreadPage.fromJson(response.data ?? const {});
   }
 
+  /// A small in-memory cache, keyed by attachment id.
+  ///
+  /// A thumbnail is asked for once per scroll, and the bytes never change: the row is immutable
+  /// once written. Bounded by the conversation's own attachments, which is small enough.
+  final Map<String, Uint8List> _attachmentCache = {};
+
   @override
-  Future<ThreadMessage> sendMessage(String conversationId, String text) async {
+  Future<ThreadMessage> sendMessage(
+    String conversationId,
+    String text, {
+    String? clientMessageId,
+    List<String> attachmentIds = const [],
+  }) async {
     final response = await _dio.post<Map<String, dynamic>>(
       _messagesPath(conversationId),
-      data: {'text': text},
+      data: {
+        'text': text,
+        'clientMessageId': ?clientMessageId,
+        if (attachmentIds.isNotEmpty) 'attachmentIds': attachmentIds,
+      },
     );
     return ThreadMessage.fromJson(response.data ?? const {});
   }
 
   @override
-  Future<void> decideSignOff({
+  Future<ThreadAttachment> uploadAttachment(
+    String conversationId, {
+    required Uint8List bytes,
+    required String contentType,
+    required String fileName,
+    int? width,
+    int? height,
+  }) async {
+    _requireUuid(conversationId, 'conversationId');
+    // Sent as a `data:` URL so the server sees the type the picker reported rather than
+    // guessing from the file name.
+    final response = await _dio.post<Map<String, dynamic>>(
+      '${_conversationPath(conversationId)}/attachments',
+      data: {
+        'imageData': 'data:$contentType;base64,${base64Encode(bytes)}',
+        'fileName': fileName,
+        'width': ?width,
+        'height': ?height,
+      },
+    );
+    return ThreadAttachment.fromJson(response.data ?? const {});
+  }
+
+  @override
+  Future<Uint8List> fetchAttachmentBytes(
+    String conversationId,
+    String attachmentId,
+  ) async {
+    _requireUuid(attachmentId, 'attachmentId');
+
+    final cached = _attachmentCache[attachmentId];
+    if (cached != null) {
+      return cached;
+    }
+
+    final response = await _dio.get<List<int>>(
+      '${_conversationPath(conversationId)}/attachments/$attachmentId',
+      options: Options(responseType: ResponseType.bytes),
+    );
+    final bytes = Uint8List.fromList(response.data ?? const []);
+    _attachmentCache[attachmentId] = bytes;
+    return bytes;
+  }
+
+  @override
+  Future<ThreadMessage> decideSignOff({
     required String conversationId,
     required ThreadMessage message,
     required bool approved,
@@ -62,9 +169,53 @@ class ApiThreadRepository implements ThreadRepository {
       );
     }
 
-    await _dio.post<void>(
+    _requireUuid(message.id, 'messageId');
+
+    final response = await _dio.post<Map<String, dynamic>>(
       '${_messagesPath(conversationId)}/${message.id}/sign-off',
       data: {'approved': approved, 'contentHash': hash},
+    );
+    return ThreadMessage.fromJson(response.data ?? const {});
+  }
+
+  @override
+  Future<void> selectCustomer(
+    String conversationId,
+    String customerId, {
+    String? query,
+  }) async {
+    _requireUuid(customerId, 'customerId');
+    await _dio.post<void>(
+      '/api/v1/orgs/$_organizationId/conversations/$conversationId/select-customer',
+      data: {
+        'customerId': customerId,
+        if (query != null && query.isNotEmpty) 'query': query,
+      },
+    );
+  }
+
+  @override
+  Future<ThreadMessage> revokeSignOff(
+    String conversationId,
+    String messageId, {
+    String? reason,
+  }) async {
+    _requireUuid(messageId, 'messageId');
+    final response = await _dio.post<Map<String, dynamic>>(
+      '${_messagesPath(conversationId)}/$messageId/sign-off/revoke',
+      data: {
+        if (reason != null && reason.isNotEmpty) 'reason': reason,
+      },
+    );
+    return ThreadMessage.fromJson(response.data ?? const {});
+  }
+
+  @override
+  Future<void> markRead(String conversationId, String lastReadMessageId) async {
+    _requireUuid(lastReadMessageId, 'lastReadMessageId');
+    await _dio.patch<void>(
+      '${_messagesPath(conversationId)}/read',
+      data: {'lastReadMessageId': lastReadMessageId},
     );
   }
 }

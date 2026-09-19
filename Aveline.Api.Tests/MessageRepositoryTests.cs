@@ -85,7 +85,7 @@ public class MessageRepositoryTests
             await _sut.SaveAsync(CreateMessage($"msg-{i}"));
         }
 
-        var (items, total) = await _sut.ListAsync(_conversationId, 1, 2);
+        var (items, total, _) = await _sut.ListAsync(_conversationId, 1, 2);
 
         Assert.Equal(5, total);
         Assert.Equal(2, items.Count);
@@ -105,7 +105,7 @@ public class MessageRepositoryTests
             Status = MessageStatus.Published,
         });
 
-        var (items, total) = await _sut.ListAsync(_conversationId, 1, 50);
+        var (items, total, _) = await _sut.ListAsync(_conversationId, 1, 50);
 
         Assert.Equal(0, total);
         Assert.Empty(items);
@@ -121,7 +121,7 @@ public class MessageRepositoryTests
             await _sut.SaveAsync(CreateMessage($"msg-{i}"));
         }
 
-        var (items, _) = await _sut.ListAsync(_conversationId, 1, 5, around: target.Id);
+        var (items, _, _) = await _sut.ListAsync(_conversationId, 1, 5, around: target.Id);
 
         Assert.Contains(items, m => m.Id == target.Id);
     }
@@ -145,5 +145,120 @@ public class MessageRepositoryTests
         Assert.Equal(MessageStatus.Sent, reloaded!.Status);
         Assert.Contains("Revised", reloaded.ContentBlocksJson);
         Assert.Equal(1, await _context.Messages.CountAsync());
+    }
+
+    [Fact]
+    public async Task ListAsync_BreaksTiedTimestampsOnId_SoPagesDoNotDuplicateOrSkip()
+    {
+        // SaveAsync stamps CreatedAt, so a tie is written directly. The inserted ids are
+        // deliberately not in Guid comparison order: without a tiebreaker the query falls back
+        // to the store's arbitrary order, which is what lets a message fall between two pages.
+        var tied = DateTime.UtcNow;
+        var inserted = new[]
+        {
+            Guid.Parse("10000000-0000-0000-0000-000000000001"),
+            Guid.Parse("01000000-0000-0000-0000-000000000001"),
+            Guid.Parse("20000000-0000-0000-0000-000000000001"),
+            Guid.Parse("02000000-0000-0000-0000-000000000001"),
+        };
+        foreach (var id in inserted)
+        {
+            _context.Messages.Add(new Message
+            {
+                Id = id,
+                ConversationId = _conversationId,
+                AuthorKind = AuthorKind.User,
+                AuthorUserId = Guid.NewGuid(),
+                Kind = MessageKind.Note,
+                ContentBlocksJson = "[]",
+                Status = MessageStatus.Published,
+                CreatedAt = tied,
+            });
+        }
+        await _context.SaveChangesAsync();
+
+        var first = await _sut.ListAsync(_conversationId, 1, 2);
+        var second = await _sut.ListAsync(_conversationId, 2, 2);
+        var seen = first.Items.Concat(second.Items).Select(m => m.Id).ToList();
+
+        Assert.Equal(4, seen.Count);
+        Assert.Equal(4, seen.Distinct().Count());
+        Assert.Equal(inserted.OrderBy(id => id).ToList(), seen);
+    }
+
+    [Fact]
+    public async Task ListAsync_WithAround_EchoesThePageThatHoldsTheAnchor()
+    {
+        // A deep-link must open on the anchor's page, and the response must say which page that
+        // was: an off-grid half-page window could not be expressed in the page envelope, and a
+        // client could not then tell whether earlier history exists.
+        var baseTime = DateTime.UtcNow;
+        var ids = new List<Guid>();
+        for (var i = 0; i < 12; i++)
+        {
+            var id = Guid.CreateVersion7();
+            _context.Messages.Add(new Message
+            {
+                Id = id,
+                ConversationId = _conversationId,
+                AuthorKind = AuthorKind.User,
+                AuthorUserId = Guid.NewGuid(),
+                Kind = MessageKind.Note,
+                ContentBlocksJson = "[]",
+                Status = MessageStatus.Published,
+                CreatedAt = baseTime.AddMinutes(i),
+            });
+            ids.Add(id);
+        }
+        await _context.SaveChangesAsync();
+
+        var (items, total, page) = await _sut.ListAsync(_conversationId, 1, 5, around: ids[7]);
+
+        Assert.Equal(12, total);
+        Assert.Equal(2, page);
+        Assert.Equal(5, items.Count);
+        Assert.Contains(items, m => m.Id == ids[7]);
+        Assert.Equal(ids[5], items.First().Id);
+    }
+
+    [Fact]
+    public async Task ListAsync_WithAnUnknownAround_ServesTheFirstPage()
+    {
+        for (var i = 0; i < 3; i++)
+        {
+            await _sut.SaveAsync(CreateMessage($"msg-{i}"));
+        }
+
+        var (items, _, page) = await _sut.ListAsync(_conversationId, 1, 2, around: Guid.NewGuid());
+
+        Assert.Equal(1, page);
+        Assert.Equal(2, items.Count);
+    }
+
+    [Fact]
+    public async Task GetByClientMessageIdAsync_ReturnsTheStoredMessage()
+    {
+        var key = Guid.NewGuid();
+        var message = CreateMessage("On my way.");
+        message.ClientMessageId = key;
+        await _sut.SaveAsync(message);
+        await _sut.SaveAsync(CreateMessage("Something else."));
+
+        var found = await _sut.GetByClientMessageIdAsync(_conversationId, key);
+
+        Assert.NotNull(found);
+        Assert.Equal(message.Id, found.Id);
+    }
+
+    [Fact]
+    public async Task GetByClientMessageIdAsync_ReturnsNull_ForAnUnknownKeyOrAnotherConversation()
+    {
+        var key = Guid.NewGuid();
+        var message = CreateMessage("On my way.");
+        message.ClientMessageId = key;
+        await _sut.SaveAsync(message);
+
+        Assert.Null(await _sut.GetByClientMessageIdAsync(_conversationId, Guid.NewGuid()));
+        Assert.Null(await _sut.GetByClientMessageIdAsync(Guid.NewGuid(), key));
     }
 }

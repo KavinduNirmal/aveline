@@ -14,9 +14,13 @@ class AgentStateProvider extends ChangeNotifier {
   final Duration transientTimeout;
 
   AgentState _state = AgentState.idle;
+  String? _agentKey;
   Timer? _transientTimer;
 
   AgentState get state => _state;
+
+  /// The persona the current state was attributed to, when the payload named one.
+  String? get agentKey => _agentKey;
 
   /// True while Aveline is actively working on a reply.
   bool get isWorking => switch (_state) {
@@ -29,11 +33,15 @@ class AgentStateProvider extends ChangeNotifier {
       };
 
   /// Applies an incoming agent state, scheduling a settle-to-idle for transient states.
-  void apply(AgentState state) {
+  ///
+  /// [agentKey] is the persona the state was attributed to, so the open thread can credit
+  /// the specialist that is working rather than the umbrella brand.
+  void apply(AgentState state, {String? agentKey}) {
     _transientTimer?.cancel();
     _transientTimer = null;
 
     _state = state;
+    _agentKey = agentKey;
     notifyListeners();
 
     if (state == AgentState.success ||
@@ -51,6 +59,7 @@ class AgentStateProvider extends ChangeNotifier {
     _transientTimer?.cancel();
     _transientTimer = null;
     _state = AgentState.idle;
+    _agentKey = null;
     notifyListeners();
   }
 

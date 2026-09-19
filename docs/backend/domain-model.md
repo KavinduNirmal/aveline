@@ -947,6 +947,189 @@ A visit is **not billable**. Consumption is an `AiUsageRecord` written after a
 completed agent workflow; in-person visits are customer interactions, not AI
 usage. The receipt returns `blossomsCharged: 0` so nothing can invent a charge.
 
+### 8.8 Conversations inbox row (no new table)
+
+The inbox list is a **derived read**, not a stored projection, and it adds **no
+table**. `ConversationRepository.ListAsync` joins the newest message and the
+customer's `FullName` onto each conversation under the unchanged visibility
+predicate, and one server-side mapper (`ConversationTileMapper`) derives the
+preview, the row's category and the marker set.
+
+- **Category is a content block.** Agent output is published as `kind: Note` for
+  every persona, so the row carries `lastMessageBlock` - the block type the
+  preview came from - and switches on that. The preview is mapped per block type,
+  including `client_message -> its text`.
+- **Markers are a derived set** over the closed vocabulary
+  `approval | choice | draft`, sorted `approval` -> `choice` -> `draft`. `approval`
+  is derived from a message-level `SignOff` with `Status == AwaitingSignOff`; the
+  write path sets both that and `Conversation.Status = AwaitingSignOff`, so the
+  producer (the commerce approval flow, ADR-018) lights the marker with no DTO or
+  client change when it ships.
+- **Customer context is a separate axis from `Kind`.** No `ConversationKind.Customer`
+  member exists, and none is added: `Kind` is the thread's nature, `CustomerId` is
+  the context it carries. The inbound path binds that context at creation through
+  `ICustomerRepository.GetByPhoneAsync`; an unresolved phone leaves `ExternalRef`
+  set and `CustomerId` null, which the client renders as an unnamed client.
+- **The ordering is total.** `OrderByDescending(LastMessageAt ?? CreatedAt)` gains
+  `.ThenByDescending(Id)` and a supporting index
+  `(OrganizationId, LastMessageAt DESC, Id DESC)` (migration
+  `AddConversationListRowSupport`, index only), so paging cannot duplicate or skip
+  a row when two threads share an effective timestamp.
+
+---
+
+### 8.9 Message history and the idempotent send
+
+`Message` is the existing thread row; the client-thread work changes it in two
+places and adds no table.
+
+- **The ordering is total.** `MessageRepository.ListAsync` gains
+  `.ThenBy(m => m.Id)` and the index `(ConversationId, CreatedAt, Id)` replaces
+  `(ConversationId, CreatedAt)` (migration `AddMessageHistoryIndex`, index only).
+  `Id` is a `Guid.CreateVersion7()`, so it is monotone and a tied `CreatedAt` still
+  has a total order: a page seam can neither duplicate nor skip a row. This is the
+  whole paging hardening (D6); a cursor is deliberately **deferred** with the
+  concurrent-insert drift recorded, and `around` is reserved for the notification
+  deep-link and not consumed by a client yet.
+- **`around` opens the anchor's page.** A deep-link asks for the page that *holds* a message
+  instead of a positional `page`; the repository counts the rows strictly before the anchor
+  under the same `(CreatedAt, Id)` order, serves that page, and the endpoint echoes the served
+  page rather than the requested one. That is what keeps `hasEarlier` computable from the
+  response, which the old half-page window could not express.
+- **`Message.ClientMessageId`** (`uuid NULL`, migration
+  `AddMessageClientMessageId`) is a client-generated idempotency key, stable for
+  one composed message across the send and every retry. A filtered unique index
+  `(ConversationId, ClientMessageId) WHERE ClientMessageId IS NOT NULL` enforces
+  exactly one row per key; the filter keeps server-authored messages, which carry
+  no key, out of the index. A replay with the same key and the same text returns
+  the stored row with `200` and does **not** trigger the agent again; the same key
+  with different text is a `409 code: message-idempotency-conflict`, because the
+  key promises exactly one message.
+- **A staff note is still `Published`.** D2 = A keeps the composer a
+  note-to-record surface: the row is visible in the Salon and reaches no customer
+  channel, which is why the bubble draws `NOTE · NOT SENT`. Nothing on the send
+  path sets `MessageStatus.Sent` or calls `IWhatsAppService.SendMessageAsync`.
+
+---
+
+### 8.10 `ConversationReadState` → `ConversationReadStates` (new, thread-owned)
+
+The first per-user conversation read model in the API (D5 = B), mirroring the shape
+Home shipped for `Focus_Dismissals`: a per-user, per-fact row with a read index and a
+unique upsert index, `ITenantEntity`, org FK cascade (plus a conversation FK
+cascade).
+
+| Column | Notes |
+| --- | --- |
+| `Id` | `Guid.CreateVersion7()` |
+| `OrganizationId`, `UserId`, `ConversationId` | the key, unique together |
+| `LastReadMessageId Guid?` | the newest message the user has seen |
+| `LastReadAtUtc` | when the marker was last advanced |
+
+- **Absent row = nothing read.** There is no `coalesce(…, now)`: a missing row means
+  every message is unread, which is the suppression the inbox strategy rejected.
+- **The marker is monotonic.** A write is accepted only when the incoming message is
+  after the stored one by `(CreatedAt, Id)`; otherwise the route still answers `204`
+  and nothing changes. Two devices therefore cannot un-read each other.
+- **One row per user.** A colleague on the same organization-shared thread has an
+  independent marker; the write is an upsert by the natural key.
+- **Route.** `PATCH /api/v1/orgs/{organizationId}/conversations/{conversationId}/read`
+  `{ lastReadMessageId }` → `204`, under `BoutiqueConversationAccessPolicy`; a
+  conversation the caller cannot see is a `404`, a message from another conversation
+  is a `400`.
+- **Consumer: none yet.** The inbox draws no badge (D2 = c). When it wants one it
+  reads this table's aggregate (`unread = messages after the marker`, absent = all
+  unread) rather than creating a second read model.
+- **Migration** `AddConversationReadStates`.
+
+---
+
+### 8.11 Sign-off oversight: the decision `Kind` and the revoke path (D7)
+
+- **`SignOffDecision.Kind`** over `approved | rejected | revoked` replaces the
+  `Approved` bool (migration `AddSignOffDecisionKind`, which adds the column,
+  **backfills** it from the bool, and only then drops the bool). Rows stay immutable
+  and append-only: a revocation appends a `revoked` row rather than mutating the
+  approval, and `GetByMessageIdAsync` already returns the newest, which is now the
+  authoritative state.
+- **Authorization.** A new named org-scoped policy `BoutiqueConversationApproval`
+  (active membership + `Permissions.ApprovalsApprove`) is applied to the decide and
+  revoke routes **in addition to** the group's `BoutiqueConversationAccess`, so an
+  ordinary `Staff` member (who holds `conversations:view`) receives `403`.
+- **Revoke** appends a `revoked` decision, sets `Message.Status = AwaitingSignOff`
+  (the `ContentHash` is retained, so the same payload is decidable again) and
+  `Conversation.Status = AwaitingSignOff`, which relights the inbox's `approval`
+  marker. No LangGraph action is taken (ADR-018 has no resume to undo). A SignOff
+  whose newest decision is not `approved` is a `400`.
+- **Fix found while building this.** `DecideSignOffAsync` re-inserted a loaded
+  `Message` through `IMessageRepository.SaveAsync` (which `Add`s), so the first real
+  decide through the repository answered `500` with a duplicate primary key. Both
+  decide and revoke now write through `UpdateAsync`; the integration test pins it.
+
+---
+
+### 8.12 `MessageAttachment` → `MessageAttachments` (new, D8)
+
+The thread's files, written unbound by the upload route and bound by the same
+idempotent insert that creates the message.
+
+| Column | Notes |
+| --- | --- |
+| `Id` | `Guid.CreateVersion7()` |
+| `OrganizationId`, `ConversationId` | the tenant and the thread |
+| `MessageId Guid?` | null until the send binds it |
+| `UploadedByUserId Guid?` | who picked it |
+| `StorageProvider` / `StorageKey` | `database` and the row id today; a CDN provider later |
+| `ImageData bytea NULL` | the catalog's `bytea` precedent; a CDN provider leaves it null |
+| `ContentType`, `FileName`, `SizeBytes` | metadata |
+| `Width`, `Height` | optional, for a thumbnail's aspect |
+| `Url` | what every reader uses, so the provider swap changes no read path |
+| `CreatedAtUtc`, `BoundAtUtc` | the sweep's clock, and when the send bound the row |
+
+- **Indexes:** `(OrganizationId, ConversationId)`; `(MessageId)`; and a filtered
+  `(MessageId, CreatedAtUtc) WHERE MessageId IS NULL` for the sweep.
+- **Content policy:** `Common/Media/MediaContentTypes` (the catalog's
+  `ImageContentTypes` promoted and extended with `application/pdf`). Images and PDF
+  only; audio and video are refused. 5 MB per file, 5 per message.
+- **Serving is authenticated**, under `BoutiqueConversationAccessPolicy`, with
+  `nosniff` and the allow-list re-checked on read; the catalog's anonymous image GET is
+  deliberately not copied.
+- **Orphan sweep:** `AttachmentSweepJob` deletes unbound rows older than 24 h, telling
+  the store first so a provider that keeps bytes elsewhere releases them.
+- **Inbound channel media** goes through the same row and store: the webhook fetches the
+  customer's image or document with the tenant's WhatsApp credentials, stores it with no
+  uploader, and the `client_message` the inbound path records binds it and appends its
+  `attachment` block. A type outside the allow-list, a missing integration or an expired
+  media URL is logged and skipped rather than failing the webhook.
+- **Migration** `AddMessageAttachments`.
+
+---
+
+### 8.13 Notification gateway tables (existing — no new table, no migration)
+
+The notification gateway's four tables predate this document
+(`Modules/Notifications/`, [ADR-013](../ADR/ADR-013-notification-service-architecture.md)).
+They are recorded here for completeness; the notifications inbox work adds **no table and
+no column**.
+
+| Table | What it holds |
+| --- | --- |
+| `NotificationRecords` | One row per dispatch: `OrganizationId` (required FK to `Organizations`), `Type`, `Title`, `Body`, `DataJson`, `CreatedAt`, and the `Deliveries` collection. This is the **audit trail** and is never purged. |
+| `NotificationDeliveries` | One row per (recipient, router-allowed channel) attempt: `NotificationRecordId`, `UserId`, `Channel`, `Status` (`Pending`/`Delivered`/`Failed`), `ErrorMessage`. Also audit trail. |
+| `UserNotifications` | The per-user inbox row: `UserId`, `NotificationRecordId`, `ReadAt`, `DeliveredAt`, `DismissedAt`, `CreatedAt`. Read is one-way and idempotent; dismiss is a soft delete with no restore route. Purged by `NotificationRetentionJob` (S6): dismissed after 30 d, read after 180 d. |
+| `UserDeviceTokens` | The FCM registration: `UserId`, `Token`, `Platform`, active flag. Push is gated on opt-in **and** a token, so an un-opted-in recipient gets no push even when the notification requests it. |
+
+- **Indexes:** `UserNotifications` on `(UserId, DismissedAt, ReadAt)`; `NotificationRecords`
+  on `OrganizationId`; `NotificationDeliveries` on its record and user.
+- **The inbox is merged per user, not scoped per organisation.** `GET /api/v1/notifications`
+  is `/users/me`-shaped and carries no organisation filter, so the list, the count and
+  "Mark all read" always cover the same set. The per-row label
+  (`organizationId`/`organizationName` on `UserNotificationDto`) is a projection of
+  `NotificationRecords.OrganizationId`, added in S7 with no column.
+- **`UnreadCount` on the realtime payload** is the recipient's count after their row was
+  written; the field is named forward-compatibly so the fan-out producer can redefine it
+  to "work items not acted upon" without a rename.
+
 ---
 
 ## 9. Audit (shared, all feature areas)

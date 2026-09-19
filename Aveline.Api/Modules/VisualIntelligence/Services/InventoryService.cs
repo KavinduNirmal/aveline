@@ -1,3 +1,4 @@
+using Aveline.Api.Common.Media;
 using Aveline.Api.Modules.VisualIntelligence.DTOs;
 using Aveline.Api.Modules.VisualIntelligence.Models;
 using Aveline.Api.Modules.VisualIntelligence.Repositories;
@@ -129,10 +130,10 @@ public class InventoryService : IInventoryService
                 if (commaIdx > 0)
                 {
                     var mimePart = trimmed[5..commaIdx];
-                    var contentType = ImageContentTypes.DefaultImage;
+                    var contentType = MediaContentTypes.DefaultImage;
                     if (mimePart.Contains(';'))
                     {
-                        contentType = ImageContentTypes.Normalize(mimePart.Split(';')[0]);
+                        contentType = MediaContentTypes.NormalizeImage(mimePart.Split(';')[0]);
                     }
                     var bytes = Convert.FromBase64String(trimmed[(commaIdx + 1)..]);
                     var imageId = Guid.NewGuid();
@@ -186,5 +187,20 @@ public class InventoryService : IInventoryService
     {
         var items = await _repository.GetLowStockAsync(orgId, threshold, cancellationToken);
         return items.Select(InventoryItemDto.FromDomain).ToList();
+    }
+
+    public async Task<bool> DeleteItemAsync(
+        Guid id,
+        Guid orgId,
+        CancellationToken cancellationToken = default)
+    {
+        var existing = await _repository.GetByIdAsync(id, orgId, cancellationToken);
+        if (existing is null)
+        {
+            return false;
+        }
+
+        await _repository.DeleteAsync(id, orgId, cancellationToken);
+        return true;
     }
 }

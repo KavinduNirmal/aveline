@@ -1,4 +1,7 @@
+using System.IO;
+using System.Text;
 using Aveline.Api.Configurations;
+using Aveline.Api.Common.Media;
 using Aveline.Api.Modules.VisualIntelligence;
 using Aveline.Api.Modules.VisualIntelligence.DTOs;
 using Aveline.Api.Modules.VisualIntelligence.Models;
@@ -161,6 +164,27 @@ public static class CatalogEndpoints
         .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status403Forbidden);
 
+        group.MapDelete("/items/{itemId:guid}", async (
+            [FromRoute] Guid organizationId,
+            [FromRoute] Guid itemId,
+            [FromServices] IVisualService visualService,
+            CancellationToken cancellationToken) =>
+        {
+            var deleted = await visualService.DeleteInventoryItemAsync(itemId, organizationId, cancellationToken);
+            if (!deleted)
+            {
+                return Results.NotFound(new { error = "Catalog item not found or already deleted." });
+            }
+
+            return Results.NoContent();
+        })
+        .WithName("CatalogDeleteItem")
+        .WithSummary("Delete (soft-delete) an inventory item from the boutique catalog.")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden);
+
         group.MapGet("/low-stock", async (
             [FromRoute] Guid organizationId,
             [FromQuery] int? threshold,
@@ -175,6 +199,149 @@ public static class CatalogEndpoints
         .Produces<IReadOnlyList<InventoryItemDto>>(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status403Forbidden);
+
+        // --- QR Codes & Scanning ---
+
+        group.MapGet("/items/{itemId:guid}/qr", async (
+            [FromRoute] Guid organizationId,
+            [FromRoute] Guid itemId,
+            [FromQuery] string? format,
+            [FromQuery] int? size,
+            [FromServices] IQrCodeService qrService,
+            HttpContext context,
+            CancellationToken cancellationToken) =>
+        {
+            var requestedFormat = format?.Trim().ToLowerInvariant() ?? "png";
+            var requestedSize = Math.Clamp(size.GetValueOrDefault(300), 50, 2000);
+
+            if (requestedFormat == "json")
+            {
+                try
+                {
+                    var dto = await qrService.GenerateItemQrDtoAsync(organizationId, itemId, "png", requestedSize, cancellationToken);
+                    return Results.Ok(dto);
+                }
+                catch (KeyNotFoundException)
+                {
+                    return Results.NotFound(new { error = "Catalog item not found." });
+                }
+            }
+
+            try
+            {
+                var bytes = await qrService.GenerateItemQrBytesAsync(organizationId, itemId, requestedFormat, requestedSize, cancellationToken);
+                context.Response.Headers.CacheControl = "public, max-age=86400";
+                context.Response.Headers.XContentTypeOptions = "nosniff";
+
+                if (requestedFormat == "svg")
+                {
+                    return Results.File(bytes, "image/svg+xml; charset=utf-8");
+                }
+
+                return Results.File(bytes, "image/png");
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound(new { error = "Catalog item not found." });
+            }
+        })
+        .WithName("CatalogGetItemQr")
+        .WithSummary("Generate and retrieve a QR code for a specific catalog inventory item.")
+        .Produces(StatusCodes.Status200OK)
+        .Produces<QrCodeResponseDto>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden);
+
+        group.MapPost("/qr/generate", (
+            [FromRoute] Guid organizationId,
+            [FromBody] GenerateQrDto request,
+            [FromServices] IQrCodeService qrService,
+            HttpContext context) =>
+        {
+            var requestedFormat = request.Format?.Trim().ToLowerInvariant() ?? "png";
+            if (requestedFormat == "json" || requestedFormat == "base64")
+            {
+                var result = qrService.GenerateQrResponse(request);
+                return Results.Ok(result);
+            }
+
+            var size = Math.Clamp(request.Size, 50, 2000);
+            context.Response.Headers.CacheControl = "public, max-age=86400";
+            context.Response.Headers.XContentTypeOptions = "nosniff";
+
+            if (requestedFormat == "svg")
+            {
+                var svg = qrService.GenerateSvg(request.Payload, size, request.EccLevel, request.QuietZone);
+                return Results.File(Encoding.UTF8.GetBytes(svg), "image/svg+xml; charset=utf-8");
+            }
+
+            var pngBytes = qrService.GeneratePng(request.Payload, size, request.EccLevel, request.QuietZone);
+            return Results.File(pngBytes, "image/png");
+        })
+        .WithName("CatalogGenerateQr")
+        .WithSummary("Generate a custom QR code (PNG, SVG, or JSON base64 data URL) for any payload.")
+        .Produces<QrCodeResponseDto>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden);
+
+        var scanHandler = async (
+            [FromRoute] Guid organizationId,
+            HttpRequest request,
+            [FromServices] IQrCodeService qrService,
+            CancellationToken cancellationToken) =>
+        {
+            if (request.HasFormContentType)
+            {
+                var form = await request.ReadFormAsync(cancellationToken);
+                var file = form.Files.GetFile("file") ?? (form.Files.Count > 0 ? form.Files[0] : null);
+                if (file != null && file.Length > 0)
+                {
+                    using var ms = new MemoryStream();
+                    await file.CopyToAsync(ms, cancellationToken);
+                    var scanResult = await qrService.ScanAndResolveImageBytesAsync(organizationId, ms.ToArray(), cancellationToken);
+                    return Results.Ok(scanResult);
+                }
+
+                var codeFromForm = form["code"].ToString();
+                if (string.IsNullOrWhiteSpace(codeFromForm))
+                {
+                    codeFromForm = form["payload"].ToString();
+                }
+
+                if (!string.IsNullOrWhiteSpace(codeFromForm))
+                {
+                    var scanResult = await qrService.ScanAndResolveAsync(organizationId, new ScanQrDto { Code = codeFromForm }, cancellationToken);
+                    return Results.Ok(scanResult);
+                }
+            }
+            else if (request.ContentType?.Contains("application/json", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                var payload = await request.ReadFromJsonAsync<ScanQrDto>(cancellationToken);
+                if (payload != null)
+                {
+                    var scanResult = await qrService.ScanAndResolveAsync(organizationId, payload, cancellationToken);
+                    return Results.Ok(scanResult);
+                }
+            }
+
+            return Results.BadRequest(new { error = "Invalid scan request. Provide a 'code', 'payload', 'imageData', or upload a valid QR image file." });
+        };
+
+        group.MapPost("/items/scan-qr", scanHandler)
+            .WithName("CatalogScanItemQr")
+            .WithSummary("Scan and resolve a QR barcode or uploaded camera image to an inventory catalog piece.")
+            .Produces<QrScanResultDto>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .Produces(StatusCodes.Status403Forbidden)
+            .DisableAntiforgery();
+
+        group.MapPost("/qr/scan", scanHandler)
+            .WithName("CatalogScanQrAlias")
+            .WithSummary("Alias endpoint for scanning and resolving QR codes.");
 
         // --- Vision Analysis ---
 
@@ -363,7 +530,7 @@ public static class CatalogEndpoints
             CancellationToken cancellationToken) =>
         {
             byte[]? bytes = null;
-            string contentType = ImageContentTypes.DefaultImage;
+            string contentType = MediaContentTypes.DefaultImage;
             string? fileName = null;
             long fileSizeBytes = 0;
 
@@ -376,7 +543,7 @@ public static class CatalogEndpoints
                     using var ms = new MemoryStream();
                     await file.CopyToAsync(ms, cancellationToken);
                     bytes = ms.ToArray();
-                    contentType = ImageContentTypes.Normalize(file.ContentType);
+                    contentType = MediaContentTypes.NormalizeImage(file.ContentType);
                     fileName = file.FileName;
                     fileSizeBytes = file.Length;
                 }
@@ -395,7 +562,7 @@ public static class CatalogEndpoints
                             var mimePart = raw[5..commaIdx];
                             if (mimePart.Contains(';'))
                             {
-                                contentType = ImageContentTypes.Normalize(mimePart.Split(';')[0]);
+                                contentType = MediaContentTypes.NormalizeImage(mimePart.Split(';')[0]);
                             }
                             bytes = Convert.FromBase64String(raw[(commaIdx + 1)..]);
                         }
@@ -463,7 +630,7 @@ public static class CatalogEndpoints
             // The stored content type comes from the uploader, so never let the browser
             // sniff or render a non-image payload (e.g. text/html) from this origin.
             context.Response.Headers.XContentTypeOptions = "nosniff";
-            return Results.File(image.ImageData, ImageContentTypes.SafeServe(image.ContentType));
+            return Results.File(image.ImageData, MediaContentTypes.SafeServe(image.ContentType));
         })
         .WithName("CatalogGetImage")
         .WithSummary("Retrieve physical image binary from PostgreSQL.")

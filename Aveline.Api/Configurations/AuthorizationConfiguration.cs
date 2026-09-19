@@ -56,6 +56,14 @@ public static class AuthorizationConfiguration
     public const string BoutiqueCustomerAccessPolicy = "BoutiqueCustomerAccess";
 
     /// <summary>
+    /// The human-in-the-loop release gate: active membership plus
+    /// <c>approvals:approve</c>. Applied on top of <see cref="BoutiqueConversationAccessPolicy"/>
+    /// on the SignOff decide and revoke routes, so an ordinary staff member (who holds
+    /// <c>conversations:view</c> but not <c>approvals:approve</c>) receives 403.
+    /// </summary>
+    public const string BoutiqueConversationApprovalPolicy = "BoutiqueConversationApproval";
+
+    /// <summary>
     /// Policy for internal service-to-service calls using X-Internal-Token header (ADR-009).
     /// </summary>
     public const string InternalServicePolicy = "InternalServicePolicy";
@@ -195,6 +203,12 @@ public static class AuthorizationConfiguration
             {
                 AllowBearerOrApiKey(p);
                 p.AddRequirements(new OrganizationScopeRequirement(Permissions.CustomersView));
+            });
+
+            options.AddPolicy(BoutiqueConversationApprovalPolicy, p =>
+            {
+                AllowBearerOrApiKey(p);
+                p.AddRequirements(new OrganizationScopeRequirement(Permissions.ApprovalsApprove));
             });
 
             options.AddPolicy(BillingViewPolicy, p =>

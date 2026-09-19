@@ -18,9 +18,15 @@ namespace Aveline.Api.Modules.Conversations.Hubs;
 /// <list type="bullet">
 ///   <item>Hub path: <c>/hubs/conversations</c>.</item>
 ///   <item>Auth: Clerk JWT passed as <c>?access_token=</c> (SignalR query-string convention).</item>
-///   <item>Server→client method: <c>ReceiveMessage</c>; payload is a <c>MessageDto</c>.</item>
+///   <item>Server→client methods: <c>ReceiveMessage</c> (a <c>MessageDto</c>),
+///     <c>ReceiveAgentState</c> (an <c>AgentStateDto</c>), and
+///     <c>ReceiveConversationChanged</c> (a <c>ConversationDto</c> - the inbox tile, so an open
+///     list updates without a re-list). The tile is sent to <c>org:&#123;organizationId&#125;</c>
+///     for organization-shared threads and to <c>user:&#123;ownerUserId&#125;</c> for a per-user
+///     general Salon, so a colleague's private thread never reaches the org group.</item>
 ///   <item>Client→server: <c>JoinSalon(organizationId, conversationId)</c> to receive messages
-///     for a specific Salon.</item>
+///     for a specific Salon. The inbox does not need it: the org and user groups are joined on
+///     connect.</item>
 /// </list>
 ///
 /// <para>

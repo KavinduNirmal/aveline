@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../../../core/config/app_config.dart';
+import '../../../../core/network/auth_token_provider.dart';
+import '../../../../core/network/conversation_realtime_service.dart';
+import '../../../../core/notifications/realtime_connection_factory.dart';
 import '../../../../core/providers/boutique_provider.dart';
 import '../../../../core/router/route_guards.dart';
 import '../../../../shared/widgets/aurora_field.dart';
@@ -11,8 +15,8 @@ import '../../../../shared/widgets/section_overline.dart';
 import '../../../../shared/widgets/section_search_field.dart';
 import '../../../salon/presentation/screens/salon_screen.dart';
 import '../../data/conversation_repository.dart';
-import '../../data/demo_conversation_repository.dart';
-import '../../data/demo_thread_repository.dart';
+import '../../data/empty_conversation_repository.dart';
+import '../../data/empty_thread_repository.dart';
 import '../../data/thread_repository.dart';
 import '../../domain/conversation.dart';
 import '../conversations_controller.dart';
@@ -29,11 +33,12 @@ import 'client_thread_screen.dart';
 ///
 /// The screen owns no inbox state of its own. It reads a [ConversationsController]
 /// - injectable for tests and previews, otherwise whatever the app provides, and
-/// failing that one of its own over the demo inbox.
+/// failing that an empty repository, so no production path renders invented data.
 ///
 /// Opening a thread is handed up: the Salon is a real screen and this one pushes
-/// it, but a client thread has no screen yet, so tapping one says so rather than
-/// opening an empty room.
+/// it, and a client row opens [ClientThreadScreen] with the thread repository it
+/// was given. A row whose thread has no injected source opens the honest empty
+/// state rather than a seeded exchange.
 class ConversationsScreen extends StatefulWidget {
   const ConversationsScreen({
     super.key,
@@ -45,12 +50,15 @@ class ConversationsScreen extends StatefulWidget {
     this.onOpenConversation,
   });
 
-  /// Overrides the inbox's source, for tests and previews. Defaults to the demo
-  /// repository, which holds a boutique's worth of threads in memory.
+  /// Overrides the inbox's source, for tests and previews. Defaults to an empty
+  /// repository, so a screen built with nothing injected renders the honest empty
+  /// state rather than a seed of invented threads (D5).
   final ConversationRepository? repository;
 
-  /// Overrides the source of the threads the client rows open. Defaults to the
-  /// demo threads, which hold the exchanges the inbox's previews promise.
+  /// Overrides the source of the threads the client rows open. Defaults to an
+  /// empty repository, so a screen built with nothing injected (the registry's
+  /// `const ConversationsScreen()`) renders the honest empty state rather than a
+  /// seed of invented exchanges.
   final ThreadRepository? threadRepository;
 
   /// How many messages a page of an opened thread holds.
@@ -78,6 +86,13 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
 
   late final ConversationsController _controller;
 
+  /// The inbox's own realtime connection.
+  ///
+  /// One connection per screen, following the Salon's pattern: the service holds a single
+  /// connection and a single listener set, so sharing an instance would make the two screens
+  /// fight over each other's callbacks.
+  ConversationRealtimeService? _realtimeService;
+
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
 
@@ -89,7 +104,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   void initState() {
     super.initState();
     _controller = ConversationsController(
-      widget.repository ?? DemoConversationRepository(),
+      widget.repository ?? const EmptyConversationRepository(),
     );
 
     // Started before the listener is attached: `load` notifies synchronously,
@@ -102,6 +117,33 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     }
 
     _controller.addListener(_onControllerChanged);
+
+    // Best-effort: with no providers above the screen (tests, previews) the inbox simply
+    // stays as it was read and a pull-to-refresh is the fallback.
+    _connectRealtime();
+  }
+
+  /// Opens the inbox's own hub connection so a thread that changes - or appears - while the
+  /// list is open updates without a re-list.
+  Future<void> _connectRealtime() async {
+    try {
+      final config = context.read<AppConfig>();
+      final authRepository = context.read<AuthTokenProvider>();
+
+      // No conversation id: the org and user groups are joined on connect, which is exactly
+      // what the list needs. The Salon's `JoinSalon` is not.
+      final service = ConversationRealtimeService(
+        defaultRealtimeConnectionFactory,
+      );
+      _realtimeService = service;
+      await service.connect(
+        baseUrl: config.apiBaseUrl,
+        getToken: authRepository.getToken,
+        onConversationChanged: _controller.applyChanged,
+      );
+    } catch (error) {
+      debugPrint('[conversations] realtime connect skipped/failed: $error');
+    }
   }
 
   @override
@@ -124,6 +166,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
 
   @override
   void dispose() {
+    _realtimeService?.disconnect();
     _scrollController.dispose();
     _searchController.dispose();
     _controller
@@ -145,19 +188,6 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     } catch (_) {
       return null;
     }
-  }
-
-  String get _summary {
-    if (!_controller.hasLoadedOnce) {
-      return 'Checking for messages';
-    }
-    final unread = _controller.unreadTotal;
-    // The same words the notification inbox uses, so the two counts read alike.
-    return switch (unread) {
-      0 => 'All caught up',
-      1 => '1 unread',
-      _ => '$unread unread',
-    };
   }
 
   void _onSearchChanged(String value) => _controller.search(value);
@@ -188,7 +218,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       MaterialPageRoute<void>(
         builder: (_) => ClientThreadScreen(
           conversation: conversation,
-          repository: widget.threadRepository ?? DemoThreadRepository(),
+          repository: widget.threadRepository ?? const EmptyThreadRepository(),
           pageSize: widget.pageSize,
           onOpenClient: () => _openClient(conversation),
         ),
@@ -234,9 +264,6 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   }
 
   Widget _header(String boutiqueName) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
       child: Column(
@@ -246,14 +273,6 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
             boutiqueName: boutiqueName,
             section: 'Messages',
             titleKey: const Key('conversations_title'),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            _summary,
-            key: const Key('conversations_unread_summary'),
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: scheme.onSurfaceVariant,
-            ),
           ),
           const SizedBox(height: 14),
           SectionSearchField(
@@ -273,7 +292,10 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
 
   /// The inbox, and whatever stands in its place while it has nothing to show.
   List<Widget> _inboxSlivers() {
-    if (_controller.isLoading && !_controller.hasLoadedOnce) {
+    // A missing org id is a "not yet": the inbox stays in its loading state
+    // rather than showing the error card, which is the server's refusal.
+    if (_controller.isWaitingForOrg ||
+        (_controller.isLoading && !_controller.hasLoadedOnce)) {
       return const [
         SliverToBoxAdapter(
           child: Padding(
@@ -348,7 +370,15 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
           ),
         ),
       if (!_controller.isSearching)
-        const SliverToBoxAdapter(child: _InboxFooter()),
+        SliverToBoxAdapter(
+          child: _InboxFooter(
+            loaded: _controller.items.length,
+            total: _controller.total,
+            hasMore: _controller.hasMore,
+            isLoading: _controller.isLoadingMore,
+            onLoadMore: _controller.loadMore,
+          ),
+        ),
     ];
   }
 
@@ -497,7 +527,8 @@ class _NoMatches extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            'Try another name, or a word from the last message.',
+            'Try another name, or a word from the last message. Search covers the '
+            'conversations loaded so far, not the whole inbox.',
             style: theme.textTheme.bodyMedium?.copyWith(
               color: scheme.onSurfaceVariant,
             ),
@@ -516,23 +547,69 @@ class _NoMatches extends StatelessWidget {
 }
 
 /// What sits under the last thread.
+///
+/// Truthful about how much of the inbox is on screen: `total` is the server's
+/// count for the whole org, so the column only claims to be complete when every
+/// thread has been loaded.
 class _InboxFooter extends StatelessWidget {
-  const _InboxFooter();
+  const _InboxFooter({
+    required this.loaded,
+    required this.total,
+    required this.hasMore,
+    required this.isLoading,
+    required this.onLoadMore,
+  });
+
+  final int loaded;
+  final int total;
+  final bool hasMore;
+  final bool isLoading;
+  final VoidCallback onLoadMore;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Padding(
-      padding: const EdgeInsets.only(top: 24),
-      child: Center(
-        child: Text(
-          'That is every conversation.',
-          key: const Key('conversations_end_of_list'),
-          style: theme.textTheme.labelSmall?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
+    if (!hasMore) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 24),
+        child: Center(
+          child: Text(
+            'That is every conversation.',
+            key: const Key('conversations_end_of_list'),
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
           ),
         ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 24),
+      child: Column(
+        children: [
+          Text(
+            'Showing $loaded of $total',
+            key: const Key('conversations_loaded_of_total'),
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextButton.icon(
+            key: const Key('conversations_load_more'),
+            onPressed: isLoading ? null : onLoadMore,
+            icon: isLoading
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.expand_more_rounded, size: 16),
+            label: Text(isLoading ? 'Loading…' : 'Load more'),
+          ),
+        ],
       ),
     );
   }

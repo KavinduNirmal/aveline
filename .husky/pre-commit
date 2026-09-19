@@ -121,8 +121,7 @@ STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
 SECRET_FOUND=""
 # Secret-indicating key names (case-insensitive), matched anywhere in the key.
 SECRET_KEY_RE='(password|passwd|secret|token|api[_-]?key|private[_-]?key|access[_-]?key|encryption[_-]?key|publishable[_-]?key|client[_-]?secret|auth[_-]?token|internal[_-]?token)'
-# Placeholder values that are safe to commit in templates/examples.
-PLACEHOLDER_RE='(change[_-]?me|your[_-]|example|placeholder|xxxx+|xxx+|dev[_-]?placeholder|local[_-]?dev|<\w+>)'
+PLACEHOLDER_RE='(change[_-]?me|your[_-]|example|placeholder|xxxx+|xxx+|dev[_-]?placeholder|local[_-]?dev|sk_test_placeholder|pk_test_placeholder|local[_-]development|<\w+>)'
 for file in $STAGED_FILES; do
     case "$file" in
         *.png|*.jpg|*.gif|*.pdf|*.zip|*.lock|*.gitignore|.husky/*) continue ;;

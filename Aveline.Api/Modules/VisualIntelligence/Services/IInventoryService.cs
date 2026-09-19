@@ -10,4 +10,5 @@ public interface IInventoryService
     Task<InventoryItemDto?> UpdateItemAsync(Guid id, UpdateInventoryItemDto dto, CancellationToken cancellationToken = default);
     Task<InventoryItemDto?> UpdateStatusAsync(Guid id, Guid orgId, string status, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<InventoryItemDto>> GetLowStockItemsAsync(Guid orgId, int threshold = 5, CancellationToken cancellationToken = default);
+    Task<bool> DeleteItemAsync(Guid id, Guid orgId, CancellationToken cancellationToken = default);
 }

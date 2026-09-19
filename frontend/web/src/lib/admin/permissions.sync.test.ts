@@ -16,10 +16,11 @@ function sorted(values: readonly string[]): string[] {
  */
 describe('permissions mirror ⇄ Aveline.Api Permissions.cs', () => {
   it('parses a sane server catalog first, so a parser bug cannot masquerade as parity', () => {
-    expect(backend.all).toHaveLength(24)
+    expect(backend.all).toHaveLength(25)
     expect(Object.keys(backend.roles)).toHaveLength(9)
-    // The two facts the audit found drifting: 24 permissions, and `billing:view:self` present.
+    // The facts that have drifted before: the permission count and `billing:view:self`.
     expect(backend.all).toContain('billing:view:self')
+    expect(backend.all).toContain('analytics:business:read')
   })
 
   it('mirrors Permissions.All exactly', () => {

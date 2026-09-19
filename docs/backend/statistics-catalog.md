@@ -782,6 +782,74 @@ unless it appears in this catalog **and** in
 
 ---
 
+## 7b. Business KPIs (growth, activity, plan mix)
+
+These are the administrator console's business reads. They live in
+`Aveline.Api/Modules/Analytics`, are exposed under
+`/api/v1/admin/statistics/business/*`, and are gated by the single permission
+`analytics:business:read` (bearer-only; an API key is refused). Their windows are capped by
+`BusinessAnalytics:MaxWindowDays` (default **400**), deliberately separate from
+`Telemetry:MaxWindowDays` (92), because telemetry's cap is tuned for request forensics rather
+than year-long growth reporting. Results are cached in `IDistributedCache` at
+`BusinessAnalytics:CacheSeconds` (default 60) and carry
+`Cache-Control: private, max-age=…`.
+
+**Null versus zero, stated once for the family.** A count of `0` in a bucket that lies inside
+the observed period is honest and is emitted as `0`. A bucket *before* the earliest
+observation (`observedFrom`), or a measure that could not be computed at all, is `null`.
+Every series point carries `isPartial`, true for the leading bucket clipped by `from` and for
+the trailing bucket the window's `to` falls inside.
+
+### S-44 · `businessGrowth`
+
+| Field | Value |
+| --- | --- |
+| Description | New users, new organizations, and administrator access requests per bucket |
+| Formula | `NewUsers = COUNT(*) FROM Users WHERE CreatedAt ∈ bucket AND DeletedAt IS NULL`; `NewOrganizations = COUNT(*) FROM Organizations WHERE CreatedAt ∈ bucket`; `NewAdminRequests = COUNT(*) FROM AdminApprovalRequests WHERE RequestedAt ∈ bucket`; `ApprovedAdminRequests = … AND Status = 'Approved'` |
+| Dimensions | `granularity` (`day`\|`week`\|`month`) |
+| Granularity | caller-selected |
+| Freshness | `≤ 60 s` (cache TTL) |
+| Retention | indefinite — `Users`/`Organizations` are not pruned |
+| Source | `Users`, `Organizations`, `AdminApprovalRequests` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/admin/statistics/business/growth` |
+| Access | `analytics:business:read` |
+| Notes | Buckets before the earliest row are absent and `observedFrom` names the boundary; buckets inside the period are `0` when truly empty. `previousTotals` covers the immediately preceding equal-length window. `Users.CreatedAt` is the **local first-seen** time, not Clerk's `created_at`: the `user.created` webhook stamps `DateTime.UtcNow`, and the JIT path on the first authenticated request stamps it too, so a user created in Clerk before the webhook was wired carries a later date. |
+
+### S-45 · `businessActiveUsers`
+
+| Field | Value |
+| --- | --- |
+| Description | Active users per bucket, plus the current DAU/WAU/MAU reading and stickiness |
+| Formula | Per bucket: `COUNT(DISTINCT UserId) FROM ApiRequestMetrics WHERE WindowSize = 'day' AND UserId IS NOT NULL AND WindowStart ∈ bucket`. `Dau` = the same distinct-count over the trailing **1 day** ending at `to`; `Wau` over **7 days**; `Mau` over **30 days**. `Stickiness = Dau / Mau`. `ActiveOrganizations` = `COUNT(DISTINCT OrganizationId)` over the same rows. |
+| Dimensions | `granularity` only. **There is no `definition` parameter** — one definition is settled, and offering a choice would invite comparing two numbers that measure different things |
+| Granularity | caller-selected |
+| Freshness | `≤ 60 s` |
+| Retention | 400 days (`ApiStatsRetentionJob`) |
+| Source | `ApiRequestMetrics` (day rows), which are exact and never sampled |
+| Storage | on-the-fly over the existing rollups |
+| Endpoint | `GET /api/v1/admin/statistics/business/active-users` |
+| Access | `analytics:business:read` |
+| Notes | **The definition is: an authenticated user who sent at least one request to the server within the window.** `UserId IS NOT NULL` is the filter, so anonymous and API-key traffic is excluded by construction. Three honesty rules: (1) when no row is attributed across the window the series is **`null`** with `dataQuality.userAttributionAvailable = false`, never `0`; (2) `dataQuality.unresolvedAttributionCount` carries the count of requests whose Clerk id was present but not yet in the claim map, so a stale map shows as a visible undercount rather than a low DAU; (3) SignalR-only sessions do not pass through `ApiTelemetryMiddleware` and are therefore not counted — a stated limit of this definition, not a defect. |
+
+### S-46 · `businessPlanMix`
+
+| Field | Value |
+| --- | --- |
+| Description | Current distribution of organizations, subscriptions and users across plan tiers, and the free-versus-premium split |
+| Formula | **`OrganizationCount` and the free/premium split come from `Organizations.PlanTier`, which is authoritative for every organization.** Per tier: `OrganizationCount = COUNT(Organizations) WHERE PlanTier = tier`; `ActiveOrganizationCount = … AND IsActive`; `BilledSubscriptionCount = COUNT(OrganizationSubscriptions) WHERE PlanTier = tier AND Status IN ('Active','Trialing')`; `UserCount = COUNT(DISTINCT OrganizationMembership.UserId)` where the membership is `Active` and its org is that tier; `MonthlyPriceLkr = SUM(OrganizationSubscriptions.PriceLkr)` over billed rows |
+| Dimensions | `planTier`; `asOf` instant |
+| Granularity | snapshot |
+| Freshness | `≤ 60 s` |
+| Retention | not historical |
+| Source | `Organizations` (**primary**), `OrganizationSubscriptions` (**supplementary**), `OrganizationMemberships` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/admin/statistics/business/plan-mix` |
+| Access | `analytics:business:read` |
+| Notes | **Free = `PlanTier.Seed`; premium = `Bloom`, `Orchid`, `Rose`, `Enterprise`.** The response returns the per-tier rows **and** the two rolled-up sides so the definition is stated once, server-side. **`OrganizationCount` and `BilledSubscriptionCount` are deliberately two different fields**, because they are two different numbers: `OrganizationSubscriptions` holds one current row per organization, created only when a plan changes or is cancelled, so an organization that never changed plan has **no** row. The response exposes `organizationsTotal` and `organizationsWithBillingRow`, making the gap a visible subtraction. `TotalMonthlyPriceLkr` is a *list-price sum over billed rows only*, not recognised revenue: the provider columns exist but no provider client is written. |
+
+---
+
 ## 8. Data quality warnings (must be returned to clients)
 
 Because several underlying data points are not yet instrumented, every

@@ -212,4 +212,45 @@ public class AuthorizationPolicyTests
         Assert.False(IsAuthorized(
             new ClaimsPrincipal(new ClaimsIdentity("test")), policyName));
     }
+
+    // ── analytics:business:read (Business KPIs phase 1, DR-4) ──────────────────────────────
+
+    [Theory]
+    [InlineData("moderator")]
+    [InlineData("admin")]
+    [InlineData("owner")]
+    public void AnalyticsBusinessRead_IsGrantedToTheTeamRoles(string role)
+    {
+        Assert.True(IsAuthorized(Principal(role), Permissions.AnalyticsBusinessRead));
+    }
+
+    [Theory]
+    [InlineData("staff")]
+    [InlineData("customer_relations")]
+    [InlineData("org:boutique_staff")]
+    [InlineData("org:boutique_manager")]
+    [InlineData("org:boutique_supervisor")]
+    [InlineData("org:boutique_owner")]
+    public void AnalyticsBusinessRead_IsDeniedToEveryOtherRole(string role)
+    {
+        Assert.False(IsAuthorized(Principal(role), Permissions.AnalyticsBusinessRead));
+    }
+
+    [Fact]
+    public void AnalyticsBusinessRead_IsDeniedToAnAnonymousPrincipal()
+    {
+        Assert.False(IsAuthorized(
+            new ClaimsPrincipal(new ClaimsIdentity("test")), Permissions.AnalyticsBusinessRead));
+    }
+
+    [Fact]
+    public void AnalyticsBusinessRead_HasAPolicyRegisteredFromTheCatalog()
+    {
+        var provider = Services.GetRequiredService<IAuthorizationPolicyProvider>();
+        var policy = provider.GetPolicyAsync(Permissions.AnalyticsBusinessRead).GetAwaiter().GetResult();
+
+        Assert.NotNull(policy);
+        var requirement = Assert.Single(policy!.Requirements.OfType<PermissionRequirement>());
+        Assert.Equal(Permissions.AnalyticsBusinessRead, requirement.Permission);
+    }
 }

@@ -4370,3 +4370,43 @@ whose floor started at 0 and ratcheted to **52.1 % lines / 40.4 % branches** by 
   the caller's own console rather than dead-ending, and a resolver that throws resolves to
   `unknown` instead of leaving the console on a loader. Five tests pin it. The GUID version was
   never the issue: UUIDv7 is a valid UUID and the shape check accepts it.
+
+## Session 2026-09-20 — Admin dashboard: Business KPIs (session start)
+
+**Task:** Implement the Business KPIs feature from
+`.agents/plans/admin-dashboard-business-kpis-implementation.ignore.md` — six phases (P1–P6), TDD
+throughout, documentation and OpenAPI updated at the end of every phase, one GitHub issue per phase.
+
+**Tool used:** DeepSeek Harness (deepseek-flash) coding agent.
+
+### Intended work (session start)
+
+The plan delivers a Postgres-first admin analytics family: six read endpoints under
+`/api/v1/admin/statistics/business/*`, one new daily subscription-snapshot table, the B1
+attribution fix (an in-memory `IClaimIdentityMap` refreshed off the request path, read
+synchronously by `RequestPrincipal.Resolve`), a new `analytics:business:read` permission with its
+five collateral mirror files, and a new console surface driven by a separate `B1…Bn` widget
+catalogue (`lib/admin/business-kpis.ts`) that leaves the pinned `V1…V11` catalogue untouched.
+
+Phases, as recorded in the plan's §6:
+
+1. **P1 — Foundations and truth plumbing.** `BusinessAnalyticsOptions`, `BusinessKpiValidation`,
+   the B1 claim-identity map plus refresher, `BusinessKpiCache` over `IDistributedCache`, three
+   EF indexes and a migration, the new permission and its mirror collateral.
+2. **P2 — Growth, active users and plan mix.** `GET business/{growth,active-users,plan-mix}` with
+   the `dataQuality` contract and the dense-bucket null-vs-zero rule.
+3. **P3 — Subscription history and usage.** The snapshot table, job and D-1-safe backfill, plus
+   `GET business/{subscriptions,usage,organizations}`.
+4. **P4 — Frontend foundation.** The `business` domain, two registry entries, the `B1…B12`
+   catalogue, six API wrappers, DTO types, four new components.
+5. **P5 — The Growth console.** `AdminBusinessGrowthView` at `/admin/:userId/business`.
+6. **P6 — Usage console, drill-down, documentation and the coverage ratchet.**
+
+### Constraints observed
+
+- One GitHub issue per phase; **no branch created or switched** — all work stays on
+  `feature/admin-frontend-ui-v3`.
+- TDD is mandatory: the failing test is written and observed failing before the implementation.
+- General docs, API docs and the OpenAPI specification are updated at the end of each phase.
+
+*(End-of-session summary for this work is appended below when the session closes.)*

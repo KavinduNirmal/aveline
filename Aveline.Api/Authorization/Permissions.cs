@@ -49,6 +49,15 @@ public static class Permissions
     public const string StatsViewAgent = "stats:view:agent";
     public const string StatsSystem = "stats:system";
 
+    /// <summary>
+    /// The administrator console's business-KPI surface: growth, active users, plan mix,
+    /// subscription trend and platform-wide usage. Distinct from <see cref="StatsSystem"/>,
+    /// which is about system health: a moderator already reads organization data through
+    /// <see cref="AdminOrgsRead"/> and <see cref="BillingView"/>, so growth is inside their
+    /// remit without granting system-health access.
+    /// </summary>
+    public const string AnalyticsBusinessRead = "analytics:business:read";
+
     // Aveline-team administration.
     public const string AdminUsersRead = "admin:users:read";
     public const string AdminUsersManage = "admin:users:manage";
@@ -77,6 +86,7 @@ public static class Permissions
         StatsView,
         StatsViewAgent,
         StatsSystem,
+        AnalyticsBusinessRead,
         AdminUsersRead,
         AdminUsersManage,
         AdminOrgsRead,
@@ -103,7 +113,7 @@ public static class Permissions
             [Roles.CustomerRelations] = Grant(CatalogView, CustomersView, ConversationsView),
             [Roles.Moderator] = Grant(
                 CatalogView, CustomersView, ApprovalsApprove, ConversationsView,
-                BillingView, StatsView, StatsViewAgent, AdminOrgsRead),
+                BillingView, StatsView, StatsViewAgent, AdminOrgsRead, AnalyticsBusinessRead),
             [Roles.Admin] = Grant(All.Where(permission => permission != PricingBackdate).ToArray()),
             [Roles.Owner] = All,
 

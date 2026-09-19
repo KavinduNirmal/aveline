@@ -3884,6 +3884,86 @@ paths:
           $ref: "#/components/responses/Forbidden"
 
   # ---------------------------------------------------------------------------
+  # Admin business statistics (Business KPIs)
+  # ---------------------------------------------------------------------------
+  /api/v1/admin/statistics/business/growth:
+    get:
+      tags: [Admin Business Statistics]
+      summary: Read platform growth per bucket
+      description: |
+        S-44. New users, new organizations and administrator access requests per bucket, with
+        the preceding equal-length window for a delta. Requires `analytics:business:read`.
+        Buckets before the earliest observation are omitted and `observedFrom` names the
+        boundary; buckets inside the period are `0` when truly empty.
+      operationId: getBusinessGrowth
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Granularity"
+      responses:
+        "200":
+          description: Growth series
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BusinessGrowthResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/business/active-users:
+    get:
+      tags: [Admin Business Statistics]
+      summary: Read active users per bucket and the DAU/WAU/MAU reading
+      description: |
+        S-45. An active user is an authenticated user who sent at least one request in the
+        window; `UserId IS NOT NULL` is the filter, so anonymous and API-key traffic is
+        excluded. When no request is attributed the series is `null` with
+        `dataQuality.userAttributionAvailable = false`, never `0`. There is deliberately no
+        `definition` parameter. Requires `analytics:business:read`.
+      operationId: getBusinessActiveUsers
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Granularity"
+      responses:
+        "200":
+          description: Active-user series and rolling readings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BusinessActiveUsersResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/business/plan-mix:
+    get:
+      tags: [Admin Business Statistics]
+      summary: Read the current plan-tier distribution
+      description: |
+        S-46. The tier axis comes from `Organizations.PlanTier`, which is authoritative for
+        every organization; billing columns are supplementary, because an organization that
+        never changed or cancelled its plan has no `OrganizationSubscriptions` row.
+        `organizationsTotal` and `organizationsWithBillingRow` make that gap a visible
+        subtraction. Requires `analytics:business:read`.
+      operationId: getBusinessPlanMix
+      responses:
+        "200":
+          description: Plan mix
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BusinessPlanMixResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ---------------------------------------------------------------------------
   # Audit
   # ---------------------------------------------------------------------------
   /api/v1/admin/audit:
@@ -4076,6 +4156,17 @@ components:
         `avl_test_<...>`. Phase 3. Available on the Rose plan and above.
 
   parameters:
+    Granularity:
+      name: granularity
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [day, week, month]
+        default: day
+      description: |
+        Bucket size. Weeks are ISO weeks (Monday-anchored); months are calendar months.
+        A non-empty value outside the enum is a `400`.
     OrganizationId:
       name: organizationId
       in: path
@@ -4203,6 +4294,175 @@ components:
               - $ref: "#/components/schemas/QuotaExceededError"
 
   schemas:
+
+    # --- admin business KPIs (S-44…S-49) -------------------------------------
+    BusinessWindow:
+      type: object
+      required: [from, to, granularity, timeZone, bucketCount]
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        granularity: { type: string, enum: [day, week, month] }
+        timeZone: { type: string, example: UTC }
+        bucketCount: { type: integer }
+    BusinessDataQuality:
+      type: object
+      required:
+        - userAttributionAvailable
+        - unresolvedAttributionCount
+        - subscriptionHistoryBackfilled
+        - lastActivityIsReconstructed
+        - agentMetricsUninstrumented
+        - notes
+      properties:
+        userAttributionAvailable:
+          type: boolean
+          description: False when no request in the window carried a resolved user id.
+        unresolvedAttributionCount:
+          type: integer
+          format: int64
+          description: Requests whose Clerk id was present but not yet in the claim map.
+        subscriptionHistoryBackfilled: { type: boolean }
+        lastActivityIsReconstructed: { type: boolean }
+        agentMetricsUninstrumented: { type: boolean }
+        notes:
+          type: array
+          items: { type: string }
+    GrowthPoint:
+      type: object
+      required:
+        - bucketStart
+        - isPartial
+        - newUsers
+        - newOrganizations
+        - newAdminRequests
+        - approvedAdminRequests
+      properties:
+        bucketStart: { type: string, format: date-time }
+        isPartial:
+          type: boolean
+          description: True for the leading bucket clipped by `from` and the trailing open bucket.
+        newUsers: { type: integer }
+        newOrganizations: { type: integer }
+        newAdminRequests: { type: integer }
+        approvedAdminRequests: { type: integer }
+    GrowthTotals:
+      type: object
+      required: [newUsers, newOrganizations, newAdminRequests, approvedAdminRequests]
+      properties:
+        newUsers: { type: integer }
+        newOrganizations: { type: integer }
+        newAdminRequests: { type: integer }
+        approvedAdminRequests: { type: integer }
+    BusinessGrowthResponse:
+      type: object
+      required: [window, series, totals, previousTotals, dataQuality]
+      properties:
+        window: { $ref: "#/components/schemas/BusinessWindow" }
+        observedFrom:
+          type: string
+          format: date-time
+          nullable: true
+          description: The earliest row date across the measures, or null when every source is empty.
+        series:
+          type: array
+          items: { $ref: "#/components/schemas/GrowthPoint" }
+        totals: { $ref: "#/components/schemas/GrowthTotals" }
+        previousTotals:
+          allOf:
+            - $ref: "#/components/schemas/GrowthTotals"
+          description: The immediately preceding equal-length window.
+        dataQuality: { $ref: "#/components/schemas/BusinessDataQuality" }
+    ActiveUsersPoint:
+      type: object
+      required: [bucketStart, isPartial]
+      properties:
+        bucketStart: { type: string, format: date-time }
+        isPartial: { type: boolean }
+        activeUsers:
+          type: integer
+          nullable: true
+          description: Null when no request in the window is attributed; never 0 in that case.
+        activeOrganizations:
+          type: integer
+          nullable: true
+    RollingActiveUsers:
+      type: object
+      properties:
+        dau: { type: integer, nullable: true }
+        wau: { type: integer, nullable: true }
+        mau: { type: integer, nullable: true }
+        stickiness:
+          type: number
+          format: double
+          nullable: true
+          description: dau / mau; null when mau is unavailable or zero.
+    BusinessActiveUsersResponse:
+      type: object
+      required: [window, series, rolling, dataQuality]
+      properties:
+        window: { $ref: "#/components/schemas/BusinessWindow" }
+        series:
+          type: array
+          items: { $ref: "#/components/schemas/ActiveUsersPoint" }
+        rolling: { $ref: "#/components/schemas/RollingActiveUsers" }
+        dataQuality: { $ref: "#/components/schemas/BusinessDataQuality" }
+    PlanMixItem:
+      type: object
+      required:
+        - planTier
+        - isFree
+        - organizationCount
+        - activeOrganizationCount
+        - billedSubscriptionCount
+        - userCount
+        - monthlyPriceLkr
+      properties:
+        planTier: { type: string, enum: [Seed, Bloom, Orchid, Rose, Enterprise] }
+        isFree: { type: boolean }
+        organizationCount:
+          type: integer
+          description: From Organizations.PlanTier; authoritative for every organization.
+        activeOrganizationCount: { type: integer }
+        billedSubscriptionCount:
+          type: integer
+          description: From OrganizationSubscriptions; smaller than organizationCount when a billing row is absent.
+        userCount: { type: integer }
+        monthlyPriceLkr:
+          type: number
+          description: List-price sum over billed rows only, not recognised revenue.
+    PlanMixSide:
+      type: object
+      required: [organizationCount, userCount, monthlyPriceLkr, shareOfOrganizations]
+      properties:
+        organizationCount: { type: integer }
+        userCount: { type: integer }
+        monthlyPriceLkr: { type: number }
+        shareOfOrganizations: { type: number, format: double }
+    BusinessPlanMixResponse:
+      type: object
+      required:
+        - asOf
+        - tiers
+        - free
+        - premium
+        - organizationsTotal
+        - organizationsWithBillingRow
+        - totalMonthlyPriceLkr
+        - dataQuality
+      properties:
+        asOf: { type: string, format: date-time }
+        tiers:
+          type: array
+          items: { $ref: "#/components/schemas/PlanMixItem" }
+        free: { $ref: "#/components/schemas/PlanMixSide" }
+        premium: { $ref: "#/components/schemas/PlanMixSide" }
+        organizationsTotal: { type: integer }
+        organizationsWithBillingRow:
+          type: integer
+          description: The size of the gap between the organization total and the billed rows.
+        totalMonthlyPriceLkr: { type: number }
+        dataQuality: { $ref: "#/components/schemas/BusinessDataQuality" }
 
     # --- primitives and enums ------------------------------------------------
     ErrorResponse:

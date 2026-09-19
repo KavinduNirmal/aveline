@@ -192,6 +192,19 @@ organizations (`Authorization/OrganizationScopeAuthorizationHandler.cs:38-74`).
 `stats:view:agent`, `stats:system`, `admin:users:read`, `admin:users:manage`,
 `admin:orgs:read`, `audit:view`.
 
+**`analytics:business:read` (Business KPIs).** Guards the six administrator
+business-KPI reads under `/api/v1/admin/statistics/business/*` — growth, active users,
+plan mix, subscription trend, usage and the organization ranking. It is deliberately
+**separate from `stats:system`**, which is role-guarded to `owner`/`admin` and is about
+system health rather than growth. Granted to `moderator`, `admin` and `owner`; denied to
+`staff`, `customer_relations` and every `org:boutique_*` role. The routes are
+**bearer-only** — the group does not call `AllowBearerOrApiKey`, so an API key is refused —
+matching the other team-only statistics families. Two of the six reads
+(`usage?organizationId=…` and the organization ranking) additionally require
+`admin:orgs:read`, checked in the handler rather than in the policy. See
+[`docs/architecture/authorization.md`](../architecture/authorization.md) for the grant
+matrix.
+
 ### A.3 Error responses
 
 A single global exception handler (`GlobalExceptionHandler`, an `IExceptionHandler`)
@@ -790,7 +803,46 @@ string-backed `AdminApprovalStatus`.
 `502 { "message": "..." }` Clerk Backend API failure.
 **Source:** `Endpoints/AdminEndpoints.cs:18-113`.
 
-### B.14 Authorization policy demo endpoints (fixtures)
+### B.14 Admin business statistics (Business KPIs)
+
+**Auth:** Clerk JWT only. **Not available to API keys.**
+**Permission:** `analytics:business:read` (see [A.2](#a2-authorization)). Granted to
+`moderator`, `admin` and `owner`; denied to `staff`, `customer_relations` and every
+`org:boutique_*` role. Only `owner` and `admin` reach the console, so the `moderator` grant is
+inert at the UI layer and exists so the catalogue is semantically correct.
+**Source:** `Modules/Analytics/Endpoints/BusinessKpiEndpoints.cs`.
+**Catalog:** S-44…S-49 in
+[statistics-catalog.md](../backend/statistics-catalog.md#7b-business-kpis-growth-activity-plan-mix).
+
+| Method | Path | Statistic | Notes |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/admin/statistics/business/growth` | S-44 | New users, new boutiques and access requests per bucket + `previousTotals` |
+| `GET` | `/api/v1/admin/statistics/business/active-users` | S-45 | Distinct active users per bucket + the DAU/WAU/MAU reading and stickiness |
+| `GET` | `/api/v1/admin/statistics/business/plan-mix` | S-46 | Per-tier organization/subscription/user counts and the free-versus-premium split |
+
+**Shared query parameters**
+
+| Param | Type | Default | Validation |
+| --- | --- | --- | --- |
+| `from` | ISO 8601 datetime | `to − 30 d` | must be `< to` |
+| `to` | ISO 8601 datetime | now (UTC) | `(to − from).TotalDays ≤ BusinessAnalytics:MaxWindowDays` (400) |
+| `granularity` | `day` \| `week` \| `month` | `day` | anything else is `400` |
+
+**Errors:** `400 { message }` on every validation failure; `401` anonymous; `403` a role
+without `analytics:business:read`; `500 { status, message, traceId }` on a database failure.
+An empty source is `200` with a `null` measure and a `dataQuality` note, never a fabricated
+zero baseline.
+
+**Caching:** `Cache-Control: private, max-age=60`. The result is cached in
+`IDistributedCache` at `BusinessAnalytics:CacheSeconds`, so `dataQuality` may be up to 60
+seconds stale.
+
+**Null versus zero.** A count of `0` inside the observed period is `0`. A bucket before the
+earliest observation (`observedFrom`), or a measure that cannot be computed at all, is
+`null`. `dataQuality.userAttributionAvailable = false` accompanies a `null` active-user
+reading.
+
+### B.15 Authorization policy demo endpoints (fixtures)
 
 These exist to prove the policy wiring end-to-end and are covered by
 `AuthorizationPolicyTests`. They return a fixed message and are **not** part of

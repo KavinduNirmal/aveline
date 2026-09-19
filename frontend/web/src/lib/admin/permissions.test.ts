@@ -7,15 +7,15 @@ import {
 } from "./permissions"
 
 describe("Admin Permissions Catalog Mirror", () => {
-  it("contains exactly 24 canonical permissions", () => {
-    expect(ALL_PERMISSIONS).toHaveLength(24)
+  it("contains exactly 25 canonical permissions", () => {
+    expect(ALL_PERMISSIONS).toHaveLength(25)
     const unique = new Set(ALL_PERMISSIONS)
-    expect(unique.size).toBe(24)
+    expect(unique.size).toBe(25)
   })
 
   it("mirrors admin role omitting only pricing:backdate", () => {
     const adminPerms = ROLE_PERMISSIONS["admin"]
-    expect(adminPerms).toHaveLength(23)
+    expect(adminPerms).toHaveLength(24)
     expect(adminPerms).not.toContain("pricing:backdate")
     expect(adminPerms).toContain("audit:view")
     expect(adminPerms).toContain("admin:users:manage")
@@ -23,7 +23,7 @@ describe("Admin Permissions Catalog Mirror", () => {
 
   it("mirrors owner role granting all permissions", () => {
     const ownerPerms = ROLE_PERMISSIONS["owner"]
-    expect(ownerPerms).toHaveLength(24)
+    expect(ownerPerms).toHaveLength(25)
     expect(ownerPerms).toContain("pricing:backdate")
   })
 
@@ -31,6 +31,7 @@ describe("Admin Permissions Catalog Mirror", () => {
     const modPerms = ROLE_PERMISSIONS["moderator"]
     expect(modPerms).toContain("admin:orgs:read")
     expect(modPerms).toContain("stats:view")
+    expect(modPerms).toContain("analytics:business:read")
     expect(modPerms).not.toContain("admin:users:read")
     expect(modPerms).not.toContain("audit:view")
   })

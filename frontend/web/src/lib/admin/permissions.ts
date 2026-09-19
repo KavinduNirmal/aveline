@@ -1,5 +1,5 @@
 ﻿/**
- * Canonical 24-permission catalog mirroring `Aveline.Api/Authorization/Permissions.cs`.
+ * Canonical 25-permission catalog mirroring `Aveline.Api/Authorization/Permissions.cs`.
  * This client mirror is used strictly for presentation and navigation gating.
  * Authoritative enforcement is always performed server-side.
  */
@@ -24,6 +24,7 @@ export type Permission =
   | "stats:view"
   | "stats:view:agent"
   | "stats:system"
+  | "analytics:business:read"
   | "admin:users:read"
   | "admin:users:manage"
   | "admin:orgs:read"
@@ -50,6 +51,7 @@ export const ALL_PERMISSIONS: readonly Permission[] = [
   "stats:view",
   "stats:view:agent",
   "stats:system",
+  "analytics:business:read",
   "admin:users:read",
   "admin:users:manage",
   "admin:orgs:read",
@@ -71,6 +73,7 @@ export const ROLE_PERMISSIONS: Record<string, readonly Permission[]> = {
     "stats:view",
     "stats:view:agent",
     "admin:orgs:read",
+    "analytics:business:read",
   ],
   admin: ALL_PERMISSIONS.filter((p) => p !== "pricing:backdate"),
   owner: ALL_PERMISSIONS,

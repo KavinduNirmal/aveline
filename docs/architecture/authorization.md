@@ -59,7 +59,7 @@ Server-side enforcement sits on top of the role claims:
 | --- | --- |
 | `staff` | `catalog:view`, `conversations:view` |
 | `customer_relations` | `catalog:view`, `customers:view`, `conversations:view` |
-| `moderator` | `catalog:view`, `customers:view`, `approvals:approve`, `conversations:view`, `billing:view`, `stats:view`, `stats:view:agent`, `admin:orgs:read` |
+| `moderator` | `catalog:view`, `customers:view`, `approvals:approve`, `conversations:view`, `billing:view`, `stats:view`, `stats:view:agent`, `admin:orgs:read`, `analytics:business:read` |
 | `admin` | Every permission **except** `pricing:backdate` |
 | `owner` | Every permission |
 | `org:boutique_staff` | `catalog:view`, `customers:view`, `conversations:view` |
@@ -75,8 +75,8 @@ The current permission catalog is `catalog:view`, `customers:view`, `catalog:man
 `approvals:approve`, `payments:refund`, `reports:view`, `settings:manage`,
 `conversations:view`, `billing:view`, `billing:manage`, `billing:adjust`,
 `pricing:view`, `pricing:manage`, `pricing:backdate`, `apikeys:view`, `apikeys:manage`,
-`stats:view`, `stats:view:agent`, `stats:system`, `admin:users:read`,
-`admin:users:manage`, `admin:orgs:read`, and `audit:view`.
+`stats:view`, `stats:view:agent`, `stats:system`, `analytics:business:read`,
+`admin:users:read`, `admin:users:manage`, `admin:orgs:read`, and `audit:view`.
 
 ## Team-only role policies carry their permission requirement (A9)
 
@@ -103,6 +103,34 @@ passes. `moderator` and every boutique role hold none of the three and were alre
 refused by the role guard, so they are still refused. The effect is that the permission
 catalogue now describes what the routes enforce, which is what lets the console's
 `Gate` role overlay be a belt-and-braces check rather than the only correct check.
+
+## `analytics:business:read` (Business KPIs)
+
+`analytics:business:read` guards the six administrator business-KPI reads under
+`/api/v1/admin/statistics/business/*` (growth, active users, plan mix, subscription trend,
+usage, and the organization ranking). It is a **separate permission from `stats:system`**
+on purpose: `stats:system` is registered as a `RequireRole(owner, admin)` policy and is
+about system health, while growth data is a different subject with a wider legitimate
+audience. A `moderator` already holds `admin:orgs:read` and `billing:view`, so reading which
+boutiques exist and what they consume is inside their remit without granting them
+system-health access.
+
+| Role | `analytics:business:read` |
+| --- | --- |
+| `moderator` | granted |
+| `admin` | granted (every permission except `pricing:backdate`) |
+| `owner` | granted (every permission) |
+| `staff`, `customer_relations`, every `org:boutique_*` | denied |
+
+The routes are **bearer-only**: the group does not call `AllowBearerOrApiKey`, so an API key
+can never reach them, matching the other team-only statistics families. Two of the six reads
+(`usage?organizationId=…` and the organization ranking) additionally require
+`admin:orgs:read`, because they enumerate tenant identity; that check is performed in the
+handler rather than in the policy.
+
+Granting the permission to `moderator` is **inert today** — `AdminRouteGuard` admits only
+`owner` and `admin` to the console — and exists so the catalog is semantically correct rather
+than because it changes live behaviour.
 
 ## Compatibility
 

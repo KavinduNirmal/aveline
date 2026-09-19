@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import hashlib
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 
 def _utc_now_iso() -> str:
@@ -44,6 +47,15 @@ def map_agent_key(node_name: str | None) -> str:
     return "orchestrator"
 
 
+#: The .NET ``AgentStepKind`` enum, which is the ingest contract (the backend is the source of
+#: truth; see ``Aveline.Api/Modules/Statistics/Models/AgentWorkflowRun.cs``). Note there is **no**
+#: ``NodeTransition`` member: a graph-node execution is reported as ``Decision``.
+AGENT_STEP_KINDS = frozenset(
+    {"LlmCall", "ToolCall", "Decision", "HumanInterrupt", "Retrieval", "Validation"}
+)
+NODE_STEP_KIND = "Decision"
+
+
 class AgentStepTelemetry(BaseModel):
     """Execution telemetry for a single step/node/tool within an agent run."""
 
@@ -52,7 +64,7 @@ class AgentStepTelemetry(BaseModel):
     step_index: int = Field(..., serialization_alias="stepIndex")
     agent_key: str = Field(..., serialization_alias="agentKey")
     node_name: str = Field(..., serialization_alias="nodeName")
-    step_kind: str = Field(default="NodeTransition", serialization_alias="stepKind")
+    step_kind: str = Field(default=NODE_STEP_KIND, serialization_alias="stepKind")
     tool_name: str | None = Field(default=None, serialization_alias="toolName")
     status: str = Field(default="Succeeded")
     attempt_number: int = Field(default=1, serialization_alias="attemptNumber")
@@ -68,6 +80,9 @@ class AgentStepTelemetry(BaseModel):
     args_hash: str | None = Field(default=None, serialization_alias="argsHash")
     result_bytes: int | None = Field(default=None, serialization_alias="resultBytes")
     error_code: str | None = Field(default=None, serialization_alias="errorCode")
+
+    # Wall-clock start used to compute ``duration_ms``. Private so it never serializes.
+    _start_perf: float | None = PrivateAttr(default=None)
 
 
 class AgentRunTelemetry(BaseModel):
@@ -111,6 +126,29 @@ class AgentRunTelemetry(BaseModel):
         return self.model_dump(by_alias=True, exclude_none=False)
 
 
+#: The collector for the workflow currently executing on this context (if any). Tools and
+#: sub-graphs read it to attach ToolCall steps to the run they belong to, without threading a
+#: collector parameter through every call.
+_current_collector: ContextVar[TelemetryCollector | None] = ContextVar(
+    "aveline_current_collector", default=None
+)
+
+
+@contextmanager
+def use_telemetry_collector(collector: TelemetryCollector | None) -> Iterator[TelemetryCollector | None]:
+    """Bind ``collector`` as the active run collector for the current context."""
+    token = _current_collector.set(collector)
+    try:
+        yield collector
+    finally:
+        _current_collector.reset(token)
+
+
+def get_current_collector() -> TelemetryCollector | None:
+    """Return the active run collector, or ``None`` outside an instrumented graph run."""
+    return _current_collector.get()
+
+
 class TelemetryCollector:
     """High-resolution timing, step, and usage collector for an active workflow."""
 
@@ -122,7 +160,6 @@ class TelemetryCollector:
         self.start_utc = _utc_now_iso()
         self.steps: list[AgentStepTelemetry] = []
         self._agents: set[str] = set()
-        self._current_step_perf: float | None = None
         self._current_step_index: int = 0
         self.tool_call_count = 0
         self.retry_count = 0
@@ -130,13 +167,12 @@ class TelemetryCollector:
     def start_step(
         self,
         node_name: str,
-        step_kind: str = "NodeTransition",
+        step_kind: str = NODE_STEP_KIND,
         tool_name: str | None = None,
         attempt: int = 1,
     ) -> AgentStepTelemetry:
         agent_key = map_agent_key(node_name)
         self._agents.add(agent_key)
-        self._current_step_perf = time.perf_counter()
         step = AgentStepTelemetry(
             step_index=self._current_step_index,
             agent_key=agent_key,
@@ -147,6 +183,7 @@ class TelemetryCollector:
             attempt_number=attempt,
             started_at=_utc_now_iso(),
         )
+        step._start_perf = time.perf_counter()
         self.steps.append(step)
         self._current_step_index += 1
         if step_kind == "ToolCall":
@@ -168,12 +205,17 @@ class TelemetryCollector:
         result_bytes: int | None = None,
         error_code: str | None = None,
     ) -> None:
-        if not self.steps:
+        """Complete the most recent **still-running** step with its outcome and usage.
+
+        Selecting the running step (rather than blindly the last one) means a ToolCall started
+        inside a node is not overwritten when the surrounding node completes afterwards.
+        """
+        step = self._current_running_step()
+        if step is None:
             return
-        step = self.steps[-1]
         elapsed_ms = 0
-        if self._current_step_perf is not None:
-            elapsed_ms = int((time.perf_counter() - self._current_step_perf) * 1000)
+        if step._start_perf is not None:
+            elapsed_ms = int((time.perf_counter() - step._start_perf) * 1000)
         step.completed_at = _utc_now_iso()
         step.duration_ms = max(0, elapsed_ms)
         step.status = status
@@ -187,6 +229,13 @@ class TelemetryCollector:
         step.result_bytes = result_bytes
         step.error_code = error_code
 
+    def _current_running_step(self) -> AgentStepTelemetry | None:
+        """Return the most recent step still in the ``Running`` state, if any."""
+        for step in reversed(self.steps):
+            if step.status == "Running":
+                return step
+        return None
+
     def finalize(
         self,
         status: str = "Succeeded",
@@ -198,6 +247,12 @@ class TelemetryCollector:
     ) -> AgentRunTelemetry:
         elapsed_ms = int((time.perf_counter() - self.start_perf) * 1000)
         completed_utc = _utc_now_iso()
+        # The .NET AgentStepStatus set has no "Running" member, so an interrupted step (e.g. a
+        # run that paused mid-node) must be closed before the payload is sent or ingest rejects it.
+        for step in self.steps:
+            if step.status == "Running":
+                step.status = "Failed" if status == "Failed" else "Skipped"
+                step.completed_at = step.completed_at or completed_utc
         return AgentRunTelemetry(
             workflow_id=self.workflow_id,
             organization_id=self.organization_id,

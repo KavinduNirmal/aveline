@@ -3,12 +3,14 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { RedirectIfAuthenticated } from './components/RedirectIfAuthenticated'
+import { RedirectAdminSignUps } from './components/RedirectAdminSignUps'
 import { RequireAccountState } from './components/RequireAccountState'
 import { NotificationsProvider } from './contexts/NotificationsContext'
 import { UserProvider } from './contexts/UserContext'
 import { AuthApiBridge } from './lib/AuthApiBridge'
 import { Toaster } from './components/ui/sonner'
 import { AdminSignUpPage } from './routes/AdminSignUpPage'
+import { AdminPendingPage } from './routes/AdminPendingPage'
 import { ContactPage } from './routes/ContactPage'
 import { DashboardRedirect } from './routes/Dashboard'
 import { DocsPage } from './routes/DocsPage'
@@ -55,8 +57,12 @@ export default function App() {
           <Route path="/download" element={<DownloadPage />} />
 
           <Route element={<ProtectedRoute />}>
-            <Route path="/onboarding" element={<OnboardingPage />} />
-            <Route path="/org-setup" element={<OrgSetupPage />} />
+            {/* Administrator sign-ups wait here for review instead of onboarding. */}
+            <Route path="/admin/pending" element={<AdminPendingPage />} />
+            <Route element={<RedirectAdminSignUps />}>
+              <Route path="/onboarding" element={<OnboardingPage />} />
+              <Route path="/org-setup" element={<OrgSetupPage />} />
+            </Route>
             <Route path="/invite" element={<InvitePage />} />
             <Route element={<RequireAccountState />}>
               <Route path="/app" element={<DashboardRedirect />} />
@@ -93,8 +99,14 @@ export default function App() {
           <Route element={<RedirectIfAuthenticated />}>
             <Route path="/sign-in/*" element={<SignInPage />} />
             <Route path="/sign-up/*" element={<SignUpPage />} />
-            <Route path="/sign-up/admin" element={<AdminSignUpPage />} />
           </Route>
+          {/*
+            Administrator sign-up is intentionally NOT wrapped in
+            RedirectIfAuthenticated: finalizing the Clerk sign-up activates the
+            session, and the redirect would unmount this page before the access
+            request is submitted.
+          */}
+          <Route path="/sign-up/admin" element={<AdminSignUpPage />} />
           <Route path="/terms" element={<TermsPage />} />
 
           <Route path="*" element={<Navigate to="/" replace />} />

@@ -12,10 +12,11 @@ namespace Aveline.Api.Modules.Statistics.Jobs;
 /// re-run leaves the same totals.
 /// </summary>
 /// <remarks>
-/// Hour→day compaction beyond the 90-day hourly retention is <b>deferred</b>: the hourly and
-/// daily windows share one table and one dimension index, so materialising a day row at the
-/// day boundary would collide with the 00:00 hour row. The catalog's 400-day daily rollup is
-/// therefore not produced yet; see the Phase 5 status in docs/backend/README.md.
+/// Hour→day compaction <b>is</b> produced: when the just-closed hour is 23:00 UTC,
+/// <see cref="RunAsync"/> also recomputes the day row for that date, which is what backs the
+/// catalog's 400-day daily rollup and <c>Telemetry:DailyRollupRetentionDays</c>. The hourly and
+/// daily windows share one table and one dimension index, distinguished by
+/// <c>WindowSize</c>, so the day row does not collide with the 00:00 hour row.
 /// </remarks>
 public sealed class ApiStatsRollupJob(
     IServiceScopeFactory scopeFactory,

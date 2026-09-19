@@ -3904,3 +3904,353 @@ committed, pushed and opened as a PR.
 - Verification at commit time was unchanged from the session summary above: Flutter 1005 pass
   and analyze clean, web 204 pass and build clean, backend notification/alert/retention suites
   green (the full run's single failure is the unrelated `PricingRuleCacheWarmerTests` flake).
+
+## Session 2026-09-19 — Prometheus + Grafana metrics infrastructure
+
+**Task:** Implement the Prometheus + Grafana metrics infrastructure plan
+(`.agents/plans/prometheus-grafana-metrics-implementation.ignore.md`, Revision 4, plus its
+strategy document) on the current branch `feature/prometheus-and-grafana-monitoring`.
+**Tool used:** DeepSeek Harness (deepseek-flash coding agent)
+
+### Intended Work (session start)
+
+- Read both plan documents in full before touching code.
+- Create one GitHub issue per plan slice (1, 2, 3, 4a, 4b, 5, 6, 7, 8) using the repo's
+  `feature_request` template. **No branches created or switched** — all work stays on the
+  current branch, per the explicit instruction.
+- Strict TDD for every slice: failing test first, implement, refactor.
+- Documentation (general + API + OpenAPI) updated at the end of each delivered slice.
+- This log updated at session start (this entry) and again at session end.
+
+### Plan understanding recorded before implementation
+
+- **Slice 1** — a real `Metrics:ScrapeToken` (never the committed internal-token default), the
+  `prometheus` compose service at a pinned non-EOL version with retention in the config file
+  (never the deprecated flag), `prometheus.yml` + `rules/aveline.yml`, a startup guard, and the
+  **naming test** that turns the plan's §1 F-3 suffix table into an executed fact.
+- **Slice 2** — register the dropped meters (`Aveline.Api.Eventing`, `Npgsql`), extract
+  `MetricSnapshotReader.Flatten` from `BuildSamples` with a **differential** test (the plan's
+  own member-wise test would pass vacuously on `eventbus.backlog`), publish gauges **before**
+  the database write, and author every Prometheus series name in one `ExportedMetric` table.
+- **Slices 3/6** — Grafana provisioning and `postgres_exporter`, both pinned, both internal.
+- **Slices 4a/4b** — Python `MeterProvider` + OTLP through the collector, additive instruments
+  only (input/output token counts duplicate `gen_ai.client.token.usage`), the step-record
+  producer, and wiring the existing uncalled `AgentDataQualityDto.Derive`.
+- **Slice 5** — `.AddMeter("Npgsql")`, a collector-emitted saturation ratio, and the seeded
+  `db.pool.saturated` rule added in the same commit.
+- **Slice 7** — the notification metric family emitted (HTTP routes stay deferred).
+- **Slice 8** — the documentation commit, including restoring the 15 s overview-cache claim
+  (D7 = A) rather than deleting it, and `docs/backend/observability.md`.
+
+Reconnaissance confirmed the plan's load-bearing claims against the working tree: `/metrics` is
+mapped under `MetricsPolicy`, the exporter is registered with no options (so the default
+`UnderscoreEscapingWithSuffixes` translation applies), `ObservabilityConfiguration` registers
+only `"Aveline.Api"` while `EventBusMetrics` creates its instruments on `"Aveline.Api.Eventing"`,
+there is no `observability/` directory, and the collector config has a `traces:` pipeline only.
+
+### Notes
+
+- Plan documents reviewed: `prometheus-grafana-metrics-implementation.ignore.md` (1585 lines) and
+  `prometheus-grafana-metrics-implementation-strategy.md` (1798 lines).
+- The `.agents/` directory is untracked on this branch; the plans are read as sources of truth
+  for scope but are not modified by this work.
+
+### Session end — what was delivered
+
+All nine slices were implemented on the current branch
+`feature/prometheus-and-grafana-monitoring`. **No branch was created or switched**, as instructed,
+and nothing was committed (the user's standing pattern on this branch is issue + implementation on
+the branch, with the commit left to review).
+
+**GitHub issues created, one per slice:** #315 (Slice 1), #316 (Slice 2), #317 (Slice 3),
+#318 (Slice 4a), #319 (Slice 4b), #320 (Slice 5), #321 (Slice 6), #322 (Slice 7), #323 (Slice 8),
+all with acceptance criteria drawn from the plan.
+
+**TDD evidence.** Every slice began with failing tests. The most consequential example is Slice 1's
+naming test, which the plan predicted would turn its hand-derived suffix table into an executed
+fact — and which immediately proved the table wrong in **three of nineteen rows**. The exporter
+appends a unit suffix unless the sanitised name already ends with it, so:
+
+| dotted name (internal key) | exporter's real series | the plan's table said |
+| --- | --- | --- |
+| `aveline.process.cpu_seconds` | `aveline_process_cpu_seconds_total` | unchanged |
+| `aveline.api.error_rate` | `aveline_api_error_rate_ratio` | unchanged |
+| `aveline.agent.success_rate` | `aveline_agent_success_rate_ratio` | unchanged |
+
+Had the dashboards been written from the plan's table, three panels would have been silently empty.
+`MetricsCatalog` is now the single place a Prometheus name is authored and `MetricsNamingTests`
+asserts all 34 entries against a live scrape.
+
+**Other findings that changed the work.**
+
+- The plan's proposed `MetricSnapshotReader.Flatten` test would have passed vacuously. The shipped
+  test is differential against `BuildSamples`, and it pins the two behaviours the plan's own
+  analysis predicted a member-wise reader would get wrong: `eventbus.backlog` is derived from two
+  members and exists only when both are present, and the two currency metrics stay `decimal` in
+  Postgres while the gauge is a documented float64 approximation.
+- `NpgsqlDataSource.Statistics` is **internal** on the pinned Npgsql 10.0.3, so the plan's "the
+  collector can read pool saturation" needed a different mechanism. The collector now reads the
+  instruments through a `MeterListener` — instrument is the source, collector is the emitter, and
+  the seeded-rule guard still holds. `NpgsqlDataSourceBuilder.Name` is public, so S-11's pool-name
+  neutralisation works as written.
+- `MetricsSecurityGuard.EnsureScrapeTokenForProduction` (S-1) broke four pre-existing
+  Production-boot tests. The guard is correct; the tests were updated to configure the credential
+  a Production deployment must configure.
+- The scrape tests race through OpenTelemetry's process-global meter registry: a concurrently
+  running test that has created an `AvelineMetrics` instance contributes measurements to every
+  provider matching the meter name, which silently falsified an "absent series" assertion. They now
+  run in a non-parallel xUnit collection.
+- `docker-compose.yml` uses `${VAR:?required}` for three secrets, so `docker compose up` fails
+  rather than falling back to the committed internal token.
+
+**Verification performed (all on the current branch).**
+
+- `dotnet build` clean; full `dotnet test Aveline.Api/Aveline.Api.sln` run after every slice.
+- `promtool check config` **and** `check rules` executed against the real pinned
+  `prom/prometheus:v3.13.3` image: `SUCCESS: 1 rule files found` / `SUCCESS: 8 rules found`.
+- `grafana/grafana:13.2.2` booted with the provisioning files mounted: datasource `aveline-prometheus`
+  returned, both alert rules provisioned, both dashboards registered, contact point returned with
+  `provenance: file`.
+- `python3 scripts/validate_observability_config.py` passes; `docker compose config` parses.
+- Python agent suite: **428 passed, 2 skipped** (the single `test_config.py` failure reproduces only
+  because this shell exports `LLM_MODEL`/`AGENT_STATE_DELAY_MS`; with them unset it is 9/9),
+  coverage 91% against the 90% gate, ruff clean on every touched file.
+- Postgres-backed role test (Testcontainers): the `postgres_exporter` role holds `pg_monitor`, is
+  not a superuser, and **cannot** select from an application table.
+
+**Delivered, by slice.**
+
+1. **Slice 1** — real `Metrics:ScrapeToken` with no default, the startup guard, the pinned
+   `prometheus` service at `v3.13.3` (retention in the config file, never the deprecated flag),
+   `observability/prometheus/{prometheus.yml,rules/aveline.yml}`, the collector pinned to `0.161.0`,
+   the naming contract, the `observability-config` CI job, and the validator script.
+2. **Slice 2** — `AddMeter("Aveline.Api.Eventing")` and `AddMeter("Npgsql")` (closing M-1 and M-9's
+   premise), `MetricSnapshotReader.Flatten`, `AvelineMetrics` (guaranteed to omit rather than zero),
+   `PublishToMetrics` **before** the database write, the three-way consistency tests, and
+   `MetricsCardinalityTests` at both the instrument and scrape level.
+3. **Slice 3** — Grafana at `13.2.2`, file provisioning, the Overview and Business dashboards, one
+   contact point, one notification policy, the operator alerts and the Prometheus recording rules
+   (every expression using the translated name).
+4. **Slice 4a/4b** — the agent `MeterProvider` + OTLP with cumulative temporality, the collector
+   `metrics:` pipeline (and the `otlp_grpc`/`resource_constant_labels` deprecations fixed), the
+   additive instruments only, the step-record producer, the two dead call sites wired, and
+   `AgentDataQualityDto.Derive` called at its three hard-coded sites.
+5. **Slice 5** — the Npgsql meter, the neutralised pool label, the collector-emitted saturation
+   ratio, the seeded `db.pool.saturated` rule, its migration, and the scrape-level cardinality
+   assertion.
+6. **Slice 6** — `postgres_exporter` digest-pinned and internal, the least-privilege role, the
+   Database dashboard (honest replication signal, `clamp_min` cache ratio), and the role tests.
+7. **Slice 7** — the notification metric family emitted with its four constraints (inbox backlog ≠
+   S-36's delivery backlog, dispatcher-incremented delivery counter, FCM gauge 1/0, percentile
+   absent below the sample floor) and the Notifications dashboard.
+8. **Slice 8** — `docs/backend/observability.md`, the corrections commit (the 15 s overview-cache
+   claim **restored** per D7 = A rather than deleted, plus the billing-routes, `AgentStatsRollupJob`,
+   daily-rollup and k6 claims), the M-8 persist half for `publish_latency_ms`, the stale code
+   comments, `DocsConsistencyTests` keyed on code references, and the OQ-2 deployment note.
+
+**Docs updated per phase (general, API, OpenAPI).** `docs/api/README.md` §C.9 (the scrape
+credential, the two-name contract, the meter registrations) and the `/metrics` description in
+`docs/api/openapi.yaml` for Slice 1; `docs/backend/README.md` gained a metrics-infrastructure
+status section that grew with Slices 2–7; `docs/backend/observability.md` is the Slice 8 operator
+document; `docs/deployment.md` gained the observability-tier note. `openapi.yaml` otherwise
+deliberately unchanged — no public route was added, and the notification routes remain deferred
+with their contracts frozen.
+
+**Recorded deviations, so the next reader is not misled.** The three aggregating notification
+series the plan called counters (`failure_reasons`, `volume_by_type`, `push_dispatch_failures`) are
+exposed as 24-hour **windowed gauges**: deriving a monotonic Prometheus counter from a table needs
+delta bookkeeping across passes, and a counter that double-counts is worse than an honest gauge.
+The notification HTTP routes and the `inbound_message_backlog` schema change (M-7) remain deferred,
+as the plan's Revision 4 requires, and exposing them needs the catalog `S-n` allocation plus the
+OpenAPI paths in the same commit.
+
+**Environment notes.** A stale incremental build made one new member invisible to the test project
+until `dotnet build --no-incremental`; the same symptom is worth remembering. Slice 4a/4b were
+delegated to a subagent, which found a real contract defect worth recording: the Python step payload
+sent `stepKind: "NodeTransition"`, which is not a member of the .NET `AgentStepKind` enum, so the
+whole run report would have been rejected with a 400 once real steps went live. It was fixed on the
+Python side (`Decision`) without changing the backend contract, consistent with the rule that the
+backend is the source of truth.
+
+### Follow-up (same session) — the compose stack would not start: three secrets and two missing files
+
+Running `docker compose up -d --build` failed at **interpolation**, before any container was
+created:
+
+```
+error while interpolating services.api.environment.Metrics__ScrapeToken:
+  required variable METRICS_SCRAPE_TOKEN is missing a value
+error while interpolating services.grafana.environment.GF_SECURITY_ADMIN_PASSWORD: ...
+error while interpolating services.postgres.environment.POSTGRES_EXPORTER_PASSWORD: ...
+```
+
+This is the intended S-1 behaviour — an unset credential fails the stack rather than falling back to
+the committed internal service token — but the local `.env` had never been given the values, and two
+of the three must also exist as **files** that the containers mount.
+
+**What was done.**
+
+- Generated three independent 32-byte secrets (`secrets.token_hex(32)` = 64 hex characters, so no
+  shell/YAML-quoting hazards) and appended them to the gitignored `.env`: `METRICS_SCRAPE_TOKEN`,
+  `GRAFANA_ADMIN_PASSWORD`, `POSTGRES_EXPORTER_PASSWORD`, plus `POSTGRES_EXPORTER_USER` and the two
+  dev-only port mappings. The append is idempotent: it never rotates an existing value.
+- Wrote the two companion files the containers read — `observability/prometheus/secrets/scrape_token`
+  (Prometheus' `authorization.credentials_file`) and `./postgres-exporter-password`
+  (`DATA_SOURCE_PASS_FILE`) — with **no trailing newline**, because both are read verbatim. Confirmed
+  all three paths are gitignored.
+- Added `scripts/sync_observability_secrets.sh`, which derives both files from `.env` so the two
+  representations cannot drift; this is the script the `.env.example` comment now references.
+- Rewrote the `.env.example` observability block: values stay **empty** (never commit a secret), with
+  the `openssl rand -hex 32` instruction, the `:?` fail-fast rationale, and the companion-file mapping.
+- **Fixed a real defect in `role.sql` found by running it.** The `DO $$ … $$` block used
+  `format(… %L, :'exporter_password')`, but **psql does not substitute `:'variables'` inside
+  dollar-quoted strings**, so the script failed with `syntax error at or near ":"`. Rewritten with
+  `SELECT format(…) … \gexec` (create-if-absent, then rotate-if-present) — which also makes a secret
+  change apply by re-running the script.
+- The existing `aveline_postgres_data` volume means `docker-entrypoint-initdb.d` will never run
+  again on this machine, so the exporter role was created by running `role.sql` against the live
+  database. Verified: `rolsuper/rolcreatedb/rolcreaterole/rolbypassrls` all **false**,
+  `pg_has_role('postgres_exporter','pg_monitor','MEMBER')` **true**.
+
+**Verification (live stack).**
+
+- `docker compose config` resolves every required variable; `docker compose up -d` brought all nine
+  services up.
+- Prometheus `/api/v1/targets`: `aveline-api`, `aveline-agent`, `aveline-postgres` and `prometheus`
+  are **all `up`**; `/api/v1/rules` reports the `aveline.operator` group with 8 rules.
+- **T-3, the plan's one-curl risk (R-4), is resolved in the plan's favour:** a scrape of
+  `http://api:8080/metrics` from inside the compose network returns `HTTP/1.1 200 OK`, **not a 307**,
+  so `UseHttpsRedirection()` does not need the config gate. The body carries
+  `# TYPE http_server_request_duration_seconds histogram`.
+- `postgres_exporter` serves 70 of the expected server-side series, including
+  `pg_database_size_bytes` and the honest `pg_replication_is_replica 0`.
+- Grafana: `/api/health` 200; 1 datasource, 2 provisioned alert rules, 1 contact point, and all four
+  dashboards (`aveline-overview`, `aveline-business`, `aveline-database`, `aveline-notifications`).
+- `scripts/validate_observability_config.py` passes and the 23 config/role/docs tests stay green
+  after the `role.sql` rewrite.
+
+**One environment caveat, not a project defect.** `docker compose up -d --build` could not rebuild
+the API/agent images inside this sandbox: the BuildKit builder writes to `~/.docker/buildx/activity`,
+which is outside the workspace and blocked by the file sandbox (`read-only file system`). The stack
+was therefore verified against the images already present, which predate this session's code — so the
+`aveline_*` bridged series and the notification family will only appear after a rebuild on a machine
+where Docker can write its builder state.
+
+### Follow-up (same session) — the dashboards were empty, and designing the system dashboard
+
+**Symptom.** All four dashboards rendered without data.
+
+**Cause, established rather than guessed.** The running `aveline_api` image was built at 20:45 while
+this session's metrics code landed at 21:24, so the container predated the bridge entirely. Confirmed
+by scraping the live endpoint: **0** `aveline_*` series. `docker compose build` could not be re-run
+through BuildKit inside this sandbox (`~/.docker/buildx/activity` is outside the workspace), so the
+rebuild was done with the legacy builder — `DOCKER_BUILDKIT=0 docker compose build api` — after which
+the bridge came alive with real values (`aveline_blossom_balance_count 737.4`,
+`aveline_api_latency_p95_milliseconds 55`, working set 252 MB).
+
+**A real bug this exposed, which the test suite had missed.** With the rebuilt API, 18 of the 19
+expected business series appeared — `aveline_db_pool_saturation_ratio` did not. The Npgsql side looked
+perfect: 32 `db_client_*` series in the scrape and `db_client_connection_pool_name="aveline"`, which
+is S-11's pool-name neutralisation working live. The `NpgsqlPoolMetricsListener` was the suspect.
+
+Two hypotheses were tested and the first was **disproved**: I suspected `MeterListener` does not
+replay `InstrumentPublished` for instruments created before it starts, and wrote a probe. It **does**
+replay (`published=1 captured=1`). The actual cause: Npgsql's pool instruments are
+`ObservableUpDownCounter<T>` where **`T` is not `long`**, and the listener registered only a `long`
+callback — so it captured nothing at all while the instruments were plainly visible to the exporter.
+The listener now registers every numeric width OpenTelemetry can emit.
+
+The unit test could not have caught this: it created its own `long` instrument. Two new tests close
+that hole — `TryGetSaturation_CapturesInstrumentsWhoseNumericTypeIsNotLong` (a private meter name, so
+it is isolated from the process-global registry) and
+`NpgsqlPoolSaturationIntegrationTests`, which starts a real Postgres container, drives two concurrent
+connections, and asserts the ratio is reported **after traffic** — which is what the plan's Slice 5
+acceptance criterion actually asked for, and what the shipped test did not do. That class also proves
+the pool label carries `aveline` rather than the connection string.
+
+**Dashboard design.** The System overview was a flat twelve-panel grid; it is now a designed
+dashboard: five titled rows (Health, Traffic — RED, Saturation and runtime, Event bus, Agents),
+a `$job` template variable, shared crosshair, `$__rate_interval` instead of a hardcoded window,
+explicit `noValue` handling, cross-dashboard links, and per-panel descriptions that say when a gap is
+expected. The other three dashboards gained the same links, shared tooltip and gap discipline.
+
+The most useful addition is **Bridge freshness**
+(`time() - max(timestamp(aveline_process_cpu_seconds_total))`): because the bridged gauges are only
+written when a value exists, a stalled collector is indistinguishable from an omitted metric on every
+other panel, and this is the one tile that separates "the value is 0" from "the bridge stopped".
+
+**A second real defect, found by checking every panel against Prometheus.** The error-ratio panel was
+empty while the service was healthy. The cause is PromQL semantics: a division whose numerator is an
+empty vector returns **no series**, not `0`, so `sum(rate(…5xx…)) / clamp_min(sum(rate(…all…)), 1)`
+had no result during normal operation. Fixed with `or vector(0)` on the **numerator only**, which
+gives `0%` when there is traffic and no errors while still returning nothing when there is no traffic
+at all — so a total outage is never rendered as a healthy 0%. `promtool check rules` still reports
+`SUCCESS: 8 rules found`, and the reloaded rule now returns `0`.
+
+**Live verification after the fixes.** 22 of the 25 System-overview panels return data. The remaining
+three are honest omissions, not defects, and are now documented as such: `Published` (no events on the
+bus yet), `Publish latency p95` (below the 5-sample floor), and `Success rate` (no terminal agent runs
+in the window). `docs/backend/observability.md` gained a "why a panel is empty" table so the next
+reader does not have to re-derive this.
+
+**Also verified live and worth recording.**
+
+- All four Prometheus targets `up`; 8 rules healthy; all four Grafana dashboards provisioned with
+  `provenance: file`.
+- **T-3 resolves in the plan's favour:** a scrape of `http://api:8080/metrics` from inside the compose
+  network returns `HTTP/1.1 200 OK`, **not a 307** — `UseHttpsRedirection()` needs no config gate.
+- `db_client_connection_max 100`, `state="used" 0`, so the saturation gauge correctly reads `0`
+  rather than being absent once a pool exists.
+
+### Follow-up (same session) — dashboard review feedback: "template data" and "not a counter"
+
+Two defects reported from the rendered Database dashboard, both confirmed by querying Prometheus
+rather than by reading the JSON.
+
+**(1) `template0` / `template1` polluted every `datname`-grouped panel.** They are PostgreSQL's own
+template databases — constant, empty, and pure noise in the buffer-cache ratio, size, backend and
+connection-limit panels. The Database dashboard now carries a `$datname` multi-select variable sourced
+from `label_values(pg_database_size_bytes{datname!~"template.*"}, datname)`, which keeps them out of
+the variable itself so that "All" means the real databases. Every panel gained
+`datname=~"$datname"`. The variable resolves to `["aveline", "postgres"]` live, and the Database
+dashboard is now **8 of 8 panels with data**.
+
+**(2) Three bridged metrics were gauges but read with `rate()`.** `GET /api/v1/metadata` showed
+`aveline_process_cpu_seconds_count`, `aveline_api_telemetry_dropped_count` and
+`aveline_eventbus_failed_count` typed **gauge**, while the System overview called `rate()` on all
+three. That is wrong twice: Grafana flags a rate over a non-counter, and Prometheus can only handle a
+counter reset (an API restart) correctly when the series is typed as a counter. The plan's bridge
+published everything as an `ObservableGauge`, which is right for levels and rates but wrong for
+cumulative totals.
+
+Fixed in the model rather than the dashboard: `MetricsCatalog` gained a `BusinessCounter` helper, and
+`AvelineMetrics` now creates an `ObservableCounter` for those entries and an `ObservableGauge` for
+the rest. They carry **no unit** so the exporter renders the idiomatic `<name>_total` rather than
+`<name>_count_total`; the persistence path is untouched and `SystemMetricSamples` still stores unit
+`count`. Verified live: the exposition now reads
+
+```
+# TYPE aveline_process_cpu_seconds_total counter
+# TYPE aveline_api_telemetry_dropped_total counter
+# TYPE aveline_eventbus_failed_total counter
+```
+
+A genuinely surprising detail worth recording, because it looks like a bug and is not: Prometheus
+**normalises a counter family by stripping `_total`**, so `count(aveline_process_cpu_seconds_total)`
+is 1 while `/api/v1/metadata?metric=aveline_process_cpu_seconds_total` is empty and the metadata
+lives under `aveline_process_cpu_seconds` with `"type":"counter"`. `docs/backend/observability.md`
+§3.1 now carries the gauge-vs-counter rule, this normalisation note, and the fact that the
+`DocsConsistencyTests` series check accepts a normalised counter family name.
+
+**Audited the rest of the classification while there.** Every other bridged metric is correctly a
+gauge: levels that can fall (`blossom.balance`, `eventbus.backlog`, `db.pool.saturation`,
+`process.working_set_bytes`), and values that are already rates or percentiles
+(`api.requests_per_second`, `api.error_rate`, `api.latency_p95`). The event-bus counters and the
+notification delivery counter were already true `Counter<long>` instruments.
+
+**Remaining empty panels are honest omissions, not defects.** Of 59 panels across the four
+dashboards, the empty ones are all explained by an idle local stack: no agent runs
+(`Agent success rate`, `Agent steps per run`), no bus traffic (`Events published/received`,
+`Publish latency p95` — also below the 5-sample floor), no notification deliveries, and no blossom
+consumption in the window. The System overview is **22 of 25** with data, the Database **8 of 8**.
+`docs/backend/observability.md` §6.4 gained a "why a panel is empty" table so this is not re-derived.

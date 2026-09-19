@@ -509,6 +509,30 @@ public class UserService : IUserService
     {
         var changed = false;
 
+        // Identity claims keep the read model populated even when the user row was
+        // first created from a token that predated the email/name claims, and when
+        // Clerk webhooks are not configured (see ClerkWebhookSyncService).
+        var email = principal.FindFirstValue("email") ?? principal.FindFirstValue(ClaimTypes.Email);
+        if (!string.IsNullOrWhiteSpace(email) && !string.Equals(user.Email, email, StringComparison.OrdinalIgnoreCase))
+        {
+            user.Email = email;
+            changed = true;
+        }
+
+        var firstName = principal.FindFirstValue("first_name") ?? principal.FindFirstValue(ClaimTypes.GivenName);
+        if (!string.IsNullOrWhiteSpace(firstName) && !string.Equals(user.FirstName, firstName, StringComparison.Ordinal))
+        {
+            user.FirstName = firstName;
+            changed = true;
+        }
+
+        var lastName = principal.FindFirstValue("last_name") ?? principal.FindFirstValue(ClaimTypes.Surname);
+        if (!string.IsNullOrWhiteSpace(lastName) && !string.Equals(user.LastName, lastName, StringComparison.Ordinal))
+        {
+            user.LastName = lastName;
+            changed = true;
+        }
+
         var userRole = principal.FindFirstValue("user_role");
         if (!string.IsNullOrWhiteSpace(userRole) && !string.Equals(user.UserRole, userRole, StringComparison.Ordinal))
         {

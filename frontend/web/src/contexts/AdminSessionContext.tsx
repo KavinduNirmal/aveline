@@ -5,6 +5,7 @@ import {
   useContext,
   useEffect,
   useReducer,
+  useRef,
   type ReactNode,
 } from "react"
 import { fetchAuthClaims } from "@/lib/admin/api"
@@ -102,6 +103,12 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
     error: null,
   })
 
+  // Latest settled status, read by the 403 handler without re-registering it.
+  const statusRef = useRef(state.status)
+  useEffect(() => {
+    statusRef.current = state.status
+  }, [state.status])
+
   const refresh = useCallback(async () => {
     if (!isSignedIn) {
       dispatch({ type: "CLEAR" })
@@ -149,7 +156,12 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     registerForbiddenHandler(() => {
-      void refresh()
+      // Only re-resolve claims while the session is still settling. Once ready, a
+      // 403 is a genuine authorization denial: refreshing here loops forever
+      // (refresh -> new context value -> dashboard refetch -> 403 -> refresh).
+      if (statusRef.current !== "ready") {
+        void refresh()
+      }
     })
   }, [refresh])
 

@@ -18,6 +18,13 @@
 *.cer
 secrets/
 *secret*
+# The Prometheus scrape-token directory must be tracked (empty except .gitkeep) so
+# `promtool check config` has a mount point in CI; the token itself stays ignored.
+!observability/prometheus/secrets/
+observability/prometheus/secrets/*
+!observability/prometheus/secrets/.gitkeep
+# Local password file mounted into postgres-exporter (Slice 6).
+postgres-exporter-password
 
 # =============================================================================
 # OPERATING SYSTEM
@@ -281,3 +288,18 @@ backend/.cache
 opencode.json
 # Final academic documentation (presented at evaluation, kept untracked)
 docs/final_document/
+
+# DSH harness tool cache: downloaded binaries (e.g. a 172 MB Flutter engine JAR), never project source.
+.dsh-tools/
+
+# =============================================================================
+# AGENT SCRATCH & TOOLING — local only, never tracked
+# The plans themselves stay untracked; these subpaths are pure scratch (agent
+# worklogs, Obsidian state, generated issue bodies) and downloaded binaries.
+# =============================================================================
+.agents/plans/.work/
+.agents/plans/.obsidian/
+.agents/plans/issues/
+.dsh-tools/
+.research-shots/
+.screenshots/

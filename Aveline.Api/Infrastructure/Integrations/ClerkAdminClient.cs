@@ -50,8 +50,10 @@ public sealed class ClerkAdminClient : IClerkAdminClient
 
     public async Task GrantAdminRoleAsync(string clerkUserId, CancellationToken cancellationToken = default)
     {
+        // Clerk deprecated public_metadata on PATCH /v1/users/{id}; metadata is now
+        // updated through the dedicated PATCH /v1/users/{id}/metadata endpoint.
         using var request = CreateRequest(
-            HttpMethod.Patch, $"/users/{Uri.EscapeDataString(clerkUserId)}");
+            HttpMethod.Patch, $"/users/{Uri.EscapeDataString(clerkUserId)}/metadata");
         request.Content = JsonContent.Create(new { public_metadata = new { role = "admin" } });
 
         var response = await _httpClient.SendAsync(request, cancellationToken);

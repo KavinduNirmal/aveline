@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { useAuth, useClerk, useSignUp } from '@clerk/react'
 import { BadgeCheck, Loader2, ShieldCheck } from 'lucide-react'
 
@@ -20,7 +20,6 @@ export function AdminSignUpPage() {
   const { isLoaded } = useAuth()
   const { signOut } = useClerk()
   const { signUp, errors, fetchStatus } = useSignUp()
-  const navigate = useNavigate()
 
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
@@ -31,6 +30,9 @@ export function AdminSignUpPage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [requestState, setRequestState] = useState<RequestState>('idle')
+  // Tracked separately from requestState so "Try again" retries only the request
+  // submission once Clerk has already turned the sign-up into an active session.
+  const [finalized, setFinalized] = useState(false)
 
   const busyState = busy || fetchStatus === 'fetching'
 
@@ -38,37 +40,86 @@ export function AdminSignUpPage() {
     if (e?.message) setError(e.message)
   }
 
-  async function finalizeSignUp() {
-    await signUp?.finalize({
-      navigate: ({ decorateUrl }) => {
-        const url = decorateUrl('/sign-up/admin')
-        if (url.startsWith('http')) window.location.href = url
-        else navigate(url)
-      },
-    })
-  }
-
-  async function submitRequest() {
-    setRequestState('submitting')
+  /**
+   * Turns the completed Clerk sign-up into an active session, then submits the
+   * admin access request. Deliberately does NOT pass a `navigate` callback to
+   * `finalize`: on a Clerk development instance that callback redirects with the
+   * dev-browser token, which unloads the page and drops the request submission.
+   * We stay on this screen and let the user sign out from the success state.
+   */
+  async function finish() {
     setError(null)
+    setRequestState('submitting')
+
     try {
+      if (!finalized) {
+        const { error: finalizeError } = (await signUp!.finalize()) ?? { error: null }
+        if (finalizeError) {
+          surf(finalizeError)
+          setRequestState('failed')
+          return
+        }
+        setFinalized(true)
+      }
+
       await submitAdminRequest()
       setRequestState('done')
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Unable to submit your request.'
-      setError(message)
+      setError(err instanceof Error ? err.message : 'Unable to complete your request.')
       setRequestState('failed')
     }
   }
 
-  async function finish() {
-    await finalizeSignUp()
-    await submitRequest()
+  /**
+   * Advances a verified sign-up. Clerk's verify call can report
+   * "already verified" for an attempt that a previous (interrupted) click left
+   * verified but unfinalised, so we always re-check the live status before
+   * deciding that verification failed.
+   */
+  async function continueAfterVerification(verifyError: { message?: string | null } | null) {
+    // Widened to string: Clerk mutates the resource in place, so TypeScript's
+    // control-flow narrowing would otherwise reject the re-read below.
+    const status: string = signUp!.status
+    if (status === 'complete') {
+      await finish()
+      return
+    }
+
+    if (verifyError) {
+      surf(verifyError)
+      return
+    }
+
+    // Supply any field Clerk still requires (username is the usual one) before
+    // concluding that the sign-up cannot be completed.
+    const missing = signUp!.missingFields ?? []
+    if (missing.includes('username')) {
+      const fallback =
+        (email.split('@')[0] || 'admin').toLowerCase().replace(/[^a-z0-9_]/g, '') || 'admin'
+      const { error: updateError } = await signUp!.update({ username: fallback })
+      if (updateError) {
+        surf(updateError)
+        return
+      }
+    }
+
+    const finalStatus: string = signUp!.status
+    if (finalStatus === 'complete') {
+      await finish()
+      return
+    }
+
+    setError(
+      missing.length > 0
+        ? `Your email is verified, but these fields are still required: ${missing.join(', ')}.`
+        : 'Your email is verified, but the account could not be finalised. Select "Start over" and try again.',
+    )
   }
 
   const signOutToLogin = () => {
-    signOut(() => navigate('/sign-in'))
+    signOut(() => {
+      window.location.href = '/sign-in'
+    })
   }
 
   const create = async (e: FormEvent) => {
@@ -84,19 +135,26 @@ export function AdminSignUpPage() {
         lastName: lastName || undefined,
         unsafeMetadata: { accountType: 'admin' },
       })
-      surf(err)
-      if (err) return
-      if (
-        signUp!.status === 'missing_requirements' &&
-        (signUp!.unverifiedFields ?? []).includes('email_address')
-      ) {
-        const send = await signUp!.verifications.sendEmailCode()
-        surf(send.error)
-        if (send.error) return
-        setVerifying(true)
+      if (err) {
+        surf(err)
         return
       }
-      if (signUp!.status === 'complete') await finish()
+
+      if (signUp!.status === 'complete') {
+        await finish()
+        return
+      }
+
+      if ((signUp!.unverifiedFields ?? []).includes('email_address')) {
+        const send = await signUp!.verifications.sendEmailCode()
+        if (send.error) {
+          surf(send.error)
+          return
+        }
+        setVerifying(true)
+      }
+    } catch (err) {
+      surf(err as { message?: string })
     } finally {
       setBusy(false)
     }
@@ -109,8 +167,9 @@ export function AdminSignUpPage() {
     setBusy(true)
     try {
       const { error: err } = await signUp!.verifications.verifyEmailCode({ code })
-      surf(err)
-      if (!err && signUp!.status === 'complete') await finish()
+      await continueAfterVerification(err)
+    } catch (err) {
+      surf(err as { message?: string })
     } finally {
       setBusy(false)
     }
@@ -121,6 +180,20 @@ export function AdminSignUpPage() {
     setBusy(true)
     try {
       surf((await signUp!.verifications.sendEmailCode()).error)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const startOver = async () => {
+    setError(null)
+    setBusy(true)
+    try {
+      await signUp?.reset()
+      setVerifying(false)
+      setCode('')
+      setFinalized(false)
+      setRequestState('idle')
     } finally {
       setBusy(false)
     }
@@ -154,6 +227,13 @@ export function AdminSignUpPage() {
         {heading}
 
         <div className="rounded-2xl border border-neutral-200 bg-white p-7 shadow-sm">
+          {/*
+            Clerk's bot sign-up protection renders its challenge into this node.
+            It must stay mounted for the whole sign-up attempt, so it lives here
+            rather than inside the (conditionally rendered) credentials step.
+          */}
+          <div id="clerk-captcha" />
+
           {requestState === 'done' ? (
             <div className="flex flex-col items-center py-4 text-center">
               <div className="mb-3 flex size-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
@@ -194,7 +274,7 @@ export function AdminSignUpPage() {
               <Button
                 type="button"
                 disabled={requestState === 'submitting'}
-                onClick={() => void submitRequest()}
+                onClick={() => void finish()}
                 className="mt-6 h-11 w-full rounded-full bg-[#7a303f] text-white hover:bg-[#8c3b4c]"
               >
                 {requestState === 'submitting' ? (
@@ -277,8 +357,6 @@ export function AdminSignUpPage() {
                     />
                   </div>
 
-                  <div id="clerk-captcha" />
-
                   <Button
                     type="submit"
                     disabled={busyState || !email || !password}
@@ -314,14 +392,24 @@ export function AdminSignUpPage() {
                   >
                     {busyState ? 'Verifying…' : 'Verify email'}
                   </Button>
-                  <button
-                    type="button"
-                    onClick={resend}
-                    disabled={busyState}
-                    className="text-center text-sm text-neutral-500 hover:text-neutral-700"
-                  >
-                    Resend code
-                  </button>
+                  <div className="flex items-center justify-between text-sm">
+                    <button
+                      type="button"
+                      onClick={resend}
+                      disabled={busyState}
+                      className="text-neutral-500 hover:text-neutral-700"
+                    >
+                      Resend code
+                    </button>
+                    <button
+                      type="button"
+                      onClick={startOver}
+                      disabled={busyState}
+                      className="text-neutral-500 hover:text-neutral-700"
+                    >
+                      Start over
+                    </button>
+                  </div>
                 </form>
               )}
             </>

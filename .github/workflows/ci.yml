@@ -627,3 +627,36 @@ jobs:
             --notes-file "$NOTES_FILE" \
             --target master
 
+
+  # ---------------------------------------------------------------------------
+  # Job 8: Observability Configuration Validation (Prometheus + Grafana + collector)
+  #
+  # `promtool check config` and `check rules` are the validators Prometheus itself runs at
+  # startup, so a green job means the container will boot. Note that `check config` STATS the
+  # files it references, so the scrape-token file must exist even for a syntax check.
+  # ---------------------------------------------------------------------------
+  observability-config:
+    name: Observability Config Validation
+    runs-on: ubuntu-latest
+    needs: hygiene
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate Prometheus config and rules
+        run: |
+          # The token is gitignored; mount a placeholder so `check config` can stat it.
+          mkdir -p observability/prometheus/secrets
+          echo "ci-placeholder-scrape-token" > observability/prometheus/secrets/scrape_token
+          docker run --rm -v "$PWD/observability/prometheus:/etc/prometheus" \
+            --entrypoint promtool prom/prometheus:v3.13.3 \
+            check config /etc/prometheus/prometheus.yml
+          docker run --rm -v "$PWD/observability/prometheus:/etc/prometheus" \
+            --entrypoint promtool prom/prometheus:v3.13.3 \
+            check rules /etc/prometheus/rules/aveline.yml
+
+      - name: Validate compose, collector, env and Grafana provisioning
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 scripts/validate_observability_config.py

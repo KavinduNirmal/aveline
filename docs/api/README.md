@@ -2084,8 +2084,49 @@ stack trace.
   `ScrapeToken`). The scrape scheme yields no result when `Metrics:ScrapeToken` is
   unset, so it can never authenticate by accident.
 
+**The scrape token has no committed default (Slice 1, R-1).** It is empty in
+`.env.example`, `docker compose` declares it as `${METRICS_SCRAPE_TOKEN:?...}` so an unset
+value fails the stack, and `MetricsSecurityGuard.EnsureScrapeTokenForProduction` refuses to
+boot the API in Production without it. Before Slice 1 the only working credential was the
+internal service token, whose compose default is a literal in this repository; Prometheus is
+now a dedicated, scrape-only caller and must not reuse it. Generate one with
+`openssl rand -hex 32`.
+
 **Response `200`** `text/plain; version=0.0.4` (Prometheus exposition format).
-`401` without credentials. Metric names use the `aveline.` prefix.
+`401` without credentials.
+
+**Metric names are translated, not passed through.** The pinned exporter
+(`OpenTelemetry.Exporter.Prometheus.AspNetCore 1.18.0-beta.1`) defaults to
+`UnderscoreEscapingWithSuffixes`: it replaces `.` with `_`, maps and appends the instrument's
+unit unless the sanitised name already ends with it, and appends `_total` to counters. The
+dotted name is the internal key (the Postgres `SystemMetricSamples.MetricName` value and the
+key the seeded alert-rule guard watches); the **Prometheus series name is what a PromQL
+expression must use**. `MetricsCatalog` in `Aveline.Api/Configurations/MetricsConfiguration.cs`
+is the one place these names are authored and `MetricsNamingTests` asserts every one of them
+against a live scrape.
+
+| Dotted name (internal key) | Prometheus series |
+| --- | --- |
+| `aveline.api.error_rate` | `aveline_api_error_rate_ratio` |
+| `aveline.api.latency_p95` | `aveline_api_latency_p95_milliseconds` |
+| `aveline.process.cpu_seconds` | `aveline_process_cpu_seconds_total` |
+| `aveline.blossom.balance` | `aveline_blossom_balance_count` |
+| `aveline.events.published` (counter) | `aveline_events_published_events_total` |
+| `aveline.events.publish_latency_ms` (histogram) | `aveline_events_publish_latency_ms_milliseconds_{bucket,sum,count}` |
+
+The full table is the 23 entries of `MetricsCatalog.All`. Note the two asymmetries the
+translation produces: `aveline.process.thread_count` gains nothing because the sanitised name
+already ends in the unit `count`, while `aveline.process.threadpool_queue_length` gains
+`_count`; and a histogram publishes one `# TYPE` line with three sample families. Do not copy
+an expression from a dashboard found online — it targets a different exporter version and a
+different translation strategy.
+
+**Meters registered (Slice 2).** `AddMeter` covers `Aveline.Api` (the bridged business gauges),
+`Aveline.Api.Eventing` (the event-bus counters and publish-latency histogram) and `Npgsql`
+(the eleven `db.client.*` pool and query instruments). Before Slice 2 only `Aveline.Api` was
+registered and no instrument used it, so fifteen instruments were produced and silently
+dropped.
+
 
 ---
 
@@ -2214,7 +2255,7 @@ is exactly the drift this plan removes, and it would break on the next plan chan
 | `GET .../usage`, `.../statement` | 30 s | Cheap and safe |
 | `GET .../entitlements` | 5 min | Changes only on a plan change |
 | `GET .../statistics/**` | 60 s | Rollup-backed |
-| `GET /admin/statistics/system/overview` | client-side only | **Not cached server-side** despite the earlier 15 s claim (M-10); the composite read is assembled live on every call, so a client may cache it briefly |
+| `GET /admin/statistics/system/overview` | `stats:system:overview` | **15 s server-side**, in-process (`SystemStatisticsService` caches the composite read; `IMemoryCache` is registered by `BillingModule`/`SystemHealthModule`). A client should therefore use `staleTime: 15_000` for this query. Originally documented as 15 s, written out of the docs as "reversed" at #243, and **restored here in Slice 8 (D7 = A) because the code is authoritative** (`SystemStatisticsService.cs:49-61`). Every other statistics family keeps its own rule; the Blossom balance stays uncached |
 | `GET /health/**` | never | Liveness |
 
 ### D.4 Versioning and deprecation

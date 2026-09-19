@@ -1,4 +1,216 @@
 
+## Session 2026-09-18 (Catalog Item Delete Feature - Frontend & Backend)
+
+**Task:** Design and implement catalog inventory item deletion across ASP.NET Core backend (Soft Delete endpoint, services, integration tests) and React frontend (ProductCard delete button, Edit modal delete action, confirmation dialog, optimistic state updates).
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Backend Implementation (`Aveline.Api`)**:
+   - Extended `IInventoryService` and `InventoryService` with `DeleteItemAsync(Guid id, Guid orgId, CancellationToken ct)`.
+   - Extended `IVisualService` and `VisualService` with `DeleteInventoryItemAsync(Guid itemId, Guid orgId, CancellationToken ct)`.
+   - Added `DELETE /api/v1/orgs/{organizationId}/catalog/items/{itemId}` in `CatalogEndpoints.cs` guarded by `BoutiqueAccessPolicy`.
+   - Added internal service endpoint `DELETE /internal/visual/inventory/{itemId}` in `VisualEndpoints.cs`.
+   - Added automated integration tests in `CatalogEndpointsIntegrationTests.cs` verifying `204 NoContent` soft deletion, query exclusion, `404 NotFound` for non-existent IDs, and cross-tenant isolation enforcement.
+
+2. **Frontend Implementation (`frontend/web`)**:
+   - Added `deleteCatalogItem(organizationId, itemId)` helper in `catalog-api.ts`.
+   - Added `onDeleteItem?: (item: InventoryItemMock) => void` to `ProductCard.tsx` with a top-right quick-action delete button styled with destructive hover states (`hover:bg-destructive/10 hover:text-destructive`).
+   - Added `onDelete?: (item: InventoryItemMock) => void` and a "Delete Piece" button in `AddProductModal.tsx` footer when editing an existing piece.
+   - Forwarded `onDeleteItem` through `InventoryTab.tsx`.
+   - Implemented `handleConfirmDelete()` in `CatalogPanel.tsx` with optimistic local state filtering, error handling, and `toast.success` notifications.
+   - Built a luxury **Delete Confirmation Modal** in `CatalogPanel.tsx` displaying the garment image thumbnail, SKU badge, price, stock warning alert, and loading states (`Loader2`).
+
+### Files Created or Modified
+
+- `Aveline.Api/Modules/VisualIntelligence/Services/IInventoryService.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/InventoryService.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/IVisualService.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/VisualService.cs`
+- `Aveline.Api/Endpoints/CatalogEndpoints.cs`
+- `Aveline.Api/Endpoints/VisualEndpoints.cs`
+- `Aveline.Api.Tests/CatalogEndpointsIntegrationTests.cs`
+- `frontend/web/src/lib/catalog-api.ts`
+- `frontend/web/src/components/catalog/ProductCard.tsx`
+- `frontend/web/src/components/catalog/AddProductModal.tsx`
+- `frontend/web/src/components/catalog/InventoryTab.tsx`
+- `frontend/web/src/components/catalog/CatalogPanel.tsx`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- ASP.NET Core integration tests: `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj --filter "FullyQualifiedName~CatalogEndpointsIntegrationTests"` passed with 0 errors.
+- Verified soft deletion behavior: `DeletedAt` set to UTC timestamp, item excluded from search/get endpoints.
+- Verified frontend modal confirmation flow, optimistic state removal, and toast alerts.
+
+---
+
+## Session 2026-09-18 (Catalog Item QR Code Quick View Button & Modal)
+
+**Task:** Add a Quick View QR Code button to catalog product cards (`ProductCard.tsx`) and build a dedicated Item QR Floor Tag Modal (`ItemQrModal.tsx`) for instant inspection, format switching, PNG/SVG download, and label printing.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Component Creation (`frontend/web/src/components/catalog/ItemQrModal.tsx`)**:
+   - Built a dedicated modal dialog for inspecting, exporting, and printing the specific piece's QR floor tag and barcode.
+   - Incorporated live vector rendering via `<QrCodeSvg />` at 150px.
+   - Built an interactive **Format Selector** allowing the user to toggle between:
+     - `Structured JSON` (`ItemQrPayload` standard with `orgId`, `itemId`, `sku`, `url`, `v`)
+     - `Boutique URL` (`https://.../catalog/items/{itemId}`)
+     - `Raw SKU` (`AVL-660`)
+   - Implemented one-click payload copying with visual check icon feedback and toast alerts.
+   - Implemented direct **PNG (600px)** and **Vector SVG** downloads.
+   - Implemented instant **Floor Tag Printing** (`handlePrintTag`) with `@media print` CSS layout and automated browser print triggers.
+
+2. **ProductCard Quick Actions Enhancement (`frontend/web/src/components/catalog/ProductCard.tsx`)**:
+   - Added `onViewQr?: (item: InventoryItemMock) => void` prop to `ProductCardProps`.
+   - Added a QR code action button in the top-right image overlay cluster next to the quick Edit button.
+   - Added a dedicated QR code icon button in the bottom action bar next to `VIP Matches` and `Style Look`.
+
+3. **Plumbing & State Wiring (`InventoryTab.tsx` & `CatalogPanel.tsx`)**:
+   - Extended `InventoryTabProps` with `onViewQr` and forwarded it to each rendered `<ProductCard />`.
+   - Updated `CatalogPanel.tsx` with `selectedQrItem` state, passed `onViewQr={(item) => setSelectedQrItem(item)}` to `InventoryTab`, and mounted `<ItemQrModal />`.
+
+### Files Created or Modified
+
+- `frontend/web/src/components/catalog/ItemQrModal.tsx` [NEW]
+- `frontend/web/src/components/catalog/ProductCard.tsx`
+- `frontend/web/src/components/catalog/InventoryTab.tsx`
+- `frontend/web/src/components/catalog/CatalogPanel.tsx`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- Verified prop propagation and state binding from `ProductCard` -> `InventoryTab` -> `CatalogPanel` -> `ItemQrModal`.
+- Verified TypeScript types and event handlers across all four components.
+- Verified dynamic payload serialization for JSON, Deep Link URL, and Raw SKU formats.
+
+---
+
+## Session 2026-09-18 (Frontend QR Code Generation Studio & Floor Tag in AddProductModal)
+
+**Task:** Implement interactive QR code floor tag generation, preview, download, and printing in `AddProductModal.tsx` for the web frontend (`frontend/web`).
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Architecture & Planning**:
+   - Researched `AddProductModal.tsx` form state, modal lifecycle, and component interactions with `CatalogPanel.tsx` and `catalog-api.ts`.
+   - Designed the **Boutique QR Floor Tag Studio** collapsible card section inside `AddProductModal.tsx` incorporating real-time vector QR preview (`QrCodeSvg`), luxury atelier card visualization, multi-format encoding selectors, high-resolution backend export, clipboard copy, and browser-native thermal/standard floor tag printing.
+   - Authored comprehensive `implementation_plan.md` artifact and obtained user approval.
+
+2. **API Client Integration (`frontend/web/src/lib/catalog-api.ts`)**:
+   - Added `GenerateQrResponse` TypeScript interface matching the ASP.NET Core backend DTO.
+   - Implemented `generateQrCode(organizationId, payload)` for requesting high-resolution PNG / SVG / Base64 dynamic QR codes from `/api/v1/orgs/{orgId}/catalog/qr/generate`.
+   - Implemented `fetchItemQr(organizationId, itemId, params)` for retrieving catalog piece QR codes from `/api/v1/orgs/{orgId}/catalog/items/{itemId}/qr`.
+
+3. **Boutique QR Floor Tag Studio UI (`frontend/web/src/components/catalog/AddProductModal.tsx`)**:
+   - Integrated zero-dependency `QrCodeSvg` component into the modal for instant, zero-latency vector QR code preview synchronized with `sku`, `name`, `price`, `category`, and `id` form state.
+   - Built a luxury boutique physical card preview mimicking a designer floor tag with gold gradient accents, atelier branding, category pill, SKU monospace badge, and retail price formatting.
+   - Built an interactive **Format Selector** allowing the user to toggle between:
+     - `Structured JSON` (`ItemQrPayload` standard with `orgId`, `itemId`, `sku`, `url`, `v`)
+     - `Boutique URL` (`/catalog/items/{itemId}`)
+     - `Raw SKU` (`AVL-SAR-001`)
+   - Implemented **One-Click Payload Copy** to clipboard with visual check icon feedback and toast notifications.
+   - Implemented **High-Resolution PNG Download (600px)** calling the backend QR engine and triggering client-side browser file download.
+   - Implemented **Vector SVG Download** creating a direct SVG blob link for high-precision print shops.
+   - Implemented **Floor Tag Print Engine** (`handlePrintTag`) opening an isolated pop-up window formatted with dedicated CSS print rules (`@media print`) and triggering automatic browser print dialogs for instant garment labeling.
+
+4. **Testing & Verification**:
+   - Verified seamless prop flow and state synchronization across `AddProductModal.tsx` and `CatalogPanel.tsx`.
+   - Verified that image optimization, Base64 upload, and Vision AI extraction capabilities remain fully intact alongside the QR studio.
+   - Verified zero TypeScript compilation errors and clean component integration.
+
+### Files Created or Modified
+
+- `frontend/web/src/lib/catalog-api.ts`
+- `frontend/web/src/components/catalog/AddProductModal.tsx`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- Verified TypeScript type definitions and parameter contracts in `catalog-api.ts`.
+- Verified live vector QR rendering with `QrCodeSvg` in `AddProductModal.tsx`.
+- Verified print preview stylesheet and print trigger in `AddProductModal.tsx`.
+- Verified full compatibility with running Vite development server.
+
+---
+
+## Session 2026-09-18 (Backend QR Code Generation & Scanning Architecture & Endpoints)
+
+**Task:** Design and implement comprehensive backend QR code generation and scanning endpoints for the boutique catalog and inventory in `Aveline.Api`.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Architecture & Planning**:
+   - Researched existing Visual Intelligence / Catalog architectures, repository query patterns, and tenant boundary models in `Aveline.Api`.
+   - Designed a zero-unmanaged dependency QR engine utilizing `QRCoder` (pure managed C# vector SVG and raster PNG rendering) and `ZXing.Net` (pure managed barcode and QR matrix decoding).
+   - Designed a polymorphic scanning pipeline resolving structured JSON (`ItemQrPayload`), boutique URLs / deep links, direct Item GUIDs, and SKU codes, as well as uploaded camera snapshots / Base64 image payloads.
+   - Authored comprehensive `implementation_plan.md` artifact and received user approval.
+
+2. **DTO & Domain Modeling (`Aveline.Api/Modules/VisualIntelligence/DTOs`)**:
+   - Created `GenerateQrDto.cs` (request configuration for payload, format, size, ECC level, quiet zone).
+   - Created `QrCodeResponseDto.cs` (JSON envelope with Base64, SVG, Data URL, timestamp).
+   - Created `ScanQrDto.cs` (supports code/payload strings and image data payloads).
+   - Created `QrScanResultDto.cs` (resolution status, scan type, matched identifier, and typed `InventoryItemDto`).
+   - Created `ItemQrPayload.cs` (canonical JSON metadata for boutique floor tags).
+
+3. **Repository Layer Enhancements (`Aveline.Api/Modules/VisualIntelligence/Repositories`)**:
+   - Added `GetBySkuAsync(string sku, Guid orgId, CancellationToken cancellationToken)` to `IInventoryRepository` and implemented it in `InventoryRepository`.
+
+4. **Service Layer Implementation (`Aveline.Api/Modules/VisualIntelligence/Services`)**:
+   - Defined `IQrCodeService` and implemented `QrCodeService` handling PNG, SVG, Base64 generation, structured item QR tags, managed bitmap decoding, and polymorphic tenant-isolated catalog resolution.
+   - Integrated QR operations into `IVisualService` and `VisualService`.
+   - Registered `IQrCodeService` in `VisualIntelligenceModule.cs`.
+
+5. **API Presentation Layer (`Aveline.Api/Endpoints`)**:
+   - Updated `CatalogEndpoints.cs`:
+     - Added `GET /api/v1/orgs/{orgId}/catalog/items/{itemId}/qr` (serves PNG, SVG, or JSON based on `?format=png|svg|json&size=300`).
+     - Added `POST /api/v1/orgs/{orgId}/catalog/qr/generate` (dynamic QR code generator).
+     - Added `POST /api/v1/orgs/{orgId}/catalog/items/scan-qr` and `POST /api/v1/orgs/{orgId}/catalog/qr/scan` (supports JSON payload, SKU, GUID, URL, Base64 image, and `multipart/form-data` image uploads).
+   - Updated `VisualEndpoints.cs`:
+     - Added internal service-to-service endpoints (`GET /internal/visual/inventory/{itemId}/qr`, `POST /internal/visual/inventory/scan-qr`, `POST /internal/visual/qr/generate`).
+
+6. **Automated Testing & Verification (`Aveline.Api.Tests`)**:
+   - Authored `QrCodeServiceTests.cs` covering PNG/SVG generation, item payload serialization, polymorphic resolution (JSON, GUID, SKU, URL), cross-tenant isolation, and fallback behavior (11 unit tests).
+   - Added 7 integration tests to `CatalogEndpointsIntegrationTests.cs` verifying PNG binary streams, SVG responses, JSON data URLs, custom QR generation, JSON/SKU scan resolution, and cross-tenant authorization isolation (17 total tests).
+   - Verified 100% test pass rate (28/28 tests passing).
+
+### Files Created or Modified
+
+- `Aveline.Api/Aveline.Api.csproj`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/GenerateQrDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/QrCodeResponseDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/ScanQrDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/QrScanResultDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/ItemQrPayload.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/IInventoryRepository.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/InventoryRepository.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/IQrCodeService.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/QrCodeService.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/IVisualService.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/VisualService.cs`
+- `Aveline.Api/Modules/VisualIntelligence/VisualIntelligenceModule.cs`
+- `Aveline.Api/Endpoints/CatalogEndpoints.cs`
+- `Aveline.Api/Endpoints/VisualEndpoints.cs`
+- `Aveline.Api.Tests/QrCodeServiceTests.cs`
+- `Aveline.Api.Tests/CatalogEndpointsIntegrationTests.cs`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `dotnet test Aveline.Api.Tests --no-restore --filter "FullyQualifiedName~QrCodeServiceTests"` -> 11/11 Passed.
+- `dotnet test Aveline.Api.Tests --no-restore --filter "FullyQualifiedName~CatalogEndpointsIntegrationTests"` -> 17/17 Passed.
+- Verified total suite: 28/28 passed (0 failed, 0 skipped).
+
+---
+
 ## Session 2026-09-17 (Fix Catalog Piece Database Persistence & Base64 Image Auto-Offload)
 
 **Task:** Resolve catalog database save failure ("Could not save to database. Retaining local draft. An unexpected error occurred while processing the request.") when creating or updating pieces with image uploads and AI styling narratives.

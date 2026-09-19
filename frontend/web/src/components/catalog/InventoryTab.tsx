@@ -19,6 +19,8 @@ interface InventoryTabProps {
   onViewMatches: (item: InventoryItemMock) => void
   onComposeOutfit: (item: InventoryItemMock) => void
   onEditItem: (item: InventoryItemMock) => void
+  onViewQr: (item: InventoryItemMock) => void
+  onDeleteItem: (item: InventoryItemMock) => void
 }
 
 const CATEGORY_PILLS = [
@@ -38,6 +40,8 @@ export function InventoryTab({
   onViewMatches,
   onComposeOutfit,
   onEditItem,
+  onViewQr,
+  onDeleteItem,
 }: InventoryTabProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('All')
@@ -190,6 +194,8 @@ export function InventoryTab({
                 onViewMatches={onViewMatches}
                 onComposeOutfit={onComposeOutfit}
                 onEditItem={onEditItem}
+                onViewQr={onViewQr}
+                onDeleteItem={onDeleteItem}
               />
             )
           })}

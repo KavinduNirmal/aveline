@@ -207,6 +207,16 @@ export async function updateCatalogItemStatus(
 }
 
 /**
+ * Deletes (soft-deletes) an inventory item from the catalog.
+ */
+export async function deleteCatalogItem(
+  organizationId: string,
+  itemId: string,
+): Promise<void> {
+  await apiClient.delete(`${catalogBase(organizationId)}/items/${itemId}`)
+}
+
+/**
  * Fetches low stock inventory items.
  */
 export async function fetchLowStockItems(
@@ -602,4 +612,62 @@ export async function uploadBase64Image(
   )
   return response.data
 }
+
+export interface GenerateQrResponse {
+  payload: string
+  format: string
+  dataUrl?: string
+  base64?: string
+  svg?: string
+  size: number
+  eccLevel: string
+  createdAtUtc: string
+}
+
+/**
+ * Generates a dynamic QR code from the backend API.
+ */
+export async function generateQrCode(
+  organizationId: string,
+  payload: {
+    payload: string
+    format?: 'png' | 'svg' | 'json' | 'base64'
+    size?: number
+    eccLevel?: 'L' | 'M' | 'Q' | 'H'
+    quietZone?: number
+  },
+): Promise<GenerateQrResponse> {
+  const response = await apiClient.post<GenerateQrResponse>(
+    `${catalogBase(organizationId)}/qr/generate`,
+    {
+      payload: payload.payload,
+      format: payload.format || 'json',
+      size: payload.size || 300,
+      eccLevel: payload.eccLevel || 'M',
+      quietZone: payload.quietZone ?? 2,
+    },
+  )
+  return response.data
+}
+
+/**
+ * Fetches the official QR code for a specific catalog item.
+ */
+export async function fetchItemQr(
+  organizationId: string,
+  itemId: string,
+  params?: { format?: 'png' | 'svg' | 'json'; size?: number },
+): Promise<GenerateQrResponse> {
+  const response = await apiClient.get<GenerateQrResponse>(
+    `${catalogBase(organizationId)}/items/${itemId}/qr`,
+    {
+      params: {
+        format: params?.format || 'json',
+        size: params?.size || 300,
+      },
+    },
+  )
+  return response.data
+}
+
 

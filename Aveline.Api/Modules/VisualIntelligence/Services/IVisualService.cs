@@ -27,6 +27,11 @@ public interface IVisualService
         UpdateInventoryStatusDto dto,
         CancellationToken cancellationToken = default);
 
+    Task<bool> DeleteInventoryItemAsync(
+        Guid itemId,
+        Guid orgId,
+        CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<InventoryItemDto>> GetLowStockInventoryAsync(
         Guid orgId,
         int threshold = 5,
@@ -80,5 +85,31 @@ public interface IVisualService
         string? category = null,
         string? color = null,
         decimal? maxPrice = null,
+        CancellationToken cancellationToken = default);
+
+    Task<QrCodeResponseDto> GenerateItemQrDtoAsync(
+        Guid orgId,
+        Guid itemId,
+        string format = "png",
+        int size = 300,
+        CancellationToken cancellationToken = default);
+
+    Task<byte[]> GenerateItemQrBytesAsync(
+        Guid orgId,
+        Guid itemId,
+        string format = "png",
+        int size = 300,
+        CancellationToken cancellationToken = default);
+
+    QrCodeResponseDto GenerateQrResponse(GenerateQrDto dto);
+
+    Task<QrScanResultDto> ScanAndResolveAsync(
+        Guid orgId,
+        ScanQrDto request,
+        CancellationToken cancellationToken = default);
+
+    Task<QrScanResultDto> ScanAndResolveImageBytesAsync(
+        Guid orgId,
+        byte[] imageBytes,
         CancellationToken cancellationToken = default);
 }

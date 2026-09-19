@@ -1,4 +1,4 @@
-import { Sparkles, Users, Layers, Edit2 } from 'lucide-react'
+import { Sparkles, Users, Layers, Edit2, QrCode, Trash2 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -11,6 +11,8 @@ interface ProductCardProps {
   onViewMatches: (item: InventoryItemMock) => void
   onComposeOutfit: (item: InventoryItemMock) => void
   onEditItem?: (item: InventoryItemMock) => void
+  onViewQr?: (item: InventoryItemMock) => void
+  onDeleteItem?: (item: InventoryItemMock) => void
 }
 
 export function ProductCard({
@@ -19,6 +21,8 @@ export function ProductCard({
   onViewMatches,
   onComposeOutfit,
   onEditItem,
+  onViewQr,
+  onDeleteItem,
 }: ProductCardProps) {
   const getStatusBadge = () => {
     switch (item.status) {
@@ -72,18 +76,53 @@ export function ProductCard({
           </Badge>
         </div>
 
-        {/* Top Right Quick Edit Button */}
-        {onEditItem && (
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => onEditItem(item)}
-            className="absolute top-2.5 right-2.5 size-7 rounded-full bg-background/80 p-0 text-muted-foreground opacity-0 backdrop-blur-xs transition-opacity group-hover:opacity-100 hover:text-foreground"
-            title="Edit piece details"
-          >
-            <Edit2 className="size-3.5" />
-          </Button>
-        )}
+        {/* Top Right Quick Action Buttons */}
+        <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 opacity-0 backdrop-blur-xs transition-opacity group-hover:opacity-100">
+          {onViewQr && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={(e) => {
+                e.stopPropagation()
+                onViewQr(item)
+              }}
+              className="size-7 rounded-full bg-background/85 p-0 text-muted-foreground shadow-2xs hover:bg-background hover:text-primary cursor-pointer"
+              title="View QR Floor Tag & Barcode"
+            >
+              <QrCode className="size-3.5" />
+            </Button>
+          )}
+
+          {onEditItem && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={(e) => {
+                e.stopPropagation()
+                onEditItem(item)
+              }}
+              className="size-7 rounded-full bg-background/85 p-0 text-muted-foreground shadow-2xs hover:bg-background hover:text-foreground cursor-pointer"
+              title="Edit piece details"
+            >
+              <Edit2 className="size-3.5" />
+            </Button>
+          )}
+
+          {onDeleteItem && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={(e) => {
+                e.stopPropagation()
+                onDeleteItem(item)
+              }}
+              className="size-7 rounded-full bg-background/85 p-0 text-muted-foreground shadow-2xs hover:bg-destructive/10 hover:text-destructive cursor-pointer"
+              title="Delete piece from catalog"
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
+          )}
+        </div>
 
         {/* Bottom AI Confidence Tag */}
         {item.confidenceScore && (
@@ -148,7 +187,7 @@ export function ProductCard({
           <Button
             size="sm"
             variant="outline"
-            className="flex-1 gap-1.5 text-xs h-8 rounded-lg border-border hover:bg-primary/5 hover:text-primary hover:border-primary/30"
+            className="flex-1 gap-1.5 text-xs h-8 rounded-lg border-border hover:bg-primary/5 hover:text-primary hover:border-primary/30 cursor-pointer"
             onClick={() => onViewMatches(item)}
           >
             <Users className="size-3.5" />
@@ -160,11 +199,24 @@ export function ProductCard({
             )}
           </Button>
 
+          {/* View QR Floor Tag Action */}
+          {onViewQr && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="size-8 p-0 rounded-lg border-border text-muted-foreground hover:text-primary hover:border-primary/30 hover:bg-primary/5 shrink-0 cursor-pointer"
+              onClick={() => onViewQr(item)}
+              title="View & Print Floor Tag QR Code"
+            >
+              <QrCode className="size-3.5" />
+            </Button>
+          )}
+
           {/* Compose Look Action */}
           <Button
             size="sm"
             variant="ghost"
-            className="gap-1.5 text-xs h-8 rounded-lg text-muted-foreground hover:text-foreground"
+            className="gap-1.5 text-xs h-8 rounded-lg text-muted-foreground hover:text-foreground cursor-pointer"
             onClick={() => onComposeOutfit(item)}
             title="Style an outfit look with Elle around this hero piece"
           >

@@ -17,6 +17,7 @@ public class VisualService : IVisualService
     private readonly IOutfitRepository _outfitRepository;
     private readonly ISupplierRepository _supplierRepository;
     private readonly IVisionService _visionService;
+    private readonly IQrCodeService _qrCodeService;
 
     public VisualService(
         IInventoryService inventoryService,
@@ -24,7 +25,8 @@ public class VisualService : IVisualService
         ICustomerMatchRepository customerMatchRepository,
         IOutfitRepository outfitRepository,
         ISupplierRepository supplierRepository,
-        IVisionService visionService)
+        IVisionService visionService,
+        IQrCodeService qrCodeService)
     {
         _inventoryService = inventoryService ?? throw new ArgumentNullException(nameof(inventoryService));
         _sourcingRequestRepository = sourcingRequestRepository ?? throw new ArgumentNullException(nameof(sourcingRequestRepository));
@@ -32,6 +34,7 @@ public class VisualService : IVisualService
         _outfitRepository = outfitRepository ?? throw new ArgumentNullException(nameof(outfitRepository));
         _supplierRepository = supplierRepository ?? throw new ArgumentNullException(nameof(supplierRepository));
         _visionService = visionService ?? throw new ArgumentNullException(nameof(visionService));
+        _qrCodeService = qrCodeService ?? throw new ArgumentNullException(nameof(qrCodeService));
     }
 
     public async Task<IReadOnlyList<InventoryItemDto>> SearchInventoryAsync(
@@ -70,6 +73,14 @@ public class VisualService : IVisualService
         CancellationToken cancellationToken = default)
     {
         return await _inventoryService.UpdateStatusAsync(itemId, dto.OrgId, dto.Status, cancellationToken);
+    }
+
+    public async Task<bool> DeleteInventoryItemAsync(
+        Guid itemId,
+        Guid orgId,
+        CancellationToken cancellationToken = default)
+    {
+        return await _inventoryService.DeleteItemAsync(itemId, orgId, cancellationToken);
     }
 
     public async Task<IReadOnlyList<InventoryItemDto>> GetLowStockInventoryAsync(
@@ -393,5 +404,46 @@ public class VisualService : IVisualService
         }
 
         return query.ToList();
+    }
+
+    public async Task<QrCodeResponseDto> GenerateItemQrDtoAsync(
+        Guid orgId,
+        Guid itemId,
+        string format = "png",
+        int size = 300,
+        CancellationToken cancellationToken = default)
+    {
+        return await _qrCodeService.GenerateItemQrDtoAsync(orgId, itemId, format, size, cancellationToken);
+    }
+
+    public async Task<byte[]> GenerateItemQrBytesAsync(
+        Guid orgId,
+        Guid itemId,
+        string format = "png",
+        int size = 300,
+        CancellationToken cancellationToken = default)
+    {
+        return await _qrCodeService.GenerateItemQrBytesAsync(orgId, itemId, format, size, cancellationToken);
+    }
+
+    public QrCodeResponseDto GenerateQrResponse(GenerateQrDto dto)
+    {
+        return _qrCodeService.GenerateQrResponse(dto);
+    }
+
+    public async Task<QrScanResultDto> ScanAndResolveAsync(
+        Guid orgId,
+        ScanQrDto request,
+        CancellationToken cancellationToken = default)
+    {
+        return await _qrCodeService.ScanAndResolveAsync(orgId, request, cancellationToken);
+    }
+
+    public async Task<QrScanResultDto> ScanAndResolveImageBytesAsync(
+        Guid orgId,
+        byte[] imageBytes,
+        CancellationToken cancellationToken = default)
+    {
+        return await _qrCodeService.ScanAndResolveImageBytesAsync(orgId, imageBytes, cancellationToken);
     }
 }

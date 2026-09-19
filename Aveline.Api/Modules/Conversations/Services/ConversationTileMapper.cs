@@ -152,6 +152,9 @@ public static class ConversationTileMapper
         "courier" => CourierPreview(block),
         "sign_off" => "Approval needed",
         "choice" => StringField(block, "prompt"),
+        // An attachment's preview is its file name, so a photo-only note still says something
+        // in the list rather than drawing an empty row.
+        "attachment" => StringField(block, "fileName") ?? "Attachment",
         _ => null,
     };
 

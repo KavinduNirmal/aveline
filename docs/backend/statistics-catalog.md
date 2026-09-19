@@ -847,17 +847,34 @@ route that exists.
 | --- | --- | --- | --- | --- | --- |
 | `conversationOpenCount` | `COUNT(*) FROM Conversations WHERE OrganizationId = @org AND Status NOT IN ('Resolved','Archived')` | `organizationId`, `kind` | real-time | `GET /api/v1/orgs/{organizationId}/stats/conversations` (intended) | `stats:view` |
 | `inboxFirstResponseLatency` | percentile of `firstStaffOrAgentReplyAt − firstClientMessageAt`, per conversation. `firstClientMessageAt` is the first message with `Kind = ClientMessage`; the reply is the first later `User` or `Agent` message. Percentiles must be `null` with a `reason` below `Telemetry:MinSampleForPercentile` (default 20) | `organizationId`, `kind`, `p50`/`p90` | day | same | `stats:view` |
-| `conversationSignOffWaitTime` | percentile of `SignOffDecision.DecidedAt − Message.CreatedAt` for `Kind = SignOff`. **Blocked on the producer**: nothing emits a `SignOff` yet (ADR-018); the write path that stages it is complete, so this needs no redefinition when the commerce flow ships. The agent-side analogue is `S-21 agentApprovalWaitTime` | `organizationId`, `approved`/`rejected` | day | same | `stats:view` |
-| `conversationMessageVolume` | `COUNT(*)` of `Messages` joined to their conversation, grouped by the message's `AuthorKind` and the first meaningful content-block type (`lastMessageBlock`'s vocabulary) | `organizationId`, `authorKind`, `blockType` | hour | same | `stats:view` |
+| `conversationSignOffWaitTime` | percentile of `SignOffDecision.DecidedAt − Message.CreatedAt` for `Kind = SignOff`. **Revoked decisions are excluded**: a revoked-then-re-approved SignOff measures the final approval's wait, so the `revoked` rows added by the oversight path (domain-model §8.11) must be filtered out rather than counted as decisions. **Blocked on the producer**: nothing emits a `SignOff` yet (ADR-018); the write path that stages it is complete, so this needs no redefinition when the commerce flow ships. The agent-side analogue is `S-21 agentApprovalWaitTime` | `organizationId`, `approved`/`rejected` | day | same | `stats:view` |
+| `conversationMessageVolume` | `COUNT(*)` of `Messages` joined to their conversation, grouped by the message's `AuthorKind` and the first meaningful content-block type (`lastMessageBlock`'s vocabulary). **Extend with a `direction` dimension**: `inbound = Kind = 'ClientMessage'`, `outbound = Kind <> 'ClientMessage'` | `organizationId`, `authorKind`, `blockType`, `direction` | hour | same | `stats:view` |
 | `conversationRealtimeDeliveries` | `COUNT(*)` of `ReceiveConversationChanged` sends, grouped by event, target group (`org:{id}` vs `user:{id}`) and routing outcome | `organizationId`, `event`, `group` | hour | same | `stats:system` (admin only) |
+| Duplicate-send rate | `COUNT(*) FROM Messages GROUP BY ConversationId, ClientMessageId HAVING COUNT(*) > 1` — must be **impossible** after the `clientMessageId` filtered unique index (domain-model §8.9), so a non-zero value is an alert rather than a metric | `organizationId`, day | day | same | `stats:view` |
 
-**Alert worth defining** (needs an alert-catalog entry, not invented here):
-`conversationRealtimeDeliveries` dropping to zero while `conversationMessageVolume`
-is non-zero — the signal that the inbox's broadcast has stopped working.
+**Attachment metrics** (thread-only; their tables land with the attachment slice, so
+these are definitions the compute can be added to rather than live queries today):
 
-**Withdrawn:** `conversationUnreadTotal` was proposed alongside the read-state model
-that D2 = (c) declined to ship. There is no read state to aggregate, so the metric is
-withdrawn, not deferred.
+| Metric | Formula | Dimensions | Access |
+| --- | --- | --- | --- |
+| Attachment volume | `COUNT(*) FROM MessageAttachments`, grouped by `ContentType`, `StorageProvider` and the bound message's direction | `organizationId`, `contentType`, `storageProvider`, `direction` | `stats:view` |
+| Upload failures | `COUNT(*)` of rejected uploads, by reason (`type`, `size`) | `organizationId`, `reason` | `stats:view` |
+| Orphaned attachments | `COUNT(*) FROM MessageAttachments WHERE MessageId IS NULL AND CreatedAtUtc < now() - TTL` — must return to zero as the sweep runs, so a flat non-zero value is the signal | `organizationId`, day | `stats:view` |
+
+**Alerts worth defining** (need an alert-catalog entry, not invented here):
+
+- `conversationRealtimeDeliveries` dropping to zero while `conversationMessageVolume`
+  is non-zero — the signal that the inbox's or the thread's broadcast has stopped
+  working.
+- A duplicate-send rate above zero — the signal that the idempotency key is being
+  reused or the index has been dropped.
+
+**Read state adds no exposed metric yet.** The thread-owned
+`ConversationReadStates` table now exists (domain-model §8.10), but the inbox draws
+no badge, so there is no `conversationUnreadTotal` to expose. When the inbox wants
+one it reads that table's aggregate (`unread = messages after the marker`, an absent
+row = all unread) rather than growing a second read model; the metric would then be
+recorded here by name, with no `S-n` allocated in this document.
 
 ---
 

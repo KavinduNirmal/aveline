@@ -5,10 +5,13 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using Aveline.Api.Authorization;
 using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Modules.Conversations.Models;
+using Aveline.Api.Modules.Conversations.Services;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Shared.Models;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 
@@ -76,6 +79,62 @@ public class ConversationEndpointsIntegrationTests : IAsyncLifetime
             .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
             .Options;
         return new AppDbContext(options);
+    }
+
+    /// <summary>
+    /// Adds a second user to an existing organization with a chosen boutique role, so the
+    /// role-narrowed policy can be exercised with a real membership row.
+    /// </summary>
+    private async Task<User> SeedMemberAsync(string clerkId, Guid organizationId, string boutiqueRole)
+    {
+        await using var context = CreateContext();
+        var member = new User
+        {
+            Id = Guid.CreateVersion7(),
+            ClerkId = clerkId,
+            Email = $"{clerkId}@aveline.lk",
+            FirstName = "Member",
+            LastName = "User",
+            Username = clerkId,
+            UserRole = Roles.Staff,
+            OrganizationRole = string.Empty,
+            HasCompletedOnboarding = true,
+            AccountState = AccountState.Active,
+        };
+        context.Users.Add(member);
+        await context.SaveChangesAsync();
+
+        context.OrganizationMemberships.Add(new OrganizationMembership
+        {
+            OrganizationId = organizationId,
+            UserId = member.Id,
+            BoutiqueRole = boutiqueRole,
+            Status = MembershipStatus.Active,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        });
+        await context.SaveChangesAsync();
+
+        return member;
+    }
+
+    /// <summary>
+    /// Persists a SignOff through the real write path, so its `AwaitingSignOff` status and
+    /// content hash are produced by the service rather than faked.
+    /// </summary>
+    private async Task<(Guid messageId, string contentHash)> SeedSignOffAsync(Guid conversationId, string threadId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<IConversationService>();
+        var stored = await service.ApplyAgentMessageAsync(new AgentMessageEvent(
+            conversationId,
+            threadId,
+            "lina",
+            MessageKind.SignOff,
+            System.Text.Json.JsonSerializer.SerializeToElement(new[] { new { type = "sign_off", amount = 48000 } }),
+            null,
+            null));
+        return (stored.Id, stored.ContentHash!);
     }
 
     private async Task<(User owner, Organization org)> SeedActiveOwnerAsync(string clerkId, string slug)
@@ -213,6 +272,82 @@ public class ConversationEndpointsIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task InvisibleConversation_ListsMessages_With404_Not500()
+    {
+        // The route advertises a 404 and `SendMessageAsync` already catches; the read used to
+        // throw straight into the global handler and answer 500.
+        var (owner, org) = await SeedActiveOwnerAsync("conv_owner_404", "conversations-404");
+        var token = CreateToken(owner.ClerkId, owner.Email);
+
+        var list = await _client.SendAsync(Authorized(HttpMethod.Get,
+            $"/api/v1/orgs/{org.Id}/conversations/{Guid.NewGuid()}/messages", token));
+
+        Assert.Equal(HttpStatusCode.NotFound, list.StatusCode);
+        var body = await list.Content.ReadAsStringAsync();
+        Assert.Contains("Conversation not found.", body);
+    }
+
+    [Fact]
+    public async Task Send_IsIdempotent_OnClientMessageId()
+    {
+        var (owner, org) = await SeedActiveOwnerAsync("conv_owner_idem", "conversations-idem");
+        var token = CreateToken(owner.ClerkId, owner.Email);
+        var create = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations", token, new { customerId = (Guid?)null }));
+        var conversation = await create.Content.ReadFromJsonAsync<ConversationDto>();
+        var key = Guid.NewGuid();
+
+        var first = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation!.Id}/messages", token,
+            new { text = "On my way.", clientMessageId = key }));
+        var second = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation.Id}/messages", token,
+            new { text = "On my way.", clientMessageId = key }));
+
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        var firstMessage = await first.Content.ReadFromJsonAsync<MessageDto>();
+        var secondMessage = await second.Content.ReadFromJsonAsync<MessageDto>();
+        Assert.Equal(firstMessage!.Id, secondMessage!.Id);
+        // The key is echoed so a client can reconcile the realtime broadcast of its own send.
+        Assert.Equal(key, firstMessage.ClientMessageId);
+
+        var list = await _client.SendAsync(Authorized(HttpMethod.Get,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation.Id}/messages", token));
+        var page = await list.Content.ReadFromJsonAsync<MessagePage>();
+        // Aveline's greeting + exactly one staff note.
+        Assert.Equal(2, page!.Total);
+    }
+
+    [Fact]
+    public async Task Send_WithAReusedKeyAndDifferentText_Is409()
+    {
+        var (owner, org) = await SeedActiveOwnerAsync("conv_owner_conflict", "conversations-conflict");
+        var token = CreateToken(owner.ClerkId, owner.Email);
+        var create = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations", token, new { customerId = (Guid?)null }));
+        var conversation = await create.Content.ReadFromJsonAsync<ConversationDto>();
+        var key = Guid.NewGuid();
+
+        await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation!.Id}/messages", token,
+            new { text = "On my way.", clientMessageId = key }));
+
+        var conflict = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation.Id}/messages", token,
+            new { text = "Something else.", clientMessageId = key }));
+
+        Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+        var body = await conflict.Content.ReadAsStringAsync();
+        Assert.Contains("message-idempotency-conflict", body);
+
+        var list = await _client.SendAsync(Authorized(HttpMethod.Get,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation.Id}/messages", token));
+        var page = await list.Content.ReadFromJsonAsync<MessagePage>();
+        Assert.Equal(2, page!.Total);
+    }
+
+    [Fact]
     public async Task NonMember_IsDenied()
     {
         var (owner, org) = await SeedActiveOwnerAsync("conv_owner_d", "conversations-d");
@@ -225,8 +360,256 @@ public class ConversationEndpointsIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Forbidden, list.StatusCode);
     }
 
-    private sealed record ConversationDto(Guid Id, string Kind, Guid? CustomerId, string ThreadId, string Status, DateTime? LastMessageAt);
+    [Fact]
+    public async Task Owner_MarksAConversationRead()
+    {
+        var (owner, org) = await SeedActiveOwnerAsync("conv_owner_read", "conversations-read");
+        var token = CreateToken(owner.ClerkId, owner.Email);
+        var create = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations", token, new { customerId = (Guid?)null }));
+        var conversation = await create.Content.ReadFromJsonAsync<ConversationDto>();
+        var send = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation!.Id}/messages", token,
+            new { text = "Hello" }));
+        var message = await send.Content.ReadFromJsonAsync<MessageDto>();
+
+        var patch = await _client.SendAsync(AuthorizedJson(HttpMethod.Patch,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation.Id}/read", token,
+            new { lastReadMessageId = message!.Id }));
+
+        Assert.Equal(HttpStatusCode.NoContent, patch.StatusCode);
+        await using var context = CreateContext();
+        var state = Assert.Single(await context.ConversationReadStates
+            .Where(s => s.OrganizationId == org.Id)
+            .ToListAsync());
+        Assert.Equal(owner.Id, state.UserId);
+        Assert.Equal(message.Id, state.LastReadMessageId);
+    }
+
+    [Fact]
+    public async Task MarkRead_RejectsAMessageFromAnotherConversation()
+    {
+        var (owner, org) = await SeedActiveOwnerAsync("conv_owner_read_bad", "conversations-read-bad");
+        var token = CreateToken(owner.ClerkId, owner.Email);
+        var first = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations", token, new { customerId = (Guid?)null }));
+        var conversation = await first.Content.ReadFromJsonAsync<ConversationDto>();
+        // A different customer, because the general Salon is get-or-create per user: asking
+        // for it twice returns the same thread.
+        var second = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations", token, new { customerId = (Guid?)Guid.NewGuid() }));
+        var other = await second.Content.ReadFromJsonAsync<ConversationDto>();
+        var send = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{other!.Id}/messages", token,
+            new { text = "Elsewhere" }));
+        var foreign = await send.Content.ReadFromJsonAsync<MessageDto>();
+
+        var patch = await _client.SendAsync(AuthorizedJson(HttpMethod.Patch,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation!.Id}/read", token,
+            new { lastReadMessageId = foreign!.Id }));
+
+        Assert.Equal(HttpStatusCode.BadRequest, patch.StatusCode);
+    }
+
+    [Fact]
+    public async Task MarkRead_ForAnInvisibleConversation_Is404()
+    {
+        var (owner, org) = await SeedActiveOwnerAsync("conv_owner_read_404", "conversations-read-404");
+        var token = CreateToken(owner.ClerkId, owner.Email);
+
+        var patch = await _client.SendAsync(AuthorizedJson(HttpMethod.Patch,
+            $"/api/v1/orgs/{org.Id}/conversations/{Guid.NewGuid()}/read", token,
+            new { lastReadMessageId = Guid.NewGuid() }));
+
+        Assert.Equal(HttpStatusCode.NotFound, patch.StatusCode);
+    }
+
+    [Fact]
+    public async Task SignOffDecide_RequiresApprovalsApprove()
+    {
+        var (owner, org) = await SeedActiveOwnerAsync("conv_owner_signoff_auth", "conversations-signoff-auth");
+        var staff = await SeedMemberAsync("conv_staff_signoff_auth", org.Id, Roles.BoutiqueStaff);
+        var ownerToken = CreateToken(owner.ClerkId, owner.Email);
+        var staffToken = CreateToken(staff.ClerkId, staff.Email);
+        var create = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations", ownerToken, new { customerId = (Guid?)null }));
+        var conversation = await create.Content.ReadFromJsonAsync<ConversationDto>();
+        var (messageId, contentHash) = await SeedSignOffAsync(conversation!.Id, conversation.ThreadId);
+
+        // An ordinary staff member holds conversations:view but not approvals:approve, so the
+        // release gate refuses them even though they can read the thread.
+        var asStaff = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation.Id}/messages/{messageId}/sign-off",
+            staffToken, new { approved = true, contentHash }));
+        Assert.Equal(HttpStatusCode.Forbidden, asStaff.StatusCode);
+
+        var asOwner = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation.Id}/messages/{messageId}/sign-off",
+            ownerToken, new { approved = true, contentHash }));
+        Assert.Equal(HttpStatusCode.OK, asOwner.StatusCode);
+    }
+
+    [Fact]
+    public async Task SignOffRevoke_RequiresApprovalsApprove_AndRelightsTheMarker()
+    {
+        var (owner, org) = await SeedActiveOwnerAsync("conv_owner_revoke", "conversations-revoke");
+        var staff = await SeedMemberAsync("conv_staff_revoke", org.Id, Roles.BoutiqueStaff);
+        var ownerToken = CreateToken(owner.ClerkId, owner.Email);
+        var staffToken = CreateToken(staff.ClerkId, staff.Email);
+        var create = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations", ownerToken, new { customerId = (Guid?)null }));
+        var conversation = await create.Content.ReadFromJsonAsync<ConversationDto>();
+        var (messageId, contentHash) = await SeedSignOffAsync(conversation!.Id, conversation.ThreadId);
+        await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation.Id}/messages/{messageId}/sign-off",
+            ownerToken, new { approved = true, contentHash }));
+
+        var asStaff = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation.Id}/messages/{messageId}/sign-off/revoke",
+            staffToken, new { reason = "no" }));
+        Assert.Equal(HttpStatusCode.Forbidden, asStaff.StatusCode);
+
+        var asOwner = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation.Id}/messages/{messageId}/sign-off/revoke",
+            ownerToken, new { reason = "customer changed their mind" }));
+        Assert.Equal(HttpStatusCode.OK, asOwner.StatusCode);
+        var revoked = await asOwner.Content.ReadFromJsonAsync<MessageDto>();
+        Assert.Equal("AwaitingSignOff", revoked!.Status);
+
+        // The revocation returns the SignOff to the associate's queue, which is exactly what
+        // the inbox's derived `approval` marker reads.
+        var list = await _client.SendAsync(Authorized(HttpMethod.Get,
+            $"/api/v1/orgs/{org.Id}/conversations", ownerToken));
+        var page = await list.Content.ReadFromJsonAsync<ConversationPage>();
+        var tile = page!.Items.Single(item => item.Id == conversation.Id);
+        Assert.Contains("approval", tile.Markers ?? []);
+    }
+
+    [Fact]
+    public async Task Revoke_RefusesASignOffThatIsNotApproved()
+    {
+        var (owner, org) = await SeedActiveOwnerAsync("conv_owner_revoke_bad", "conversations-revoke-bad");
+        var token = CreateToken(owner.ClerkId, owner.Email);
+        var create = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations", token, new { customerId = (Guid?)null }));
+        var conversation = await create.Content.ReadFromJsonAsync<ConversationDto>();
+        var (messageId, _) = await SeedSignOffAsync(conversation!.Id, conversation.ThreadId);
+
+        var revoke = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation.Id}/messages/{messageId}/sign-off/revoke",
+            token, new { reason = (string?)null }));
+
+        Assert.Equal(HttpStatusCode.BadRequest, revoke.StatusCode);
+    }
+
+    private static readonly byte[] TinyPng =
+    [
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+    ];
+
+    [Fact]
+    public async Task AttachmentUpload_ThenFetch_IsAuthenticatedAndNosniff()
+    {
+        var (owner, org) = await SeedActiveOwnerAsync("conv_owner_att", "conversations-att");
+        var token = CreateToken(owner.ClerkId, owner.Email);
+        var create = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations", token, new { customerId = (Guid?)null }));
+        var conversation = await create.Content.ReadFromJsonAsync<ConversationDto>();
+
+        var upload = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation!.Id}/attachments", token,
+            new { imageData = Convert.ToBase64String(TinyPng), fileName = "photo.png" }));
+
+        Assert.Equal(HttpStatusCode.OK, upload.StatusCode);
+        var attachment = await upload.Content.ReadFromJsonAsync<AttachmentResponse>();
+        Assert.NotNull(attachment);
+        Assert.Equal("image/png", attachment!.ContentType);
+        Assert.Equal(TinyPng.LongLength, attachment.SizeBytes);
+
+        // The URL is not anonymous: the catalog's AllowAnonymous image GET is deliberately not
+        // copied for a customer's file.
+        var anonymous = await _client.GetAsync(attachment.Url);
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+
+        var fetch = await _client.SendAsync(Authorized(HttpMethod.Get, attachment.Url, token));
+        Assert.Equal(HttpStatusCode.OK, fetch.StatusCode);
+        Assert.Equal("nosniff", fetch.Headers.GetValues("X-Content-Type-Options").Single());
+        Assert.Equal(TinyPng, await fetch.Content.ReadAsByteArrayAsync());
+    }
+
+    [Fact]
+    public async Task AttachmentUpload_RejectsAnOversizeFileAndADisallowedType()
+    {
+        var (owner, org) = await SeedActiveOwnerAsync("conv_owner_att_bad", "conversations-att-bad");
+        var token = CreateToken(owner.ClerkId, owner.Email);
+        var create = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations", token, new { customerId = (Guid?)null }));
+        var conversation = await create.Content.ReadFromJsonAsync<ConversationDto>();
+
+        var oversize = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation!.Id}/attachments", token,
+            new { imageData = Convert.ToBase64String(new byte[(5 * 1024 * 1024) + 1]), fileName = "big.png" }));
+        Assert.Equal(HttpStatusCode.BadRequest, oversize.StatusCode);
+
+        var disallowed = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation.Id}/attachments", token,
+            new { imageData = Convert.ToBase64String(TinyPng), fileName = "notes.txt" }));
+        Assert.Equal(HttpStatusCode.BadRequest, disallowed.StatusCode);
+    }
+
+    [Fact]
+    public async Task Send_WithAttachmentIds_BindsThemAndCarriesTheirBlocks()
+    {
+        var (owner, org) = await SeedActiveOwnerAsync("conv_owner_att_send", "conversations-att-send");
+        var token = CreateToken(owner.ClerkId, owner.Email);
+        var create = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations", token, new { customerId = (Guid?)null }));
+        var conversation = await create.Content.ReadFromJsonAsync<ConversationDto>();
+
+        var upload = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation!.Id}/attachments", token,
+            new { imageData = Convert.ToBase64String(TinyPng), fileName = "photo.png" }));
+        var attachment = await upload.Content.ReadFromJsonAsync<AttachmentResponse>();
+
+        var send = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation.Id}/messages", token,
+            new { text = "Here it is.", attachmentIds = new[] { attachment!.AttachmentId } }));
+
+        Assert.Equal(HttpStatusCode.OK, send.StatusCode);
+        var message = await send.Content.ReadFromJsonAsync<MessageDto>();
+        var blocks = message!.ContentBlocks.EnumerateArray().ToList();
+        Assert.Equal("text", blocks[0].GetProperty("type").GetString());
+        Assert.Equal("attachment", blocks[1].GetProperty("type").GetString());
+        Assert.Equal(attachment.AttachmentId, blocks[1].GetProperty("attachmentId").GetGuid());
+
+        // A re-list carries the same block, because it is stored with the message.
+        var list = await _client.SendAsync(Authorized(HttpMethod.Get,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation.Id}/messages", token));
+        var page = await list.Content.ReadFromJsonAsync<MessagePage>();
+        var reloaded = page!.Items.Single(m => m.Id == message.Id);
+        Assert.Contains(reloaded.ContentBlocks.EnumerateArray(),
+            b => b.GetProperty("type").GetString() == "attachment");
+    }
+
+    [Fact]
+    public async Task Send_WithAForeignAttachmentId_Is400()
+    {
+        var (owner, org) = await SeedActiveOwnerAsync("conv_owner_att_foreign", "conversations-att-foreign");
+        var token = CreateToken(owner.ClerkId, owner.Email);
+        var create = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations", token, new { customerId = (Guid?)null }));
+        var conversation = await create.Content.ReadFromJsonAsync<ConversationDto>();
+
+        var send = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation!.Id}/messages", token,
+            new { text = "Here it is.", attachmentIds = new[] { Guid.NewGuid() } }));
+
+        Assert.Equal(HttpStatusCode.BadRequest, send.StatusCode);
+    }
+
+    private sealed record ConversationDto(Guid Id, string Kind, Guid? CustomerId, string ThreadId, string Status, DateTime? LastMessageAt, System.Collections.Generic.IReadOnlyList<string>? Markers = null);
     private sealed record ConversationPage(System.Collections.Generic.IReadOnlyList<ConversationDto> Items, int Total, int Page, int PageSize);
-    private sealed record MessageDto(Guid Id, Guid ConversationId, string AuthorKind, string? AgentKey, Guid? AuthorUserId, string Kind, System.Text.Json.JsonElement ContentBlocks, Guid? ReplyToMessageId, string Status, DateTime CreatedAt);
+    private sealed record AttachmentResponse(Guid AttachmentId, string Url, string ContentType, string FileName, long SizeBytes, int? Width, int? Height);
+    private sealed record MessageDto(Guid Id, Guid ConversationId, string AuthorKind, string? AgentKey, Guid? AuthorUserId, string Kind, System.Text.Json.JsonElement ContentBlocks, Guid? ReplyToMessageId, string Status, DateTime CreatedAt, Guid? ClientMessageId, Guid? WorkflowRunId);
     private sealed record MessagePage(System.Collections.Generic.IReadOnlyList<MessageDto> Items, int Total, int Page, int PageSize);
 }

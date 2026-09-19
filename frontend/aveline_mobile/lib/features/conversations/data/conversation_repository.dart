@@ -69,4 +69,12 @@ abstract interface class ConversationRepository {
   /// Throws [OrgContextUnavailable] when the organization id is not known yet -
   /// a "not yet" the screen keeps as a loading state, never the error state.
   Future<ConversationPage> fetchConversations({int page = 1});
+
+  /// One thread by id, or `null` when the server does not have it (a notification about a
+  /// thread that has since gone, or one this caller may not see).
+  ///
+  /// A notification opens a thread it knows only by id, and the thread screen needs the whole
+  /// row (its name, its kind, whether it is a client thread), so the row is read rather than
+  /// guessed from the payload.
+  Future<Conversation?> fetchConversation(String id);
 }

@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 
+import '../domain/conversation.dart';
 import 'conversation_repository.dart';
 
 /// The message inbox, over the Aveline API.
@@ -53,5 +54,28 @@ class ApiConversationRepository implements ConversationRepository {
     );
 
     return ConversationPage.fromJson(response.data ?? const {});
+  }
+
+  @override
+  Future<Conversation?> fetchConversation(String id) async {
+    final organizationId = this.organizationId();
+    if (organizationId == null || organizationId.isEmpty) {
+      throw const OrgContextUnavailable();
+    }
+
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/api/v1/orgs/$organizationId/conversations/$id',
+      );
+      final data = response.data;
+      return data == null ? null : Conversation.fromJson(data);
+    } on DioException catch (error) {
+      // A thread the server no longer has, or one this caller may not see, is a "not found"
+      // rather than a failure: the caller shows its own not-found state.
+      if (error.response?.statusCode == 404 || error.response?.statusCode == 403) {
+        return null;
+      }
+      rethrow;
+    }
   }
 }

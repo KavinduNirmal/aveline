@@ -122,6 +122,12 @@ public class AppDbContext : DbContext
 
     public DbSet<SignOffDecision> SignOffDecisions => Set<SignOffDecision>();
 
+    /// <summary>The thread's per-user read markers (D5 = B).</summary>
+    public DbSet<ConversationReadState> ConversationReadStates => Set<ConversationReadState>();
+
+    /// <summary>A thread message's attachments (D8).</summary>
+    public DbSet<MessageAttachment> MessageAttachments => Set<MessageAttachment>();
+
     // Customer Concierge Module (Slice 1)
     public DbSet<Customer> Customers => Set<Customer>();
     public DbSet<CustomerPreference> CustomerPreferences => Set<CustomerPreference>();

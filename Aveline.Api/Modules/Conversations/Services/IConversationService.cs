@@ -82,7 +82,12 @@ public interface IConversationService
         string? query,
         CancellationToken cancellationToken = default);
 
-    Task<(IReadOnlyList<MessageDto> Items, int Total)> ListMessagesAsync(
+    /// <summary>
+    /// One page of a conversation's messages, oldest first. <c>Page</c> is the page actually
+    /// served: a deep-linked <paramref name="around"/> changes which page that is, and echoing it
+    /// is what lets a client compute <c>hasEarlier</c> from the response alone.
+    /// </summary>
+    Task<(IReadOnlyList<MessageDto> Items, int Total, int Page)> ListMessagesAsync(
         Guid orgId,
         Guid userId,
         Guid conversationId,
@@ -96,6 +101,56 @@ public interface IConversationService
         Guid userId,
         Guid conversationId,
         string text,
+        Guid? clientMessageId = null,
+        IReadOnlyList<Guid>? attachmentIds = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Stores an uploaded attachment against a conversation, unbound. Returns <c>null</c> when
+    /// the conversation is not visible to the caller. The caller has already applied the type
+    /// and size policy; the service owns storage.
+    /// </summary>
+    Task<Models.MessageAttachment?> CreateAttachmentAsync(
+        Guid orgId,
+        Guid userId,
+        Guid conversationId,
+        byte[] bytes,
+        string contentType,
+        string fileName,
+        int? width,
+        int? height,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// An attachment the caller may read, or <c>null</c> when the conversation is not visible or
+    /// the row is not in it. Visibility is the conversation's, not the row's.
+    /// </summary>
+    Task<Models.MessageAttachment?> GetAttachmentAsync(
+        Guid orgId,
+        Guid userId,
+        Guid conversationId,
+        Guid attachmentId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>The stored bytes behind an attachment, through the store boundary.</summary>
+    Task<Stream?> OpenAttachmentAsync(
+        Models.MessageAttachment attachment,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Advances the caller's read marker for one conversation to
+    /// <paramref name="lastReadMessageId"/>.
+    ///
+    /// The write is monotonic — it never moves the marker backwards — and an absent row means
+    /// nothing has been read. A position the caller may not see is
+    /// <see cref="MarkReadOutcome.ConversationNotFound"/>; a message from another conversation
+    /// is <see cref="MarkReadOutcome.MessageNotFound"/>.
+    /// </summary>
+    Task<MarkReadOutcome> MarkReadAsync(
+        Guid orgId,
+        Guid userId,
+        Guid conversationId,
+        Guid lastReadMessageId,
         CancellationToken cancellationToken = default);
 
     Task<MessageDto> ApplyAgentMessageAsync(
@@ -125,6 +180,23 @@ public interface IConversationService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Revokes an approved SignOff, returning it to the associate's queue.
+    ///
+    /// Appends a <see cref="SignOffDecisionKind.Revoked"/> row to the immutable decision log
+    /// (the original approval is untouched), sets the message and the conversation back to
+    /// <see cref="MessageStatus.AwaitingSignOff"/>, and touches no workflow: ADR-018 has no
+    /// LangGraph resume to undo. A SignOff whose newest decision is not an approval is
+    /// refused, as is one that is not a SignOff at all.
+    /// </summary>
+    Task<MessageDto> RevokeSignOffAsync(
+        Guid orgId,
+        Guid userId,
+        Guid conversationId,
+        Guid messageId,
+        string? reason,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Records an inbound customer message (e.g. WhatsApp) as a <see cref="MessageKind.ClientMessage"/>
     /// in the customer's Salon, creating the Salon by external channel reference when needed.
     /// <paramref name="customerId"/> is the customer resolved from the channel handle at creation
@@ -137,5 +209,20 @@ public interface IConversationService
         string from,
         string text,
         Guid? customerId,
+        Guid? attachmentId = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Stores an inbound channel attachment against the conversation for
+    /// <paramref name="externalRef"/>, creating it when needed. No uploader is recorded: the
+    /// bytes came from the customer's channel, not from a staff device.
+    /// </summary>
+    Task<Models.MessageAttachment> StoreInboundAttachmentAsync(
+        Guid orgId,
+        string externalRef,
+        Guid? customerId,
+        byte[] bytes,
+        string contentType,
+        string fileName,
         CancellationToken cancellationToken = default);
 }

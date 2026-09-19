@@ -17,7 +17,16 @@ public class MessageRepository : IMessageRepository
         => await _context.Messages
             .FirstOrDefaultAsync(m => m.ConversationId == conversationId && m.Id == messageId, cancellationToken);
 
-    public async Task<(IReadOnlyList<Message> Items, int Total)> ListAsync(
+    public async Task<Message?> GetByClientMessageIdAsync(
+        Guid conversationId,
+        Guid clientMessageId,
+        CancellationToken cancellationToken = default)
+        => await _context.Messages
+            .FirstOrDefaultAsync(
+                m => m.ConversationId == conversationId && m.ClientMessageId == clientMessageId,
+                cancellationToken);
+
+    public async Task<(IReadOnlyList<Message> Items, int Total, int Page)> ListAsync(
         Guid conversationId,
         int page,
         int pageSize,
@@ -26,39 +35,41 @@ public class MessageRepository : IMessageRepository
     {
         var query = _context.Messages
             .Where(m => m.ConversationId == conversationId)
-            .OrderBy(m => m.CreatedAt);
+            // The id breaks a tie on CreatedAt. Guid.CreateVersion7 is monotone, so the pair is
+            // a total order and a page seam cannot duplicate or skip a row.
+            .OrderBy(m => m.CreatedAt)
+            .ThenBy(m => m.Id);
 
         var total = await query.CountAsync(cancellationToken);
 
-        IQueryable<Message> pageQuery;
+        // Deep-link: the anchor decides which page is served, and the page **that page** is
+        // echoed. The window is therefore page-aligned, which is what lets a client compute
+        // `hasEarlier` (page > 1) and `hasMore` (page * pageSize < total) from the response
+        // alone; an off-grid half-page window could not be expressed in this envelope.
+        var effectivePage = Math.Max(page, 1);
         if (around is not null)
         {
-            // Deep-link: return a page that contains the target message. Compute the
-            // target's index, then page around it so the caller can scroll to it.
             var target = await _context.Messages
                 .Where(m => m.ConversationId == conversationId && m.Id == around)
-                .Select(m => (int?)m.CreatedAt.Ticks)
+                .Select(m => new { m.CreatedAt, m.Id })
                 .FirstOrDefaultAsync(cancellationToken);
 
-            if (target is null)
+            if (target is not null)
             {
-                pageQuery = query.Take(pageSize);
+                // Rows strictly before the anchor under the same total order, so a tied
+                // CreatedAt cannot move the anchor to the wrong page.
+                var beforeCount = await _context.Messages.CountAsync(
+                    m => m.ConversationId == conversationId
+                         && (m.CreatedAt < target.CreatedAt
+                             || (m.CreatedAt == target.CreatedAt && m.Id.CompareTo(target.Id) < 0)),
+                    cancellationToken);
+                effectivePage = (beforeCount / pageSize) + 1;
             }
-            else
-            {
-                var beforeCount = await _context.Messages
-                    .CountAsync(m => m.ConversationId == conversationId && m.CreatedAt.Ticks < target.Value, cancellationToken);
-                var start = Math.Max(0, beforeCount - pageSize / 2);
-                pageQuery = query.Skip(start).Take(pageSize);
-            }
-        }
-        else
-        {
-            pageQuery = query.Skip((page - 1) * pageSize).Take(pageSize);
         }
 
-        var items = await pageQuery.ToListAsync(cancellationToken);
-        return (items, total);
+        var start = (effectivePage - 1) * pageSize;
+        var items = await query.Skip(start).Take(pageSize).ToListAsync(cancellationToken);
+        return (items, total, effectivePage);
     }
 
     public async Task SaveAsync(Message message, CancellationToken cancellationToken = default)

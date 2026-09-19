@@ -56,6 +56,72 @@ public sealed class WhatsAppService : IWhatsAppService
     }
 
     /// <inheritdoc/>
+    public async Task<WhatsAppMediaResult> GetMediaAsync(
+        string accessToken,
+        string mediaId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(accessToken);
+        ArgumentException.ThrowIfNullOrWhiteSpace(mediaId);
+
+        try
+        {
+            // Step 1: the media id resolves to a short-lived URL on Meta's CDN.
+            using var resolve = new HttpRequestMessage(HttpMethod.Get, mediaId);
+            resolve.Headers.Authorization = new("Bearer", accessToken);
+            using var resolved = await _http.SendAsync(resolve, cancellationToken);
+            if (!resolved.IsSuccessStatusCode)
+            {
+                var resolveError = await ReadErrorAsync(resolved, cancellationToken);
+                _logger.LogWarning(
+                    "WhatsApp media resolve failed. mediaId={MediaId} status={Status} error={Error}",
+                    mediaId, (int)resolved.StatusCode, resolveError);
+                return new WhatsAppMediaResult(IsSuccess: false, Error: resolveError);
+            }
+
+            var metadata = await resolved.Content.ReadFromJsonAsync<MediaMetadata>(cancellationToken);
+            if (string.IsNullOrWhiteSpace(metadata?.Url))
+            {
+                _logger.LogWarning("WhatsApp media resolve returned no URL. mediaId={MediaId}", mediaId);
+                return new WhatsAppMediaResult(IsSuccess: false, Error: "Meta returned no media URL.");
+            }
+
+            // Step 2: the URL still needs the bearer; it is not public.
+            using var download = new HttpRequestMessage(HttpMethod.Get, metadata.Url);
+            download.Headers.Authorization = new("Bearer", accessToken);
+            using var media = await _http.SendAsync(download, cancellationToken);
+            if (!media.IsSuccessStatusCode)
+            {
+                var downloadError = await ReadErrorAsync(media, cancellationToken);
+                _logger.LogWarning(
+                    "WhatsApp media download failed. mediaId={MediaId} status={Status} error={Error}",
+                    mediaId, (int)media.StatusCode, downloadError);
+                return new WhatsAppMediaResult(IsSuccess: false, Error: downloadError);
+            }
+
+            var bytes = await media.Content.ReadAsByteArrayAsync(cancellationToken);
+            var contentType = media.Content.Headers.ContentType?.MediaType
+                              ?? metadata.MimeType
+                              ?? "application/octet-stream";
+            _logger.LogInformation(
+                "WhatsApp media fetched. mediaId={MediaId} bytes={Bytes} contentType={ContentType}",
+                mediaId, bytes.Length, contentType);
+
+            return new WhatsAppMediaResult(
+                IsSuccess: true,
+                Bytes: bytes,
+                ContentType: contentType,
+                SizeBytes: bytes.LongLength);
+        }
+        catch (Exception ex)
+        {
+            // A media fetch must never take the webhook down: the caller records what it can.
+            _logger.LogError(ex, "WhatsApp media fetch threw. mediaId={MediaId}", mediaId);
+            return new WhatsAppMediaResult(IsSuccess: false, Error: ex.Message);
+        }
+    }
+
+    /// <inheritdoc/>
     public async Task<WhatsAppSendResult> SendMessageAsync(
         string accessToken,
         string phoneNumberId,
@@ -109,6 +175,12 @@ public sealed class WhatsAppService : IWhatsAppService
             return new WhatsAppSendResult(IsSuccess: false, Error: ex.Message);
         }
     }
+
+    /// <summary>Meta's media metadata; the JSON is snake_case.</summary>
+    private sealed record MediaMetadata(
+        [property: System.Text.Json.Serialization.JsonPropertyName("url")] string? Url,
+        [property: System.Text.Json.Serialization.JsonPropertyName("mime_type")] string? MimeType,
+        [property: System.Text.Json.Serialization.JsonPropertyName("file_size")] long? FileSize);
 
     private static string? ExtractMessageId(string body)
     {

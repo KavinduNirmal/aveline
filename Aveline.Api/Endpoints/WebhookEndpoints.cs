@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Aveline.Api.Common.Media;
 using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Infrastructure.Eventing;
 using Aveline.Api.Infrastructure.RateLimiting;
@@ -69,6 +70,7 @@ public static class WebhookEndpoints
             Aveline.Api.Modules.Conversations.Services.IConversationService conversations,
             Aveline.Api.Modules.Conversations.Services.IMessageBroadcaster broadcaster,
             Aveline.Api.Modules.CustomerConcierge.Repositories.ICustomerRepository customers,
+            Aveline.Api.Modules.Integrations.Services.Providers.IWhatsAppService whatsApp,
             CancellationToken ct) =>
         {
             var logger = loggerFactory.CreateLogger("Aveline.Webhooks.WhatsApp");
@@ -169,24 +171,14 @@ public static class WebhookEndpoints
                 return Results.Ok(new { status = "duplicate_ignored" });
             }
 
-            // Publish to the agent service for processing (fire-and-forget).
-            await eventBus.PublishAsync(
-                "message.received",
-                organizationId,
-                new
-                {
-                    messageId = message.Id,
-                    from = message.From,
-                    to = message.To,
-                    text = message.Text,
-                    timestamp = DateTimeOffset.UtcNow,
-                },
-                traceId: null,
-                ct);
-
             // Surface the inbound message in the Salon as a ClientMessage so staff see it
             // immediately (ADR-016). Best-effort: a failure here must not fail the webhook.
-            if (!string.IsNullOrWhiteSpace(message.From) && !string.IsNullOrWhiteSpace(message.Text))
+            //
+            // A message with media but no caption is recorded too (D8): it used to be dropped
+            // entirely, which is why a customer's photo produced `{status: "ignored"}`.
+            Guid? attachmentId = null;
+            if (!string.IsNullOrWhiteSpace(message.From)
+                && (!string.IsNullOrWhiteSpace(message.Text) || message.Media is not null))
             {
                 try
                 {
@@ -195,8 +187,21 @@ public static class WebhookEndpoints
                     // A number that is not on file yields a null customer, and the thread is
                     // created with only its external ref - the client renders that state.
                     var customer = await customers.GetByPhoneAsync(organizationId, message.From, ct);
+
+                    // The customer's own media, stored before the message is recorded so the
+                    // message can bind it. A missing integration or an expired media URL logs and
+                    // records what it can rather than failing the webhook: Meta retries a non-200,
+                    // and a retry would not fix an expired URL.
+                    if (message.Media is not null)
+                    {
+                        attachmentId = await TryStoreInboundMediaAsync(
+                            organizationId, message, customer?.Id, integrationService, whatsApp,
+                            conversations, logger, ct);
+                    }
+
                     var recorded = await conversations.RecordInboundClientMessageAsync(
-                        organizationId, message.From, message.From, message.Text, customer?.Id, ct);
+                        organizationId, message.From, message.From, message.Text ?? string.Empty,
+                        customer?.Id, attachmentId, ct);
 
                     // An inbound message may have created the thread, and `message.created` alone
                     // cannot deliver that: it carries a message for a conversation the client may
@@ -214,6 +219,23 @@ public static class WebhookEndpoints
                         organizationId);
                 }
             }
+
+            // Published after the record branch so it can name the attachment the thread now
+            // carries: the agent's image analysis needs the id, not the bytes.
+            await eventBus.PublishAsync(
+                "message.received",
+                organizationId,
+                new
+                {
+                    messageId = message.Id,
+                    from = message.From,
+                    to = message.To,
+                    text = message.Text,
+                    attachmentId,
+                    timestamp = DateTimeOffset.UtcNow,
+                },
+                traceId: null,
+                ct);
 
             logger.LogInformation(
                 "Processed inbound WhatsApp message. organizationId={OrganizationId} messageId={MessageId}",
@@ -258,6 +280,103 @@ public static class WebhookEndpoints
         }
     }
 
+    /// <summary>
+    /// Fetches the customer's media with the tenant's credentials and stores it against the
+    /// thread, returning the attachment id or <c>null</c> when it could not be kept.
+    /// </summary>
+    /// <remarks>
+    /// Every failure path here is a log-and-continue: a missing integration, an expired media
+    /// URL, a download error or a type outside the allow-list must never make the webhook
+    /// answer non-200, because Meta's retry would not fix any of them.
+    /// </remarks>
+    private static async Task<Guid?> TryStoreInboundMediaAsync(
+        Guid organizationId,
+        ExtractedMessage message,
+        Guid? customerId,
+        IIntegrationService integrationService,
+        Aveline.Api.Modules.Integrations.Services.Providers.IWhatsAppService whatsApp,
+        Aveline.Api.Modules.Conversations.Services.IConversationService conversations,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        var media = message.Media!;
+        if (string.IsNullOrWhiteSpace(media.Id) || string.IsNullOrWhiteSpace(message.From))
+        {
+            return null;
+        }
+
+        try
+        {
+            var credentials = await integrationService.GetCredentialsAsync(
+                organizationId, IntegrationType.WhatsApp, ct);
+            if (!credentials.TryGetValue("accessToken", out var accessToken)
+                || string.IsNullOrWhiteSpace(accessToken))
+            {
+                logger.LogWarning(
+                    "Inbound WhatsApp media skipped: no access token. organizationId={OrganizationId}",
+                    organizationId);
+                return null;
+            }
+
+            var fetched = await whatsApp.GetMediaAsync(accessToken, media.Id, ct);
+            if (!fetched.IsSuccess || fetched.Bytes is null || fetched.Bytes.Length == 0)
+            {
+                logger.LogWarning(
+                    "Inbound WhatsApp media could not be fetched. organizationId={OrganizationId} error={Error}",
+                    organizationId, fetched.Error);
+                return null;
+            }
+
+            var fileName = InboundMediaFileName(message.Id, fetched.ContentType ?? media.MimeType);
+            var contentType = MediaContentTypes.Resolve(fetched.ContentType ?? media.MimeType, fileName);
+            if (contentType is null)
+            {
+                // Audio, video or anything else off the allow-list: recorded as skipped rather
+                // than stored.
+                logger.LogInformation(
+                    "Inbound WhatsApp media skipped: unsupported type. organizationId={OrganizationId} type={Type}",
+                    organizationId, fetched.ContentType ?? media.MimeType);
+                return null;
+            }
+
+            var stored = await conversations.StoreInboundAttachmentAsync(
+                organizationId, message.From, customerId, fetched.Bytes, contentType, fileName, ct);
+            return stored.Id;
+        }
+        catch (IntegrationNotConfiguredException)
+        {
+            logger.LogWarning(
+                "Inbound WhatsApp media skipped: the integration is not configured. organizationId={OrganizationId}",
+                organizationId);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex,
+                "Inbound WhatsApp media failed. organizationId={OrganizationId}", organizationId);
+            return null;
+        }
+    }
+
+    /// <summary>A file name for media Meta sends without one.</summary>
+    private static string InboundMediaFileName(string? externalId, string? contentType)
+    {
+        var extension = (contentType ?? string.Empty).Split(';')[0].Trim().ToLowerInvariant() switch
+        {
+            "application/pdf" => ".pdf",
+            "image/png" => ".png",
+            "image/webp" => ".webp",
+            "image/gif" => ".gif",
+            "image/avif" => ".avif",
+            "image/bmp" => ".bmp",
+            "image/tiff" => ".tiff",
+            "image/heic" => ".heic",
+            "image/heif" => ".heif",
+            _ => ".jpg",
+        };
+        return $"whatsapp-{externalId ?? "media"}{extension}";
+    }
+
     private static async Task<string?> GetAppSecretAsync(
         Guid organizationId,
         IIntegrationService integrationService,
@@ -275,23 +394,34 @@ public static class WebhookEndpoints
         }
     }
 
+    /// <summary>
+    /// The message Meta sent, whether it is text or media.
+    /// </summary>
+    /// <remarks>
+    /// This used to select only `type == "text"`, so an image or a document produced
+    /// `{status: "ignored"}` and nothing in the thread. Media now yields a descriptor plus any
+    /// caption, and the caption is the message's own words when it has them.
+    /// </remarks>
     private static ExtractedMessage? ExtractMessage(WhatsAppWebhookPayload? payload)
     {
         var entry = payload?.Entry?.FirstOrDefault();
         var change = entry?.Changes?.FirstOrDefault();
         var value = change?.Value;
-        var message = value?.Messages?.FirstOrDefault(m => m.Type == "text");
+        var message = value?.Messages?.FirstOrDefault();
         if (message is null)
         {
             return null;
         }
 
+        var media = message.Image ?? message.Document;
+
         return new ExtractedMessage
         {
             Id = message.Id,
             From = message.From,
-            To = value.Contacts?.FirstOrDefault()?.WaId ?? value.Metadata?.DisplayPhoneNumber,
-            Text = message.Text?.Body,
+            To = value!.Contacts?.FirstOrDefault()?.WaId ?? value.Metadata?.DisplayPhoneNumber,
+            Text = message.Text?.Body ?? media?.Caption,
+            Media = media,
         };
     }
 
@@ -302,8 +432,22 @@ public static class WebhookEndpoints
         WhatsAppMessage[]? Messages,
         WhatsAppContact[]? Contacts,
         WhatsAppMetadata? Metadata);
-    private sealed record WhatsAppMessage(string? Id, string? From, string? Type, WhatsAppText? Text);
+    private sealed record WhatsAppMessage(
+        string? Id,
+        string? From,
+        string? Type,
+        WhatsAppText? Text,
+        WhatsAppMedia? Image,
+        WhatsAppMedia? Document);
+
     private sealed record WhatsAppText(string? Body);
+
+    /// <summary>Meta's media object: `{ id, mime_type, sha256, caption? }`.</summary>
+    private sealed record WhatsAppMedia(
+        string? Id,
+        [property: System.Text.Json.Serialization.JsonPropertyName("mime_type")] string? MimeType,
+        string? Sha256,
+        string? Caption);
     private sealed record WhatsAppContact(string? WaId);
     private sealed record WhatsAppMetadata(string? DisplayPhoneNumber);
 
@@ -313,5 +457,8 @@ public static class WebhookEndpoints
         public string? From { get; init; }
         public string? To { get; init; }
         public string? Text { get; init; }
+
+        /// <summary>The image or document the customer sent, when there was one.</summary>
+        public WhatsAppMedia? Media { get; init; }
     }
 }

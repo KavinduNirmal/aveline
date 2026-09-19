@@ -42,6 +42,20 @@ class BoutiqueProvider extends ChangeNotifier {
   /// Whether loading the boutique has failed and has not succeeded since.
   bool get hasLoadFailed => _errorMessage != null;
 
+  /// Stands a membership up directly, for a test or a preview: the app fills this from
+  /// `GET /orgs/my`, which a widget test has no endpoint for.
+  @visibleForTesting
+  void setMembership({
+    String? name,
+    String? organizationId,
+    String? boutiqueRole,
+  }) {
+    _name = name;
+    _organizationId = organizationId;
+    _boutiqueRole = boutiqueRole;
+    notifyListeners();
+  }
+
   void clear() {
     _name = null;
     _organizationId = null;

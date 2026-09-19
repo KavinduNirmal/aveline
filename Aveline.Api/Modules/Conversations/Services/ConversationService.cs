@@ -1,9 +1,12 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using Aveline.Api.Common.Media;
 using Aveline.Api.Infrastructure.Integrations;
+using Aveline.Api.Modules.Conversations.Attachments;
 using Aveline.Api.Modules.Conversations.DTOs;
 using Aveline.Api.Modules.Conversations.Models;
 using Aveline.Api.Modules.Conversations.Repositories;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace Aveline.Api.Modules.Conversations.Services;
@@ -13,6 +16,9 @@ public class ConversationService : IConversationService
     private readonly IConversationRepository _conversations;
     private readonly IMessageRepository _messages;
     private readonly ISignOffDecisionRepository _signOffDecisions;
+    private readonly IConversationReadStateRepository _readStates;
+    private readonly IMessageAttachmentRepository _attachments;
+    private readonly IAttachmentStore _attachmentStore;
     private readonly IAgentServiceClient _agentClient;
     private readonly ILogger<ConversationService> _logger;
 
@@ -20,12 +26,18 @@ public class ConversationService : IConversationService
         IConversationRepository conversations,
         IMessageRepository messages,
         ISignOffDecisionRepository signOffDecisions,
+        IConversationReadStateRepository readStates,
+        IMessageAttachmentRepository attachments,
+        IAttachmentStore attachmentStore,
         IAgentServiceClient agentClient,
         ILogger<ConversationService> logger)
     {
         _conversations = conversations;
         _messages = messages;
         _signOffDecisions = signOffDecisions;
+        _readStates = readStates;
+        _attachments = attachments;
+        _attachmentStore = attachmentStore;
         _agentClient = agentClient;
         _logger = logger;
     }
@@ -145,7 +157,7 @@ public class ConversationService : IConversationService
                 row.Conversation.OwnerUserId);
     }
 
-    public async Task<(IReadOnlyList<MessageDto> Items, int Total)> ListMessagesAsync(
+    public async Task<(IReadOnlyList<MessageDto> Items, int Total, int Page)> ListMessagesAsync(
         Guid orgId,
         Guid userId,
         Guid conversationId,
@@ -160,8 +172,9 @@ public class ConversationService : IConversationService
             throw new InvalidOperationException("Conversation not found in this organization.");
         }
 
-        var (items, total) = await _messages.ListAsync(conversationId, page, pageSize, around, cancellationToken);
-        return (items.Select(MessageDto.From).ToList(), total);
+        var (items, total, effectivePage) = await _messages.ListAsync(
+            conversationId, page, pageSize, around, cancellationToken);
+        return (items.Select(MessageDto.From).ToList(), total, effectivePage);
     }
 
     public async Task<MessageDto> SendStaffNoteAsync(
@@ -169,10 +182,30 @@ public class ConversationService : IConversationService
         Guid userId,
         Guid conversationId,
         string text,
+        Guid? clientMessageId = null,
+        IReadOnlyList<Guid>? attachmentIds = null,
         CancellationToken cancellationToken = default)
     {
         var conversation = await _conversations.GetVisibleToUserAsync(orgId, conversationId, userId, cancellationToken)
             ?? throw new InvalidOperationException("Conversation not found in this organization.");
+
+        // Resolved and validated **before** the message is written, so a bad id leaves the
+        // uploads unbound and sweepable rather than half-binding them to a stored message.
+        var attachments = await ResolveAttachmentsAsync(orgId, conversationId, attachmentIds, cancellationToken);
+        var contentBlocksJson = SerializeNoteBlocks(text, attachments);
+
+        // A retry of one composed message must land on the row the first attempt stored. The
+        // same key with the same words is a replay (200 with that row, no second agent brief);
+        // the same key with different words is refused rather than silently written twice.
+        if (clientMessageId is not null)
+        {
+            var existing = await _messages.GetByClientMessageIdAsync(
+                conversationId, clientMessageId.Value, cancellationToken);
+            if (existing is not null)
+            {
+                return ResolveReplay(existing, text, conversationId, clientMessageId.Value);
+            }
+        }
 
         var message = new Message
         {
@@ -180,13 +213,36 @@ public class ConversationService : IConversationService
             AuthorKind = AuthorKind.User,
             AuthorUserId = userId,
             Kind = MessageKind.Note,
-            ContentBlocksJson = JsonSerializer.Serialize(new[]
-            {
-                new { type = "text", text },
-            }),
+            ContentBlocksJson = contentBlocksJson,
+            ClientMessageId = clientMessageId,
             Status = MessageStatus.Published,
         };
-        await _messages.SaveAsync(message, cancellationToken);
+
+        try
+        {
+            await _messages.SaveAsync(message, cancellationToken);
+        }
+        catch (DbUpdateException) when (clientMessageId is not null)
+        {
+            // A concurrent duplicate won the filtered unique index first. Adopt the row it
+            // wrote rather than failing the retry the caller is making.
+            var existing = await _messages.GetByClientMessageIdAsync(
+                conversationId, clientMessageId.Value, cancellationToken);
+            if (existing is not null)
+            {
+                return ResolveReplay(existing, text, conversationId, clientMessageId.Value);
+            }
+            throw;
+        }
+
+        // Bound after the row exists, inside the same request: an upload that is never sent
+        // stays unbound and the sweep collects it.
+        foreach (var attachment in attachments)
+        {
+            attachment.MessageId = message.Id;
+            attachment.BoundAtUtc = DateTime.UtcNow;
+            await _attachments.SaveAsync(attachment, cancellationToken);
+        }
 
         conversation.LastMessageAt = DateTime.UtcNow;
         await _conversations.SaveAsync(conversation, cancellationToken);
@@ -194,6 +250,223 @@ public class ConversationService : IConversationService
         await TriggerAgentAsync(conversation, text, cancellationToken: cancellationToken);
 
         return MessageDto.From(message);
+    }
+
+    /// <summary>
+    /// The attachments a send may bind, refusing the whole send when any id is unknown, foreign
+    /// to this conversation, already bound, or over the per-message cap.
+    /// </summary>
+    private async Task<IReadOnlyList<MessageAttachment>> ResolveAttachmentsAsync(
+        Guid orgId,
+        Guid conversationId,
+        IReadOnlyList<Guid>? attachmentIds,
+        CancellationToken cancellationToken)
+    {
+        if (attachmentIds is null || attachmentIds.Count == 0)
+        {
+            return [];
+        }
+
+        var distinct = attachmentIds.Distinct().ToList();
+        if (distinct.Count > MediaContentTypes.MaxPerMessage)
+        {
+            throw new AttachmentBindingException(
+                $"A message may carry at most {MediaContentTypes.MaxPerMessage} attachments.");
+        }
+
+        var bindable = await _attachments.GetBindableAsync(orgId, conversationId, distinct, cancellationToken);
+        if (bindable.Count != distinct.Count)
+        {
+            throw new AttachmentBindingException(
+                "An attachment is unknown, belongs to another conversation, or is already attached to a message.");
+        }
+
+        return bindable;
+    }
+
+    /// <summary>
+    /// The stored blocks: the note's own words, then one <c>attachment</c> block per file.
+    /// </summary>
+    private static string SerializeNoteBlocks(string text, IReadOnlyList<MessageAttachment> attachments)
+    {
+        var blocks = new List<Dictionary<string, object?>>
+        {
+            new() { ["type"] = "text", ["text"] = text },
+        };
+
+        foreach (var attachment in attachments)
+        {
+            blocks.Add(new Dictionary<string, object?>
+            {
+                ["type"] = "attachment",
+                ["attachmentId"] = attachment.Id,
+                ["url"] = attachment.Url,
+                ["contentType"] = attachment.ContentType,
+                ["fileName"] = attachment.FileName,
+                ["sizeBytes"] = attachment.SizeBytes,
+                ["width"] = attachment.Width,
+                ["height"] = attachment.Height,
+            });
+        }
+
+        return JsonSerializer.Serialize(blocks);
+    }
+
+    /// <summary>The note's own words, read back out of its stored blocks.</summary>
+    private static string? ReadNoteText(string? contentBlocksJson)
+    {
+        if (string.IsNullOrWhiteSpace(contentBlocksJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(contentBlocksJson);
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+            foreach (var block in document.RootElement.EnumerateArray())
+            {
+                if (block.TryGetProperty("type", out var type)
+                    && type.GetString() == "text"
+                    && block.TryGetProperty("text", out var value)
+                    && value.ValueKind == JsonValueKind.String)
+                {
+                    return value.GetString();
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        return null;
+    }
+
+    public async Task<MessageAttachment?> CreateAttachmentAsync(
+        Guid orgId,
+        Guid userId,
+        Guid conversationId,
+        byte[] bytes,
+        string contentType,
+        string fileName,
+        int? width,
+        int? height,
+        CancellationToken cancellationToken = default)
+    {
+        var conversation = await _conversations.GetVisibleToUserAsync(orgId, conversationId, userId, cancellationToken);
+        if (conversation is null)
+        {
+            return null;
+        }
+
+        return await _attachmentStore.StoreAsync(
+            new AttachmentStoreRequest(orgId, conversationId, userId, bytes, contentType, fileName, width, height),
+            cancellationToken);
+    }
+
+    public async Task<MessageAttachment?> GetAttachmentAsync(
+        Guid orgId,
+        Guid userId,
+        Guid conversationId,
+        Guid attachmentId,
+        CancellationToken cancellationToken = default)
+    {
+        // Visibility is checked on the conversation, not the row: an attachment is readable
+        // exactly when the thread it belongs to is.
+        var conversation = await _conversations.GetVisibleToUserAsync(orgId, conversationId, userId, cancellationToken);
+        if (conversation is null)
+        {
+            return null;
+        }
+
+        return await _attachments.GetAsync(orgId, conversationId, attachmentId, cancellationToken);
+    }
+
+    public Task<Stream?> OpenAttachmentAsync(
+        MessageAttachment attachment,
+        CancellationToken cancellationToken = default)
+        => _attachmentStore.OpenReadAsync(attachment, cancellationToken);
+
+    public async Task<MarkReadOutcome> MarkReadAsync(
+        Guid orgId,
+        Guid userId,
+        Guid conversationId,
+        Guid lastReadMessageId,
+        CancellationToken cancellationToken = default)
+    {
+        var conversation = await _conversations.GetVisibleToUserAsync(orgId, conversationId, userId, cancellationToken);
+        if (conversation is null)
+        {
+            return MarkReadOutcome.ConversationNotFound;
+        }
+
+        var message = await _messages.GetAsync(conversationId, lastReadMessageId, cancellationToken);
+        if (message is null)
+        {
+            return MarkReadOutcome.MessageNotFound;
+        }
+
+        var state = await _readStates.GetAsync(orgId, userId, conversationId, cancellationToken);
+
+        // Monotonic by (CreatedAt, Id): a second device re-opening an older position must not
+        // un-read what the first device already read. The marker's own message is loaded to
+        // compare; when it is gone there is nothing to prove a regression, so the write stands.
+        if (state?.LastReadMessageId is Guid currentId && currentId != Guid.Empty)
+        {
+            var current = await _messages.GetAsync(conversationId, currentId, cancellationToken);
+            if (current is not null && !IsAfter(message, current))
+            {
+                return MarkReadOutcome.Ignored;
+            }
+        }
+
+        if (state is null)
+        {
+            state = new ConversationReadState
+            {
+                OrganizationId = orgId,
+                UserId = userId,
+                ConversationId = conversationId,
+                LastReadMessageId = lastReadMessageId,
+                LastReadAtUtc = DateTime.UtcNow,
+            };
+        }
+        else
+        {
+            state.LastReadMessageId = lastReadMessageId;
+            state.LastReadAtUtc = DateTime.UtcNow;
+        }
+
+        await _readStates.SaveAsync(state, cancellationToken);
+        return MarkReadOutcome.Recorded;
+    }
+
+    /// <summary>Whether <paramref name="candidate"/> is a later position than <paramref name="current"/>.</summary>
+    private static bool IsAfter(Message candidate, Message current)
+        => candidate.CreatedAt > current.CreatedAt
+           || (candidate.CreatedAt == current.CreatedAt && candidate.Id.CompareTo(current.Id) > 0);
+
+    /// <summary>
+    /// The stored row a retry named, or a conflict when the key was used for different words.
+    /// </summary>
+    private static MessageDto ResolveReplay(
+        Message stored,
+        string expectedText,
+        Guid conversationId,
+        Guid clientMessageId)
+    {
+        // Compared on the note's own words rather than the whole block array, so a retry that
+        // carries the same text alongside its attachments replays instead of conflicting.
+        if (!string.Equals(ReadNoteText(stored.ContentBlocksJson), expectedText, StringComparison.Ordinal))
+        {
+            throw new MessageIdempotencyConflictException(conversationId, clientMessageId);
+        }
+
+        return MessageDto.From(stored);
     }
 
     public async Task<MessageDto> ApplyAgentMessageAsync(
@@ -294,10 +567,10 @@ public class ConversationService : IConversationService
         CancellationToken cancellationToken = default)
     {
         var conversation = await _conversations.GetVisibleToUserAsync(orgId, conversationId, userId, cancellationToken)
-            ?? throw new InvalidOperationException("Conversation not found in this organization.");
+            ?? throw new SignOffNotFoundException("Conversation not found in this organization.");
 
         var message = await _messages.GetAsync(conversationId, messageId, cancellationToken)
-            ?? throw new InvalidOperationException("Message not found in this conversation.");
+            ?? throw new SignOffNotFoundException("Message not found in this conversation.");
 
         if (message.Kind != MessageKind.SignOff)
         {
@@ -325,13 +598,15 @@ public class ConversationService : IConversationService
             ConversationId = conversationId,
             MessageId = messageId,
             ContentHash = currentHash,
-            Approved = approved,
+            Kind = approved ? SignOffDecisionKind.Approved : SignOffDecisionKind.Rejected,
             DecidedBy = userId,
             DecidedAt = DateTime.UtcNow,
         }, cancellationToken);
 
         message.Status = approved ? MessageStatus.Published : MessageStatus.Cancelled;
-        await _messages.SaveAsync(message, cancellationToken);
+        // `SaveAsync` inserts; this message was loaded, so re-adding it would violate the
+        // primary key. `UpdateAsync` is the write for an existing row.
+        await _messages.UpdateAsync(message, cancellationToken);
 
         conversation.Status = approved ? ConversationStatus.Active : ConversationStatus.Resolved;
         conversation.LastMessageAt = DateTime.UtcNow;
@@ -352,12 +627,85 @@ public class ConversationService : IConversationService
         return MessageDto.From(message);
     }
 
+    public async Task<MessageDto> RevokeSignOffAsync(
+        Guid orgId,
+        Guid userId,
+        Guid conversationId,
+        Guid messageId,
+        string? reason,
+        CancellationToken cancellationToken = default)
+    {
+        var conversation = await _conversations.GetVisibleToUserAsync(orgId, conversationId, userId, cancellationToken)
+            ?? throw new SignOffNotFoundException("Conversation not found in this organization.");
+
+        var message = await _messages.GetAsync(conversationId, messageId, cancellationToken)
+            ?? throw new SignOffNotFoundException("Message not found in this conversation.");
+
+        if (message.Kind != MessageKind.SignOff)
+        {
+            throw new InvalidOperationException("Only a SignOff message can be decided.");
+        }
+
+        var newest = await _signOffDecisions.GetByMessageIdAsync(messageId, cancellationToken);
+        if (newest is null || newest.Kind != SignOffDecisionKind.Approved)
+        {
+            throw new InvalidOperationException("This SignOff is not approved.");
+        }
+
+        // Appended, never mutated: the approval row stays as the record of what was decided,
+        // and the revocation is a second row. The hash is carried over so the same payload is
+        // decidable again.
+        await _signOffDecisions.SaveAsync(new SignOffDecision
+        {
+            OrganizationId = orgId,
+            ConversationId = conversationId,
+            MessageId = messageId,
+            ContentHash = newest.ContentHash,
+            Kind = SignOffDecisionKind.Revoked,
+            DecidedBy = userId,
+            DecidedAt = DateTime.UtcNow,
+        }, cancellationToken);
+
+        message.Status = MessageStatus.AwaitingSignOff;
+        await _messages.UpdateAsync(message, cancellationToken);
+
+        // Back to the associate's queue: this is what lights the inbox's `approval` marker
+        // again, since it is derived from this status.
+        conversation.Status = ConversationStatus.AwaitingSignOff;
+        await _conversations.SaveAsync(conversation, cancellationToken);
+
+        _logger.LogInformation(
+            "SignOff {MessageId} revoked by user {UserId} in conversation {ConversationId} (reason: {Reason}).",
+            messageId, userId, conversationId, string.IsNullOrWhiteSpace(reason) ? "none" : reason);
+
+        return MessageDto.From(message);
+    }
+
+    public async Task<MessageAttachment> StoreInboundAttachmentAsync(
+        Guid orgId,
+        string externalRef,
+        Guid? customerId,
+        byte[] bytes,
+        string contentType,
+        string fileName,
+        CancellationToken cancellationToken = default)
+    {
+        var conversation = await _conversations.GetOrCreateSalonByExternalRefAsync(
+            orgId, externalRef, Guid.NewGuid().ToString("N"), customerId, cancellationToken);
+
+        // No uploader: the bytes came from the customer's channel, not from a staff device.
+        return await _attachmentStore.StoreAsync(
+            new AttachmentStoreRequest(orgId, conversation.Id, null, bytes, contentType, fileName, null, null),
+            cancellationToken);
+    }
+
     public async Task<MessageDto> RecordInboundClientMessageAsync(
         Guid orgId,
         string externalRef,
         string from,
         string text,
         Guid? customerId,
+        Guid? attachmentId = null,
         CancellationToken cancellationToken = default)
     {
         var threadId = Guid.NewGuid().ToString("N");
@@ -366,18 +714,47 @@ public class ConversationService : IConversationService
         var conversation = await _conversations.GetOrCreateSalonByExternalRefAsync(
             orgId, externalRef, threadId, customerId, cancellationToken);
 
+        // Media the webhook already stored, so the same message the customer sent arrives as the
+        // channel's words plus the file rather than as a dropped payload.
+        var attachment = attachmentId is null
+            ? null
+            : await _attachments.GetAsync(orgId, conversation.Id, attachmentId.Value, cancellationToken);
+
+        var blocks = new List<Dictionary<string, object?>>
+        {
+            new() { ["type"] = "client_message", ["from"] = from, ["text"] = text },
+        };
+        if (attachment is not null)
+        {
+            blocks.Add(new Dictionary<string, object?>
+            {
+                ["type"] = "attachment",
+                ["attachmentId"] = attachment.Id,
+                ["url"] = attachment.Url,
+                ["contentType"] = attachment.ContentType,
+                ["fileName"] = attachment.FileName,
+                ["sizeBytes"] = attachment.SizeBytes,
+                ["width"] = attachment.Width,
+                ["height"] = attachment.Height,
+            });
+        }
+
         var message = new Message
         {
             ConversationId = conversation.Id,
             AuthorKind = AuthorKind.System,
             Kind = MessageKind.ClientMessage,
-            ContentBlocksJson = JsonSerializer.Serialize(new[]
-            {
-                new { type = "client_message", from, text },
-            }),
+            ContentBlocksJson = JsonSerializer.Serialize(blocks),
             Status = MessageStatus.Published,
         };
         await _messages.SaveAsync(message, cancellationToken);
+
+        if (attachment is not null)
+        {
+            attachment.MessageId = message.Id;
+            attachment.BoundAtUtc = DateTime.UtcNow;
+            await _attachments.SaveAsync(attachment, cancellationToken);
+        }
 
         conversation.LastMessageAt = DateTime.UtcNow;
         await _conversations.SaveAsync(conversation, cancellationToken);

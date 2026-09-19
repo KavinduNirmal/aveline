@@ -14,6 +14,17 @@ import 'package:flutter_test/flutter_test.dart';
 /// it means. The demo repository keeps its own contract test in
 /// `demo_conversation_repository_test.dart`.
 class _FakeInbox implements ConversationRepository {
+
+  @override
+  Future<Conversation?> fetchConversation(String id) async {
+    final page = await fetchConversations();
+    for (final conversation in page.items) {
+      if (conversation.id == id) {
+        return conversation;
+      }
+    }
+    return null;
+  }
   _FakeInbox(
     this.items, {
     this.latency = Duration.zero,
@@ -160,6 +171,17 @@ List<Conversation> _seed() => [
 ];
 
 class _EmptyInbox implements ConversationRepository {
+
+  @override
+  Future<Conversation?> fetchConversation(String id) async {
+    final page = await fetchConversations();
+    for (final conversation in page.items) {
+      if (conversation.id == id) {
+        return conversation;
+      }
+    }
+    return null;
+  }
   @override
   Future<ConversationPage> fetchConversations({int page = 1}) async =>
       ConversationPage.empty;
@@ -167,6 +189,17 @@ class _EmptyInbox implements ConversationRepository {
 
 /// An inbox whose organization context has not arrived yet.
 class _WaitingInbox implements ConversationRepository {
+
+  @override
+  Future<Conversation?> fetchConversation(String id) async {
+    final page = await fetchConversations();
+    for (final conversation in page.items) {
+      if (conversation.id == id) {
+        return conversation;
+      }
+    }
+    return null;
+  }
   @override
   Future<ConversationPage> fetchConversations({int page = 1}) async {
     throw const OrgContextUnavailable();

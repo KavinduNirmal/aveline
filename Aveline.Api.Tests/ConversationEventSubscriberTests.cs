@@ -93,10 +93,31 @@ public class ConversationEventSubscriberTests
         public Task<ConversationDto?> SelectCustomerAsync(Guid orgId, Guid userId, Guid conversationId, Guid customerId, string? query, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public Task<(IReadOnlyList<MessageDto> Items, int Total)> ListMessagesAsync(Guid orgId, Guid userId, Guid conversationId, int page, int pageSize, Guid? around = null, CancellationToken cancellationToken = default)
+        public Task<(IReadOnlyList<MessageDto> Items, int Total, int Page)> ListMessagesAsync(Guid orgId, Guid userId, Guid conversationId, int page, int pageSize, Guid? around = null, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public Task<MessageDto> SendStaffNoteAsync(Guid orgId, Guid userId, Guid conversationId, string text, CancellationToken cancellationToken = default)
+        public Task<MessageDto> SendStaffNoteAsync(Guid orgId, Guid userId, Guid conversationId, string text, Guid? clientMessageId = null, IReadOnlyList<Guid>? attachmentIds = null, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        public Task<Aveline.Api.Modules.Conversations.Models.MessageAttachment?> CreateAttachmentAsync(Guid orgId, Guid userId, Guid conversationId, byte[] bytes, string contentType, string fileName, int? width, int? height, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        public Task<Aveline.Api.Modules.Conversations.Models.MessageAttachment?> GetAttachmentAsync(Guid orgId, Guid userId, Guid conversationId, Guid attachmentId, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        public Task<Stream?> OpenAttachmentAsync(Aveline.Api.Modules.Conversations.Models.MessageAttachment attachment, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        public Task<MarkReadOutcome> MarkReadAsync(Guid orgId, Guid userId, Guid conversationId, Guid lastReadMessageId, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        public Task<MessageDto> RevokeSignOffAsync(Guid orgId, Guid userId, Guid conversationId, Guid messageId, string? reason, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        public Task<MessageDto> RecordInboundClientMessageAsync(Guid orgId, string externalRef, string from, string text, Guid? customerId, Guid? attachmentId = null, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        public Task<Aveline.Api.Modules.Conversations.Models.MessageAttachment> StoreInboundAttachmentAsync(Guid orgId, string externalRef, Guid? customerId, byte[] bytes, string contentType, string fileName, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
         public Task<MessageDto> ApplyAgentMessageAsync(AgentMessageEvent evt, CancellationToken cancellationToken = default)

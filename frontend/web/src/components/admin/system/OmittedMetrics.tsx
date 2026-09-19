@@ -18,7 +18,7 @@ export function OmittedMetrics({ omitted }: { omitted: readonly string[] }) {
         <ShieldCheck className="size-4 shrink-0 text-primary" />
         <div>
           <div className="font-medium text-foreground">Not measured on this host</div>
-          <ul className="mt-1 list-disc space-y-0.5 pl-4">
+          <ul className="mt-1 list-disc flex flex-col gap-0.5 pl-4">
             {names.map((name) => (
               <li key={name} className="font-mono">
                 {name}

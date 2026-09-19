@@ -162,7 +162,7 @@ export function AdminRequestsView() {
   ]
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6">
       <div className="flex justify-between items-center gap-3 flex-wrap">
         <div>
           <h2 className="font-serif text-2xl font-medium tracking-tight text-foreground">

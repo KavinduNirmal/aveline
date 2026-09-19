@@ -32,8 +32,13 @@ function source(file: string): string {
  * is where the accessibility work lives, because the shadcn primitives carry the labels, focus
  * rings and error wiring.
  *
- * The remaining two rules (raw `<button>`/`<table>`/`<hr>`, and `space-x-*`/`space-y-*`) land
- * before A8.
+ * **The allow-list.** A genuinely bespoke component may carry a marker comment beside the
+ * exception, as C6 requires:
+ *
+ *     conformance-allow: raw-button — <why no primitive covers this>
+ *
+ * `offenders` skips a file for a rule only when that marker is present. The only current exception
+ * is the log viewer's virtualised row (see `components/admin/logs/LogRow.tsx`).
  */
 const PALETTE =
   /\b(?:bg|text|border|ring|from|to|via|fill|stroke|decoration|outline|shadow|divide|accent|caret|placeholder|ring-offset)-(?:slate|gray|grey|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3}\b/g
@@ -42,9 +47,18 @@ const HEX = /#[0-9a-fA-F]{3,8}\b/g
 
 const RAW_CONTROL = /<(select|input)\b/g
 
-function offenders(pattern: RegExp): string[] {
+const RAW_ELEMENT = /<(button|table|hr)\b/g
+
+const SPACE_UTILITY = /\bspace-[xy]-[0-9.]+\b/g
+
+function allowed(file: string, rule: string): boolean {
+  return new RegExp(`conformance-allow:\\s*${rule}\\b`).test(source(file))
+}
+
+function offenders(pattern: RegExp, rule: string): string[] {
   const found: string[] = []
   for (const file of adminFiles) {
+    if (allowed(file, rule)) continue
     const matches = source(file).match(pattern)
     if (matches) {
       found.push(`${file.replace(srcRoot, 'src')}: ${[...new Set(matches)].join(', ')}`)
@@ -55,30 +69,50 @@ function offenders(pattern: RegExp): string[] {
 
 describe('A3 blocking conformance rules', () => {
   it('rule 1a: no raw palette utilities in the admin tree', () => {
-    expect(offenders(PALETTE)).toEqual([])
+    expect(offenders(PALETTE, 'raw-palette')).toEqual([])
   })
 
   it('rule 1b: no bare hex colours in the admin tree', () => {
-    expect(offenders(HEX)).toEqual([])
+    expect(offenders(HEX, 'raw-hex')).toEqual([])
   })
 
   it('rule 2: no raw <select> or <input> in the admin tree', () => {
-    expect(offenders(RAW_CONTROL)).toEqual([])
+    expect(offenders(RAW_CONTROL, 'raw-control')).toEqual([])
+  })
+
+  it('rule 3: no raw <button>, <table> or <hr> in the admin tree', () => {
+    expect(offenders(RAW_ELEMENT, 'raw-button')).toEqual([])
+  })
+
+  it('rule 4: layout spacing uses gap, never space-x-*/space-y-*', () => {
+    expect(offenders(SPACE_UTILITY, 'space-utilities')).toEqual([])
+  })
+
+  it('keeps the allow-list honest: every exception is a documented marker', () => {
+    const markers: string[] = []
+    for (const file of adminFiles) {
+      const text = source(file)
+      for (const match of text.matchAll(/conformance-allow:\s*([a-z-]+)/g)) {
+        markers.push(`${file.replace(srcRoot, 'src')}: ${match[1]}`)
+      }
+    }
+    // Grow this list only with a reason beside the exception.
+    expect(markers).toEqual(['src/components/admin/logs/LogRow.tsx: raw-button'])
   })
 
   it('every chart series sets connectNulls from the shared CONNECT_NULLS constant', () => {
     // A `null` must be a gap. `connectNulls: true` is the classic silent lie: the line runs
     // through zero and the chart reports a value the server never measured.
-    const offenders: string[] = []
+    const found: string[] = []
     for (const file of adminFiles) {
       const text = source(file)
       for (const match of text.matchAll(/<(?:Line|Area)\b[\s\S]*?\/>/g)) {
         const element = match[0]
         if (!element.includes('connectNulls={CONNECT_NULLS}')) {
-          offenders.push(`${file.replace(srcRoot, 'src')}: ${element.slice(0, 60)}…`)
+          found.push(`${file.replace(srcRoot, 'src')}: ${element.slice(0, 60)}…`)
         }
       }
     }
-    expect(offenders).toEqual([])
+    expect(found).toEqual([])
   })
 })

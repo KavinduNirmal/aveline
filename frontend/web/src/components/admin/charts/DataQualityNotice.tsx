@@ -45,7 +45,7 @@ export function DataQualityNotice({
           <div className="font-medium text-foreground">
             {title ?? VOCABULARY_LABEL[report.vocabulary]}
           </div>
-          <ul className="list-disc pl-4 mt-1 space-y-0.5">
+          <ul className="list-disc pl-4 mt-1 flex flex-col gap-0.5">
             {report.messages.map((message) => (
               <li key={message}>{message}</li>
             ))}

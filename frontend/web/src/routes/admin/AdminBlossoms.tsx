@@ -124,7 +124,7 @@ export function AdminBlossomsView() {
   const canWrite = can("billing:adjust")
 
   return (
-    <div className="space-y-6 max-w-5xl">
+    <div className="flex flex-col gap-6 max-w-5xl">
       <div>
         <h2 className="font-serif text-2xl font-medium tracking-tight text-foreground">
           Blossom Ledger Administration
@@ -153,7 +153,7 @@ export function AdminBlossomsView() {
             Every entry is recorded permanently and reconciled against the balance projection.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4 text-xs">
+        <CardContent className="flex flex-col gap-4 text-xs">
           <div>
             <label className="font-medium block mb-1">Target Organization ID (GUID)</label>
             <Input

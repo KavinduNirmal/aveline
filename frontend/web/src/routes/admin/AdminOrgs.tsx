@@ -97,7 +97,7 @@ export function AdminOrgsView() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6">
       <div>
         <h2 className="font-serif text-2xl font-medium tracking-tight text-foreground">
           Boutiques & Organizations
@@ -210,7 +210,7 @@ export function AdminOrgsView() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-2 text-xs">
+          <div className="flex flex-col gap-4 py-2 text-xs">
             <div>
               <label className="font-medium block mb-1">Entitlement Key</label>
               <Input

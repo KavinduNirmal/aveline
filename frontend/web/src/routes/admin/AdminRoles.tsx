@@ -17,7 +17,7 @@ const ROLES = Object.keys(ROLE_PERMISSIONS)
 
 export function AdminRolesView() {
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6">
       <div>
         <h2 className="font-serif text-2xl font-medium tracking-tight text-foreground">
           Canonical Security &amp; Authorization Matrix
@@ -31,7 +31,7 @@ export function AdminRolesView() {
       <Card className="border-border/80 bg-muted/20 shadow-xs">
         <CardContent className="p-4 flex items-start gap-3 text-xs text-foreground">
           <Info className="size-4 text-primary shrink-0 mt-0.5" />
-          <div className="space-y-2">
+          <div className="flex flex-col gap-2">
             <p className="text-muted-foreground leading-relaxed">
               <span className="font-medium text-foreground">The server is authoritative.</span>{' '}
               This table is a presentation mirror used for navigation and gating; it is never the

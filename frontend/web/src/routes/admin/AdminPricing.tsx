@@ -19,7 +19,7 @@ export function AdminPricingView() {
   const [ruleId, setRuleId] = useState("")
 
   return (
-    <div className="space-y-6 max-w-5xl">
+    <div className="flex flex-col gap-6 max-w-5xl">
       <div>
         <h2 className="font-serif text-2xl font-medium tracking-tight text-foreground">
           Pricing &amp; Valuation Rules
@@ -32,7 +32,7 @@ export function AdminPricingView() {
       <Card className="border-warning/30 bg-warning/5 shadow-xs">
         <CardContent className="p-4 flex items-start gap-3 text-xs text-foreground">
           <Info className="size-5 text-warning shrink-0 mt-0.5" />
-          <div className="space-y-1">
+          <div className="flex flex-col gap-1">
             <div className="font-semibold text-foreground">
               System policy note: legacy formula active
             </div>
@@ -56,7 +56,7 @@ export function AdminPricingView() {
             it.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="flex flex-col gap-3">
           <div>
             <label className="font-medium block mb-1 text-xs">Pricing rule ID (GUID)</label>
             <Input

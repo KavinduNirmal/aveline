@@ -105,7 +105,7 @@ export function IdempotentActionButton({
   }, [execute, onSettled, snapshot, state])
 
   return (
-    <div className="space-y-2">
+    <div className="flex flex-col gap-2">
       <Button
         onClick={() => void submit()}
         disabled={disabled || busy || blocked}

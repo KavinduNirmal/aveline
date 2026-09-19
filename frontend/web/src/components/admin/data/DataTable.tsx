@@ -112,7 +112,7 @@ export function DataTable<T>({
         {state === 'error' && (
           <TableRow>
             <TableCell colSpan={columns.length} className="py-8 text-center">
-              <div className="space-y-2 text-xs text-muted-foreground">
+              <div className="flex flex-col gap-2 text-xs text-muted-foreground">
                 <div>{errorMessage ?? 'This list could not be loaded.'}</div>
                 {onRetry !== undefined && (
                   <Button variant="outline" size="sm" className="text-xs" onClick={onRetry}>

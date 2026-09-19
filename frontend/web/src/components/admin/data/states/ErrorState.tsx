@@ -39,7 +39,7 @@ export function ErrorState({
     <Card className="border-destructive/30 shadow-xs">
       <CardContent className="p-4 flex items-start gap-3 text-xs">
         <AlertTriangle className="size-4 text-destructive shrink-0 mt-0.5" />
-        <div className="space-y-1 min-w-0">
+        <div className="flex flex-col gap-1 min-w-0">
           <div className="font-medium text-foreground">{title}</div>
           <div className="text-muted-foreground">
             {description.message}

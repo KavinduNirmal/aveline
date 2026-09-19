@@ -186,7 +186,7 @@ export function AdminAuditView() {
   const expanded = entries.find((candidate) => candidate.id === expandedId) ?? null
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6">
       <div>
         <h2 className="font-serif text-2xl font-medium tracking-tight text-foreground">
           Audit explorer
@@ -199,7 +199,7 @@ export function AdminAuditView() {
 
       <Card className="border-border shadow-xs">
         <CardContent className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 xl:grid-cols-5">
-          <div className="space-y-1">
+          <div className="flex flex-col gap-1">
             <Label htmlFor="audit-action" className="text-[11px] text-muted-foreground">
               Action
             </Label>
@@ -212,7 +212,7 @@ export function AdminAuditView() {
               className="h-8 font-mono text-xs"
             />
           </div>
-          <div className="space-y-1">
+          <div className="flex flex-col gap-1">
             <Label htmlFor="audit-entity-type" className="text-[11px] text-muted-foreground">
               Entity type
             </Label>
@@ -225,7 +225,7 @@ export function AdminAuditView() {
               className="h-8 font-mono text-xs"
             />
           </div>
-          <div className="space-y-1">
+          <div className="flex flex-col gap-1">
             <Label htmlFor="audit-entity-id" className="text-[11px] text-muted-foreground">
               Entity id
             </Label>
@@ -238,7 +238,7 @@ export function AdminAuditView() {
               className="h-8 font-mono text-xs"
             />
           </div>
-          <div className="space-y-1">
+          <div className="flex flex-col gap-1">
             <Label htmlFor="audit-actor" className="text-[11px] text-muted-foreground">
               Actor user id
             </Label>
@@ -251,7 +251,7 @@ export function AdminAuditView() {
               className="h-8 font-mono text-xs"
             />
           </div>
-          <div className="space-y-1">
+          <div className="flex flex-col gap-1">
             <Label htmlFor="audit-org" className="text-[11px] text-muted-foreground">
               Organization id
             </Label>

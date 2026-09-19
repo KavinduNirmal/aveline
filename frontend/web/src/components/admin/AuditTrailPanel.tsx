@@ -55,7 +55,7 @@ export function AuditTrailPanel({
           </SheetDescription>
         </SheetHeader>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
           {error && (
             <div className="p-3 text-xs bg-destructive/10 text-destructive rounded-lg border border-destructive/20 flex justify-between items-center">
               <span>{error}</span>
@@ -66,9 +66,9 @@ export function AuditTrailPanel({
           )}
 
           {isLoading && entries.length === 0 ? (
-            <div className="space-y-3">
+            <div className="flex flex-col gap-3">
               {[...Array(5)].map((_, i) => (
-                <div key={i} className="p-3 border border-border rounded-lg space-y-2">
+                <div key={i} className="p-3 border border-border rounded-lg flex flex-col gap-2">
                   <Skeleton className="h-4 w-3/4" />
                   <Skeleton className="h-3 w-1/2" />
                 </div>
@@ -87,7 +87,7 @@ export function AuditTrailPanel({
                   className="border border-border/80 rounded-lg p-3 bg-background hover:bg-muted/10 transition-all text-xs"
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <div className="space-y-1">
+                    <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <Badge variant="outline" className="font-mono text-[11px] bg-muted/40">
                           {entry.action}
@@ -117,7 +117,7 @@ export function AuditTrailPanel({
                   </div>
 
                   {isExpanded && (
-                    <div className="mt-3 pt-3 border-t border-border/60 space-y-2">
+                    <div className="mt-3 pt-3 border-t border-border/60 flex flex-col gap-2">
                       <div className="grid grid-cols-2 gap-2 font-mono text-[10px]">
                         <div className="p-2 bg-muted/30 rounded border border-border">
                           <div className="font-semibold text-muted-foreground mb-1">BEFORE</div>

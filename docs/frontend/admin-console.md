@@ -260,21 +260,33 @@ hard-coded "Live Connection" green dot is gone: it reflected nothing.
 
 ### The two blocking conformance rules (C6)
 
-| Rule | Scope |
-|---|---|
-| Raw palette utilities (`emerald-*`, `amber-*`, …) and bare hex colours | the admin tree, `src/components/ui/**` exempt |
-| Raw `<select>` / `<input>` | the admin tree |
+| Rule | Scope | Enforced from |
+|---|---|---|
+| 1. Raw palette utilities (`emerald-*`, `amber-*`, …) and bare hex colours | the admin tree, `src/components/ui/**` exempt | A3 |
+| 2. Raw `<select>` / `<input>` | the admin tree | A3 |
+| 3. Raw `<button>` / `<table>` / `<hr>` | the admin tree | A8 |
+| 4. `space-x-*` / `space-y-*` (use `gap-*`) | the admin tree | A8 |
+| 5. Every Recharts `<Line>`/`<Area>` sets `connectNulls={CONNECT_NULLS}` | the admin tree | A4 |
 
 Enforcement is `src/test/admin-conformance.test.ts` — a blocking test, which CI runs on every push.
 oxlint 1.79 in this repository has no custom-JS-plugin API, so the test suite is where the rule binds
 just as hard.
 
-The rules required two supporting changes. `--warning` and `--success` (plus their foregrounds and
+The rules required three supporting changes. `--warning` and `--success` (plus their foregrounds and
 `@theme inline` mappings) were added to `index.css`, so state colours come from semantic tokens rather
-than a raw palette; and the raw `<select>`/`<input>` violations in `AdminUsers`, `AdminOrgs`,
-`AdminLogs` and `AdminBlossoms` were converted to the shadcn `Select` and `Switch` primitives.
+than a raw palette; the raw `<select>`/`<input>` violations in `AdminUsers`, `AdminOrgs`, `AdminLogs`
+and `AdminBlossoms` were converted to the shadcn `Select` and `Switch` primitives; and the 22 files
+using `space-y-*` were converted to `flex flex-col gap-*`, which is equivalent for a block stack.
 
-The remaining two rules — raw `<button>`/`<table>`/`<hr>`, and `space-x-*`/`space-y-*` — land before A8.
+**The allow-list.** A bespoke component may carry `conformance-allow: <rule> — <why>` beside the
+exception, as C6 requires. There is exactly one:
+
+| File | Rule | Why |
+|---|---|---|
+| `components/admin/logs/LogRow.tsx` | raw `<button>` | the virtualised log row's two inline controls: a shadcn `Button` per row would add a primitive instance and its focus machinery to a list that re-renders every 1.5 s |
+
+`admin-conformance.test.ts` asserts the allow-list itself is exactly that one entry, so an exception
+cannot be added silently.
 
 ## A4 — the dashboard: the triage surface (V1–V11)
 
@@ -493,10 +505,8 @@ the ratchet in `vitest.admin-coverage.config.ts` was raised to match.
 
 **Deferred, and stated rather than implied.**
 
-- **The remaining two conformance rules** (raw `<button>`/`<table>`/`<hr>`, and
-  `space-x-*`/`space-y-*`). The two rules C6 scoped to A3 — raw palette/hex and raw
-  `<select>`/`<input>` — are delivered and **blocking**; these two are not yet enforced, so the tree
-  still contains `space-y-*` layout spacing that rule 4 would flag.
+- **All four C6 conformance rules are delivered and blocking** (rules 1–4 of the A3 table above,
+  plus the chart `connectNulls` rule), with a single documented allow-list entry.
 - **The Playwright suite covers the signed-out path only.** The harness is delivered —
   `tests/e2e/admin-console/console-access.spec.ts` with `frontend/web/playwright.config.ts` and
   `bun run test:e2e` — and it asserts the defect A1 exists to remove: signed out, `/admin/<id>/dashboard`

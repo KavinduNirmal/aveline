@@ -144,7 +144,7 @@ export function AdminDashboardView() {
       : null
 
   return (
-    <div className="space-y-6 pb-12">
+    <div className="flex flex-col gap-6 pb-12">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="font-serif text-3xl font-medium tracking-tight text-foreground">
@@ -305,7 +305,7 @@ export function AdminDashboardView() {
               Counted on status === &quot;Pending&quot;; no Grafana equivalent exists.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-2">
+          <CardContent className="flex flex-col gap-2">
             {requests.kind === "error" ? (
               <p className="text-xs text-muted-foreground">
                 Access requests could not be loaded: {requests.message}
@@ -337,7 +337,7 @@ export function AdminDashboardView() {
               Derived: actions whose name matches error, fail or revoke.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-2">
+          <CardContent className="flex flex-col gap-2">
             <div className="text-2xl font-serif font-semibold text-foreground">
               {audits.kind === "ready" ? errorEntries.length : "—"}
             </div>
@@ -361,7 +361,7 @@ export function AdminDashboardView() {
             The distinction between an empty history and an uninstrumented one is the point.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="flex flex-col gap-3">
           {agents.kind === "error" ? (
             <p className="text-xs text-muted-foreground">
               Agent statistics could not be loaded: {agents.message}

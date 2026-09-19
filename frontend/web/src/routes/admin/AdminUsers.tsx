@@ -144,7 +144,7 @@ export function AdminUsersView() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6">
       <div className="flex justify-between items-center">
         <div>
           <h2 className="font-serif text-2xl font-medium tracking-tight text-foreground">
@@ -287,7 +287,7 @@ export function AdminUsersView() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-2 text-xs">
+          <div className="flex flex-col gap-4 py-2 text-xs">
             <div>
               <label className="font-medium block mb-1">Target Account State</label>
               <Select value={targetState} onValueChange={(value) => setTargetState(value as AccountState)}>

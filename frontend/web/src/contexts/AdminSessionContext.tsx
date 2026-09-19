@@ -21,6 +21,12 @@ import type { AccountState } from "@/types/user"
 interface AdminSessionState {
   status: "idle" | "loading" | "ready" | "error" | "forbidden"
   userId: string | null
+  /**
+   * The Clerk subject (`sub`) of the caller. Self-approval is keyed on this and not on email:
+   * the captured live API returns `email: null` on `/auth/claims` and `""` on every request row,
+   * so an email comparison is `undefined === undefined` and passes.
+   */
+  clerkUserId: string | null
   email: string | null
   roles: string[]
   permissions: Set<Permission>
@@ -35,6 +41,7 @@ type AdminSessionAction =
       type: "FETCH_SUCCESS"
       payload: {
         userId: string
+        clerkUserId: string | null
         email: string | null
         roles: string[]
         accountState: AccountState | null
@@ -57,6 +64,7 @@ function adminSessionReducer(
         ...state,
         status: "ready",
         userId: action.payload.userId,
+        clerkUserId: action.payload.clerkUserId,
         email: action.payload.email,
         roles: action.payload.roles,
         permissions,
@@ -71,6 +79,7 @@ function adminSessionReducer(
       return {
         status: "idle",
         userId: null,
+        clerkUserId: null,
         email: null,
         roles: [],
         permissions: new Set<Permission>(),
@@ -102,6 +111,7 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(adminSessionReducer, {
     status: "idle",
     userId: null,
+    clerkUserId: null,
     email: null,
     roles: [],
     permissions: new Set<Permission>(),
@@ -153,6 +163,7 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
         type: "FETCH_SUCCESS",
         payload: {
           userId: claims.userId,
+          clerkUserId: claims.claims?.sub?.[0] ?? null,
           email: claims.email,
           roles: claims.roles,
           accountState: claims.account.accountState,

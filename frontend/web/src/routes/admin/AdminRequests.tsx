@@ -1,76 +1,177 @@
-﻿import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
+
+import { useAdminSession } from "@/contexts/AdminSessionContext"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
+import { DataTable, type Column } from "@/components/admin/data/DataTable"
 import { listAdminRequests, approveAdminRequest, rejectAdminRequest } from "@/lib/admin/api"
 import type { AdminApprovalRequestSummary } from "@/types/admin"
-import { Card } from "@/components/ui/card"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { Check, X } from "lucide-react"
 import { toast } from "sonner"
-import { useAdminSession } from "@/contexts/AdminSessionContext"
 
+type LoadState =
+  | { kind: "loading" }
+  | { kind: "ready"; requests: AdminApprovalRequestSummary[] }
+  | { kind: "error"; message: string }
+
+/**
+ * The access-request queue.
+ *
+ * The self-approval guard is keyed on **`clerkUserId` vs the caller's `sub`**, not on email. The
+ * captured live payloads return `email: null` on `/auth/claims` and `""` on every request row, so
+ * an email comparison is `undefined === undefined` and admits the very approval it exists to
+ * block. `GET /admin/requests` is a bare, unpaginated array, so the whole queue is one read.
+ */
 export function AdminRequestsView() {
-  const [requests, setRequests] = useState<AdminApprovalRequestSummary[]>([])
-  const [loading, setLoading] = useState(true)
+  const [state, setState] = useState<LoadState>({ kind: "loading" })
   const [processingId, setProcessingId] = useState<string | null>(null)
-  const { email } = useAdminSession()
+  const { clerkUserId } = useAdminSession()
 
-  const loadRequests = async () => {
-    setLoading(true)
+  const loadRequests = useCallback(async () => {
+    setState({ kind: "loading" })
     try {
-      const data = await listAdminRequests()
-      setRequests(data)
-    } catch {
-      toast.error("Failed to load admin approval requests")
-    } finally {
-      setLoading(false)
+      setState({ kind: "ready", requests: await listAdminRequests() })
+    } catch (err: unknown) {
+      setState({
+        kind: "error",
+        message: err instanceof Error ? err.message : "Failed to load admin approval requests",
+      })
     }
-  }
+  }, [])
 
   useEffect(() => {
     void loadRequests()
-  }, [])
+  }, [loadRequests])
 
-  const handleApprove = async (req: AdminApprovalRequestSummary) => {
-    if (req.email.toLowerCase() === email?.toLowerCase()) {
-      toast.error("Self-approval prohibited: An administrator cannot approve their own elevation request.")
+  const requests = state.kind === "ready" ? state.requests : []
+  const pendingCount = requests.filter((request) => request.status === "Pending").length
+  const isSelf = (request: AdminApprovalRequestSummary): boolean =>
+    clerkUserId !== null && request.clerkUserId === clerkUserId
+
+  const handleApprove = async (request: AdminApprovalRequestSummary) => {
+    if (isSelf(request)) {
+      toast.error("Self-approval prohibited: an administrator cannot approve their own request.")
       return
     }
-
-    setProcessingId(req.id)
+    setProcessingId(request.id)
     try {
-      await approveAdminRequest(req.id)
-      toast.success(`Approved admin access for ${req.email}`)
-      void loadRequests()
-    } catch (err: any) {
-      toast.error(err?.message || "Failed to approve request")
+      await approveAdminRequest(request.id)
+      toast.success(`Approved administrator access for ${request.email || request.clerkUserId}`)
+      await loadRequests()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to approve request")
     } finally {
       setProcessingId(null)
     }
   }
 
-  const handleReject = async (req: AdminApprovalRequestSummary) => {
-    setProcessingId(req.id)
+  const handleReject = async (request: AdminApprovalRequestSummary) => {
+    setProcessingId(request.id)
     try {
-      await rejectAdminRequest(req.id)
-      toast.success(`Rejected request for ${req.email}`)
-      void loadRequests()
-    } catch (err: any) {
-      toast.error(err?.message || "Failed to reject request")
+      await rejectAdminRequest(request.id)
+      toast.success(`Rejected request for ${request.email || request.clerkUserId}`)
+      await loadRequests()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to reject request")
     } finally {
       setProcessingId(null)
     }
   }
+
+  const columns: Column<AdminApprovalRequestSummary>[] = [
+    {
+      key: "candidate",
+      header: "Candidate",
+      render: (request) => (
+        <span className="font-medium text-foreground">
+          {request.firstName} {request.lastName}
+        </span>
+      ),
+    },
+    {
+      key: "email",
+      header: "Email",
+      render: (request) => (
+        <span className="font-mono text-xs text-muted-foreground">
+          {request.email || "—"}
+        </span>
+      ),
+    },
+    {
+      key: "requested",
+      header: "Requested",
+      render: (request) => (
+        <span className="text-xs text-muted-foreground">
+          {new Date(request.requestedAt).toLocaleString()}
+        </span>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      render: (request) => (
+        <Badge
+          variant={
+            request.status === "Approved"
+              ? "default"
+              : request.status === "Rejected"
+                ? "destructive"
+                : "secondary"
+          }
+          className="text-[11px]"
+        >
+          {request.status}
+        </Badge>
+      ),
+    },
+    {
+      key: "actions",
+      header: "Actions",
+      className: "text-right",
+      render: (request) =>
+        request.status === "Pending" ? (
+          <div className="flex justify-end gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs text-destructive border-destructive/40 hover:bg-destructive/10"
+              disabled={processingId === request.id}
+              onClick={() => void handleReject(request)}
+            >
+              <X className="size-3 mr-1" />
+              Reject
+            </Button>
+            <Button
+              size="sm"
+              className="h-7 text-xs"
+              disabled={processingId === request.id || isSelf(request)}
+              title={
+                isSelf(request)
+                  ? "Self-approval is prohibited by the server and by this guard"
+                  : undefined
+              }
+              onClick={() => void handleApprove(request)}
+            >
+              <Check className="size-3 mr-1" />
+              Approve
+            </Button>
+          </div>
+        ) : null,
+    },
+  ]
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center gap-3 flex-wrap">
         <div>
           <h2 className="font-serif text-2xl font-medium tracking-tight text-foreground">
             Administrator Access Requests
           </h2>
           <p className="text-sm text-muted-foreground">
-            Review and grant elevated administrative privileges to verified staff members.
+            {state.kind === "ready"
+              ? `${pendingCount} pending · ${requests.length} total`
+              : "Review and grant elevated administrative privileges."}
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => void loadRequests()} className="text-xs">
@@ -79,81 +180,18 @@ export function AdminRequestsView() {
       </div>
 
       <Card className="border-border shadow-xs overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Candidate</TableHead>
-              <TableHead>Email</TableHead>
-              <TableHead>Requested Date</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={5} className="text-center py-8 text-xs text-muted-foreground">
-                  Loading requests queue...
-                </TableCell>
-              </TableRow>
-            ) : requests.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={5} className="text-center py-8 text-xs text-muted-foreground">
-                  No pending administrator access requests.
-                </TableCell>
-              </TableRow>
-            ) : (
-              requests.map((r) => {
-                const isSelf = r.email.toLowerCase() === email?.toLowerCase()
-                return (
-                  <TableRow key={r.id}>
-                    <TableCell className="font-medium text-foreground">
-                      {r.firstName} {r.lastName}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">{r.email}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {new Date(r.requestedAt).toLocaleString()}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={r.status === "Approved" ? "default" : r.status === "Rejected" ? "destructive" : "secondary"}
-                        className="text-[11px]"
-                      >
-                        {r.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right space-x-2">
-                      {r.status === "Pending" && (
-                        <>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 text-xs text-destructive border-destructive/40 hover:bg-destructive/10"
-                            disabled={processingId === r.id}
-                            onClick={() => void handleReject(r)}
-                          >
-                            <X className="size-3 mr-1" />
-                            Reject
-                          </Button>
-                          <Button
-                            size="sm"
-                            className="h-7 text-xs"
-                            disabled={processingId === r.id || isSelf}
-                            onClick={() => void handleApprove(r)}
-                            title={isSelf ? "Self-approval disabled" : undefined}
-                          >
-                            <Check className="size-3 mr-1" />
-                            Approve
-                          </Button>
-                        </>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                )
-              })
-            )}
-          </TableBody>
-        </Table>
+        <CardContent className="p-0">
+          <DataTable<AdminApprovalRequestSummary>
+            columns={columns}
+            rows={requests}
+            getRowKey={(request) => request.id}
+            state={state.kind}
+            emptyMessage="No administrator access requests."
+            errorMessage={state.kind === "error" ? state.message : undefined}
+            onRetry={() => void loadRequests()}
+            caption="Administrator access requests"
+          />
+        </CardContent>
       </Card>
     </div>
   )

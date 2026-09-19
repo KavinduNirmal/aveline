@@ -1,6 +1,13 @@
-﻿import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
+import { useSearchParams } from "react-router-dom"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { searchAdminUsers, updateUserAccountState } from "@/lib/admin/api"
+import { Pagination } from "@/components/admin/data/Pagination"
+import {
+  USER_PAGE_SIZES,
+  readListParams,
+  writeListParams,
+} from "@/lib/admin/query-params"
 import type { AdminUserDto } from "@/types/admin"
 import type { AccountState } from "@/types/user"
 import { Button } from "@/components/ui/button"
@@ -26,41 +33,82 @@ import {
 import { Search } from "lucide-react"
 import { toast } from "sonner"
 
+const LIST_OPTIONS = {
+  pageSizes: USER_PAGE_SIZES,
+  defaultPageSize: 25,
+  filters: ['q', 'accountState'] as const,
+}
+
 export function AdminUsersView() {
+  // Filters and paging live in the URL, so a filtered view survives the back button.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const { page, pageSize, filters } = readListParams(searchParams, LIST_OPTIONS)
+  const q = filters.q ?? ''
+  const stateFilter = filters.accountState ?? 'all'
+
+  const [searchInput, setSearchInput] = useState(q)
   const [users, setUsers] = useState<AdminUserDto[]>([])
+  const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState("")
-  const [stateFilter, setStateFilter] = useState<string>("all")
-  const [page] = useState(1)
 
   const [selectedUser, setSelectedUser] = useState<AdminUserDto | null>(null)
   const [targetState, setTargetState] = useState<AccountState>("Active")
   const [reason, setReason] = useState("")
   const [updating, setUpdating] = useState(false)
 
-  const loadUsers = async () => {
+  const applyParams = useCallback(
+    (next: { page?: number; pageSize?: number; q?: string; accountState?: string }) => {
+      const nextAccountState = next.accountState ?? stateFilter
+      setSearchParams(
+        writeListParams(
+          {
+            page: next.page ?? page,
+            pageSize: next.pageSize ?? pageSize,
+            filters: {
+              q: next.q ?? q,
+              accountState: nextAccountState === 'all' ? '' : nextAccountState,
+            },
+          },
+          LIST_OPTIONS,
+        ),
+      )
+    },
+    [page, pageSize, q, stateFilter, setSearchParams],
+  )
+
+  const loadUsers = useCallback(async () => {
     setLoading(true)
     try {
       const data = await searchAdminUsers({
-        q: search || undefined,
+        q: q || undefined,
         accountState: stateFilter === "all" ? undefined : stateFilter,
         page,
-        pageSize: 20,
+        pageSize,
       })
       setUsers(data.items)
+      setTotal(data.total)
     } catch {
       toast.error("Failed to load users")
     } finally {
       setLoading(false)
     }
-  }
+  }, [q, stateFilter, page, pageSize])
 
   useEffect(() => {
     const timer = setTimeout(() => {
       void loadUsers()
     }, 250)
     return () => clearTimeout(timer)
-  }, [search, stateFilter, page])
+  }, [loadUsers])
+
+  // Typing debounces into the URL rather than into local state, so the URL is always the
+  // single source of truth the fetch reads from.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (searchInput !== q) applyParams({ q: searchInput, page: 1 })
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [searchInput, q, applyParams])
 
   const openStateModal = (user: AdminUserDto) => {
     setSelectedUser(user)
@@ -114,14 +162,17 @@ export function AdminUsersView() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
             <Input
               placeholder="Search by name, email, clerk ID..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
               className="pl-9 text-xs"
             />
           </div>
 
           <div className="flex items-center gap-2">
-            <Select value={stateFilter} onValueChange={setStateFilter}>
+            <Select
+              value={stateFilter}
+              onValueChange={(value) => applyParams({ accountState: value, page: 1 })}
+            >
               <SelectTrigger className="text-xs h-9 w-[190px]">
                 <SelectValue placeholder="All Account States" />
               </SelectTrigger>
@@ -216,6 +267,14 @@ export function AdminUsersView() {
             )}
           </TableBody>
         </Table>
+        <Pagination
+          page={page}
+          pageSize={pageSize}
+          total={total}
+          pageSizes={USER_PAGE_SIZES}
+          onPageChange={(next) => applyParams({ page: next })}
+          onPageSizeChange={(next) => applyParams({ pageSize: next, page: 1 })}
+        />
       </Card>
 
       <Dialog open={!!selectedUser} onOpenChange={(o) => !o && setSelectedUser(null)}>
@@ -272,7 +331,10 @@ export function AdminUsersView() {
             <Button
               size="sm"
               onClick={() => void handleStateSubmit()}
-              disabled={updating}
+              disabled={updating || reason.trim().length === 0}
+              title={
+                reason.trim().length === 0 ? "A reason is required for the audit trail" : undefined
+              }
             >
               {updating ? "Updating..." : "Commit State Change"}
             </Button>

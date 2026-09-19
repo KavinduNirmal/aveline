@@ -28,7 +28,7 @@ shows the number once and links out.
 | **A2** | Identity: guard chain, scope, `Gate` overlay | [#327](https://github.com/KavinduNirmal/aveline/issues/327) | **delivered** |
 | **A3** | Shell: layout, registry, conformance lint | [#328](https://github.com/KavinduNirmal/aveline/issues/328) | **delivered** |
 | **A4** | Dashboard: the triage surface V1–V11 | [#329](https://github.com/KavinduNirmal/aveline/issues/329) | **delivered** |
-| **A5** | Core management: users, orgs, requests | [#330](https://github.com/KavinduNirmal/aveline/issues/330) | planned |
+| **A5** | Core management: users, orgs, requests | [#330](https://github.com/KavinduNirmal/aveline/issues/330) | **delivered** |
 | **A6** | Operations: pricing and Blossom idempotency | [#331](https://github.com/KavinduNirmal/aveline/issues/331) | planned |
 | **A7** | Observability: logs, audit, system, statistics | [#332](https://github.com/KavinduNirmal/aveline/issues/332) | planned |
 | **A8** | Edge cases, a11y, E2E, documentation | [#333](https://github.com/KavinduNirmal/aveline/issues/333) | planned |
@@ -303,6 +303,43 @@ derivation here.
 
 Admin-subtree coverage at A4: **27.69 % lines** (from 0 % at A0). The floors in
 `vitest.admin-coverage.config.ts` are raised to the achieved values.
+
+## A5 — core management: users, orgs, requests
+
+### URL-backed list state
+
+`lib/admin/query-params.ts` reads and writes `page`, `pageSize` and the surface's own filters
+through the query string, so a filtered view survives the back button, is shareable, and a refresh
+does not silently reset the operator's context. A page size the surface does not offer is **not
+forwarded** — `readListParams` falls back to the default rather than letting the server's clamp make
+the pager lie. Page sizes are `25 | 50 | 100 | 200`.
+
+### One table, one set of states
+
+`components/admin/data/DataTable.tsx` owns the five states (skeleton, empty, error with a working
+retry, and rows) plus the `aria-sort` announcement, so a page cannot invent its own. `Pagination`
+renders the range, the page-size choice and the prev/next controls.
+
+### The self-approval guard
+
+`AdminRequestsView` keys self-approval on **`clerkUserId` vs the caller's `sub`**, not on email, and
+the admin session now exposes `clerkUserId` (from the raw `sub` claim). The captured live payloads
+return `email: null` on `/auth/claims` and `""` on every request row, so the delivered email
+comparison was `undefined === undefined` and admitted the approval it existed to block. The pending
+count is computed on `status === "Pending"`, not on row count.
+
+`GET /admin/requests` is a bare, unpaginated array, so the whole queue is one read.
+
+### Entitlement overrides
+
+`lib/admin/overrides.ts` separates the two failures that look alike: a `400` is a **field-level**
+error, and a `409 override-overlap` renders a **reload-and-retry** affordance inside the dialog —
+not one toast for both. It also infers the `valueType` from the key and coerces the form string into
+the JSON shape the key expects; the delivered form hard-coded `valueType: "boolean"` and sent the
+raw string, which the server rejects with a `400` for every non-boolean key.
+
+The account-state dialog cannot be submitted without a reason, and the override dialog cannot be
+submitted without one either.
 
 ## A9 — the three backend defects unlocked by C7
 

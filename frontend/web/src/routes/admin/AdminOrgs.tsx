@@ -9,6 +9,12 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Search, SlidersHorizontal } from "lucide-react"
+import {
+  classifyOverrideError,
+  coerceOverrideValue,
+  inferOverrideValueType,
+  type ClassifiedOverrideError,
+} from "@/lib/admin/overrides"
 import { toast } from "sonner"
 
 export function AdminOrgsView() {
@@ -23,6 +29,7 @@ export function AdminOrgsView() {
   const [overrideValue, setOverrideValue] = useState("true")
   const [overrideReason, setOverrideReason] = useState("")
   const [savingOverride, setSavingOverride] = useState(false)
+  const [overrideError, setOverrideError] = useState<ClassifiedOverrideError | null>(null)
 
   const loadOrgs = async () => {
     setLoading(true)
@@ -61,26 +68,29 @@ export function AdminOrgsView() {
       const inOneYear = new Date()
       inOneYear.setFullYear(now.getFullYear() + 1)
 
+      const valueType = inferOverrideValueType(overrideKey)
+      const value = coerceOverrideValue(overrideValue, valueType)
+
       await setEntitlementOverrides(selectedOrg.id, {
         overrides: [
           {
             key: overrideKey,
-            valueType: "boolean",
-            value: overrideValue,
+            valueType,
+            value,
+            // The server defaults the window; the client states it explicitly and shows it.
             effectiveFrom: now.toISOString(),
             effectiveTo: inOneYear.toISOString(),
             reason: overrideReason.trim(),
           },
         ],
       })
+      setOverrideError(null)
       toast.success("Entitlement override successfully configured.")
       setSelectedOrg(null)
-    } catch (err: any) {
-      if (err?.code === "override-overlap" || err?.status === 409) {
-        toast.error("Conflict: An active override already exists for this date range.")
-      } else {
-        toast.error(err?.message || "Failed to set entitlement override.")
-      }
+    } catch (err: unknown) {
+      // A 400 is a field-level error; a 409 override-overlap is "the world changed, reload and
+      // retry". Rendering both as one toast leaves the operator editing a stale form.
+      setOverrideError(classifyOverrideError(err))
     } finally {
       setSavingOverride(false)
     }
@@ -177,6 +187,7 @@ export function AdminOrgsView() {
                       onClick={() => {
                         setSelectedOrg(o)
                         setOverrideReason("")
+                        setOverrideError(null)
                       }}
                     >
                       <SlidersHorizontal className="size-3" />
@@ -209,13 +220,43 @@ export function AdminOrgsView() {
               />
             </div>
             <div>
-              <label className="font-medium block mb-1">Override Value</label>
+              <label className="font-medium block mb-1">
+                Override Value
+                <span className="ml-2 font-mono text-[10px] text-muted-foreground">
+                  {inferOverrideValueType(overrideKey)}
+                </span>
+              </label>
               <Input
                 value={overrideValue}
                 onChange={(e) => setOverrideValue(e.target.value)}
                 className="text-xs font-mono"
+                aria-invalid={overrideError?.kind === "field"}
+                aria-describedby={overrideError?.kind === "field" ? "override-error" : undefined}
               />
+              {overrideError?.kind === "field" && (
+                <p id="override-error" className="mt-1 text-[11px] text-destructive">
+                  {overrideError.message}
+                  {overrideError.fields !== undefined &&
+                    Object.values(overrideError.fields)
+                      .flat()
+                      .map((message) => <span key={message} className="block">{message}</span>)}
+                </p>
+              )}
             </div>
+
+            {overrideError?.kind === "overlap" && (
+              <div className="rounded-md border border-warning/40 bg-warning/5 p-2 text-[11px] text-foreground">
+                {overrideError.message}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-2 h-7 text-xs"
+                  onClick={() => void loadOrgs()}
+                >
+                  Reload and retry
+                </Button>
+              </div>
+            )}
             <div>
               <label className="font-medium block mb-1">
                 Mandatory Reason <span className="text-destructive">*</span>
@@ -236,7 +277,7 @@ export function AdminOrgsView() {
             <Button
               size="sm"
               onClick={() => void handleOverrideSubmit()}
-              disabled={savingOverride}
+              disabled={savingOverride || overrideReason.trim().length === 0}
             >
               {savingOverride ? "Saving..." : "Apply Override"}
             </Button>

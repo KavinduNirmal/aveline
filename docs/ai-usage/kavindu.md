@@ -4283,13 +4283,30 @@ consumption in the window. The System overview is **22 of 25** with data, the Da
 Ten GitHub issues were created for the plan's slices — **#325–#334** — and work proceeded on the
 current branch `feature/admin-frontend-ui-v3` with no branch created or switched.
 
-**Slices A0–A6 and A9 are delivered**; A7 (observability) was delegated to a parallel agent and
-verified on landing; A8 is **partially** delivered. Commit history on the branch:
+**All ten slices are delivered**: A0–A7 and A9 in full, and A8 everywhere it can be verified in this
+environment. Commit history on the branch:
 
 - `965c555` — A0–A3: harness, truthfulness, identity, shell.
 - `1685cc8` — A9: the three backend defects unlocked by C7.
-- A4 (dashboard V1–V11), A5 (core management) and A6 (pricing and Blossom) each committed with
-  their own slice message.
+- `862782c` — the console-URL identity fix plus A8's `traceId`/`ErrorState` and the doc corrections.
+- `cd660b2`, `2b6156d`, `42deba2`, `60521bd`, `b0c19fd` — roles matrix, the real TanStack Query
+  adoption, the price book, the E2E harness and the last two conformance rules.
+- A4 (dashboard V1–V11), A5 (core management), A6 (pricing and Blossom) and A7 (observability) each
+  committed with their own slice message.
+
+**What A8 does not cover, and why.** The axe sweep, the keyboard walkthrough and the contrast audit
+need a browser; `playwright install chromium` stalled against the CDN and no system browser exists
+here. The authenticated end-to-end walk needs a Clerk test session, which this environment has no
+credentials for. The Playwright suite is delivered and wired (`tests/e2e/admin-console/`,
+`bun run test:e2e`) and covers the signed-out path, but it was **not executed** — that is stated in
+`docs/frontend/admin-console.md` rather than implied.
+
+**Two routes in the plan's target tree are not built, deliberately.** `AdminUserDetail` and
+`AdminOrgDetail` would each need a by-id read the API does not have (`GET /admin/users/{id}`,
+`GET /admin/orgs/{id}`), and the search cannot substitute because `UserRepository` matches `q`
+against email, name, username and `clerkId` but not `id`. Adding those reads would be a fourth item
+in A9, which C7 forbids. The registry keeps both entries disabled, so nothing links to a page that
+cannot be built.
 
 Every slice followed TDD: the failing test was written and observed failing before its
 implementation. Highlights of the defects that are now pinned by a test:
@@ -4327,13 +4344,15 @@ whose floor started at 0 and ratcheted to **52.1 % lines / 40.4 % branches** by 
 
 ### Verification performed
 
-- `bunx vitest run` — 368 tests across 61 files passing before A7; the suite is re-run and reported
-  per slice.
+- `bunx vitest run` — **73 files / 456 tests passed** (the baseline was 30 files / 214 tests).
 - `bunx tsc -b` — exit 0.
-- `bunx oxlint src` — 0 errors.
-- `bun run test:coverage` — the tenant gate passes unchanged.
-- `bun run test:coverage:admin` — the ratchet passes.
-- `dotnet test Aveline.Api.Tests` (A9) — 1640 passed.
+- `bunx oxlint src` — 0 errors (51 warnings, all pre-existing).
+- `bun run test:coverage` — the tenant gate passes unchanged, at its original 80/70/70/80 floors.
+- `bun run test:coverage:admin` — the ratchet passes at 69.65 % lines / 57.12 % branches for the
+  admin subtree, 70.02 % lines on `routes/admin`, having started at a floor of 0 at A0.
+- `dotnet test Aveline.Api.Tests` (A9) — **1640 passed, 0 failed**.
+- All four C6 conformance rules plus the chart `connectNulls` rule are blocking, with exactly one
+  documented allow-list entry (the log viewer's virtualised row).
 - A reviewer reported the console rendering a dead-end "Console scope not available" card for a
   real administrator's URL. Investigating it produced the most useful finding of the session, in
   two parts.

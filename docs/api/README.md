@@ -146,7 +146,17 @@ endpoint code:
 | `BoutiqueConversationAccess` | same, grants `conversations:view` |
 | `BoutiqueCustomerAccess` | same, grants `customers:view` (the tenant customer surface: the client book, a client profile and Home's client highlights) |
 | `InternalServicePolicy` | `X-Internal-Token` + role `InternalService` |
+| `StatsSystemPolicy` | team roles `owner`/`admin` **and** `stats:system` |
+| `AuditViewPolicy` | team roles `owner`/`admin` **and** `audit:view` |
+| `PricingAdminReadPolicy` | team roles `owner`/`admin` **and** `pricing:view` |
 | *one per permission* | policy name **is** the permission string, e.g. `catalog:view` |
+
+> **A9 (B2).** The three team-only policies above previously guarded their routes with
+> `RequireRole(owner, admin)` only, so the `stats:system`, `audit:view` and
+> `pricing:view` permission policies were registered but referenced by no route. Each
+> now also carries its permission requirement. The change is **additive and inert**:
+> `owner` and `admin` already hold all three permissions, so no role that passed
+> before is refused now, and the permission catalogue matches the wire.
 
 **Layer 2 — organization scope.** For any route containing
 `{organizationId:guid}`, `OrganizationScopeAuthorizationHandler` resolves the
@@ -379,7 +389,7 @@ cited.
 
 | Method | Path | Auth | Notes |
 | --- | --- | --- | --- |
-| `GET` | `/api/v1/auth/claims` | authenticated | Raw Clerk claims plus the resolved `AccountState`, `UserRole`, `OrganizationRole`. Source: `Endpoints/AuthEndpoints.cs:16`. |
+| `GET` | `/api/v1/auth/claims` | authenticated | Raw Clerk claims plus the resolved `AccountState`, `UserRole`, `OrganizationRole`. `email` is read from the mapped `ClaimTypes.Email` claim (falling back to the raw `email` name); the JwtBearer inbound map rewrites the token's `email` claim, so reading the raw name alone returned `null` (**A9 B1**). Source: `Endpoints/AuthEndpoints.cs:16`. |
 
 ### B.2 Users
 
@@ -830,10 +840,11 @@ below is registered under the `/api/v1` group unless the path says otherwise.
 >    compensating-ledger recompute job is not scheduled yet. See the endpoint below
 >    for the status response and the intended contract.
 
-Permissions: the read routes are enforced by the team-only `PricingAdminRead` policy
-(Admin or Owner, #237); writes need `pricing:manage`, and a past effective date
-additionally needs `pricing:backdate`. `pricing:view` remains in the catalog but no
-longer gates a route. **Never available to boutique roles.**
+Permissions: the read routes are enforced by the team-only `PricingAdminRead` policy,
+which requires the `admin` or `owner` role **and** `pricing:view` (**A9 B2**); writes
+need `pricing:manage`, and a past effective date additionally needs `pricing:backdate`.
+`pricing:view` therefore does gate the read routes again. **Never available to boutique
+roles.**
 
 ---
 
@@ -1457,7 +1468,8 @@ beyond that dialog.
 > `GET /admin/audit/{entryId:guid}`), the Aveline-team organization search
 > (`GET /admin/orgs`, FR-4.8) and per-organization entitlement overrides
 > (`PATCH /admin/orgs/{organizationId}/entitlement-overrides`, FR-4.9). The audit log
-> was previously write-only, so `audit:view` and `AuditViewPolicy` were dead.
+> was previously write-only. `AuditViewPolicy` requires the team `owner`/`admin` role
+> **and** the `audit:view` permission; the permission requirement was added in **A9 B2**.
 
 
 | Method | Path | Policy | Body | Response |
@@ -1957,7 +1969,8 @@ lastUsedAt, topEndpoint }`. **Related statistics:** [S-28](../backend/statistics
 > organization-scoped critical alert creates a `NotificationRecord` because
 > `NotificationRecords.OrganizationId` is a required FK to `Organizations`.
 
-Base: `/api/v1/admin/statistics`. **Auth:** `stats:system` (Aveline team only).
+Base: `/api/v1/admin/statistics`. **Auth:** the `StatsSystem` policy — the team
+`owner`/`admin` role **and** `stats:system` (A9 B2); Aveline team only.
 
 | Endpoint | Params | Returns |
 | --- | --- | --- |
@@ -1968,7 +1981,7 @@ Base: `/api/v1/admin/statistics`. **Auth:** `stats:system` (Aveline team only).
 | `GET /system/throughput` | `from`, `to`, `groupBy` | RPS, agent runs/min, Blossoms/hour |
 | `GET /system/eventbus` | **none** (`from`/`to` are accepted but ignored) | Published, delivered, failed, publish latency — an instantaneous counter snapshot |
 | `GET /system/alerts` | `status?`, `severity?`, `ruleId?`, `page`, `pageSize` | `SystemAlertPage` |
-| `POST /system/alerts/{alertId:guid}/acknowledge` | body `{ "note": string? }` | Updated alert |
+| `POST /system/alerts/{alertId:guid}/acknowledge` | body `{ "note": string? }` | Updated alert; **404** when unknown, **409 `{ message }`** when the alert is already `Resolved` (**A9 B3** — a resolved alert is terminal) |
 
 > **`GET /system/eventbus` is windowless (M-11).** The handler binds only the
 > statistics service and the cancellation token, so the documented `from`/`to`

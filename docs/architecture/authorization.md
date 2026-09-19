@@ -78,6 +78,32 @@ The current permission catalog is `catalog:view`, `customers:view`, `catalog:man
 `stats:view`, `stats:view:agent`, `stats:system`, `admin:users:read`,
 `admin:users:manage`, `admin:orgs:read`, and `audit:view`.
 
+## Team-only role policies carry their permission requirement (A9)
+
+`StatsSystem`, `AuditView` and `PricingAdminRead` used to be pure role guards
+(`RequireRole(owner, admin)`), while the `stats:system`, `audit:view` and
+`pricing:view` permission policies registered for every name in the catalogue were
+referenced by no route. The catalogue and the wire therefore disagreed: the three
+permission strings looked like the authority for those surfaces, but a route only
+checked the role.
+
+Each of the three named policies now carries its `PermissionRequirement` **alongside**
+the role requirement:
+
+| Policy | Requirement |
+| --- | --- |
+| `StatsSystem` | role `owner`/`admin` **and** `stats:system` |
+| `AuditView` | role `owner`/`admin` **and** `audit:view` |
+| `PricingAdminRead` | role `owner`/`admin` **and** `pricing:view` |
+
+The addition is **additive and inert for the current role set**: both `admin` and
+`owner` already hold all three permissions (`Permissions.cs`; `admin` holds every
+permission except `pricing:backdate`), so every principal the role guard admitted still
+passes. `moderator` and every boutique role hold none of the three and were already
+refused by the role guard, so they are still refused. The effect is that the permission
+catalogue now describes what the routes enforce, which is what lets the console's
+`Gate` role overlay be a belt-and-braces check rather than the only correct check.
+
 ## Compatibility
 
 The legacy values `associate`, `manager`, `org:associate`, `org:manager`,

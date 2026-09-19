@@ -254,12 +254,27 @@ public static class AuthorizationConfiguration
             });
 
             // Team-only policies: an API key may never reach these, so they only accept
-            // the default bearer scheme.
-            options.AddPolicy(StatsSystemPolicy, p => p.RequireRole(Roles.Owner, Roles.Admin));
+            // the default bearer scheme. The permission requirement is added alongside the
+            // role guard so the catalogue and the wire agree (A9 B2). It is additive: both
+            // `owner` and `admin` already hold `stats:system`, `audit:view` and
+            // `pricing:view`, so every role the role policy admitted still passes.
+            options.AddPolicy(StatsSystemPolicy, p =>
+            {
+                p.RequireRole(Roles.Owner, Roles.Admin);
+                p.Requirements.Add(new PermissionRequirement(Permissions.StatsSystem));
+            });
 
-            options.AddPolicy(AuditViewPolicy, p => p.RequireRole(Roles.Owner, Roles.Admin));
+            options.AddPolicy(AuditViewPolicy, p =>
+            {
+                p.RequireRole(Roles.Owner, Roles.Admin);
+                p.Requirements.Add(new PermissionRequirement(Permissions.AuditView));
+            });
 
-            options.AddPolicy(PricingAdminReadPolicy, p => p.RequireRole(Roles.Owner, Roles.Admin));
+            options.AddPolicy(PricingAdminReadPolicy, p =>
+            {
+                p.RequireRole(Roles.Owner, Roles.Admin);
+                p.Requirements.Add(new PermissionRequirement(Permissions.PricingView));
+            });
 
             // Permission-based policies (one per permission in the catalog).
             foreach (var permission in Permissions.All)

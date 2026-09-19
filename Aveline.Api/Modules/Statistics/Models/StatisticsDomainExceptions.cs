@@ -9,6 +9,12 @@ public class AgentRunValidationException(string message) : Exception(message);
 /// </summary>
 public sealed class AgentRunConflictException(string message) : Exception(message);
 
+/// <summary>
+/// An alert operation that conflicts with the alert's terminal state (BR-7.5) → HTTP 409.
+/// A <c>Resolved</c> alert is terminal and cannot be acknowledged.
+/// </summary>
+public sealed class AlertStateConflictException(string message) : Exception(message);
+
 /// <summary>The reported run does not exist for the caller's organisation → HTTP 404.</summary>
 public sealed class AgentRunNotFoundException(string message) : Exception(message);
 

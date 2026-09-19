@@ -2516,7 +2516,7 @@ paths:
     get:
       tags: [Pricing]
       summary: List Blossom conversion rules
-      description: Phase 1. Requires the team-only `PricingAdminRead` policy (Admin or Owner). Never available to boutique roles.
+      description: Phase 1. Requires the team-only `PricingAdminRead` policy: the `admin` or `owner` role **and** `pricing:view`. Never available to boutique roles.
       operationId: listPricingRules
       parameters:
         - $ref: "#/components/parameters/Page"
@@ -2586,7 +2586,7 @@ paths:
     get:
       tags: [Pricing]
       summary: Read one conversion rule
-      description: Phase 1. Requires the team-only `PricingAdminRead` policy (Admin or Owner).
+      description: Phase 1. Requires the team-only `PricingAdminRead` policy: the `admin` or `owner` role **and** `pricing:view`.
       operationId: getPricingRule
       responses:
         "200":
@@ -2749,7 +2749,7 @@ paths:
       tags: [Pricing]
       summary: List price-book entries
       description: |
-        Phase 1. Requires the team-only `PricingAdminRead` policy (Admin or Owner).
+        Phase 1. Requires the team-only `PricingAdminRead` policy: the `admin` or `owner` role **and** `pricing:view`.
 
         Returns a **bare array of entries — there is no `page`/`pageSize` and no
         `{ items, total }` envelope** (finding M-8, a deliberate deviation from the
@@ -2817,7 +2817,7 @@ paths:
       tags: [Pricing]
       summary: Read one price-book entry
       description: |
-        Phase 1. Requires the team-only `PricingAdminRead` policy (Admin or Owner).
+        Phase 1. Requires the team-only `PricingAdminRead` policy: the `admin` or `owner` role **and** `pricing:view`.
         A global entry (no `organizationId`) is always readable; a per-organization
         override is readable only when the caller passes that same `organizationId`.
       operationId: getPricingPriceEntry

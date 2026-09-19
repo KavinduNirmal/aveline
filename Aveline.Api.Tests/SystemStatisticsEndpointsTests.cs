@@ -340,6 +340,36 @@ public class SystemStatisticsEndpointsTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
+    [Fact]
+    public async Task Acknowledge_ResolvedAlertReturns409_AndLeavesTheRowUnchanged()
+    {
+        var suffix = Guid.NewGuid().ToString("N");
+        var clerkId = await SeedAdminAsync(suffix);
+        var token = CreateToken(clerkId, userRole: Roles.Admin);
+
+        var alertId = await SeedAlertAsync(
+            $"aveline.test.ack_resolved_{suffix}", AlertSeverity.Warning, AlertStatus.Resolved, DateTime.UtcNow);
+
+        var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/api/v1/admin/statistics/system/alerts/{alertId}/acknowledge")
+        {
+            Headers = { Authorization = new AuthenticationHeaderValue("Bearer", token) },
+            Content = JsonContent.Create(new { note = "must not apply" }),
+        };
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.False(string.IsNullOrWhiteSpace(body.GetProperty("message").GetString()));
+
+        await using var context = Context();
+        var alert = await context.SystemAlerts.SingleAsync(candidate => candidate.Id == alertId);
+        Assert.Equal(AlertStatus.Resolved, alert.Status);
+        Assert.Null(alert.AcknowledgedAt);
+    }
+
     [Theory]
     [InlineData("/api/v1/admin/statistics/system/metrics")]
     [InlineData("/api/v1/admin/statistics/system/metrics?metric=aveline.process.thread_count&windowSize=fortnight")]

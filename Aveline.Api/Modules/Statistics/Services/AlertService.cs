@@ -208,6 +208,15 @@ public sealed class AlertService : IAlertService
             return null;
         }
 
+        // A Resolved alert is terminal (BR-7.7). Acknowledging it would move it back to
+        // Acknowledged and stamp an acknowledgement on a closed incident; reject it
+        // instead of silently succeeding (A9 B3).
+        if (alert.Status == AlertStatus.Resolved)
+        {
+            throw new AlertStateConflictException(
+                $"Alert {alert.Id} is resolved and can no longer be acknowledged.");
+        }
+
         alert.Status = AlertStatus.Acknowledged;
         alert.AcknowledgedAt = DateTime.UtcNow;
         alert.AcknowledgedByUserId = userId;

@@ -20,6 +20,20 @@ public class InventoryRepository : IInventoryRepository
             .FirstOrDefaultAsync(i => i.Id == id && i.OrgId == orgId && i.DeletedAt == null, cancellationToken);
     }
 
+    public async Task<InventoryItem?> GetBySkuAsync(string sku, Guid orgId, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(sku)) return null;
+        var trimmed = sku.Trim().ToLower();
+        return await _db.InventoryItems
+            .AsNoTracking()
+            .FirstOrDefaultAsync(i =>
+                i.OrgId == orgId &&
+                i.DeletedAt == null &&
+                i.Sku != null &&
+                i.Sku.ToLower() == trimmed,
+                cancellationToken);
+    }
+
     public async Task<IReadOnlyList<InventoryItem>> SearchAsync(
         Guid orgId,
         string? category = null,

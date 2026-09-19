@@ -188,4 +188,19 @@ public class InventoryService : IInventoryService
         var items = await _repository.GetLowStockAsync(orgId, threshold, cancellationToken);
         return items.Select(InventoryItemDto.FromDomain).ToList();
     }
+
+    public async Task<bool> DeleteItemAsync(
+        Guid id,
+        Guid orgId,
+        CancellationToken cancellationToken = default)
+    {
+        var existing = await _repository.GetByIdAsync(id, orgId, cancellationToken);
+        if (existing is null)
+        {
+            return false;
+        }
+
+        await _repository.DeleteAsync(id, orgId, cancellationToken);
+        return true;
+    }
 }

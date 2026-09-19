@@ -14,6 +14,7 @@ using Aveline.Api.Modules.ApiAccess;
 using Aveline.Api.Modules.Audit;
 using Aveline.Api.Modules.Billing;
 using Aveline.Api.Modules.Billing.Endpoints;
+using Aveline.Api.Modules.Commerce;
 using Aveline.Api.Modules.Conversations;
 using Aveline.Api.Modules.Conversations.Hubs;
 using Aveline.Api.Modules.CustomerConcierge;
@@ -97,6 +98,9 @@ builder.Services.AddControllers();
 
 // Visual Intelligence & Inventory Module (Slice 2)
 builder.Services.AddVisualIntelligenceModule();
+
+// Commerce Module (Slice 3)
+builder.Services.AddCommerceModule();
 
 var app = builder.Build();
 

@@ -373,3 +373,32 @@ export interface PricingPriceEntry {
   createdAt: string
   updatedAt: string
 }
+
+/** `PricingRuleDto` (`PricingDtos.cs:7-24`). */
+export interface PricingRule {
+  id: string
+  scopeKind: string
+  provider: string | null
+  model: string | null
+  unitsPerBlossom: number
+  minimumChargeBlossoms: number
+  roundingMode: string
+  roundingDecimals: number
+  effectiveFrom: string
+  effectiveTo: string | null
+  status: string
+  version: number
+  changeReason: string
+  createdByUserId: string
+  approvedByUserId: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+/** `PricingRulePageDto` (`PricingDtos.cs:41-43`) — this one **is** paged, unlike the price book. */
+export interface PagedPricingRules {
+  items: PricingRule[]
+  total: number
+  page: number
+  pageSize: number
+}

@@ -439,6 +439,13 @@ input plan's *"returns `501`, disable it"* is false — it returns `200`.
 
 The legacy-formula banner is stated on every pricing view and comes from one shared constant.
 
+`AdminPricingRules` renders the paged rule list with a status filter, a real pager (this endpoint
+**is** paged, unlike the price book), and `RuleTimeline` — one bar per rule on a shared axis, so
+overlapping or adjacent effective windows are visible at a glance. A rule with a null `effectiveTo`
+is drawn to *now* and labelled **"in force"**, never as a zero-width bar that would read as expired.
+`computeTimelineLayout` is pure, so the geometry is unit-testable without a browser. Each rule carries
+its own `RecomputeButton`, gated on the capability.
+
 `AdminPriceBook` renders the resolved price entries. `GET /admin/pricing/price-book` is a **bare,
 unpaginated array** (rule 9), so the page sends no paging parameters and renders no pager; a null
 `effectiveTo` reads *"in force"* rather than a blank cell.

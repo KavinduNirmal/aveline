@@ -11,6 +11,7 @@ import type {
   DebitBlossomsRequest,
   PagedAdminOrganizations,
   PagedAuditLogEntries,
+  PagedPricingRules,
   PagedUsers,
   PricingPriceEntry,
   PricingRecomputeResult,
@@ -311,5 +312,24 @@ export async function fetchPriceBook(params: {
     '/api/v1/admin/pricing/price-book',
     { params },
   )
+  return response.data
+}
+
+/**
+ * `GET /admin/pricing/rules` — a **paged** envelope (`PricingRulePageDto`), unlike the bare
+ * price-book array. Guarded by the `PricingAdminRead` role policy.
+ */
+export async function fetchPricingRules(params: {
+  scopeKind?: string
+  provider?: string
+  model?: string
+  status?: string
+  activeAt?: string
+  page?: number
+  pageSize?: number
+} = {}): Promise<PagedPricingRules> {
+  const response = await apiClient.get<PagedPricingRules>('/api/v1/admin/pricing/rules', {
+    params,
+  })
   return response.data
 }

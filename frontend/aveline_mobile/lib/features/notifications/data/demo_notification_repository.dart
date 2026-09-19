@@ -5,11 +5,11 @@ import 'notification_repository.dart';
 
 /// A boutique's notification inbox, held in memory.
 ///
-/// Stands in for the notification endpoints while they are being built. It
-/// mirrors `NotificationPage` and the read/dismiss rules exactly - paging, the
-/// `unreadOnly` narrowing, idempotent marks, a soft delete - so the tab behaves
-/// the same once `ApiNotificationRepository` replaces it, and the seed covers
-/// every kind the dispatcher sends so all six tiles can be seen and reviewed.
+/// Test/preview fixture only — the live path reads `ApiNotificationRepository`.
+/// It mirrors `NotificationPage` and the read/dismiss rules exactly - paging, the
+/// `unreadOnly` narrowing, idempotent marks, a soft delete - so a preview behaves
+/// the way the API does, and the seed covers every kind the dispatcher sends so a
+/// tile of each can be seen and reviewed.
 ///
 /// Ages are measured from an injectable [clock] rather than from the wall clock,
 /// so "20 minutes ago" means the same thing in a test as it does on screen.
@@ -144,8 +144,8 @@ class DemoNotificationRepository implements NotificationRepository {
     );
   }
 
-  /// Nine notifications: one every kind, a mix of read and unread, and two that
-  /// address the same client so a thread of updates reads as one.
+  /// Eleven notifications: one of every kind, a mix of read and unread, and two
+  /// that address the same client so a thread of updates reads as one.
   List<AppNotification> _buildInbox() => [
     _seed(
       id: 'un_msg_nadeesha',
@@ -250,6 +250,34 @@ class DemoNotificationRepository implements NotificationRepository {
           'June.',
       age: const Duration(days: 12),
       data: {'customerId': 'cus_045', 'daysSinceVisit': '112'},
+      isRead: true,
+    ),
+    _seed(
+      id: 'un_integration_whatsapp',
+      kind: NotificationKind.integrationExpired,
+      title: 'WhatsApp needs reconnecting',
+      body:
+          'The access token for the boutique\u2019s WhatsApp number has expired. '
+          'Messages will not be fetched until it is reconnected.',
+      age: const Duration(hours: 8, minutes: 20),
+      data: {'integrationType': 'whatsapp', 'error': 'token_expired'},
+      isRead: true,
+    ),
+    _seed(
+      id: 'un_alert_stock_sync',
+      kind: NotificationKind.systemAlert,
+      title: 'Stock sync above threshold',
+      body:
+          'Failed stock synchronisations crossed the critical threshold over the '
+          'last hour. Three consecutive evaluations breached it.',
+      age: const Duration(days: 4, hours: 1),
+      data: {
+        'alertId': 'alt_3001',
+        'ruleId': 'rule_stock_sync',
+        'metricName': 'catalog.stock.sync_failures',
+        'observedValue': '14',
+        'threshold': '5',
+      },
       isRead: true,
     ),
   ];

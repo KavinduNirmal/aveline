@@ -34,14 +34,25 @@ public class NotificationHubTests
     {
         public List<string> AddedGroups { get; } = [];
 
+        /// <summary>
+        /// The connection's actual memberships. SignalR groups are a set, so a
+        /// repeated add is a no-op; modelling that here is what makes the
+        /// idempotency of <c>SubscribeAsync</c> observable.
+        /// </summary>
+        public HashSet<string> Memberships { get; } = [];
+
         public Task AddToGroupAsync(string connectionId, string groupName, CancellationToken cancellationToken = default)
         {
             AddedGroups.Add(groupName);
+            Memberships.Add(groupName);
             return Task.CompletedTask;
         }
 
         public Task RemoveFromGroupAsync(string connectionId, string groupName, CancellationToken cancellationToken = default)
-            => Task.CompletedTask;
+        {
+            Memberships.Remove(groupName);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class TestableHub : NotificationHub
@@ -147,5 +158,53 @@ public class NotificationHubTests
         hub.SetGroups(new RecordingGroupManager());
 
         await Assert.ThrowsAsync<HubException>(() => hub.OnConnectedAsync());
+    }
+
+    [Fact]
+    public async Task SubscribeAsync_IsIdempotent_AndJoinsTheSameGroupsAsConnect()
+    {
+        var userId = Guid.NewGuid();
+        var activeOrgId = Guid.NewGuid();
+        var clerkId = "hub_resubscribe_user";
+        var user = MakeUser(userId, clerkId);
+        var memberships = new List<OrganizationMembership>
+        {
+            new() { OrganizationId = activeOrgId, UserId = userId, Status = MembershipStatus.Active },
+            new() { OrganizationId = Guid.NewGuid(), UserId = userId, Status = MembershipStatus.Suspended },
+        };
+
+        var hub = new TestableHub(new FakeUserRepository(user), new FakeOrganizationRepository(memberships));
+        hub.SetContext(new FakeHubCallerContext(new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", clerkId) }))));
+        var groups = new RecordingGroupManager();
+        hub.SetGroups(groups);
+
+        // A reconnect re-joins from the client; the call must be repeatable.
+        await hub.SubscribeAsync();
+        await hub.SubscribeAsync();
+
+        Assert.Equal(1, groups.Memberships.Count(g => g.StartsWith("user:")));
+        Assert.Contains($"user:{userId}", groups.Memberships);
+        Assert.Single(groups.Memberships, g => g.StartsWith("org:"));
+        Assert.Contains($"org:{activeOrgId}", groups.Memberships);
+    }
+
+    [Fact]
+    public async Task SubscribeAsync_NoUserClaim_Throws()
+    {
+        var hub = new TestableHub(new FakeUserRepository(null), new FakeOrganizationRepository([]));
+        hub.SetContext(new FakeHubCallerContext(user: null));
+        hub.SetGroups(new RecordingGroupManager());
+
+        await Assert.ThrowsAsync<HubException>(() => hub.SubscribeAsync());
+    }
+
+    [Fact]
+    public async Task SubscribeAsync_AuthenticatedUserNotInAveline_Throws()
+    {
+        var hub = new TestableHub(new FakeUserRepository(null), new FakeOrganizationRepository([]));
+        hub.SetContext(new FakeHubCallerContext(new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", "unknown_clerk") }))));
+        hub.SetGroups(new RecordingGroupManager());
+
+        await Assert.ThrowsAsync<HubException>(() => hub.SubscribeAsync());
     }
 }

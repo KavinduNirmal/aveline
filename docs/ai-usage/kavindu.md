@@ -3719,3 +3719,188 @@ true when they were written and are superseded here.
   `docs/reports/PR-290-slice3-review.md`, `.agents/plans/` (the plan file is named
   `*.ignore.md` on purpose), `.dsh-tools/`, `.screenshots/`, `.research-shots/`, and the
   pre-existing `frontend/aveline_mobile/android/gradle.properties`.
+
+## Session 2026-09-19 (cont.) — Notifications inbox: Flutter to backend (session start)
+
+**Task:** Implement the notifications inbox Flutter-to-backend feature across the phases defined in
+`.agents/plans/flutter-to-backend-notifications-implementation.ignore.md` (S0–S9) and its design record
+`.agents/plans/flutter-to-backend-notifications-implementation-strategy.md` (revision 2, FINAL).
+**Tool used:** DeepSeek Harness (deepseek-flash) coding agent
+**Branch:** `feature/flutter-to-backend-notifications` (current branch; **no branch created or switched**)
+
+### Plan read and reconciled
+
+- Read both plan documents in full (847 + 921 lines) at the stated baseline HEAD `1e4bdb5`, which is the
+  current HEAD. The executable plan is the authority on files, contracts, order, gates and acceptance
+  criteria; the strategy is the design record and the source of every decision (D1–D12, Q1–Q9).
+- **D1 = B is the shape of the work:** this plan wires and enables the inbox and ships **no new producer**.
+  S0–S4 wire and enable; S5 repairs the one producer that exists and is broken (`SystemAlert` notifies
+  nobody); S6–S9 handle retention, the per-row label, metrics-by-name and docs. The five missing producers
+  (`NewMessage`, `NewMatch`, `VipAtRisk`, `ApprovalNeeded`, `PaymentConfirmed`) each have a named gate and
+  land with no client change.
+- **Verified against the live repository before starting:** the notification endpoints are live
+  (`Program.cs:155`); `app.dart:364` still selects `DemoNotificationRepository()` and the API repository's
+  import is absent; `NotificationDto` carries no `notificationId`/`unreadCount`; the `NotificationHub`
+  declares no client-callable re-subscribe method; `NotificationKind` has seven values (no
+  `IntegrationExpired`/`SystemAlert`); `EventReminderService.cs:58` requests `Realtime | Email`; and
+  `AlertService` writes a bare record without ever calling `INotificationDispatcher`.
+- **TDD is mandatory for every phase:** failing test first, then implementation, then refactor. Flutter
+  tests run under the SDK cache outside the workspace, so the DSH sandbox needed full access for
+  `flutter test` (the harness default was widened mid-session).
+
+### Issues created (one per phase)
+
+- S0 [#304](https://github.com/KavinduNirmal/aveline/issues/304) — wire the API notification repository
+- S1 [#305](https://github.com/KavinduNirmal/aveline/issues/305) — the two missing kind visuals
+- S2 [#306](https://github.com/KavinduNirmal/aveline/issues/306) — realtime recovery (hub re-subscribe + refresh)
+- S3 [#307](https://github.com/KavinduNirmal/aveline/issues/307) — payload identity and the badge
+- S4 [#308](https://github.com/KavinduNirmal/aveline/issues/308) — push truth, tap semantics, the reminder's push
+- S5 [#309](https://github.com/KavinduNirmal/aveline/issues/309) — repair and de-duplicate the alert path
+- S6 [#310](https://github.com/KavinduNirmal/aveline/issues/310) — notification retention job
+- S7 [#311](https://github.com/KavinduNirmal/aveline/issues/311) — per-row boutique label
+- S8 [#312](https://github.com/KavinduNirmal/aveline/issues/312) — record the notification metric family
+- S9 [#313](https://github.com/KavinduNirmal/aveline/issues/313) — docs truth
+
+### Summary of work done
+
+**Test-driven throughout.** Every phase started with failing tests (confirmed red), then
+implementation, then the phase's documentation. No branch was created or switched; all work
+is on `feature/flutter-to-backend-notifications`. Nothing was committed (the repo already
+carried unrelated staged reports, which were left untouched).
+
+**S0 + S1 — wiring and the two missing visuals (client-only; #304, #305).**
+`app.dart` now selects `ApiNotificationRepository(_dio)` and imports it; the stale "until the
+endpoints are live" comment is gone. New `EmptyNotificationRepository` is the screen's
+provider-less fallback (the `EmptyThreadRepository` rule), so a widget test mounting the
+screen alone draws the real empty state. `NotificationKind` gained `integrationExpired` and
+`systemAlert` with new icons/tints, and `kind_covers_every_backend_type` lists the eight
+`NotificationType` names explicitly as the drift guard. The demo fixture gained the two kinds
+so its own "covers every kind" contract stays true (11 rows, all read, so unread stays 4);
+`notifications_screen_test.dart`'s row-count assertion was updated deliberately. A new
+source-level guard (`test/app_notifications_wiring_test.dart`) pins the repository selection,
+since the shell cannot be driven to `/notifications` without Clerk + Dio + Firebase.
+
+**S2 — realtime recovery (#306).** `NotificationHub.SubscribeAsync` is a new idempotent
+client-callable re-join of `user:{id}` + active `org:{id}`, sharing `JoinGroupsAsync` with
+`OnConnectedAsync`. `RealtimeNotificationService` registers `onReconnected`/`onClosed`
+**before** `start()`, re-invokes `SubscribeAsync` on every reconnect, then calls the refresh
+seam; a failed re-join is surfaced. `app.dart` awaits the connect inside `_connectRealtime`
+(no unawaited async error). The web client re-subscribes in `onreconnected`.
+
+**S3 — payload identity and the badge (#307).** `NotificationDto` gained `notificationId` and
+`unreadCount`; `IRealtimeChannel.SendAsync` takes both, `IPushChannel.SendAsync` the id, and
+`NotificationDispatcher` computes the count per recipient **after** its inbox row is written.
+`NotificationPayload` (Dart) and the web interface widened, both defaulted. The controller
+gained `applyUnreadCount` (clamped, silent on unchanged); `_onNotificationReceived` applies the
+payload count and still refreshes, so `setUnreadCount` remains the only badge writer. The
+dispatcher test harness was rebuilt into per-interface recorders — one shared object matched
+the first `switch` arm and never exercised the push/email signatures.
+
+**S4 — push truth and tap semantics (#308).** `FcmPushChannel` merges `type` and
+`notificationId` into the FCM `data`; `EventReminderService` requests `Realtime | Push |
+Email`. New `PushMessageHandler` + `PushMessageSource` seam (with a
+`FirebasePushMessageSource` adapter) handle `onMessage` → the same arrival seam and
+`onMessageOpenedApp`/`getInitialMessage` → mark **that notification** read, then route through
+the one shared rule. The routing rule was factored into `notificationRouteForIds`, now used by
+both `notificationRouteFor` and the tap. The handler reads route ids from the flat FCM map
+**and** the nested hub `data` map; a cold-start tap whose mark-read fails still routes, and
+navigation is deferred a frame because the router may not be mounted.
+
+**S5 — alert path repaired and de-duplicated (#309).** `INotificationDispatcher.DispatchAsync`
+returns the `NotificationRecord` it wrote (or `null`); `AlertService` injects the dispatcher
+instead of `INotificationRepository` + `IRecipientResolver`, dispatches once and stores the
+returned id; the re-fire branch no longer clears `NotificationRecordId`. A Critical
+`SystemAlert` now creates one record and one inbox row per resolved recipient, and a sustained
+breach notifies once with the `system.alert.fired` event still published.
+
+**S6 — retention (#310).** New `NotificationRetentionJob` (module-local `BackgroundService`,
+`PeriodicTimer`, shared `IDistributedJobLock`, public `RunAsync`/`RunLockedAsync`) purges
+`UserNotifications` dismissed after `Notifications:DismissedRetentionDays` (30) or read after
+`Notifications:ReadRetentionDays` (180); the `NotificationRecord`/`NotificationDelivery` audit
+trail is untouched. Config keys added beside the existing retention keys; registered from
+`AddNotificationsModule`.
+
+**S7 — per-row boutique label (#311).** `UserNotificationDto` gained `organizationId` and
+`organizationName`. **Deviation from the plan:** the plan prescribed
+`.ThenInclude(r => r.Organization)`, but `NotificationRecord.OrganizationId` is a required FK
+and EF therefore treats the navigation as a required reference — its include uses inner-join
+semantics and **drops** every row whose organisation is absent, which failed both the existing
+repository tests (they seed random org ids) and the plan's own "a row with no organisation
+still lists" acceptance. The repository instead loads the names in a second query and attaches
+them, keeping rows and leaving the name null when absent. No column, no migration, no
+interface change; OpenAPI and the API README document the two new fields.
+
+**S8 — metric family recorded (#312).** A `notification*` block was added to
+`docs/backend/statistics-catalog.md` with all nine metrics, every required field, access per
+metric, the exposure rule, the two definitional notes (inbox backlog vs S-36's delivery
+backlog; percentiles null below the sample floor) and the proposed alert thresholds. No
+`S-n`, no endpoint, no code.
+
+**S9 — docs truth (#313).** Corrected the stale backend README Phase-6 deviation that still
+claimed the alert re-fire clears `NotificationRecordId`; added a notifications-inbox backend
+status section; updated `docs/architecture/inbox.md` §6.4 (the deep link is implemented) and
+§7 (the hub re-join); documented the four notification tables in
+`docs/backend/domain-model.md` §8.13; fixed the four OpenAPI drift items (`/read-all` 200 body,
+named `UnreadCountResponse`/`MarkAllReadResponse` schemas, device-registration empty body,
+device DELETE 404) and the matching API-README lines. The feature README now states the
+endpoints are live, the fallback is empty, Undo expires with the toast, the badge's single
+writer and what an arrival does.
+
+### Verification performed
+
+- **Flutter:** `flutter analyze --no-fatal-infos` → **No issues found**; `flutter test` →
+  **1005 passed**. New coverage: wiring guard, empty repository, kind coverage + tile visuals,
+  reconnect/re-join, payload defaults, badge-from-payload, push tap + cold start, routing.
+- **Backend:** `dotnet test Aveline.Api.Tests` (full suite, Docker up) → **1472 passed, 1
+  failed**, the failure being the pre-existing, unrelated
+  `PricingRuleCacheWarmerTests.WarmAsync_PopulatesCacheForEveryActiveScope` (it passes in
+  isolation; a timing flake in the parallel run, untouched by this work). The
+  notification/alert/retention filters are **fully green** (hub, dispatcher, channels, alert
+  evaluation, event reminder, endpoints, retention).
+- **Web:** `bun run test` → **204 passed**; `bun run build` succeeds (pre-existing chunk-size
+  warning); `bun run lint` → 0 errors (the 33 warnings are pre-existing, none in the touched
+  files).
+- `docs/api/openapi.yaml` parses (149 schemas; both new schemas present).
+- `grep -rn "not yet mapped on the server" docs lib/features/notifications` → nothing.
+
+### Deliberately not built (the plan's D1 = B and its gates)
+
+- **No notification producer ships.** `NewMessage`, `NewMatch`, `VipAtRisk`,
+  `ApprovalNeeded` and `PaymentConfirmed` remain gated on the modules that own their events
+  (§4.9); the inbox is now complete enough that each lands with no client or contract change.
+- **D12 fan-out schema, the append/update path and the count re-definition** stay frozen in
+  the plan, landing with the first fan-out producer.
+- **No metric endpoint, no local-notification stack, no restore route, no org filter, no
+  migration.** The four OpenAPI fixes are documentation only.
+
+### Notes / remaining work
+
+- The work is uncommitted by design (the user asked for issues + implementation on the current
+  branch, not for a commit), and the pre-existing staged reports and untracked scratch dirs
+  were left alone.
+- The demo fixture now seeds 11 rows (one per kind) instead of 9; this is the only place the
+  fixture's shape changed, and the README records it.
+- Local `flutter test` needs write access to the Flutter SDK's engine cache outside the
+  workspace; a workspace-write sandbox aborts every Flutter command, which the session's
+  wider file policy resolved.
+
+### Follow-up (same session) — deferred-work documentation, commit, push and PR
+
+On the user's instruction the deferred/not-built scope was written down, then the branch was
+committed, pushed and opened as a PR.
+
+- **Documented the deferred and not-built work** in
+  [`docs/backend/README.md`](../../docs/backend/README.md) §"Deferred and not built by this
+  work" — a gate table covering the five missing producers (`NewMessage`, `NewMatch`,
+  `VipAtRisk`, `ApprovalNeeded`, `PaymentConfirmed`), the D12 fan-out schema/append/count, the
+  D12 race guard, the metric endpoints, the hub's absence from OpenAPI, the restore route, the
+  org filter, the local-notification stack, the Commerce wiring defect and FCM provisioning —
+  and a matching "Deferred" section in
+  [`frontend/aveline_mobile/lib/features/notifications/README.md`](../../frontend/aveline_mobile/lib/features/notifications/README.md).
+- **Committed** only this feature's files, using an explicit pathspec so the two pre-existing
+  staged reports (`PR-290-slice3-review.md`, `SE3110_Compliance_and_Tool_Integration_Report.md`)
+  and the untracked scratch directories were **not** swept into the commit.
+- **Pushed** `feature/flutter-to-backend-notifications` and opened a PR against `development`.
+- Verification at commit time was unchanged from the session summary above: Flutter 1005 pass
+  and analyze clean, web 204 pass and build clean, backend notification/alert/retention suites
+  green (the full run's single failure is the unrelated `PricingRuleCacheWarmerTests` flake).

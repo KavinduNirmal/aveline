@@ -1,5 +1,6 @@
 using Aveline.Api.Configurations;
 using Aveline.Api.Modules.Notifications.Channels;
+using Aveline.Api.Modules.Notifications.Jobs;
 using Aveline.Api.Modules.Notifications.Repositories;
 using Aveline.Api.Modules.Notifications.Services;
 
@@ -37,6 +38,9 @@ public static class NotificationsModule
         {
             services.AddScoped<IPushChannel, LoggingPushChannel>();
         }
+
+        // Purges inbox rows the user is finished with; the audit trail is kept.
+        services.AddHostedService<NotificationRetentionJob>();
 
         return services;
     }

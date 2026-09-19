@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
@@ -25,10 +26,13 @@ const ORG = {
 }
 
 async function openOverrideDialog() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
-    <MemoryRouter>
-      <AdminOrgsView />
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <AdminOrgsView />
+      </MemoryRouter>
+    </QueryClientProvider>,
   )
   await waitFor(() => {
     expect(screen.getByText('Aveline Boutique')).toBeInTheDocument()

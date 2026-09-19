@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react"
+import { useQuery } from "@tanstack/react-query"
+import { useState } from "react"
 
 import { useAdminSession } from "@/contexts/AdminSessionContext"
 import { Badge } from "@/components/ui/badge"
@@ -10,11 +11,6 @@ import type { AdminApprovalRequestSummary } from "@/types/admin"
 import { Check, X } from "lucide-react"
 import { toast } from "sonner"
 
-type LoadState =
-  | { kind: "loading" }
-  | { kind: "ready"; requests: AdminApprovalRequestSummary[] }
-  | { kind: "error"; message: string }
-
 /**
  * The access-request queue.
  *
@@ -24,27 +20,36 @@ type LoadState =
  * block. `GET /admin/requests` is a bare, unpaginated array, so the whole queue is one read.
  */
 export function AdminRequestsView() {
-  const [state, setState] = useState<LoadState>({ kind: "loading" })
   const [processingId, setProcessingId] = useState<string | null>(null)
   const { clerkUserId } = useAdminSession()
 
-  const loadRequests = useCallback(async () => {
-    setState({ kind: "loading" })
-    try {
-      setState({ kind: "ready", requests: await listAdminRequests() })
-    } catch (err: unknown) {
-      setState({
-        kind: "error",
-        message: err instanceof Error ? err.message : "Failed to load admin approval requests",
-      })
-    }
-  }, [])
+  /**
+   * §3.7: the access queue is small (`ListAllAsync` takes no paging) and the action is the point,
+   * so it is never served stale and it refreshes on a 60 s cadence.
+   */
+  const requestsQuery = useQuery({
+    queryKey: ['admin', 'requests'],
+    queryFn: listAdminRequests,
+    staleTime: 0,
+    refetchInterval: 60_000,
+  })
 
-  useEffect(() => {
-    void loadRequests()
-  }, [loadRequests])
+  const requests = requestsQuery.data ?? []
+  const state = requestsQuery.isPending
+    ? ({ kind: 'loading' } as const)
+    : requestsQuery.isError
+      ? ({
+          kind: 'error',
+          message:
+            requestsQuery.error instanceof Error
+              ? requestsQuery.error.message
+              : 'Failed to load admin approval requests',
+        } as const)
+      : ({ kind: 'ready' } as const)
 
-  const requests = state.kind === "ready" ? state.requests : []
+  const loadRequests = async () => {
+    await requestsQuery.refetch()
+  }
   const pendingCount = requests.filter((request) => request.status === "Pending").length
   const isSelf = (request: AdminApprovalRequestSummary): boolean =>
     clerkUserId !== null && request.clerkUserId === clerkUserId

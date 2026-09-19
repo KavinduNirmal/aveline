@@ -1,7 +1,10 @@
+import { keepPreviousData, useQuery } from "@tanstack/react-query"
 import { useCallback, useEffect, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { searchAdminUsers, updateUserAccountState } from "@/lib/admin/api"
+import { DataTable, type Column } from "@/components/admin/data/DataTable"
+import { ErrorState } from "@/components/admin/data/states/ErrorState"
 import { Pagination } from "@/components/admin/data/Pagination"
 import {
   USER_PAGE_SIZES,
@@ -14,14 +17,6 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import {
   Dialog,
   DialogContent,
@@ -47,9 +42,6 @@ export function AdminUsersView() {
   const stateFilter = filters.accountState ?? 'all'
 
   const [searchInput, setSearchInput] = useState(q)
-  const [users, setUsers] = useState<AdminUserDto[]>([])
-  const [total, setTotal] = useState(0)
-  const [loading, setLoading] = useState(true)
 
   const [selectedUser, setSelectedUser] = useState<AdminUserDto | null>(null)
   const [targetState, setTargetState] = useState<AccountState>("Active")
@@ -76,30 +68,107 @@ export function AdminUsersView() {
     [page, pageSize, q, stateFilter, setSearchParams],
   )
 
-  const loadUsers = useCallback(async () => {
-    setLoading(true)
-    try {
-      const data = await searchAdminUsers({
+  /**
+   * The read, through TanStack Query (C4).
+   *
+   * `placeholderData: keepPreviousData` is why the library was adopted: a page change keeps the
+   * previous rows on screen while the next page is in flight, instead of blanking the table. The
+   * `staleTime` and "no polling" match §3.7 — this is an operator-driven list, and polling a list
+   * someone is reading is noise.
+   */
+  const usersQuery = useQuery({
+    queryKey: ['admin', 'users', { q, stateFilter, page, pageSize }],
+    queryFn: () =>
+      searchAdminUsers({
         q: q || undefined,
         accountState: stateFilter === "all" ? undefined : stateFilter,
         page,
         pageSize,
-      })
-      setUsers(data.items)
-      setTotal(data.total)
-    } catch {
-      toast.error("Failed to load users")
-    } finally {
-      setLoading(false)
-    }
-  }, [q, stateFilter, page, pageSize])
+      }),
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+  })
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      void loadUsers()
-    }, 250)
-    return () => clearTimeout(timer)
-  }, [loadUsers])
+  const users = usersQuery.data?.items ?? []
+  const total = usersQuery.data?.total ?? 0
+  const loading = usersQuery.isPending
+  const loadUsers = useCallback(async () => {
+    const result = await usersQuery.refetch()
+    if (result.error !== null) toast.error("Failed to load users")
+  }, [usersQuery])
+
+  const columns: Column<AdminUserDto>[] = [
+    {
+      key: "identity",
+      header: "User / Identity",
+      render: (user) => (
+        <div>
+          <div className="font-medium text-foreground">
+            {user.firstName} {user.lastName}
+          </div>
+          <div className="text-xs text-muted-foreground font-mono">{user.email}</div>
+        </div>
+      ),
+    },
+    {
+      key: "role",
+      header: "Role",
+      render: (user) => (
+        <div className="flex flex-col gap-1">
+          <Badge variant="outline" className="w-fit text-[10px] font-mono">
+            {user.userRole || "staff"}
+          </Badge>
+          {user.organizationRole && (
+            <span className="text-[10px] text-muted-foreground font-mono">
+              {user.organizationRole}
+            </span>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "state",
+      header: "Account state",
+      render: (user) => (
+        <Badge
+          variant={
+            user.accountState === "Active"
+              ? "default"
+              : user.accountState === "Suspended"
+                ? "destructive"
+                : "secondary"
+          }
+          className="text-[11px]"
+        >
+          {user.accountState}
+        </Badge>
+      ),
+    },
+    {
+      key: "joined",
+      header: "Joined",
+      render: (user) => (
+        <span className="text-xs text-muted-foreground">
+          {new Date(user.createdAt).toLocaleDateString()}
+        </span>
+      ),
+    },
+    {
+      key: "action",
+      header: "Action",
+      className: "text-right",
+      render: (user) => (
+        <Button
+          variant="outline"
+          size="sm"
+          className="text-xs h-8"
+          onClick={() => openStateModal(user)}
+        >
+          Change State
+        </Button>
+      ),
+    },
+  ]
 
   // Typing debounces into the URL rather than into local state, so the URL is always the
   // single source of truth the fetch reads from.
@@ -191,90 +260,32 @@ export function AdminUsersView() {
       </Card>
 
       <Card className="border-border shadow-xs overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>User / Identity</TableHead>
-              <TableHead>Role</TableHead>
-              <TableHead>Account State</TableHead>
-              <TableHead>Joined</TableHead>
-              <TableHead className="text-right">Action</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={5} className="text-center py-8 text-muted-foreground text-xs">
-                  Loading users...
-                </TableCell>
-              </TableRow>
-            ) : users.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={5} className="text-center py-8 text-muted-foreground text-xs">
-                  No users found matching query.
-                </TableCell>
-              </TableRow>
-            ) : (
-              users.map((u) => (
-                <TableRow key={u.id}>
-                  <TableCell>
-                    <div className="font-medium text-foreground">
-                      {u.firstName} {u.lastName}
-                    </div>
-                    <div className="text-xs text-muted-foreground font-mono">{u.email}</div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-col gap-1">
-                      <Badge variant="outline" className="w-fit text-[10px] font-mono">
-                        {u.userRole || "staff"}
-                      </Badge>
-                      {u.organizationRole && (
-                        <span className="text-[10px] text-muted-foreground font-mono">
-                          {u.organizationRole}
-                        </span>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={
-                        u.accountState === "Active"
-                          ? "default"
-                          : u.accountState === "Suspended"
-                            ? "destructive"
-                            : "secondary"
-                      }
-                      className="text-[11px]"
-                    >
-                      {u.accountState}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    {new Date(u.createdAt).toLocaleDateString()}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="text-xs h-8"
-                      onClick={() => openStateModal(u)}
-                    >
-                      Change State
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-        <Pagination
-          page={page}
-          pageSize={pageSize}
-          total={total}
-          pageSizes={USER_PAGE_SIZES}
-          onPageChange={(next) => applyParams({ page: next })}
-          onPageSizeChange={(next) => applyParams({ pageSize: next, page: 1 })}
-        />
+        {usersQuery.isError ? (
+          <ErrorState
+            error={usersQuery.error}
+            title="Users could not be loaded"
+            onRetry={() => void loadUsers()}
+          />
+        ) : (
+          <>
+            <DataTable<AdminUserDto>
+              columns={columns}
+              rows={users}
+              getRowKey={(user) => user.id}
+              state={loading ? "loading" : "ready"}
+              emptyMessage="No users found matching query."
+              caption="User accounts"
+            />
+            <Pagination
+              page={page}
+              pageSize={pageSize}
+              total={total}
+              pageSizes={USER_PAGE_SIZES}
+              onPageChange={(next) => applyParams({ page: next })}
+              onPageSizeChange={(next) => applyParams({ pageSize: next, page: 1 })}
+            />
+          </>
+        )}
       </Card>
 
       <Dialog open={!!selectedUser} onOpenChange={(o) => !o && setSelectedUser(null)}>

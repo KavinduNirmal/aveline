@@ -1,4 +1,5 @@
-﻿import { useEffect, useState } from "react"
+import { keepPreviousData, useQuery } from "@tanstack/react-query"
+import { useState } from "react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { searchAdminOrganizations, setEntitlementOverrides } from "@/lib/admin/api"
 import type { AdminOrganizationDto } from "@/types/admin"
@@ -18,8 +19,6 @@ import {
 import { toast } from "sonner"
 
 export function AdminOrgsView() {
-  const [orgs, setOrgs] = useState<AdminOrganizationDto[]>([])
-  const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
   const [planTier, setPlanTier] = useState<string>("all")
   const [page] = useState(1)
@@ -31,29 +30,27 @@ export function AdminOrgsView() {
   const [savingOverride, setSavingOverride] = useState(false)
   const [overrideError, setOverrideError] = useState<ClassifiedOverrideError | null>(null)
 
-  const loadOrgs = async () => {
-    setLoading(true)
-    try {
-      const data = await searchAdminOrganizations({
+  /** §3.7: a read-mostly list with operator-driven filtering — `keepPreviousData`, no polling. */
+  const orgsQuery = useQuery({
+    queryKey: ['admin', 'orgs', { search, planTier, page }],
+    queryFn: () =>
+      searchAdminOrganizations({
         q: search || undefined,
         planTier: planTier === "all" ? undefined : planTier,
         page,
-        pageSize: 20,
-      })
-      setOrgs(data.items)
-    } catch {
-      toast.error("Failed to load organizations")
-    } finally {
-      setLoading(false)
-    }
-  }
+        pageSize: 50,
+      }),
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+  })
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      void loadOrgs()
-    }, 250)
-    return () => clearTimeout(timer)
-  }, [search, planTier, page])
+  const orgs = orgsQuery.data?.items ?? []
+  const loading = orgsQuery.isPending
+
+  const loadOrgs = async () => {
+    const result = await orgsQuery.refetch()
+    if (result.error !== null) toast.error("Failed to load organizations")
+  }
 
   const handleOverrideSubmit = async () => {
     if (!selectedOrg) return

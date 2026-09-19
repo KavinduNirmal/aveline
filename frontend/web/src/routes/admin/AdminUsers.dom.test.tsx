@@ -1,4 +1,6 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -16,12 +18,19 @@ vi.mock('@/contexts/AdminSessionContext', () => ({
 }))
 
 function renderAt(entry: string) {
+  // The admin tree mounts its own QueryClientProvider inside AdminLayout (C4); the page is
+  // rendered directly here, so the test supplies one.
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
   return render(
-    <MemoryRouter initialEntries={[entry]}>
-      <Routes>
-        <Route path="/admin/:userId/users" element={<AdminUsersView />} />
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[entry]}>
+        <Routes>
+          <Route path="/admin/:userId/users" element={<AdminUsersView />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   )
 }
 
@@ -65,5 +74,59 @@ describe('AdminUsersView list state', () => {
     await waitFor(() => {
       expect(screen.getByText(/no users/i)).toBeInTheDocument()
     })
+  })
+})
+
+/**
+ * C4's reason for adopting TanStack Query: a page change must not blank the table. The delivered
+ * page held rows in component state and cleared them on every fetch.
+ */
+describe('AdminUsersView keepPreviousData', () => {
+  it('keeps the previous page visible while the next page is in flight', async () => {
+    searchAdminUsers.mockReset()
+    searchAdminUsers.mockResolvedValueOnce({
+      items: [
+        {
+          id: 'u-1',
+          clerkId: 'user_1',
+          email: 'ada@aveline.lk',
+          firstName: 'Ada',
+          lastName: 'Lovelace',
+          displayName: null,
+          username: 'ada',
+          phoneNumber: '',
+          address: null,
+          profileImageUrl: null,
+          userRole: 'staff',
+          organizationRole: '',
+          organizationId: '',
+          hasCompletedOnboarding: true,
+          accountState: 'Active',
+          contactPreference: 'Email',
+          pushNotificationsEnabled: false,
+          isActive: true,
+          createdAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+      ],
+      page: 1,
+      pageSize: 25,
+      total: 50,
+    })
+    // Page 2 never settles: the table must still show page 1's rows.
+    searchAdminUsers.mockImplementationOnce(() => new Promise(() => undefined))
+
+    renderAt('/admin/u1/users')
+
+    await waitFor(() => {
+      expect(screen.getByText(/Ada Lovelace/)).toBeInTheDocument()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /next/i }))
+
+    await waitFor(() => {
+      expect(searchAdminUsers).toHaveBeenCalledWith(expect.objectContaining({ page: 2 }))
+    })
+    expect(screen.getByText(/Ada Lovelace/)).toBeInTheDocument()
   })
 })

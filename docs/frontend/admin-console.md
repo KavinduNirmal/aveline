@@ -350,6 +350,22 @@ does not silently reset the operator's context. A page size the surface does not
 forwarded** — `readListParams` falls back to the default rather than letting the server's clamp make
 the pager lie. Page sizes are `25 | 50 | 100 | 200`.
 
+### The reads go through TanStack Query (C4)
+
+The `QueryClientProvider` alone is not the adoption; the reads are. `AdminUsers` and `AdminOrgs` use
+`useQuery` with `placeholderData: keepPreviousData` and `staleTime: 30_000`; `AdminRequests` uses
+`staleTime: 0` with a 60 s `refetchInterval`. That is §3.7 exactly:
+
+| Surface | `staleTime` | `refetchInterval` | `keepPreviousData` | Why |
+|---|---|---|---|---|
+| `admin/users`, `admin/orgs` | 30 s | none | **yes** | operator-driven paging and filtering; polling a list someone is reading is noise |
+| `admin/requests` | 0 | 60 s | n/a | the queue is small and the action is the point |
+
+`keepPreviousData` is the specific reason the library was adopted: a page change keeps the previous
+rows on screen while the next page is in flight, instead of blanking the table. The delivered page
+held rows in component state and cleared them on every fetch. A test pins it by making page 2 never
+settle and asserting page 1's rows are still rendered.
+
 ### One table, one set of states
 
 `components/admin/data/DataTable.tsx` owns the five states (skeleton, empty, error with a working

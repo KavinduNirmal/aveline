@@ -35,6 +35,28 @@ public class OrdersController : ControllerBase
         return order is not null ? Ok(order) : NotFound();
     }
 
+    [HttpPut("{id:guid}")]
+    public async Task<ActionResult<OrderResponseDto>> Update(
+        [FromRoute] Guid orgId,
+        [FromRoute] Guid id,
+        [FromBody] CreateOrderDto dto,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var updated = await _orderService.UpdateOrderAsync(id, orgId, dto, ct);
+            return Ok(updated);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
     [HttpPost]
     public async Task<ActionResult<OrderResponseDto>> Create(
         [FromRoute] Guid orgId,

@@ -233,22 +233,18 @@ class ToolRegistry:
 
     # ============================== COMMERCE AGENT ==============================
 
-    async def calculate_margin(self, order_id: str) -> dict[str, Any]:
+    async def calculate_margin(self, order_id: str, org_id: str | None = None) -> dict[str, Any]:
         """Compute margin for an order via the backend."""
-        return await self._client.request(
-            "POST", f"/api/internal/orders/{order_id}/calculate-margin"
-        )
+        path = f"/api/v1/orgs/{org_id}/orders/{order_id}/recalculate" if org_id else f"/api/internal/orders/{order_id}/calculate-margin"
+        return await self._client.request("POST", path)
 
-    async def generate_payment_request(self, order_id: str, amount: float) -> dict[str, Any]:
+    async def generate_payment_request(self, order_id: str, amount: float, org_id: str | None = None) -> dict[str, Any]:
         """Generate a payment request for an order."""
-        return await self._client.request(
-            "POST",
-            f"/api/internal/orders/{order_id}/payment-request",
-            json={"amount": amount},
-        )
+        path = f"/api/v1/orgs/{org_id}/payments" if org_id else f"/api/internal/orders/{order_id}/payment-request"
+        payload = {"orderId": order_id, "amount": amount} if org_id else {"amount": amount}
+        return await self._client.request("POST", path, json=payload)
 
-    async def check_approval_threshold(self, order_id: str) -> dict[str, Any]:
+    async def check_approval_threshold(self, order_id: str, org_id: str | None = None) -> dict[str, Any]:
         """Evaluate an order against approval thresholds."""
-        return await self._client.request(
-            "GET", f"/api/internal/orders/{order_id}/approval-check"
-        )
+        path = f"/api/v1/orgs/{org_id}/approvals" if org_id else f"/api/internal/orders/{order_id}/approval-check"
+        return await self._client.request("GET", path)

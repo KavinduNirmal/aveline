@@ -1,4 +1,4 @@
-﻿using Aveline.Api.Configurations;
+using Aveline.Api.Configurations;
 using Aveline.Api.Modules.Commerce.DTOs;
 using Aveline.Api.Modules.Commerce.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -49,6 +49,16 @@ public class PaymentsController : ControllerBase
         return result is not null ? Ok(result) : NotFound(new { message = $"Payment '{id}' not found." });
     }
 
+    [HttpGet("order/{orderId:guid}")]
+    public async Task<ActionResult<PaymentResponseDto>> GetByOrderId(
+        [FromRoute] Guid organizationId,
+        [FromRoute] Guid orderId,
+        CancellationToken ct = default)
+    {
+        var result = await _paymentService.GetPaymentByOrderIdAsync(orderId, organizationId, ct);
+        return result is not null ? Ok(result) : NotFound(new { message = $"No payment found for order '{orderId}'." });
+    }
+
     [HttpPost("{id:guid}/confirm")]
     public async Task<ActionResult<PaymentResponseDto>> Confirm(
         [FromRoute] Guid organizationId,
@@ -76,6 +86,7 @@ public class PaymentsController : ControllerBase
     }
 
     [HttpPost("{id:guid}/refund")]
+    [Authorize(Policy = AuthorizationConfiguration.BoutiquePaymentRefundPolicy)]
     public async Task<ActionResult<PaymentResponseDto>> Refund(
         [FromRoute] Guid organizationId,
         [FromRoute] Guid id,

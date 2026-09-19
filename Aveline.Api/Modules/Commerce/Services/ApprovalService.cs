@@ -1,6 +1,9 @@
+using System.Net.Http.Json;
+using Aveline.Api.Infrastructure.Integrations;
 using Aveline.Api.Modules.Commerce.DTOs;
 using Aveline.Api.Modules.Commerce.Models;
 using Aveline.Api.Modules.Commerce.Repositories;
+using Microsoft.Extensions.Logging;
 
 namespace Aveline.Api.Modules.Commerce.Services;
 
@@ -8,11 +11,19 @@ public class ApprovalService : IApprovalService
 {
     private readonly IApprovalRepository _approvalRepository;
     private readonly IOrderRepository _orderRepository;
+    private readonly IAgentServiceClient? _agentClient;
+    private readonly ILogger<ApprovalService>? _logger;
 
-    public ApprovalService(IApprovalRepository approvalRepository, IOrderRepository orderRepository)
+    public ApprovalService(
+        IApprovalRepository approvalRepository,
+        IOrderRepository orderRepository,
+        IAgentServiceClient? agentClient = null,
+        ILogger<ApprovalService>? logger = null)
     {
         _approvalRepository = approvalRepository ?? throw new ArgumentNullException(nameof(approvalRepository));
         _orderRepository = orderRepository ?? throw new ArgumentNullException(nameof(orderRepository));
+        _agentClient = agentClient;
+        _logger = logger;
     }
 
     public async Task<PagedResult<ApprovalQueueResponseDto>> GetPendingApprovalsAsync(
@@ -119,6 +130,34 @@ public class ApprovalService : IApprovalService
         }
 
         await _approvalRepository.UpdateAsync(entry, ct);
+
+        // Resume the paused LangGraph workflow when a thread ID is associated with the approval (HITL resume)
+        if (!string.IsNullOrWhiteSpace(entry.ThreadId) && _agentClient != null)
+        {
+            try
+            {
+                var payload = new
+                {
+                    query = $"[Human Approval Decision: {decision}] {dto.Reason ?? string.Empty}".Trim(),
+                    thread_id = entry.ThreadId,
+                    org_context = new
+                    {
+                        organization_id = organizationId,
+                        order_id = entry.OrderId,
+                        approval_decision = decision,
+                        approval_comment = dto.Reason,
+                        revised_discount = dto.RevisedDiscount,
+                    }
+                };
+                using var content = JsonContent.Create(payload);
+                await _agentClient.PostAsync("/agents/query", content, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Failed to send approval decision resume to Agent Service for thread {ThreadId}", entry.ThreadId);
+            }
+        }
+
         return MapToDto(entry);
     }
 

@@ -1,4 +1,4 @@
-﻿using System.Security.Claims;
+using System.Security.Claims;
 using Aveline.Api.Configurations;
 using Aveline.Api.Modules.Commerce.DTOs;
 using Aveline.Api.Modules.Commerce.Services;
@@ -40,6 +40,7 @@ public class ApprovalsController : ControllerBase
     }
 
     [HttpPost("{id:guid}/decision")]
+    [Authorize(Policy = AuthorizationConfiguration.BoutiqueApprovalDecisionPolicy)]
     public async Task<ActionResult<ApprovalQueueResponseDto>> ProcessDecision(
         [FromRoute] Guid organizationId,
         [FromRoute] Guid id,
@@ -48,13 +49,7 @@ public class ApprovalsController : ControllerBase
     {
         try
         {
-            Guid? userId = null;
-            var sub = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (!string.IsNullOrEmpty(sub) && Guid.TryParse(sub, out var parsed))
-            {
-                userId = parsed;
-            }
-
+            Guid? userId = GetCurrentUserId();
             var result = await _approvalService.ProcessDecisionAsync(id, organizationId, dto, userId, ct);
             return Ok(result);
         }
@@ -70,5 +65,49 @@ public class ApprovalsController : ControllerBase
         {
             return BadRequest(new { message = ex.Message });
         }
+    }
+
+    [HttpPost("{id:guid}/approve")]
+    [Authorize(Policy = AuthorizationConfiguration.BoutiqueApprovalDecisionPolicy)]
+    public Task<ActionResult<ApprovalQueueResponseDto>> Approve(
+        [FromRoute] Guid organizationId,
+        [FromRoute] Guid id,
+        [FromBody] ApprovalDecisionDto? dto = null,
+        CancellationToken ct = default)
+    {
+        var decisionDto = dto ?? new ApprovalDecisionDto();
+        decisionDto.Decision = "approve";
+        return ProcessDecision(organizationId, id, decisionDto, ct);
+    }
+
+    [HttpPost("{id:guid}/reject")]
+    [Authorize(Policy = AuthorizationConfiguration.BoutiqueApprovalDecisionPolicy)]
+    public Task<ActionResult<ApprovalQueueResponseDto>> Reject(
+        [FromRoute] Guid organizationId,
+        [FromRoute] Guid id,
+        [FromBody] ApprovalDecisionDto? dto = null,
+        CancellationToken ct = default)
+    {
+        var decisionDto = dto ?? new ApprovalDecisionDto();
+        decisionDto.Decision = "reject";
+        return ProcessDecision(organizationId, id, decisionDto, ct);
+    }
+
+    [HttpPost("{id:guid}/revise")]
+    [Authorize(Policy = AuthorizationConfiguration.BoutiqueApprovalDecisionPolicy)]
+    public Task<ActionResult<ApprovalQueueResponseDto>> Revise(
+        [FromRoute] Guid organizationId,
+        [FromRoute] Guid id,
+        [FromBody] ApprovalDecisionDto dto,
+        CancellationToken ct = default)
+    {
+        dto.Decision = "revise";
+        return ProcessDecision(organizationId, id, dto, ct);
+    }
+
+    private Guid? GetCurrentUserId()
+    {
+        var sub = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        return !string.IsNullOrEmpty(sub) && Guid.TryParse(sub, out var parsed) ? parsed : null;
     }
 }

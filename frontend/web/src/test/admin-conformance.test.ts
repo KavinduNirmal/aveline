@@ -65,4 +65,20 @@ describe('A3 blocking conformance rules', () => {
   it('rule 2: no raw <select> or <input> in the admin tree', () => {
     expect(offenders(RAW_CONTROL)).toEqual([])
   })
+
+  it('every chart series sets connectNulls from the shared CONNECT_NULLS constant', () => {
+    // A `null` must be a gap. `connectNulls: true` is the classic silent lie: the line runs
+    // through zero and the chart reports a value the server never measured.
+    const offenders: string[] = []
+    for (const file of adminFiles) {
+      const text = source(file)
+      for (const match of text.matchAll(/<(?:Line|Area)\b[\s\S]*?\/>/g)) {
+        const element = match[0]
+        if (!element.includes('connectNulls={CONNECT_NULLS}')) {
+          offenders.push(`${file.replace(srcRoot, 'src')}: ${element.slice(0, 60)}…`)
+        }
+      }
+    }
+    expect(offenders).toEqual([])
+  })
 })

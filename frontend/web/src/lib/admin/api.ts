@@ -2,6 +2,7 @@ import { apiClient } from "@/lib/api"
 import type {
   AdminApprovalRequestSummary,
   AdminUserDto,
+  AgentOverviewDto,
   AuditLogEntry,
   AuthClaims,
   ChangeUserStateRequest,
@@ -13,7 +14,7 @@ import type {
   RevokeBlossomsRequest,
   SetEntitlementOverridesRequest,
   SystemAlertAckResponse,
-  SystemAlertDto,
+  SystemAlertPage,
   SystemOverview,
   SystemMetricSeries,
 } from "@/types/admin"
@@ -176,15 +177,21 @@ export async function fetchSystemAlerts(params: {
   ruleId?: string
   page?: number
   pageSize?: number
-}): Promise<{
-  items: SystemAlertDto[]
-  page: number
-  pageSize: number
-  total: number
-}> {
-  const response = await apiClient.get(
+}): Promise<SystemAlertPage> {
+  const response = await apiClient.get<SystemAlertPage>(
     "/api/v1/admin/statistics/system/alerts",
     { params },
+  )
+  return response.data
+}
+
+/**
+ * `GET /admin/statistics/agents/overview` — the agent family's own `dataQuality` vocabulary
+ * (five booleans), which must not be rendered with the system family's wording.
+ */
+export async function fetchAgentOverview(): Promise<AgentOverviewDto> {
+  const response = await apiClient.get<AgentOverviewDto>(
+    "/api/v1/admin/statistics/agents/overview",
   )
   return response.data
 }

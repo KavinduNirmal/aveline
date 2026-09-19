@@ -278,3 +278,30 @@ export interface SystemMetricSeries {
     omitted: string[]
   }
 }
+
+export interface SystemAlertPage {
+  items: SystemAlertDto[]
+  page: number
+  pageSize: number
+  total: number
+}
+
+/** The agent family's five instrumentation flags (`AgentStatisticsDtos.cs:11-16`). */
+export interface AgentDataQualityDto {
+  latencyInstrumented: boolean
+  nodeFailuresObserved: boolean
+  perStepAttribution: boolean
+  toolInstrumented: boolean
+  costInstrumented: boolean
+}
+
+/** `AgentOverviewDto` (`AgentStatisticsDtos.cs:256-263`). `successRate` is null when unmeasured. */
+export interface AgentOverviewDto {
+  totalRuns: number
+  running: number
+  pausedForApproval: number
+  succeeded: number
+  failed: number
+  successRate: number | null
+  dataQuality: AgentDataQualityDto
+}

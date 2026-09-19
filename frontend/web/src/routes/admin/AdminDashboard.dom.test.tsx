@@ -22,10 +22,14 @@ vi.mock('@/contexts/AdminSessionContext', () => ({
 const fetchSystemOverview = vi.fn()
 const queryAuditEntries = vi.fn()
 const listAdminRequests = vi.fn()
+const fetchSystemAlerts = vi.fn()
+const fetchAgentOverview = vi.fn()
 vi.mock('@/lib/admin/api', () => ({
   fetchSystemOverview: () => fetchSystemOverview(),
   queryAuditEntries: (...args: unknown[]) => queryAuditEntries(...args),
   listAdminRequests: () => listAdminRequests(),
+  fetchSystemAlerts: (...args: unknown[]) => fetchSystemAlerts(...args),
+  fetchAgentOverview: () => fetchAgentOverview(),
 }))
 
 const FABRICATED = [
@@ -52,9 +56,13 @@ describe('AdminDashboardView when every call fails', () => {
     fetchSystemOverview.mockReset()
     queryAuditEntries.mockReset()
     listAdminRequests.mockReset()
+    fetchSystemAlerts.mockReset()
+    fetchAgentOverview.mockReset()
     fetchSystemOverview.mockRejectedValue(new Error('503'))
     queryAuditEntries.mockRejectedValue(new Error('503'))
     listAdminRequests.mockRejectedValue(new Error('503'))
+    fetchSystemAlerts.mockRejectedValue(new Error('503'))
+    fetchAgentOverview.mockRejectedValue(new Error('503'))
 
     const { container } = renderDashboard()
 
@@ -73,6 +81,8 @@ describe('AdminDashboardView when the API answers', () => {
     fetchSystemOverview.mockReset()
     queryAuditEntries.mockReset()
     listAdminRequests.mockReset()
+    fetchSystemAlerts.mockReset()
+    fetchAgentOverview.mockReset()
     fetchSystemOverview.mockResolvedValue({
       version: {
         gitSha: 'deadbee',
@@ -131,6 +141,48 @@ describe('AdminDashboardView when the API answers', () => {
       total: 1,
     })
     listAdminRequests.mockResolvedValue([])
+    fetchSystemAlerts.mockResolvedValue({
+      items: [
+        {
+          id: 'alert-1',
+          ruleId: 'rule-1',
+          ruleName: 'api.error_rate',
+          organizationId: null,
+          metricName: 'api.error_rate',
+          severity: 'Warning',
+          status: 'Firing',
+          title: 'REAL_ALERT',
+          detail: null,
+          observedValue: 0.2,
+          threshold: 0.05,
+          occurrenceCount: 3,
+          firedAt: '2026-01-01T00:00:00Z',
+          lastObservedAt: '2026-01-01T00:05:00Z',
+          acknowledgedAt: null,
+          resolvedAt: null,
+        },
+      ],
+      page: 1,
+      pageSize: 5,
+      total: 1,
+    })
+    // totalRuns === 0 must read "no runs recorded yet", which is a *different* message from
+    // "not instrumented" — the five flags below are all false and must not produce that copy.
+    fetchAgentOverview.mockResolvedValue({
+      totalRuns: 0,
+      running: 0,
+      pausedForApproval: 0,
+      succeeded: 0,
+      failed: 0,
+      successRate: null,
+      dataQuality: {
+        latencyInstrumented: false,
+        nodeFailuresObserved: false,
+        perStepAttribution: false,
+        toolInstrumented: false,
+        costInstrumented: false,
+      },
+    })
 
     renderDashboard()
 
@@ -141,5 +193,15 @@ describe('AdminDashboardView when the API answers', () => {
     for (const value of FABRICATED) {
       expect(screen.queryByText(value)).toBeNull()
     }
+
+    // V2 asks the server for firing alerts explicitly, so a Resolved row is never counted.
+    expect(fetchSystemAlerts).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'Firing' }),
+    )
+    // V7 renders every omitted metric by name.
+    expect(screen.getByText(/blossoms_per_hour: not measured on this host/)).toBeInTheDocument()
+    // V10 distinguishes an empty history from an uninstrumented one.
+    expect(screen.getByText('no runs recorded yet')).toBeInTheDocument()
+    expect(screen.queryByText(/latency is not instrumented/)).toBeNull()
   })
 })

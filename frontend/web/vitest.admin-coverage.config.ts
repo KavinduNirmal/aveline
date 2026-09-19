@@ -35,14 +35,16 @@ export default defineConfig({
       ],
       exclude: ['**/*.test.*', '**/*.d.ts'],
       thresholds: {
-        // A0 ratchet floor. Raised by each slice to the value it achieved.
-        'src/routes/admin/**': { lines: 0, functions: 0, branches: 0, statements: 0 },
-        'src/components/admin/**': { lines: 0, functions: 0, branches: 0, statements: 0 },
+        // The ratchet. A0 set the floor to 0; each slice raises it to the value that slice
+        // achieved. A8 writes the final numbers. Achieved at A4: routes/admin 19.25% lines,
+        // components/admin 10% lines, AdminSessionContext 66.07% lines.
+        'src/routes/admin/**': { lines: 19, functions: 12, branches: 18, statements: 19 },
+        'src/components/admin/**': { lines: 9, functions: 8, branches: 0, statements: 9 },
         'src/contexts/AdminSessionContext.tsx': {
-          lines: 0,
-          functions: 0,
-          branches: 0,
-          statements: 0,
+          lines: 66,
+          functions: 71,
+          branches: 53,
+          statements: 64,
         },
       },
     },

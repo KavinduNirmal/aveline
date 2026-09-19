@@ -27,7 +27,7 @@ shows the number once and links out.
 | **A1** | Truthfulness (no new feature) | [#326](https://github.com/KavinduNirmal/aveline/issues/326) | **delivered** |
 | **A2** | Identity: guard chain, scope, `Gate` overlay | [#327](https://github.com/KavinduNirmal/aveline/issues/327) | **delivered** |
 | **A3** | Shell: layout, registry, conformance lint | [#328](https://github.com/KavinduNirmal/aveline/issues/328) | **delivered** |
-| **A4** | Dashboard: the triage surface V1–V11 | [#329](https://github.com/KavinduNirmal/aveline/issues/329) | planned |
+| **A4** | Dashboard: the triage surface V1–V11 | [#329](https://github.com/KavinduNirmal/aveline/issues/329) | **delivered** |
 | **A5** | Core management: users, orgs, requests | [#330](https://github.com/KavinduNirmal/aveline/issues/330) | planned |
 | **A6** | Operations: pricing and Blossom idempotency | [#331](https://github.com/KavinduNirmal/aveline/issues/331) | planned |
 | **A7** | Observability: logs, audit, system, statistics | [#332](https://github.com/KavinduNirmal/aveline/issues/332) | planned |
@@ -251,6 +251,58 @@ than a raw palette; and the raw `<select>`/`<input>` violations in `AdminUsers`,
 `AdminLogs` and `AdminBlossoms` were converted to the shadcn `Select` and `Switch` primitives.
 
 The remaining two rules — raw `<button>`/`<table>`/`<hr>`, and `space-x-*`/`space-y-*` — land before A8.
+
+## A4 — the dashboard: the triage surface (V1–V11)
+
+The dashboard is re-specified against Grafana, not against the audit's W1–W11. The rule:
+
+> **Grafana owns the platform's time series; the console owns decisions and actions.** Where the two
+> would show the same number over time, the console shows the number once, points at Grafana for the
+> series, and never builds a second copy of the chart.
+
+`lib/admin/metrics.ts` declares the eleven widgets — id, title, kind, the endpoint it reads, the
+Grafana dashboard it links to, and why it is not simply a link. `metrics.test.ts` asserts the
+catalogue is exactly V1–V11 in order, that every source names a real admin endpoint and never a
+Prometheus series name, and that the two largest chart specs (W5 5xx volume, W6 latency percentiles)
+are absent as duplicates.
+
+### The chart layer
+
+`components/admin/charts/` provides `ChartFrame` (over `ChartContainer`, with the explicit height
+token that stops `ResponsiveContainer` collapsing in an auto-height parent), `TimeSeriesChart`
+(`connectNulls` from the shared `CONNECT_NULLS`, which is `false`), `KpiTile`, `DataQualityNotice` and
+`GrafanaCard`.
+
+`lib/admin/data-quality.ts` implements the three vocabularies and **never coerces one into another**:
+
+| Family | Shape | Rendered as |
+|---|---|---|
+| system | `omitted[]` + `dataQuality{points,measured,omitted[]}` | each name as "not measured on this host" |
+| agent | five booleans | each false flag named; `totalRuns === 0` is a **different** message — "no runs recorded yet" |
+| api | three booleans | each false flag named on the chart that depends on it |
+
+`formatMetricValue(null, …)` is `"not measured"` — never `0.00%`.
+
+### Grafana deep links
+
+`lib/admin/grafana.ts` builds links from `VITE_GRAFANA_BASE_URL` and the four **provisioned** UIDs
+(`aveline-overview`, `aveline-business`, `aveline-database`, `aveline-notifications`). It never
+hard-codes a host; when `VITE_GRAFANA_ENABLED` is not exactly `"true"`, or no base URL is set, every
+link renders **disabled with a stated reason**, because the published Grafana port is dev-only and no
+production route exists in the repository. Both variables are recorded in
+`frontend/web/.env.example`.
+
+### The mechanical boundary
+
+`src/test/admin-prometheus-boundary.test.ts` asserts that no file in `routes/admin`, `components/admin`
+or `lib/admin` contains a string matching `aveline_` or `pg_`. If a number comes from Prometheus it
+arrives through the sibling workstream's proxy and its two-name contract, never from a second
+derivation here.
+
+### The ratchet
+
+Admin-subtree coverage at A4: **27.69 % lines** (from 0 % at A0). The floors in
+`vitest.admin-coverage.config.ts` are raised to the achieved values.
 
 ## A9 — the three backend defects unlocked by C7
 

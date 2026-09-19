@@ -40,6 +40,8 @@ import { AdminLogsView } from './routes/admin/AdminLogs'
 import { AdminAuditView } from './routes/admin/AdminAudit'
 import { AdminSystemView } from './routes/admin/AdminSystem'
 import { AdminRolesView } from './routes/admin/AdminRoles'
+import { AdminStatisticsAgentsView } from './routes/admin/AdminStatisticsAgents'
+import { AdminStatisticsApiView } from './routes/admin/AdminStatisticsApi'
 
 export default function App() {
   return (
@@ -85,6 +87,8 @@ export default function App() {
                   <Route path="audit" element={<AdminAuditView />} />
                   <Route path="system" element={<AdminSystemView />} />
                   <Route path="roles" element={<AdminRolesView />} />
+                  <Route path="statistics/agents" element={<AdminStatisticsAgentsView />} />
+                  <Route path="statistics/api" element={<AdminStatisticsApiView />} />
                   <Route path="*" element={<Navigate to="dashboard" replace />} />
                 </Route>
               </Route>

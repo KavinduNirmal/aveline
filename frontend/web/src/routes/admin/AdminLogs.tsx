@@ -1,113 +1,88 @@
-﻿import { useEffect, useRef, useState } from "react"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { queryAuditEntries } from "@/lib/admin/api"
-import type { AuditLogEntry } from "@/types/admin"
-import { Card, CardContent } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Pause, Play, RefreshCw, Filter, ChevronDown, ChevronRight, Copy, Check } from "lucide-react"
+import { useEffect, useMemo, useRef, useState } from 'react'
 
-export type LogLevel = "error" | "warn" | "info" | "debug"
+import { Button } from '@/components/ui/button'
+import { EMPTY_LOG_FILTERS, type LogFilterState } from '@/components/admin/logs/LogFilters'
+import { LogViewer } from '@/components/admin/logs/LogViewer'
 
-export function deriveLogLevel(action: string): LogLevel {
-  const lower = action.toLowerCase()
-  if (
-    lower.includes("failed") ||
-    lower.includes("error") ||
-    lower.includes("rejected") ||
-    lower.includes("suspended")
-  ) {
-    return "error"
-  }
-  if (lower.includes("cancelled") || lower.includes("revoked") || lower.includes("warning")) {
-    return "warn"
-  }
-  if (lower.includes("created") || lower.includes("activated") || lower.includes("approved")) {
-    return "info"
-  }
-  return "debug"
-}
+import { useNotifications } from '@/contexts/NotificationsContext'
+import { queryAuditEntries } from '@/lib/admin/api'
+import {
+  createLogStream,
+  DEFAULT_WINDOW_HOURS,
+  MAX_WINDOW_DAYS,
+  type LogPage,
+  type LogStreamSnapshot,
+} from '@/lib/admin/log-stream'
 
+/** The audit endpoint's own ceiling (`AuditEndpoints.cs:20`); asking for more is clamped. */
+const AUDIT_PAGE_SIZE = 200
+
+/** A SignalR alert is a hint, not a command: at most one hinted poll per 10 s. */
+const ALERT_HINT_INTERVAL_MS = 10_000
+
+/**
+ * The live log stream.
+ *
+ * Everything streaming-related lives in the pure `createLogStream` engine: the `id` cursor, the
+ * bounded ring buffer, the 1500 → 10 000 ms adaptive interval, the single-flight guard that
+ * **drops** a tick rather than queueing it, and the visibility suspension. This component only
+ * renders the engine's snapshots and drives the ticks.
+ *
+ * The default window is **24 h** with a **7 day** maximum (Q3), and both are stated in the UI.
+ * The SignalR `SystemAlert` notification is used as a refresh hint, rate-limited so an alert
+ * burst cannot become a request burst.
+ */
 export function AdminLogsView() {
-  const [entries, setEntries] = useState<AuditLogEntry[]>([])
-  const [isPaused, setIsPaused] = useState(false)
-  const [pollIntervalMs] = useState(1500)
-  const [levelFilter, setLevelFilter] = useState<string>("all")
-  const [actionFilter, setActionFilter] = useState<string>("")
-  const [lastPollTime, setLastPollTime] = useState<Date>(new Date())
-  const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [copiedId, setCopiedId] = useState<string | null>(null)
+  const { lastNotification } = useNotifications()
+  const [snapshot, setSnapshot] = useState<LogStreamSnapshot | null>(null)
+  const [filters, setFilters] = useState<LogFilterState>(EMPTY_LOG_FILTERS)
+  const hintRef = useRef(0)
 
-  const cursorRef = useRef<string | null>(null)
-  const seenIdsRef = useRef<Set<string>>(new Set())
-  const feedEndRef = useRef<HTMLDivElement | null>(null)
-
-  const fetchIncremental = async () => {
-    try {
-      const res = await queryAuditEntries({
-        pageSize: 30,
-        from: cursorRef.current ? new Date(Date.now() - 60000).toISOString() : undefined,
-      })
-
-      setLastPollTime(new Date())
-
-      if (res.items.length > 0) {
-        const fresh = res.items.filter((item) => !seenIdsRef.current.has(item.id))
-        if (fresh.length > 0) {
-          for (const item of fresh) {
-            seenIdsRef.current.add(item.id)
-          }
-          cursorRef.current = fresh[0].occurredAt
-
-          setEntries((prev) => {
-            const merged = [...fresh, ...prev].slice(0, 2000)
-            return merged
-          })
-        }
-      }
-    } catch {
-      // Ignore transient polling failure
-    }
-  }
+  const engine = useMemo(
+    () =>
+      createLogStream({
+        pageSize: AUDIT_PAGE_SIZE,
+        windowHours: DEFAULT_WINDOW_HOURS,
+        // The audit endpoint filters by instant, so the oldest held row's instant is the
+        // continuation bound. The engine removes the boundary row it already holds.
+        fetchPage: async ({ page, from }): Promise<LogPage> =>
+          queryAuditEntries({ from, page, pageSize: AUDIT_PAGE_SIZE }),
+      }),
+    [],
+  )
 
   useEffect(() => {
-    void fetchIncremental()
-    const interval = setInterval(() => {
-      if (!isPaused && document.visibilityState === "visible") {
-        void fetchIncremental()
-      }
-    }, pollIntervalMs)
-
-    return () => clearInterval(interval)
-  }, [isPaused, pollIntervalMs])
-
-  const copyId = (text: string, id: string) => {
-    void navigator.clipboard.writeText(text)
-    setCopiedId(id)
-    setTimeout(() => setCopiedId(null), 2000)
-  }
-
-  const filteredEntries = entries.filter((e) => {
-    if (levelFilter !== "all" && deriveLogLevel(e.action) !== levelFilter) {
-      return false
+    setSnapshot(engine.snapshot())
+    const unsubscribe = engine.subscribe(setSnapshot)
+    engine.start()
+    return () => {
+      unsubscribe()
+      engine.stop()
     }
-    if (actionFilter && !e.action.toLowerCase().includes(actionFilter.toLowerCase())) {
-      return false
-    }
-    return true
-  })
+  }, [engine])
+
+  useEffect(() => {
+    if (lastNotification === null) return
+    const now = Date.now()
+    if (now - hintRef.current < ALERT_HINT_INTERVAL_MS) return
+    hintRef.current = now
+    void engine.tick()
+  }, [engine, lastNotification])
+
+  const current = snapshot ?? engine.snapshot()
+  const paused = current.status === 'paused'
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="font-serif text-2xl font-medium tracking-tight text-foreground flex items-center gap-2">
-            Real-time Audit & Log Stream
-            <span className="size-2.5 rounded-full bg-success animate-pulse" />
+          <h2 className="font-serif text-2xl font-medium tracking-tight text-foreground">
+            Real-time audit stream
           </h2>
           <p className="text-sm text-muted-foreground">
-            Live incremental event poller running on a 1.5s cadence with adaptive backoff.
+            Incremental reads keyed on the entry id, over a {DEFAULT_WINDOW_HOURS} h window with a{' '}
+            {MAX_WINDOW_DAYS} day maximum. Severity is derived by the console and labelled as
+            derived; the server sends no level.
           </p>
         </div>
 
@@ -115,148 +90,33 @@ export function AdminLogsView() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setIsPaused(!isPaused)}
-            className="text-xs h-8 gap-1.5"
+            className="h-8 text-xs"
+            onClick={() => engine.setPaused(!paused)}
           >
-            {isPaused ? <Play className="size-3.5 text-success" /> : <Pause className="size-3.5 text-warning" />}
-            {isPaused ? "Resume Stream" : "Pause Stream"}
+            {paused ? 'Resume stream' : 'Pause stream'}
           </Button>
-
           <Button
             variant="outline"
             size="sm"
-            onClick={() => void fetchIncremental()}
-            className="text-xs h-8 gap-1.5"
+            className="h-8 text-xs"
+            onClick={() => void engine.tick()}
           >
-            <RefreshCw className="size-3.5" />
-            Poll Now
+            Poll now
           </Button>
         </div>
       </div>
 
-      <Card className="border-border shadow-xs">
-        <CardContent className="p-3 flex flex-wrap gap-3 items-center justify-between text-xs">
-          <div className="flex items-center gap-2 flex-1 min-w-[200px]">
-            <Filter className="size-4 text-muted-foreground" />
-            <Input
-              placeholder="Filter by action name..."
-              value={actionFilter}
-              onChange={(e) => setActionFilter(e.target.value)}
-              className="h-8 text-xs"
-            />
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span className="text-muted-foreground">Severity (derived):</span>
-            <Select value={levelFilter} onValueChange={setLevelFilter}>
-              <SelectTrigger className="h-8 w-[180px] text-xs">
-                <SelectValue placeholder="All Levels" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Levels</SelectItem>
-                <SelectItem value="error">Error / Failure</SelectItem>
-                <SelectItem value="warn">Warning / Revoke</SelectItem>
-                <SelectItem value="info">Info / Activation</SelectItem>
-                <SelectItem value="debug">Debug / Other</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="text-muted-foreground font-mono text-[11px]">
-            Last poll: {lastPollTime.toLocaleTimeString()} | Buffer: {entries.length}/2000
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="border-border shadow-xs bg-card/60 backdrop-blur-xs overflow-hidden">
-        <div className="max-h-[600px] overflow-y-auto p-4 space-y-2 font-mono text-xs">
-          {filteredEntries.length === 0 ? (
-            <div className="py-12 text-center text-muted-foreground font-sans text-sm">
-              Waiting for incoming log events...
-            </div>
-          ) : (
-            filteredEntries.map((e) => {
-              const level = deriveLogLevel(e.action)
-              const isExpanded = expandedId === e.id
-              return (
-                <div
-                  key={e.id}
-                  className="p-2.5 rounded-lg border border-border/80 bg-background/90 hover:bg-muted/30 transition-all"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-muted-foreground text-[11px]">
-                        {new Date(e.occurredAt).toLocaleTimeString()}
-                      </span>
-                      <Badge
-                        variant={
-                          level === "error"
-                            ? "destructive"
-                            : level === "warn"
-                              ? "secondary"
-                              : "outline"
-                        }
-                        className="text-[10px] uppercase font-mono tracking-wider h-5"
-                      >
-                        {level}
-                      </Badge>
-                      <span className="font-semibold text-foreground">{e.action}</span>
-                      <span className="text-muted-foreground">
-                        [{e.entityType}:{e.entityId}]
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 text-[11px] px-1.5"
-                        onClick={() => setExpandedId(isExpanded ? null : e.id)}
-                      >
-                        {isExpanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
-                        Diff
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6"
-                        onClick={() => copyId(e.id, e.id)}
-                        title="Copy entry UUID"
-                      >
-                        {copiedId === e.id ? <Check className="size-3 text-success" /> : <Copy className="size-3" />}
-                      </Button>
-                    </div>
-                  </div>
-
-                  {e.reason && (
-                    <div className="mt-1 text-[11px] text-muted-foreground italic font-sans pl-2 border-l-2 border-primary/40">
-                      Reason: {e.reason}
-                    </div>
-                  )}
-
-                  {isExpanded && (
-                    <div className="mt-2.5 pt-2 border-t border-border grid grid-cols-2 gap-2 text-[10px]">
-                      <div className="p-2 bg-muted/20 rounded border border-border">
-                        <div className="font-bold text-muted-foreground mb-1">BEFORE STATE</div>
-                        <pre className="overflow-x-auto whitespace-pre-wrap text-muted-foreground">
-                          {e.before ? JSON.stringify(e.before, null, 2) : "(none / redacted)"}
-                        </pre>
-                      </div>
-                      <div className="p-2 bg-muted/20 rounded border border-border">
-                        <div className="font-bold text-muted-foreground mb-1">AFTER STATE</div>
-                        <pre className="overflow-x-auto whitespace-pre-wrap text-foreground">
-                          {e.after ? JSON.stringify(e.after, null, 2) : "(none / redacted)"}
-                        </pre>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )
-            })
-          )}
-          <div ref={feedEndRef} />
-        </div>
-      </Card>
+      <LogViewer
+        entries={current.entries}
+        status={current.status}
+        lastPolledAt={current.lastPolledAt}
+        dropped={current.dropped}
+        bufferLimit={current.bufferLimit}
+        droppedTicks={current.droppedTicks}
+        windowHours={engine.windowHours()}
+        filters={filters}
+        onFiltersChange={setFilters}
+      />
     </div>
   )
 }

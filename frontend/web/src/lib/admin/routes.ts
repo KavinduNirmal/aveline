@@ -212,7 +212,7 @@ export const ADMIN_ROUTES: readonly AdminRouteDef[] = [
     icon: BarChart3,
     domain: "statistics",
     gate: { kind: "role", anyOf: ROLE_POLICIES.StatsSystem.anyOf },
-    enabled: false,
+    enabled: true,
   },
   {
     id: "statistics-api",
@@ -222,7 +222,7 @@ export const ADMIN_ROUTES: readonly AdminRouteDef[] = [
     icon: BarChart3,
     domain: "statistics",
     gate: { kind: "role", anyOf: ROLE_POLICIES.StatsSystem.anyOf },
-    enabled: false,
+    enabled: true,
   },
 ]
 

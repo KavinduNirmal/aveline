@@ -411,6 +411,67 @@ input plan's *"returns `501`, disable it"* is false — it returns `200`.
 
 The legacy-formula banner is stated on every pricing view and comes from one shared constant.
 
+## A7 — observability: logs, audit, system, statistics
+
+### The pure log engine
+
+`lib/admin/log-stream.ts` is the engine, with **no React and no fetch**: `mergeEntries`,
+`computeCursor`, `isNewer`, `shouldPoll`, `deriveAdaptiveInterval`, plus a `createLogStream` factory.
+
+| Concern | Behaviour |
+|---|---|
+| Cursor | **`id`-based** (UUIDv7), not an offset. UUIDv7 is monotonic, so `id` is the only cursor that is stable under concurrent inserts |
+| Buffer | a ring of **2000** with a **visible drop count**, never an unbounded `seenIds` set |
+| Cadence | adaptive **1500 → 10 000 ms**, dropping ticks rather than queueing them |
+| Single-flight | a **synchronous** gate checked before the first `await`, so a stalled response cannot accumulate overlap |
+| Visibility | no requests while the document is hidden; resumes on `visibilitychange` |
+| Cancellation | an `AbortSignal` per request, aborted on stop |
+
+The cursor is proven by draining **250 rows with a server page size of 100**: two reads, 250
+entries buffered, cursor at the newest id, zero dropped. `/admin/audit` can filter by instant but not
+by id, so a continuation re-reads the boundary instant and skips the boundary row **by `id`**
+(`LogPageRequest.cursorId`); a stall guard breaks the chain if the bound stops advancing, and
+`MAX_PAGES_PER_POLL` caps a runaway.
+
+### Derived severity, labelled
+
+`lib/admin/log-level.ts` derives severity and **says so** (Q4). The fourth level is `other`, not the
+delivered `debug` default, and every tone maps to a **semantic token**
+(`destructive | warning | primary | muted`) rather than a raw palette class, which also satisfies A3's
+blocking conformance rule.
+
+### The views
+
+`components/admin/logs/` (viewer, row, filters, connection chip) and `components/admin/system/`
+(readiness table, alert list, acknowledge dialog, omitted metrics, Grafana link) feed rewritten
+`AdminLogs`, `AdminAudit`, `AdminSystem` and two new statistics routes
+(`AdminStatisticsAgents`, `AdminStatisticsApi`), registered in `lib/admin/routes.ts` and routed in
+`App.tsx`.
+
+Three contract details worth stating:
+
+- **No live region on the feed.** The log feed has no `aria-live` and no `role="log"`; the
+  connection chip is the only `role="status"`. A live region on a 1.5 s feed reads every entry aloud
+  and is unusable.
+- **`status=Firing` is sent explicitly** to `/admin/statistics/system/alerts` in both the system page
+  and the API statistics page, so a `Resolved` row is never counted as active.
+- **Acknowledge patches by `id`.** The row is updated from `SystemAlertAckResponse`, reading only
+  `status` and `acknowledgedAt` (the entity has no `ruleName`); the rule label comes from the list
+  row and survives the patch. A test asserts exactly that.
+
+### Honesty copy
+
+The system vocabulary's `omitted[]` renders as *"not measured on this host"*; the agent family's five
+booleans each name their flag, with `totalRuns === 0` reading *"no runs recorded yet"* — a different
+message from "not instrumented"; the API family's three booleans each name the chart that depends on
+them. The log window defaults to **24 h, capped at 7 days**, and the UI states it
+(`data-testid="log-retention-window"`).
+
+### Coverage
+
+The admin subtree reached **67.98 % lines / 53.4 % branches** (routes/admin **68.2 % / 50.87 %**), and
+the ratchet in `vitest.admin-coverage.config.ts` was raised to match.
+
 ## A8 — edge cases, a11y, E2E, documentation
 
 **Delivered.**

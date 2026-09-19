@@ -322,11 +322,21 @@ token that stops `ResponsiveContainer` collapsing in an auto-height parent), `Ti
 ### Grafana deep links
 
 `lib/admin/grafana.ts` builds links from `VITE_GRAFANA_BASE_URL` and the four **provisioned** UIDs
-(`aveline-overview`, `aveline-business`, `aveline-database`, `aveline-notifications`). It never
-hard-codes a host; when `VITE_GRAFANA_ENABLED` is not exactly `"true"`, or no base URL is set, every
-link renders **disabled with a stated reason**, because the published Grafana port is dev-only and no
-production route exists in the repository. Both variables are recorded in
-`frontend/web/.env.example`.
+(`aveline-overview`, `aveline-business`, `aveline-database`, `aveline-notifications`).
+
+| Configuration | Behaviour |
+|---|---|
+| `VITE_GRAFANA_ENABLED` set | it wins, exactly: only `"true"` enables (`"false"` disables everywhere) |
+| nothing set, **development build** | enabled against `http://localhost:3000` — the compose-published port (`docker-compose.yml:274`, marked **DEV ONLY**) |
+| nothing set, **production build** | every link **disabled with a stated reason**; a production bundle never invents a Grafana host |
+| `VITE_GRAFANA_ENABLED=true`, no base URL, production | disabled, with the same stated reason |
+
+`VITE_GRAFANA_BASE_URL` always beats the dev default, so a dev build can point elsewhere. Both
+variables are recorded in `frontend/web/.env.example`.
+
+**If `GRAFANA_PORT` was overridden in the compose environment**, set `VITE_GRAFANA_BASE_URL` to
+match — the default assumes 3000. Because the link is a plain outbound anchor, the **browser** (not
+the dev server) must be able to reach that host.
 
 ### The mechanical boundary
 

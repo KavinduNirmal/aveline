@@ -27,16 +27,35 @@ export interface GrafanaLink {
 
 const NOT_CONFIGURED = 'Grafana is not configured for this environment'
 
-/** True only when `VITE_GRAFANA_ENABLED` is exactly `"true"`. */
+/**
+ * The compose-published Grafana port, which `docker-compose.yml:274` marks **DEV ONLY**
+ * (`"${GRAFANA_PORT:-3000}:3000"`). A development build points at it without configuration; a
+ * production build has no default, because no production route exists in the repository.
+ */
+const DEV_GRAFANA_BASE_URL = 'http://localhost:3000'
+
+function trimmed(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null
+}
+
+/**
+ * Whether to render links at all.
+ *
+ * An explicit `VITE_GRAFANA_ENABLED` always wins, so a deployment can turn the links off (or on)
+ * deliberately. With nothing configured, a **development** build enables them against the
+ * dev-only published port, and a **production** build leaves them off — a production bundle never
+ * invents a Grafana host.
+ */
 export function grafanaEnabled(): boolean {
-  return import.meta.env.VITE_GRAFANA_ENABLED === 'true'
+  const explicit = trimmed(import.meta.env.VITE_GRAFANA_ENABLED)
+  if (explicit !== null) return explicit === 'true'
+  return Boolean(import.meta.env.DEV)
 }
 
 function baseUrl(): string | null {
-  const value = import.meta.env.VITE_GRAFANA_BASE_URL
-  if (typeof value !== 'string') return null
-  const trimmed = value.trim()
-  return trimmed.length > 0 ? trimmed.replace(/\/+$/, '') : null
+  const explicit = trimmed(import.meta.env.VITE_GRAFANA_BASE_URL)
+  if (explicit !== null) return explicit.replace(/\/+$/, '')
+  return import.meta.env.DEV ? DEV_GRAFANA_BASE_URL : null
 }
 
 /** A deep link to a provisioned dashboard, or to the Grafana root when none is named. */

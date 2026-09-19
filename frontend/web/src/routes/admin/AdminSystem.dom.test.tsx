@@ -202,7 +202,11 @@ describe('AdminSystemView', () => {
     expect(screen.getByTestId(`alert-rule-${id}`)).toHaveTextContent('api.error_rate')
   })
 
-  it('offers a Grafana deep link that is disabled with a stated reason when unconfigured', async () => {
+  it('renders a disabled link with a stated reason when Grafana is switched off', async () => {
+    // `false` is the explicit off switch. With nothing configured at all a *development* build
+    // points at the compose-published dev port, so the disabled state must be asked for
+    // explicitly rather than assumed.
+    vi.stubEnv('VITE_GRAFANA_ENABLED', 'false')
     prime()
 
     render(<AdminSystemView />)
@@ -210,5 +214,23 @@ describe('AdminSystemView', () => {
     const link = await screen.findByTestId('grafana-link')
     expect(within(link).getByRole('button', { name: /grafana/i })).toBeDisabled()
     expect(within(link).getByText(/not configured/i)).toBeInTheDocument()
+
+    vi.unstubAllEnvs()
+  })
+
+  it('links out to the configured Grafana dashboard', async () => {
+    vi.stubEnv('VITE_GRAFANA_ENABLED', 'true')
+    vi.stubEnv('VITE_GRAFANA_BASE_URL', 'https://grafana.example')
+    prime()
+
+    render(<AdminSystemView />)
+
+    const link = await screen.findByTestId('grafana-link')
+    expect(within(link).getByRole('link', { name: /grafana/i })).toHaveAttribute(
+      'href',
+      'https://grafana.example/d/aveline-overview',
+    )
+
+    vi.unstubAllEnvs()
   })
 })

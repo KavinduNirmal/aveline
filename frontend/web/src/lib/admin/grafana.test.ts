@@ -18,14 +18,21 @@ describe('GRAFANA_DASHBOARD_UIDS', () => {
 })
 
 describe('grafanaEnabled', () => {
-  it('is false unless VITE_GRAFANA_ENABLED is exactly "true"', () => {
-    vi.stubEnv('VITE_GRAFANA_ENABLED', '')
-    expect(grafanaEnabled()).toBe(false)
+  it('honours an explicit flag, and only "true" means on', () => {
     vi.stubEnv('VITE_GRAFANA_ENABLED', 'false')
     expect(grafanaEnabled()).toBe(false)
     vi.stubEnv('VITE_GRAFANA_ENABLED', 'yes')
     expect(grafanaEnabled()).toBe(false)
+    vi.stubEnv('VITE_GRAFANA_ENABLED', 'TRUE')
+    expect(grafanaEnabled()).toBe(false)
     vi.stubEnv('VITE_GRAFANA_ENABLED', 'true')
+    expect(grafanaEnabled()).toBe(true)
+  })
+
+  it('is on in a development build with nothing configured, so the dev port just works', () => {
+    vi.stubEnv('VITE_GRAFANA_ENABLED', '')
+    vi.stubEnv('VITE_GRAFANA_BASE_URL', '')
+    expect(import.meta.env.DEV).toBe(true)
     expect(grafanaEnabled()).toBe(true)
   })
 })
@@ -40,7 +47,28 @@ describe('grafanaLink', () => {
     expect(link.reason).toMatch(/not configured for this environment/i)
   })
 
-  it('refuses a stale enabled flag with no base URL rather than emitting a broken link', () => {
+  it('points at the compose-published dev port when nothing is configured', () => {
+    vi.stubEnv('VITE_GRAFANA_ENABLED', '')
+    vi.stubEnv('VITE_GRAFANA_BASE_URL', '')
+    expect(grafanaLink('overview')).toEqual({
+      enabled: true,
+      href: 'http://localhost:3000/d/aveline-overview',
+      reason: null,
+    })
+  })
+
+  it('an explicit base URL always beats the dev default', () => {
+    vi.stubEnv('VITE_GRAFANA_ENABLED', '')
+    vi.stubEnv('VITE_GRAFANA_BASE_URL', 'https://grafana.staging.example')
+    expect(grafanaLink('overview').href).toBe(
+      'https://grafana.staging.example/d/aveline-overview',
+    )
+  })
+
+  it('refuses a stale enabled flag with no base URL in a production build', () => {
+    // A production bundle has no default host, so an enabled flag with no base URL must render
+    // disabled rather than a broken link.
+    vi.stubEnv('DEV', false)
     vi.stubEnv('VITE_GRAFANA_ENABLED', 'true')
     vi.stubEnv('VITE_GRAFANA_BASE_URL', '')
     const link = grafanaLink('overview')

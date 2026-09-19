@@ -323,7 +323,7 @@ time for the links to resolve, and both are inert when unset:
 
 | Variable | Value | Behaviour when unset |
 |---|---|---|
-| `VITE_GRAFANA_ENABLED` | `true` to enable links | every link renders **disabled** with *"Grafana is not configured for this environment"* |
+| `VITE_GRAFANA_ENABLED` | `true` to enable links | a **production** build renders every link **disabled** with *"Grafana is not configured for this environment"*; a dev build points at `http://localhost:3000` |
 | `VITE_GRAFANA_BASE_URL` | e.g. `https://grafana.aveline.internal` | as above; the base is **never hard-coded**, because the compose port is DEV ONLY and no production route exists in the repository |
 
 The four dashboard UIDs the console links to (`aveline-overview`, `aveline-business`,

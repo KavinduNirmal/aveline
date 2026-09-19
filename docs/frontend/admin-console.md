@@ -520,6 +520,10 @@ Three contract details worth stating:
 - **No live region on the feed.** The log feed has no `aria-live` and no `role="log"`; the
   connection chip is the only `role="status"`. A live region on a 1.5 s feed reads every entry aloud
   and is unusable.
+- **No motion to reduce.** The connection chip is a static `size-2` dot with `bg-current` — the
+  colour carries the state. A grep for `animate-*` across `routes/admin` and `components/admin`
+  returns nothing, so `prefers-reduced-motion` has no animation to suppress. The delivered
+  `animate-pulse` dot labelled *"Live Connection"* was removed in A3: it reflected nothing.
 - **`status=Firing` is sent explicitly** to `/admin/statistics/system/alerts` in both the system page
   and the API statistics page, so a `Resolved` row is never counted as active.
 - **Acknowledge patches by `id`.** The row is updated from `SystemAlertAckResponse`, reading only

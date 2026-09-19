@@ -1,6 +1,14 @@
 import { apiClient } from "@/lib/api"
 import type {
   AdminApprovalRequestSummary,
+  BusinessActiveUsers,
+  BusinessGrowth,
+  BusinessOrganizationUsage,
+  BusinessPlanMix,
+  BusinessRankingMetric,
+  BusinessSubscriptionTrend,
+  BusinessUsage,
+  BusinessWindowParams,
   AdminUserDto,
   AgentOverviewDto,
   AuditLogEntry,
@@ -331,5 +339,87 @@ export async function fetchPricingRules(params: {
   const response = await apiClient.get<PagedPricingRules>('/api/v1/admin/pricing/rules', {
     params,
   })
+  return response.data
+}
+
+// ── Business KPIs (S-44…S-49) ────────────────────────────────────────────────────────────────
+
+/**
+ * The shared query string for the six business reads. An absent parameter is omitted rather
+ * than sent empty, so the server's own default applies.
+ */
+function businessQuery(params: BusinessWindowParams): Record<string, string | number | undefined> {
+  return {
+    from: params.from || undefined,
+    to: params.to || undefined,
+    granularity: params.granularity || undefined,
+    organizationId: params.organizationId || undefined,
+  }
+}
+
+export async function fetchBusinessGrowth(
+  params: BusinessWindowParams,
+): Promise<BusinessGrowth> {
+  const response = await apiClient.get<BusinessGrowth>(
+    "/api/v1/admin/statistics/business/growth",
+    { params: businessQuery(params) },
+  )
+  return response.data
+}
+
+export async function fetchBusinessActiveUsers(
+  params: BusinessWindowParams,
+): Promise<BusinessActiveUsers> {
+  const response = await apiClient.get<BusinessActiveUsers>(
+    "/api/v1/admin/statistics/business/active-users",
+    { params: businessQuery(params) },
+  )
+  return response.data
+}
+
+export async function fetchBusinessPlanMix(): Promise<BusinessPlanMix> {
+  const response = await apiClient.get<BusinessPlanMix>(
+    "/api/v1/admin/statistics/business/plan-mix",
+  )
+  return response.data
+}
+
+export async function fetchBusinessSubscriptionTrend(
+  params: BusinessWindowParams,
+): Promise<BusinessSubscriptionTrend> {
+  const response = await apiClient.get<BusinessSubscriptionTrend>(
+    "/api/v1/admin/statistics/business/subscriptions",
+    { params: businessQuery(params) },
+  )
+  return response.data
+}
+
+/**
+ * Product usage. Passing `organizationId` is the org drill-down; the server then additionally
+ * requires `admin:orgs:read`.
+ */
+export async function fetchBusinessUsage(
+  params: BusinessWindowParams,
+): Promise<BusinessUsage> {
+  const response = await apiClient.get<BusinessUsage>(
+    "/api/v1/admin/statistics/business/usage",
+    { params: businessQuery(params) },
+  )
+  return response.data
+}
+
+export async function fetchBusinessOrganizationUsage(
+  params: BusinessWindowParams & { metric?: BusinessRankingMetric; limit?: number },
+): Promise<BusinessOrganizationUsage> {
+  const response = await apiClient.get<BusinessOrganizationUsage>(
+    "/api/v1/admin/statistics/business/organizations",
+    {
+      params: {
+        ...businessQuery(params),
+        metric: params.metric || undefined,
+        limit: params.limit ?? undefined,
+      },
+    },
+  )
   return response.data
 }

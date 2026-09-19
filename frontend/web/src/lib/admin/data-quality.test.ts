@@ -4,6 +4,7 @@ import {
   CONNECT_NULLS,
   agentDataQuality,
   apiDataQuality,
+  businessDataQuality,
   formatMetricValue,
   systemDataQuality,
 } from './data-quality'
@@ -112,5 +113,67 @@ describe('the chart non-negotiables', () => {
     expect(formatMetricValue(null, 'percent')).toBe('not measured')
     expect(formatMetricValue(undefined, 'percent')).toBe('not measured')
     expect(formatMetricValue(0, 'percent')).toBe('0.00%')
+  })
+})
+
+describe('businessDataQuality', () => {
+  const clean = {
+    userAttributionAvailable: true,
+    unresolvedAttributionCount: 0,
+    subscriptionHistoryBackfilled: false,
+    lastActivityIsReconstructed: false,
+    agentMetricsUninstrumented: false,
+    notes: [],
+  }
+
+  it('declares its own vocabulary rather than impersonating another family', () => {
+    expect(businessDataQuality(clean).vocabulary).toBe('business')
+  })
+
+  it('reports nothing for a fully measured payload', () => {
+    expect(businessDataQuality(clean).messages).toEqual([])
+  })
+
+  it('names an unavailable attribution rather than leaving a null reading unexplained', () => {
+    const report = businessDataQuality({ ...clean, userAttributionAvailable: false })
+
+    expect(report.messages.join(' ')).toMatch(/not measured/i)
+  })
+
+  it('names unresolved attribution as an undercount when the count is positive', () => {
+    const report = businessDataQuality({ ...clean, unresolvedAttributionCount: 12 })
+
+    expect(report.messages.join(' ')).toContain('12')
+  })
+
+  it('does not report an undercount when the unresolved count is zero', () => {
+    const report = businessDataQuality({ ...clean, unresolvedAttributionCount: 0 })
+
+    expect(report.messages.join(' ')).not.toMatch(/undercount/i)
+  })
+
+  it('marks reconstructed subscription history as approximate', () => {
+    const report = businessDataQuality({ ...clean, subscriptionHistoryBackfilled: true })
+
+    expect(report.messages.join(' ')).toMatch(/approximate|reconstructed/i)
+  })
+
+  it('names a reconstructed last-activity figure', () => {
+    const report = businessDataQuality({ ...clean, lastActivityIsReconstructed: true })
+
+    expect(report.messages.join(' ')).toMatch(/reconstruct/i)
+  })
+
+  it('names uninstrumented agent metrics', () => {
+    const report = businessDataQuality({ ...clean, agentMetricsUninstrumented: true })
+
+    expect(report.messages.join(' ')).toMatch(/agent/i)
+  })
+
+  it('carries the server notes through as their own messages', () => {
+    const report = businessDataQuality({ ...clean, notes: ['a server note', 'another note'] })
+
+    expect(report.messages).toContain('a server note')
+    expect(report.messages).toContain('another note')
   })
 })

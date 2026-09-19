@@ -10,7 +10,7 @@
  * - **api**: three booleans — `rollupComplete`, `rawLogSampled`, `latencyBuckets`
  */
 
-export type DataQualityVocabulary = 'system' | 'agent' | 'api'
+export type DataQualityVocabulary = 'system' | 'agent' | 'api' | 'business'
 
 export interface DataQualityReport {
   vocabulary: DataQualityVocabulary
@@ -93,6 +93,52 @@ export function agentDataQuality(input: AgentDataQualityInput): DataQualityRepor
   if (!input.toolInstrumented) messages.push('tool calls are not instrumented')
   if (!input.costInstrumented) messages.push('cost is not instrumented')
   return { vocabulary: 'agent', messages }
+}
+
+/** The business family's input: the server's `BusinessDataQualityDto`. */
+export interface BusinessDataQualityInput {
+  userAttributionAvailable: boolean
+  unresolvedAttributionCount: number
+  subscriptionHistoryBackfilled: boolean
+  lastActivityIsReconstructed: boolean
+  agentMetricsUninstrumented: boolean
+  notes: readonly string[]
+}
+
+/**
+ * The business family's vocabulary (S-44…S-49). Every false flag is named, and the server's own
+ * notes are carried through as their own messages rather than reworded.
+ *
+ * `userAttributionAvailable: false` is the one that matters most: it accompanies a `null` active
+ * -user reading, and without this message the operator reads the blank as "nobody uses the
+ * product" when the real problem is attribution.
+ */
+export function businessDataQuality(input: BusinessDataQualityInput): DataQualityReport {
+  const messages: string[] = []
+
+  if (!input.userAttributionAvailable) {
+    messages.push(
+      'active users are not measured for this window: no request carried a resolved user id',
+    )
+  }
+  if (input.unresolvedAttributionCount > 0) {
+    messages.push(
+      `${input.unresolvedAttributionCount} request(s) could not be attributed, so the active-user figure is an undercount`,
+    )
+  }
+  if (input.subscriptionHistoryBackfilled) {
+    messages.push('subscription history is approximate: some buckets were reconstructed from the audit ledger')
+  }
+  if (input.lastActivityIsReconstructed) {
+    messages.push('last activity is a reconstruction over several timestamps, not a recorded fact')
+  }
+  if (input.agentMetricsUninstrumented) {
+    messages.push('agent-run counts have no user dimension, so per-user agent activity is not measured')
+  }
+
+  for (const note of input.notes) messages.push(note)
+
+  return { vocabulary: 'business', messages }
 }
 
 export interface ApiDataQualityInput {

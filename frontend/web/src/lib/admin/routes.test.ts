@@ -58,4 +58,27 @@ describe('ADMIN_ROUTES invariants', () => {
     expect(findRouteById('dashboard')?.subPath).toBe('dashboard')
     expect(findRouteById('does-not-exist')).toBeUndefined()
   })
+
+  it('lands the two business entries in the new domain, each with a gate', () => {
+    const business = routesForDomain('business')
+
+    expect(business.map((route) => route.id).sort()).toEqual(['business-growth', 'business-usage'])
+    for (const route of business) {
+      expect(route.enabled, route.id).toBe(true)
+      expect(route.gate, route.id).toEqual({
+        kind: 'permission',
+        permission: 'analytics:business:read',
+      })
+    }
+  })
+
+  it('declares analytics:business:read, and the catalogue defines it', () => {
+    expect(declaredPermissions()).toContain('analytics:business:read')
+    expect(ALL_PERMISSIONS).toContain('analytics:business:read')
+  })
+
+  it('routes the business entries under the business sub-path prefix', () => {
+    expect(findRouteById('business-growth')?.subPath).toBe('business')
+    expect(findRouteById('business-usage')?.subPath).toBe('business/usage')
+  })
 })

@@ -2,6 +2,10 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import type {
   AdminOrganizationDto,
+  BusinessActiveUsers,
+  BusinessOrganizationUsage,
+  BusinessPlanMix,
+  BusinessSubscriptionTrend,
   CreditBlossomsRequest,
   DebitBlossomsRequest,
   EntitlementOverrideInput,
@@ -158,5 +162,170 @@ describe('the three Blossom request records', () => {
       ledgerEntryId: string
       reason: string
     }>()
+  })
+})
+
+/**
+ * Business KPIs (S-44…S-49). Each shape is pinned against the C# record it mirrors, and the two
+ * fields whose *absence* would be a lie are asserted explicitly: `activeUsers` is nullable (a
+ * `null` is "not measured"), and `BilledSubscriptionCount` is a separate field from
+ * `OrganizationCount` rather than the same number under two names.
+ */
+describe('BusinessActiveUsers mirrors BusinessActiveUsersDto (BusinessKpiDtos.cs)', () => {
+  it('types a measure as nullable, because the server sends null when it is unavailable', () => {
+    const payload = {
+      window: {
+        from: '2026-09-01T00:00:00Z',
+        to: '2026-09-20T00:00:00Z',
+        granularity: 'day',
+        timeZone: 'UTC',
+        bucketCount: 20,
+      },
+      series: [
+        {
+          bucketStart: '2026-09-19T00:00:00Z',
+          isPartial: false,
+          activeUsers: null,
+          activeOrganizations: null,
+        },
+      ],
+      rolling: { dau: null, wau: null, mau: null, stickiness: null },
+      dataQuality: {
+        userAttributionAvailable: false,
+        unresolvedAttributionCount: 3,
+        subscriptionHistoryBackfilled: false,
+        lastActivityIsReconstructed: false,
+        agentMetricsUninstrumented: false,
+        notes: ['attribution unavailable'],
+      },
+    } satisfies BusinessActiveUsers
+
+    expect(payload.series[0].activeUsers).toBeNull()
+    expect(payload.dataQuality.userAttributionAvailable).toBe(false)
+    expectTypeOf<BusinessActiveUsers['series'][number]['activeUsers']>().toEqualTypeOf<
+      number | null
+    >()
+  })
+})
+
+describe('BusinessPlanMix mirrors BusinessPlanMixDto (BusinessKpiDtos.cs)', () => {
+  it('keeps the organization count and the billed count as two distinct fields', () => {
+    const payload = {
+      asOf: '2026-09-20T12:00:00Z',
+      tiers: [
+        {
+          planTier: 'Seed',
+          isFree: true,
+          organizationCount: 8,
+          activeOrganizationCount: 7,
+          billedSubscriptionCount: 0,
+          userCount: 8,
+          monthlyPriceLkr: 0,
+        },
+      ],
+      free: {
+        organizationCount: 8,
+        userCount: 8,
+        monthlyPriceLkr: 0,
+        shareOfOrganizations: 1,
+      },
+      premium: {
+        organizationCount: 0,
+        userCount: 0,
+        monthlyPriceLkr: 0,
+        shareOfOrganizations: 0,
+      },
+      organizationsTotal: 8,
+      organizationsWithBillingRow: 0,
+      totalMonthlyPriceLkr: 0,
+      dataQuality: {
+        userAttributionAvailable: true,
+        unresolvedAttributionCount: 0,
+        subscriptionHistoryBackfilled: false,
+        lastActivityIsReconstructed: false,
+        agentMetricsUninstrumented: false,
+        notes: [],
+      },
+    } satisfies BusinessPlanMix
+
+    expect(payload.tiers[0].organizationCount).not.toBe(payload.tiers[0].billedSubscriptionCount)
+    expectTypeOf<BusinessPlanMix>().toHaveProperty('organizationsWithBillingRow')
+  })
+})
+
+describe('BusinessOrganizationUsage mirrors BusinessOrganizationUsageDto', () => {
+  it('types the recency figures as nullable and carries the reconstructed flag', () => {
+    const payload = {
+      metric: 'apiRequests',
+      from: '2026-09-13T00:00:00Z',
+      to: '2026-09-20T00:00:00Z',
+      items: [
+        {
+          rank: 1,
+          organizationId: '00000000-0000-0000-0000-000000000001',
+          name: 'Atelier',
+          planTier: 'Bloom',
+          messagesSent: 10,
+          agentRuns: 2,
+          apiRequests: 100,
+          blossomUnits: 5.5,
+          lastActivityAt: null,
+          daysSinceLastActivity: null,
+        },
+      ],
+      totalCount: 1,
+      dataQuality: {
+        userAttributionAvailable: true,
+        unresolvedAttributionCount: 0,
+        subscriptionHistoryBackfilled: false,
+        lastActivityIsReconstructed: true,
+        agentMetricsUninstrumented: false,
+        notes: [],
+      },
+    } satisfies BusinessOrganizationUsage
+
+    expect(payload.dataQuality.lastActivityIsReconstructed).toBe(true)
+    expectTypeOf<BusinessOrganizationUsage['items'][number]['lastActivityAt']>().toEqualTypeOf<
+      string | null
+    >()
+  })
+})
+
+describe('BusinessSubscriptionTrend mirrors BusinessSubscriptionTrendDto', () => {
+  it('carries the per-bucket backfill flag so the chart can mark a bucket approximate', () => {
+    const payload = {
+      window: {
+        from: '2026-09-01T00:00:00Z',
+        to: '2026-09-20T00:00:00Z',
+        granularity: 'day',
+        timeZone: 'UTC',
+        bucketCount: 20,
+      },
+      series: [
+        {
+          bucketStart: '2026-09-19T00:00:00Z',
+          isPartial: false,
+          activeTotal: 4,
+          activeByTier: { Seed: 2, Bloom: 2 },
+          started: 1,
+          cancelled: 0,
+          isBackfilled: true,
+        },
+      ],
+      openingActive: 3,
+      closingActive: 4,
+      churnRate: 0,
+      dataQuality: {
+        userAttributionAvailable: true,
+        unresolvedAttributionCount: 0,
+        subscriptionHistoryBackfilled: true,
+        lastActivityIsReconstructed: false,
+        agentMetricsUninstrumented: false,
+        notes: [],
+      },
+    } satisfies BusinessSubscriptionTrend
+
+    expect(payload.series[0].isBackfilled).toBe(true)
+    expect(payload.series[0].activeByTier.Seed).toBe(2)
   })
 })

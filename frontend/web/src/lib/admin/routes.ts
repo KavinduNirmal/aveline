@@ -9,6 +9,7 @@ import {
   Radio,
   Scale,
   ShieldCheck,
+  TrendingUp,
   UserRound,
   Users,
   type LucideIcon,
@@ -28,6 +29,10 @@ export type AdminDomain =
   | "operations"
   | "observability"
   | "statistics"
+  // Business state — users, organizations, subscriptions and usage. Sourced from Aveline's own
+  // Postgres tables, not Prometheus: the console may own a business time series, and this domain
+  // is where it lives (DR-1).
+  | "business"
 
 export const ADMIN_DOMAINS: readonly AdminDomain[] = [
   "overview",
@@ -36,6 +41,7 @@ export const ADMIN_DOMAINS: readonly AdminDomain[] = [
   "operations",
   "observability",
   "statistics",
+  "business",
 ]
 
 export interface AdminRouteDef {
@@ -221,6 +227,27 @@ export const ADMIN_ROUTES: readonly AdminRouteDef[] = [
     icon: BarChart3,
     domain: "statistics",
     gate: { kind: "role", anyOf: ROLE_POLICIES.StatsSystem.anyOf },
+    enabled: true,
+  },
+
+  {
+    id: "business-growth",
+    subPath: "business",
+    label: "Growth",
+    description: "Signups, active users, plan mix and subscription trend",
+    icon: TrendingUp,
+    domain: "business",
+    gate: { kind: "permission", permission: "analytics:business:read" },
+    enabled: true,
+  },
+  {
+    id: "business-usage",
+    subPath: "business/usage",
+    label: "Usage & Engagement",
+    description: "Messages, agent runs, API calls and Blossom consumption per org",
+    icon: BarChart3,
+    domain: "business",
+    gate: { kind: "permission", permission: "analytics:business:read" },
     enabled: true,
   },
 ]

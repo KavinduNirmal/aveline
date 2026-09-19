@@ -402,3 +402,184 @@ export interface PagedPricingRules {
   page: number
   pageSize: number
 }
+
+// ── Business KPIs (S-44…S-49) ────────────────────────────────────────────────────────────────
+// The wire shapes of `/api/v1/admin/statistics/business/*`. Authority: the C# DTOs in
+// `Aveline.Api/Modules/Analytics/DTOs/BusinessKpiDtos.cs` and the catalog entries S-44…S-49.
+
+/** `BusinessWindowDto` — echoed so the client never re-derives the window it asked for. */
+export interface BusinessWindow {
+  from: string
+  to: string
+  granularity: string
+  timeZone: string
+  bucketCount: number
+}
+
+/**
+ * `BusinessDataQualityDto`. A false flag is named, never silently absorbed: `null` on a measure
+ * plus `userAttributionAvailable: false` is "not measured", which is not the same as `0`.
+ */
+export interface BusinessDataQuality {
+  userAttributionAvailable: boolean
+  unresolvedAttributionCount: number
+  subscriptionHistoryBackfilled: boolean
+  lastActivityIsReconstructed: boolean
+  agentMetricsUninstrumented: boolean
+  notes: string[]
+}
+
+export interface GrowthPoint {
+  bucketStart: string
+  isPartial: boolean
+  newUsers: number
+  newOrganizations: number
+  newAdminRequests: number
+  approvedAdminRequests: number
+}
+
+export interface GrowthTotals {
+  newUsers: number
+  newOrganizations: number
+  newAdminRequests: number
+  approvedAdminRequests: number
+}
+
+export interface BusinessGrowth {
+  window: BusinessWindow
+  observedFrom: string | null
+  series: GrowthPoint[]
+  totals: GrowthTotals
+  previousTotals: GrowthTotals
+  dataQuality: BusinessDataQuality
+}
+
+export interface ActiveUsersPoint {
+  bucketStart: string
+  isPartial: boolean
+  /** `null` when no request in the window is attributed. Never `0` in that case. */
+  activeUsers: number | null
+  activeOrganizations: number | null
+}
+
+export interface RollingActiveUsers {
+  dau: number | null
+  wau: number | null
+  mau: number | null
+  stickiness: number | null
+}
+
+export interface BusinessActiveUsers {
+  window: BusinessWindow
+  series: ActiveUsersPoint[]
+  rolling: RollingActiveUsers
+  dataQuality: BusinessDataQuality
+}
+
+export interface PlanMixItem {
+  planTier: string
+  isFree: boolean
+  /** From `Organizations.PlanTier`; authoritative for every organization. */
+  organizationCount: number
+  activeOrganizationCount: number
+  /** From `OrganizationSubscriptions`; smaller when a billing row is absent. */
+  billedSubscriptionCount: number
+  userCount: number
+  monthlyPriceLkr: number
+}
+
+export interface PlanMixSide {
+  organizationCount: number
+  userCount: number
+  monthlyPriceLkr: number
+  shareOfOrganizations: number
+}
+
+export interface BusinessPlanMix {
+  asOf: string
+  tiers: PlanMixItem[]
+  free: PlanMixSide
+  premium: PlanMixSide
+  organizationsTotal: number
+  organizationsWithBillingRow: number
+  totalMonthlyPriceLkr: number
+  dataQuality: BusinessDataQuality
+}
+
+export interface SubscriptionTrendPoint {
+  bucketStart: string
+  isPartial: boolean
+  activeTotal: number
+  activeByTier: Record<string, number>
+  started: number
+  cancelled: number
+  /** True when this bucket was reconstructed from the audit ledger rather than snapshotted. */
+  isBackfilled: boolean
+}
+
+export interface BusinessSubscriptionTrend {
+  window: BusinessWindow
+  series: SubscriptionTrendPoint[]
+  openingActive: number
+  closingActive: number
+  churnRate: number
+  dataQuality: BusinessDataQuality
+}
+
+export interface UsageTrendPoint {
+  bucketStart: string
+  isPartial: boolean
+  messagesSent: number
+  agentRuns: number
+  apiRequests: number
+  blossomUnits: number
+  actualCostUsd: number
+}
+
+export interface UsageTotals {
+  messagesSent: number
+  agentRuns: number
+  apiRequests: number
+  blossomUnits: number
+  actualCostUsd: number
+}
+
+export interface BusinessUsage {
+  window: BusinessWindow
+  organizationId: string | null
+  series: UsageTrendPoint[]
+  totals: UsageTotals
+  dataQuality: BusinessDataQuality
+}
+
+export interface OrganizationUsageItem {
+  rank: number
+  organizationId: string
+  name: string
+  planTier: string
+  messagesSent: number
+  agentRuns: number
+  apiRequests: number
+  blossomUnits: number
+  lastActivityAt: string | null
+  daysSinceLastActivity: number | null
+}
+
+export interface BusinessOrganizationUsage {
+  metric: string
+  from: string
+  to: string
+  items: OrganizationUsageItem[]
+  totalCount: number
+  dataQuality: BusinessDataQuality
+}
+
+/** The shared query contract of the six business reads. */
+export interface BusinessWindowParams {
+  from?: string
+  to?: string
+  granularity?: 'day' | 'week' | 'month'
+  organizationId?: string
+}
+
+export type BusinessRankingMetric = 'messages' | 'agentRuns' | 'apiRequests' | 'blossomUnits'

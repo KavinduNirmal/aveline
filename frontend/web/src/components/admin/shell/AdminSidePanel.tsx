@@ -25,6 +25,7 @@ const DOMAIN_LABEL: Record<AdminDomain, string> = {
   operations: "Operations",
   observability: "Observability",
   statistics: "Statistics",
+  business: "Business",
 }
 
 /**

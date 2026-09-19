@@ -1,5 +1,6 @@
 import type { ReactNode } from "react"
 
+import { DeltaBadge } from "@/components/admin/kpi/DeltaBadge"
 import { Card, CardContent } from "@/components/ui/card"
 import { formatMetricValue } from "@/lib/admin/data-quality"
 
@@ -10,6 +11,9 @@ export type MetricUnit = 'percent' | 'count' | 'seconds' | 'raw'
  *
  * `value === null` renders **"not measured"** — never `0.00%`. `approximate` marks a
  * `precision: "bucket-interpolated"` figure as approximate on the tile, not only in a tooltip.
+ *
+ * `delta` is optional and additive, so the eight delivered call sites are unaffected. It has no
+ * effect on `value`, and `DeltaBadge` renders nothing for a null delta.
  */
 export function KpiTile({
   label,
@@ -18,6 +22,7 @@ export function KpiTile({
   source,
   approximate = false,
   action,
+  delta,
 }: {
   label: string
   value: number | null | undefined
@@ -25,6 +30,7 @@ export function KpiTile({
   source: string
   approximate?: boolean
   action?: ReactNode
+  delta?: number | null
 }) {
   return (
     <Card className="border-border shadow-xs">
@@ -37,6 +43,7 @@ export function KpiTile({
         </div>
         <div className="text-xl font-serif font-semibold mt-2 text-foreground">
           {formatMetricValue(value, unit)}
+          {delta !== undefined && <span className="ml-2 align-middle"><DeltaBadge delta={delta} /></span>}
           {approximate && value !== null && value !== undefined && (
             <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">
               approximate

@@ -6,6 +6,7 @@ const VOCABULARY_LABEL: Record<DataQualityVocabulary, string> = {
   system: "Not measured on this host",
   agent: "Agent instrumentation",
   api: "API data quality",
+  business: "Business data quality",
 }
 
 /**

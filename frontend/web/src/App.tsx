@@ -30,6 +30,8 @@ import { TermsPage } from './routes/TermsPage'
 
 import { AdminLayout, AdminRootRedirect } from './routes/admin/AdminLayout'
 import { AdminShell } from './components/admin/shell/AdminShell'
+import { AdminBusinessGrowthView } from './routes/admin/AdminBusinessGrowth'
+import { AdminBusinessUsageView } from './routes/admin/AdminBusinessUsage'
 import { AdminDashboardView } from './routes/admin/AdminDashboard'
 import { AdminUsersView } from './routes/admin/AdminUsers'
 import { AdminOrgsView } from './routes/admin/AdminOrgs'
@@ -91,6 +93,8 @@ export default function App() {
                   <Route path="roles" element={<AdminRolesView />} />
                   <Route path="statistics/agents" element={<AdminStatisticsAgentsView />} />
                   <Route path="statistics/api" element={<AdminStatisticsApiView />} />
+                  <Route path="business" element={<AdminBusinessGrowthView />} />
+                  <Route path="business/usage" element={<AdminBusinessUsageView />} />
                   <Route path="*" element={<Navigate to="dashboard" replace />} />
                 </Route>
               </Route>

@@ -12,8 +12,24 @@ describe('AdminRolesView', () => {
   it('renders a row per permission and a column per canonical role', () => {
     render(<AdminRolesView />)
     const table = screen.getByRole('table')
-    expect(within(table).getAllByRole('row')).toHaveLength(1 + 24)
+    // 25 permissions since `analytics:business:read` joined the catalogue (Business KPIs P1).
+    expect(within(table).getAllByRole('row')).toHaveLength(1 + 25)
     expect(within(table).getAllByRole('columnheader')).toHaveLength(1 + 9)
+  })
+
+  it('grants analytics:business:read to moderator, admin and owner only', () => {
+    render(<AdminRolesView />)
+    const row = within(screen.getByRole('table'))
+      .getByText('analytics:business:read')
+      .closest('tr')
+    expect(row).not.toBeNull()
+    const cells = within(row as HTMLElement)
+    expect(cells.getByLabelText('moderator holds analytics:business:read')).toBeInTheDocument()
+    expect(cells.getByLabelText('admin holds analytics:business:read')).toBeInTheDocument()
+    expect(cells.getByLabelText('owner holds analytics:business:read')).toBeInTheDocument()
+    expect(
+      cells.getByLabelText('org:boutique_owner does not hold analytics:business:read'),
+    ).toBeInTheDocument()
   })
 
   it('marks owner as holding every permission, including pricing:backdate', () => {

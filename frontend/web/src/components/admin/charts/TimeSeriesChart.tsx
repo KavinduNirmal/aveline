@@ -1,11 +1,11 @@
-import { CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts"
+import { CartesianGrid, Line, LineChart, ReferenceArea, XAxis, YAxis } from "recharts"
 
 import { ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { CONNECT_NULLS } from "@/lib/admin/data-quality"
 
 export interface SeriesPoint {
   bucket: string
-  [key: string]: string | number | null
+  [key: string]: string | number | boolean | null
 }
 
 export interface SeriesDef {
@@ -24,10 +24,23 @@ export function TimeSeriesChart({
   data,
   series,
   xKey = "bucket",
+  partialBucket,
+  backfilledBuckets = [],
 }: {
   data: SeriesPoint[]
   series: SeriesDef[]
   xKey?: string
+  /**
+   * The x value of the trailing (or leading) bucket the window has not closed. It is shaded,
+   * because a bucket that has not finished is not comparable with a closed one — the plan's
+   * non-negotiable #2.
+   */
+  partialBucket?: string | undefined
+  /**
+   * x values whose data was reconstructed rather than measured. Drawn as a dashed reference so
+   * "approximate" is visible on the chart, not only in a footnote.
+   */
+  backfilledBuckets?: readonly string[]
 }) {
   return (
     <LineChart data={data} accessibilityLayer margin={{ left: 4, right: 8, top: 8 }}>
@@ -44,6 +57,24 @@ export function TimeSeriesChart({
           />
         }
       />
+      {partialBucket !== undefined && (
+        <ReferenceArea
+          x1={partialBucket}
+          x2={partialBucket}
+          fill="var(--muted)"
+          fillOpacity={0.35}
+        />
+      )}
+      {backfilledBuckets.map((bucket) => (
+        <ReferenceArea
+          key={bucket}
+          x1={bucket}
+          x2={bucket}
+          fill="var(--chart-4)"
+          fillOpacity={0.25}
+          strokeDasharray="4 4"
+        />
+      ))}
       {series.map((definition) => (
         <Line
           key={definition.dataKey}

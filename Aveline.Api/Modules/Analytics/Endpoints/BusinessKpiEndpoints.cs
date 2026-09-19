@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Aveline.Api.Authorization;
 using Aveline.Api.Configurations;
+using Microsoft.AspNetCore.Authorization;
 using Aveline.Api.Modules.Analytics.DTOs;
 using Aveline.Api.Modules.Analytics.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -55,6 +56,30 @@ public static class BusinessKpiEndpoints
             .WithDescription(
                 "S-46. The tier axis comes from `Organizations.PlanTier`, which is authoritative for "
                 + "every organization; billing columns are supplementary. Requires `analytics:business:read`.");
+
+        group.MapGet("/subscriptions", GetSubscriptionTrendAsync)
+            .WithName("getBusinessSubscriptionTrend")
+            .WithSummary("Read active subscriptions over time, split by tier")
+            .WithDescription(
+                "S-47. One row per organization per UTC day, written by the daily snapshot job. The "
+                + "tier comes from `Organizations.PlanTier`, so an organization with no billing row is "
+                + "still counted. Buckets reconstructed from the audit ledger are marked approximate. "
+                + "Requires `analytics:business:read`.");
+
+        group.MapGet("/usage", GetUsageAsync)
+            .WithName("getBusinessUsage")
+            .WithSummary("Read product usage per bucket")
+            .WithDescription(
+                "S-48. Messages sent, agent runs, API calls, Blossom units and actual AI cost. Without "
+                + "`organizationId` the API-call total includes unattributed requests (BR-6.1); with it, "
+                + "`admin:orgs:read` is also required. Requires `analytics:business:read`.");
+
+        group.MapGet("/organizations", GetOrganizationUsageAsync)
+            .WithName("getBusinessOrganizationUsage")
+            .WithSummary("Rank organizations by a usage measure")
+            .WithDescription(
+                "S-49. Ranked usage with a greatest-of last-activity reconstruction. Enumerates tenant "
+                + "names, so `admin:orgs:read` is also required in addition to `analytics:business:read`.");
 
         return endpoints;
     }
@@ -124,6 +149,130 @@ public static class BusinessKpiEndpoints
             ct => service.GetPlanMixAsync("plan-mix", ct),
             static (dto, quality) => dto with { DataQuality = quality },
             cancellationToken);
+
+    // ── S-47 ──────────────────────────────────────────────────────────────────────────────
+
+    private static async Task<IResult> GetSubscriptionTrendAsync(
+        HttpContext httpContext,
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        [FromQuery] string? granularity,
+        IBusinessKpiService service,
+        BusinessKpiCache cache,
+        IOptions<BusinessAnalyticsOptions> options,
+        IConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        var parameters = new BusinessQueryParameters { From = from, To = to, Granularity = granularity };
+        if (!TryWindow(httpContext, parameters, options.Value, out var window))
+        {
+            return InvalidWindow(httpContext, parameters, options.Value);
+        }
+
+        return await ReadAsync<BusinessSubscriptionTrendDto>(
+            httpContext, cache, configuration, "subscriptions", KeyFor(parameters, window!),
+            ct => service.GetSubscriptionTrendAsync(window!, KeyFor(parameters, window!), ct),
+            static (dto, quality) => dto with { DataQuality = quality },
+            cancellationToken);
+    }
+
+    // ── S-48 ──────────────────────────────────────────────────────────────────────────────
+
+    private static async Task<IResult> GetUsageAsync(
+        HttpContext httpContext,
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        [FromQuery] string? granularity,
+        [FromQuery] Guid? organizationId,
+        IBusinessKpiService service,
+        BusinessKpiCache cache,
+        IOptions<BusinessAnalyticsOptions> options,
+        IConfiguration configuration,
+        IAuthorizationService authorization,
+        CancellationToken cancellationToken)
+    {
+        var parameters = new BusinessQueryParameters
+        {
+            From = from,
+            To = to,
+            Granularity = granularity,
+            OrganizationId = organizationId,
+        };
+
+        if (!TryWindow(httpContext, parameters, options.Value, out var window))
+        {
+            return InvalidWindow(httpContext, parameters, options.Value);
+        }
+
+        // The org drill-down enumerates a tenant's usage, so it needs the org-read permission in
+        // addition to the KPI permission. Checked in the handler because the route carries no
+        // organization scope.
+        if (organizationId is not null
+            && !(await authorization.AuthorizeAsync(httpContext.User, Permissions.AdminOrgsRead)).Succeeded)
+        {
+            return Results.Forbid();
+        }
+
+        return await ReadAsync<BusinessUsageDto>(
+            httpContext, cache, configuration, "usage", KeyFor(parameters, window!),
+            ct => service.GetUsageAsync(window!, organizationId, KeyFor(parameters, window!), ct),
+            static (dto, quality) => dto with { DataQuality = quality },
+            cancellationToken);
+    }
+
+    // ── S-49 ──────────────────────────────────────────────────────────────────────────────
+
+    private static async Task<IResult> GetOrganizationUsageAsync(
+        HttpContext httpContext,
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        [FromQuery] string? metric,
+        [FromQuery] int? limit,
+        IBusinessKpiService service,
+        BusinessKpiCache cache,
+        IOptions<BusinessAnalyticsOptions> options,
+        IConfiguration configuration,
+        IAuthorizationService authorization,
+        CancellationToken cancellationToken)
+    {
+        var parameters = new BusinessQueryParameters
+        {
+            From = from,
+            To = to,
+            Granularity = "day",
+            Metric = metric,
+            Limit = limit,
+        };
+
+        if (!TryWindow(httpContext, parameters, options.Value, out var window))
+        {
+            return InvalidWindow(httpContext, parameters, options.Value);
+        }
+
+        if (!BusinessKpiValidation.TryParseRankingMetric(metric, out var parsedMetric, out var metricError))
+        {
+            return Results.BadRequest(new { message = metricError });
+        }
+
+        if (!BusinessKpiValidation.TryParseLimit(limit, options.Value, out var parsedLimit, out var limitError))
+        {
+            return Results.BadRequest(new { message = limitError });
+        }
+
+        // The ranking enumerates tenant names, so it needs the org-read permission as well.
+        if (!(await authorization.AuthorizeAsync(httpContext.User, Permissions.AdminOrgsRead)).Succeeded)
+        {
+            return Results.Forbid();
+        }
+
+        return await ReadAsync<BusinessOrganizationUsageDto>(
+            httpContext, cache, configuration, "organizations",
+            $"{KeyFor(parameters, window!)}|{parsedMetric}|{parsedLimit}",
+            ct => service.GetOrganizationUsageAsync(
+                window!, parsedMetric, parsedLimit, KeyFor(parameters, window!), ct),
+            static (dto, quality) => dto with { DataQuality = quality },
+            cancellationToken);
+    }
 
     // ── Shared plumbing ───────────────────────────────────────────────────────────────────
 

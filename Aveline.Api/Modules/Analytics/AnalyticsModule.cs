@@ -1,5 +1,6 @@
 using Aveline.Api.Configurations;
 using Aveline.Api.Modules.Analytics.Endpoints;
+using Aveline.Api.Modules.Analytics.Jobs;
 using Aveline.Api.Modules.Analytics.Services;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -26,6 +27,11 @@ public static class AnalyticsModule
 
         services.AddSingleton<BusinessKpiCache>();
         services.AddScoped<IBusinessKpiService, BusinessKpiService>();
+
+        // The daily 02:00 UTC snapshot, after BillingRollupJob's 01:30 so a same-day tier change
+        // is already settled. Registered as a singleton first so a test can drive one pass.
+        services.AddSingleton<OrganizationSubscriptionSnapshotJob>();
+        services.AddHostedService(sp => sp.GetRequiredService<OrganizationSubscriptionSnapshotJob>());
 
         // Fail startup — not the first request — when a shared cache is required but the
         // deployment would silently fall back to the per-instance in-memory implementation, so

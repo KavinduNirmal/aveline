@@ -66,6 +66,11 @@ public class AppDbContext : DbContext
 
     public DbSet<OrganizationSubscription> OrganizationSubscriptions => Set<OrganizationSubscription>();
 
+    /// <summary>Daily per-organization subscription snapshot backing the S-47 trend.</summary>
+    public DbSet<Aveline.Api.Modules.Analytics.Models.OrganizationSubscriptionSnapshot>
+        OrganizationSubscriptionSnapshots =>
+        Set<Aveline.Api.Modules.Analytics.Models.OrganizationSubscriptionSnapshot>();
+
     public DbSet<DailyBillingMetric> DailyBillingMetrics => Set<DailyBillingMetric>();
 
     public DbSet<AuditLogEntry> AuditLogEntries => Set<AuditLogEntry>();

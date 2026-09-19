@@ -819,6 +819,9 @@ inert at the UI layer and exists so the catalogue is semantically correct.
 | `GET` | `/api/v1/admin/statistics/business/growth` | S-44 | New users, new boutiques and access requests per bucket + `previousTotals` |
 | `GET` | `/api/v1/admin/statistics/business/active-users` | S-45 | Distinct active users per bucket + the DAU/WAU/MAU reading and stickiness |
 | `GET` | `/api/v1/admin/statistics/business/plan-mix` | S-46 | Per-tier organization/subscription/user counts and the free-versus-premium split |
+| `GET` | `/api/v1/admin/statistics/business/subscriptions` | S-47 | Active organizations by tier over time, with starts, cancellations and churn |
+| `GET` | `/api/v1/admin/statistics/business/usage` | S-48 | Messages, agent runs, API calls, Blossom units and actual AI cost per bucket |
+| `GET` | `/api/v1/admin/statistics/business/organizations` | S-49 | Organizations ranked by a usage measure, with last-activity recency |
 
 **Shared query parameters**
 
@@ -827,6 +830,9 @@ inert at the UI layer and exists so the catalogue is semantically correct.
 | `from` | ISO 8601 datetime | `to − 30 d` | must be `< to` |
 | `to` | ISO 8601 datetime | now (UTC) | `(to − from).TotalDays ≤ BusinessAnalytics:MaxWindowDays` (400) |
 | `granularity` | `day` \| `week` \| `month` | `day` | anything else is `400` |
+| `organizationId` | uuid | absent | `usage` only; additionally requires `admin:orgs:read` |
+| `metric` | `messages` \| `agentRuns` \| `apiRequests` \| `blossomUnits` | `apiRequests` | `organizations` only; anything else is `400` |
+| `limit` | int | `20` | `organizations` only; clamped to 100, and `> 1000`, `0` or negative is `400` |
 
 **Errors:** `400 { message }` on every validation failure; `401` anonymous; `403` a role
 without `analytics:business:read`; `500 { status, message, traceId }` on a database failure.
@@ -841,6 +847,21 @@ seconds stale.
 earliest observation (`observedFrom`), or a measure that cannot be computed at all, is
 `null`. `dataQuality.userAttributionAvailable = false` accompanies a `null` active-user
 reading.
+
+**Two operations carry a second permission.** `usage?organizationId=…` and `organizations`
+both require `admin:orgs:read` in addition to `analytics:business:read`, because the first
+drills into one tenant's usage and the second enumerates tenant names. The check is performed
+in the handler; a caller holding only the KPI permission is refused with `403`.
+
+**Subscription history is a snapshot, not a read of `OrganizationSubscriptions`.**
+`OrganizationSubscriptionSnapshots` holds one row per organization per UTC day, written at
+02:00 UTC. The tier comes from `Organizations.PlanTier`, so an organization that never changed
+plan (and therefore has no subscription row) is still counted. Buckets reconstructed from the
+audit ledger are flagged `isBackfilled` and `dataQuality.subscriptionHistoryBackfilled`.
+
+**Usage without `organizationId` includes unattributed API requests** (`BR-6.1`), which is
+correct for a platform total and is stated in `dataQuality.notes`. With `organizationId`, those
+rows belong to no organization and are excluded.
 
 ### B.15 Authorization policy demo endpoints (fixtures)
 

@@ -848,6 +848,54 @@ the trailing bucket the window's `to` falls inside.
 | Access | `analytics:business:read` |
 | Notes | **Free = `PlanTier.Seed`; premium = `Bloom`, `Orchid`, `Rose`, `Enterprise`.** The response returns the per-tier rows **and** the two rolled-up sides so the definition is stated once, server-side. **`OrganizationCount` and `BilledSubscriptionCount` are deliberately two different fields**, because they are two different numbers: `OrganizationSubscriptions` holds one current row per organization, created only when a plan changes or is cancelled, so an organization that never changed plan has **no** row. The response exposes `organizationsTotal` and `organizationsWithBillingRow`, making the gap a visible subtraction. `TotalMonthlyPriceLkr` is a *list-price sum over billed rows only*, not recognised revenue: the provider columns exist but no provider client is written. |
 
+### S-47 · `businessSubscriptionTrend`
+
+| Field | Value |
+| --- | --- |
+| Description | Active subscription count over time, split by tier, with starts and cancellations per bucket |
+| Formula | From the daily snapshot: `ActiveTotal` = the number of organizations with `Status IN ('Active','Trialing')` on the bucket's closing snapshot day; `ActiveByTier` the same grouped by `PlanTier`; `ChurnRate = Σ Cancelled over the window / OpeningActive` |
+| Dimensions | `granularity`, `planTier` |
+| Granularity | caller-selected over daily snapshots |
+| Freshness | `≤ 24 h` (the snapshot runs daily at 02:00 UTC) |
+| Retention | 400 days, matching `Telemetry:DailyRollupRetentionDays` |
+| Source | **New** `OrganizationSubscriptionSnapshots`, whose tier column is taken from `Organizations.PlanTier` and whose billing columns come from `OrganizationSubscriptions` where a row exists; backfilled from `AuditLogEntries[Action='org.plan.changed']` |
+| Storage | daily snapshot + rollup |
+| Endpoint | `GET /api/v1/admin/statistics/business/subscriptions` |
+| Access | `analytics:business:read` |
+| Notes | **`ActiveTotal` counts *organizations* by tier, not subscription rows.** A row per active organization is written on every snapshot day whether or not a billing row exists, with `HasBillingRow` recorded, so the series cannot silently under-count. The snapshot is written at **02:00 UTC**, after `BillingRollupJob` at 01:30, so a tier change made the same day is already reflected. `dataQuality.subscriptionHistoryBackfilled` is `true` when any bucket was reconstructed from the audit ledger, and the console marks those buckets **approximate**. The backfill never reproduces the `"Grow"` phantom tier: an unparseable `AfterJson` yields no tier rather than a literal, and before the earliest parseable change the organization's live tier is reported as the series' floor. |
+
+### S-48 · `businessUsageTrend`
+
+| Field | Value |
+| --- | --- |
+| Description | Product usage per bucket: messages sent, agent runs, API calls, Blossom units consumed, and actual AI cost |
+| Formula | `MessagesSent = COUNT(Messages) ⋈ Conversations WHERE CreatedAt ∈ bucket`; `AgentRuns = Σ DailyAgentMetrics.RunCount WHERE Day ∈ bucket`; `ApiRequests = Σ ApiRequestMetrics.RequestCount WHERE WindowSize='day' AND WindowStart ∈ bucket`; `BlossomUnits = Σ DailyBillingMetrics.BlossomUnits`; `ActualCostUsd = Σ DailyBillingMetrics.ActualCostUsd` |
+| Dimensions | `granularity`, `organizationId` (optional) |
+| Granularity | caller-selected |
+| Freshness | `≤ 60 s` from the rollups; the rollups themselves are `≤ 1 h` (hour) / `≤ 24 h` (day) |
+| Retention | 400 days for the rollups; messages indefinite |
+| Source | `Messages` ⋈ `Conversations`, `DailyAgentMetrics`, `ApiRequestMetrics`, `DailyBillingMetrics` |
+| Storage | on-the-fly over existing rollups |
+| Endpoint | `GET /api/v1/admin/statistics/business/usage` |
+| Access | `analytics:business:read`; when `organizationId` is supplied, the caller must additionally satisfy `admin:orgs:read` |
+| Notes | When `organizationId` is absent, `ApiRequests` counts **every** request including unattributed ones (`BR-6.1`), which is correct for a platform total and is said in `dataQuality.notes`. When it is present, unattributed rows belong to no organization and are excluded. `dataQuality.agentMetricsUninstrumented` is `true`: the daily agent rollup has no user dimension, so per-user agent runs are not available. |
+
+### S-49 · `businessOrganizationUsage`
+
+| Field | Value |
+| --- | --- |
+| Description | Organizations ranked by a chosen usage measure over a window, with last-activity recency |
+| Formula | Ranked `SUM` over the window of `messages`\|`agentRuns`\|`apiRequests`\|`blossomUnits`; `LastActivityAt = MAX(GREATEST(Conversation.LastMessageAt, AgentWorkflowRun day, ApiRequestMetric.WindowStart, AuditLogEntry.CreatedAt))`; `DaysSinceLastActivity = (now − LastActivityAt).Days` |
+| Dimensions | `metric`, window, `limit` (≤ 100) |
+| Granularity | window aggregate |
+| Freshness | `≤ 60 s` |
+| Retention | window ≤ 400 days |
+| Source | `Conversations`, `DailyAgentMetrics`, `ApiRequestMetrics`, `AuditLogEntries`, `Organizations` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/admin/statistics/business/organizations` |
+| Access | `analytics:business:read` **and** `admin:orgs:read` |
+| Notes | `LastActivityAt` is explicitly a **greatest-of reconstruction**, not a recorded fact, because there is no per-day user-activity table; the response sets `lastActivityIsReconstructed: true` and the UI labels the column. Ties are broken by `OrganizationId` so paging is stable. The endpoint enumerates tenant names, which is why it carries the second permission. |
+
 ---
 
 ## 8. Data quality warnings (must be returned to clients)

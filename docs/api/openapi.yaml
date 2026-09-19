@@ -3963,6 +3963,103 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /api/v1/admin/statistics/business/subscriptions:
+    get:
+      tags: [Admin Business Statistics]
+      summary: Read active subscriptions over time, split by tier
+      description: |
+        S-47. One row per organization per UTC day, written by the daily 02:00 UTC snapshot job.
+        The tier comes from `Organizations.PlanTier`, so an organization with no billing row is
+        still counted (its absence would otherwise under-count the series silently). Buckets
+        reconstructed from the audit ledger set `dataQuality.subscriptionHistoryBackfilled` and
+        `isBackfilled` on the point. Requires `analytics:business:read`.
+      operationId: getBusinessSubscriptionTrend
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Granularity"
+      responses:
+        "200":
+          description: Subscription trend
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BusinessSubscriptionTrendResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/business/usage:
+    get:
+      tags: [Admin Business Statistics]
+      summary: Read product usage per bucket
+      description: |
+        S-48. Messages sent, agent runs, API calls, Blossom units and actual AI cost. Without
+        `organizationId` the API-call total includes unattributed requests, which is correct for
+        a platform total (BR-6.1) and is stated in `dataQuality.notes`; with it, unattributed rows
+        belong to no organization and are excluded, and the caller must additionally satisfy
+        `admin:orgs:read`. Requires `analytics:business:read`.
+      operationId: getBusinessUsage
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Granularity"
+        - name: organizationId
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+          description: Scope every measure to one organization. Requires `admin:orgs:read`.
+      responses:
+        "200":
+          description: Usage trend
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BusinessUsageResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/business/organizations:
+    get:
+      tags: [Admin Business Statistics]
+      summary: Rank organizations by a usage measure
+      description: |
+        S-49. Ranked usage with a greatest-of last-activity reconstruction. Enumerates tenant
+        names, so `admin:orgs:read` is required in addition to `analytics:business:read`.
+      operationId: getBusinessOrganizationUsage
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: metric
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [messages, agentRuns, apiRequests, blossomUnits]
+            default: apiRequests
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 20 }
+          description: Clamped to `BusinessAnalytics:MaxRankingLimit` (100); above the hard ceiling is a 400.
+      responses:
+        "200":
+          description: Ranked organizations
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BusinessOrganizationUsageResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   # ---------------------------------------------------------------------------
   # Audit
   # ---------------------------------------------------------------------------
@@ -4462,6 +4559,112 @@ components:
           type: integer
           description: The size of the gap between the organization total and the billed rows.
         totalMonthlyPriceLkr: { type: number }
+        dataQuality: { $ref: "#/components/schemas/BusinessDataQuality" }
+
+    SubscriptionTrendPoint:
+      type: object
+      required: [bucketStart, isPartial, activeTotal, activeByTier, started, cancelled, isBackfilled]
+      properties:
+        bucketStart: { type: string, format: date-time }
+        isPartial: { type: boolean }
+        activeTotal:
+          type: integer
+          description: Organizations with an Active or Trialing snapshot on the bucket's closing day.
+        activeByTier:
+          type: object
+          additionalProperties: { type: integer }
+        started: { type: integer }
+        cancelled: { type: integer }
+        isBackfilled:
+          type: boolean
+          description: True when this bucket was reconstructed from the audit ledger rather than snapshotted.
+    BusinessSubscriptionTrendResponse:
+      type: object
+      required: [window, series, openingActive, closingActive, churnRate, dataQuality]
+      properties:
+        window: { $ref: "#/components/schemas/BusinessWindow" }
+        series:
+          type: array
+          items: { $ref: "#/components/schemas/SubscriptionTrendPoint" }
+        openingActive: { type: integer }
+        closingActive: { type: integer }
+        churnRate: { type: number, format: double }
+        dataQuality: { $ref: "#/components/schemas/BusinessDataQuality" }
+    UsageTrendPoint:
+      type: object
+      required:
+        - bucketStart
+        - isPartial
+        - messagesSent
+        - agentRuns
+        - apiRequests
+        - blossomUnits
+        - actualCostUsd
+      properties:
+        bucketStart: { type: string, format: date-time }
+        isPartial: { type: boolean }
+        messagesSent: { type: integer, format: int64 }
+        agentRuns: { type: integer }
+        apiRequests: { type: integer, format: int64 }
+        blossomUnits: { type: number }
+        actualCostUsd: { type: number }
+    UsageTotals:
+      type: object
+      required: [messagesSent, agentRuns, apiRequests, blossomUnits, actualCostUsd]
+      properties:
+        messagesSent: { type: integer, format: int64 }
+        agentRuns: { type: integer }
+        apiRequests: { type: integer, format: int64 }
+        blossomUnits: { type: number }
+        actualCostUsd: { type: number }
+    BusinessUsageResponse:
+      type: object
+      required: [window, series, totals, dataQuality]
+      properties:
+        window: { $ref: "#/components/schemas/BusinessWindow" }
+        organizationId: { type: string, format: uuid, nullable: true }
+        series:
+          type: array
+          items: { $ref: "#/components/schemas/UsageTrendPoint" }
+        totals: { $ref: "#/components/schemas/UsageTotals" }
+        dataQuality: { $ref: "#/components/schemas/BusinessDataQuality" }
+    OrganizationUsageItem:
+      type: object
+      required:
+        - rank
+        - organizationId
+        - name
+        - planTier
+        - messagesSent
+        - agentRuns
+        - apiRequests
+        - blossomUnits
+      properties:
+        rank: { type: integer }
+        organizationId: { type: string, format: uuid }
+        name: { type: string }
+        planTier: { type: string, enum: [Seed, Bloom, Orchid, Rose, Enterprise] }
+        messagesSent: { type: integer, format: int64 }
+        agentRuns: { type: integer }
+        apiRequests: { type: integer, format: int64 }
+        blossomUnits: { type: number }
+        lastActivityAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: A greatest-of reconstruction, not a recorded fact.
+        daysSinceLastActivity: { type: integer, nullable: true }
+    BusinessOrganizationUsageResponse:
+      type: object
+      required: [metric, from, to, items, totalCount, dataQuality]
+      properties:
+        metric: { type: string, enum: [messages, agentRuns, apiRequests, blossomUnits] }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/OrganizationUsageItem" }
+        totalCount: { type: integer }
         dataQuality: { $ref: "#/components/schemas/BusinessDataQuality" }
 
     # --- primitives and enums ------------------------------------------------

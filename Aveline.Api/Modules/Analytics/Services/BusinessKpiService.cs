@@ -201,9 +201,12 @@ public sealed class BusinessKpiService(
             userAttributionAvailable: attributionAvailable,
             notes: attributionAvailable
                 ? null
-                : "User attribution is unavailable for this window: no API request carried a resolved user id, "
-                  + "so the active-user measures are reported as not measured rather than as zero. SignalR-only "
-                  + "sessions are not counted by this definition.");
+                :
+                [
+                    "User attribution is unavailable for this window: no API request carried a resolved "
+                    + "user id, so the active-user measures are reported as not measured rather than as "
+                    + "zero. SignalR-only sessions are not counted by this definition.",
+                ]);
 
         return new BusinessActiveUsersDto(
             ToDto(window),
@@ -324,28 +327,383 @@ public sealed class BusinessKpiService(
 
     private static string Tier(PlanTier tier) => tier.ToString();
 
-    // ── S-47…S-49 (phase 3) ───────────────────────────────────────────────────────────────
+    // ── S-47 subscription trend ───────────────────────────────────────────────────────────
 
-    public Task<BusinessSubscriptionTrendDto> GetSubscriptionTrendAsync(
+    public async Task<BusinessSubscriptionTrendDto> GetSubscriptionTrendAsync(
         BusinessWindow window,
         string? cacheKey,
-        CancellationToken cancellationToken = default) =>
-        throw new NotImplementedException("S-47 is delivered in business-KPIs phase 3.");
+        CancellationToken cancellationToken = default)
+    {
+        var rows = await db.OrganizationSubscriptionSnapshots
+            .Where(snapshot => snapshot.SnapshotDay >= window.From && snapshot.SnapshotDay < window.To)
+            .Select(snapshot => new
+            {
+                snapshot.SnapshotDay,
+                snapshot.OrganizationId,
+                snapshot.PlanTier,
+                snapshot.Status,
+                snapshot.IsBackfilled,
+                snapshot.CreatedAt,
+            })
+            .ToListAsync(cancellationToken);
 
-    public Task<BusinessUsageDto> GetUsageAsync(
+        var activeStatuses = new[] { SubscriptionStatus.Active, SubscriptionStatus.Trialing };
+        var active = rows
+            .Where(row => activeStatuses.Contains(row.Status))
+            .ToList();
+
+        var axis = BusinessKpiValidation.BuildAxis(window.From, window.To, window.Granularity);
+        var series = new List<SubscriptionTrendPointDto>(axis.Count);
+
+        foreach (var bucketStart in axis)
+        {
+            var bucketEnd = BusinessKpiValidation.Advance(bucketStart, window.Granularity);
+
+            // The latest snapshot day inside the bucket: a snapshot is a point-in-time reading,
+            // so a bucket is summarised by its closing snapshot rather than by a sum.
+            var inBucket = active
+                .Where(row => row.SnapshotDay >= bucketStart && row.SnapshotDay < bucketEnd)
+                .ToList();
+            var closingDay = inBucket.Count == 0 ? (DateTime?)null : inBucket.Max(row => row.SnapshotDay);
+            var closing = closingDay is null
+                ? []
+                : inBucket.Where(row => row.SnapshotDay == closingDay).ToList();
+
+            var byTier = closing
+                .GroupBy(row => Tier(row.PlanTier))
+                .ToDictionary(group => group.Key, group => group.Count());
+
+            var started = rows.Count(row => row.CreatedAt >= bucketStart
+                                            && row.CreatedAt < bucketEnd
+                                            && row.SnapshotDay == window.To.Date);
+            var cancelled = inBucket.Count(row => row.Status == SubscriptionStatus.Cancelled);
+
+            series.Add(new SubscriptionTrendPointDto(
+                bucketStart,
+                IsPartial(bucketStart, window),
+                closing.Select(row => row.OrganizationId).Distinct().Count(),
+                byTier,
+                started,
+                cancelled,
+                closing.Count > 0 && closing.All(row => row.IsBackfilled)));
+        }
+
+        var opening = await ClosingActiveAsync(window.From, cancellationToken);
+        var closingActive = series.Count == 0 ? opening : series[^1].ActiveTotal;
+        var cancelledTotal = series.Sum(point => point.Cancelled);
+        var churnRate = opening > 0 ? (decimal)cancelledTotal / opening : 0m;
+
+        var anyBackfilled = series.Any(point => point.IsBackfilled);
+
+        return new BusinessSubscriptionTrendDto(
+            ToDto(window),
+            series,
+            opening,
+            closingActive,
+            churnRate,
+            DataQuality(
+                notes: anyBackfilled
+                    ?
+                    [
+                        "Buckets marked approximate were reconstructed from the audit ledger rather "
+                        + "than snapshotted, and their tier comes from Organizations.PlanTier.",
+                    ]
+                    : null,
+                subscriptionHistoryBackfilled: anyBackfilled));
+    }
+
+    private async Task<int> ClosingActiveAsync(DateTime asOf, CancellationToken cancellationToken)
+    {
+        var activeStatuses = new[] { SubscriptionStatus.Active, SubscriptionStatus.Trialing };
+        var latestDay = await db.OrganizationSubscriptionSnapshots
+            .Where(snapshot => snapshot.SnapshotDay < asOf)
+            .Select(snapshot => (DateTime?)snapshot.SnapshotDay)
+            .MaxAsync(cancellationToken);
+
+        if (latestDay is null)
+        {
+            return 0;
+        }
+
+        return await db.OrganizationSubscriptionSnapshots
+            .Where(snapshot => snapshot.SnapshotDay == latestDay
+                               && activeStatuses.Contains(snapshot.Status))
+            .Select(snapshot => snapshot.OrganizationId)
+            .Distinct()
+            .CountAsync(cancellationToken);
+    }
+
+    // ── S-48 usage ────────────────────────────────────────────────────────────────────────
+
+    public async Task<BusinessUsageDto> GetUsageAsync(
         BusinessWindow window,
         Guid? organizationId,
         string? cacheKey,
-        CancellationToken cancellationToken = default) =>
-        throw new NotImplementedException("S-48 is delivered in business-KPIs phase 3.");
+        CancellationToken cancellationToken = default)
+    {
+        var conversations = await db.Conversations
+            .Where(conversation => organizationId == null || conversation.OrganizationId == organizationId)
+            .Select(conversation => new { conversation.Id, conversation.OrganizationId })
+            .ToListAsync(cancellationToken);
+        var conversationIds = conversations.Select(conversation => conversation.Id).ToList();
 
-    public Task<BusinessOrganizationUsageDto> GetOrganizationUsageAsync(
+        var messageRows = conversationIds.Count == 0
+            ? []
+            : await db.Messages
+                .Where(message => conversationIds.Contains(message.ConversationId)
+                                  && message.CreatedAt >= window.From
+                                  && message.CreatedAt < window.To)
+                .Select(message => new { message.ConversationId, message.CreatedAt })
+                .ToListAsync(cancellationToken);
+
+        var agentRows = await db.DailyAgentMetrics
+            .Where(metric => metric.Day >= window.From
+                             && metric.Day < window.To
+                             && (organizationId == null || metric.OrganizationId == organizationId))
+            .Select(metric => new { metric.Day, metric.RunCount })
+            .ToListAsync(cancellationToken);
+
+        // A platform total deliberately includes unattributed requests (BR-6.1): the request
+        // happened. A scoped read excludes them, because they belong to no organization.
+        var apiRows = await db.ApiRequestMetrics
+            .Where(metric => metric.WindowSize == "day"
+                             && metric.WindowStart >= window.From
+                             && metric.WindowStart < window.To
+                             && (organizationId == null || metric.OrganizationId == organizationId))
+            .Select(metric => new { metric.WindowStart, metric.RequestCount })
+            .ToListAsync(cancellationToken);
+
+        var billingRows = await db.DailyBillingMetrics
+            .Where(metric => metric.Day >= window.From
+                             && metric.Day < window.To
+                             && (organizationId == null || metric.OrganizationId == organizationId))
+            .Select(metric => new { metric.Day, metric.BlossomUnits, metric.ActualCostUsd })
+            .ToListAsync(cancellationToken);
+
+        var messages = CountByBucket(
+            messageRows.Select(row => row.CreatedAt), window.Granularity);
+        var agents = SumByBucket(
+            agentRows.Select(row => (row.Day, (decimal)row.RunCount)), window.Granularity);
+        var api = SumByBucket(
+            apiRows.Select(row => (row.WindowStart, (decimal)row.RequestCount)), window.Granularity);
+        var blossoms = SumByBucket(
+            billingRows.Select(row => (row.Day, row.BlossomUnits)), window.Granularity);
+        var cost = SumByBucket(
+            billingRows.Select(row => (row.Day, row.ActualCostUsd)), window.Granularity);
+
+        var axis = BusinessKpiValidation.BuildAxis(window.From, window.To, window.Granularity);
+        var series = axis
+            .Select(bucketStart => new UsageTrendPointDto(
+                bucketStart,
+                IsPartial(bucketStart, window),
+                SumForBucket(messages, bucketStart, window.Granularity),
+                (int)SumDecimalForBucket(agents, bucketStart, window.Granularity),
+                (long)SumDecimalForBucket(api, bucketStart, window.Granularity),
+                SumDecimalForBucket(blossoms, bucketStart, window.Granularity),
+                SumDecimalForBucket(cost, bucketStart, window.Granularity)))
+            .ToList();
+
+        var totals = new UsageTotalsDto(
+            series.Sum(point => point.MessagesSent),
+            series.Sum(point => point.AgentRuns),
+            series.Sum(point => point.ApiRequests),
+            series.Sum(point => point.BlossomUnits),
+            series.Sum(point => point.ActualCostUsd));
+
+        var notes = new List<string>
+        {
+            "Agent-run counts come from the DailyAgentMetrics rollup, which has no user dimension: "
+            + "per-user agent-run attribution is not available, so these are organization-level totals.",
+        };
+        if (organizationId is null)
+        {
+            notes.Add(
+                "This platform total includes API requests that carry no organization or user "
+                + "attribution (BR-6.1); those requests happened and are counted.");
+        }
+
+        var quality = DataQuality(
+            agentMetricsUninstrumented: true,
+            notes: notes);
+
+        return new BusinessUsageDto(ToDto(window), organizationId, series, totals, quality);
+    }
+
+    // ── S-49 organization ranking ─────────────────────────────────────────────────────────
+
+    public async Task<BusinessOrganizationUsageDto> GetOrganizationUsageAsync(
         BusinessWindow window,
         BusinessRankingMetric metric,
         int limit,
         string? cacheKey,
-        CancellationToken cancellationToken = default) =>
-        throw new NotImplementedException("S-49 is delivered in business-KPIs phase 3.");
+        CancellationToken cancellationToken = default)
+    {
+        var conversations = await db.Conversations
+            .Select(conversation => new { conversation.Id, conversation.OrganizationId })
+            .ToListAsync(cancellationToken);
+        var conversationIds = conversations.Select(conversation => conversation.Id).ToList();
+        var organizationByConversation = conversations.ToDictionary(
+            conversation => conversation.Id, conversation => conversation.OrganizationId);
+
+        var messageRows = conversationIds.Count == 0
+            ? []
+            : await db.Messages
+                .Where(message => conversationIds.Contains(message.ConversationId)
+                                  && message.CreatedAt >= window.From
+                                  && message.CreatedAt < window.To)
+                .Select(message => new { message.ConversationId, message.CreatedAt })
+                .ToListAsync(cancellationToken);
+
+        var agentRows = await db.DailyAgentMetrics
+            .Where(row => row.Day >= window.From && row.Day < window.To && row.OrganizationId != null)
+            .Select(row => new { OrganizationId = row.OrganizationId!.Value, row.Day, row.RunCount })
+            .ToListAsync(cancellationToken);
+
+        var apiRows = await db.ApiRequestMetrics
+            .Where(row => row.WindowSize == "day"
+                          && row.WindowStart >= window.From
+                          && row.WindowStart < window.To
+                          && row.OrganizationId != null)
+            .Select(row => new
+            {
+                OrganizationId = row.OrganizationId!.Value,
+                row.WindowStart,
+                row.RequestCount,
+            })
+            .ToListAsync(cancellationToken);
+
+        var billingRows = await db.DailyBillingMetrics
+            .Where(row => row.Day >= window.From && row.Day < window.To)
+            .Select(row => new { row.OrganizationId, row.Day, row.BlossomUnits })
+            .ToListAsync(cancellationToken);
+
+        var auditRows = await db.AuditLogEntries
+            .Where(row => row.OrganizationId != null
+                          && row.CreatedAt >= window.From
+                          && row.CreatedAt < window.To)
+            .Select(row => new { OrganizationId = row.OrganizationId!.Value, row.CreatedAt })
+            .ToListAsync(cancellationToken);
+
+        var conversationActivity = await db.Conversations
+            .Where(conversation => conversation.LastMessageAt != null
+                                   && conversation.LastMessageAt >= window.From
+                                   && conversation.LastMessageAt < window.To)
+            .Select(conversation => new { conversation.OrganizationId, LastMessageAt = conversation.LastMessageAt!.Value })
+            .ToListAsync(cancellationToken);
+
+        var messagesByOrganization = messageRows
+            .GroupBy(row => organizationByConversation[row.ConversationId])
+            .ToDictionary(group => group.Key, group => (long)group.Count());
+        var agentsByOrganization = agentRows
+            .GroupBy(row => row.OrganizationId)
+            .ToDictionary(group => group.Key, group => group.Sum(row => row.RunCount));
+        var apiByOrganization = apiRows
+            .GroupBy(row => row.OrganizationId)
+            .ToDictionary(group => group.Key, group => group.Sum(row => row.RequestCount));
+        var blossomsByOrganization = billingRows
+            .GroupBy(row => row.OrganizationId)
+            .ToDictionary(group => group.Key, group => group.Sum(row => row.BlossomUnits));
+
+        DateTime? LastActivity(Guid organizationId)
+        {
+            DateTime? latest = null;
+            foreach (var candidate in new[]
+                     {
+                         conversationActivity.FirstOrDefault(row => row.OrganizationId == organizationId)?.LastMessageAt,
+                         agentRows.Where(row => row.OrganizationId == organizationId)
+                             .Select(row => (DateTime?)row.Day).Max(),
+                         apiRows.Where(row => row.OrganizationId == organizationId)
+                             .Select(row => (DateTime?)row.WindowStart).Max(),
+                         auditRows.Where(row => row.OrganizationId == organizationId)
+                             .Select(row => (DateTime?)row.CreatedAt).Max(),
+                     })
+            {
+                if (candidate is { } value && (latest is null || value > latest))
+                {
+                    latest = value;
+                }
+            }
+
+            return latest;
+        }
+
+        bool IsMeasured(Guid organizationId) =>
+            messagesByOrganization.ContainsKey(organizationId)
+            || agentsByOrganization.ContainsKey(organizationId)
+            || apiByOrganization.ContainsKey(organizationId)
+            || blossomsByOrganization.ContainsKey(organizationId);
+
+        var candidates = await db.Organizations
+            .Select(organization => new { organization.Id, organization.Name, organization.PlanTier })
+            .ToListAsync(cancellationToken);
+
+        var ranked = candidates
+            .Select(organization => new
+            {
+                organization.Id,
+                organization.Name,
+                organization.PlanTier,
+                MessagesSent = messagesByOrganization.GetValueOrDefault(organization.Id),
+                AgentRuns = agentsByOrganization.GetValueOrDefault(organization.Id),
+                ApiRequests = apiByOrganization.GetValueOrDefault(organization.Id),
+                BlossomUnits = blossomsByOrganization.GetValueOrDefault(organization.Id),
+                LastActivityAt = LastActivity(organization.Id),
+            })
+            .Where(row => IsMeasured(row.Id))
+            .ToList();
+
+        var ordered = ranked
+            .OrderByDescending(row => metric switch
+            {
+                BusinessRankingMetric.Messages => (double)row.MessagesSent,
+                BusinessRankingMetric.AgentRuns => row.AgentRuns,
+                BusinessRankingMetric.BlossomUnits => (double)row.BlossomUnits,
+                _ => row.ApiRequests,
+            })
+            // A deterministic tiebreak keeps paging stable.
+            .ThenBy(row => row.Id)
+            .ToList();
+
+        var items = ordered
+            .Take(limit)
+            .Select((row, index) => new OrganizationUsageItemDto(
+                index + 1,
+                row.Id,
+                row.Name,
+                Tier(row.PlanTier),
+                row.MessagesSent,
+                row.AgentRuns,
+                row.ApiRequests,
+                row.BlossomUnits,
+                row.LastActivityAt,
+                row.LastActivityAt is null
+                    ? null
+                    : (int)(timeProvider.GetUtcNow().UtcDateTime.Date - row.LastActivityAt.Value.Date).TotalDays))
+            .ToList();
+
+        return new BusinessOrganizationUsageDto(
+            MetricName(metric),
+            window.From,
+            window.To,
+            items,
+            ordered.Count,
+            DataQuality(
+                lastActivityIsReconstructed: true,
+                notes:
+                [
+                    "Last activity is a greatest-of reconstruction over conversation, agent-run, "
+                    + "API-metric and audit timestamps, not a recorded fact: no per-day user-activity "
+                    + "table exists.",
+                ]));
+    }
+
+    private static string MetricName(BusinessRankingMetric metric) => metric switch
+    {
+        BusinessRankingMetric.Messages => "messages",
+        BusinessRankingMetric.AgentRuns => "agentRuns",
+        BusinessRankingMetric.BlossomUnits => "blossomUnits",
+        _ => "apiRequests",
+    };
 
     // ── Shared helpers ────────────────────────────────────────────────────────────────────
 
@@ -357,6 +715,42 @@ public sealed class BusinessKpiService(
     private static bool IsPartial(DateTime bucketStart, BusinessWindow window) =>
         bucketStart < window.From
         || BusinessKpiValidation.Advance(bucketStart, window.Granularity) > window.To;
+
+    /// <summary>
+    /// Sums a day-keyed decimal dictionary over one bucket. The axis is day-keyed because every
+    /// source timestamp carries a time component, so the fold walks the bucket's days.
+    /// </summary>
+    private static decimal SumDecimalForBucket(
+        IReadOnlyDictionary<DateTime, decimal> values,
+        DateTime bucketStart,
+        string granularity)
+    {
+        var bucketEnd = BusinessKpiValidation.Advance(bucketStart, granularity);
+        var total = 0m;
+        for (var day = bucketStart.Date; day < bucketEnd; day = day.AddDays(1))
+        {
+            if (values.TryGetValue(day, out var value))
+            {
+                total += value;
+            }
+        }
+
+        return total;
+    }
+
+    private static Dictionary<DateTime, decimal> SumByBucket(
+        IEnumerable<(DateTime Instant, decimal Value)> rows,
+        string granularity)
+    {
+        var totals = new Dictionary<DateTime, decimal>();
+        foreach (var (instant, value) in rows)
+        {
+            var bucket = BusinessKpiValidation.Truncate(instant, granularity);
+            totals[bucket] = totals.TryGetValue(bucket, out var current) ? current + value : value;
+        }
+
+        return totals;
+    }
 
     private static Dictionary<DateTime, int> CountByBucket(
         IEnumerable<DateTime> instants,
@@ -396,14 +790,17 @@ public sealed class BusinessKpiService(
 
     private BusinessDataQualityDto DataQuality(
         bool userAttributionAvailable = true,
-        string? notes = null) =>
+        bool subscriptionHistoryBackfilled = false,
+        bool lastActivityIsReconstructed = false,
+        bool agentMetricsUninstrumented = false,
+        IReadOnlyList<string>? notes = null) =>
         new(
             UserAttributionAvailable: userAttributionAvailable,
             UnresolvedAttributionCount: identities.UnresolvedCount,
-            SubscriptionHistoryBackfilled: false,
-            LastActivityIsReconstructed: false,
-            AgentMetricsUninstrumented: false,
-            Notes: notes is null ? [] : [notes]);
+            SubscriptionHistoryBackfilled: subscriptionHistoryBackfilled,
+            LastActivityIsReconstructed: lastActivityIsReconstructed,
+            AgentMetricsUninstrumented: agentMetricsUninstrumented,
+            Notes: notes ?? []);
 
     private static BusinessWindowDto ToDto(BusinessWindow window) =>
         new(window.From, window.To, window.Granularity, window.TimeZone, window.BucketCount);

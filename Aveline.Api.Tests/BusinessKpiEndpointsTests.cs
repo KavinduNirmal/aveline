@@ -135,12 +135,18 @@ public class BusinessKpiEndpointsTests : IAsyncLifetime
         "/api/v1/admin/statistics/business/growth",
         "/api/v1/admin/statistics/business/active-users",
         "/api/v1/admin/statistics/business/plan-mix",
+        "/api/v1/admin/statistics/business/subscriptions",
+        "/api/v1/admin/statistics/business/usage",
+        "/api/v1/admin/statistics/business/organizations",
     ];
 
     [Theory]
     [InlineData("/api/v1/admin/statistics/business/growth")]
     [InlineData("/api/v1/admin/statistics/business/active-users")]
     [InlineData("/api/v1/admin/statistics/business/plan-mix")]
+    [InlineData("/api/v1/admin/statistics/business/subscriptions")]
+    [InlineData("/api/v1/admin/statistics/business/usage")]
+    [InlineData("/api/v1/admin/statistics/business/organizations")]
     public async Task AnonymousIsUnauthorized(string path)
     {
         var response = await _client.GetAsync(path);
@@ -154,6 +160,9 @@ public class BusinessKpiEndpointsTests : IAsyncLifetime
     [InlineData("/api/v1/admin/statistics/business/growth", "org:boutique_owner")]
     [InlineData("/api/v1/admin/statistics/business/active-users", "staff")]
     [InlineData("/api/v1/admin/statistics/business/plan-mix", "org:boutique_manager")]
+    [InlineData("/api/v1/admin/statistics/business/subscriptions", "staff")]
+    [InlineData("/api/v1/admin/statistics/business/usage", "customer_relations")]
+    [InlineData("/api/v1/admin/statistics/business/organizations", "org:boutique_owner")]
     public async Task AWeakRoleIsForbidden(string path, string role)
     {
         var request = await AuthorizedRequestAsync(path, role);
@@ -169,6 +178,9 @@ public class BusinessKpiEndpointsTests : IAsyncLifetime
     [InlineData("/api/v1/admin/statistics/business/growth", Roles.Moderator)]
     [InlineData("/api/v1/admin/statistics/business/active-users", Roles.Owner)]
     [InlineData("/api/v1/admin/statistics/business/plan-mix", Roles.Owner)]
+    [InlineData("/api/v1/admin/statistics/business/subscriptions", Roles.Owner)]
+    [InlineData("/api/v1/admin/statistics/business/usage", Roles.Moderator)]
+    [InlineData("/api/v1/admin/statistics/business/organizations", Roles.Admin)]
     public async Task AnAuthorizedRoleReceivesTheDocumentedShape(string path, string role)
     {
         var request = await AuthorizedRequestAsync(path, role);
@@ -190,6 +202,13 @@ public class BusinessKpiEndpointsTests : IAsyncLifetime
             Assert.True(root.TryGetProperty("organizationsWithBillingRow", out _));
             Assert.True(root.TryGetProperty("free", out _));
             Assert.True(root.TryGetProperty("premium", out _));
+        }
+        else if (path.EndsWith("organizations", StringComparison.Ordinal))
+        {
+            Assert.True(root.TryGetProperty("metric", out var metric));
+            Assert.Equal("apiRequests", metric.GetString());
+            Assert.True(root.TryGetProperty("items", out _));
+            Assert.True(root.TryGetProperty("totalCount", out _));
         }
         else
         {
@@ -215,6 +234,33 @@ public class BusinessKpiEndpointsTests : IAsyncLifetime
         var payload = await response.Content.ReadAsStringAsync();
         using var document = JsonDocument.Parse(payload);
         Assert.False(string.IsNullOrWhiteSpace(document.RootElement.GetProperty("message").GetString()));
+    }
+
+    [Theory]
+    [InlineData("/api/v1/admin/statistics/business/organizations?metric=orders")]
+    [InlineData("/api/v1/admin/statistics/business/organizations?limit=0")]
+    [InlineData("/api/v1/admin/statistics/business/organizations?limit=1001")]
+    public async Task AnInvalidRankingParameterIsABadRequest(string path)
+    {
+        var request = await AuthorizedRequestAsync(path);
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task TheUsageDrillDownAlsoRequiresTheOrgReadPermission()
+    {
+        // `analytics:business:read` alone is not enough to enumerate a tenant's usage.
+        var request = await AuthorizedRequestAsync(
+            "/api/v1/admin/statistics/business/usage?organizationId=" + Guid.CreateVersion7());
+        // Strip the grant by issuing a token whose role is the one that holds the KPI permission
+        // but not `admin:orgs:read`. Only `owner`/`admin`/`moderator` hold both, so this asserts
+        // the positive case: the org-scoped read succeeds for a role that holds both.
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     [Fact]

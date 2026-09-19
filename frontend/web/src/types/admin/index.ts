@@ -1,4 +1,4 @@
-﻿import type { AccountState, ContactPreferences } from "@/types/user"
+import type { AccountState, ContactPreferences } from "@/types/user"
 
 export interface AuthClaims {
   userId: string
@@ -50,14 +50,19 @@ export interface ChangeUserStateRequest {
 
 export type PlanTier = "Seed" | "Bloom" | "Orchid" | "Rose" | "Enterprise"
 
+/**
+ * The wire shape of `AdminOrganizationDtos.cs:6-15`. Note what is **not** here:
+ * `ownerEmail` and `memberCount` are not on the wire, while `clerkOrgId`/`ownerUserId` are.
+ * The delivered type had it exactly backwards.
+ */
 export interface AdminOrganizationDto {
   id: string
   name: string
   slug: string
+  clerkOrgId: string | null
+  ownerUserId: string
   planTier: PlanTier
   isActive: boolean
-  ownerEmail?: string | null
-  memberCount?: number
   createdAt: string
   updatedAt: string
 }
@@ -69,17 +74,52 @@ export interface PagedAdminOrganizations {
   total: number
 }
 
+/** The JSON value shapes `EntitlementOverrideService` accepts for a given `valueType`. */
+export type EntitlementOverrideValue = number | boolean | string
+
+/**
+ * Mirrors `EntitlementOverrideDtos.cs:12-18`. `value` is a raw `JsonElement` server-side and
+ * is validated against `valueType`, so a string-typed field rejects an `Integer` override
+ * with a `400`. Both dates are optional and default server-side.
+ */
 export interface EntitlementOverrideInput {
   key: string
   valueType: string
-  value: string
-  effectiveFrom: string
-  effectiveTo: string
+  value: EntitlementOverrideValue
   reason: string
+  effectiveFrom?: string | null
+  effectiveTo?: string | null
 }
 
 export interface SetEntitlementOverridesRequest {
   overrides: EntitlementOverrideInput[]
+}
+
+/**
+ * The three Blossom verbs bind three **different** request records
+ * (`BlossomDtos.cs:69-78`), which is why they cannot share one body type:
+ * `CreditBlossomsRequest`, `DebitBlossomsRequest(Amount, Reason, AllowNegative)` and
+ * `RevokeBlossomsRequest(Guid LedgerEntryId, string Reason)`.
+ */
+export type BlossomSourceKind = string
+
+export interface CreditBlossomsRequest {
+  amount: number
+  reason: string
+  expiresAt?: string | null
+  sourceKind?: BlossomSourceKind | null
+  sourceRef?: string | null
+}
+
+export interface DebitBlossomsRequest {
+  amount: number
+  reason: string
+  allowNegative: boolean
+}
+
+export interface RevokeBlossomsRequest {
+  ledgerEntryId: string
+  reason: string
 }
 
 export interface AuditLogEntry {
@@ -136,7 +176,11 @@ export interface ReadinessDto {
   checks: ReadinessCheckDto[]
 }
 
-export interface SystemAlert {
+/**
+ * The alerts-list row (`SystemStatisticsDtos.cs:16`). It **does** carry `ruleName`, which is
+ * exactly why it must not be reused for the acknowledge response.
+ */
+export interface SystemAlertDto {
   id: string
   ruleId: string | null
   ruleName: string | null
@@ -155,6 +199,34 @@ export interface SystemAlert {
   resolvedAt: string | null
 }
 
+/**
+ * What `POST …/alerts/{id}/acknowledge` actually returns: the **EF entity**
+ * (`SystemStatisticsEndpoints.cs:140`), which has no `ruleName` and carries six extra
+ * mutable fields. Patching by `id` must read only `status`/`acknowledgedAt`.
+ */
+export interface SystemAlertAckResponse {
+  id: string
+  ruleId: string | null
+  organizationId: string | null
+  metricName: string
+  severity: string
+  status: string
+  title: string
+  detail: string | null
+  observedValue: number | null
+  threshold: number | null
+  occurrenceCount: number
+  consecutiveOkCount: number
+  firedAt: string
+  lastObservedAt: string
+  acknowledgedAt: string | null
+  acknowledgedByUserId: string | null
+  resolvedAt: string | null
+  resolvedByUserId: string | null
+  resolutionNote: string | null
+  notificationRecordId: string | null
+}
+
 export interface SystemOverview {
   version: SystemVersionDto
   readiness: ReadinessDto
@@ -162,7 +234,7 @@ export interface SystemOverview {
   alerts: {
     critical: number
     warning: number
-    top: SystemAlert[]
+    top: SystemAlertDto[]
   }
   throughput: {
     requestsPerSecond: number | null

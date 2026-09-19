@@ -13,11 +13,11 @@ export function AdminPricingView() {
         </p>
       </div>
 
-      <Card className="border-amber-500/30 bg-amber-500/5 shadow-xs">
+      <Card className="border-warning/30 bg-warning/5 shadow-xs">
         <CardContent className="p-4 flex items-start gap-3 text-xs text-foreground">
-          <Info className="size-5 text-amber-600 shrink-0 mt-0.5" />
+          <Info className="size-5 text-warning shrink-0 mt-0.5" />
           <div className="space-y-1">
-            <div className="font-semibold text-amber-900 dark:text-amber-200">
+            <div className="font-semibold text-foreground">
               System Policy Note: Legacy Formula Active
             </div>
             <p className="text-muted-foreground leading-relaxed">

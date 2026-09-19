@@ -1,4 +1,5 @@
 ﻿import { useEffect, useState } from "react"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { searchAdminUsers, updateUserAccountState } from "@/lib/admin/api"
 import type { AdminUserDto } from "@/types/admin"
 import type { AccountState } from "@/types/user"
@@ -29,7 +30,7 @@ export function AdminUsersView() {
   const [users, setUsers] = useState<AdminUserDto[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
-  const [stateFilter, setStateFilter] = useState<string>("")
+  const [stateFilter, setStateFilter] = useState<string>("all")
   const [page] = useState(1)
 
   const [selectedUser, setSelectedUser] = useState<AdminUserDto | null>(null)
@@ -42,7 +43,7 @@ export function AdminUsersView() {
     try {
       const data = await searchAdminUsers({
         q: search || undefined,
-        accountState: stateFilter || undefined,
+        accountState: stateFilter === "all" ? undefined : stateFilter,
         page,
         pageSize: 20,
       })
@@ -120,16 +121,17 @@ export function AdminUsersView() {
           </div>
 
           <div className="flex items-center gap-2">
-            <select
-              value={stateFilter}
-              onChange={(e) => setStateFilter(e.target.value)}
-              className="text-xs h-9 px-3 rounded-md border border-input bg-background text-foreground"
-            >
-              <option value="">All Account States</option>
-              <option value="Active">Active</option>
-              <option value="OnboardingPending">Onboarding Pending</option>
-              <option value="Suspended">Suspended</option>
-            </select>
+            <Select value={stateFilter} onValueChange={setStateFilter}>
+              <SelectTrigger className="text-xs h-9 w-[190px]">
+                <SelectValue placeholder="All Account States" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Account States</SelectItem>
+                <SelectItem value="Active">Active</SelectItem>
+                <SelectItem value="OnboardingPending">Onboarding Pending</SelectItem>
+                <SelectItem value="Suspended">Suspended</SelectItem>
+              </SelectContent>
+            </Select>
             <Button variant="outline" size="sm" onClick={() => void loadUsers()} className="text-xs">
               Refresh
             </Button>
@@ -229,24 +231,25 @@ export function AdminUsersView() {
           <div className="space-y-4 py-2 text-xs">
             <div>
               <label className="font-medium block mb-1">Target Account State</label>
-              <select
-                value={targetState}
-                onChange={(e) => setTargetState(e.target.value as AccountState)}
-                className="w-full text-xs h-9 px-3 rounded-md border border-input bg-background text-foreground"
-              >
-                {selectedUser?.accountState === "OnboardingPending" && (
-                  <>
-                    <option value="Active">Active</option>
-                    <option value="Suspended">Suspended</option>
-                  </>
-                )}
-                {selectedUser?.accountState === "Active" && (
-                  <option value="Suspended">Suspended</option>
-                )}
-                {selectedUser?.accountState === "Suspended" && (
-                  <option value="Active">Active</option>
-                )}
-              </select>
+              <Select value={targetState} onValueChange={(value) => setTargetState(value as AccountState)}>
+                <SelectTrigger className="w-full text-xs h-9">
+                  <SelectValue placeholder="Select a state" />
+                </SelectTrigger>
+                <SelectContent>
+                  {selectedUser?.accountState === "OnboardingPending" && (
+                    <>
+                      <SelectItem value="Active">Active</SelectItem>
+                      <SelectItem value="Suspended">Suspended</SelectItem>
+                    </>
+                  )}
+                  {selectedUser?.accountState === "Active" && (
+                    <SelectItem value="Suspended">Suspended</SelectItem>
+                  )}
+                  {selectedUser?.accountState === "Suspended" && (
+                    <SelectItem value="Active">Active</SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
             </div>
 
             <div>

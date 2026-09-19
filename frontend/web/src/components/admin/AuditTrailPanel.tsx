@@ -141,7 +141,7 @@ export function AuditTrailPanel({
                             className="h-6 w-6"
                             onClick={() => copyToClipboard(entry.requestId!, entry.id)}
                           >
-                            {copiedId === entry.id ? <Check className="size-3 text-green-600" /> : <Copy className="size-3" />}
+                            {copiedId === entry.id ? <Check className="size-3 text-success" /> : <Copy className="size-3" />}
                           </Button>
                         </div>
                       )}

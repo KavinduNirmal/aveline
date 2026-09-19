@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { fetchSystemOverview } from "@/lib/admin/api"
 import type { SystemOverview } from "@/types/admin"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -7,57 +7,86 @@ import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Activity, AlertTriangle, Server, Clock, ShieldCheck } from "lucide-react"
 
-export function AdminSystemView() {
-  const [overview, setOverview] = useState<SystemOverview | null>(null)
+type LoadState =
+  | { kind: "loading" }
+  | { kind: "ready"; overview: SystemOverview }
+  | { kind: "error"; message: string }
 
-  const loadData = async () => {
+function formatUptime(seconds: number): string {
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  return `${hours}h ${minutes}m`
+}
+
+/**
+ * The system page. There is no fallback: a failed overview renders the failure.
+ *
+ * The delivered version substituted a fully fabricated healthy system on any error
+ * (`readiness.status: "Healthy"`, three invented probe rows, `uptimeSeconds: 84200`,
+ * `requestsPerSecond: 12.4`). That is the defect this slice exists to remove.
+ */
+export function AdminSystemView() {
+  const [state, setState] = useState<LoadState>({ kind: "loading" })
+
+  const loadData = useCallback(async () => {
+    setState({ kind: "loading" })
     try {
-      const ov = await fetchSystemOverview()
-      setOverview(ov)
-    } catch {
-      setOverview({
-        version: {
-          gitSha: "a542a5e",
-          buildTime: new Date().toISOString(),
-          assemblyVersion: "1.0.0.0",
-          environment: "Development",
-        },
-        readiness: {
-          status: "Healthy",
-          checks: [
-            { name: "PostgreSQL Database", status: "Healthy", durationMs: 4, message: null },
-            { name: "Redis Key-Value Cache", status: "Healthy", durationMs: 2, message: null },
-            { name: "Clerk Authentication Proxy", status: "Healthy", durationMs: 45, message: null },
-          ],
-        },
-        uptimeSeconds: 84200,
-        alerts: { critical: 0, warning: 0, top: [] },
-        throughput: { requestsPerSecond: 12.4, agentRunsPerMinute: 0, blossomsPerHour: 180, omitted: [] },
-        errors: { errorRate: 0.001, requestCount: 14200, errorCount: 14, windowSize: "hour", unhandledExceptionsMeasured: true, omitted: [] },
-        queues: { telemetryChannelDepth: 0, eventBusBacklog: 0, notificationBacklog: 0, inboundMessageBacklog: null, agentRunsRunning: 0, omitted: ["inbound_message_backlog"] },
-        omitted: ["inbound_message_backlog"],
-        generatedAt: new Date().toISOString(),
+      const overview = await fetchSystemOverview()
+      setState({ kind: "ready", overview })
+    } catch (err: unknown) {
+      setState({
+        kind: "error",
+        message: err instanceof Error ? err.message : "Unknown error",
       })
     }
-  }
+  }, [])
 
   useEffect(() => {
     void loadData()
-  }, [])
+  }, [loadData])
+
+  if (state.kind === "loading") {
+    return <p className="text-sm text-muted-foreground">Loading system telemetry…</p>
+  }
+
+  if (state.kind === "error") {
+    return (
+      <Card className="border-destructive/30 shadow-xs max-w-xl">
+        <CardHeader>
+          <CardTitle className="font-serif text-base">
+            System overview could not be loaded
+          </CardTitle>
+          <CardDescription className="text-xs">
+            {state.message}. Nothing is shown rather than a substitute system.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button variant="outline" size="sm" onClick={() => void loadData()} className="text-xs">
+            Retry
+          </Button>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  const { overview } = state
+  const errorRate = overview.errors.errorRate
+  const requestsPerSecond = overview.throughput.requestsPerSecond
+  const omitted = Array.from(new Set([...overview.omitted, ...overview.errors.omitted]))
 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
           <h2 className="font-serif text-2xl font-medium tracking-tight text-foreground">
-            System Health & Telemetry
+            System Health &amp; Telemetry
           </h2>
           <p className="text-sm text-muted-foreground">
             Operational infrastructure telemetry, dependency readiness, and real-time alerts.
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => void loadData()} className="text-xs">
-          Refresh Pulse
+          Refresh
         </Button>
       </div>
 
@@ -66,13 +95,13 @@ export function AdminSystemView() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between text-muted-foreground">
               <span className="text-xs font-medium uppercase tracking-wider">Readiness</span>
-              <Activity className="size-4 text-emerald-500" />
+              <Activity className="size-4 text-primary" />
             </div>
             <div className="text-xl font-serif font-semibold mt-2 text-foreground">
-              {overview?.readiness.status || "Healthy"}
+              {overview.readiness.status}
             </div>
             <div className="text-[11px] text-muted-foreground mt-1">
-              {overview?.readiness.checks.length || 3} dependency probes passing
+              {overview.readiness.checks.length} dependency probes reported
             </div>
           </CardContent>
         </Card>
@@ -84,9 +113,11 @@ export function AdminSystemView() {
               <Clock className="size-4 text-primary" />
             </div>
             <div className="text-xl font-serif font-semibold mt-2 text-foreground">
-              {overview ? `${Math.floor(overview.uptimeSeconds / 3600)}h ${Math.floor((overview.uptimeSeconds % 3600) / 60)}m` : "23h 40m"}
+              {formatUptime(overview.uptimeSeconds)}
             </div>
-            <div className="text-[11px] text-muted-foreground mt-1">Zero unhandled crash loops</div>
+            <div className="text-[11px] text-muted-foreground mt-1">
+              Reported by the API process
+            </div>
           </CardContent>
         </Card>
 
@@ -94,13 +125,17 @@ export function AdminSystemView() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between text-muted-foreground">
               <span className="text-xs font-medium uppercase tracking-wider">Error Rate</span>
-              <AlertTriangle className="size-4 text-amber-500" />
+              <AlertTriangle className="size-4 text-muted-foreground" />
             </div>
             <div className="text-xl font-serif font-semibold mt-2 text-foreground">
-              {overview?.errors.errorRate !== null ? `${((overview?.errors.errorRate || 0) * 100).toFixed(2)}%` : "0.00%"}
+              {errorRate === null ? (
+                <span className="text-muted-foreground">not measured</span>
+              ) : (
+                `${(errorRate * 100).toFixed(2)}%`
+              )}
             </div>
             <div className="text-[11px] text-muted-foreground mt-1">
-              Window: {overview?.errors.windowSize || "hour"}
+              Window: {overview.errors.windowSize}
             </div>
           </CardContent>
         </Card>
@@ -108,14 +143,18 @@ export function AdminSystemView() {
         <Card className="border-border shadow-xs">
           <CardContent className="p-4">
             <div className="flex items-center justify-between text-muted-foreground">
-              <span className="text-xs font-medium uppercase tracking-wider">Assembly Version</span>
+              <span className="text-xs font-medium uppercase tracking-wider">Requests / sec</span>
               <Server className="size-4 text-muted-foreground" />
             </div>
-            <div className="text-xl font-mono text-xs font-semibold mt-2 text-foreground truncate">
-              {overview?.version.gitSha || "a542a5e"}
+            <div className="text-xl font-serif font-semibold mt-2 text-foreground">
+              {requestsPerSecond === null ? (
+                <span className="text-muted-foreground">not measured</span>
+              ) : (
+                requestsPerSecond.toFixed(2)
+              )}
             </div>
             <div className="text-[11px] text-muted-foreground mt-1 font-mono">
-              Env: {overview?.version.environment || "Development"}
+              {overview.version.gitSha} · {overview.version.environment}
             </div>
           </CardContent>
         </Card>
@@ -124,7 +163,9 @@ export function AdminSystemView() {
       <Card className="border-border shadow-xs overflow-hidden">
         <CardHeader>
           <CardTitle className="font-serif text-base">Infrastructure Probes</CardTitle>
-          <CardDescription className="text-xs">Subsystem health checks reported by ASP.NET Core</CardDescription>
+          <CardDescription className="text-xs">
+            Subsystem health checks reported by ASP.NET Core
+          </CardDescription>
         </CardHeader>
         <Table>
           <TableHeader>
@@ -136,29 +177,45 @@ export function AdminSystemView() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {overview?.readiness.checks.map((c) => (
-              <TableRow key={c.name}>
-                <TableCell className="font-medium text-foreground">{c.name}</TableCell>
-                <TableCell>
-                  <Badge variant={c.status === "Healthy" ? "default" : "destructive"} className="text-[10px]">
-                    {c.status}
-                  </Badge>
+            {overview.readiness.checks.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={4} className="text-xs text-muted-foreground">
+                  No probes reported.
                 </TableCell>
-                <TableCell className="font-mono text-xs text-muted-foreground">{c.durationMs}ms</TableCell>
-                <TableCell className="text-xs text-muted-foreground">{c.message || "Operational"}</TableCell>
               </TableRow>
-            ))}
+            ) : (
+              overview.readiness.checks.map((c) => (
+                <TableRow key={c.name}>
+                  <TableCell className="font-medium text-foreground">{c.name}</TableCell>
+                  <TableCell>
+                    <Badge
+                      variant={c.status === "Healthy" ? "default" : "destructive"}
+                      className="text-[10px]"
+                    >
+                      {c.status}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs text-muted-foreground">
+                    {c.durationMs}ms
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {c.message ?? "—"}
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
           </TableBody>
         </Table>
       </Card>
 
-      {overview?.omitted && overview.omitted.length > 0 && (
+      {omitted.length > 0 && (
         <Card className="border-border/60 bg-muted/20 shadow-xs">
           <CardContent className="p-3 text-xs text-muted-foreground flex items-center gap-2">
             <ShieldCheck className="size-4 text-primary shrink-0" />
             <span>
-              Honesty Policy: Metrics omitted on this host:{" "}
-              <span className="font-mono text-foreground">{overview.omitted.join(", ")}</span> (not instrumented).
+              Metrics not measured on this host:{" "}
+              <span className="font-mono text-foreground">{omitted.join(", ")}</span>. The server
+              omits a metric it cannot determine rather than recording it as 0.
             </span>
           </CardContent>
         </Card>

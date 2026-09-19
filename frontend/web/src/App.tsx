@@ -28,8 +28,8 @@ import { SuspendedPage } from './routes/SuspendedPage'
 import { TenantDashboard } from './routes/TenantDashboard'
 import { TermsPage } from './routes/TermsPage'
 
-import { AdminLayout } from './routes/admin/AdminLayout'
-import { AdminShell } from './components/admin/AdminShell'
+import { AdminLayout, AdminRootRedirect } from './routes/admin/AdminLayout'
+import { AdminShell } from './components/admin/shell/AdminShell'
 import { AdminDashboardView } from './routes/admin/AdminDashboard'
 import { AdminUsersView } from './routes/admin/AdminUsers'
 import { AdminOrgsView } from './routes/admin/AdminOrgs'
@@ -67,26 +67,27 @@ export default function App() {
             <Route element={<RequireAccountState />}>
               <Route path="/app" element={<DashboardRedirect />} />
               <Route path="/app/b/:slug" element={<TenantDashboard />} />
-              
-            </Route>
-          </Route>
 
-          {/* Admin Dashboard Console — accessible directly for review/visualization */}
-          <Route path="/admin" element={<Navigate to="/admin/kaveesha/dashboard" replace />} />
-          <Route path="/admin/:userId" element={<AdminLayout />}>
-            <Route element={<AdminShell />}>
-              <Route index element={<Navigate to="dashboard" replace />} />
-              <Route path="dashboard" element={<AdminDashboardView />} />
-              <Route path="users" element={<AdminUsersView />} />
-              <Route path="requests" element={<AdminRequestsView />} />
-              <Route path="orgs" element={<AdminOrgsView />} />
-              <Route path="blossoms" element={<AdminBlossomsView />} />
-              <Route path="pricing" element={<AdminPricingView />} />
-              <Route path="logs" element={<AdminLogsView />} />
-              <Route path="audit" element={<AdminAuditView />} />
-              <Route path="system" element={<AdminSystemView />} />
-              <Route path="roles" element={<AdminRolesView />} />
-              <Route path="*" element={<Navigate to="dashboard" replace />} />
+              {/* Administrator console. Nested inside the same guards as the tenant app, so an
+                  unauthenticated visitor cannot reach it and an account mid-lifecycle is handled
+                  by the state gate rather than by the console itself (A2). */}
+              <Route path="/admin" element={<AdminRootRedirect />} />
+              <Route path="/admin/:userId" element={<AdminLayout />}>
+                <Route element={<AdminShell />}>
+                  <Route index element={<Navigate to="dashboard" replace />} />
+                  <Route path="dashboard" element={<AdminDashboardView />} />
+                  <Route path="users" element={<AdminUsersView />} />
+                  <Route path="requests" element={<AdminRequestsView />} />
+                  <Route path="orgs" element={<AdminOrgsView />} />
+                  <Route path="blossoms" element={<AdminBlossomsView />} />
+                  <Route path="pricing" element={<AdminPricingView />} />
+                  <Route path="logs" element={<AdminLogsView />} />
+                  <Route path="audit" element={<AdminAuditView />} />
+                  <Route path="system" element={<AdminSystemView />} />
+                  <Route path="roles" element={<AdminRolesView />} />
+                  <Route path="*" element={<Navigate to="dashboard" replace />} />
+                </Route>
+              </Route>
             </Route>
           </Route>
 

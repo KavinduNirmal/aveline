@@ -1,4 +1,5 @@
 ﻿import { useEffect, useState } from "react"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { searchAdminOrganizations, setEntitlementOverrides } from "@/lib/admin/api"
 import type { AdminOrganizationDto } from "@/types/admin"
 import { Card, CardContent } from "@/components/ui/card"
@@ -14,7 +15,7 @@ export function AdminOrgsView() {
   const [orgs, setOrgs] = useState<AdminOrganizationDto[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
-  const [planTier, setPlanTier] = useState<string>("")
+  const [planTier, setPlanTier] = useState<string>("all")
   const [page] = useState(1)
 
   const [selectedOrg, setSelectedOrg] = useState<AdminOrganizationDto | null>(null)
@@ -28,7 +29,7 @@ export function AdminOrgsView() {
     try {
       const data = await searchAdminOrganizations({
         q: search || undefined,
-        planTier: planTier || undefined,
+        planTier: planTier === "all" ? undefined : planTier,
         page,
         pageSize: 20,
       })
@@ -109,18 +110,19 @@ export function AdminOrgsView() {
           </div>
 
           <div className="flex items-center gap-2">
-            <select
-              value={planTier}
-              onChange={(e) => setPlanTier(e.target.value)}
-              className="text-xs h-9 px-3 rounded-md border border-input bg-background text-foreground"
-            >
-              <option value="">All Tiers</option>
-              <option value="Seed">Seed</option>
-              <option value="Bloom">Bloom</option>
-              <option value="Orchid">Orchid</option>
-              <option value="Rose">Rose</option>
-              <option value="Enterprise">Enterprise</option>
-            </select>
+            <Select value={planTier} onValueChange={setPlanTier}>
+              <SelectTrigger className="text-xs h-9 w-[160px]">
+                <SelectValue placeholder="All Tiers" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Tiers</SelectItem>
+                <SelectItem value="Seed">Seed</SelectItem>
+                <SelectItem value="Bloom">Bloom</SelectItem>
+                <SelectItem value="Orchid">Orchid</SelectItem>
+                <SelectItem value="Rose">Rose</SelectItem>
+                <SelectItem value="Enterprise">Enterprise</SelectItem>
+              </SelectContent>
+            </Select>
             <Button variant="outline" size="sm" onClick={() => void loadOrgs()} className="text-xs">
               Refresh
             </Button>

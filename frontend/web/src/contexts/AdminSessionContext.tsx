@@ -6,6 +6,7 @@ import {
   useEffect,
   useReducer,
   useRef,
+  useState,
   type ReactNode,
 } from "react"
 import { fetchAuthClaims } from "@/lib/admin/api"
@@ -13,6 +14,7 @@ import {
   resolvePermissions,
   type Permission,
 } from "@/lib/admin/permissions"
+import { decodeJwtPayload } from "@/lib/auth"
 import { registerForbiddenHandler } from "@/lib/api"
 import type { AccountState } from "@/types/user"
 
@@ -82,6 +84,11 @@ function adminSessionReducer(
 }
 
 interface AdminSessionContextValue extends AdminSessionState {
+  /**
+   * True while `roles` comes from the JWT hint rather than from `/auth/claims`, so the console
+   * can recognise a signed-in owner on first paint instead of flashing a forbidden state.
+   */
+  provisional: boolean
   can: (permission: Permission) => boolean
   refresh: () => Promise<void>
 }
@@ -91,7 +98,7 @@ const AdminSessionContext = createContext<AdminSessionContextValue | undefined>(
 )
 
 export function AdminSessionProvider({ children }: { children: ReactNode }) {
-  const { isLoaded, isSignedIn } = useAuth()
+  const { isLoaded, isSignedIn, getToken } = useAuth()
   const [state, dispatch] = useReducer(adminSessionReducer, {
     status: "idle",
     userId: null,
@@ -102,6 +109,30 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
     hasCompletedOnboarding: false,
     error: null,
   })
+
+  // Role names from the JWT hint, used only until `/auth/claims` settles. The hint is never
+  // authoritative: `state.roles` replaces it the moment the session is ready.
+  const [provisionalRoles, setProvisionalRoles] = useState<string[]>([])
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn || typeof getToken !== "function") {
+      setProvisionalRoles([])
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const token = await getToken({ template: "jwt-aveline-v1" })
+      if (!token || cancelled) return
+      const payload = decodeJwtPayload(token)
+      const hinted = [payload.user_role, payload.org_role].filter(
+        (role): role is string => typeof role === "string" && role.length > 0,
+      )
+      setProvisionalRoles(hinted)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [isLoaded, isSignedIn, getToken])
 
   // Latest settled status, read by the 403 handler without re-registering it.
   const statusRef = useRef(state.status)
@@ -139,18 +170,13 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
     if (isSignedIn) {
       void refresh()
     } else {
-      // In development / local testing preview, provide default Admin session
-      // so the admin dashboard and side panel can be visualized without external Clerk 2FA blocking
-      dispatch({
-        type: "FETCH_SUCCESS",
-        payload: {
-          userId: "kaveesha",
-          email: "ktharindi48@gmail.com",
-          roles: ["Admin"],
-          accountState: "Active",
-          hasCompletedOnboarding: true,
-        },
-      })
+      // Signed out. The console has no identity to work with, so the session is cleared.
+      //
+      // The delivered provider fabricated an admin session here (a literal user id and
+      // `roles: ["Admin"]`). That synthesis is what made `AdminRouteGuard` admit a signed-out
+      // visitor and what let the dashboard render fiction against six `401`s. There is no
+      // fallback identity: a console that cannot identify its caller has nothing to show.
+      dispatch({ type: "CLEAR" })
     }
   }, [isLoaded, isSignedIn, refresh])
 
@@ -163,6 +189,9 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
         void refresh()
       }
     })
+    // Unregister on unmount, so leaving the admin tree does not leave a handler behind that
+    // refreshes a session nobody is rendering.
+    return () => registerForbiddenHandler(null)
   }, [refresh])
 
   const can = useCallback(
@@ -172,8 +201,18 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
     [state.permissions],
   )
 
+  const provisional = state.status !== "ready" && provisionalRoles.length > 0
+
   return (
-    <AdminSessionContext.Provider value={{ ...state, can, refresh }}>
+    <AdminSessionContext.Provider
+      value={{
+        ...state,
+        roles: state.status === "ready" ? state.roles : provisionalRoles,
+        provisional,
+        can,
+        refresh,
+      }}
+    >
       {children}
     </AdminSessionContext.Provider>
   )
@@ -185,9 +224,4 @@ export function useAdminSession(): AdminSessionContextValue {
     throw new Error("useAdminSession must be used within AdminSessionProvider")
   }
   return ctx
-}
-
-export function useCan(permission: Permission): boolean {
-  const { can } = useAdminSession()
-  return can(permission)
 }

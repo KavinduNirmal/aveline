@@ -1,4 +1,5 @@
 ﻿import { useEffect, useRef, useState } from "react"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { queryAuditEntries } from "@/lib/admin/api"
 import type { AuditLogEntry } from "@/types/admin"
 import { Card, CardContent } from "@/components/ui/card"
@@ -103,7 +104,7 @@ export function AdminLogsView() {
         <div>
           <h2 className="font-serif text-2xl font-medium tracking-tight text-foreground flex items-center gap-2">
             Real-time Audit & Log Stream
-            <span className="size-2.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="size-2.5 rounded-full bg-success animate-pulse" />
           </h2>
           <p className="text-sm text-muted-foreground">
             Live incremental event poller running on a 1.5s cadence with adaptive backoff.
@@ -117,7 +118,7 @@ export function AdminLogsView() {
             onClick={() => setIsPaused(!isPaused)}
             className="text-xs h-8 gap-1.5"
           >
-            {isPaused ? <Play className="size-3.5 text-emerald-600" /> : <Pause className="size-3.5 text-amber-600" />}
+            {isPaused ? <Play className="size-3.5 text-success" /> : <Pause className="size-3.5 text-warning" />}
             {isPaused ? "Resume Stream" : "Pause Stream"}
           </Button>
 
@@ -147,17 +148,18 @@ export function AdminLogsView() {
 
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground">Severity (derived):</span>
-            <select
-              value={levelFilter}
-              onChange={(e) => setLevelFilter(e.target.value)}
-              className="h-8 px-2 text-xs rounded-md border border-input bg-background text-foreground"
-            >
-              <option value="all">All Levels</option>
-              <option value="error">Error / Failure</option>
-              <option value="warn">Warning / Revoke</option>
-              <option value="info">Info / Activation</option>
-              <option value="debug">Debug / Other</option>
-            </select>
+            <Select value={levelFilter} onValueChange={setLevelFilter}>
+              <SelectTrigger className="h-8 w-[180px] text-xs">
+                <SelectValue placeholder="All Levels" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Levels</SelectItem>
+                <SelectItem value="error">Error / Failure</SelectItem>
+                <SelectItem value="warn">Warning / Revoke</SelectItem>
+                <SelectItem value="info">Info / Activation</SelectItem>
+                <SelectItem value="debug">Debug / Other</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="text-muted-foreground font-mono text-[11px]">
@@ -221,7 +223,7 @@ export function AdminLogsView() {
                         onClick={() => copyId(e.id, e.id)}
                         title="Copy entry UUID"
                       >
-                        {copiedId === e.id ? <Check className="size-3 text-green-600" /> : <Copy className="size-3" />}
+                        {copiedId === e.id ? <Check className="size-3 text-success" /> : <Copy className="size-3" />}
                       </Button>
                     </div>
                   </div>

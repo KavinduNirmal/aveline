@@ -1,13 +1,16 @@
-﻿import { useState } from "react"
-import { executeBlossomOperation } from "@/lib/admin/api"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useState } from "react"
+import { creditBlossoms, debitBlossoms, revokeBlossoms } from "@/lib/admin/api"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
+import { Switch } from "@/components/ui/switch"
 import { Coins } from "lucide-react"
 import { toast } from "sonner"
 
 export function AdminBlossomsView() {
   const [orgId, setOrgId] = useState("")
+  const [ledgerEntryId, setLedgerEntryId] = useState("")
   const [amount, setAmount] = useState<number>(100)
   const [reason, setReason] = useState("")
   const [allowNegative, setAllowNegative] = useState(false)
@@ -23,21 +26,42 @@ export function AdminBlossomsView() {
       toast.error("Audit reason is mandatory for ledger operations")
       return
     }
-    if (amount <= 0) {
+    if (operation === "revoke") {
+      if (!ledgerEntryId.trim()) {
+        toast.error("Ledger entry ID (GUID) is required to revoke")
+        return
+      }
+    } else if (amount <= 0) {
       toast.error("Amount must be positive")
       return
     }
 
     setExecuting(true)
     try {
+      // The key is minted once per logical operation and required by all three verbs
+      // (`IdempotencyEndpointFilter.cs:44-52`). A6 replaces this with the frozen key
+      // lifecycle of the plan's §3.8; A0 only makes the verbs correct and the key mandatory.
       const idempotencyKey = crypto.randomUUID()
-      await executeBlossomOperation(orgId.trim(), operation, {
-        amount,
-        reason: reason.trim(),
-        allowNegative,
-        idempotencyKey,
-      })
-      toast.success(`Successfully recorded Blossom ${operation} of ${amount} units.`)
+      if (operation === "revoke") {
+        await revokeBlossoms(
+          orgId.trim(),
+          { ledgerEntryId: ledgerEntryId.trim(), reason: reason.trim() },
+          idempotencyKey,
+        )
+      } else if (operation === "credit") {
+        await creditBlossoms(
+          orgId.trim(),
+          { amount, reason: reason.trim() },
+          idempotencyKey,
+        )
+      } else {
+        await debitBlossoms(
+          orgId.trim(),
+          { amount, reason: reason.trim(), allowNegative },
+          idempotencyKey,
+        )
+      }
+      toast.success(`Successfully recorded Blossom ${operation}.`)
       setReason("")
     } catch (err: any) {
       toast.error(err?.message || `Failed to execute Blossom ${operation}`)
@@ -81,37 +105,48 @@ export function AdminBlossomsView() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="font-medium block mb-1">Operation</label>
-              <select
-                value={operation}
-                onChange={(e) => setOperation(e.target.value as any)}
-                className="w-full text-xs h-9 px-3 rounded-md border border-input bg-background text-foreground"
-              >
-                <option value="credit">Credit (Deposit to Boutique)</option>
-                <option value="debit">Debit (Deduct from Boutique)</option>
-                <option value="revoke">Revoke (Nullify Grant)</option>
-              </select>
+              <Select value={operation} onValueChange={(value) => setOperation(value as "credit" | "debit" | "revoke")}>
+                <SelectTrigger className="w-full text-xs h-9">
+                  <SelectValue placeholder="Select an operation" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="credit">Credit (Deposit to Boutique)</SelectItem>
+                  <SelectItem value="debit">Debit (Deduct from Boutique)</SelectItem>
+                  <SelectItem value="revoke">Revoke (Nullify Grant)</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
-            <div>
-              <label className="font-medium block mb-1">Amount</label>
-              <Input
-                type="number"
-                min="1"
-                value={amount}
-                onChange={(e) => setAmount(Number(e.target.value))}
-                className="text-xs font-mono"
-              />
-            </div>
+            {operation === "revoke" ? (
+              <div>
+                <label className="font-medium block mb-1">Ledger Entry ID (GUID)</label>
+                <Input
+                  placeholder="e.g. 00000000-0000-0000-0000-000000000000"
+                  value={ledgerEntryId}
+                  onChange={(e) => setLedgerEntryId(e.target.value)}
+                  className="text-xs font-mono"
+                />
+              </div>
+            ) : (
+              <div>
+                <label className="font-medium block mb-1">Amount</label>
+                <Input
+                  type="number"
+                  min="1"
+                  value={amount}
+                  onChange={(e) => setAmount(Number(e.target.value))}
+                  className="text-xs font-mono"
+                />
+              </div>
+            )}
           </div>
 
           {operation === "debit" && (
             <div className="flex items-center gap-2 pt-1">
-              <input
-                type="checkbox"
+              <Switch
                 id="allowNeg"
                 checked={allowNegative}
-                onChange={(e) => setAllowNegative(e.target.checked)}
-                className="rounded border-input text-primary focus:ring-primary"
+                onCheckedChange={setAllowNegative}
               />
               <label htmlFor="allowNeg" className="text-xs text-muted-foreground">
                 Allow negative balance (overdraft exception)

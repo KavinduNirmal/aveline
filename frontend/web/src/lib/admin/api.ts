@@ -1,15 +1,19 @@
-﻿import { apiClient } from "@/lib/api"
+import { apiClient } from "@/lib/api"
 import type {
   AdminApprovalRequestSummary,
   AdminUserDto,
   AuditLogEntry,
   AuthClaims,
   ChangeUserStateRequest,
+  CreditBlossomsRequest,
+  DebitBlossomsRequest,
   PagedAdminOrganizations,
   PagedAuditLogEntries,
   PagedUsers,
+  RevokeBlossomsRequest,
   SetEntitlementOverridesRequest,
-  SystemAlert,
+  SystemAlertAckResponse,
+  SystemAlertDto,
   SystemOverview,
   SystemMetricSeries,
 } from "@/types/admin"
@@ -173,7 +177,7 @@ export async function fetchSystemAlerts(params: {
   page?: number
   pageSize?: number
 }): Promise<{
-  items: SystemAlert[]
+  items: SystemAlertDto[]
   page: number
   pageSize: number
   total: number
@@ -188,37 +192,59 @@ export async function fetchSystemAlerts(params: {
 export async function acknowledgeAlert(
   alertId: string,
   note?: string,
-): Promise<unknown> {
-  const response = await apiClient.post(
+): Promise<SystemAlertAckResponse> {
+  const response = await apiClient.post<SystemAlertAckResponse>(
     `/api/v1/admin/statistics/system/alerts/${alertId}/acknowledge`,
     { note: note || null },
   )
   return response.data
 }
 
-export async function executeBlossomOperation(
+/**
+ * The three Blossom POSTs are idempotency-guarded and the `Idempotency-Key` header is
+ * **mandatory** for all of them (`IdempotencyEndpointFilter.cs:44-52`), so the key is a
+ * required argument rather than an optional one: a caller cannot forget it.
+ *
+ * The three verbs also bind different request records, so each has its own function
+ * (`BlossomDtos.cs:69-78`). A shared body would make `revoke` unsendable — the delivered
+ * client sent `{ amount, reason, allowNegative }` against
+ * `RevokeBlossomsRequest(Guid LedgerEntryId, string Reason)`.
+ */
+export async function creditBlossoms(
   organizationId: string,
-  operation: "credit" | "debit" | "revoke",
-  data: {
-    amount: number
-    reason: string
-    allowNegative?: boolean
-    idempotencyKey?: string
-  },
+  request: CreditBlossomsRequest,
+  idempotencyKey: string,
 ): Promise<unknown> {
-  const headers: Record<string, string> = {}
-  if (data.idempotencyKey) {
-    headers["Idempotency-Key"] = data.idempotencyKey
-  }
-
   const response = await apiClient.post(
-    `/api/v1/admin/orgs/${organizationId}/blossoms/${operation}`,
-    {
-      amount: data.amount,
-      reason: data.reason,
-      allowNegative: data.allowNegative ?? false,
-    },
-    { headers },
+    `/api/v1/admin/orgs/${organizationId}/blossoms/credit`,
+    request,
+    { headers: { "Idempotency-Key": idempotencyKey } },
+  )
+  return response.data
+}
+
+export async function debitBlossoms(
+  organizationId: string,
+  request: DebitBlossomsRequest,
+  idempotencyKey: string,
+): Promise<unknown> {
+  const response = await apiClient.post(
+    `/api/v1/admin/orgs/${organizationId}/blossoms/debit`,
+    request,
+    { headers: { "Idempotency-Key": idempotencyKey } },
+  )
+  return response.data
+}
+
+export async function revokeBlossoms(
+  organizationId: string,
+  request: RevokeBlossomsRequest,
+  idempotencyKey: string,
+): Promise<unknown> {
+  const response = await apiClient.post(
+    `/api/v1/admin/orgs/${organizationId}/blossoms/revoke`,
+    request,
+    { headers: { "Idempotency-Key": idempotencyKey } },
   )
   return response.data
 }

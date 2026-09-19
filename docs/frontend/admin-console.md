@@ -436,10 +436,17 @@ The legacy-formula banner is stated on every pricing view and comes from one sha
   `space-x-*`/`space-y-*`). The two rules C6 scoped to A3 — raw palette/hex and raw
   `<select>`/`<input>` — are delivered and **blocking**; these two are not yet enforced, so the tree
   still contains `space-y-*` layout spacing that rule 4 would flag.
-- **Playwright end-to-end and the axe sweep.** No `e2e/**` harness was added, so "axe zero
-  serious/critical", "every route walked E2E" and the six-viewport overflow measurement are not
-  executed. The geometry invariant is pinned structurally by `AdminShell.dom.test.tsx` (one
-  `.admin-container` wrapping header and content) rather than measured in a browser.
+- **The Playwright suite covers the signed-out path only.** The harness is delivered —
+  `tests/e2e/admin-console/console-access.spec.ts` with `frontend/web/playwright.config.ts` and
+  `bun run test:e2e` — and it asserts the defect A1 exists to remove: signed out, `/admin/<id>/dashboard`
+  and `/admin` both land on `/sign-in`, the console chrome is absent, **zero** `/api/v1/admin/*`
+  requests are issued, and the page a visitor does land on has no horizontal overflow at
+  1920/1440/1280/1024/768/390 px.
+  The **authenticated** walk (every console route, the operator flows, the 2-second log freshness)
+  needs a Clerk test session, which this environment has no credentials for. **The suite was not
+  executed here**: `playwright install chromium` stalled against the CDN, and no system browser is
+  present. `bun run test:e2e:install` is the one prerequisite.
+- **The axe sweep** (zero `serious`/`critical`) was not run, for the same browser reason.
 - **The keyboard walkthrough and the contrast audit** of `text-muted-foreground` were not performed.
 
 These are the honest gaps in this workstream; the plan's A8 row is not fully closed.

@@ -1,6 +1,7 @@
 import { useLocation, useParams } from "react-router-dom"
 
 import { useAdminSession } from "@/contexts/AdminSessionContext"
+import { useUserContext } from "@/contexts/UserContext"
 import { findRouteBySubPath, findRouteById } from "@/lib/admin/routes"
 import { Button } from "@/components/ui/button"
 import { SidebarTrigger } from "@/components/ui/sidebar"
@@ -33,7 +34,24 @@ interface AdminHeaderProps {
 export function AdminHeader({ onOpenAudit }: AdminHeaderProps) {
   const { userId } = useParams<{ userId: string }>()
   const { email } = useAdminSession()
+  const { user } = useUserContext()
   const label = useCurrentRouteLabel()
+
+  /**
+   * The operator's identity, from the best available source.
+   *
+   * `/auth/claims` reported `email: null` for every real bearer token (the A9 defect), so the
+   * header fell back to a placeholder even though the console already holds the signed-in user's
+   * own record from `GET /users/me`. The claims email is preferred when it is present, and the
+   * account record is the fallback, so the header reads correctly on an API build either side of
+   * the fix.
+   */
+  const nonEmpty = (value: string | null | undefined): string | null =>
+    typeof value === "string" && value.trim().length > 0 ? value : null
+
+  const displayEmail = nonEmpty(email) ?? nonEmpty(user?.email)
+  const accountLabel =
+    displayEmail ?? (user?.username ? `@${user.username}` : "signed-in account")
 
   return (
     <header className="h-16 border-b border-border bg-background/80 backdrop-blur-md px-4 sm:px-6 flex items-center justify-between sticky top-0 z-10">
@@ -67,7 +85,7 @@ export function AdminHeader({ onOpenAudit }: AdminHeaderProps) {
 
         <div className="text-right hidden sm:block min-w-0">
           <div className="text-xs font-medium text-foreground truncate max-w-[160px]">
-            {email ?? "unknown account"}
+            {accountLabel}
           </div>
           <div className="text-[10px] text-muted-foreground font-mono truncate max-w-[160px]">
             {userId}

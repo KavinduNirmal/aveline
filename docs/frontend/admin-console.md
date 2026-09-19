@@ -360,6 +360,7 @@ Four defects reported from the running console, each fixed with a test:
 | "Back to Boutique" in the header landed on `/forbidden` | an Aveline-team operator has no boutique | the control is removed |
 | The audit drawer had **two** close buttons | `SheetContent` renders its own close control and the panel added a second | the custom one is removed; a test asserts exactly one |
 | The log status strip and the readiness banner were mostly empty space | both were full-width cards carrying one line of facts | both are now compact strips |
+| The header read **"unknown account"** | `/auth/claims` returns `email: null` for every real bearer token, and the header fell back to a placeholder even though the console already holds the account record | the header prefers the claims email and falls back to `GET /users/me`'s email, then the username, then a neutral label — correct on an API build either side of the A9 fix |
 
 ### The dashboard has a chart again
 

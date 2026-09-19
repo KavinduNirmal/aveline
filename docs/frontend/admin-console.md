@@ -439,6 +439,30 @@ input plan's *"returns `501`, disable it"* is false — it returns `200`.
 
 The legacy-formula banner is stated on every pricing view and comes from one shared constant.
 
+`AdminPriceBook` renders the resolved price entries. `GET /admin/pricing/price-book` is a **bare,
+unpaginated array** (rule 9), so the page sends no paging parameters and renders no pager; a null
+`effectiveTo` reads *"in force"* rather than a blank cell.
+
+### Two routes the plan names are not buildable, and why
+
+`AdminUserDetail` and `AdminOrgDetail` are in the plan's target tree and are **not** built. The
+reason is the API, not the slice:
+
+| Route | Needed | Delivered |
+|---|---|---|
+| a user by id | `GET /admin/users/{id}` | only `GET /admin/users` (search) and `PATCH /admin/users/{id}/state` |
+| an organization by id | `GET /admin/orgs/{id}` | only `GET /admin/orgs` and `PATCH /admin/orgs/{id}/entitlement-overrides` |
+
+There is no by-id read for either, and the search cannot substitute for one: `UserRepository`
+matches `q` against email, name, username and `clerkId` but **not** `id` (the Q1 finding above). A
+detail route would therefore have to guess its subject. Adding the two missing reads would be a
+**fourth item** in A9, which C7 explicitly forbids ("anything added is a new decision, not an
+implication of this one").
+
+The registry keeps both entries with `enabled: false`, so the navigation does not link to a page that
+cannot be built, and `routes.test.ts` still counts them for the domain invariants. The operator flow
+is the one the delivered endpoints support: search the list and act inline.
+
 ## A7 — observability: logs, audit, system, statistics
 
 ### The pure log engine

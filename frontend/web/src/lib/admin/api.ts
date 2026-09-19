@@ -12,6 +12,7 @@ import type {
   PagedAdminOrganizations,
   PagedAuditLogEntries,
   PagedUsers,
+  PricingPriceEntry,
   PricingRecomputeResult,
   RevokeBlossomsRequest,
   SetEntitlementOverridesRequest,
@@ -292,6 +293,22 @@ export async function fetchBlossomStatement(
 ): Promise<BlossomStatement> {
   const response = await apiClient.get<BlossomStatement>(
     `/api/v1/admin/orgs/${organizationId}/blossoms/statement`,
+    { params },
+  )
+  return response.data
+}
+
+/**
+ * `GET /admin/pricing/price-book` — a **bare, unpaginated array** (`PricingEndpoints.cs:230`), so
+ * there is no `page`/`pageSize` to send. Guarded by the `PricingAdminRead` role policy.
+ */
+export async function fetchPriceBook(params: {
+  skuKind?: string
+  planTier?: string
+  organizationId?: string
+} = {}): Promise<PricingPriceEntry[]> {
+  const response = await apiClient.get<PricingPriceEntry[]>(
+    '/api/v1/admin/pricing/price-book',
     { params },
   )
   return response.data

@@ -39,13 +39,12 @@ export default defineConfig({
         // achieved, and the floor never exceeds the achieved value — a ratchet that blocks is a
         // ratchet that gets removed. A8 records the final numbers.
         //
-        // Achieved at A7: routes/admin 68.2% lines / 50.87% branches; the whole admin subtree
-        // 67.98% lines / 53.4% branches; AdminSessionContext 66.07% lines. The
-        // `components/admin` floor stays low because `components/admin/shell` is at 10% lines and
-        // dominates that aggregate — the shell is exercised structurally (one geometry container,
-        // a skip link, the panel) rather than coveraged to death, which is what A8's Playwright
-        // walk is for.
-        'src/routes/admin/**': { lines: 65, functions: 55, branches: 48, statements: 65 },
+        // Achieved at A7/A8: routes/admin 68.75% lines / 55.91% branches; the whole admin subtree
+        // 68.3% lines. The `components/admin` floor stays low because `components/admin/shell` is
+        // at 10% lines and dominates that aggregate — the shell is exercised structurally (one
+        // geometry container, a skip link, the panel) rather than coveraged to death, which is
+        // what the Playwright walk is for.
+        'src/routes/admin/**': { lines: 67, functions: 58, branches: 53, statements: 67 },
         'src/components/admin/**': { lines: 9, functions: 8, branches: 0, statements: 9 },
         'src/contexts/AdminSessionContext.tsx': {
           lines: 66,

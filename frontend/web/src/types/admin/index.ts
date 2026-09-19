@@ -352,3 +352,24 @@ export interface BlossomStatement {
   reconciliation: BlossomStatementReconciliation
   generatedAt: string
 }
+
+/**
+ * `PricingPriceEntryDto` (`PricingDtos.cs:53-66`). `GET /admin/pricing/price-book` returns a **bare
+ * unpaginated array** of these, and `GET /admin/pricing/price-book/{entryId}` returns one or an
+ * empty-bodied `404`.
+ */
+export interface PricingPriceEntry {
+  id: string
+  planTier: string | null
+  organizationId: string | null
+  skuKind: string
+  skuCode: string | null
+  blossomQuantity: number
+  priceLkr: number
+  effectiveFrom: string
+  effectiveTo: string | null
+  status: string
+  changeReason: string
+  createdAt: string
+  updatedAt: string
+}

@@ -169,8 +169,7 @@ export const ADMIN_ROUTES: readonly AdminRouteDef[] = [
     icon: Scale,
     domain: "operations",
     gate: { kind: "role", anyOf: ROLE_POLICIES.PricingAdminRead.anyOf },
-    enabled: false,
-    navigable: false,
+    enabled: true,
   },
 
   {

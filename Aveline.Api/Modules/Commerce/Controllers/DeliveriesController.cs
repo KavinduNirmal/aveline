@@ -1,4 +1,4 @@
-﻿using Aveline.Api.Configurations;
+using Aveline.Api.Configurations;
 using Aveline.Api.Modules.Commerce.DTOs;
 using Aveline.Api.Modules.Commerce.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -47,6 +47,16 @@ public class DeliveriesController : ControllerBase
     {
         var result = await _deliveryService.GetDeliveryPlanByIdAsync(id, organizationId, ct);
         return result is not null ? Ok(result) : NotFound(new { message = $"Delivery plan '{id}' not found." });
+    }
+
+    [HttpGet("order/{orderId:guid}")]
+    public async Task<ActionResult<DeliveryPlanResponseDto>> GetByOrderId(
+        [FromRoute] Guid organizationId,
+        [FromRoute] Guid orderId,
+        CancellationToken ct = default)
+    {
+        var result = await _deliveryService.GetDeliveryPlanByOrderIdAsync(orderId, organizationId, ct);
+        return result is not null ? Ok(result) : NotFound(new { message = $"No delivery plan found for order '{orderId}'." });
     }
 
     [HttpPut("{id:guid}/status")]

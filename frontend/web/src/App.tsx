@@ -26,6 +26,19 @@ import { SuspendedPage } from './routes/SuspendedPage'
 import { TenantDashboard } from './routes/TenantDashboard'
 import { TermsPage } from './routes/TermsPage'
 
+import { AdminLayout } from './routes/admin/AdminLayout'
+import { AdminShell } from './components/admin/AdminShell'
+import { AdminDashboardView } from './routes/admin/AdminDashboard'
+import { AdminUsersView } from './routes/admin/AdminUsers'
+import { AdminOrgsView } from './routes/admin/AdminOrgs'
+import { AdminRequestsView } from './routes/admin/AdminRequests'
+import { AdminBlossomsView } from './routes/admin/AdminBlossoms'
+import { AdminPricingView } from './routes/admin/AdminPricing'
+import { AdminLogsView } from './routes/admin/AdminLogs'
+import { AdminAuditView } from './routes/admin/AdminAudit'
+import { AdminSystemView } from './routes/admin/AdminSystem'
+import { AdminRolesView } from './routes/admin/AdminRoles'
+
 export default function App() {
   return (
     <>
@@ -48,10 +61,31 @@ export default function App() {
             <Route element={<RequireAccountState />}>
               <Route path="/app" element={<DashboardRedirect />} />
               <Route path="/app/b/:slug" element={<TenantDashboard />} />
-              <Route element={<RootLayout />}>
-                <Route path="/forbidden" element={<ForbiddenPage />} />
-              </Route>
+              
             </Route>
+          </Route>
+
+          {/* Admin Dashboard Console — accessible directly for review/visualization */}
+          <Route path="/admin" element={<Navigate to="/admin/kaveesha/dashboard" replace />} />
+          <Route path="/admin/:userId" element={<AdminLayout />}>
+            <Route element={<AdminShell />}>
+              <Route index element={<Navigate to="dashboard" replace />} />
+              <Route path="dashboard" element={<AdminDashboardView />} />
+              <Route path="users" element={<AdminUsersView />} />
+              <Route path="requests" element={<AdminRequestsView />} />
+              <Route path="orgs" element={<AdminOrgsView />} />
+              <Route path="blossoms" element={<AdminBlossomsView />} />
+              <Route path="pricing" element={<AdminPricingView />} />
+              <Route path="logs" element={<AdminLogsView />} />
+              <Route path="audit" element={<AdminAuditView />} />
+              <Route path="system" element={<AdminSystemView />} />
+              <Route path="roles" element={<AdminRolesView />} />
+              <Route path="*" element={<Navigate to="dashboard" replace />} />
+            </Route>
+          </Route>
+
+          <Route element={<RootLayout />}>
+            <Route path="/forbidden" element={<ForbiddenPage />} />
           </Route>
 
           <Route path="/sso-callback" element={<AuthenticateWithRedirectCallback signInFallbackRedirectUrl="/app" signUpFallbackRedirectUrl="/app" />} />

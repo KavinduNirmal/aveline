@@ -14,8 +14,10 @@ public class OrderService : IOrderService
     private static readonly Dictionary<string, HashSet<string>> ValidTransitions = new(StringComparer.OrdinalIgnoreCase)
     {
         { "pending_hold", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "pending_approval", "payment_requested", "cancelled" } },
-        { "pending_approval", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "approved", "rejected", "cancelled" } },
+        { "pending_approval", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "approved", "confirmed", "rejected", "cancelled", "revised" } },
         { "approved", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "payment_requested", "cancelled" } },
+        { "confirmed", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "payment_requested", "cancelled" } },
+        { "revised", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "payment_requested", "cancelled" } },
         { "payment_requested", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "payment_confirmed", "payment_expired", "cancelled" } },
         { "payment_expired", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "payment_requested", "cancelled" } },
         { "payment_confirmed", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "delivery_scheduled", "completed", "cancelled" } },
@@ -23,14 +25,18 @@ public class OrderService : IOrderService
         { "delivered", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "completed" } }
     };
 
+    private readonly IApprovalRepository? _approvalRepository;
+
     public OrderService(
         IOrderRepository orderRepository,
         ILogger<OrderService> logger,
-        IBusinessRulesService? businessRulesService = null)
+        IBusinessRulesService? businessRulesService = null,
+        IApprovalRepository? approvalRepository = null)
     {
         _orderRepository = orderRepository ?? throw new ArgumentNullException(nameof(orderRepository));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _businessRulesService = businessRulesService;
+        _approvalRepository = approvalRepository;
     }
 
     public async Task<OrderResponseDto> CreateOrderAsync(
@@ -89,6 +95,7 @@ public class OrderService : IOrderService
 
         // Determine initial status based on business rules evaluation
         var initialStatus = "payment_requested";
+        string approvalReason = "Requires approval based on business rules evaluation";
         if (_businessRulesService != null)
         {
             try
@@ -103,6 +110,10 @@ public class OrderService : IOrderService
                 if (evaluation.RequiresApproval)
                 {
                     initialStatus = "pending_approval";
+                    if (evaluation.TriggeredRules != null && evaluation.TriggeredRules.Count > 0)
+                    {
+                        approvalReason = string.Join(", ", evaluation.TriggeredRules);
+                    }
                     _logger.LogInformation(
                         "Order {OrderId} requires approval due to rules: {Rules}",
                         orderId,
@@ -137,6 +148,32 @@ public class OrderService : IOrderService
         var createdOrder = await _orderRepository.CreateAsync(order, cancellationToken);
         _logger.LogInformation("Created order {OrderId} for customer {CustomerName} with initial status {Status}", createdOrder.Id, createdOrder.CustomerName, createdOrder.Status);
 
+        if (initialStatus == "pending_approval" && _approvalRepository != null)
+        {
+            try
+            {
+                var approvalEntry = new ApprovalQueueEntry
+                {
+                    Id = Guid.NewGuid(),
+                    OrganizationId = organizationId,
+                    OrderId = createdOrder.Id,
+                    ApprovalType = "order_approval",
+                    Status = "pending",
+                    ThresholdExceeded = true,
+                    Reason = approvalReason,
+                    ThreadId = dto.ThreadId,
+                    ConversationId = dto.ConversationId,
+                    CreatedAt = DateTime.UtcNow
+                };
+                await _approvalRepository.AddAsync(approvalEntry, cancellationToken);
+                _logger.LogInformation("Enqueued order {OrderId} for approval with ThreadId {ThreadId}", createdOrder.Id, dto.ThreadId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to enqueue approval for order {OrderId}", createdOrder.Id);
+            }
+        }
+
         return MapToDto(createdOrder);
     }
 
@@ -147,6 +184,60 @@ public class OrderService : IOrderService
     {
         var order = await _orderRepository.GetByIdAsync(id, organizationId, cancellationToken);
         return order == null ? null : MapToDto(order);
+    }
+
+    public async Task<OrderResponseDto> UpdateOrderAsync(
+        Guid id,
+        Guid organizationId,
+        CreateOrderDto dto,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(dto);
+        var order = await _orderRepository.GetByIdAsync(id, organizationId, cancellationToken)
+            ?? throw new KeyNotFoundException($"Order '{id}' not found.");
+
+        decimal subtotal = 0m;
+        decimal totalCost = 0m;
+        var orderItems = new List<OrderItem>();
+
+        foreach (var itemDto in dto.Items)
+        {
+            var itemTotal = Math.Round(itemDto.UnitPrice * itemDto.Quantity, 2);
+            var itemCost = Math.Round(itemDto.WholesaleCost * itemDto.Quantity, 2);
+            subtotal += itemTotal;
+            totalCost += itemCost;
+
+            orderItems.Add(new OrderItem
+            {
+                Id = itemDto.Id ?? Guid.NewGuid(),
+                OrganizationId = organizationId,
+                OrderId = order.Id,
+                ItemId = itemDto.ItemId,
+                ItemName = itemDto.ItemName,
+                Quantity = itemDto.Quantity,
+                UnitPrice = itemDto.UnitPrice,
+                WholesaleCost = itemDto.WholesaleCost,
+                TotalPrice = itemTotal,
+                CreatedAt = DateTime.UtcNow
+            });
+        }
+
+        decimal discount = Math.Min(subtotal, Math.Max(0m, dto.Discount ?? 0m));
+        decimal total = Math.Max(0m, subtotal - discount);
+        decimal rawMargin = total > 0 ? (total - totalCost) / total : 0.0000m;
+
+        order.CustomerName = dto.CustomerName;
+        order.OrderType = string.IsNullOrWhiteSpace(dto.OrderType) ? "whatsapp" : dto.OrderType.Trim().ToLowerInvariant();
+        order.Subtotal = subtotal;
+        order.Discount = discount;
+        order.Total = total;
+        order.TotalCost = totalCost;
+        order.Margin = Math.Clamp(rawMargin, -0.9999m, 0.9999m);
+        order.Items = orderItems;
+        order.UpdatedAt = DateTime.UtcNow;
+
+        var updated = await _orderRepository.UpdateAsync(order, cancellationToken);
+        return MapToDto(updated);
     }
 
     public async Task<PagedResult<OrderResponseDto>> GetOrdersAsync(

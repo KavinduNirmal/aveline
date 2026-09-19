@@ -73,6 +73,29 @@ class CommerceAgent:
         customer_id = state.get("customer_id")
 
         # 1. Tally line items and costs
+        if not items:
+            return {
+                "subtotal": 0.0,
+                "discount_amount": 0.0,
+                "total": 0.0,
+                "total_cost": 0.0,
+                "margin": 0.0,
+                "loyalty_tier": "Regular",
+                "is_auto_approved": True,
+                "requires_approval": False,
+                "approval_type": None,
+                "approval_reason": None,
+                "triggered_rules": [],
+                "flags": [],
+                "status": SKIPPED,
+                "output": {
+                    "agent": "commerce",
+                    "ran": True,
+                    "status": SKIPPED,
+                    "reason": "no items in order context to evaluate",
+                },
+            }
+
         subtotal = sum(float(item.get("total_price") or (float(item.get("unit_price", 0.0)) * int(item.get("quantity", 1)))) for item in items)
         total_cost = sum(float(item.get("wholesale_cost", 0.0)) * int(item.get("quantity", 1)) for item in items)
 

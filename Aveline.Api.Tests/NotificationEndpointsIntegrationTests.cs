@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Modules.Notifications.Models;
+using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Shared.Models;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -96,12 +97,13 @@ public class NotificationEndpointsIntegrationTests : IAsyncLifetime
         return user.Id;
     }
 
-    private static async Task<(Guid recordId, Guid inboxId)> SeedNotificationAsync(Guid userId, string title, bool read = false)
+    private static async Task<(Guid recordId, Guid inboxId)> SeedNotificationAsync(
+        Guid userId, string title, bool read = false, Guid? organizationId = null)
     {
         await using var context = CreateSeedContext();
         var record = new NotificationRecord
         {
-            OrganizationId = Guid.NewGuid(),
+            OrganizationId = organizationId ?? Guid.NewGuid(),
             Type = NotificationType.PaymentConfirmed,
             Title = title,
             Body = "Body of " + title,
@@ -119,6 +121,21 @@ public class NotificationEndpointsIntegrationTests : IAsyncLifetime
         context.UserNotifications.Add(inbox);
         await context.SaveChangesAsync();
         return (record.Id, inbox.Id);
+    }
+
+    private static async Task SeedOrganizationAsync(Guid organizationId, string name)
+    {
+        await using var context = CreateSeedContext();
+        context.Organizations.Add(new Organization
+        {
+            Id = organizationId,
+            Name = name,
+            Slug = $"notif-{Guid.NewGuid():N}"[..20],
+            OwnerUserId = Guid.CreateVersion7(),
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        });
+        await context.SaveChangesAsync();
     }
 
     private HttpRequestMessage Authorized(HttpMethod method, string path, string token) =>
@@ -245,5 +262,45 @@ public class NotificationEndpointsIntegrationTests : IAsyncLifetime
         var response = await _client.SendAsync(Authorized(HttpMethod.Get, $"/api/v1/notifications/{Guid.NewGuid()}", token));
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ListNotifications_CarriesTheDispatchingOrganization()
+    {
+        const string clerkId = "user_notif_org";
+        var userId = await SeedUserAsync(clerkId, "notif.org@aveline.lk");
+        var organizationId = Guid.CreateVersion7();
+        const string organizationName = "Ceylon Atelier";
+        await SeedOrganizationAsync(organizationId, organizationName);
+        await SeedNotificationAsync(userId, "With a boutique", organizationId: organizationId);
+        var token = CreateToken(clerkId);
+
+        var response = await _client.SendAsync(Authorized(HttpMethod.Get, "/api/v1/notifications", token));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        var item = doc.GetProperty("items")[0];
+        // The per-row label: a merged inbox can tell which boutique each row is about.
+        Assert.Equal(organizationId, item.GetProperty("organizationId").GetGuid());
+        Assert.Equal(organizationName, item.GetProperty("organizationName").GetString());
+    }
+
+    [Fact]
+    public async Task ListNotifications_ARowWithoutAnOrganizationStillLists()
+    {
+        const string clerkId = "user_notif_no_org";
+        var userId = await SeedUserAsync(clerkId, "notif.noorg@aveline.lk");
+        // The record carries an id, but no Organizations row exists for it.
+        await SeedNotificationAsync(userId, "No boutique row");
+        var token = CreateToken(clerkId);
+
+        var response = await _client.SendAsync(Authorized(HttpMethod.Get, "/api/v1/notifications", token));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        var item = doc.GetProperty("items")[0];
+        Assert.Equal(1, doc.GetProperty("total").GetInt32());
+        Assert.Equal(JsonValueKind.String, item.GetProperty("organizationId").ValueKind);
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("organizationName").ValueKind);
     }
 }

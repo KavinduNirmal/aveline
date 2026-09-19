@@ -269,6 +269,15 @@ control. The ids ride the payload rather than the route, because the router re-p
 location whenever the auth or profile listenable fires and `extra` does not survive that. A
 notification that addresses only a client (`customerId`) still opens the client book.
 
+> **Shipped.** The deep link is implemented client-side for every kind that carries ids:
+> the pure rule `notificationRouteForIds` (`lib/core/notifications/notification_route.dart`)
+> is shared by the inbox tile and a push tap, so both open the same place. `NewMessage`
+> carries `conversationId` (+ `messageId`) and opens the thread; `NewMatch` and
+> `EventReminder` carry `customerId` and open the client book; `IntegrationExpired` and
+> `SystemAlert` carry no deep-link target and open nothing (the tile simply unfolds). A
+> push tap additionally marks **that notification** read (`PATCH /api/v1/notifications/{id}/read`)
+> and never the conversation or the message — the thread owns its own read state.
+
 ### 6.5 Threaded agent replies
 Ava, Elle, and Lina reply to specific messages via `ReplyToMessageId`, matching the
 conversation example:
@@ -311,6 +320,12 @@ Lina:   Message 5  (reply to Message 3)
 - **One connection per screen.** The Salon and the inbox each construct their own
   `ConversationRealtimeService` and disconnect on dispose, so neither steals the other's
   connection; the inbox's connect joins no Salon.
+- **The notification hub re-joins on reconnect.** SignalR does not preserve group
+  membership across a rebuilt socket, so `NotificationHub.SubscribeAsync`
+  (`Modules/Notifications/Hubs/NotificationHub.cs`) is an idempotent, client-callable
+  re-join of `user:{id}` and the active `org:{id}` groups. Both clients invoke it from
+  their `onreconnected` handler; a client that never re-joins looks connected and
+  receives nothing.
 
 ---
 

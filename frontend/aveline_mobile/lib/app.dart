@@ -16,9 +16,11 @@ import 'core/config/app_config.dart';
 import 'core/network/api_client.dart';
 import 'core/network/auth_token_provider.dart';
 import 'core/notifications/device_token_api.dart';
+import 'core/notifications/firebase_push_message_source.dart';
 import 'core/notifications/firebase_push_token_source.dart';
 import 'core/notifications/notification_payload.dart';
 import 'core/notifications/notification_provider.dart';
+import 'core/notifications/push_message_handler.dart';
 import 'core/notifications/push_notification_service.dart';
 import 'core/notifications/realtime_connection_factory.dart';
 import 'core/notifications/realtime_notification_service.dart';
@@ -51,7 +53,7 @@ import 'features/customers/presentation/screens/customers_screen.dart';
 import 'features/home/data/api_home_repository.dart';
 import 'features/home/presentation/home_controller.dart';
 import 'features/home/presentation/screens/main_shell.dart';
-import 'features/notifications/data/demo_notification_repository.dart';
+import 'features/notifications/data/api_notification_repository.dart';
 import 'features/notifications/presentation/notifications_controller.dart';
 import 'features/notifications/presentation/screens/notifications_screen.dart';
 import 'features/settings/presentation/screens/settings_screen.dart';
@@ -295,6 +297,15 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
   late final NotificationProvider _notificationProvider;
   late final NotificationsController _notificationsController;
 
+  /// The inbox's API source, kept so a push tap can mark one notification read
+  /// without the controller having to hold that row on screen.
+  late final ApiNotificationRepository _notificationRepository;
+
+  /// Handles FCM messages: a foreground arrival refreshes the inbox through the
+  /// same seam realtime uses; a tap marks that notification read and routes.
+  /// `null` when Firebase is unavailable or after sign-out.
+  PushMessageHandler? _pushMessageHandler;
+
   /// One source for the Home tab's three data blocks (the focus deck, the client
   /// row and the Blossom meter), provided beside the other long-lived
   /// controllers so the screen and the shell's pull-to-refresh read one state.
@@ -357,11 +368,12 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
     _homeController = HomeController(
       ApiHomeRepository(_dio, organizationId: () => _boutiqueProvider.organizationId),
     );
+    _notificationRepository = ApiNotificationRepository(_dio);
     _notificationsController = NotificationsController(
-      // The demo inbox stands in until the notification endpoints are live, the
-      // same way the client book and the catalog do. Swapping in
-      // `ApiNotificationRepository(_dio)` is the whole change.
-      DemoNotificationRepository(),
+      // The inbox reads the live API. The endpoints are mapped (`Program.cs`) and
+      // the route group is `/users/me`-shaped: it takes no organization id, so
+      // the repository needs only the shared Dio.
+      _notificationRepository,
     );
     // The header's badge and the inbox are the same number: the controller owns
     // it and reports it up, so a notification read on the tab clears the dot that
@@ -430,11 +442,11 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
   /// Starts push registration and the foreground realtime connection for the signed-in user.
   void _startNotifications() {
     _pushNotificationService.initialize();
-    _realtimeNotificationService.connect(
-      baseUrl: widget.config.apiBaseUrl,
-      getToken: _authRepository.getToken,
-      onNotification: _onNotificationReceived,
-    );
+    // Awaited inside [_connectRealtime] rather than left as an unawaited future: a
+    // connect failure that escapes becomes an unhandled async error, which is
+    // neither recorded nor actionable.
+    unawaited(_connectRealtime());
+    _startPushMessages();
     // A restored session opens on an inbox that is already stale. A sign-in that
     // fires again while the inbox is loaded only re-reads it, so the tab does not
     // blank out under a token refresh.
@@ -445,13 +457,97 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
     }
   }
 
+  /// Starts the FCM message handler, when Firebase is available.
+  ///
+  /// A foreground arrival refreshes the inbox through the same "an arrival
+  /// happened" seam the realtime path uses. A tap opens the app (the OS does
+  /// that), marks **that notification** read, and routes through the one shared
+  /// rule. A cold-start tap may arrive before the session is restored, so the
+  /// mark-read is best-effort and the route is still opened.
+  void _startPushMessages() {
+    if (_pushMessageHandler != null || Firebase.apps.isEmpty) {
+      return;
+    }
+    final handler = _pushMessageHandler = PushMessageHandler(
+      FirebasePushMessageSource(FirebaseMessaging.instance),
+    );
+    handler.start(
+      onMessage: _onNotificationReceived,
+      markRead: _markNotificationRead,
+      open: _openNotificationRoute,
+    );
+    unawaited(
+      handler.handleInitialMessage(
+        markRead: _markNotificationRead,
+        open: _openNotificationRoute,
+      ),
+    );
+  }
+
+  /// Marks the notification a push tap addressed as read, best-effort.
+  ///
+  /// Deliberately the **notification**, never the conversation or the message:
+  /// the thread owns its own read state and writes it when it is opened on the
+  /// newest message (Q7). A session that is not restored yet must not lose the
+  /// tap, so a failure is swallowed here.
+  Future<void> _markNotificationRead(String notificationId) async {
+    try {
+      await _notificationRepository.markRead(notificationId);
+      // The badge and the list must agree with the server after the tap.
+      await _notificationsController.refresh();
+    } catch (_) {
+      // Best-effort.
+    }
+  }
+
+  /// Opens the route a push tap asked for.
+  ///
+  /// Deferred to the next frame: a cold-start tap can be handled before the
+  /// router has settled, and navigating from outside a frame would throw.
+  void _openNotificationRoute(String location) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _router.go(location);
+      }
+    });
+  }
+
+  /// Opens the foreground realtime connection, recording a failure.
+  ///
+  /// A reconnection re-joins the hub's groups and then re-reads the inbox: anything
+  /// the socket missed while it was down is only recoverable from the API, and
+  /// SignalR does not preserve group membership across a rebuilt socket.
+  Future<void> _connectRealtime() async {
+    try {
+      await _realtimeNotificationService.connect(
+        baseUrl: widget.config.apiBaseUrl,
+        getToken: _authRepository.getToken,
+        onNotification: _onNotificationReceived,
+        onReconnected: _notificationsController.refresh,
+        onRejoinFailed: _onRejoinFailed,
+      );
+    } catch (error, stackTrace) {
+      debugPrint('[notifications] realtime connect failed: $error\n$stackTrace');
+    }
+  }
+
+  /// Records a failed re-join: the socket is up but subscribed to nothing.
+  void _onRejoinFailed(Object error) {
+    debugPrint('[notifications] realtime re-subscribe failed: $error');
+  }
+
   /// Records a notification that arrived while the app was open.
   ///
-  /// The payload is a live event with no inbox id, so it cannot be read or
-  /// dismissed from here. It is surfaced for the banner and the inbox is
-  /// re-read, which is what puts the persisted row on the tab.
+  /// When the payload carries the recipient's unread count the badge moves at
+  /// once, before the inbox's own reply lands. The list is re-read regardless,
+  /// because the rows remain the API's authority, and a payload without a count
+  /// behaves exactly as it did before.
   void _onNotificationReceived(NotificationPayload payload) {
     _notificationProvider.push(payload);
+    final count = payload.unreadCount;
+    if (count != null) {
+      _notificationsController.applyUnreadCount(count);
+    }
     _notificationsController.refresh();
   }
 
@@ -464,6 +560,13 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
   void _stopNotifications() {
     _realtimeNotificationService.disconnect();
     _pushNotificationService.unregister();
+    // The message listeners belong to the session that is ending; the next
+    // sign-in starts them again.
+    final pushMessages = _pushMessageHandler;
+    _pushMessageHandler = null;
+    if (pushMessages != null) {
+      unawaited(pushMessages.dispose());
+    }
     _notificationProvider.clear();
     _notificationsController.clearInbox();
   }
@@ -488,6 +591,11 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
       ..removeListener(_syncUnreadBadge)
       ..dispose();
     _notificationProvider.dispose();
+    final pushMessages = _pushMessageHandler;
+    _pushMessageHandler = null;
+    if (pushMessages != null) {
+      unawaited(pushMessages.dispose());
+    }
     super.dispose();
   }
 

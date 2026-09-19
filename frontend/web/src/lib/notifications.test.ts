@@ -95,6 +95,7 @@ describe('startNotifications', () => {
       }),
       start: vi.fn().mockResolvedValue(undefined),
       stop: vi.fn().mockResolvedValue(undefined),
+      invoke: vi.fn().mockResolvedValue(undefined),
       handlers,
       stateHandlers,
     }
@@ -139,5 +140,19 @@ describe('startNotifications', () => {
     connection.stateHandlers.close?.()
 
     expect(onStateChange).toHaveBeenCalledWith('Disconnected')
+  })
+
+  it('re-subscribes on reconnect, so a rebuilt socket re-joins its groups', () => {
+    const connection = makeConnection()
+    const onNotification = vi.fn()
+    const onStateChange = vi.fn()
+
+    startNotifications(connection as never, { onNotification, onStateChange })
+
+    // SignalR does not preserve group membership across a reconnect, so the
+    // client has to re-join by invoking the hub's SubscribeAsync.
+    connection.stateHandlers.reconnected?.()
+
+    expect(connection.invoke).toHaveBeenCalledWith('SubscribeAsync')
   })
 })

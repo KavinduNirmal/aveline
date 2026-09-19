@@ -218,14 +218,7 @@ paths:
                   $ref: "#/components/schemas/DevicePlatform"
       responses:
         "200":
-          description: Registered
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  token: { type: string }
-                  platform: { $ref: "#/components/schemas/DevicePlatform" }
+          description: Registered. The handler returns an empty body.
         "400":
           $ref: "#/components/responses/ValidationError"
         "401":
@@ -248,6 +241,8 @@ paths:
           description: Unregistered
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /api/v1/users/me/sessions:
     get:
@@ -1046,10 +1041,7 @@ paths:
           description: Count
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  count: { type: integer, minimum: 0 }
+              schema: { $ref: "#/components/schemas/UnreadCountResponse" }
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -1105,6 +1097,9 @@ paths:
       responses:
         "200":
           description: Marked
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MarkAllReadResponse" }
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -4652,6 +4647,20 @@ components:
         readAt: { type: string, format: date-time, nullable: true }
         deliveredAt: { type: string, format: date-time, nullable: true }
         createdAt: { type: string, format: date-time }
+        organizationId: { type: string, format: uuid }
+        organizationName: { type: string, nullable: true }
+    UnreadCountResponse:
+      type: object
+      required: [count]
+      properties:
+        count: { type: integer, minimum: 0 }
+
+    MarkAllReadResponse:
+      type: object
+      required: [updated]
+      properties:
+        updated: { type: integer, minimum: 0 }
+
     NotificationPage:
       allOf:
         - $ref: "#/components/schemas/PageMeta"

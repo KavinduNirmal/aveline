@@ -876,6 +876,53 @@ one it reads that table's aggregate (`unread = messages after the marker`, an ab
 row = all unread) rather than growing a second read model; the metric would then be
 recorded here by name, with no `S-n` allocated in this document.
 
+### Notification gateway metrics (proposed — no `S-n` allocated here)
+
+Recorded by **name and formula only**; identifiers are allocated centrally at merge,
+per the same series decision as the Home and Conversations blocks above. The
+notification gateway ([ADR-013](../ADR/ADR-013-notification-service-architecture.md))
+ships the dispatcher, the channel adapters and the per-user inbox; **no statistics
+route is built yet**, so the `Endpoint` column names the intended exposure rather
+than a route that exists. Nothing is exposed until it appears here **and** in
+[`docs/api/openapi.yaml`](../api/openapi.yaml) (§1).
+
+| Metric | Description | Formula | Dimensions | Granularity | Freshness | Retention | Source | Storage | Endpoint (intended) | Access |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `notificationDeliverySuccessRate` | Share of delivery attempts that succeeded, per channel. | `COUNT(Status = 'Delivered') ÷ COUNT(*)` over `NotificationDeliveries` | `organizationId`, `channel` | day | ≤ 1 day | deliveries kept indefinitely (audit trail) | `NotificationDeliveries` | on-the-fly | `GET /api/v1/orgs/{organizationId}/stats/notifications` | `stats:view` |
+| `notificationInboxReadRate` | Share of inbox rows the recipient has read. | `COUNT(ReadAt IS NOT NULL) ÷ COUNT(*)` over visible `UserNotifications` in the window | `organizationId`, `type` | day | ≤ 1 day | inbox rows: dismissed 30 d, read 180 d (S6); `NotificationRecords` kept | `UserNotifications` ⋈ `NotificationRecords` | on-the-fly | same | `stats:view` |
+| `notificationDismissRate` | Share of inbox rows the recipient dismissed. | `COUNT(DismissedAt IS NOT NULL) ÷ COUNT(*)` over `UserNotifications` | `organizationId`, `type` | day | ≤ 1 day | inbox rows: 30 d after dismissal (S6) | `UserNotifications` ⋈ `NotificationRecords` | on-the-fly | same | `stats:view` |
+| `notificationTimeToReadP50` | Median time from arrival to read, in minutes. | `percentile_cont(0.5)` of `ReadAt − CreatedAt` over read rows | `organizationId`, `type` | day | ≤ 1 day | inbox rows: 180 d after read (S6) | `UserNotifications` | on-the-fly | same | `stats:view` |
+| `notificationFailureReasons` | Failed deliveries grouped by channel and error class. | `COUNT(*)` of failed rows, grouped by `Channel` and a normalised `ErrorMessage` class | `organizationId`, `channel`, `errorClass` | hour | ≤ 1 hour | deliveries kept indefinitely | `NotificationDeliveries` | on-the-fly | same | `stats:view` |
+| `notificationVolumeByType` | How many notifications were dispatched, by kind. | `COUNT(*)` over `NotificationRecords` grouped by `Type` | `type`, `organizationId` | hour + day | ≤ 1 hour | records kept indefinitely | `NotificationRecords` | on-the-fly | same | `stats:view` |
+| `notificationInboxBacklog` | **Open work items** at window end: inbox rows a user has not acted upon. Distinct from S-36's `notification_backlog`, which counts delivery rows with `Status = 'Pending'` (§2.5, S-36). | `COUNT(*)` of visible rows with `ReadAt IS NULL AND DismissedAt IS NULL` | `organizationId`, and per-`userId` only for an admin | snapshot | real-time | inbox rows only (S6) | `UserNotifications` | on-the-fly | same; the per-user cut is `GET /api/v1/admin/statistics/system/notifications` | `stats:view`; `stats:system` for the per-user cut |
+| `pushDispatchFailures` | Failed push deliveries across every organisation. | `COUNT(*)` of `NotificationDeliveries WHERE Channel = 'Push' AND Status = 'Failed'` | `organizationId`, `platform` | hour | ≤ 1 hour | deliveries kept indefinitely | `NotificationDeliveries` ⋈ `UserDeviceTokens` | on-the-fly | `GET /api/v1/admin/statistics/system/notifications` | `stats:system` |
+| `fcmCredentialConfigured` | Whether the real FCM channel was selected at startup, or the logging fallback. Push is a silent no-op otherwise. | `1` when `FirebaseConfiguration.IsConfigured` selected `FcmPushChannel`, else `0` | — | snapshot | real-time | n/a (configuration) | `NotificationsModule` channel selection | on-the-fly | `GET /api/v1/admin/statistics/system/notifications` | `stats:system` |
+
+**Definitional notes.**
+
+1. **`notificationInboxBacklog` is not S-36's `notification_backlog`.** S-36 counts
+   delivery rows that have not been attempted (`NotificationDeliveries.Status = 'Pending'`,
+   `stats:system`); the inbox backlog counts **work items a user has not acted upon**.
+   The two have different denominators and different audiences; neither replaces the other.
+2. **`notificationTimeToReadP50` is `null` below the sample floor.** Every percentile in
+   this family is `null` with a `reason` when the sample count is below
+   `Telemetry:MinSampleForPercentile` (default 20), per §1.
+3. **`notificationInboxReadRate`, `notificationDismissRate` and
+   `notificationInboxBacklog` are projections of per-user state**, not of the shared
+   `NotificationRecord`. A fan-out kind writes one inbox row per recipient, so these
+   denominators are per-recipient; the count's forward-compatible meaning ("open work
+   under the model in force") is recorded in the notifications plan and needs no rename
+   when the fan-out producer redefines it.
+
+**Proposed alert thresholds** (recorded, not seeded — a seeded rule is itself a
+`SystemAlert` producer, and routing it is the alert path's own concern):
+
+- push failures > 20 % of attempts over 30 min → **Critical**;
+- realtime delivery success < 95 % over 15 min → **Warning** (usually a reconnect problem);
+- `notificationInboxBacklog` growing for 7 days with `notificationInboxReadRate < 10 %` →
+  **Warning**;
+- `fcmCredentialConfigured == 0` in production → **Critical** (push is a silent no-op).
+
 ---
 
 ## 9. Retention and aggregation summary

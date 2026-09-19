@@ -1105,6 +1105,33 @@ idempotent insert that creates the message.
 
 ---
 
+### 8.13 Notification gateway tables (existing — no new table, no migration)
+
+The notification gateway's four tables predate this document
+(`Modules/Notifications/`, [ADR-013](../ADR/ADR-013-notification-service-architecture.md)).
+They are recorded here for completeness; the notifications inbox work adds **no table and
+no column**.
+
+| Table | What it holds |
+| --- | --- |
+| `NotificationRecords` | One row per dispatch: `OrganizationId` (required FK to `Organizations`), `Type`, `Title`, `Body`, `DataJson`, `CreatedAt`, and the `Deliveries` collection. This is the **audit trail** and is never purged. |
+| `NotificationDeliveries` | One row per (recipient, router-allowed channel) attempt: `NotificationRecordId`, `UserId`, `Channel`, `Status` (`Pending`/`Delivered`/`Failed`), `ErrorMessage`. Also audit trail. |
+| `UserNotifications` | The per-user inbox row: `UserId`, `NotificationRecordId`, `ReadAt`, `DeliveredAt`, `DismissedAt`, `CreatedAt`. Read is one-way and idempotent; dismiss is a soft delete with no restore route. Purged by `NotificationRetentionJob` (S6): dismissed after 30 d, read after 180 d. |
+| `UserDeviceTokens` | The FCM registration: `UserId`, `Token`, `Platform`, active flag. Push is gated on opt-in **and** a token, so an un-opted-in recipient gets no push even when the notification requests it. |
+
+- **Indexes:** `UserNotifications` on `(UserId, DismissedAt, ReadAt)`; `NotificationRecords`
+  on `OrganizationId`; `NotificationDeliveries` on its record and user.
+- **The inbox is merged per user, not scoped per organisation.** `GET /api/v1/notifications`
+  is `/users/me`-shaped and carries no organisation filter, so the list, the count and
+  "Mark all read" always cover the same set. The per-row label
+  (`organizationId`/`organizationName` on `UserNotificationDto`) is a projection of
+  `NotificationRecords.OrganizationId`, added in S7 with no column.
+- **`UnreadCount` on the realtime payload** is the recipient's count after their row was
+  written; the field is named forward-compatibly so the fan-out producer can redefine it
+  to "work items not acted upon" without a rename.
+
+---
+
 ## 9. Audit (shared, all feature areas)
 
 ### 9.1 `AuditLogEntry` → `AuditLogEntries` (new, append-only)

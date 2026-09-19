@@ -1,3 +1,4 @@
+import 'package:aveline_mobile/core/notifications/notification_route.dart';
 import 'package:aveline_mobile/core/router/route_guards.dart';
 import 'package:aveline_mobile/features/notifications/domain/app_notification.dart';
 import 'package:aveline_mobile/features/notifications/presentation/screens/notifications_screen.dart';
@@ -66,6 +67,54 @@ void main() {
         notificationRouteFor(_notification({'customerId': '', 'conversationId': ''})),
         isNull,
       );
+    });
+  });
+
+  group('notificationRouteForIds', () {
+    test('is the one rule the tile and a push tap share', () {
+      final cases = <Map<String, String?>>[
+        {
+          'conversationId': '11111111-1111-4111-8111-111111111111',
+          'messageId': '22222222-2222-4222-8222-222222222222',
+        },
+        {'conversationId': '11111111-1111-4111-8111-111111111111'},
+        {'conversationId': 'c1', 'customerId': 'cus_204'},
+        {'customerId': 'cus_204'},
+        <String, String?>{},
+      ];
+
+      for (final data in cases) {
+        expect(
+          notificationRouteFor(_notification(data)),
+          notificationRouteForIds(
+            conversationId: data['conversationId'],
+            messageId: data['messageId'],
+            customerId: data['customerId'],
+          ),
+          reason: 'the tile must not keep a rule of its own',
+        );
+      }
+    });
+
+    test('a conversation without an identified client still opens', () {
+      // An inbound thread whose sender is not on file has no customer id; the
+      // conversation is the only target that always exists.
+      expect(
+        notificationRouteForIds(
+          conversationId: '11111111-1111-4111-8111-111111111111',
+        ),
+        '/conversations/thread/11111111-1111-4111-8111-111111111111',
+      );
+    });
+
+    test('a conversation wins over a client, and empty ids are absent', () {
+      expect(
+        notificationRouteForIds(conversationId: 'c1', customerId: 'cus_204'),
+        startsWith('/conversations/thread/c1'),
+      );
+      expect(notificationRouteForIds(conversationId: ''), isNull);
+      expect(notificationRouteForIds(customerId: ''), isNull);
+      expect(notificationRouteForIds(), isNull);
     });
   });
 }

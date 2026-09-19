@@ -171,10 +171,10 @@ public class IntegrationHealthServiceTests
     {
         public List<Notification> Dispatched { get; } = [];
 
-        public Task DispatchAsync(Notification notification, CancellationToken cancellationToken = default)
+        public Task<NotificationRecord?> DispatchAsync(Notification notification, CancellationToken cancellationToken = default)
         {
             Dispatched.Add(notification);
-            return Task.CompletedTask;
+            return Task.FromResult<NotificationRecord?>(null);
         }
     }
 }

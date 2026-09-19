@@ -38,7 +38,7 @@ public class LoggingNotificationChannelsTests
         var logger = new CapturingLogger<LoggingRealtimeChannel>();
         var channel = new LoggingRealtimeChannel(logger);
 
-        await channel.SendAsync(Recipient(), NotificationFor());
+        await channel.SendAsync(Recipient(), NotificationFor(), Guid.NewGuid(), unreadCount: 3);
 
         var log = Assert.Single(logger.Messages);
         Assert.Contains("New message", log);
@@ -51,7 +51,7 @@ public class LoggingNotificationChannelsTests
         var logger = new CapturingLogger<LoggingPushChannel>();
         var channel = new LoggingPushChannel(logger);
 
-        await channel.SendAsync(Recipient(), NotificationFor());
+        await channel.SendAsync(Recipient(), NotificationFor(), Guid.NewGuid());
 
         var log = Assert.Single(logger.Messages);
         Assert.Contains("New message", log);

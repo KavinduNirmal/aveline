@@ -6,6 +6,10 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import type { ChartConfig } from "@/components/ui/chart"
+import { ActivityChart } from "@/components/admin/charts/ActivityChart"
+import { ChartFrame } from "@/components/admin/charts/ChartFrame"
 import { DataQualityNotice } from "@/components/admin/charts/DataQualityNotice"
 import { GrafanaCard } from "@/components/admin/charts/GrafanaCard"
 import { KpiTile } from "@/components/admin/charts/KpiTile"
@@ -15,6 +19,7 @@ import {
   formatMetricValue,
   systemDataQuality,
 } from "@/lib/admin/data-quality"
+import { bucketActivity, deltaPct, type BucketUnit } from "@/lib/admin/activity-series"
 import { grafanaLink, type GrafanaDashboard } from "@/lib/admin/grafana"
 import {
   fetchAgentOverview,
@@ -60,6 +65,10 @@ function GrafanaTileLink({ dashboard }: { dashboard: GrafanaDashboard }) {
   )
 }
 
+const ACTIVITY_CONFIG = {
+  activity: { label: "Business actions", color: "var(--chart-1)" },
+} satisfies ChartConfig
+
 const QUEUE_FIELDS = [
   ["Telemetry channel", "telemetryChannelDepth"],
   ["Event bus backlog", "eventBusBacklog"],
@@ -87,6 +96,7 @@ export function AdminDashboardView() {
     kind: "loading",
   })
   const [agents, setAgents] = useState<Async<AgentOverviewDto>>({ kind: "loading" })
+  const [range, setRange] = useState<"7d" | "12m">("7d")
 
   const load = useCallback(async () => {
     setOverview({ kind: "loading" })
@@ -108,7 +118,9 @@ export function AdminDashboardView() {
       setAlerts({ kind: "error", message: messageOf(err) })
     }
     try {
-      const page = await queryAuditEntries({ pageSize: 8 })
+      // A wider read than the table needs: the same page feeds the volume chart, which buckets a
+      // 7-day or 12-month window. It is one request, not two.
+      const page = await queryAuditEntries({ pageSize: 200 })
       setAudits({ kind: "ready", value: page.items })
     } catch (err: unknown) {
       setAudits({ kind: "error", message: messageOf(err) })
@@ -135,6 +147,13 @@ export function AdminDashboardView() {
       : null
 
   const auditEntries = audits.kind === "ready" ? audits.value : []
+  const bucketUnit: BucketUnit = range === "7d" ? "day" : "month"
+  const activityPoints = bucketActivity(auditEntries, {
+    unit: bucketUnit,
+    buckets: range === "7d" ? 7 : 12,
+  })
+  const activityDelta = deltaPct(activityPoints)
+  const recentActions = auditEntries.slice(0, 8)
   const errorEntries = auditEntries.filter((entry) => /error|fail|revoke/i.test(entry.action))
   const oldestPending =
     pending !== null && pending.length > 0
@@ -167,32 +186,33 @@ export function AdminDashboardView() {
           onRetry={() => void load()}
         />
       ) : overview.kind === "loading" ? (
-        <Card className="border-border shadow-xs">
-          <CardContent className="p-4 text-xs text-muted-foreground">
-            Loading system pulse…
-          </CardContent>
-        </Card>
+        <p className="text-xs text-muted-foreground">Loading system pulse…</p>
       ) : (
         <>
-          <Card className="border-border shadow-xs">
-            <CardContent className="p-4 flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <span className="inline-block size-3 rounded-full bg-success" aria-hidden="true" />
-                <div>
-                  <div className="text-sm font-medium text-foreground">
-                    Readiness: {overview.value.readiness.status}
-                  </div>
-                  <div className="text-[11px] text-muted-foreground">
-                    {overview.value.readiness.checks.length} dependency probes reported · build{" "}
-                    {overview.value.version.gitSha} · {overview.value.version.environment}
-                  </div>
-                </div>
-              </div>
-              <Badge variant="secondary" className="text-[10px] font-mono">
-                uptime {formatMetricValue(overview.value.uptimeSeconds, "seconds")}
-              </Badge>
-            </CardContent>
-          </Card>
+          {/* V1 — readiness, as a single strip. It carries four facts and needs four facts' worth of
+              space; a full-width card for "Healthy" was mostly empty. A failed call still renders
+              an error above, never a fabricated "Healthy". */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+            <span
+              className={
+                overview.value.readiness.status === "Healthy"
+                  ? "inline-flex items-center gap-1.5 font-medium text-success"
+                  : "inline-flex items-center gap-1.5 font-medium text-destructive"
+              }
+            >
+              <span className="size-2 rounded-full bg-current" aria-hidden="true" />
+              Readiness: {overview.value.readiness.status}
+            </span>
+            <span className="text-muted-foreground">
+              {overview.value.readiness.checks.length} dependency probes
+            </span>
+            <span className="font-mono text-[11px] text-muted-foreground">
+              {overview.value.version.gitSha} · {overview.value.version.environment}
+            </span>
+            <span className="font-mono text-[11px] text-muted-foreground">
+              uptime {formatMetricValue(overview.value.uptimeSeconds, "seconds")}
+            </span>
+          </div>
 
           {/* V6 — the platform-health KPIs. The numbers are the ten-second answer. */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -216,6 +236,40 @@ export function AdminDashboardView() {
               source="system/alerts?status=Firing"
             />
           </div>
+
+          {/* Business-action volume. The source is Postgres (`GET /admin/audit`), so this is the
+              console's own chart and not a second copy of a Grafana panel (Q11). */}
+          <ChartFrame
+            title="Business action volume"
+            description="Recorded business actions per bucket. Reads and failed requests are not recorded."
+            config={ACTIVITY_CONFIG}
+            action={
+              <div className="flex items-center gap-2">
+                {activityDelta !== null && (
+                  <Badge variant="secondary" className="font-mono text-[10px]">
+                    {activityDelta >= 0 ? "+" : ""}
+                    {activityDelta}%
+                  </Badge>
+                )}
+                <ToggleGroup
+                  type="single"
+                  value={range}
+                  onValueChange={(value) => {
+                    if (value !== "") setRange(value as "7d" | "12m")
+                  }}
+                >
+                  <ToggleGroupItem value="7d" className="text-xs">
+                    Weekly
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="12m" className="text-xs">
+                    Monthly
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              </div>
+            }
+          >
+            <ActivityChart points={activityPoints} />
+          </ChartFrame>
 
           {/* V8 — queue depths; a null field renders "not measured", never 0. */}
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
@@ -413,7 +467,7 @@ export function AdminDashboardView() {
           <CardContent className="text-xs text-muted-foreground">
             Loading recent actions…
           </CardContent>
-        ) : audits.value.length === 0 ? (
+        ) : recentActions.length === 0 ? (
           <CardContent className="text-xs text-muted-foreground">
             No business actions recorded.
           </CardContent>
@@ -428,7 +482,7 @@ export function AdminDashboardView() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {audits.value.map((entry) => (
+              {recentActions.map((entry) => (
                 <TableRow key={entry.id}>
                   <TableCell className="text-xs font-medium text-foreground">
                     {entry.action}

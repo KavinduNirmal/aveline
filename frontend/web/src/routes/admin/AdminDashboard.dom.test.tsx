@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -203,5 +204,125 @@ describe('AdminDashboardView when the API answers', () => {
     // V10 distinguishes an empty history from an uninstrumented one.
     expect(screen.getByText('no runs recorded yet')).toBeInTheDocument()
     expect(screen.queryByText(/latency is not instrumented/)).toBeNull()
+  })
+})
+
+/**
+ * The dashboard's own chart. Its source is `GET /admin/audit` — Postgres, and not something Grafana
+ * renders — which is what keeps it inside the Q11 boundary.
+ */
+describe('AdminDashboardView business-action chart', () => {
+  function seedChartData(items: unknown[]) {
+    fetchSystemOverview.mockReset()
+    queryAuditEntries.mockReset()
+    listAdminRequests.mockReset()
+    fetchSystemAlerts.mockReset()
+    fetchAgentOverview.mockReset()
+
+    fetchSystemOverview.mockResolvedValue({
+      version: { gitSha: 'deadbee', buildTime: '', assemblyVersion: '', environment: 'Production' },
+      readiness: { status: 'Healthy', checks: [] },
+      uptimeSeconds: 60,
+      alerts: { critical: 0, warning: 0, top: [] },
+      throughput: { requestsPerSecond: 1, agentRunsPerMinute: null, blossomsPerHour: null, omitted: [] },
+      errors: {
+        errorRate: 0,
+        requestCount: 1,
+        errorCount: 0,
+        windowSize: 'hour',
+        unhandledExceptionsMeasured: true,
+        omitted: [],
+      },
+      queues: {
+        telemetryChannelDepth: 0,
+        eventBusBacklog: 0,
+        notificationBacklog: 0,
+        inboundMessageBacklog: 0,
+        agentRunsRunning: 0,
+        omitted: [],
+      },
+      omitted: [],
+      generatedAt: '',
+    })
+    queryAuditEntries.mockResolvedValue({ items, page: 1, pageSize: 200, total: items.length })
+    listAdminRequests.mockResolvedValue([])
+    fetchSystemAlerts.mockResolvedValue({ items: [], page: 1, pageSize: 5, total: 0 })
+    fetchAgentOverview.mockResolvedValue({
+      totalRuns: 0,
+      running: 0,
+      pausedForApproval: 0,
+      succeeded: 0,
+      failed: 0,
+      successRate: null,
+      dataQuality: {
+        latencyInstrumented: false,
+        nodeFailuresObserved: false,
+        perStepAttribution: false,
+        toolInstrumented: false,
+        costInstrumented: false,
+      },
+    })
+  }
+
+  function auditRow(id: string, occurredAt: string, action: string) {
+    return {
+      id,
+      occurredAt,
+      organizationId: null,
+      actorKind: 'User',
+      actorUserId: 'u1',
+      actorRef: 'owner@aveline.lk',
+      action,
+      entityType: 'Order',
+      entityId: id,
+      reason: null,
+      requestId: null,
+      before: null,
+      after: null,
+    }
+  }
+
+  it('renders the chart card and reads a window wide enough to bucket', async () => {
+    const today = new Date()
+    seedChartData([auditRow('a1', today.toISOString(), 'Order Approved')])
+
+    renderDashboard()
+
+    await waitFor(() => {
+      expect(screen.getByText(/business action volume/i)).toBeInTheDocument()
+    })
+    // One request feeds both the table and the chart; it must not be a paging read of 8.
+    expect(queryAuditEntries).toHaveBeenCalledWith(
+      expect.objectContaining({ pageSize: 200 }),
+    )
+  })
+
+  it('switches the bucket unit from weekly to monthly', async () => {
+    seedChartData([auditRow('a1', new Date().toISOString(), 'Order Approved')])
+
+    renderDashboard()
+
+    // A single-select ToggleGroup is a radio group, not a set of buttons.
+    expect(await screen.findByRole('radio', { name: /weekly/i })).toHaveAttribute(
+      'data-state',
+      'on',
+    )
+
+    await userEvent.click(screen.getByRole('radio', { name: /monthly/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('radio', { name: /monthly/i })).toHaveAttribute('data-state', 'on')
+    })
+  })
+
+  it('shows no delta badge when there is nothing to compare against', async () => {
+    // A single empty window has no previous bucket, so "up from nothing" must not be rendered.
+    seedChartData([])
+
+    renderDashboard()
+
+    await waitFor(() => {
+      expect(screen.getByText(/business action volume/i)).toBeInTheDocument()
+    })
+    expect(screen.queryByText(/^[+-]\d/)).toBeNull()
   })
 })

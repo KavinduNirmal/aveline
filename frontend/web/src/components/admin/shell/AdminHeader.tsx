@@ -1,4 +1,4 @@
-import { useLocation, useNavigate, useParams } from "react-router-dom"
+import { useLocation, useParams } from "react-router-dom"
 
 import { useAdminSession } from "@/contexts/AdminSessionContext"
 import { findRouteBySubPath, findRouteById } from "@/lib/admin/routes"
@@ -33,21 +33,12 @@ interface AdminHeaderProps {
 export function AdminHeader({ onOpenAudit }: AdminHeaderProps) {
   const { userId } = useParams<{ userId: string }>()
   const { email } = useAdminSession()
-  const navigate = useNavigate()
   const label = useCurrentRouteLabel()
 
   return (
     <header className="h-16 border-b border-border bg-background/80 backdrop-blur-md px-4 sm:px-6 flex items-center justify-between sticky top-0 z-10">
       <div className="flex items-center gap-3 min-w-0">
         <SidebarTrigger className="lg:hidden" />
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => navigate("/app")}
-          className="text-xs text-muted-foreground hover:text-foreground hidden sm:inline-flex"
-        >
-          Back to Boutique
-        </Button>
         <Breadcrumb className="min-w-0">
           <BreadcrumbList>
             <BreadcrumbItem className="hidden md:block">

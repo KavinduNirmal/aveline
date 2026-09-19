@@ -350,6 +350,30 @@ does not silently reset the operator's context. A page size the surface does not
 forwarded** — `readListParams` falls back to the default rather than letting the server's clamp make
 the pager lie. Page sizes are `25 | 50 | 100 | 200`.
 
+### Feedback round: the console's own ergonomics
+
+Four defects reported from the running console, each fixed with a test:
+
+| Report | Cause | Fix |
+|---|---|---|
+| "Go to dashboard" from `/` opened the **boutique** dashboard | `DashboardRedirect` resolved a boutique membership for everyone and sent a boutique-less operator to `/forbidden` | a console role goes to `/admin/<their id>/dashboard`; everyone else keeps the tenant resolution |
+| "Back to Boutique" in the header landed on `/forbidden` | an Aveline-team operator has no boutique | the control is removed |
+| The audit drawer had **two** close buttons | `SheetContent` renders its own close control and the panel added a second | the custom one is removed; a test asserts exactly one |
+| The log status strip and the readiness banner were mostly empty space | both were full-width cards carrying one line of facts | both are now compact strips |
+
+### The dashboard has a chart again
+
+The delivered dashboard's animated charts were **fabricated literals**, so they could not come back
+as they were. The chart is rebuilt on data the console actually owns: `GET /admin/audit` — Postgres,
+which Grafana does not render — bucketed by day (Weekly) or month (Monthly), drawn as animated bars
+with a diagonal hatch and the peak bucket filled solid.
+
+That keeps it inside the Q11 boundary: the console charts *business actions*, and still links out for
+the platform's time series. `lib/admin/activity-series.ts` is pure and unit-tested; a bucket outside
+the window is ignored rather than clamped, `peakIndex` is `-1` for an all-zero window, and `deltaPct`
+is `null` rather than `Infinity` when the previous bucket was zero. Animation is gated on
+`prefers-reduced-motion`.
+
 ### The reads go through TanStack Query (C4)
 
 The `QueryClientProvider` alone is not the adoption; the reads are. `AdminUsers` and `AdminOrgs` use

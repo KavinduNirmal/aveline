@@ -1,10 +1,10 @@
-﻿import { useState } from "react"
+import { useState } from "react"
 import { useAuditTrail } from "@/hooks/useAuditTrail"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ChevronDown, ChevronRight, Copy, Check, History, X } from "lucide-react"
+import { ChevronDown, ChevronRight, Copy, Check, History } from "lucide-react"
 
 interface AuditTrailPanelProps {
   actorUserId?: string
@@ -41,14 +41,11 @@ export function AuditTrailPanel({
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
       <SheetContent className="sm:max-w-xl w-full flex flex-col p-0 bg-card border-l border-border">
         <SheetHeader className="p-5 border-b border-border bg-muted/20">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <History className="size-5 text-primary" />
-              <SheetTitle className="font-serif text-lg">{title}</SheetTitle>
-            </div>
-            <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8">
-              <X className="size-4" />
-            </Button>
+          {/* `SheetContent` renders its own close control at the top-right; adding a second one
+              here gave the drawer two X buttons. */}
+          <div className="flex items-center gap-2">
+            <History className="size-5 text-primary" />
+            <SheetTitle className="font-serif text-lg">{title}</SheetTitle>
           </div>
           <SheetDescription className="text-xs text-muted-foreground">
             Auditable business actions recorded by the system.

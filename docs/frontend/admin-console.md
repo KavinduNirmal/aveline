@@ -29,7 +29,7 @@ shows the number once and links out.
 | **A3** | Shell: layout, registry, conformance lint | [#328](https://github.com/KavinduNirmal/aveline/issues/328) | **delivered** |
 | **A4** | Dashboard: the triage surface V1–V11 | [#329](https://github.com/KavinduNirmal/aveline/issues/329) | **delivered** |
 | **A5** | Core management: users, orgs, requests | [#330](https://github.com/KavinduNirmal/aveline/issues/330) | **delivered** |
-| **A6** | Operations: pricing and Blossom idempotency | [#331](https://github.com/KavinduNirmal/aveline/issues/331) | planned |
+| **A6** | Operations: pricing and Blossom idempotency | [#331](https://github.com/KavinduNirmal/aveline/issues/331) | **delivered** |
 | **A7** | Observability: logs, audit, system, statistics | [#332](https://github.com/KavinduNirmal/aveline/issues/332) | planned |
 | **A8** | Edge cases, a11y, E2E, documentation | [#333](https://github.com/KavinduNirmal/aveline/issues/333) | planned |
 | **A9** | Backend defects unlocked by C7 | [#334](https://github.com/KavinduNirmal/aveline/issues/334) | **delivered** |
@@ -340,6 +340,52 @@ raw string, which the server rejects with a `400` for every non-boolean key.
 
 The account-state dialog cannot be submitted without a reason, and the override dialog cannot be
 submitted without one either.
+
+## A6 — operations: pricing and Blossom
+
+### The idempotency key lifecycle
+
+`lib/admin/idempotency.ts` implements the plan's §5.1 table as pure functions. The one rule that
+makes it testable: **the key is a property of the operation the user is trying to perform**, derived
+from the payload fingerprint, so it does not change across a retry of the same payload.
+
+| Event | Key behaviour |
+|---|---|
+| Form opens / payload changes | one key per payload; a changed payload mints a new one |
+| network error, timeout, `5xx` | reuse — the operation may have applied |
+| `400` | reuse — nothing applied |
+| `409 idempotency-key-reuse` | mint a new key (a different operation) |
+| `409 idempotency-key-in-flight` | keep, disable the button, never issue a second request |
+| `503 idempotency-unavailable` | keep, offer an explicit retry, **never auto-retry** |
+| `201` | discard |
+| `Idempotency-Replayed` | render *"this operation was already applied"* |
+
+`IdempotentActionButton` enforces two guarantees: **single-flight** (the guard is a ref read
+synchronously before the first `await`, not a `disabled` attribute React has not re-rendered yet),
+and one key per logical operation. The Blossom client functions now return the
+`Idempotency-Replayed` signal alongside the body, so a replay is surfaced rather than mistaken for a
+fresh application.
+
+### The three verbs
+
+`revoke` sends `{ ledgerEntryId, reason }`. The delivered page sent
+`{ amount, reason, allowNegative }` for all three verbs, so the operation could never be bound by
+`RevokeBlossomsRequest(Guid LedgerEntryId, string Reason)` — it was dead code. Every Blossom POST
+now carries a mandatory `Idempotency-Key`.
+
+The statement view fetches fresh every time (the balance **must not be cached**) and renders the
+**reconciliation banner**: consistent, or drift detected with the projected and ledger-derived
+balances. An unavailable statement reads *"reconciliation status unknown"*, never "consistent".
+
+### The recompute capability
+
+`lib/admin/pricing.ts` gates recompute on **`pricing:backdate`**, not on the page's
+`pricing:manage`. `admin` holds 23 of the 24 permissions and is deliberately denied backdate, so
+the control renders **disabled with the stated reason** for an admin and issues **no request**; for
+an owner it runs and renders the `PricingRecomputeResult`, so a zero-effect run is visible. The
+input plan's *"returns `501`, disable it"* is false — it returns `200`.
+
+The legacy-formula banner is stated on every pricing view and comes from one shared constant.
 
 ## A9 — the three backend defects unlocked by C7
 

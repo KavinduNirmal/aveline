@@ -4,6 +4,7 @@ import type {
   AdminUserDto,
   AgentOverviewDto,
   AuditLogEntry,
+  BlossomStatement,
   AuthClaims,
   ChangeUserStateRequest,
   CreditBlossomsRequest,
@@ -11,6 +12,7 @@ import type {
   PagedAdminOrganizations,
   PagedAuditLogEntries,
   PagedUsers,
+  PricingRecomputeResult,
   RevokeBlossomsRequest,
   SetEntitlementOverridesRequest,
   SystemAlertAckResponse,
@@ -207,6 +209,12 @@ export async function acknowledgeAlert(
   return response.data
 }
 
+/** What a Blossom mutation returns, including the `Idempotency-Replayed` signal. */
+export interface BlossomMutationResult {
+  data: unknown
+  replayed: boolean
+}
+
 /**
  * The three Blossom POSTs are idempotency-guarded and the `Idempotency-Key` header is
  * **mandatory** for all of them (`IdempotencyEndpointFilter.cs:44-52`), so the key is a
@@ -221,37 +229,70 @@ export async function creditBlossoms(
   organizationId: string,
   request: CreditBlossomsRequest,
   idempotencyKey: string,
-): Promise<unknown> {
+): Promise<BlossomMutationResult> {
   const response = await apiClient.post(
     `/api/v1/admin/orgs/${organizationId}/blossoms/credit`,
     request,
     { headers: { "Idempotency-Key": idempotencyKey } },
   )
-  return response.data
+  return {
+    data: response.data,
+    replayed: response.headers["idempotency-replayed"] === "true",
+  }
 }
 
 export async function debitBlossoms(
   organizationId: string,
   request: DebitBlossomsRequest,
   idempotencyKey: string,
-): Promise<unknown> {
+): Promise<BlossomMutationResult> {
   const response = await apiClient.post(
     `/api/v1/admin/orgs/${organizationId}/blossoms/debit`,
     request,
     { headers: { "Idempotency-Key": idempotencyKey } },
   )
-  return response.data
+  return {
+    data: response.data,
+    replayed: response.headers["idempotency-replayed"] === "true",
+  }
 }
 
 export async function revokeBlossoms(
   organizationId: string,
   request: RevokeBlossomsRequest,
   idempotencyKey: string,
-): Promise<unknown> {
+): Promise<BlossomMutationResult> {
   const response = await apiClient.post(
     `/api/v1/admin/orgs/${organizationId}/blossoms/revoke`,
     request,
     { headers: { "Idempotency-Key": idempotencyKey } },
+  )
+  return {
+    data: response.data,
+    replayed: response.headers["idempotency-replayed"] === "true",
+  }
+}
+
+/**
+ * `POST /admin/pricing/rules/{ruleId}/recompute`. Guarded by `pricing:backdate`, which `admin`
+ * does not hold; returns `200` with a `PricingRecomputeResult`, so a zero-effect run is visible
+ * rather than silent.
+ */
+export async function recomputePricingRule(ruleId: string): Promise<PricingRecomputeResult> {
+  const response = await apiClient.post<PricingRecomputeResult>(
+    `/api/v1/admin/pricing/rules/${ruleId}/recompute`,
+  )
+  return response.data
+}
+
+/** `GET /admin/orgs/{organizationId}/blossoms/statement`. The balance must never be cached. */
+export async function fetchBlossomStatement(
+  organizationId: string,
+  params: { from?: string; to?: string; page?: number; pageSize?: number } = {},
+): Promise<BlossomStatement> {
+  const response = await apiClient.get<BlossomStatement>(
+    `/api/v1/admin/orgs/${organizationId}/blossoms/statement`,
+    { params },
   )
   return response.data
 }

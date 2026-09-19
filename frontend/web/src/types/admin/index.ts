@@ -305,3 +305,50 @@ export interface AgentOverviewDto {
   successRate: number | null
   dataQuality: AgentDataQualityDto
 }
+
+/** `PricingRecomputeResult` (`IPricingService.cs:56-60`). A zero-effect run is visible here. */
+export interface PricingRecomputeResult {
+  ruleId: string
+  processedRecords: number
+  affectedOrganizations: number
+  totalDelta: number
+  recomputedAt: string
+}
+
+/** `BlossomStatementItem` (`IBlossomService.cs:58-69`). */
+export interface BlossomStatementItem {
+  id: string
+  occurredAt: string
+  kind: string
+  entryType: string | null
+  blossomDelta: number
+  balanceAfter: number
+  reason: string
+  sourceKind: string | null
+  sourceRef: string | null
+  expiresAt: string | null
+  createdByUserId: string | null
+}
+
+/** `BlossomStatementReconciliation` (`IBlossomService.cs:71-72`). */
+export interface BlossomStatementReconciliation {
+  projectedBalance: number
+  ledgerDerivedBalance: number
+  drift: number
+  isConsistent: boolean
+}
+
+/** `BlossomStatement` (`IBlossomService.cs:74-85`). */
+export interface BlossomStatement {
+  organizationId: string
+  periodStart: string
+  periodEnd: string
+  openingBalance: number
+  items: BlossomStatementItem[]
+  total: number
+  page: number
+  pageSize: number
+  closingBalance: number
+  reconciliation: BlossomStatementReconciliation
+  generatedAt: string
+}

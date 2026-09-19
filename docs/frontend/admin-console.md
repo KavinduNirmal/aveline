@@ -30,8 +30,8 @@ shows the number once and links out.
 | **A4** | Dashboard: the triage surface V1–V11 | [#329](https://github.com/KavinduNirmal/aveline/issues/329) | **delivered** |
 | **A5** | Core management: users, orgs, requests | [#330](https://github.com/KavinduNirmal/aveline/issues/330) | **delivered** |
 | **A6** | Operations: pricing and Blossom idempotency | [#331](https://github.com/KavinduNirmal/aveline/issues/331) | **delivered** |
-| **A7** | Observability: logs, audit, system, statistics | [#332](https://github.com/KavinduNirmal/aveline/issues/332) | planned |
-| **A8** | Edge cases, a11y, E2E, documentation | [#333](https://github.com/KavinduNirmal/aveline/issues/333) | planned |
+| **A7** | Observability: logs, audit, system, statistics | [#332](https://github.com/KavinduNirmal/aveline/issues/332) | **delivered** |
+| **A8** | Edge cases, a11y, E2E, documentation | [#333](https://github.com/KavinduNirmal/aveline/issues/333) | **partially delivered** |
 | **A9** | Backend defects unlocked by C7 | [#334](https://github.com/KavinduNirmal/aveline/issues/334) | **delivered** |
 
 **Ordering rule.** A slice may merge only when the console is **strictly better than before it** —
@@ -184,9 +184,33 @@ check** (a Clerk subject id is not a GUID, so shape-first would make a caller's 
 unresolvable), and **a fuzzy hit is `unknown`, never `managed`** (`q` is matched against email, name,
 username and `clerkId` server-side, so an exact-id hit must be confirmed).
 
-`MANAGED_SCOPE_ENABLED` is `false`: Q1's probe returned `401` and no token was available to confirm an
-exact-id hit, so the console stays `self`-only. The resolver for `managed` is written and unit-tested;
-flipping the constant is the whole of the change once the probe succeeds.
+**Q1 is now settled by inspection, and it is a negative.** `GET /admin/users?q=<GUID>` cannot return
+an exact-`id` hit, because `UserRepository.SearchAsync` filters on `Email`, `FirstName`, `LastName`,
+`Username` and `ClerkId` (`UserRepository.cs:61-70`) and has **no `Id` predicate at all**. A GUID is
+not any of those fields, so the resolver has no server-side path to a user by id. (The `401` the
+probe returned was a second, independent reason the probe was inconclusive.)
+
+That is C1 option (c): the console is **`self`-only**, and an unresolvable segment is a restatement
+of the caller rather than a guessed user. Two rules implement it:
+
+1. **`self` is matched against every id that means "the caller".** The console's URLs are built by
+   `AdminRootRedirect` from the application user's **database id** — a UUIDv7 `Guid`
+   (`User.cs:11`, e.g. `01a0ba0b-485f-780e-b465-ae11670539e9`) — while `/auth/claims` returns the
+   **Clerk subject** (`ClaimTypes.NameIdentifier ?? "sub"`, i.e. `user_…`). Comparing the segment
+   against only the Clerk subject could never match a real console URL; `useAdminScope` now supplies
+   both ids as `selfUserIds`.
+2. **Everything else falls back.** `AdminRouteGuard` redirects an `unknown` scope to the caller's own
+   console instead of showing a dead-end card, and a resolver that throws (`401`, `403` on the users
+   route, a network failure) resolves to `unknown` for the same reason, so the console can never get
+   stuck on a loader.
+
+`MANAGED_SCOPE_ENABLED` remains `true` so that a future `id`-aware lookup can be wired without
+touching the union, but with the current endpoint no segment can ever resolve to `managed`.
+
+**What this corrects.** An earlier revision shipped `MANAGED_SCOPE_ENABLED = false` with a hard
+"Console scope not available" card and compared only against the Clerk subject. That made
+`/admin/<database-id>/dashboard` — the URL the console itself generates — unusable for its own
+administrator.
 
 ### The `Gate` / `ROLE_POLICIES` overlay
 
@@ -386,6 +410,39 @@ an owner it runs and renders the `PricingRecomputeResult`, so a zero-effect run 
 input plan's *"returns `501`, disable it"* is false — it returns `200`.
 
 The legacy-formula banner is stated on every pricing view and comes from one shared constant.
+
+## A8 — edge cases, a11y, E2E, documentation
+
+**Delivered.**
+
+- **The support handle.** `lib/admin/errors.ts` reads the `traceId` from the API's `500` envelope and
+  from the `X-Request-Id`/`X-Trace-Id` headers. `components/admin/data/states/ErrorState.tsx` renders
+  it **with a copy button**, because the exception itself is never serialised and the `traceId` is
+  the only thing that ties a user-visible failure to a server log line. The dashboard's failed-read
+  card now uses it.
+- **`frontend/web/src/docs/admin-access.md` corrected (Q9).** It previously promised support
+  impersonation, enforced MFA, 15-minute idle expiry and cryptographic append-only logs; none has a
+  backend counterpart. The page now states what is enforced and lists those four explicitly under
+  **"Not implemented — do not rely on these"**, so nobody plans around them.
+- **Deployment requirements recorded** in `docs/deployment.md` §10: the SPA fallback rewrite that
+  stops `/admin/<id>/users` returning `404` on refresh, the two `VITE_GRAFANA_*` variables and their
+  disabled-link behaviour, and the A9 dependency on a non-null `/auth/claims` email.
+- **The coverage ratchet** is written into `vitest.admin-coverage.config.ts` at the value each slice
+  achieved.
+
+**Deferred, and stated rather than implied.**
+
+- **The remaining two conformance rules** (raw `<button>`/`<table>`/`<hr>`, and
+  `space-x-*`/`space-y-*`). The two rules C6 scoped to A3 — raw palette/hex and raw
+  `<select>`/`<input>` — are delivered and **blocking**; these two are not yet enforced, so the tree
+  still contains `space-y-*` layout spacing that rule 4 would flag.
+- **Playwright end-to-end and the axe sweep.** No `e2e/**` harness was added, so "axe zero
+  serious/critical", "every route walked E2E" and the six-viewport overflow measurement are not
+  executed. The geometry invariant is pinned structurally by `AdminShell.dom.test.tsx` (one
+  `.admin-container` wrapping header and content) rather than measured in a browser.
+- **The keyboard walkthrough and the contrast audit** of `text-muted-foreground` were not performed.
+
+These are the honest gaps in this workstream; the plan's A8 row is not fully closed.
 
 ## A9 — the three backend defects unlocked by C7
 

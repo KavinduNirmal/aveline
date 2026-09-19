@@ -4277,3 +4277,77 @@ consumption in the window. The System overview is **22 of 25** with data, the Da
   implementation, then refactored green.
 
 *(End-of-session summary for this work is appended below when the session closes.)*
+
+### Work delivered
+
+Ten GitHub issues were created for the plan's slices — **#325–#334** — and work proceeded on the
+current branch `feature/admin-frontend-ui-v3` with no branch created or switched.
+
+**Slices A0–A6 and A9 are delivered**; A7 (observability) was delegated to a parallel agent and
+verified on landing; A8 is **partially** delivered. Commit history on the branch:
+
+- `965c555` — A0–A3: harness, truthfulness, identity, shell.
+- `1685cc8` — A9: the three backend defects unlocked by C7.
+- A4 (dashboard V1–V11), A5 (core management) and A6 (pricing and Blossom) each committed with
+  their own slice message.
+
+Every slice followed TDD: the failing test was written and observed failing before its
+implementation. Highlights of the defects that are now pinned by a test:
+
+- The fabricated admin session and the two fabricated system fallbacks (a `Healthy` system with
+  `uptimeSeconds: 84200`) — a signed-out visitor previously rendered ten sections against six `401`s.
+- The permission mirror is now checked against `Aveline.Api/Authorization/Permissions.cs` by a
+  **generated** drift test, and the four role policies against `AuthorizationConfiguration.cs`.
+- `revoke` now sends `{ ledgerEntryId, reason }`; the delivered body could not be bound at all.
+- The Blossom `Idempotency-Key` is mandatory and belongs to the payload, so a retry cannot
+  double-apply.
+- Self-approval is keyed on the Clerk subject, not on an email that the captured payload returns as
+  `null` on `/auth/claims` and `""` on every request row.
+- `recompute` is gated on the `pricing:backdate` capability, not on the page's `pricing:manage`.
+
+**A9 (backend, TDD).** `GET /auth/claims` read the raw `email` claim while the JwtBearer pipeline
+maps it to `ClaimTypes.Email`, so every real token got `null`; the three team-only role policies now
+carry their permission requirement alongside the role requirement; and `AcknowledgeAsync` rejects an
+already-`Resolved` alert. `dotnet test` → **1640 passed, 0 failed**.
+
+**Coverage policy (C3).** The tenant surface keeps its exact `80/70/70/80` floor, now expressed as
+glob-scoped thresholds; the admin subtree is measured by its own run (`bun run test:coverage:admin`)
+whose floor started at 0 and ratcheted to **52.1 % lines / 40.4 % branches** by A6.
+
+**Deviations and gaps, stated rather than implied.**
+
+- oxlint 1.79 has no custom-JS-plugin API, so the two blocking conformance rules (raw palette/hex;
+  raw `<select>`/`<input>`) are enforced by `src/test/admin-conformance.test.ts`, which CI runs.
+- The admin-subtree coverage number is produced by a second Vitest config rather than by adding the
+  admin tree to the single global run, because a global number cannot both keep the tenant floor and
+  avoid blocking every admin slice. The tenant floor is untouched.
+- A8's remaining two conformance rules, the Playwright/axe harness, the keyboard walkthrough and the
+  contrast audit were **not** delivered. They are recorded as open in
+  `docs/frontend/admin-console.md`.
+
+### Verification performed
+
+- `bunx vitest run` — 368 tests across 61 files passing before A7; the suite is re-run and reported
+  per slice.
+- `bunx tsc -b` — exit 0.
+- `bunx oxlint src` — 0 errors.
+- `bun run test:coverage` — the tenant gate passes unchanged.
+- `bun run test:coverage:admin` — the ratchet passes.
+- `dotnet test Aveline.Api.Tests` (A9) — 1640 passed.
+- A reviewer reported the console rendering a dead-end "Console scope not available" card for a
+  real administrator's URL. Investigating it produced the most useful finding of the session, in
+  two parts.
+  **(a) Q1 is negative by construction.** `UserRepository.SearchAsync` filters on `Email`,
+  `FirstName`, `LastName`, `Username` and `ClerkId` — there is **no `Id` predicate** — so
+  `GET /admin/users?q=<GUID>` can never return an exact-`id` hit. The probe was never going to
+  succeed. C1 therefore degrades to option (c): `self`-only, the segment as a restatement of the
+  caller.
+  **(b) The URL and the session used different id spaces.** `AdminRootRedirect` builds
+  `/admin/<user.id>` from `GET /users/me`, the **database id** (a UUIDv7 `Guid`), while
+  `/auth/claims` returns the **Clerk subject** (`ClaimTypes.NameIdentifier ?? "sub"`). Comparing the
+  segment against only the latter could never match the console's own URL.
+  Fixed: `resolveAdminScope` matches `self` against every caller id (`selfUserIds`), `useAdminScope`
+  supplies the database id and the Clerk subject, `AdminRouteGuard` redirects an `unknown` scope to
+  the caller's own console rather than dead-ending, and a resolver that throws resolves to
+  `unknown` instead of leaving the console on a loader. Five tests pin it. The GUID version was
+  never the issue: UUIDv7 is a valid UUID and the shape check accepts it.

@@ -24,7 +24,7 @@ import { ForbiddenState } from "./ForbiddenState"
  *    nothing renders an in-shell not-available state, never a guessed user's data.
  */
 export function AdminRouteGuard() {
-  const { status, roles, error, refresh } = useAdminSession()
+  const { status, roles, error, refresh, userId } = useAdminSession()
   const { user } = useUser()
   const scopeState = useAdminScope()
 
@@ -71,6 +71,13 @@ export function AdminRouteGuard() {
   }
 
   if (scopeState.scope.kind === "unknown") {
+    // C1 option (c): a segment that does not resolve to a user becomes a restatement of the
+    // caller rather than a guessed user. Falling back to the caller's own console keeps the
+    // console usable when the resolver is unproven (Q1) or the id simply does not exist, and it
+    // still shows nobody else's data.
+    if (userId !== null) {
+      return <Navigate to={`/admin/${userId}/dashboard`} replace />
+    }
     return (
       <ForbiddenState
         title="Console scope not available"

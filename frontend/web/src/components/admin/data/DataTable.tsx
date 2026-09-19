@@ -75,10 +75,11 @@ export function DataTable<T>({
               aria-sort={column.sortable === true ? ariaSort(column.key) : undefined}
             >
               {column.sortable === true ? (
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={() => onSortChange?.(column.key)}
-                  className="inline-flex items-center gap-1 text-xs font-medium hover:text-foreground"
+                  className="h-auto gap-1 p-0 text-xs font-medium hover:bg-transparent hover:text-foreground"
                 >
                   {column.header}
                   {sort?.key !== column.key ? (
@@ -88,7 +89,7 @@ export function DataTable<T>({
                   ) : (
                     <ArrowDown className="size-3" />
                   )}
-                </button>
+                </Button>
               ) : (
                 column.header
               )}

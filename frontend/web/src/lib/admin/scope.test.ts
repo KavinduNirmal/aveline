@@ -111,9 +111,7 @@ describe('resolveAdminScope', () => {
     ).resolves.toEqual({ kind: 'unknown' })
   })
 
-  it('returns unknown for a non-self id while managed scope is disabled', async () => {
-    // Q1 is unproven (the probe returned 401), so managed scope is off by default and the
-    // segment is a restatement of the caller.
+  it('falls back to unknown (never managed) while managed scope is explicitly disabled', async () => {
     const findUserById = vi.fn()
     await expect(
       resolveAdminScope({
@@ -121,8 +119,54 @@ describe('resolveAdminScope', () => {
         sessionUserId: USER_ID,
         canReadUsers: true,
         findUserById,
+        managedEnabled: false,
       }),
     ).resolves.toEqual({ kind: 'unknown' })
     expect(findUserById).not.toHaveBeenCalled()
+  })
+
+  it('treats the application database id as self, not only the Clerk subject', async () => {
+    // The console's URLs are built from the database id (`User.Id`, a UUIDv7 Guid), while
+    // `/auth/claims` returns the Clerk subject. Comparing only against the subject is why a
+    // caller's own `/admin/<guid>/dashboard` failed to resolve.
+    const findUserById = vi.fn()
+    await expect(
+      resolveAdminScope({
+        segment: USER_ID,
+        sessionUserId: 'user_2abcDEF',
+        selfUserIds: [USER_ID],
+        canReadUsers: true,
+        findUserById,
+      }),
+    ).resolves.toEqual({ kind: 'self', userId: USER_ID })
+    expect(findUserById).not.toHaveBeenCalled()
+  })
+
+  it('still resolves self from the Clerk subject when it appears in the URL', async () => {
+    const findUserById = vi.fn()
+    await expect(
+      resolveAdminScope({
+        segment: 'user_2abcDEF',
+        sessionUserId: 'user_2abcDEF',
+        selfUserIds: [USER_ID],
+        canReadUsers: true,
+        findUserById,
+      }),
+    ).resolves.toEqual({ kind: 'self', userId: 'user_2abcDEF' })
+  })
+
+  it('has managed scope enabled by default, because the guard falls back rather than dead-ends', async () => {
+    // Q1's probe is still unproven, so the resolver cannot be the only thing between an
+    // administrator and their console: `AdminRouteGuard` redirects an `unknown` scope to the
+    // caller's own console (C1 option (c)).
+    const findUserById = vi.fn().mockResolvedValue(user(OTHER_ID))
+    await expect(
+      resolveAdminScope({
+        segment: OTHER_ID,
+        sessionUserId: USER_ID,
+        canReadUsers: true,
+        findUserById,
+      }),
+    ).resolves.toEqual({ kind: 'managed', userId: OTHER_ID, user: user(OTHER_ID) })
   })
 })

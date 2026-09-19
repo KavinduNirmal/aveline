@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { DataQualityNotice } from "@/components/admin/charts/DataQualityNotice"
 import { GrafanaCard } from "@/components/admin/charts/GrafanaCard"
 import { KpiTile } from "@/components/admin/charts/KpiTile"
+import { ErrorState } from "@/components/admin/data/states/ErrorState"
 import {
   agentDataQuality,
   formatMetricValue,
@@ -160,14 +161,11 @@ export function AdminDashboardView() {
 
       {/* V1 — readiness banner. A failed call renders an error, never a fabricated "Healthy". */}
       {overview.kind === "error" ? (
-        <Card className="border-destructive/30 shadow-xs">
-          <CardHeader>
-            <CardTitle className="font-serif text-base">
-              System overview could not be loaded
-            </CardTitle>
-            <CardDescription className="text-xs">{overview.message}</CardDescription>
-          </CardHeader>
-        </Card>
+        <ErrorState
+          error={{ message: overview.message }}
+          title="System overview could not be loaded"
+          onRetry={() => void load()}
+        />
       ) : overview.kind === "loading" ? (
         <Card className="border-border shadow-xs">
           <CardContent className="p-4 text-xs text-muted-foreground">

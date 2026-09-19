@@ -7,6 +7,7 @@ import { AdminRouteGuard } from './AdminRouteGuard'
 const session = {
   status: 'ready' as 'idle' | 'loading' | 'ready' | 'error' | 'forbidden',
   roles: ['owner'] as string[],
+  userId: 'u1' as string | null,
   error: null as string | null,
   can: () => true,
   refresh: vi.fn(),
@@ -30,6 +31,7 @@ function renderGuard() {
         <Route element={<AdminRouteGuard />}>
           <Route path="/" element={<div>SECRET_SECTION</div>} />
         </Route>
+        <Route path="/admin/:userId/dashboard" element={<div>OWN_CONSOLE</div>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -64,12 +66,28 @@ describe('AdminRouteGuard', () => {
     expect(screen.queryByText('SECRET_SECTION')).toBeNull()
   })
 
-  it('does not render the section for an out-of-scope segment', () => {
+  it('falls back to the caller’s own console for an unresolvable segment, never a dead end', () => {
+    // C1 option (c): when the `{user_Id}` segment does not resolve to a user, it becomes a
+    // restatement of the caller. The delivered behaviour showed a dead-end card, which made the
+    // console unusable the moment the resolver could not confirm the id.
     session.status = 'ready'
     session.roles = ['owner']
+    session.userId = 'u1'
     scopeState.scope = { kind: 'unknown' }
     renderGuard()
     expect(screen.queryByText('SECRET_SECTION')).toBeNull()
+    expect(screen.getByText('OWN_CONSOLE')).toBeInTheDocument()
+  })
+
+  it('renders a stated refusal for an unresolvable segment when there is no session id', () => {
+    session.status = 'ready'
+    session.roles = ['owner']
+    session.userId = null
+    scopeState.scope = { kind: 'unknown' }
+    renderGuard()
+    expect(screen.queryByText('SECRET_SECTION')).toBeNull()
+    expect(screen.getByText(/scope not available/i)).toBeInTheDocument()
+    session.userId = 'u1'
   })
 
   it('refuses an out-of-scope caller', () => {

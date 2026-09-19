@@ -293,3 +293,47 @@ deployment:
 
 `postgres_exporter` is internal only — no host port — and runs as a dedicated `pg_monitor` role with
 no application-table access. Grafana is operator-only; the admin console does not embed it (D3).
+
+---
+
+## 10. Administrator console — deployment requirements
+
+The console is served by the same SPA as the tenant dashboard, so it inherits every host decision
+above. Two requirements are specific to it and neither can be satisfied from the repository, because
+no production host configuration is committed.
+
+### 10.1 SPA fallback rewrite for deep links
+
+Every console route is a client-side path under `/admin/:userId/*`. A static host must rewrite an
+unmatched path to `index.html`, or a refresh on `/admin/<id>/users` returns a `404`. The Vite dev
+server does this automatically; a production host does not. Required rule (exact syntax depends on
+the host):
+
+```
+/*  →  /index.html   (200)
+```
+
+This applies to the tenant app too (`/app/b/:slug`), so the rewrite is not console-specific — but the
+console makes it visible, because its URLs are the ones an operator bookmarks and shares.
+
+### 10.2 Grafana deep links
+
+The console links out to Grafana; it never embeds it. Two environment variables must be set at build
+time for the links to resolve, and both are inert when unset:
+
+| Variable | Value | Behaviour when unset |
+|---|---|---|
+| `VITE_GRAFANA_ENABLED` | `true` to enable links | every link renders **disabled** with *"Grafana is not configured for this environment"* |
+| `VITE_GRAFANA_BASE_URL` | e.g. `https://grafana.aveline.internal` | as above; the base is **never hard-coded**, because the compose port is DEV ONLY and no production route exists in the repository |
+
+The four dashboard UIDs the console links to (`aveline-overview`, `aveline-business`,
+`aveline-database`, `aveline-notifications`) are the **provisioned** UIDs from
+`observability/grafana/dashboards/*.json`, so they survive re-provisioning.
+
+### 10.3 The console depends on one backend fix
+
+`GET /api/v1/auth/claims` must return a non-null `email`. Before slice A9 it returned `email: null`
+for every real bearer token because the JwtBearer pipeline maps the claim to `ClaimTypes.Email`
+while the endpoint read the raw name. A deployment pinned to an API build older than that fix will
+show blank operator identities and will not be able to key self-approval on email (the console keys
+it on the Clerk subject, so approval still behaves correctly).

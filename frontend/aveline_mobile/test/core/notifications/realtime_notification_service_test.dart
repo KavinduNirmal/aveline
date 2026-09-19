@@ -31,6 +31,12 @@ class FakeRealtimeConnection implements RealtimeConnection {
     stopped = true;
   }
 
+  @override
+  void onReconnected(void Function() handler) {}
+
+  @override
+  void onClosed(void Function(Object? error) handler) {}
+
   void emit(String method, List<Object?>? args) => handlers[method]?.call(args);
 }
 

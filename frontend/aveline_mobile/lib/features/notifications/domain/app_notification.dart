@@ -60,6 +60,24 @@ class AppNotification {
     return id == null || id.isEmpty ? null : id;
   }
 
+  /// The thread this notification is about, when it carries one.
+  ///
+  /// A notification about a thread addresses the conversation, not the client: the thread may
+  /// be one whose client is not identified yet.
+  String? get conversationId {
+    final id = data['conversationId'];
+    return id == null || id.isEmpty ? null : id;
+  }
+
+  /// The message the notification was about, so the thread can open on it.
+  String? get messageId {
+    final id = data['messageId'];
+    return id == null || id.isEmpty ? null : id;
+  }
+
+  /// Whether tapping this notification has anywhere to go.
+  bool get isOpenable => customerId != null || conversationId != null;
+
   factory AppNotification.fromJson(Map<String, dynamic> json) {
     return AppNotification(
       id: json['id']?.toString() ?? '',

@@ -213,4 +213,58 @@ void main() {
       );
     });
   });
+
+  group('ApiConversationRepository.fetchConversation', () {
+    test('reads one thread by id', () async {
+      final api = _api(
+        jsonEncode({
+          'id': 'cnv_1',
+          'kind': 'Salon',
+          'customerId': 'cus_204',
+          'customerName': 'Nadeesha Perera',
+          'threadId': 'thread_204',
+          'status': 'Active',
+        }),
+      );
+
+      final conversation = await api.repository.fetchConversation('cnv_1');
+
+      expect(
+        api.adapter.requests.single.path,
+        '/api/v1/orgs/org_7/conversations/cnv_1',
+      );
+      expect(conversation, isNotNull);
+      expect(conversation!.customerName, 'Nadeesha Perera');
+      expect(conversation.title, 'Nadeesha Perera');
+    });
+
+    test('a thread the caller may not see is null, not a failure', () async {
+      // A notification about a thread that has gone, or one this caller cannot see, is the
+      // screen's own not-found state rather than an error card about the network.
+      final forbidden = _api('{"message":"nope"}', statusCode: 403);
+      final missing = _api('{"message":"gone"}', statusCode: 404);
+
+      expect(await forbidden.repository.fetchConversation('cnv_1'), isNull);
+      expect(await missing.repository.fetchConversation('cnv_1'), isNull);
+    });
+
+    test('a server failure still propagates', () async {
+      final api = _api('{"message":"boom"}', statusCode: 500);
+
+      expect(
+        api.repository.fetchConversation('cnv_1'),
+        throwsA(isA<DioException>()),
+      );
+    });
+
+    test('a missing organization id is a "not yet"', () async {
+      final api = _api('{}', organizationId: null);
+
+      expect(
+        api.repository.fetchConversation('cnv_1'),
+        throwsA(isA<OrgContextUnavailable>()),
+      );
+      expect(api.adapter.requests, isEmpty);
+    });
+  });
 }

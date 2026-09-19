@@ -42,6 +42,8 @@ public class ConversationTileMapperTests
     [InlineData("""{"type":"courier","carrier":"Pronto","status":"in transit"}""", "courier", "Pronto \u00b7 in transit")]
     [InlineData("""{"type":"sign_off","reason":"discount","amount":48000}""", "sign_off", "Approval needed")]
     [InlineData("""{"type":"choice","prompt":"Which one did you mean?","options":[]}""", "choice", "Which one did you mean?")]
+    [InlineData("""{"type":"attachment","attachmentId":"a1","fileName":"photo.png","contentType":"image/png","sizeBytes":2048}""", "attachment", "photo.png")]
+    [InlineData("""{"type":"attachment","attachmentId":"a2","contentType":"application/pdf"}""", "attachment", "Attachment")]
     public void BuildPreview_MapsEachBlockType(string block, string expectedBlock, string expectedPreview)
     {
         var (preview, type) = ConversationTileMapper.BuildPreview(MessageWith(Blocks(block)));

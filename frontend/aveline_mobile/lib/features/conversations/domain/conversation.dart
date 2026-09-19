@@ -190,12 +190,15 @@ class Conversation {
   bool get needsSignOff => status == ConversationStatus.awaitingSignOff;
 
   /// The thread's name: the concierge's, the client's, or a stand-in.
+  ///
+  /// A channel thread whose customer is not identified yet has no `customerName`, so it
+  /// prints the handle it was opened from (`externalRef`) rather than a bare "Client": the
+  /// associate can see who wrote, and resolving the thread with a `choice` block replaces
+  /// the stand-in with the real name.
   String get title => switch (kind) {
     ConversationKind.aveline => avelineTitle,
     ConversationKind.customer =>
-      customerName == null || customerName!.isEmpty
-          ? unnamedClientTitle
-          : customerName!,
+      _nonEmpty(customerName) ?? _nonEmpty(externalRef) ?? unnamedClientTitle,
     ConversationKind.system => 'Announcement',
   };
 

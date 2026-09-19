@@ -1,3 +1,4 @@
+import '../domain/conversation.dart';
 import 'conversation_repository.dart';
 
 /// An inbox with nothing in it, used wherever no real source has been injected.
@@ -12,4 +13,7 @@ class EmptyConversationRepository implements ConversationRepository {
   @override
   Future<ConversationPage> fetchConversations({int page = 1}) async =>
       ConversationPage.empty;
+
+  @override
+  Future<Conversation?> fetchConversation(String id) async => null;
 }

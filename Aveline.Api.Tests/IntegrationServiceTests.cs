@@ -41,6 +41,9 @@ public class IntegrationServiceTests
 
     private sealed class FakeWhatsAppService : IWhatsAppService
     {
+        public Task<WhatsAppMediaResult> GetMediaAsync(string accessToken, string mediaId, CancellationToken cancellationToken = default)
+            => Task.FromResult(new WhatsAppMediaResult(IsSuccess: false, Error: "not used in this test"));
+
         public bool Valid { get; set; } = true;
 
         public Task<WhatsAppTestResult> TestConnectionAsync(

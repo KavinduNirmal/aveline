@@ -1,7 +1,10 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 
 import '../../../../shared/utils/date_formatter.dart';
 import '../../domain/thread_message.dart';
+import 'thread_blocks.dart';
 
 /// One message in a thread with a client.
 ///
@@ -13,7 +16,9 @@ import '../../domain/thread_message.dart';
 ///   filled bubble wearing its delivery tick. A note that never left the shop is
 ///   tinted, labelled `NOT SENT` and carries no tick. A reply an agent staged is
 ///   labelled `AWAITING APPROVAL` and carries its own decision, right where the
-///   message will sit once it goes out.
+///   message will sit once it goes out. A `SignOff` is classified by **kind
+///   first**, so an approved one reads `APPROVED` rather than the note label it
+///   would otherwise wear for being `Published`.
 ///
 /// The distinction matters more here than in a chat between two people: this
 /// thread is the shop's record of what it told a client, and a note read as a sent
@@ -22,12 +27,23 @@ class ThreadMessageBubble extends StatelessWidget {
   const ThreadMessageBubble({
     super.key,
     required this.message,
+    this.quotedParent,
     this.onRetry,
     this.onApproveDraft,
     this.onDismissDraft,
+    this.onRevoke,
+    this.onSelectCustomer,
+    this.loadAttachment,
+    this.openAttachment,
   });
 
   final ThreadMessage message;
+
+  /// The message this one replies to, when it is in the window.
+  ///
+  /// A parent outside the window is omitted rather than fetched: a quoted line is
+  /// tappable context, not a second read.
+  final ThreadMessage? quotedParent;
 
   /// Tries a message this device failed to send.
   final VoidCallback? onRetry;
@@ -38,11 +54,28 @@ class ThreadMessageBubble extends StatelessWidget {
   /// Drops a staged draft without sending it.
   final VoidCallback? onDismissDraft;
 
+  /// Returns an approved SignOff to the associate's queue. Shown only when the
+  /// caller has the approval permission.
+  final VoidCallback? onRevoke;
+
+  /// Resolves a `choice` option's client.
+  final void Function(ThreadBlock block, Map<String, dynamic> option)?
+  onSelectCustomer;
+
+  /// Fetches an attachment's bytes through the authenticated client.
+  final Future<Uint8List> Function(String attachmentId)? loadAttachment;
+
+  /// Opens a document through the platform viewer.
+  final Future<void> Function(Uint8List bytes, String fileName)? openAttachment;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final staged = message.needsSignOff;
+    final approved = message.isApprovedSignOff;
+    // A dismissed message is one the associate dropped, whatever its kind: the seeded draft a
+    // decision cancels is a `Note`, and it must still read DISMISSED rather than vanish.
     final dismissed = message.status == MessageStatus.cancelled;
     final note = message.isInternalNote;
 
@@ -53,6 +86,16 @@ class ThreadMessageBubble extends StatelessWidget {
       bottomRight: Radius.circular(message.isFromClient ? 16 : 6),
     );
 
+    final overline = _overline(staged: staged, approved: approved, dismissed: dismissed, note: note);
+
+    // A block-only message must never be empty: the `sign_off` block's own words stand in
+    // for missing text, and a message with neither falls back to a plain label below.
+    final body = message.text.isNotEmpty
+        ? message.text
+        : (message.signOffBlock != null
+              ? threadBlockSummary(message.signOffBlock!)
+              : '');
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Column(
@@ -60,18 +103,17 @@ class ThreadMessageBubble extends StatelessWidget {
             ? CrossAxisAlignment.start
             : CrossAxisAlignment.end,
         children: [
-          if (note || staged || dismissed) ...[
+          if (quotedParent != null) ...[
+            _QuoteLine(
+              key: ValueKey('thread_quote_${message.id}'),
+              parent: quotedParent!,
+            ),
+            const SizedBox(height: 3),
+          ],
+          if (overline != null) ...[
             _Overline(
-              key: note
-                  ? ValueKey('thread_note_${message.id}')
-                  : staged
-                  ? ValueKey('thread_draft_${message.id}')
-                  : ValueKey('thread_dismissed_${message.id}'),
-              label: note
-                  ? 'NOTE · NOT SENT'
-                  : staged
-                  ? 'AWAITING APPROVAL'
-                  : 'DISMISSED',
+              key: ValueKey(overline.$2),
+              label: overline.$1,
               color: note ? _noteInk(scheme) : scheme.primary,
             ),
             const SizedBox(height: 3),
@@ -94,7 +136,7 @@ class ThreadMessageBubble extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: _fill(scheme, note: note, dismissed: dismissed),
                     borderRadius: radius,
-                    border: message.isFromClient || note
+                    border: message.isFromClient || note || dismissed
                         ? Border.all(
                             color: note
                                 ? _noteInk(scheme).withValues(alpha: 0.35)
@@ -102,15 +144,39 @@ class ThreadMessageBubble extends StatelessWidget {
                           )
                         : null,
                   ),
-                  child: Text(
-                    message.text,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: message.isFromClient
-                          ? scheme.onSurface
-                          : note || dismissed
-                          ? scheme.onSurfaceVariant
-                          : scheme.onPrimary,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (message.clientMessageFrom != null) ...[
+                        Text(
+                          message.clientMessageFrom!,
+                          key: ValueKey('thread_client_handle_${message.id}'),
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                            fontSize: 10,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                      ],
+                      if (body.isNotEmpty || message.bodyBlocks.isEmpty)
+                        Text(
+                          body.isEmpty ? 'Update' : body,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: message.isFromClient
+                                ? scheme.onSurface
+                                : note || dismissed
+                                ? scheme.onSurfaceVariant
+                                : scheme.onPrimary,
+                          ),
+                        ),
+                      ThreadMessageBlocks(
+                        message: message,
+                        onSelectCustomer: onSelectCustomer,
+                        loadAttachment: loadAttachment,
+                        openAttachment: openAttachment,
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -123,6 +189,9 @@ class ThreadMessageBubble extends StatelessWidget {
               onApprove: onApproveDraft,
               onDismiss: onDismissDraft,
             ),
+          ] else if (approved && onRevoke != null) ...[
+            const SizedBox(height: 4),
+            _RevokeAction(messageId: message.id, onRevoke: onRevoke!),
           ] else ...[
             const SizedBox(height: 2),
             _Footer(message: message, onRetry: onRetry),
@@ -130,6 +199,41 @@ class ThreadMessageBubble extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// The bubble's overline: the label and the widget key it wears.
+  ///
+  /// The order is deliberate. A `SignOff` is drawn by its kind before its status, so an
+  /// approved one is `APPROVED` and not the `NOTE · NOT SENT` its `Published` status would
+  /// otherwise earn; a dismissed one is `DISMISSED`; a staged one is `AWAITING APPROVAL`; and
+  /// only everything else that is `Published` and not the client's is a note.
+  (String, String)? _overline({
+    required bool staged,
+    required bool approved,
+    required bool dismissed,
+    required bool note,
+  }) {
+    if (message.kind == MessageKind.signOff) {
+      if (staged) {
+        return ('AWAITING APPROVAL', 'thread_draft_${message.id}');
+      }
+      if (approved) {
+        return ('APPROVED', 'thread_approved_${message.id}');
+      }
+      if (dismissed) {
+        return ('DISMISSED', 'thread_dismissed_${message.id}');
+      }
+    }
+    if (staged) {
+      return ('AWAITING APPROVAL', 'thread_draft_${message.id}');
+    }
+    if (note) {
+      return ('NOTE · NOT SENT', 'thread_note_${message.id}');
+    }
+    if (dismissed) {
+      return ('DISMISSED', 'thread_dismissed_${message.id}');
+    }
+    return null;
   }
 
   /// The bubble's fill: the client's is paper, the boutique's is the brand, and a
@@ -171,6 +275,57 @@ class _Overline extends StatelessWidget {
   }
 }
 
+/// One line of the message a reply answers.
+class _QuoteLine extends StatelessWidget {
+  const _QuoteLine({super.key, required this.parent});
+
+  final ThreadMessage parent;
+
+  /// Who the parent is from, in the words the thread uses for them.
+  String get _who => switch (parent.author) {
+    MessageAuthor.client => parent.clientMessageFrom ?? 'Client',
+    MessageAuthor.staff => 'You',
+    MessageAuthor.agent =>
+      parent.agentKey == null || parent.agentKey!.isEmpty
+          ? 'Aveline'
+          : '${parent.agentKey![0].toUpperCase()}${parent.agentKey!.substring(1)}',
+    MessageAuthor.system => 'Client',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final words = parent.text.isNotEmpty
+        ? parent.text
+        : (parent.blocks.isEmpty
+              ? 'A message'
+              : threadBlockSummary(parent.blocks.first));
+
+    return Container(
+      constraints: BoxConstraints(
+        maxWidth: MediaQuery.of(context).size.width * 0.78,
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainer,
+        borderRadius: BorderRadius.circular(8),
+        border: Border(
+          left: BorderSide(color: scheme.primary.withValues(alpha: 0.5), width: 2),
+        ),
+      ),
+      child: Text(
+        '$_who: $words',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
+      ),
+    );
+  }
+}
+
 /// The decision a staged reply is waiting on, attached to the reply itself.
 class _DraftActions extends StatelessWidget {
   const _DraftActions({
@@ -205,6 +360,26 @@ class _DraftActions extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// The way back from an approval, for a supervisor.
+class _RevokeAction extends StatelessWidget {
+  const _RevokeAction({required this.messageId, required this.onRevoke});
+
+  final String messageId;
+  final VoidCallback onRevoke;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 2),
+      child: TextButton(
+        key: ValueKey('thread_revoke_$messageId'),
+        onPressed: onRevoke,
+        child: const Text('Revoke'),
       ),
     );
   }
@@ -256,8 +431,11 @@ class _Footer extends StatelessWidget {
       );
     }
 
-    // A note went nowhere, so it has no delivery to report.
-    final showTick = message.isFromBoutique && !message.isInternalNote;
+    // A tick is a delivery claim, so it is drawn only for a status that claims delivery:
+    // a note went nowhere, and an approved SignOff is a decision rather than a delivery.
+    final showTick =
+        message.isFromBoutique &&
+        (message.status == MessageStatus.sent || message.isDelivered);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 6),

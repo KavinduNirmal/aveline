@@ -3400,3 +3400,292 @@ carries today" and "Known gaps", `docs/architecture/inbox.md` (§5.2, §6.2, §6
   identifiers are left for central allocation at merge.
 - Nothing was committed; all changes are in the working tree on
   `feature/flutter-to-backend-conversations-inbox`.
+
+## Session 2026-09-19
+
+**Task:** Implement the Flutter-to-backend **client threads** feature (plan slices T0-T11) on branch
+`feature/flutter-to-backend-conversation-threads`
+**Tool used:** DeepSeek Harness (deepseek-flash) AI coding agent
+**Status:** In progress (session start)
+
+### Intended Work (session start)
+
+- Execute the final, frozen plan in
+  `.agents/plans/flutter-to-backend-client-thread-implementation.ignore.md`, which is the executable form
+  of strategy revision 3 (`...-implementation-strategy.md`, D1-D8 all decided: D1 = B briefing renderer,
+  D2 = A note-to-record with outbound deferred, D3 = A `clientMessageId` idempotency, D4 = A hardened
+  realtime on `salon:{id}`, D5 = B thread-owned read state, D6 = hardened offset paging with `around`
+  deferred to the deep-link, D7 = A + supervisor revoke, D8 = attachments and images in scope both
+  directions).
+- TDD is mandatory: a failing test first, then implementation, then refactor, per slice.
+- One GitHub issue per phase (T0-T11), on the current branch; **no branch is created or switched**.
+- After each delivered phase, update general docs, API docs and `docs/api/openapi.yaml`.
+- Prerequisites already landed at HEAD `225a83c`: the inbox plan S0-S5 (the `ConversationDto` row fields,
+  the `customerId`-first classifier, the `externalRef` disclosure, the `AwaitingSignOff` write path, the
+  lazy-org-id wiring pattern, and the inbox realtime work).
+
+### GitHub Issues Created (session start)
+
+| Slice | Issue |
+|---|---|
+| T0 - thread truthfulness (client-only) | [#291](https://github.com/KavinduNirmal/aveline/issues/291) |
+| T1 - the message-history contract (backend) | [#292](https://github.com/KavinduNirmal/aveline/issues/292) |
+| T2 - wire `ApiThreadRepository` into the app | [#293](https://github.com/KavinduNirmal/aveline/issues/293) |
+| T3 - the thread tells the truth (block renderer) | [#294](https://github.com/KavinduNirmal/aveline/issues/294) |
+| T4 - realtime hardening and thread subscription | [#295](https://github.com/KavinduNirmal/aveline/issues/295) |
+| T5 - conversation read state | [#296](https://github.com/KavinduNirmal/aveline/issues/296) |
+| T6 - sign-off authorization and supervisor revoke | [#297](https://github.com/KavinduNirmal/aveline/issues/297) |
+| T7 - history depth and notification deep-link | [#298](https://github.com/KavinduNirmal/aveline/issues/298) |
+| T8 - thread metrics and documentation | [#299](https://github.com/KavinduNirmal/aveline/issues/299) |
+| T9 - attachments, staff side | [#300](https://github.com/KavinduNirmal/aveline/issues/300) |
+| T10 - attachments, customer side | [#301](https://github.com/KavinduNirmal/aveline/issues/301) |
+| T11 - Cloudinary adapter (recorded, not built) | [#302](https://github.com/KavinduNirmal/aveline/issues/302) |
+
+### Verification Performed (session start)
+
+- `git branch --show-current` -> `feature/flutter-to-backend-conversation-threads`; HEAD `225a83c`
+  ("feat(conversations): wire the Messages inbox to the backend (S0-S5)"). No branch created or switched.
+- `git status --short` -> only `android/gradle.properties`, the untracked `.agents/plans/` and report
+  artifacts are dirty; no source edits before this log entry.
+
+### Session end — what was delivered
+
+**T0 — thread truthfulness (client).** Added `EmptyThreadRepository` (serves
+`ThreadPage.empty`, refuses a send/decision with a readable `StateError`);
+`ConversationsScreen.threadRepository` falls back to it; `ClientThreadScreen.repository`
+became **required**; deleted `demo_thread_repository.dart` and its contract test, moving the
+seed into the widget test as explicit fakes (`_SeedThread`, `_StubThread`, `_DelayedThread`,
+`_FailingThread`); the latency-driven loading tests now use a `Completer` instead of a timer.
+Also fixed a real flake: the day-separator test pinned a UTC instant while `relativeDay`
+compares local calendar days, so it failed whenever the local date was ahead.
+
+**T1 — the message-history contract (backend).** `ThenBy(m => m.Id)` and the index
+`(ConversationId, CreatedAt, Id)` (migration `AddMessageHistoryIndex`, index only); the
+invisible-conversation `404` instead of the global 500; `clientMessageId` end to end
+(`SendMessageRequest`, `Message.ClientMessageId`, the filtered unique index, migration
+`AddMessageClientMessageId`, get-before-insert with a unique-violation re-read, replay `200`,
+conflict `409 code: message-idempotency-conflict`, agent-once). The two migrations were split
+by temporarily stubbing the model so each carries only its own change.
+
+**T2 — wire the thread (client).** `ApiThreadRepository` takes a late-bound
+`String? Function()` and raises the shared `OrgContextUnavailable`; constructed once in
+`app.dart` and passed at the route; the last page is computed from the **echoed** `pageSize`;
+UUID-shape validation before every path segment; the §4.6 error mapping (401/403/404/409/429
+plus the server's `{message}`); the header's `externalRef` stand-in.
+
+**T3 — the thread tells the truth (client).** `ThreadMessage` carries the ordered
+`ThreadBlock` list, the `client_message` text and channel handle, and the `clientMessageId`;
+`isInternalNote` excludes a `SignOff` (kind-first classification); the new `thread_blocks.dart`
+renderer (`suggestion` + copy, `choice` + options, one-line fallback for every other block);
+the quoted-parent line; `decideSignOff` reconciles the server's own status (fixing a latent
+duplicate-row bug in the old `_restore` path); `selectCustomer` on the contract; one UUIDv4
+send key reused by every retry; `MessageDto` now echoes `clientMessageId` and exposes
+`workflowRunId`. D2 is pinned by a test: a staff note still reads `NOTE · NOT SENT`.
+
+**T4 — the thread goes live (client).** `RealtimeConnection` gained
+`onReconnected`/`onClosed`; `ConversationRealtimeService` registers `ReceiveMessage`
+unconditionally, keeps listener **sets**, hands over the raw payload (so `core` no longer
+imports the Salon's model), re-joins `salon:{id}` after a reconnect, surfaces a join failure
+and validates both ids as UUIDs; `AgentStatePayload.tryFromJson` drops a malformed payload.
+The screen subscribes on `initState` and disconnects on `dispose`; `receive` dedupes by server
+id, adopts the in-flight optimistic row by `clientMessageId`, inserts older messages in
+`(createdAt, id)` order, replaces a delivery status in place and ignores `local_*` ids; an
+activity strip says only working/searching/tool-use, credited to the persona.
+
+**T5 — read state (backend + client).** `ConversationReadState` +
+`ConversationReadStateRepository` (upsert by the natural key) + migration
+`AddConversationReadStates`; `MarkReadAsync` returns `Recorded | Ignored | ConversationNotFound
+| MessageNotFound` with a monotonic `(CreatedAt, Id)` marker; `PATCH …/read` under
+`BoutiqueConversationAccessPolicy`; the client's `markRead` advances on open, after a send and
+on a newer arrival, never with a `local_*` id, and swallows a refusal.
+
+**T6 — sign-off authorization and supervisor revoke (backend + client).**
+`BoutiqueConversationApproval` = active membership + `approvals:approve`, applied on top of the
+group policy on decide **and** revoke, so a plain `Staff` member gets `403`;
+`SignOffDecision.Kind` replaces the `Approved` bool (migration `AddSignOffDecisionKind` adds,
+**backfills**, then drops); `RevokeSignOffAsync` appends a `revoked` row, returns both statuses
+to `AwaitingSignOff` and touches no workflow; the client only draws **Revoke** for a membership
+holding the permission.
+**Bug found and fixed:** `DecideSignOffAsync` re-inserted a loaded `Message` through
+`SaveAsync` (which `Add`s), so the first real decide through the repository answered `500` with
+a duplicate primary key. Decide and revoke now write via `UpdateAsync`, pinned by the new
+integration test.
+
+**T8 (partial) — metrics and documentation.** The statistics catalog records the thread-only
+metrics by name and formula with no `S-n`; OpenAPI documents every new field and route
+(115 paths); domain-model §8.9–§8.11 and the feature README carry the contracts.
+
+### GitHub Issues
+
+| Slice | Issue | State |
+|---|---|---|
+| T0 | [#291](https://github.com/KavinduNirmal/aveline/issues/291) | closed |
+| T1 | [#292](https://github.com/KavinduNirmal/aveline/issues/292) | closed |
+| T2 | [#293](https://github.com/KavinduNirmal/aveline/issues/293) | closed |
+| T3 | [#294](https://github.com/KavinduNirmal/aveline/issues/294) | closed |
+| T4 | [#295](https://github.com/KavinduNirmal/aveline/issues/295) | closed |
+| T5 | [#296](https://github.com/KavinduNirmal/aveline/issues/296) | closed |
+| T6 | [#297](https://github.com/KavinduNirmal/aveline/issues/297) | closed |
+| T7 | [#298](https://github.com/KavinduNirmal/aveline/issues/298) | open — conditional on the notification deep-link, which is not wired |
+| T8 | [#299](https://github.com/KavinduNirmal/aveline/issues/299) | open — delivered for T0–T6; the attachment documentation trails T9/T10 |
+| T9 | [#300](https://github.com/KavinduNirmal/aveline/issues/300) | open — not started |
+| T10 | [#301](https://github.com/KavinduNirmal/aveline/issues/301) | open — not started |
+| T11 | [#302](https://github.com/KavinduNirmal/aveline/issues/302) | closed as recorded; deliberately not built |
+
+### Verification Performed
+
+- `dotnet test Aveline.Api/Aveline.Api.sln -c Release`: **1410 passed, 0 failed** (6 m 23 s),
+  after **1403** at T5 and **1392** at T1.
+- `flutter analyze --no-fatal-infos`: **No issues found!**
+- `flutter test`: **931 passed, 0 failed** (174 conversations tests at T2, 203 at T3, 916 at T4,
+  923 at T5, 931 at T6).
+- `docs/api/openapi.yaml` re-parsed as YAML after every addition (now 115 paths).
+- `git branch --show-current` → `feature/flutter-to-backend-conversation-threads` throughout;
+  **no branch was created or switched**, per the instruction.
+
+### Remaining Work / Known Deviations
+
+- **T9 (attachments, staff side), T10 (inbound customer media) and the rest of T8 are not
+  delivered.** T9 was not begun rather than left half-built: an upload route with no composer
+  affordance would not make the screen strictly better, which is the plan's own merge rule.
+  The prerequisites are recorded on the issues, and the `attachment` switch arm in
+  `thread_blocks.dart` is marked so T9 can add it without restructuring.
+- **T7** waits on the notification deep-link (`Notification.Data` carrying
+  `{conversationId, messageId}`), which is outside this plan; OpenAPI documents `around` as
+  reserved-not-consumed.
+- **Two latent defects were found by the new tests and fixed**, and are worth recording:
+  `DecideSignOffAsync`'s duplicate-key insert (above), and the duplicate optimistic draft row
+  left by `ClientThreadController._restore` on a refused decision.
+- Nothing was committed; all changes are in the working tree on
+  `feature/flutter-to-backend-conversation-threads`.
+
+## Session 2026-09-19 (continued — goal round 1)
+
+**Task:** the same client-threads objective, continued: T9 (attachments, staff side), T10
+(inbound WhatsApp media), T7 (history depth and deep-link), and the rest of T8.
+
+### T9 — attachments, staff side (delivered except one detail)
+
+- **Policy promoted.** `Modules/VisualIntelligence/ImageContentTypes` became
+  `Common/Media/MediaContentTypes`, extended with `application/pdf`, and split into an
+  image-only rule for the catalog (`NormalizeImage`, whose behaviour is unchanged) and an
+  allow-list for attachments (`IsAllowed`, `Resolve`, `SafeServe`). The catalog and
+  `InventoryService` were rewired to it and the old file deleted.
+- **Storage behind a boundary.** `IAttachmentStore` (`StoreAsync`, `OpenReadAsync`,
+  `DeleteAsync`) with `DatabaseAttachmentStore` (bytes in a `bytea` row, key = the row id,
+  url = the authenticated conversations route). `MessageAttachment` +
+  `MessageAttachmentConfiguration` + `DbSet` + migration `AddMessageAttachments`, with the
+  `StorageProvider`/`StorageKey`/`Url` columns that keep a Cloudinary adapter a drop-in.
+- **Routes.** `POST …/attachments` (multipart or base64/`data:`-URL JSON) and the
+  authenticated `GET …/attachments/{id}`, both under `BoutiqueConversationAccessPolicy`;
+  5 MB per file, 5 per message, `nosniff`, and a refused upload never stored.
+- **Binding.** `SendMessageRequest.AttachmentIds`; the send resolves and validates them
+  **before** the insert (a bad id fails the whole send with 400), binds them after, and stores
+  the `attachment` blocks **with** the message, so a re-list and an idempotent replay both
+  carry them. The replay comparison moved from the whole block array to the note's own words,
+  so a retry that names the same text alongside its attachments replays rather than conflicts.
+- **Sweep.** `AttachmentSweepJob` (24 h TTL, hourly) tells the store first, then deletes the
+  rows.
+- **Client.** `uploadAttachment`/`fetchAttachmentBytes` (authenticated `Dio` + an
+  `attachmentId`-keyed cache), the controller's pending tray (per-file upload, remove, retry;
+  a failed upload holds the send rather than being silently dropped), the composer's paperclip
+  with a gallery/camera sheet, `image_picker` + iOS usage descriptions, client-side re-encode
+  under the cap, the image thumbnail → full-screen `InteractiveViewer`, and the document chip.
+- **Additive surfaces.** The web `BlockRenderer` gained `attachment`, and
+  `ConversationTileMapper` previews one by its file name.
+- **Not met:** a PDF does not open through the platform viewer (needs a temp file plus an OS
+  viewer dependency), so the chip is inert and shows the name and size. Issue #300 left open
+  for that reason.
+
+### T10 — attachments, customer side (delivered)
+
+`ExtractMessage` no longer filters to `type == "text"`: it returns a media descriptor
+`{id, mime_type, sha256, caption?}` with the caption as the client's words, so an image with no
+caption is recorded instead of `{status: "ignored"}`. `IWhatsAppService.GetMediaAsync` performs
+Meta's two-step fetch (resolve, then download) with the bearer on both hops; the webhook gets
+the tenant's credentials from `IIntegrationService`, stores the bytes through `IAttachmentStore`
+(`StoreInboundAttachmentAsync`, no uploader), keeps the caption in the `client_message` block,
+appends an `attachment` block, and publishes `message.received` carrying the `attachmentId`.
+Every failure path — missing integration, expired URL, failed download, type off the allow-list
+— logs and skips, so the caption is still recorded and the webhook still answers 200.
+
+### T7 — history depth and deep-link (two of three items delivered)
+
+The `around` contract was fixed rather than documented around: the repository counts the rows
+strictly before the anchor under the same `(CreatedAt, Id)` order, serves the **page that holds
+it**, and the endpoint echoes the served page, so `hasEarlier`/`hasMore` follow from the
+response — the old half-page window could not express either. The client consumes it end to end
+(`fetchMessages(around:)` → query parameter, `ClientThreadController.load(around:)`,
+`ClientThreadScreen.aroundMessageId`), and `ThreadDeepLink.fromNotificationData` reads
+`{conversationId, messageId}` out of `Notification.Data`. **Not met:** opening *from* a
+notification, because the shell has no notification-tap handler to hand the link to; issue #298
+left open with the seam in place and tested.
+
+### T8 — metrics and documentation (completed)
+
+The statistics catalog, the OpenAPI document (117 paths), the domain model (§8.9–§8.12), the
+inbox architecture note and the feature README now describe what shipped. The acceptance check
+was run mechanically: no document claims unread state ships on the inbox side, cites
+`ConversationKind.Customer` (only the note that it does not exist), describes the thread as
+plain-text-only, or calls attachments out of scope.
+
+### Verification Performed (round 1)
+
+- `dotnet test Aveline.Api/Aveline.Api.sln -c Release`: **1453 passed, 0 failed** (was 1410).
+- `flutter analyze --no-fatal-infos`: **No issues found!**
+- `flutter test`: **952 passed, 0 failed** (was 931).
+- `bun run test` (web): **203 passed**; `bun run build`: green.
+- `docs/api/openapi.yaml` re-parsed after every edit (117 paths); `ios/Runner/Info.plist`
+  re-parsed as a plist after adding the picker usage descriptions.
+- Branch: `feature/flutter-to-backend-conversation-threads` throughout; no branch created or
+  switched.
+
+### Remaining Work (round 1)
+
+- **#298 (T7):** the shell's notification-tap → thread navigation.
+- **#300 (T9):** the PDF platform viewer.
+- **#302 (T11):** the Cloudinary adapter, recorded and deliberately not built.
+
+## Session 2026-09-19 (continued — goal round 2)
+
+**Task:** close the two remaining acceptance gaps: T7's notification-tap navigation (#298) and
+T9's PDF platform viewer (#300).
+
+### T7 — the deep-link is now wired end to end
+
+- `ConversationRepository.fetchConversation(id)` (+ `ApiConversationRepository`, which maps 404
+  and 403 to `null` and rethrows anything else; `EmptyConversationRepository`; the demo fixture).
+- `AppNotification.conversationId`/`messageId`/`isOpenable` getters, and the **pure**
+  `notificationRouteFor` rule: a notification carrying a `conversationId` opens the thread
+  (anchored to its message), one carrying only a `customerId` opens the client book. Pure, so
+  the rule is tested without standing a router up.
+- `AppRoutes.threadPattern`/`thread(id, {messageId})` and the new `ThreadRouteScreen`, which
+  reads the row by id and then shows the same thread screen. Three outcomes are kept apart: the
+  row arrives (the thread), the row is gone or not visible (its own state with a retry), and the
+  organization id is not yet known (a "not yet" with a retry).
+
+### T9 — the PDF opens through the platform viewer
+
+`openWithPlatformViewer` (new `attachment_opener.dart`) writes the bytes to the temporary
+directory (`path_provider`) and hands the path to the OS viewer (`open_filex`). The document
+chip became an actionable tile, and the opener is injectable
+(`ClientThreadScreen.attachmentOpener`) so a widget test records the bytes and file name without
+touching the filesystem or leaving the app.
+
+### Verification Performed (round 2)
+
+- `dotnet test Aveline.Api/Aveline.Api.sln -c Release`: **1453 passed, 0 failed**.
+- `flutter analyze --no-fatal-infos`: **No issues found!**
+- `flutter test`: **966 passed, 0 failed** (was 952) — new: the routing rule (thread beats
+  client, anchored message, empty ids), the route screen (loads, anchors, not-found + retry,
+  waiting-for-org + retry), `fetchConversation` (path, 404/403 → null, 500 rethrows, org
+  unavailable) and the document opener.
+- Branch: `feature/flutter-to-backend-conversation-threads` throughout; no branch created or
+  switched.
+
+### Status: the plan's slices are all delivered
+
+T0–T10 ship; T11 (the Cloudinary adapter) is recorded and deliberately not built, which is its
+own acceptance. Every phase's documentation (general, API and OpenAPI) is updated, `kavindu.md`
+carries the start and end entries plus both round summaries, and every GitHub issue for the plan
+is closed.

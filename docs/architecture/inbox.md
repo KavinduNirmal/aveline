@@ -220,16 +220,29 @@ Staff opens the Salon → sends a `Note`. API calls the agent service (`/agents/
 client so the reply types in live. `WorkflowRunId`/`TraceId` are recorded for audit.
 
 ### 6.2 WhatsApp inbound
-Webhook (`/api/v1/webhooks/whatsapp/{orgId}`, ADR-015) → persist `InboundMessageLog` →
-publish `message.received` → the API resolves the sender's phone against the customer book
+Webhook (`/api/v1/webhooks/whatsapp/{orgId}`, ADR-015) → persist `InboundMessageLog` → the
+API resolves the sender's phone against the customer book
 (`ICustomerRepository.GetByPhoneAsync`) and creates a `Message` of kind `ClientMessage` in
 that customer's Salon, binding `CustomerId` at thread creation (so staff see it immediately
 and the thread carries the context it exists for) → the API then asks the agent service to
 draft a response into the same thread (`/agents/query` with the conversation's `threadId`
-and the client's phone in `org_context`), so the memory agent can refine the identification.
-A phone that is not on file yields a thread with `ExternalRef` set and `CustomerId` null -
-the rendered "not yet identified" state, resolvable through `select-customer` (§5.1.1).
-Both steps are best-effort and never delay the webhook `200`.
+and the client's phone in `org_context`), so the memory agent can refine the identification,
+and publishes `message.received` (carrying any `attachmentId`) → a phone that is not on file
+yields a thread with `ExternalRef` set and `CustomerId` null - the rendered "not yet
+identified" state, resolvable through `select-customer` (§5.1.1).
+
+**Media is no longer dropped (D8).** `ExtractMessage` used to select only
+`type == "text"`, so a customer's photo produced `{status: "ignored"}` and nothing in the
+thread. It now reads the message whatever its type and returns a media descriptor
+(`{id, mime_type, sha256, caption?}`); the caption is the client's own words. Before the
+message is recorded, the API fetches the bytes with the tenant's credentials through
+`IWhatsAppService.GetMediaAsync` (Meta's two-step resolve-then-download, the bearer on both
+hops) and stores them through `IAttachmentStore`, which the message then binds; the
+`client_message` block keeps the caption and an `attachment` block is appended. A missing
+integration, an expired media URL, a failed download or a type outside the allow-list
+(images and PDF; audio and video are refused) is logged and skipped - the caption is still
+recorded and the webhook still answers `200`, because Meta's retry would fix none of them.
+Every step is best-effort and never delays the webhook `200`.
 
 ### 6.3 Human-in-the-loop sign-off
 Commerce agent issues an interrupt (`pause_for_approval`, `agnet-service/app/agents/commerce/README.md`)
@@ -247,7 +260,14 @@ and `Active`/`Resolved`).
 
 ### 6.4 Notification deep-link
 `Notification.Data` = `{ "conversationId": "…", "messageId": "…" }`. Tapping a
-notification opens the Salon scrolled to the message.
+notification opens `/conversations/thread/{conversationId}` (with `?messageId=` when one
+was named), which reads the thread's row through `ConversationRepository.fetchConversation`
+and then opens it **on the page that holds that message** rather than on the newest words:
+the request carries `around`, the server serves the page containing the anchor and echoes
+the served page, so earlier history stays reachable through the ordinary "load earlier"
+control. The ids ride the payload rather than the route, because the router re-parses its
+location whenever the auth or profile listenable fires and `extra` does not survive that. A
+notification that addresses only a client (`customerId`) still opens the client book.
 
 ### 6.5 Threaded agent replies
 Ava, Elle, and Lina reply to specific messages via `ReplyToMessageId`, matching the

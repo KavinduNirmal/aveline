@@ -39,8 +39,11 @@ import 'features/catalog/presentation/screens/catalog_filter_screen.dart';
 import 'features/catalog/presentation/screens/catalog_product_screen.dart';
 import 'features/catalog/presentation/screens/catalog_screen.dart';
 import 'features/conversations/data/api_conversation_repository.dart';
+import 'features/conversations/data/api_thread_repository.dart';
 import 'features/conversations/data/conversation_repository.dart';
+import 'features/conversations/data/thread_repository.dart';
 import 'features/conversations/presentation/screens/conversations_screen.dart';
+import 'features/conversations/presentation/screens/thread_route_screen.dart';
 import 'features/customers/data/customer_repository.dart';
 import 'features/customers/data/demo_customer_repository.dart';
 import 'features/customers/presentation/screens/customer_screen.dart';
@@ -310,6 +313,10 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
   /// One source for the message inbox, so the tab and whatever opens a thread
   /// from it read the same conversations.
   late final ConversationRepository _conversationRepository;
+
+  /// One source for a client's thread, so the inbox's client rows and the thread
+  /// screen they open read the same history.
+  late final ThreadRepository _threadRepository;
   late final Dio _dio;
   late final GoRouter _router;
   final AppLinks _appLinks = AppLinks();
@@ -331,6 +338,13 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
     // state rather than reporting an error it does not have. The id is the active
     // membership's, never the JWT's `org_id` claim, which can be stale.
     _conversationRepository = ApiConversationRepository(
+      _dio,
+      organizationId: () => _boutiqueProvider.organizationId,
+    );
+    // The thread reads the same active membership's org id, read at call time for the same
+    // reason: it arrives with `/orgs/my` after this shell is built. Until it does the thread
+    // stays in its loading state, which is a "not yet" rather than an error.
+    _threadRepository = ApiThreadRepository(
       _dio,
       organizationId: () => _boutiqueProvider.organizationId,
     );
@@ -603,7 +617,23 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
           path: AppRoutes.conversations,
           name: 'conversations',
           builder: (context, state) => MainShell(
-            child: ConversationsScreen(repository: _conversationRepository),
+            child: ConversationsScreen(
+              repository: _conversationRepository,
+              threadRepository: _threadRepository,
+            ),
+          ),
+        ),
+        GoRoute(
+          // A notification knows a thread only by its id, so the row is read before the thread
+          // screen is shown. The anchored message travels as a query parameter: the router
+          // re-parses its location and `extra` does not survive that.
+          path: AppRoutes.threadPattern,
+          name: 'thread',
+          builder: (context, state) => ThreadRouteScreen(
+            conversationId: state.pathParameters['conversationId'] ?? '',
+            messageId: state.uri.queryParameters['messageId'],
+            conversationRepository: _conversationRepository,
+            threadRepository: _threadRepository,
           ),
         ),
         GoRoute(

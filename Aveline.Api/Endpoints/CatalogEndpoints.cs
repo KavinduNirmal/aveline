@@ -1,4 +1,5 @@
 using Aveline.Api.Configurations;
+using Aveline.Api.Common.Media;
 using Aveline.Api.Modules.VisualIntelligence;
 using Aveline.Api.Modules.VisualIntelligence.DTOs;
 using Aveline.Api.Modules.VisualIntelligence.Models;
@@ -363,7 +364,7 @@ public static class CatalogEndpoints
             CancellationToken cancellationToken) =>
         {
             byte[]? bytes = null;
-            string contentType = ImageContentTypes.DefaultImage;
+            string contentType = MediaContentTypes.DefaultImage;
             string? fileName = null;
             long fileSizeBytes = 0;
 
@@ -376,7 +377,7 @@ public static class CatalogEndpoints
                     using var ms = new MemoryStream();
                     await file.CopyToAsync(ms, cancellationToken);
                     bytes = ms.ToArray();
-                    contentType = ImageContentTypes.Normalize(file.ContentType);
+                    contentType = MediaContentTypes.NormalizeImage(file.ContentType);
                     fileName = file.FileName;
                     fileSizeBytes = file.Length;
                 }
@@ -395,7 +396,7 @@ public static class CatalogEndpoints
                             var mimePart = raw[5..commaIdx];
                             if (mimePart.Contains(';'))
                             {
-                                contentType = ImageContentTypes.Normalize(mimePart.Split(';')[0]);
+                                contentType = MediaContentTypes.NormalizeImage(mimePart.Split(';')[0]);
                             }
                             bytes = Convert.FromBase64String(raw[(commaIdx + 1)..]);
                         }
@@ -463,7 +464,7 @@ public static class CatalogEndpoints
             // The stored content type comes from the uploader, so never let the browser
             // sniff or render a non-image payload (e.g. text/html) from this origin.
             context.Response.Headers.XContentTypeOptions = "nosniff";
-            return Results.File(image.ImageData, ImageContentTypes.SafeServe(image.ContentType));
+            return Results.File(image.ImageData, MediaContentTypes.SafeServe(image.ContentType));
         })
         .WithName("CatalogGetImage")
         .WithSummary("Retrieve physical image binary from PostgreSQL.")

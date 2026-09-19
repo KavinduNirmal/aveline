@@ -303,6 +303,9 @@ public class IntegrationEndpointsIntegrationTests : IAsyncLifetime
     /// <summary>Offline WhatsApp provider used to keep endpoint tests free of network calls.</summary>
     private sealed class FakeWhatsAppService : IWhatsAppService
     {
+        public Task<WhatsAppMediaResult> GetMediaAsync(string accessToken, string mediaId, CancellationToken cancellationToken = default)
+            => Task.FromResult(new WhatsAppMediaResult(IsSuccess: false, Error: "not used in this test"));
+
         public Task<WhatsAppTestResult> TestConnectionAsync(
             string accessToken, string phoneNumberId, CancellationToken cancellationToken = default)
             => Task.FromResult(new WhatsAppTestResult(IsValid: true));

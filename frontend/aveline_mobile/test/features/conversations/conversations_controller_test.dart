@@ -6,6 +6,17 @@ import 'package:flutter_test/flutter_test.dart';
 final DateTime _now = DateTime.utc(2026, 9, 18, 12);
 
 class _FakeInbox implements ConversationRepository {
+
+  @override
+  Future<Conversation?> fetchConversation(String id) async {
+    final page = await fetchConversations();
+    for (final conversation in page.items) {
+      if (conversation.id == id) {
+        return conversation;
+      }
+    }
+    return null;
+  }
   _FakeInbox(this.items, {this.pageSize = 50, int? total})
     : total = total ?? items.length;
 

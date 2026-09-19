@@ -44,6 +44,19 @@ class DemoConversationRepository implements ConversationRepository {
     );
   }
 
+  @override
+  Future<Conversation?> fetchConversation(String id) async {
+    if (latency > Duration.zero) {
+      await Future<void>.delayed(latency);
+    }
+    for (final conversation in _buildInbox()) {
+      if (conversation.id == id) {
+        return conversation;
+      }
+    }
+    return null;
+  }
+
   /// Where a thread stood [age] ago.
   DateTime _at(Duration age) => _clock().toUtc().subtract(age);
 

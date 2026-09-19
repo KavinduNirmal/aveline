@@ -38,6 +38,14 @@ export interface ContentBlock {
   status?: string
   prompt?: string
   options?: ChoiceOption[]
+  /** The thread's own `attachment` block (D8). */
+  attachmentId?: string
+  url?: string
+  contentType?: string
+  fileName?: string
+  sizeBytes?: number
+  width?: number
+  height?: number
   [key: string]: unknown
 }
 
@@ -78,6 +86,8 @@ export function BlockRenderer({
       return <LookBlock block={block} onSignOff={onSignOff} persona={persona} />
     case 'choice':
       return <ChoiceBlock block={block} onSelectCustomer={onSelectCustomer} />
+    case 'attachment':
+      return <AttachmentBlock block={block} />
     default:
       return null
   }
@@ -327,4 +337,32 @@ export function BlockList({
       ))}
     </div>
   )
+}
+
+
+/** A thread attachment: the file's name and size.
+ *
+ * The stored `url` is authenticated (the catalog's anonymous image GET is deliberately not
+ * copied for a customer's file), so an `<img src>` would be refused. The dashboard names the
+ * file rather than showing a broken image.
+ */
+function AttachmentBlock({ block }: BlockRendererProps) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
+      <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        {block.contentType === 'application/pdf' ? 'PDF' : 'Image'}
+      </span>
+      <span className="truncate text-sm">{block.fileName ?? 'Attachment'}</span>
+      {typeof block.sizeBytes === 'number' && (
+        <span className="text-xs text-muted-foreground">{formatBytes(block.sizeBytes)}</span>
+      )}
+    </div>
+  )
+}
+
+/** A file size the way a person reads it. */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }

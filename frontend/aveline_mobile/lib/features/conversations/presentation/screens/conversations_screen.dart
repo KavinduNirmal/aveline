@@ -15,8 +15,8 @@ import '../../../../shared/widgets/section_overline.dart';
 import '../../../../shared/widgets/section_search_field.dart';
 import '../../../salon/presentation/screens/salon_screen.dart';
 import '../../data/conversation_repository.dart';
-import '../../data/demo_thread_repository.dart';
 import '../../data/empty_conversation_repository.dart';
+import '../../data/empty_thread_repository.dart';
 import '../../data/thread_repository.dart';
 import '../../domain/conversation.dart';
 import '../conversations_controller.dart';
@@ -36,8 +36,9 @@ import 'client_thread_screen.dart';
 /// failing that an empty repository, so no production path renders invented data.
 ///
 /// Opening a thread is handed up: the Salon is a real screen and this one pushes
-/// it, but a client thread has no screen yet, so tapping one says so rather than
-/// opening an empty room.
+/// it, and a client row opens [ClientThreadScreen] with the thread repository it
+/// was given. A row whose thread has no injected source opens the honest empty
+/// state rather than a seeded exchange.
 class ConversationsScreen extends StatefulWidget {
   const ConversationsScreen({
     super.key,
@@ -54,8 +55,10 @@ class ConversationsScreen extends StatefulWidget {
   /// state rather than a seed of invented threads (D5).
   final ConversationRepository? repository;
 
-  /// Overrides the source of the threads the client rows open. Defaults to the
-  /// demo threads, which hold the exchanges the inbox's previews promise.
+  /// Overrides the source of the threads the client rows open. Defaults to an
+  /// empty repository, so a screen built with nothing injected (the registry's
+  /// `const ConversationsScreen()`) renders the honest empty state rather than a
+  /// seed of invented exchanges.
   final ThreadRepository? threadRepository;
 
   /// How many messages a page of an opened thread holds.
@@ -215,7 +218,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       MaterialPageRoute<void>(
         builder: (_) => ClientThreadScreen(
           conversation: conversation,
-          repository: widget.threadRepository ?? DemoThreadRepository(),
+          repository: widget.threadRepository ?? const EmptyThreadRepository(),
           pageSize: widget.pageSize,
           onOpenClient: () => _openClient(conversation),
         ),

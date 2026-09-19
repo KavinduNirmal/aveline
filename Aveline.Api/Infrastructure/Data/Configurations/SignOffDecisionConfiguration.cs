@@ -25,7 +25,9 @@ public class SignOffDecisionConfiguration : IEntityTypeConfiguration<SignOffDeci
             .IsRequired()
             .HasMaxLength(64);
 
-        builder.Property(d => d.Approved)
+        builder.Property(d => d.Kind)
+            .HasConversion<string>()
+            .HasMaxLength(16)
             .IsRequired();
 
         builder.Property(d => d.DecidedAt)

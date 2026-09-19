@@ -168,8 +168,10 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
           _agentStateProvider.apply(state);
           setState(() => _agentActivity = nextAgentActivity(activity, state));
         },
-        onMessage: (message) {
-          _handleIncomingMessage(message);
+        onMessage: (payload) {
+          // The realtime service hands over the raw `MessageDto` the hub sent, so `core`
+          // needs no dependency on this feature's model.
+          _handleIncomingMessage(SalonMessage.fromJson(payload));
         },
       );
     } catch (e) {

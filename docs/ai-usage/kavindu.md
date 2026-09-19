@@ -3689,3 +3689,33 @@ T0–T10 ship; T11 (the Cloudinary adapter) is recorded and deliberately not bui
 own acceptance. Every phase's documentation (general, API and OpenAPI) is updated, `kavindu.md`
 carries the start and end entries plus both round summaries, and every GitHub issue for the plan
 is closed.
+
+## Session 2026-09-19 (closing — applied, committed, PR opened)
+
+The two lines above that read "Nothing was committed; all changes are in the working tree" were
+true when they were written and are superseded here.
+
+- **Migrations applied** to the project's dev database (the `aveline_postgres` container, host
+  port 5433, database/user `aveline`). The database was 15 migrations behind, not five: its last
+  recorded migration was `20260913181825_AddConversationOwnerUserId`. All 15 were applied with
+  `dotnet ef database update --connection …`, verified with `dotnet ef migrations list` (no
+  pending) and by inspecting the schema — `Messages.ClientMessageId`, `ConversationReadStates`,
+  `MessageAttachments`, `SignOffDecisions.Kind` present, `SignOffDecisions.Approved` dropped, and
+  the filtered unique index and the new history index created. A `pg_dump` backup was taken first
+  (`/tmp/aveline_pre_threads_migrations_20260919_133425.sql`, 7.7 MB).
+- **Committed** as `cdcde08` — `feat(conversations): implement the client thread end to end
+  (T0-T11)`, 114 files, +33255/-935. All six pre-commit gates passed (no `.env`, bun-only
+  lockfiles, no secrets, `dotnet build`, no staged `.py`, `flutter analyze`).
+- **PR opened**: [#303](https://github.com/KavinduNirmal/aveline/pull/303) into `development`.
+- **Conflict resolved.** The first push produced a conflicting PR: `development` already carried
+  the inbox work as the squash `589f9d4` (PR #289), duplicating this branch's `225a83c`, so the two
+  sides disagreed on every file the thread commit also touched. `git diff 225a83c
+  origin/development` proved the two trees were byte-identical, so `development`'s content was
+  already wholly contained here; merging it with `-s ours` produced merge commit `ef8d1d7` whose
+  tree hash (`2a7f8fa61069d9929f90ccd5cae932afaa888533`) equals the pre-merge tree, proving nothing
+  was lost. The PR is now `MERGEABLE`, and its diff is exactly the thread commit.
+- **Deliberately not committed**: `docs/reports/SE3110_Compliance_and_Tool_Integration_Report.md`
+  (it was staged before this work began, so it stays staged-uncommitted for its author),
+  `docs/reports/PR-290-slice3-review.md`, `.agents/plans/` (the plan file is named
+  `*.ignore.md` on purpose), `.dsh-tools/`, `.screenshots/`, `.research-shots/`, and the
+  pre-existing `frontend/aveline_mobile/android/gradle.properties`.

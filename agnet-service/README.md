@@ -30,8 +30,10 @@ Health check: `GET http://localhost:8000/health` (public).
 | `LLM_THINKING_ENABLED` | no (default `false`) | When `false`, reasoner-capable DeepSeek models are asked to skip the thinking pass. |
 | `AGENT_STATE_DELAY_MS` | no (default `0`) | Artificial delay (ms) between emitted lifecycle states so clients can visibly animate Aveline's blossom during integration testing. `0` disables it. |
 | `DATABASE_URL` | yes | Async SQLAlchemy connection string (PostgreSQL 16 + pgvector). |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | no | OTLP exporter endpoint for traces. |
-| `OTEL_SERVICE_NAME` | no (default `aveline-agent-service`) | Resource attribute identifying this service in traces. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | no | OTLP exporter endpoint shared by traces and metrics. Metrics append `/v1/metrics`. |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | no | Metrics-specific OTLP/HTTP endpoint, used **verbatim** when set (wins over the generic endpoint above). |
+| `OTEL_SEMCONV_STABILITY_OPT_IN` | no (default `http`) | Recorded semconv convention. The service sets `http` before instrumenting so its HTTP metrics use the stable seconds-based names the API uses. An explicit operator value wins. |
+| `OTEL_SERVICE_NAME` | no (default `aveline-agent-service`) | Resource attribute identifying this service in traces and metrics. |
 | `OTEL_TRACE_CONTENT` | no (default `true`) | Set `false` in production to strip prompt/completion content from spans. |
 | `AVELINE_LOG_FORMAT` | no (default `json`) | `json` for structured logs, `text` for local dev. |
 | `REDIS_URL` | no | Redis connection URL for the Pub/Sub event bus (ADR-014). When unset the bus is disabled. |
@@ -75,9 +77,66 @@ the agent can attribute the work.
 HTTPX and LangChain auto-instrumentation plus an OTLP exporter. `init_tracing()`
 is called from the FastAPI lifespan. Manual "chain-of-thought" spans are opened
 with `chain_of_thought_span(...)`, which sets `gen_ai.*`, `llm.*` and `agent.*`
-attributes. Set `OTEL_TRACE_CONTENT=false` in production to strip prompt/completion
-content from exported spans. In docker-compose, traces flow to the `otel-collector`
-and are visualized in Jaeger at `http://localhost:16686`.
+attributes. Every concierge graph node now opens one (`agent.node.<node>`), so
+the helper has a real caller on the query path. Set `OTEL_TRACE_CONTENT=false` in
+production to strip prompt/completion content from exported spans. In
+docker-compose, traces flow to the `otel-collector` and are visualized in Jaeger
+at `http://localhost:16686`.
+
+### Metrics (OTLP push → collector → Prometheus)
+
+`app/observability/metrics.py` builds a `MeterProvider` with an
+`OTLPMetricExporter` next to the tracer provider; `init_metrics()` is called from
+the FastAPI lifespan. There is deliberately **no `/metrics` route and no inbound
+metrics port** — the agent pushes OTLP to the collector, whose config carries a
+`metrics:` pipeline and a `prometheus` exporter that Prometheus scrapes. A
+GET of `http://agent:8000/metrics` still returns `404`.
+
+- **Endpoint precedence** (OTel spec): explicit argument > `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`
+  (verbatim) > `OTEL_EXPORTER_OTLP_ENDPOINT` + `/v1/metrics`. When none is set the
+  provider is not built and every instrument is a no-op, so tests and local runs
+  without a collector keep working.
+- **Cumulative temporality** is pinned explicitly via
+  `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=CUMULATIVE` **and** the
+  exporter's `preferred_temporality`, so it cannot be flipped downstream.
+  Prometheus requires cumulative.
+- **Semconv**: `OTEL_SEMCONV_STABILITY_OPT_IN=http` is recorded before the HTTP
+  instrumentors run, so the agent's HTTP metrics use the same new (seconds) names
+  as `Aveline.Api` rather than the legacy millisecond incubating names.
+- `opentelemetry-exporter-otlp-proto-http` is an explicit pin in
+  `requirements.txt` (N-6): the metric exporter is the first Python code whose
+  correctness depends on it.
+
+The **additive** instruments (plan §6.6) are declared in `INSTRUMENTS` with their
+exact label keys:
+
+| Instrument | Type | Labels |
+|---|---|---|
+| `aveline.agent.run.duration` | histogram (s) | `workflow`, `status` |
+| `aveline.agent.run.count` | counter | `workflow`, `status` |
+| `aveline.agent.node.duration` | histogram (s) | `node` |
+| `aveline.agent.node.failures` | counter | `node`, `error_class` |
+| `aveline.agent.tool.calls` | counter | `tool`, `status` |
+| `aveline.agent.retries` | counter | `node` |
+| `aveline.agent.run.unattributed` | counter | — |
+| `aveline.agent.stream.runs` | counter | — |
+| `aveline.agent.llm.tokens.cached` | counter | `provider`, `model` |
+
+There is intentionally **no input/output token counter**: the LangChain
+instrumentor already emits `gen_ai.client.token.usage`, and a second measure of
+the same quantity would be a defect (R-15). `workflow` is the workflow **name**
+(`concierge`), never a run id; `run_id`/`step_index` never become metric labels
+(plan §7.3).
+
+### Step records
+
+`POST /agents/query` creates a `TelemetryCollector` and passes it into
+`run_concierge`. Each graph node writes an `AgentStepTelemetry` row (start /
+complete, with duration and any LLM usage), and registry tool calls append a
+`ToolCall` row. The collector is finalized into an `AgentRunTelemetry` payload and
+sent through the existing `report_agent_run` → `POST /internal/agent-runs`
+`steps[]` path, replacing the previous single synthetic step.
+
 
 ## Rate limiting
 
@@ -97,7 +156,16 @@ Structured JSON logs (`app/core/logging.py`) are emitted to stdout with
 
 ```bash
 pytest tests/ -q
+ruff check app/ tests/
 ```
+
+Metrics and step-record coverage lives in `tests/test_agent_metrics.py` (every
+instrument exists with exactly its declared label keys, no forbidden label key,
+endpoint precedence, cumulative temporality, and `test_metrics_are_recorded` —
+a real `/agents/query` that must move a non-zero counter) and
+`tests/test_agent_step_records.py` (a real graph run writes more than one bounded
+step, the serialized step keys match the .NET `AgentStepReportRequest` contract,
+and `chain_of_thought_span` has a real caller).
 
 Coverage gate: ≥ 90% (`--cov=app --cov-fail-under=90`). DB integration tests are
 skipped unless `TEST_DATABASE_URL` is set (e.g.

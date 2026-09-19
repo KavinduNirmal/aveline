@@ -4022,8 +4022,21 @@ paths:
       tags: [Health]
       summary: Prometheus metrics
       description: |
-        Phase 0. Authenticated: `X-Internal-Token`, or `Authorization: Bearer
-        <Metrics:ScrapeToken>` when configured. Metric names use the `aveline.` prefix.
+        Authenticated: `X-Internal-Token`, or `Authorization: Bearer <Metrics:ScrapeToken>`.
+
+        `Metrics:ScrapeToken` has no committed default. It is empty in `.env.example`,
+        `docker compose` declares it required (`${METRICS_SCRAPE_TOKEN:?...}`), and
+        `MetricsSecurityGuard.EnsureScrapeTokenForProduction` refuses to boot Production
+        without it, so the committed internal service token is never the working credential.
+
+        Series names are translated by the Prometheus exporter
+        (`UnderscoreEscapingWithSuffixes`): `.` becomes `_`, the instrument unit is appended
+        unless the sanitised name already ends with it, and counters gain `_total`. The
+        internal dotted name (the Postgres `SystemMetricSamples.MetricName`) and the exposed
+        series name therefore differ, for example `aveline.api.error_rate` is exposed as
+        `aveline_api_error_rate_ratio` and `aveline.api.latency_p95` as
+        `aveline_api_latency_p95_milliseconds`. `MetricsCatalog` is the authored mapping and
+        `MetricsNamingTests` asserts it against a live scrape.
       operationId: getMetrics
       security:
         - internalToken: []

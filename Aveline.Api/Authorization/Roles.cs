@@ -36,4 +36,16 @@ public static class Roles
     [
         Owner, BoutiqueOwner,
     ];
+
+    /// <summary>
+    /// Aveline team roles that operate the platform console. These are not boutique
+    /// tenants, so they never complete tenant onboarding (see OnboardingMiddleware).
+    /// Deliberately narrower than <see cref="StaffAccess"/>: <c>staff</c> and
+    /// <c>customer_relations</c> remain subject to the onboarding gate, and the
+    /// <c>org:*</c> boutique roles always are.
+    /// </summary>
+    public static readonly string[] OnboardingExemptRoles =
+    [
+        Moderator, Admin, Owner,
+    ];
 }

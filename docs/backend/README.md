@@ -250,10 +250,11 @@ entitlements.
    where the catalog says `costIsEstimated`, and the API omits
    `retryInstrumented`, `materialisedCounts`, `streamingRunsIncluded` and
    `unattributedRunsExcluded` until the corresponding work exists.
-2. **There is no `DailyAgentMetrics` rollup and therefore no `AgentStatsRollupJob`.**
-   Percentiles are computed on the fly over the bounded window (catalog §9 says the
-   on-the-fly path is sufficient at current volumes). The hybrid "rollup beyond
-   seven days" described for S-16 is not implemented.
+2. **The rollup job exists and is registered.** `AgentStatsRollupJob` is present in
+   `Modules/Statistics/Jobs/` and registered as a hosted service by
+   `StatisticsModule`. Percentiles are still computed on the fly over the bounded window
+   (catalog §9 says the on-the-fly path is sufficient at current volumes); the earlier
+   claim that the job does not exist was stale and is corrected here (Slice 8, N-3a).
 3. **`AgentStats:MinSampleForPercentile` and the retention keys are new config
    keys** beyond the two the plan's §10.2 listed (`MaxStepsPerRun`,
    `PausedRunTimeoutHours`). `AgentStats:StepRetentionDays` (90) and
@@ -289,12 +290,15 @@ entitlements.
    "not configured → unlimited", never an exhausted quota. When the counter store is
    unreachable the quota path **fails closed** (treats the meter as exhausted) only while
    enforcement is enabled; with enforcement disabled it can never fail a request.
-2. **Hour→day compaction beyond the 90-day hourly retention is deferred.** Hourly and
-   daily windows share one table and one unique dimension index, so a day row at the day
-   boundary would collide with the 00:00 hour row. `ApiStatsRollupJob` therefore
-   recomputes-and-replaces (normalises and merges) the just-closed hour; the 400-day daily
-   rollup from S-24/§9 is not produced yet.
-3. **The load-test harness is deferred.** There is no load runner in CI, so the FR-6.3 /
+2. **Hour→day compaction IS produced.** When the just-closed hour is 23:00 UTC,
+   `ApiStatsRollupJob.RunAsync` also calls `RecomputeDayAsync`, which backs the 400-day
+   daily rollup from S-24/§9 and `Telemetry:DailyRollupRetentionDays`. Hourly and daily
+   windows share one table but are distinguished by `WindowSize`, so the day row does not
+   collide with the 00:00 hour row. The earlier "deferred / not produced yet" claim was
+   stale and is corrected here (Slice 8, N-3b).
+3. **The load runner is not wired into CI, though the script is tracked.**
+   `tests/load/k6-telemetry-overhead.js` is committed; what is missing is a CI job that
+   runs it. The FR-6.3 /
    BR-6.3 gate — 5 000 req/s for 60 s with p99 telemetry overhead ≤ 1 ms — is a noted
    acceptance criterion, not a measured one. The middleware inlines no I/O and only
    stamps/enqueues, and `ApiTelemetryWriterTests` covers buffer overflow, but the
@@ -370,12 +374,103 @@ entitlements.
    filter by organization. `EvaluateRuleAsync`'s `organizationId` only scopes the fired alert
    (and its critical notification); a future org-scoped metric would carry the organization in
    `DimensionsJson` and be selected through the rule's dimension filter.
-10. **The billing statistics family is deferred, not shipped.** The five
+10. **The billing statistics family IS shipped.** The five
     `/api/v1/admin/statistics/billing/*` endpoints (`profitability`, `org-usage`,
     `adjustments`, `plan-changes`, `downgrades`) and the three organization billing
     statistics (`/orgs/{id}/statistics/billing/burn-rate`, `/customers/active`,
-    `/staff/seats`) are consciously out of scope for the #241 fix. No route exists, so
-    they return **404**; `docs/api/README.md` marks them as deferred.
+    `/staff/seats`) are mapped in `BillingStatisticsEndpoints.cs` and present in
+    `docs/api/openapi.yaml`. The earlier claim that "no route exists, so they return
+    **404**" was stale (Slice 8, N-3c) and is corrected here.
+
+### Implementation status (metrics infrastructure — Prometheus + Grafana)
+
+> Operator runbook: [observability.md](observability.md) — architecture, the two-name metric
+> contract, token rotation, how to add a dashboard, the cardinality prohibition, the deferred
+> register and the production deployment note.
+
+
+The executable plan is
+`.agents/plans/prometheus-grafana-metrics-implementation.ignore.md` (Revision 4), which
+re-scoped the work to Prometheus and Grafana only; the admin console, the PromQL proxy and the
+notification HTTP routes are deferred with frozen contracts, and nothing in these slices needs a
+frontend or a backend contract change. One GitHub issue per slice, all on
+`feature/prometheus-and-grafana-monitoring`.
+
+| Slice | Issue | What lands |
+| --- | --- | --- |
+| 1 | [#315](https://github.com/KavinduNirmal/aveline/issues/315) | A real `Metrics:ScrapeToken` with no committed default, the pinned `prometheus` compose service, `observability/prometheus/{prometheus.yml,rules/aveline.yml}`, `MetricsNamingTests` proving the exporter's name translation, the `observability-config` CI job, and `scripts/validate_observability_config.py` |
+| 4a | [#318](https://github.com/KavinduNirmal/aveline/issues/318) | The agent service's `MeterProvider` + `OTLPMetricExporter` (OLTP push to the collector), the additive agent instruments, cumulative temporality pinned explicitly, the recorded `OTEL_SEMCONV_STABILITY_OPT_IN=http` convention, and `test_metrics_are_recorded` |
+| 4b | [#319](https://github.com/KavinduNirmal/aveline/issues/319) | The step-record producer on the real graph path, real `steps[]` rows through `POST /internal/agent-runs`, and `AgentDataQualityDto.Derive` called from the two sites that hard-coded the flags |
+
+**Slice 1 findings worth carrying forward.**
+
+1. **The scrape credential is no longer the internal token.** `METRICS_SCRAPE_TOKEN` is empty in
+   `.env.example`, `docker-compose.yml` declares `Metrics__ScrapeToken:
+   ${METRICS_SCRAPE_TOKEN:?...}` so an unset value fails the stack, and
+   `MetricsSecurityGuard.EnsureScrapeTokenForProduction` refuses to boot Production without it
+   (S-1/R-1). Prometheus is now a scrape-only caller; `Authorization` is a reserved header name
+   in Prometheus' scrape config, which is why the credential goes through
+   `authorization.credentials_file` rather than `http_headers`.
+2. **Retention lives in `prometheus.yml`, never a CLI flag.** `--storage.tsdb.retention.time`
+   is deprecated and the config-file field silently takes precedence; the bare
+   `--storage.tsdb.retention` is startup-fatal in Prometheus 3. `promtool check config` is run
+   against the real pinned image by the `observability-config` job.
+3. **The exporter translates, and the plan's hand-applied table was wrong in three rows.**
+   `MetricsNamingTests` scrapes a live meter and asserts every `MetricsCatalog` entry, which
+   caught `aveline.process.cpu_seconds → aveline_process_cpu_seconds_total`,
+   `aveline.api.error_rate → aveline_api_error_rate_ratio` and
+   `aveline.agent.success_rate → aveline_agent_success_rate_ratio` — all three of which the
+   strategy document recorded as passing through unchanged. This is why the naming test ships
+   **before** any rule or dashboard: without it, an exporter upgrade empties every panel
+   silently. Full detail is in [../api/README.md §C.9](../api/README.md).
+4. **The collector now has a `metrics:` pipeline.** The agent service pushes OTLP metrics
+   through `otel-collector`, which exposes them on port 8889 for the `aveline-agent` scrape
+   job. The two deprecated forms were fixed in the same commit (`otlp` → `otlp_grpc/jaeger`,
+   `resource_to_telemetry_conversion` → `resource_constant_labels`), and the collector is
+   pinned to `0.161.0` rather than `:latest`.
+
+**The agent metrics pipeline (Slices 4a–4b).**
+
+The agent service pushes, it is never scraped. `app/observability/metrics.py` builds a
+`MeterProvider` with an `OTLPMetricExporter` next to the existing `TracerProvider`;
+`init_metrics()` runs on the FastAPI lifespan. There is **no `/metrics` route and no inbound
+metrics port**, so `http://agent:8000/metrics` still returns `404` (the test asserts it). The
+collector's `metrics:` pipeline and `prometheus` exporter (Slice 1, above) are the receiving
+half.
+
+1. **Endpoint precedence follows the OTel spec.** An explicit argument wins, then
+   `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` (verbatim), then `OTEL_EXPORTER_OTLP_ENDPOINT` +
+   `/v1/metrics`. With none set the provider is not built and every instrument is a no-op, so
+   tests and local runs without a collector keep working.
+2. **Cumulative temporality is pinned twice.** `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE`
+   is set to `CUMULATIVE` *and* passed as the exporter's `preferred_temporality`, so a delta
+   exporter cannot be introduced downstream. Prometheus requires cumulative.
+3. **The semconv convention is recorded, not discovered.** The service sets
+   `OTEL_SEMCONV_STABILITY_OPT_IN=http` before the FastAPI/HTTPX instrumentors run, so the
+   agent's HTTP metrics use the API's stable seconds-based names instead of the legacy
+   millisecond incubating ones (R-17).
+4. **Additive instruments only.** `aveline.agent.run.{duration,count}`,
+   `aveline.agent.node.{duration,failures}`, `aveline.agent.tool.calls`,
+   `aveline.agent.retries`, `aveline.agent.run.unattributed`, `aveline.agent.stream.runs` and
+   `aveline.agent.llm.tokens.cached`. There is deliberately **no input/output token counter**:
+   the LangChain instrumentor already emits `gen_ai.client.token.usage`, and a second measure
+   of the same quantity is a defect (R-15). `opentelemetry-exporter-otlp-proto-http` is an
+   explicit pin in `agnet-service/requirements.txt` (N-6).
+5. **`workflow` is a bounded name, never an id.** `runId`/`stepIndex` are row columns, never
+   metric labels (plan §7.3). `test_agent_step_records.py` asserts no forbidden label key and
+   that `workflow` is always `concierge`.
+6. **The step-record producer is real.** `POST /agents/query` builds a `TelemetryCollector`,
+   passes it into `run_concierge`, and every graph node writes an `AgentStepTelemetry` row
+   (tool calls append `ToolCall` rows). The collector is finalized into the existing
+   `AgentRunTelemetry` → `POST /internal/agent-runs` `steps[]` payload, replacing the single
+   synthetic step. The same change gives `chain_of_thought_span` its first application caller
+   (`agent.node.<node>`), closing G-13.
+7. **`dataQuality` is derived, not asserted (M-6).** `AgentDataQualityDto.Derive` is now called
+   from `AgentRunIngestService.GetRunAsync` and both `BillingStatisticsService` constructions
+   (burn rate and profitability). A flag is `true` only when a persisted run/step row justifies
+   it and `false` on an empty window; `AgentDataQualityDerivationTests` pins the truth table,
+   including the empty window, so the "do not flip a flag because an instrument exists" rule is
+   enforced by a test rather than by a comment.
 
 ### Implementation status (notifications inbox — backend slices)
 
@@ -446,7 +541,7 @@ intended contract, so this list and the catalogue now agree.
 | M-4 | WhatsApp webhook replay window | **Partially fixed.** The rate limit now runs *after* signature verification (`Endpoints/WebhookEndpoints.cs:113-124`), so only authentic traffic consumes the window, and the GET verify-token compare is constant-time (`:202-217`). Still open: `WebhookSignatureVerifier` has no timestamp/nonce/tolerance check (Meta sends no timestamp), and `InboundMessageLog` has no unique index on `ExternalId` (`Infrastructure/Data/Configurations/InboundMessageLogConfiguration.cs:23-24`), so a captured signed body replays indefinitely — bounded only by the 120/min per org+IP limiter. |
 | M-5 | No application-level rate limiting outside the two in-handler limiters | Deferred; tracked as accepted risk SEC-M2 in `docs/security/auth-security-review.md`; needs an infrastructure decision. |
 | M-8 | `GET /admin/pricing/price-book` returns a bare, unpaginated array | Behaviour deferred (a contract change with frontend impact); now explicitly documented in [api/README.md §C.1](../api/README.md). |
-| M-10 | `/admin/statistics/system/overview` is not cached server-side | **Claim corrected** in [api/README.md §D.3](../api/README.md); the cache itself remains unimplemented. |
+| M-10 | `/admin/statistics/system/overview` is not cached server-side | **The claim is restored, not corrected (D7 = A, Slice 8).** The code caches the composite read for 15 s in `IMemoryCache`, which `BillingModule` and `SystemHealthModule` register (`SystemStatisticsService.cs:49-61`), so the code is authoritative. [api/README.md §D.3](../api/README.md) and [implementation-plan.md](implementation-plan.md) now say 15 s again; the frontend uses `staleTime: 15_000` for this query only. |
 | M-11 | `GET /system/eventbus` ignores the documented `from`/`to` window | Behaviour deferred (the response is an instantaneous counter snapshot); now explicitly documented in [api/README.md §C.8](../api/README.md). |
 | M-16 | The `/metrics` scheme requirement was not documented precisely | **Documented** in [api/README.md §B.12 and §C.9](../api/README.md): `MetricsPolicy` accepts `X-Internal-Token` or `Authorization: Bearer <Metrics:ScrapeToken>`. |
 | M-17 | Ledger `201` bodies use `blossomBalanceAfter`/`createdAt` | **Documented** in [api/README.md §C.2](../api/README.md); the example now matches the shipped `BlossomLedgerEntryDto` and distinguishes it from the statement item shape. |

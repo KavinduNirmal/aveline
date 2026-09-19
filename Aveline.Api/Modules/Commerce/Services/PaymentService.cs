@@ -1,4 +1,4 @@
-﻿using Aveline.Api.Modules.Commerce.DTOs;
+using Aveline.Api.Modules.Commerce.DTOs;
 using Aveline.Api.Modules.Commerce.Models;
 using Aveline.Api.Modules.Commerce.Repositories;
 
@@ -136,6 +136,15 @@ public class PaymentService : IPaymentService
         CancellationToken ct = default)
     {
         var payment = await _paymentRepository.GetByIdAsync(id, organizationId, ct);
+        return payment is not null ? MapToDto(payment) : null;
+    }
+
+    public async Task<PaymentResponseDto?> GetPaymentByOrderIdAsync(
+        Guid orderId,
+        Guid organizationId,
+        CancellationToken ct = default)
+    {
+        var payment = await _paymentRepository.GetByOrderIdAsync(orderId, organizationId, ct);
         return payment is not null ? MapToDto(payment) : null;
     }
 

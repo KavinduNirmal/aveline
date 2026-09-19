@@ -9,14 +9,50 @@ The registry is shared infrastructure. Slice owners may add agent-specific tools
 in ``app/tools/<slice>/`` but should reuse ``InternalApiClient`` for transport.
 """
 
+import functools
+import inspect
 import logging
 from typing import Any
 
+from app.observability.metrics import get_agent_metrics
+from app.telemetry.agent_telemetry import get_current_collector
 from app.tools.client import InternalApiClient
 
 logger = logging.getLogger("aveline.agent.tools.registry")
 
 
+def _instrument_tool(tool_name: str, tool_fn: Any) -> Any:
+    """Wrap one registry tool so a tool call is both a step row and a metric (G-6)."""
+
+    @functools.wraps(tool_fn)
+    async def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        collector = get_current_collector()
+        if collector is not None:
+            collector.start_step(tool_name, step_kind="ToolCall", tool_name=tool_name)
+        status = "Succeeded"
+        try:
+            return await tool_fn(self, *args, **kwargs)
+        except Exception:
+            status = "Failed"
+            raise
+        finally:
+            if collector is not None:
+                collector.complete_current_step(status=status)
+            get_agent_metrics().record_tool_call(tool=tool_name, status=status)
+
+    return wrapper
+
+
+def _instrumented_registry(cls: Any) -> Any:
+    """Instrument every public coroutine on the registry (the tools are a bounded set)."""
+    for attr_name, attr in list(vars(cls).items()):
+        if attr_name.startswith("_") or not inspect.iscoroutinefunction(attr):
+            continue
+        setattr(cls, attr_name, _instrument_tool(attr_name, attr))
+    return cls
+
+
+@_instrumented_registry
 class ToolRegistry:
     """Authenticated client for the backend internal API, grouped by domain."""
 
@@ -233,22 +269,18 @@ class ToolRegistry:
 
     # ============================== COMMERCE AGENT ==============================
 
-    async def calculate_margin(self, order_id: str) -> dict[str, Any]:
+    async def calculate_margin(self, order_id: str, org_id: str | None = None) -> dict[str, Any]:
         """Compute margin for an order via the backend."""
-        return await self._client.request(
-            "POST", f"/api/internal/orders/{order_id}/calculate-margin"
-        )
+        path = f"/api/v1/orgs/{org_id}/orders/{order_id}/recalculate" if org_id else f"/api/internal/orders/{order_id}/calculate-margin"
+        return await self._client.request("POST", path)
 
-    async def generate_payment_request(self, order_id: str, amount: float) -> dict[str, Any]:
+    async def generate_payment_request(self, order_id: str, amount: float, org_id: str | None = None) -> dict[str, Any]:
         """Generate a payment request for an order."""
-        return await self._client.request(
-            "POST",
-            f"/api/internal/orders/{order_id}/payment-request",
-            json={"amount": amount},
-        )
+        path = f"/api/v1/orgs/{org_id}/payments" if org_id else f"/api/internal/orders/{order_id}/payment-request"
+        payload = {"orderId": order_id, "amount": amount} if org_id else {"amount": amount}
+        return await self._client.request("POST", path, json=payload)
 
-    async def check_approval_threshold(self, order_id: str) -> dict[str, Any]:
+    async def check_approval_threshold(self, order_id: str, org_id: str | None = None) -> dict[str, Any]:
         """Evaluate an order against approval thresholds."""
-        return await self._client.request(
-            "GET", f"/api/internal/orders/{order_id}/approval-check"
-        )
+        path = f"/api/v1/orgs/{org_id}/approvals" if org_id else f"/api/internal/orders/{order_id}/approval-check"
+        return await self._client.request("GET", path)

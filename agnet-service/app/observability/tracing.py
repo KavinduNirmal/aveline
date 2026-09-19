@@ -25,6 +25,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.semconv.resource import ResourceAttributes
 
 from app.core.config import Settings, get_settings
+from app.observability.metrics import configure_semconv_environment
 
 logger = logging.getLogger("aveline.agent.observability")
 
@@ -50,6 +51,9 @@ def init_tracing(settings: Settings | None = None) -> TracerProvider | None:
         return None
 
     settings = settings or get_settings()
+    # R-17: record the semconv convention before the HTTP instrumentors are applied so the
+    # agent's HTTP metrics use the same new (seconds) names as Aveline.Api.
+    configure_semconv_environment()
     resource = Resource.create(
         {ResourceAttributes.SERVICE_NAME: settings.otel_service_name}
     )

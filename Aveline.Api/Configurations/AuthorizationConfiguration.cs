@@ -31,6 +31,16 @@ public static class AuthorizationConfiguration
     public const string BoutiqueMembershipManagePolicy = "BoutiqueMembershipManage";
 
     /// <summary>
+    /// Org-scoped policy for approving/rejecting/revising high-value orders and business-rule exceptions.
+    /// </summary>
+    public const string BoutiqueApprovalDecisionPolicy = "BoutiqueApprovalDecision";
+
+    /// <summary>
+    /// Org-scoped policy for issuing payment refunds.
+    /// </summary>
+    public const string BoutiquePaymentRefundPolicy = "BoutiquePaymentRefund";
+
+    /// <summary>
     /// Org-scoped policy for the conversation inbox ("The Salon"): requires an active
     /// membership in the target organization whose role grants <c>conversations:view</c>
     /// (all boutique staff roles).
@@ -169,6 +179,18 @@ public static class AuthorizationConfiguration
             {
                 AllowBearerOrApiKey(p);
                 p.AddRequirements(new OrganizationScopeRequirement(Permissions.SettingsManage));
+            });
+
+            options.AddPolicy(BoutiqueApprovalDecisionPolicy, p =>
+            {
+                AllowBearerOrApiKey(p);
+                p.AddRequirements(new OrganizationScopeRequirement(Permissions.ApprovalsApprove));
+            });
+
+            options.AddPolicy(BoutiquePaymentRefundPolicy, p =>
+            {
+                AllowBearerOrApiKey(p);
+                p.AddRequirements(new OrganizationScopeRequirement(Permissions.PaymentsRefund));
             });
 
             options.AddPolicy(BoutiqueConversationAccessPolicy, p =>

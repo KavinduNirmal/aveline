@@ -22,15 +22,46 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-aveline}
       POSTGRES_USER: ${POSTGRES_USER:-aveline}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      # Password for the least-privilege postgres_exporter role created on first init (S-10).
+      POSTGRES_EXPORTER_PASSWORD: ${POSTGRES_EXPORTER_PASSWORD:?POSTGRES_EXPORTER_PASSWORD is required}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./observability/postgres-exporter/role.sql:/docker-entrypoint-initdb.d/postgres-exporter-role.sql:ro
+      - ./observability/postgres-exporter/init-role.sh:/docker-entrypoint-initdb.d/10-postgres-exporter-role.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aveline}"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # ---------------------------------------------------------------------------
+  # postgres_exporter — server-side PostgreSQL metrics Npgsql cannot see: locks,
+  # buffer-cache hit ratio, database growth and backend counts (OQ-4). Internal
+  # only: no host port (S-2/S-10).
+  # ---------------------------------------------------------------------------
+  postgres-exporter:
+    # Digest-pinned: the same digest is published on Docker Hub, quay.io and GHCR, so the
+    # tag alone does not identify the artefact.
+    image: prometheuscommunity/postgres-exporter@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
+    container_name: aveline_postgres_exporter
+    restart: unless-stopped
+    environment:
+      # URI + PASS_FILE rather than one connection URL with the password inline.
+      DATA_SOURCE_URI: postgres:5432/${POSTGRES_DB:-aveline}?sslmode=disable
+      DATA_SOURCE_USER: ${POSTGRES_EXPORTER_USER:-postgres_exporter}
+      DATA_SOURCE_PASS_FILE: /run/secrets/postgres_exporter_password
+      # NEVER set --metric-prefix (silently ignored by the standalone collectors since
+      # v0.20.0), --auto-discover-databases (deprecated) or --disable-settings-metrics
+      # (removed in v0.20.0). All five collectors this deployment needs are on by default.
+    volumes:
+      - ./postgres-exporter-password:/run/secrets/postgres_exporter_password:ro
+    expose:
+      - "9187"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   # ---------------------------------------------------------------------------
   # Redis — caching layer
@@ -82,6 +113,10 @@ services:
       # Production: the API refuses to boot without it (M-1). The local default keeps the
       # development profile salted too; set a high-entropy secret when deploying.
       Telemetry__IpHashSalt: ${TELEMETRY_IP_HASH_SALT:-local-development-telemetry-salt}
+      # Dedicated Prometheus scrape credential for /metrics (S-1/R-1). Always required: an
+      # unset value fails the stack rather than silently falling back to the committed
+      # internal service token. Generate with `openssl rand -hex 32`.
+      Metrics__ScrapeToken: ${METRICS_SCRAPE_TOKEN:?METRICS_SCRAPE_TOKEN is required}
       # OpenAI-compatible embeddings used by the Customer Memory agent (pgvector retrieval).
       Embeddings__ApiKey: ${EMBEDDINGS_API_KEY:-}
       Embeddings__BaseUrl: ${EMBEDDINGS_BASE_URL:-https://api.openai.com/v1}
@@ -170,10 +205,13 @@ services:
         condition: service_started
 
   # ---------------------------------------------------------------------------
-  # OpenTelemetry Collector — receives OTLP traces from the agent service.
+  # OpenTelemetry Collector — receives OTLP traces and metrics from the agent
+  # service and exposes the metrics on a Prometheus scrape port.
   # ---------------------------------------------------------------------------
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
+    # Pinned: the project ships monthly breaking minors and the config below is a
+    # validated artifact.
+    image: otel/opentelemetry-collector-contrib:0.161.0
     container_name: aveline_otel_collector
     restart: unless-stopped
     command: ["--config=/etc/otelcol/config.yaml"]
@@ -181,8 +219,61 @@ services:
       - ./otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
     ports:
       - "4318:4318" # OTLP HTTP receiver
+    expose:
+      - "8889" # Prometheus exporter for agent metrics (compose network only)
     depends_on:
       - jaeger
+
+  # ---------------------------------------------------------------------------
+  # Prometheus — scrapes /metrics, the collector's exporter and postgres_exporter;
+  # evaluates the operator rules. DEV ONLY host port (S-2).
+  # ---------------------------------------------------------------------------
+  prometheus:
+    # LTS line. v3.5.0 exists but Prometheus 3.5 is End of life (2026-07-31).
+    image: prom/prometheus:v3.13.3
+    container_name: aveline_prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+      # NO --storage.tsdb.retention.time: it is [DEPRECATED] and the config-file field
+      # silently takes precedence. Retention lives in prometheus.yml.
+      # NO --web.enable-remote-write-receiver: k6 is out of scope (OQ-9).
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/rules:/etc/prometheus/rules:ro
+      - ./observability/prometheus/secrets:/etc/prometheus/secrets:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090" # DEV ONLY (S-2)
+    depends_on:
+      - api
+      - otel-collector
+
+  # ---------------------------------------------------------------------------
+  # Grafana — provisioned datasource, dashboards and operator alerting.
+  # Operator-only; DEV ONLY host port (S-2/S-3).
+  # ---------------------------------------------------------------------------
+  grafana:
+    # NOT 13.0.0: withdrawn after a unified-storage migration bug that could revert dashboards.
+    image: grafana/grafana:13.2.2
+    container_name: aveline_grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # The console is out of scope and does not embed Grafana (D3), so embedding stays off.
+      GF_SECURITY_ALLOW_EMBEDDING: "false"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000" # DEV ONLY (S-2)
+    depends_on:
+      - prometheus
 
   # ---------------------------------------------------------------------------
   # Jaeger — trace visualization UI (localhost:16686).
@@ -197,4 +288,8 @@ services:
 
 volumes:
   postgres_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
     driver: local

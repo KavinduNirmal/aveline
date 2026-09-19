@@ -10,7 +10,7 @@ import {
 } from './api'
 
 /** Clerk JWT template that mints the Aveline role claims. */
-const JWT_TEMPLATE = 'jwt-aveline-v1'
+export const JWT_TEMPLATE = 'jwt-aveline-v1'
 
 /**
  * Mounted inside ClerkProvider + Router. Wires the axios client's token getter

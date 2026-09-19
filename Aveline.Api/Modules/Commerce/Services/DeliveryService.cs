@@ -1,4 +1,4 @@
-﻿using Aveline.Api.Modules.Commerce.DTOs;
+using Aveline.Api.Modules.Commerce.DTOs;
 using Aveline.Api.Modules.Commerce.Models;
 using Aveline.Api.Modules.Commerce.Repositories;
 
@@ -123,6 +123,15 @@ public class DeliveryService : IDeliveryService
         CancellationToken ct = default)
     {
         var plan = await _deliveryRepository.GetByIdAsync(id, organizationId, ct);
+        return plan is not null ? MapToDto(plan) : null;
+    }
+
+    public async Task<DeliveryPlanResponseDto?> GetDeliveryPlanByOrderIdAsync(
+        Guid orderId,
+        Guid organizationId,
+        CancellationToken ct = default)
+    {
+        var plan = await _deliveryRepository.GetByOrderIdAsync(orderId, organizationId, ct);
         return plan is not null ? MapToDto(plan) : null;
     }
 

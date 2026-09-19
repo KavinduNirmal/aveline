@@ -413,10 +413,16 @@ class CustomerMemoryAgent:
             return self._draft(name, intent), None
 
         meta = getattr(result, "usage_metadata", None) or {}
+        token_details = meta.get("input_token_details") or {}
+        cached_tokens = int(token_details.get("cache_read") or 0)
         usage: dict[str, Any] | None = {
             "input_tokens": int(meta.get("input_tokens") or 0),
             "output_tokens": int(meta.get("output_tokens") or 0),
         }
+        if cached_tokens > 0:
+            # Cached prompt tokens are span attributes only today; the cached direction is the
+            # one additive token metric (R-15). Surfaced on state so run metrics can observe it.
+            usage["cached_tokens"] = cached_tokens
         return draft, usage
 
     @staticmethod

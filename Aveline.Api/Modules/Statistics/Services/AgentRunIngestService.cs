@@ -162,7 +162,9 @@ public sealed class AgentRunIngestService(
         return new AgentRunDetailDto(
             AgentRunSummaryDto.From(run),
             steps.Select(AgentStepDto.From).ToArray(),
-            AgentDataQualityDto.Uninstrumented);
+            // M-6: derive the flags from the rows actually persisted for this run instead of
+            // hard-coding them. A run with no steps, duration or cost stays honestly "false".
+            AgentDataQualityDto.Derive([run], steps));
     }
 
     private static bool IsTerminal(AgentRunStatus status) =>

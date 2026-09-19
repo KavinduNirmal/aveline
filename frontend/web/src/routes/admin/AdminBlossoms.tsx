@@ -22,6 +22,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { IdempotentActionButton } from "@/components/admin/blossoms/IdempotentActionButton"
+import { OrgPicker } from "@/components/admin/orgs/OrgPicker"
 import type { OperationSnapshot } from "@/lib/admin/idempotency"
 import {
   creditBlossoms,
@@ -29,7 +30,7 @@ import {
   fetchBlossomStatement,
   revokeBlossoms,
 } from "@/lib/admin/api"
-import type { BlossomStatement } from "@/types/admin"
+import type { AdminOrganizationDto, BlossomStatement } from "@/types/admin"
 import { Coins, ShieldAlert } from "lucide-react"
 
 type Verb = "credit" | "debit" | "revoke"
@@ -46,7 +47,8 @@ type Verb = "credit" | "debit" | "revoke"
 export function AdminBlossomsView() {
   const { can } = useAdminSession()
 
-  const [orgId, setOrgId] = useState("")
+  const [organization, setOrganization] = useState<AdminOrganizationDto | null>(null)
+  const orgId = organization?.id ?? ""
   const [ledgerEntryId, setLedgerEntryId] = useState("")
   const [amount, setAmount] = useState<number>(100)
   const [reason, setReason] = useState("")
@@ -154,15 +156,11 @@ export function AdminBlossomsView() {
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4 text-xs">
-          <div>
-            <label className="font-medium block mb-1">Target Organization ID (GUID)</label>
-            <Input
-              placeholder="00000000-0000-0000-0000-000000000000"
-              value={orgId}
-              onChange={(e) => setOrgId(e.target.value)}
-              className="text-xs font-mono"
-            />
-          </div>
+          <OrgPicker
+            value={organization}
+            onSelect={setOrganization}
+            label="Target organization"
+          />
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>

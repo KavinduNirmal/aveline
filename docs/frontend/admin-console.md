@@ -393,6 +393,14 @@ raw string, which the server rejects with a `400` for every non-boolean key.
 The account-state dialog cannot be submitted without a reason, and the override dialog cannot be
 submitted without one either.
 
+### `OrgPicker`
+
+The ledger and entitlement flows are org-scoped, and the delivered console made an operator **paste
+an organization GUID by hand** — error-prone, and in practice impossible. `components/admin/orgs/OrgPicker.tsx`
+replaces it with a search over `GET /admin/orgs` (from two characters), reporting the selection as a
+whole `AdminOrganizationDto` so the caller never re-parses an id. `AdminBlossoms` uses it for its
+target organization.
+
 ## A6 — operations: pricing and Blossom
 
 ### The idempotency key lifecycle

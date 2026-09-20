@@ -38,3 +38,18 @@ public sealed class IncomeEntryNotVoidableException(Guid entryId, string reason)
 {
     public string Code => "income-entry-not-voidable";
 }
+
+/// <summary>
+/// A refund was requested against a charge the ledger never recorded collecting. Maps to <c>409</c>
+/// with <c>code = "refund-not-allowed"</c>.
+/// </summary>
+/// <remarks>
+/// You cannot return money you never recorded receiving. The alternative — recording the refund and
+/// letting the totals go negative — would hide the very thing the operator needs to see, which is
+/// that the charge was never collected in the first place.
+/// </remarks>
+public sealed class RevenueRefundNotAllowedException(string detail)
+    : RevenueDomainException($"The charge cannot be refunded: {detail}")
+{
+    public string Code => "refund-not-allowed";
+}

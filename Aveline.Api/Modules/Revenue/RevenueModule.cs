@@ -1,20 +1,27 @@
+using Aveline.Api.Modules.Revenue.Endpoints;
 using Aveline.Api.Modules.Revenue.Services;
 
 namespace Aveline.Api.Modules.Revenue;
 
 /// <summary>
-/// Dependency injection registration for the revenue module.
+/// Dependency injection and routing registration for the revenue module.
 /// </summary>
-/// <remarks>
-/// There is no <c>MapRevenueEndpoints</c> yet: R1 lands the schema and its write rules only, and
-/// the read and write routes arrive in R2 and R3. Registration is here from the start so those two
-/// phases add endpoints to an already-wired module rather than touching <c>Program.cs</c> twice.
-/// </remarks>
 public static class RevenueModule
 {
     public static IServiceCollection AddRevenueModule(this IServiceCollection services)
     {
         services.AddScoped<IIncomeLedgerService, IncomeLedgerService>();
         return services;
+    }
+
+    /// <summary>
+    /// Maps the revenue routes under the caller's group. Named differently from the endpoint class's
+    /// own entry point on purpose: two same-named extension methods would resolve to this one and
+    /// recurse rather than delegate.
+    /// </summary>
+    public static IEndpointRouteBuilder MapRevenueModuleEndpoints(this IEndpointRouteBuilder app)
+    {
+        app.MapRevenueWriteEndpoints();
+        return app;
     }
 }

@@ -126,8 +126,13 @@ public sealed class IncomeLedgerService(
             throw new RevenueValidationException("A SourceRef is required to identify the entry.");
         }
 
-        if (command.RecordedByUserId is null || command.RecordedByUserId == Guid.Empty)
+        if ((command.RecordedByUserId is null || command.RecordedByUserId == Guid.Empty)
+            && command.SourceKind != IncomeSourceKind.System)
         {
+            // A human-facing write must be attributable, or the journal cannot answer "who did
+            // this?". A **system** write is the one exception, and `SourceKind` already names that:
+            // `BlossomLedgerEntry.CreatedByUserId` documents the same convention for job-written
+            // rows, and the rollover job writes its derived charges the same way.
             throw new RevenueValidationException(
                 "A recorded actor is required; an unattributable money entry must not be written.");
         }

@@ -183,6 +183,7 @@ v1.MapBillingStatisticsEndpoints();
 v1.MapApiAccessEndpoints();
 v1.MapStatisticsEndpoints();
 v1.MapAnalyticsEndpoints();
+v1.MapRevenueModuleEndpoints();
 v1.MapCatalogEndpoints();
 v1.MapHomeEndpoints();
 v1.MapCustomerTenantEndpoints();

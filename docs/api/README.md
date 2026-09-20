@@ -886,6 +886,83 @@ unauthenticated, `403` empty when the policy denies.
 **Excluded from `openapi.yaml` deliberately** — they are test fixtures, not
 contract.
 
+### B.16 Admin revenue writes
+
+> **Status: implemented** (Revenue Ledger R2, issue #343). The three verbs that put
+> money into the append-only income ledger. The reads arrive with R3.
+
+**The two entry classes.** There is no payment-provider client in this repository, so
+the ledger distinguishes what a list price says *should* be billed (`Derived`) from
+money an operator confirmed was received (`Verified`). No response in this family may
+conflate them, and only a `Verified` entry may be described as collected.
+
+| Method | Path | Permission | Body | Response |
+| --- | --- | --- | --- | --- |
+| `POST` | `/api/v1/admin/revenue/ledger/verify` | `revenue:manage` | `{ organizationId, sourceKind, sourceRef, amount, reason }` | `201` `IncomeLedgerEntryDto` |
+| `POST` | `/api/v1/admin/revenue/ledger/refund` | `revenue:refund` | `{ organizationId, sourceKind, sourceRef, amount, reason }` | `201` `IncomeLedgerEntryDto` |
+| `POST` | `/api/v1/admin/revenue/ledger/adjust` | `revenue:manage` | `{ organizationId, amount, reason, sourceRef?, supersedesEntryId? }` | `201` `IncomeLedgerEntryDto` |
+
+**Idempotency: required on all three.** A missing key is `400
+{ "code": "idempotency-key-required" }`; a replay returns the stored response with the
+`Idempotency-Replayed: true` header and writes **nothing** a second time. The filter
+fails closed: if the lease store is unreachable the request is `503
+{ "code": "idempotency-unavailable" }` rather than applied twice.
+
+**Authorization.** `revenue:manage` is held by `admin` and `owner`; `revenue:refund`
+by `owner` only, because sending money back is irreversible in a way that correcting
+the ledger is not. A `moderator` holds `revenue:read` and is refused `403` on all
+three. Bearer-only: an API key can never reach these routes.
+
+**Validation.**
+
+| Field | Rule |
+| --- | --- |
+| `amount` | `> 0`. The ledger stores a positive amount and derives the sign from the entry kind, so a non-positive value is a `400` rather than a credit |
+| `reason` | 10–500 characters, matching the Blossom ledger's constraint |
+| `sourceRef` | Required on verify and optional on adjust; it is the dedup identity |
+| actor | Resolved from the Clerk subject. An unresolvable actor is refused, so no money entry can be unattributable |
+
+**Behaviour worth knowing.**
+
+- **Verify takes over the derived charge.** A verified receipt for an existing
+  `(sourceKind, sourceRef)` nulls its derived counterpart rather than sitting beside
+  it: the derived row was an *expectation* of the very charge now collected. The
+  original row survives with `status: "Voided"` and its `sourceRef` cleared, and the
+  new row carries `supersedesEntryId` pointing back at it. Counting both would
+  double-book the period.
+- **A refund needs a real receipt.** Refunding a charge with no `Verified`
+  counterpart is `409 { "code": "refund-not-allowed" }`. You cannot return money the
+  ledger never recorded receiving, and recording it as a negative total would hide
+  that.
+- **An adjustment counts as verified movement**, never as derived revenue: it corrects
+  the ledger rather than being something a list price asked for.
+- **Nothing is ever updated or deleted.** A correction is a new row, and a cancelled
+  one is marked `Voided` by the row that supersedes it.
+
+**Errors:** `400 validation`; `400 idempotency-key-required`; `401`; `403`;
+`404` unknown organization or supersede target; `409 refund-not-allowed`;
+`409 duplicate-revenue-entry`; `409 income-entry-not-voidable`;
+`409 idempotency-key-reuse`; `503 idempotency-unavailable`.
+
+**Audit.** Each verb writes `revenue.ledger.{verified|refunded|adjusted}` through the
+same `IAuditService` the entitlement journal uses, so both money journals read as one
+history in the Audit Explorer. The rollover's derived charges are
+`revenue.ledger.derived` — deliberately not one of the three administrative verbs,
+because a job is not an operator.
+
+**Source:** `Modules/Revenue/Endpoints/RevenueEndpoints.cs`,
+`Modules/Revenue/DTOs/RevenueDtos.cs`.
+
+**The system-side writers**, which write `Derived` and never `Verified`:
+
+| Source | Site | Rule |
+| --- | --- | --- |
+| Blossom top-up | `POST /api/v1/orgs/{organizationId}/blossoms/top-ups` | Writes a `TopUpPurchase` row **only** when `paymentReference` is present. A free or unreferenced grant writes nothing, because a grant is not a charge |
+| Subscription period charge | `BillingPeriodRolloverJob` | Writes one `SubscriptionCharge` for an `Active` subscription with `PriceLkr > 0`. A zero price writes nothing, which is why `subscriptionPricesConfigured` is `false` and MRR is `null` rather than `0` today |
+
+Both dedupe on a natural reference — the provider reference for a top-up, the period
+start in ISO-8601 for a charge — so a retry or a re-run cannot double-book.
+
 ---
 
 ## Part C — Planned endpoints

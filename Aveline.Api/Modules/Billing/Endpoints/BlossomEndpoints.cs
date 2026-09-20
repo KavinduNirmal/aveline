@@ -1,9 +1,12 @@
 using System.Security.Claims;
 using Aveline.Api.Authorization;
 using Aveline.Api.Configurations;
+using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Modules.Billing.DTOs;
 using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Billing.Services;
+using Aveline.Api.Modules.Revenue.Models;
+using Aveline.Api.Modules.Revenue.Services;
 using Aveline.Api.Modules.Shared.Services;
 using Microsoft.EntityFrameworkCore;
 
@@ -81,6 +84,8 @@ public static class BlossomEndpoints
             IBlossomService blossoms,
             IPricingService pricing,
             IUserService users,
+            AppDbContext db,
+            IIncomeLedgerService revenue,
             IConfiguration configuration,
             CancellationToken ct) =>
         {
@@ -104,10 +109,19 @@ public static class BlossomEndpoints
 
                 var allowCrossPeriod = configuration.GetValue("Billing:AllowCrossPeriodTopUps", false);
                 var now = DateTime.UtcNow;
-                var periodEnd = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(1);
+                var periodStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+                var periodEnd = periodStart.AddMonths(1);
                 var expiresAt = allowCrossPeriod ? (DateTime?)null : periodEnd;
 
                 var actorUserId = await ResolveActorUserIdAsync(principal, users, ct);
+
+                // The grant and its revenue row are one unit of work, so a failure cannot leave the
+                // Blossoms granted without the charge that explains them (Revenue Ledger R2).
+                var ownsTransaction = db.Database.IsRelational();
+                var transaction = ownsTransaction
+                    ? await db.Database.BeginTransactionAsync(ct)
+                    : null;
+
                 var entry = await blossoms.CreditAsync(new CreditBlossomsCommand(
                     organizationId,
                     priceEntry.BlossomQuantity,
@@ -119,6 +133,16 @@ public static class BlossomEndpoints
                     IdempotencyKey(http),
                     "org.blossoms.top-up",
                     BlossomLedgerEntryType.TopUpGrant), ct);
+
+                await RecordTopUpRevenueAsync(
+                    revenue, request, organizationId, priceEntry, periodStart, periodEnd,
+                    actorUserId, ct);
+
+                if (transaction is not null)
+                {
+                    await transaction.CommitAsync(ct);
+                    await transaction.DisposeAsync();
+                }
 
                 return Results.Created(
                     $"/api/v1/orgs/{organizationId}/blossoms/statement", BlossomLedgerEntryDto.From(entry));
@@ -261,6 +285,51 @@ public static class BlossomEndpoints
         {
             return MapProblem(exception);
         }
+    }
+
+    /// <summary>
+    /// Records the revenue a top-up represents — and **only** when a payment reference is present.
+    /// </summary>
+    /// <remarks>
+    /// There is no payment-provider client in this repository, so a top-up grant is not a charge:
+    /// `docs/api/README.md` §C.2 records the position plainly. What a top-up does give us is the
+    /// provider session reference the caller supplied, which is the operator's evidence that money
+    /// changed hands. Without it, a granted pack writes **no** income row at all, because booking a
+    /// free grant as revenue would invent it.
+    ///
+    /// The entry is <see cref="IncomeChargeBasis.Derived"/> rather than `Verified`: a reference is
+    /// evidence of a session, not proof of settlement, and only an operator confirming receipt makes
+    /// the money real.
+    /// </remarks>
+    private static async Task RecordTopUpRevenueAsync(
+        IIncomeLedgerService revenue,
+        TopUpRequest request,
+        Guid organizationId,
+        BlossomPriceEntry priceEntry,
+        DateTime periodStart,
+        DateTime periodEnd,
+        Guid? actorUserId,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.PaymentReference))
+        {
+            return;
+        }
+
+        await revenue.RecordAsync(new RecordIncomeCommand(
+            organizationId,
+            priceEntry.PriceLkr,
+            $"Top-up purchase {request.SkuCode} ({priceEntry.BlossomQuantity} Blossoms).",
+            IncomeEntryKind.TopUpPurchase,
+            IncomeChargeBasis.Derived,
+            IncomeSourceKind.BlossomTopUp,
+            // The provider reference is the dedup identity, so a retried top-up cannot double-book
+            // even if its idempotency lease has expired.
+            request.PaymentReference.Trim(),
+            periodStart,
+            periodEnd,
+            DateTime.UtcNow,
+            actorUserId), ct);
     }
 
     private static (DateTime From, DateTime To)? ResolveWindow(DateTime? from, DateTime? to)

@@ -129,18 +129,19 @@ describe('ADMIN_ROUTES invariants', () => {
   })
 
   /**
-   * The three revenue pages are registered now and built in R5/R6. Registering them disabled
-   * settles the navigation's shape and these invariants before the pages land, and is the
-   * precedent slice A3 set: an entry with `enabled: false` is never linked, and
-   * `routes.router.test.ts` asserts it is not mounted either.
+   * The three revenue pages shipped `enabled: false` from R0 to R5 so the navigation's shape and
+   * these invariants were settled before the pages landed — the precedent slice A3 set. R6 flipped
+   * them in the commit that mounted their `<Route>`s, which is the only moment that is safe:
+   * `routes.router.test.ts` asserts the two stay in step in both directions.
    */
-  it('registers the three revenue pages but does not yet claim they are built', () => {
+  it('registers and enables the three revenue pages now that they are built', () => {
+    const navigable = navigableRoutes().map((route) => route.id)
+
     for (const id of ['revenue', 'revenue-ledger', 'revenue-stats']) {
-      expect(findRouteById(id)?.enabled, id).toBe(false)
+      expect(findRouteById(id)?.enabled, id).toBe(true)
+      // Enabled and linked: an operator can reach them from the panel.
+      expect(navigable, id).toContain(id)
     }
-    expect(navigableRoutes().map((route) => route.id)).not.toContain('revenue')
-    expect(navigableRoutes().map((route) => route.id)).not.toContain('revenue-ledger')
-    expect(navigableRoutes().map((route) => route.id)).not.toContain('revenue-stats')
   })
 
   it('declares the money domain, and the operations domain still holds two entries', () => {

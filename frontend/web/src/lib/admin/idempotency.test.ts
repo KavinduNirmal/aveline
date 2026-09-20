@@ -22,6 +22,54 @@ const CREDIT: OperationSnapshot = {
  * that same payload. The delivered button minted the key inside the submit handler, so a retry
  * after a `5xx` produced a second, distinct operation.
  */
+/**
+ * The revenue verbs share this lifecycle rather than reimplementing it, so the snapshot carries
+ * their fields too. `sourceRef` is the identity a verify or refund settles; without it in the
+ * fingerprint, two different charges on the same amount would share a key and the second would be
+ * replayed as the first.
+ */
+describe('the revenue verb set', () => {
+  const VERIFY: OperationSnapshot = {
+    verb: 'verify',
+    organizationId: 'org-1',
+    amount: 4500,
+    reason: 'payment received',
+    sourceRef: 'period-2026-09',
+  }
+
+  it('fingerprints a verify by its source reference, not just its amount', () => {
+    const other: OperationSnapshot = { ...VERIFY, sourceRef: 'period-2026-10' }
+
+    expect(operationFingerprint(VERIFY)).not.toBe(operationFingerprint(other))
+  })
+
+  it('fingerprints a refund distinctly from a verify of the same charge', () => {
+    const refund: OperationSnapshot = { ...VERIFY, verb: 'refund' }
+
+    expect(operationFingerprint(refund)).not.toBe(operationFingerprint(VERIFY))
+  })
+
+  it('keeps one key across a retry of the same revenue operation', () => {
+    const state = beginOperation({ snapshot: VERIFY, previous: null, mintKey: () => 'key-1' })
+
+    const retried = beginOperation({ snapshot: { ...VERIFY }, previous: state, mintKey: () => 'key-2' })
+
+    expect(retried.key).toBe('key-1')
+  })
+
+  it('mints a new key when the settled reference changes', () => {
+    const state = beginOperation({ snapshot: VERIFY, previous: null, mintKey: () => 'key-1' })
+
+    const changed = beginOperation({
+      snapshot: { ...VERIFY, sourceRef: 'period-2026-10' },
+      previous: state,
+      mintKey: () => 'key-2',
+    })
+
+    expect(changed.key).toBe('key-2')
+  })
+})
+
 describe('operationFingerprint', () => {
   it('is stable for the same payload and different for a changed one', () => {
     expect(operationFingerprint(CREDIT)).toBe(operationFingerprint({ ...CREDIT }))

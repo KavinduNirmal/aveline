@@ -10,13 +10,30 @@
 
 export type BlossomVerb = 'credit' | 'debit' | 'revoke'
 
+/**
+ * The revenue verbs (S-50). They share this module's key lifecycle rather than reimplementing it:
+ * the rule that a key belongs to the *operation* is the same rule, and a second copy of it is a
+ * second place for it to drift.
+ */
+export type RevenueVerb = 'verify' | 'refund' | 'adjust'
+
+export type OperationVerb = BlossomVerb | RevenueVerb
+
 export interface OperationSnapshot {
-  verb: BlossomVerb
+  verb: OperationVerb
   organizationId: string
   reason: string
   amount?: number
   allowNegative?: boolean
   ledgerEntryId?: string
+  /**
+   * The `(sourceKind, sourceRef)` identity a verify or refund settles.
+   *
+   * It is part of the fingerprint because without it the key would describe only the amount:
+   * settling two different charges of the same size would share a key, and the second attempt
+   * would be replayed as the first.
+   */
+  sourceRef?: string
 }
 
 export interface IdempotencyState {
@@ -53,6 +70,7 @@ export function operationFingerprint(snapshot: OperationSnapshot): string {
     amount: snapshot.amount ?? null,
     allowNegative: snapshot.allowNegative ?? null,
     ledgerEntryId: snapshot.ledgerEntryId ?? null,
+    sourceRef: snapshot.sourceRef ?? null,
   })
 }
 

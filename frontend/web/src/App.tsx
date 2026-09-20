@@ -37,6 +37,9 @@ import { AdminUsersView } from './routes/admin/AdminUsers'
 import { AdminOrgsView } from './routes/admin/AdminOrgs'
 import { AdminRequestsView } from './routes/admin/AdminRequests'
 import { AdminBlossomsView } from './routes/admin/AdminBlossoms'
+import { AdminRevenueView } from './routes/admin/AdminRevenue'
+import { AdminRevenueLedgerView } from './routes/admin/AdminRevenueLedger'
+import { AdminRevenueStatsView } from './routes/admin/AdminRevenueStats'
 import { AdminPricingRulesView } from './routes/admin/AdminPricingRules'
 import { AdminPriceBookView } from './routes/admin/AdminPriceBook'
 import { AdminLogsView } from './routes/admin/AdminLogs'
@@ -85,6 +88,9 @@ export default function App() {
                   <Route path="requests" element={<AdminRequestsView />} />
                   <Route path="orgs" element={<AdminOrgsView />} />
                   <Route path="blossoms" element={<AdminBlossomsView />} />
+                  <Route path="revenue" element={<AdminRevenueView />} />
+                  <Route path="revenue/ledger" element={<AdminRevenueLedgerView />} />
+                  <Route path="revenue/statistics" element={<AdminRevenueStatsView />} />
                   <Route path="pricing" element={<AdminPricingRulesView />} />
                   <Route path="pricing/price-book" element={<AdminPriceBookView />} />
                   <Route path="logs" element={<AdminLogsView />} />

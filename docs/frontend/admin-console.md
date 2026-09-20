@@ -809,10 +809,9 @@ is required and Redis is not configured, rather than letting the two replicas se
 
 ## Revenue Ledger — the `money` domain (R0–R6)
 
-**Status:** in progress. R0 is delivered; R1–R6 are open.
+**Status: delivered.** All six phases, seven GitHub issues.
 
-The plan is `.agents/plans/revenue-ledger-and-blossom-redesign-implementation.md`; the GitHub
-issues are
+The plan is `.agents/plans/revenue-ledger-and-blossom-redesign-implementation.md`. The issues are
 [#341](https://github.com/KavinduNirmal/aveline/issues/341) (R0),
 [#342](https://github.com/KavinduNirmal/aveline/issues/342) (R1),
 [#343](https://github.com/KavinduNirmal/aveline/issues/343) (R2),
@@ -823,15 +822,15 @@ issues are
 
 ### What the family is for
 
-The console has no revenue concept. `grep -rniE "\bincome\b"` over `Aveline.Api` and
-`Aveline.Api.Tests` returns zero, and `revenue` appears only as `BlossomRevenue` /
+The console had no revenue concept. `grep -rniE "\bincome\b"` over `Aveline.Api` and
+`Aveline.Api.Tests` returned zero, and `revenue` appeared only as `BlossomRevenue` /
 `TotalBlossomRevenue`, which are Blossom **units**, not currency. Payments in this repository are
 boutique-scoped: `Payment` requires an `OrderId` and reaches only
 `/api/v1/orgs/{organizationId}/payments`, so it is a tenant's sales record rather than platform
 income. The `money` domain answers a different question — *what did Aveline bill, and was any of it
 collected?*
 
-### The two entry classes (D4)
+### The two entry classes (D4), and why the ledger has two
 
 **There is no payment-provider client in this repository.** The provider columns on
 `OrganizationSubscriptions` and `BlossomPriceEntries` exist and nothing writes them;
@@ -839,20 +838,20 @@ collected?*
 top-up is a recorded grant, not a charge."*
 
 Booking income at the top-up or rollover site without that distinction would invent money, so the
-ledger carries two classes and the console must always say which it is showing:
+ledger carries two classes and the console always says which it is showing:
 
 | `chargeBasis` | Meaning | Writer |
 |---|---|---|
 | `Derived` | what the list price says *should* be billed — an expectation | the top-up route when a `paymentReference` is supplied, and `BillingPeriodRolloverJob` |
 | `Verified` | money an operator confirmed was received, or a refund | `POST /admin/revenue/ledger/verify` and `/refund` |
 
-A top-up with **no** `paymentReference` writes no income row at all.
+A top-up with **no** `paymentReference` writes no income row at all. A subscription with
+`PriceLkr = 0` writes no charge at all, which is the production case today: that is why
+`subscriptionPricesConfigured` is `false` and MRR is `null` rather than `0`.
 
-### R0 — foundations and the honesty contract
+### The permission family
 
-R0 adds **no UI and no endpoint**. It lands the contract so R1–R6 have nothing left to decide.
-
-**The permission family.** Three constants join a 25-permission catalog, which is now **28**:
+Three constants joined a 25-permission catalog, which is now **28**:
 
 | Permission | `admin` | `owner` | `moderator` |
 |---|---|---|---|
@@ -861,54 +860,136 @@ R0 adds **no UI and no endpoint**. It lands the contract so R1–R6 have nothing
 | `revenue:refund` | — | ✅ | — |
 
 A `moderator` already holds `analytics:business:read` and `admin:orgs:read`, so reading what a
-boutique was billed is the same class of read and is inside their remit. Moving money is not:
-`revenue:manage` stays team-only, and `revenue:refund` is owner-only, because sending money back is
-irreversible in a way that correcting the ledger is not.
+boutique was billed is the same class of read. Moving money is not: `revenue:manage` stays
+team-only, and `revenue:refund` is owner-only, because sending money back is irreversible in a way
+that correcting the ledger is not.
 
 **A structural fix that came out of this.** `admin` is granted the whole catalog minus a denial
-list, and that list was an inline `!= PricingBackdate` at the `All.Where(...)` call site — which
-meant the client mirror had to re-derive the exclusion by hand in a `.filter()` the server could not
-check. Adding `revenue:refund` as a second denial made the drift real: the first test run granted it
-to an admin. `Permissions.cs` now names the denials in
-`PermissionsDeniedToAdmin`, `permissions-catalog.ts` parses that array, and **both sides derive their
-grant set from it** — so a third denial cannot drift.
+list, and that list was an inline `!= PricingBackdate` at the `All.Where(...)` call site — so the
+client mirror had to re-derive the exclusion by hand in a `.filter()` the server could not check.
+Adding `revenue:refund` as a second denial made the drift real: the first test run granted it to an
+admin. `Permissions.cs` now names the denials in `PermissionsDeniedToAdmin`, the parser reads that
+array, and **both sides derive their grant set from it**.
 
-**Two role policies.** `AuthorizationConfiguration.cs` gains `MoneyRead` (`owner`, `admin`,
-`moderator`) and `MoneyOperations` (`owner`, `admin`), each `RequireRole(...)` plus a
-`PermissionRequirement` in the established team-only shape. `MoneyRead` is the only team-only policy
-that admits a `moderator`.
+### The `money` domain, and the gate that was missing
 
-**A fifth `dataQuality` vocabulary.** `IncomeDataQuality` (`types/admin/index.ts`) and its pinned
-field list (`lib/admin/revenue-quality.ts`), deliberately not a reuse of `BusinessDataQuality`:
-attribution and backfill say nothing about whether a price was configured or whether a receipt was
-verified. Its three load-bearing facts:
+Four registry entries, all `enabled: true`: `revenue`, `revenue-ledger`, `revenue-stats` (gated
+`MoneyRead`) and `blossoms` (moved out of `operations`, gated `MoneyOperations`). The three revenue
+entries shipped `enabled: false` from R0 to R5 so the navigation's shape and the invariants were
+settled before the pages landed — the precedent slice A3 set — and R6 flipped them in the commit
+that mounted their `<Route>`s.
+
+`routes.ts` is the single source of truth for the panel, the breadcrumb and the registry invariants,
+but it mounts nothing: `App.tsx` carries a hand-written `<Route>` block. Nothing checked the two
+agreed, and an entry registered without a route falls through to the `path="*"` catch-all and
+silently redirects to the dashboard — worse than a 404, because nothing looks broken.
+`lib/admin/routes.router.test.ts` reads `App.tsx` from source and asserts that every enabled entry
+is mounted, that a **disabled** entry is *not*, that no sub-path is mounted twice, and that every
+imported view is mounted somewhere.
+
+### The fifth `dataQuality` vocabulary
+
+`IncomeDataQuality` (`types/admin/index.ts`) and its renderer
+(`lib/admin/revenue-quality.ts`), deliberately not a reuse of `BusinessDataQuality`: attribution and
+backfill say nothing about whether a price was configured or whether a receipt was verified. Its
+three load-bearing facts:
 
 - `revenueProviderSettlementAvailable: false` — no figure in this family is settled money.
-- `subscriptionPricesConfigured: false` — every subscription has `PriceLkr = 0`, because
-  `SubscriptionService.UpsertSubscriptionAsync` never assigns it. A derived charge of `0` therefore
-  means *no list price is configured*; it does not mean free, and MRR is `null` rather than `0`.
+- `subscriptionPricesConfigured: false` — a derived charge of `0` means *no list price is
+  configured*, not "free".
 - `derivedEntriesUnverified` — the count of `Derived` rows with no `Verified` counterpart. That gap
   is the most important number on the surface, and it is **not** an error.
 
-**The `money` domain.** Four registry entries: `blossoms` (moved out of `operations`, gated
-`MoneyOperations`), and `revenue`, `revenue-ledger`, `revenue-stats` (gated `MoneyRead`,
-`enabled: false` until R5/R6 build and mount them — the precedent slice A3 set). `operations` keeps
-`pricing` and `price-book`, so its ≥ 2-entry invariant still holds.
+### The reads
 
-**A gate that was missing.** `routes.ts` is the single source of truth for the panel, the breadcrumb
-and the registry invariants, but it mounts nothing: `App.tsx` carries a hand-written `<Route>` block
-and nothing checked the two agreed. An entry registered without a route falls through to the
-`path="*"` catch-all and silently redirects to the dashboard — worse than a 404, because nothing
-looks broken. `lib/admin/routes.router.test.ts` reads `App.tsx` from source and asserts that every
-`enabled` entry is mounted, that a **disabled** entry is *not* mounted, that no sub-path is mounted
-twice, and that every imported view is mounted somewhere.
+Six endpoints, gated `revenue:read`, bearer-only, each carrying `dataQuality` and
+`Cache-Control: private`. Three rules the pages keep, each pinned by test:
 
-### The catalog and the wire
+1. **A measure that could not be computed is `null`, never `0`.** MRR is `null` while every
+   `PriceLkr` is `0`; `collectionRate` is `null` when nothing was billed; `arpu` is `null` rather
+   than a divide-by-zero. `KpiTile` renders `null` as *"not measured"*. A **measured** `0` stays
+   `0` — a window with no rows is a measurement, and so is a count of zero paying organizations.
+2. **Derived and verified are never merged.** The timeseries returns three separate series, and the
+   register carries `derivedTotal`, `verifiedTotal` and the gap between them as three labelled
+   figures. `unverifiedGap` is a **magnitude**: a receipt with no matching charge is as much a
+   finding as a charge with no receipt. The signed view is `collectionRate.outstanding`, which is a
+   balance.
+3. **A window is dense and calendar-aligned.** A bucket the window clips carries `isPartial`, and
+   a window over `Revenue:MaxWindowDays` is rejected **naming the effective limit** rather than
+   silently shortened.
 
-S-50 … S-56 are recorded in `docs/backend/statistics-catalog.md` §7c, including the two-entry-class
-table, the `IncomeDataQualityDto` field table, and the `PriceLkr = 0` warning. The endpoints
-themselves land in R2 (writes) and R3 (reads), and the API catalog and OpenAPI entries land with
-them.
+### The Blossom ledger, redesigned
+
+The delivered page was the console's weakest and had **no test at all**. Three defects, each
+verified before the fix:
+
+| Defect | Fix |
+|---|---|
+| `GetStatementAsync` read the whole window with `pageSize: int.MaxValue` and skipped in memory | merged, filtered, ordered and paged **in SQL**, ordered `occurredAt DESC, id DESC` (`id` is UUIDv7, so the ordering is total and stable) |
+| A consumption row said `"Agent workflow"` and nothing else | rows carry `provider`, `model`, `normalizedUnits` and `actualCostUsd`, and the reason names the model |
+| `revoke` required a hand-typed ledger GUID, and non-revocability was only found from a `409` | the statement reports `availableToRevoke`, the action is on eligible rows, and the identifier comes from the row |
+
+Two bugs the filter tests caught, both of which returned consumption rows under a request that asked
+for ledger rows: the consumption leg ignored `entryType` entirely, and its zero `BlossomDelta`
+satisfied `delta >= 1`. `entryType` and an amount bound are now recognised as **ledger-only**
+concepts that short-circuit the union.
+
+The statement's `dataQuality` states two things a reader would otherwise assume are not true.
+`openingBalanceFromProjection` is always `true`: the opening balance is derived **backwards** from
+the cached `BlossomRemaining`, not accumulated forward from the ledger. And
+`reconciliationChecked: false` renders *"reconciliation status unknown"* — **never** as consistent;
+the delivered banner was a two-way `isConsistent ? … : …` with no third state.
+
+`BalanceTimeline` draws the page's balance movement as one bar per row, so a discontinuity is
+visible rather than something to infer from a numeric column. A `PeriodAllocation` row is drawn
+separately because the allowance steps the balance once a month, and drawing that as ordinary
+movement would present a cliff as a slope.
+
+### S-56, the cross-org drift read
+
+`GET /api/v1/admin/statistics/billing/reconciliation`, gated `stats:system`. Drift is already a
+Critical alert — `SystemMetricCollector` emits `aveline.blossom.reconciliation.drift`, which
+`blossom.ledger.drift` watches — and an alarm is only actionable if the operator can find *which*
+account drifted, which previously meant Grafana.
+
+The formula is **not** reimplemented: it calls the same `BlossomService.LedgerDerivedBalance` and
+`ReconciliationDrift` the collector uses, because a second derivation would let the console and the
+alarm disagree about the same account. `reconciliationChecked` is `null` there rather than `false`:
+the read does not run a pass, so it cannot claim one happened.
+
+### The trap that cost the most
+
+`currentWindow(preset)` calls the clock, so calling it inline in a component produces a **new window
+on every render**. A query key built from that is a new key every render, which React Query reads as
+a new query: the first version of `AdminRevenue` issued **167 requests** before its test gave up.
+`useRevenueWindow` buckets "now" to the hour so the key is stable. The general rule, now recorded in
+the hook: a query key must be **structural, never referential**.
+
+### Coverage
+
+`components/admin` jumped from 29.41% to **84.73% lines** because R5 gave the Blossom page its first
+test, which loads `blossoms`, `charts`, `data` and `orgs` with it; 26 of the 37 components are at
+100% lines and `shell/AdminScopeChip` is still at 0. Routes are at **81.87% lines / 72.35%
+branches**, `AdminSessionContext` at 66.07% / 55.88%, and the whole subtree at **81.93% lines /
+71.29% branches**.
+
+The ratchet in `vitest.admin-coverage.config.ts` is raised to just below each achieved value, and
+`ci.yml` now **runs it** (`bun run test:coverage:admin`). It previously ran nowhere in CI: the tenant
+gate's glob-scoped thresholds deliberately exclude the admin subtree, so the floor only ever bound on
+a developer's laptop.
+
+### Not delivered, and stated rather than implied
+
+- **The authenticated Playwright walk.** `tests/e2e/admin-console/console-access.spec.ts` now covers
+  all four `money` routes **signed out**, asserting each lands on `/sign-in` and issues zero revenue
+  requests. The authenticated walk still needs a Clerk test session this environment does not have.
+- **A `test:coverage:admin` failure is not reproducible under concurrent load.** The suite is timing-
+  sensitive at Vitest's default 5 s per test; running it alongside `test:coverage` made one
+  unrelated `AdminAudit` test time out. CI runs the two steps sequentially, which is why the job
+  definition keeps them in order.
+- **The seven Prometheus revenue gauges** the plan's §5.9 layer 3 names. The data-quality contract,
+  the reads and the tests are delivered; the gauges are alerting plumbing rather than a console
+  requirement.
 
 ## Documentation and API surface
 

@@ -39,19 +39,20 @@ export default defineConfig({
         // achieved, and the floor never exceeds the achieved value — a ratchet that blocks is a
         // ratchet that gets removed.
         //
-        // Achieved with the business-KPI surface (P1–P6) and the landing-page KPIs: routes/admin
-        // 78.24% lines / 64.52% branches; components/admin 29.41% lines / 19.35% branches;
-        // AdminSessionContext 64.4% lines / 55.88% branches; the whole admin subtree 78.55% lines.
-        // The `components/admin` aggregate stays low because `components/admin/shell` is exercised
-        // structurally (one geometry container, a skip link, the panel) rather than coveraged to
-        // death, which is what the Playwright walk is for. Each floor is set just below the achieved
-        // value so the gate never blocks on noise.
-        'src/routes/admin/**': { lines: 77, functions: 75, branches: 63, statements: 77 },
-        'src/components/admin/**': { lines: 28, functions: 18, branches: 9, statements: 30 },
+        // Achieved with the Revenue Ledger workstream (R0–R6): routes/admin 81.87% lines /
+        // 72.35% branches; components/admin 84.73% lines / 70.75% branches; AdminSessionContext
+        // 66.07% lines / 55.88% branches; the whole admin subtree 81.93% lines / 71.29% branches.
+        //
+        // `components/admin` jumped from 29.41% to 84.73% because R5 gave the Blossom page its first
+        // test, which loads `components/admin/blossoms`, `charts`, `data` and `orgs` with it. 26 of
+        // the 37 components are now at 100% lines and one — `shell/AdminScopeChip` — is still at 0.
+        // Each floor is set just below the achieved value so the gate never blocks on noise.
+        'src/routes/admin/**': { lines: 80, functions: 74, branches: 70, statements: 79 },
+        'src/components/admin/**': { lines: 82, functions: 74, branches: 68, statements: 80 },
         'src/contexts/AdminSessionContext.tsx': {
-          lines: 63,
+          lines: 64,
           functions: 70,
-          branches: 52,
+          branches: 53,
           statements: 63,
         },
       },

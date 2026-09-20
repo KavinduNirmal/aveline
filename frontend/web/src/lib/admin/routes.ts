@@ -269,10 +269,7 @@ export const ADMIN_ROUTES: readonly AdminRouteDef[] = [
     icon: TrendingUp,
     domain: "money",
     gate: { kind: "role", anyOf: ROLE_POLICIES.MoneyRead.anyOf },
-    // Registered disabled: R0 settles the navigation's shape and the registry invariants
-    // before the page lands, exactly as slice A3 did. R6 flips it to `enabled: true` in the
-    // commit that also mounts its `<Route>` and imports its view.
-    enabled: false,
+    enabled: true,
   },
   {
     id: "revenue-ledger",
@@ -282,7 +279,7 @@ export const ADMIN_ROUTES: readonly AdminRouteDef[] = [
     icon: FileText,
     domain: "money",
     gate: { kind: "role", anyOf: ROLE_POLICIES.MoneyRead.anyOf },
-    enabled: false,
+    enabled: true,
   },
   {
     id: "revenue-stats",
@@ -292,7 +289,7 @@ export const ADMIN_ROUTES: readonly AdminRouteDef[] = [
     icon: BarChart3,
     domain: "money",
     gate: { kind: "role", anyOf: ROLE_POLICIES.MoneyRead.anyOf },
-    enabled: false,
+    enabled: true,
   },
 ]
 

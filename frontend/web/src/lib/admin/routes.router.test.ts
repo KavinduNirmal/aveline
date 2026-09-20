@@ -79,6 +79,31 @@ describe('the admin registry is mounted by App.tsx', () => {
     }
   })
 
+  /**
+   * The failure this catches is specific: an entry registered `enabled: true` with no `<Route>` in
+   * `App.tsx` falls through to the `path="*"` catch-all and silently redirects to the dashboard.
+   * The `money` entries are the ones this guard was written for — three of them shipped
+   * `enabled: false` through R0 to R5, and R6 flipped all three in the commit that mounted them.
+   */
+  it('mounts every money entry, and the paths are the ones the registry names', () => {
+    const mounted = mountedAdminPaths()
+
+    for (const id of ['revenue', 'revenue-ledger', 'revenue-stats', 'blossoms']) {
+      const route = ADMIN_ROUTES.find((candidate) => candidate.id === id)
+      expect(route, `${id} is not registered`).toBeDefined()
+      expect(route!.enabled, `${id} must be enabled now that its page exists`).toBe(true)
+      expect(mounted.has(route!.subPath), `no <Route path="${route!.subPath}">`).toBe(true)
+    }
+  })
+
+  it('does not mount the two unbuildable detail routes', () => {
+    // `user-detail` and `org-detail` stay registered and disabled: the API has no by-id read for
+    // either, so the navigation's shape is settled without shipping a page that cannot load.
+    const mounted = mountedAdminPaths()
+    expect(mounted.has('users/:userId')).toBe(false)
+    expect(mounted.has('orgs/:organizationId')).toBe(false)
+  })
+
   it('mounts exactly one route per registry sub-path', () => {
     const paths = [...mountedAdminPaths().keys()]
     expect(new Set(paths).size).toBe(paths.length)

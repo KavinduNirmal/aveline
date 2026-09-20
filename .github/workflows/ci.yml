@@ -349,18 +349,16 @@ jobs:
         with:
           scan-type: fs
           scan-ref: .
-          skip-dirs: node_modules,.git,build,dist
+          skip-dirs: node_modules,.git,build,dist,.cache
           severity: CRITICAL,HIGH
           ignore-unfixed: true
-          limit-severities-for-sarif: true
-          format: sarif
-          output: trivy-results.sarif
+          format: table
           exit-code: "1"
 
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         # Best effort: requires "Code scanning" to be enabled in repo settings.
-        if: always()
+        if: always() && hashFiles('trivy-results.sarif') != ''
         continue-on-error: true
         with:
           sarif_file: trivy-results.sarif

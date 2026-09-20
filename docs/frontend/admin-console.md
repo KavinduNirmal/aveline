@@ -350,8 +350,8 @@ derivation here.
 Admin-subtree coverage at A4: **27.69 % lines** (from 0 % at A0). The floors in
 `vitest.admin-coverage.config.ts` are raised to the achieved values.
 
-**Final, with the business-KPI surface (P1–P6):** the admin subtree is at **77.09 % lines /
-64.88 % branches**; `routes/admin` at **76.57 % / 62.52 %**; `components/admin` at
+**Final, with the business-KPI surface (P1–P6) and the landing-page KPIs:** the admin subtree is at
+**78.55 % lines / 66.77 % branches**; `routes/admin` at **78.21 % / 65.14 %**; `components/admin` at
 **29.41 % / 19.35 %**; `components/admin/shell` is still the drag on that last aggregate, by design.
 The floors are set just below each achieved value, and `bun run test:coverage:admin` passes.
 
@@ -657,6 +657,52 @@ the business doing?** It is the plan
 | **P4** | Frontend foundation | [#338](https://github.com/KavinduNirmal/aveline/issues/338) | **delivered** |
 | **P5** | The Growth console | [#339](https://github.com/KavinduNirmal/aveline/issues/339) | **delivered** |
 | **P6** | Usage console, drill-down, documentation, ratchet | [#340](https://github.com/KavinduNirmal/aveline/issues/340) | **delivered** |
+
+### The three KPIs on the landing page
+
+The dashboard landing page (`/admin/:userId/dashboard`) carries a **Business snapshot** section with
+three of the highest-value business KPIs. They are the only part of the landing page that reads the
+business endpoints, and each uses a **different chart type**, so the page does not read as one chart
+repeated:
+
+| KPI | Chart | Source | What it answers |
+|---|---|---|---|
+| **New signups** | line trend (`TimeSeriesChart`) | `GET business/growth` | Are we growing? New users and new boutiques per day |
+| **Active users** | area trend with a gradient fill (`AreaTrendChart`), with the DAU/WAU/MAU reading above it | `GET business/active-users` | Is anyone using the product? |
+| **Plan mix** | single stacked distribution bar (`DistributionBar`) | `GET business/plan-mix` | Where is the revenue? Free versus premium, from `Organizations.PlanTier` |
+
+**The section is gated on `analytics:business:read`**, read from the permission set directly. A caller
+without it does not render the section **and issues no business request** — a `403` in the network log
+is a worse experience than an absent section, and a test asserts both halves.
+
+`AreaTrendChart` and `DistributionBar` are the two new chart primitives. Both reuse the one series
+shaping path (`lib/admin/business-series.ts`), so the landing page introduced no second way to compute
+a bucket, and both keep the family's honesty rule: a `null` is a gap, never a line through zero.
+`DistributionBar` takes **counts** and derives the proportions, so it says *"no organizations"* rather
+than dividing by zero, and a tier with no measurable value is named rather than dropped.
+
+### The volume chart now says what it counts
+
+The existing dashboard chart was titled *"Business action volume"* with the description *"Recorded
+business actions per bucket"*, which did not say what a "volume" was a volume **of**. It is now
+**"Business actions logged"** with a description that names the unit and the three deliberate
+exclusions — *count of write operations recorded in the audit ledger per period: ledger entries,
+entitlement overrides, plan changes, approvals and pricing edits; excludes reads, failed requests and
+sign-ins* — and the count axis is labelled `actions` with the tooltip spelling the unit out, so a bar
+is interpretable without reading the card.
+
+### Trap 2 of the chart layer: never put a message inside `ChartContainer`
+
+Found while building this section, and worth recording because it is mechanical.
+`ResponsiveContainer` measures its parent and renders the result into a **plain wrapper**, not a flex
+box. A non-chart state rendered as its child therefore lands in a `0×0` box whenever the measurement
+has not resolved, and the text wraps **one character per line**.
+
+`ChartFrame` now takes `state: "ready" | "error" | "empty"` and renders the non-chart states itself, at
+the card's full width, **without mounting `ChartContainer` at all**. Every failure on the landing page
+goes through it, and `ChartFrame.dom.test.tsx` pins that no `[data-slot="chart"]` exists in those
+states. The frame also trims a trailing full stop off the server's message, so a `404` reads
+*"The requested resource was not found."* rather than *"…not found.."*.
 
 ### The scope decision (DR-1): a Postgres series is inside the boundary
 

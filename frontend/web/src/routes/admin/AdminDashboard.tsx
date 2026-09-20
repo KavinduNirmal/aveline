@@ -9,10 +9,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import type { ChartConfig } from "@/components/ui/chart"
 import { ActivityChart } from "@/components/admin/charts/ActivityChart"
+import { AreaTrendChart } from "@/components/admin/charts/AreaTrendChart"
 import { ChartFrame } from "@/components/admin/charts/ChartFrame"
 import { DataQualityNotice } from "@/components/admin/charts/DataQualityNotice"
+import { DistributionBar, type DistributionSegment } from "@/components/admin/charts/DistributionBar"
 import { GrafanaCard } from "@/components/admin/charts/GrafanaCard"
 import { KpiTile } from "@/components/admin/charts/KpiTile"
+import { TimeSeriesChart } from "@/components/admin/charts/TimeSeriesChart"
 import { ErrorState } from "@/components/admin/data/states/ErrorState"
 import {
   agentDataQuality,
@@ -20,9 +23,15 @@ import {
   systemDataQuality,
 } from "@/lib/admin/data-quality"
 import { bucketActivity, deltaPct, type BucketUnit } from "@/lib/admin/activity-series"
+import { buildBusinessAxis, toSeries } from "@/lib/admin/business-series"
+import { businessDataQuality } from "@/lib/admin/data-quality"
+import { presetWindow } from "@/components/admin/kpi/RangePresets"
 import { grafanaLink, type GrafanaDashboard } from "@/lib/admin/grafana"
 import {
   fetchAgentOverview,
+  fetchBusinessActiveUsers,
+  fetchBusinessGrowth,
+  fetchBusinessPlanMix,
   fetchSystemAlerts,
   fetchSystemOverview,
   listAdminRequests,
@@ -32,6 +41,9 @@ import type {
   AdminApprovalRequestSummary,
   AgentOverviewDto,
   AuditLogEntry,
+  BusinessActiveUsers,
+  BusinessGrowth,
+  BusinessPlanMix,
   SystemAlertDto,
   SystemOverview,
 } from "@/types/admin"
@@ -69,6 +81,25 @@ const ACTIVITY_CONFIG = {
   activity: { label: "Business actions", color: "var(--chart-1)" },
 } satisfies ChartConfig
 
+const SIGNUP_CONFIG = {
+  newUsers: { label: "New users", color: "var(--chart-2)" },
+} satisfies ChartConfig
+
+const ACTIVE_USERS_CONFIG = {
+  activeUsers: { label: "Active users", color: "var(--chart-1)" },
+} satisfies ChartConfig
+
+const PLAN_MIX_CONFIG = {
+  Seed: { label: "Seed (free)", color: "var(--chart-4)" },
+  Bloom: { label: "Bloom", color: "var(--chart-1)" },
+  Orchid: { label: "Orchid", color: "var(--chart-2)" },
+  Rose: { label: "Rose", color: "var(--chart-3)" },
+  Enterprise: { label: "Enterprise", color: "var(--chart-5)" },
+} satisfies ChartConfig
+
+/** The permission the business-KPI section needs. Absent, the section does not render at all. */
+const BUSINESS_PERMISSION = "analytics:business:read"
+
 const QUEUE_FIELDS = [
   ["Telemetry channel", "telemetryChannelDepth"],
   ["Event bus backlog", "eventBusBacklog"],
@@ -86,7 +117,11 @@ const QUEUE_FIELDS = [
  */
 export function AdminDashboardView() {
   const { userId } = useParams<{ userId: string }>()
-  const { email } = useAdminSession()
+  const { email, permissions } = useAdminSession()
+  // The section is gated on the permission set directly, so a caller without it issues **no**
+  // business request. `Gate` does the same for nav entries; this is the same rule applied to a
+  // section rather than an entry.
+  const canReadBusiness = permissions.has(BUSINESS_PERMISSION)
   const displayName = email ? email.split("@")[0] : "administrator"
 
   const [overview, setOverview] = useState<Async<SystemOverview>>({ kind: "loading" })
@@ -97,6 +132,21 @@ export function AdminDashboardView() {
   })
   const [agents, setAgents] = useState<Async<AgentOverviewDto>>({ kind: "loading" })
   const [range, setRange] = useState<"7d" | "12m">("7d")
+
+  // The three landing-page business KPIs. Each is loaded independently so one failure names itself
+  // instead of blanking the section.
+  const [businessGrowth, setBusinessGrowth] = useState<Async<BusinessGrowth>>({ kind: "loading" })
+  const [businessActive, setBusinessActive] = useState<Async<BusinessActiveUsers>>({
+    kind: "loading",
+  })
+  const [businessPlanMix, setBusinessPlanMix] = useState<Async<BusinessPlanMix>>({
+    kind: "loading",
+  })
+
+  const businessWindow = useCallback(() => ({
+    ...presetWindow("30d"),
+    granularity: "day" as const,
+  }), [])
 
   const load = useCallback(async () => {
     setOverview({ kind: "loading" })
@@ -137,9 +187,35 @@ export function AdminDashboardView() {
     }
   }, [])
 
+  /** The business reads are a separate pass, because they are gated separately. */
+  const loadBusiness = useCallback(async () => {
+    if (!canReadBusiness) return
+    setBusinessGrowth({ kind: "loading" })
+    setBusinessActive({ kind: "loading" })
+    setBusinessPlanMix({ kind: "loading" })
+
+    const window = businessWindow()
+    try {
+      setBusinessGrowth({ kind: "ready", value: await fetchBusinessGrowth(window) })
+    } catch (err: unknown) {
+      setBusinessGrowth({ kind: "error", message: messageOf(err) })
+    }
+    try {
+      setBusinessActive({ kind: "ready", value: await fetchBusinessActiveUsers(window) })
+    } catch (err: unknown) {
+      setBusinessActive({ kind: "error", message: messageOf(err) })
+    }
+    try {
+      setBusinessPlanMix({ kind: "ready", value: await fetchBusinessPlanMix() })
+    } catch (err: unknown) {
+      setBusinessPlanMix({ kind: "error", message: messageOf(err) })
+    }
+  }, [canReadBusiness, businessWindow])
+
   useEffect(() => {
     void load()
-  }, [load])
+    void loadBusiness()
+  }, [load, loadBusiness])
 
   const pending =
     requests.kind === "ready"
@@ -161,6 +237,94 @@ export function AdminDashboardView() {
           item.requestedAt < oldest.requestedAt ? item : oldest,
         ).requestedAt
       : null
+
+  // ── Derived business series ───────────────────────────────────────────────────────────────
+  // The axis comes from the server's own window, so the client never invents buckets; a bucket
+  // the server did not send stays `null` and is drawn as a gap.
+
+  const signupPoints =
+    businessGrowth.kind === "ready"
+      ? toSeries(
+          buildBusinessAxis(
+            businessGrowth.value.window.from,
+            businessGrowth.value.window.to,
+            "day",
+          ),
+          businessGrowth.value.series.map((point) => ({
+            bucketStart: point.bucketStart,
+            isPartial: point.isPartial,
+            values: {
+              newUsers: point.newUsers,
+              newOrganizations: point.newOrganizations,
+            },
+          })),
+          "day",
+          ["newUsers", "newOrganizations"],
+        )
+      : []
+
+  const activeUserPoints =
+    businessActive.kind === "ready"
+      ? toSeries(
+          buildBusinessAxis(
+            businessActive.value.window.from,
+            businessActive.value.window.to,
+            "day",
+          ),
+          businessActive.value.series.map((point) => ({
+            bucketStart: point.bucketStart,
+            isPartial: point.isPartial,
+            values: { activeUsers: point.activeUsers },
+          })),
+          "day",
+          ["activeUsers"],
+        )
+      : []
+
+  const activeUserPartial =
+    activeUserPoints.at(-1)?.isPartial === true
+      ? (activeUserPoints.at(-1)?.bucket as string)
+      : undefined
+
+  const signupPartial =
+    signupPoints.at(-1)?.isPartial === true
+      ? (signupPoints.at(-1)?.bucket as string)
+      : undefined
+
+  const planMixSegments: DistributionSegment[] =
+    businessPlanMix.kind === "ready"
+      ? businessPlanMix.value.tiers
+          .filter((tier) => tier.organizationCount > 0)
+          .map((tier) => ({
+            key: tier.planTier,
+            label: tier.planTier,
+            value: tier.organizationCount,
+            free: tier.isFree,
+          }))
+      : []
+
+  const businessQuality = (() => {
+    const qualities = [businessGrowth, businessActive, businessPlanMix].flatMap((state) =>
+      state.kind === "ready" ? [state.value.dataQuality] : [],
+    )
+    if (qualities.length === 0) return null
+    return businessDataQuality({
+      userAttributionAvailable: qualities.every((quality) => quality.userAttributionAvailable),
+      unresolvedAttributionCount: Math.max(
+        ...qualities.map((quality) => quality.unresolvedAttributionCount),
+      ),
+      subscriptionHistoryBackfilled: qualities.some(
+        (quality) => quality.subscriptionHistoryBackfilled,
+      ),
+      lastActivityIsReconstructed: qualities.some(
+        (quality) => quality.lastActivityIsReconstructed,
+      ),
+      agentMetricsUninstrumented: qualities.some(
+        (quality) => quality.agentMetricsUninstrumented,
+      ),
+      notes: Array.from(new Set(qualities.flatMap((quality) => quality.notes))),
+    })
+  })()
 
   return (
     <div className="flex flex-col gap-6 pb-12">
@@ -237,11 +401,13 @@ export function AdminDashboardView() {
             />
           </div>
 
-          {/* Business-action volume. The source is Postgres (`GET /admin/audit`), so this is the
-              console's own chart and not a second copy of a Grafana panel (Q11). */}
+          {/* Business actions logged. The source is Postgres (`GET /admin/audit`), so this is the
+              console's own chart and not a second copy of a Grafana panel (Q11). The y-axis carries
+              its unit and the description names the three things it deliberately excludes, because
+              a bare "volume" chart does not say what it is a volume *of*. */}
           <ChartFrame
-            title="Business action volume"
-            description="Recorded business actions per bucket. Reads and failed requests are not recorded."
+            title="Business actions logged"
+            description="Count of write operations recorded in the audit ledger per period: ledger entries, entitlement overrides, plan changes, approvals and pricing edits. Excludes reads, failed requests and sign-ins — the audit table records only actions that changed something."
             config={ACTIVITY_CONFIG}
             action={
               <div className="flex items-center gap-2">
@@ -270,6 +436,118 @@ export function AdminDashboardView() {
           >
             <ActivityChart points={activityPoints} />
           </ChartFrame>
+
+          {/* The three business KPIs. Each uses a different chart type — a line, an area and a
+              stacked distribution bar — so the page does not read as one repeated chart. The whole
+              block is gated on `analytics:business:read`.
+
+              A failed read is rendered by **`ChartFrame`'s own state**, never inside the chart: a
+              message placed inside `ChartContainer` lands in recharts' measured `0×0` box and wraps
+              one character per line. */}
+          {canReadBusiness && (
+            <div className="flex min-w-0 flex-col gap-4">
+              <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+                <div className="min-w-0">
+                  <h2 className="font-serif text-lg font-medium tracking-tight text-foreground">
+                    Business snapshot
+                  </h2>
+                  <p className="text-[11px] text-muted-foreground">
+                    Trailing 30 days, from Aveline&rsquo;s own Postgres tables. Every figure is a
+                    count; a blank reads &ldquo;not measured&rdquo; rather than zero.
+                  </p>
+                </div>
+                <Button asChild variant="outline" size="sm" className="shrink-0 text-xs">
+                  <Link to={`/admin/${userId}/business`}>Open Growth</Link>
+                </Button>
+              </div>
+
+              <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-3">
+                {/* KPI 1 — new signups, as a line trend. */}
+                <ChartFrame
+                  title="New signups"
+                  description="New users and new boutiques per day, from the local first-seen timestamp (GET business/growth)"
+                  config={SIGNUP_CONFIG}
+                  action={<GrafanaTileLink dashboard="business" />}
+                  state={businessGrowth.kind === "error" ? "error" : "ready"}
+                  stateMessage={
+                    businessGrowth.kind === "error" ? businessGrowth.message : undefined
+                  }
+                >
+                  <TimeSeriesChart
+                    data={signupPoints}
+                    series={[
+                      { dataKey: "newUsers", label: "New users" },
+                      { dataKey: "newOrganizations", label: "New boutiques" },
+                    ]}
+                    partialBucket={signupPartial}
+                  />
+                </ChartFrame>
+
+                {/* KPI 2 — active users, as an area trend with the DAU reading above it. */}
+                <ChartFrame
+                  title="Active users"
+                  description="Distinct authenticated users who sent at least one request per day. An unattributed window reads not measured (GET business/active-users)"
+                  config={ACTIVE_USERS_CONFIG}
+                  action={<GrafanaTileLink dashboard="business" />}
+                  state={businessActive.kind === "error" ? "error" : "ready"}
+                  stateMessage={
+                    businessActive.kind === "error" ? businessActive.message : undefined
+                  }
+                >
+                  <div className="flex h-full w-full min-w-0 flex-col">
+                    <p className="shrink-0 text-[11px] text-muted-foreground">
+                      Daily active:{" "}
+                      <span className="font-serif text-base font-semibold text-foreground">
+                        {businessActive.kind === "ready"
+                          ? formatMetricValue(businessActive.value.rolling.dau, "count")
+                          : "…"}
+                      </span>
+                      {businessActive.kind === "ready" && (
+                        <span className="ml-2">
+                          weekly {formatMetricValue(businessActive.value.rolling.wau, "count")} ·
+                          monthly {formatMetricValue(businessActive.value.rolling.mau, "count")}
+                        </span>
+                      )}
+                    </p>
+                    <div className="min-h-0 w-full min-w-0 flex-1">
+                      <AreaTrendChart
+                        data={activeUserPoints}
+                        series={[{ dataKey: "activeUsers", label: "Active users" }]}
+                        config={ACTIVE_USERS_CONFIG}
+                        partialBucket={activeUserPartial}
+                      />
+                    </div>
+                  </div>
+                </ChartFrame>
+
+                {/* KPI 3 — the plan mix, as a single stacked distribution bar. */}
+                <ChartFrame
+                  title="Plan mix"
+                  description="Organizations per tier, from Organizations.PlanTier, which is authoritative for every organization (GET business/plan-mix)"
+                  config={PLAN_MIX_CONFIG}
+                  state={businessPlanMix.kind === "error" ? "error" : "ready"}
+                  stateMessage={
+                    businessPlanMix.kind === "error" ? businessPlanMix.message : undefined
+                  }
+                >
+                  <div className="flex h-full w-full min-w-0 flex-col gap-2">
+                    <DistributionBar segments={planMixSegments} config={PLAN_MIX_CONFIG} />
+                    {businessPlanMix.kind === "ready" && (
+                      <p className="text-[11px] text-muted-foreground">
+                        {businessPlanMix.value.organizationsWithBillingRow} of{" "}
+                        {businessPlanMix.value.organizationsTotal} boutiques have a billing record.
+                      </p>
+                    )}
+                  </div>
+                </ChartFrame>
+              </div>
+
+              {/* One merged notice, so no endpoint's caveat is dropped. */}
+              {businessQuality !== null && (
+                <DataQualityNotice report={businessQuality} title="Business data quality" />
+              )}
+            </div>
+          )}
 
           {/* V8 — queue depths; a null field renders "not measured", never 0. */}
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">

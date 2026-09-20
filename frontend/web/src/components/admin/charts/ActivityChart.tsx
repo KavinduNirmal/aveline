@@ -5,13 +5,17 @@ import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion"
 import { peakIndex, type ActivityPoint } from "@/lib/admin/activity-series"
 
 /**
- * Business-action volume, as animated bars.
+ * Business actions logged, as animated bars.
  *
  * The bars carry a diagonal hatch, and the peak bucket is filled solid so the shape is readable at
  * a glance. **Animation is gated on `prefers-reduced-motion`.**
  *
  * The data is Postgres-only (`GET /admin/audit`), which is what keeps this inside the Q11 boundary:
  * the console charts what it owns and links out for the platform's time series.
+ *
+ * **The count axis is labelled**, because a bare bar chart does not say what a bar counts. The
+ * y-axis now reads "actions" and the tooltip spells the unit out, so the number is interpretable
+ * without the card description.
  */
 export function ActivityChart({ points }: { points: ActivityPoint[] }) {
   const reducedMotion = usePrefersReducedMotion()
@@ -42,8 +46,21 @@ export function ActivityChart({ points }: { points: ActivityPoint[] }) {
       </defs>
       <CartesianGrid vertical={false} />
       <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} />
-      <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={32} />
-      <ChartTooltip content={<ChartTooltipContent indicator="dot" />} />
+      <YAxis
+        allowDecimals={false}
+        tickLine={false}
+        axisLine={false}
+        width={56}
+        label={{ value: "actions", angle: -90, position: "insideLeft", offset: 8 }}
+      />
+      <ChartTooltip
+        content={
+          <ChartTooltipContent
+            indicator="dot"
+            formatter={(value) => (value === null ? "no data" : `${value} actions`)}
+          />
+        }
+      />
       <Bar
         dataKey="value"
         radius={[6, 6, 0, 0]}

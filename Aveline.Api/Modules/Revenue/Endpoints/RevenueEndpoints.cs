@@ -9,7 +9,6 @@ using Aveline.Api.Modules.Shared.Services;
 using Aveline.Api.Modules.Revenue.DTOs;
 using Aveline.Api.Modules.Revenue.Models;
 using Aveline.Api.Modules.Revenue.Services;
-using Aveline.Api.Modules.Shared.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -457,7 +456,8 @@ public static class RevenueEndpoints
         // Every read DTO carries the quality block, so it is rewritten through this one place rather
         // than each handler remembering to. Typed as `object` because the arms are distinct record
         // types and `Results.Ok` does not need the concrete type back.
-        object withNotes = result.Value switch
+        var value = result.Value!;
+        object withNotes = value switch
         {
             RevenueAccountsDto accounts => accounts with
             {
@@ -479,7 +479,7 @@ public static class RevenueEndpoints
             {
                 DataQuality = cache.WithCacheNotes(blossoms.DataQuality, redis),
             },
-            _ => result.Value,
+            _ => value,
         };
 
         return Results.Ok(withNotes);

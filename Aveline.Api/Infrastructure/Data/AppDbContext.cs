@@ -60,11 +60,20 @@ public class AppDbContext : DbContext
 
     public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
 
+    /// <summary>Aveline's own revenue journal (S-50). Append-only; see <c>IncomeLedgerEntry</c>.</summary>
+    public DbSet<Modules.Revenue.Models.IncomeLedgerEntry> IncomeLedgerEntries =>
+        Set<Modules.Revenue.Models.IncomeLedgerEntry>();
+
     public DbSet<PlanEntitlement> PlanEntitlements => Set<PlanEntitlement>();
 
     public DbSet<PlanEntitlementOverride> PlanEntitlementOverrides => Set<PlanEntitlementOverride>();
 
     public DbSet<OrganizationSubscription> OrganizationSubscriptions => Set<OrganizationSubscription>();
+
+    /// <summary>Daily per-organization subscription snapshot backing the S-47 trend.</summary>
+    public DbSet<Aveline.Api.Modules.Analytics.Models.OrganizationSubscriptionSnapshot>
+        OrganizationSubscriptionSnapshots =>
+        Set<Aveline.Api.Modules.Analytics.Models.OrganizationSubscriptionSnapshot>();
 
     public DbSet<DailyBillingMetric> DailyBillingMetrics => Set<DailyBillingMetric>();
 

@@ -303,15 +303,31 @@ entitlements.
    acceptance criterion, not a measured one. The middleware inlines no I/O and only
    stamps/enqueues, and `ApiTelemetryWriterTests` covers buffer overflow, but the
    latency gate itself is unproven in this environment.
-4. **JWT user/org attribution is claim-only.** `RequestPrincipal` reads `org_id`/`user_id`
-   claims; it deliberately performs no database lookup on the request path (FR-6.3), so a
-   Clerk token without those claims is attributed to `OrganizationId = NULL` and counted
-   in system statistics only (BR-6.1). API-key traffic is fully attributed.
+4. **JWT user/org attribution is claim-only, with an in-memory map behind it.** `RequestPrincipal`
+   reads `org_id`/`user_id`/`sub` and parses them as GUIDs. A Clerk `jwt-aveline-v1` token carries
+   Clerk's native `user_…`/`org_…` ids rather than the Aveline GUIDs, so that chain failed for every
+   human session and `ApiRequestMetric.UserId` was `null`. `IClaimIdentityMap` — two
+   `FrozenDictionary`s rebuilt every five minutes by `ClaimIdentityMapRefresher` — now resolves the
+   Clerk ids **off the request path**, and `RequestPrincipal.Resolve(principal, identities)` is one
+   synchronous dictionary read, so the middleware still does no I/O (FR-6.3). A refresh failure keeps
+   the previous map, and an unmapped Clerk id increments `UnresolvedCount`, which the business-KPI
+   `dataQuality` block exposes. Anything still unresolvable is attributed to
+   `OrganizationId = NULL`/`UserId = NULL` and counted in system statistics only (BR-6.1). API-key
+   traffic is unchanged and fully attributed.
 5. **`IX_ApiRequestLogs_Slow` and `IX_ApiRequestLogs_Errors` are created by raw SQL.**
    EF Core identifies an index by its property set, so the two partial indexes on
    `OccurredAt` cannot both be modelled; they exist in the hand-edited M7 migration and
    are verified by `ApiConsumptionPostgresTests`.
-6. **New `Telemetry:*` retention/threshold keys** (`RawLogRetentionDays`,
+6. **`OrganizationSubscriptionSnapshots` is a new table.** One row per organization per UTC day,
+   written at 02:00 UTC by `OrganizationSubscriptionSnapshotJob` and pruned at 400 days. It exists
+   because `OrganizationSubscriptions` holds one current row per organization, created only when a
+   plan changes or is cancelled, so it can never answer "how many were on Bloom in March" — and an
+   organization that never changed plan has no row there at all. The snapshot's tier therefore comes
+   from `Organizations.PlanTier`, which is authoritative for every organization, and `HasBillingRow`
+   records whether a billing row existed. Days before the first real snapshot are reconstructed from
+   `AuditLogEntries[Action='org.plan.changed']` and marked `IsBackfilled`. See
+   [statistics-catalog.md](statistics-catalog.md) S-47.
+7. **New `Telemetry:*` retention/threshold keys** (`RawLogRetentionDays`,
    `HourlyRollupRetentionDays`, `DailyRollupRetentionDays`, `WriterBatchSize`,
    `WriterFlushSeconds`, `MinSampleForPercentile`, `MaxWindowDays`,
    `QuotaWarningPercent`, `IpHashSalt`) are exposed in `appsettings.json` beyond the

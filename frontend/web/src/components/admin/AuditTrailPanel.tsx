@@ -1,10 +1,10 @@
-﻿import { useState } from "react"
+import { useState } from "react"
 import { useAuditTrail } from "@/hooks/useAuditTrail"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ChevronDown, ChevronRight, Copy, Check, History, X } from "lucide-react"
+import { ChevronDown, ChevronRight, Copy, Check, History } from "lucide-react"
 
 interface AuditTrailPanelProps {
   actorUserId?: string
@@ -41,21 +41,18 @@ export function AuditTrailPanel({
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
       <SheetContent className="sm:max-w-xl w-full flex flex-col p-0 bg-card border-l border-border">
         <SheetHeader className="p-5 border-b border-border bg-muted/20">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <History className="size-5 text-primary" />
-              <SheetTitle className="font-serif text-lg">{title}</SheetTitle>
-            </div>
-            <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8">
-              <X className="size-4" />
-            </Button>
+          {/* `SheetContent` renders its own close control at the top-right; adding a second one
+              here gave the drawer two X buttons. */}
+          <div className="flex items-center gap-2">
+            <History className="size-5 text-primary" />
+            <SheetTitle className="font-serif text-lg">{title}</SheetTitle>
           </div>
           <SheetDescription className="text-xs text-muted-foreground">
             Auditable business actions recorded by the system.
           </SheetDescription>
         </SheetHeader>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
           {error && (
             <div className="p-3 text-xs bg-destructive/10 text-destructive rounded-lg border border-destructive/20 flex justify-between items-center">
               <span>{error}</span>
@@ -66,9 +63,9 @@ export function AuditTrailPanel({
           )}
 
           {isLoading && entries.length === 0 ? (
-            <div className="space-y-3">
+            <div className="flex flex-col gap-3">
               {[...Array(5)].map((_, i) => (
-                <div key={i} className="p-3 border border-border rounded-lg space-y-2">
+                <div key={i} className="p-3 border border-border rounded-lg flex flex-col gap-2">
                   <Skeleton className="h-4 w-3/4" />
                   <Skeleton className="h-3 w-1/2" />
                 </div>
@@ -87,7 +84,7 @@ export function AuditTrailPanel({
                   className="border border-border/80 rounded-lg p-3 bg-background hover:bg-muted/10 transition-all text-xs"
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <div className="space-y-1">
+                    <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <Badge variant="outline" className="font-mono text-[11px] bg-muted/40">
                           {entry.action}
@@ -117,7 +114,7 @@ export function AuditTrailPanel({
                   </div>
 
                   {isExpanded && (
-                    <div className="mt-3 pt-3 border-t border-border/60 space-y-2">
+                    <div className="mt-3 pt-3 border-t border-border/60 flex flex-col gap-2">
                       <div className="grid grid-cols-2 gap-2 font-mono text-[10px]">
                         <div className="p-2 bg-muted/30 rounded border border-border">
                           <div className="font-semibold text-muted-foreground mb-1">BEFORE</div>
@@ -141,7 +138,7 @@ export function AuditTrailPanel({
                             className="h-6 w-6"
                             onClick={() => copyToClipboard(entry.requestId!, entry.id)}
                           >
-                            {copiedId === entry.id ? <Check className="size-3 text-green-600" /> : <Copy className="size-3" />}
+                            {copiedId === entry.id ? <Check className="size-3 text-success" /> : <Copy className="size-3" />}
                           </Button>
                         </div>
                       )}

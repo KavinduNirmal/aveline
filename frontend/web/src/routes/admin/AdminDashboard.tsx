@@ -1,607 +1,786 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Link, useParams } from "react-router-dom"
+
 import { useAdminSession } from "@/contexts/AdminSessionContext"
-import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import type { ChartConfig } from "@/components/ui/chart"
+import { ActivityChart } from "@/components/admin/charts/ActivityChart"
+import { AreaTrendChart } from "@/components/admin/charts/AreaTrendChart"
+import { ChartFrame } from "@/components/admin/charts/ChartFrame"
+import { DataQualityNotice } from "@/components/admin/charts/DataQualityNotice"
+import { DistributionBar, type DistributionSegment } from "@/components/admin/charts/DistributionBar"
+import { GrafanaCard } from "@/components/admin/charts/GrafanaCard"
+import { KpiTile } from "@/components/admin/charts/KpiTile"
+import { TimeSeriesChart } from "@/components/admin/charts/TimeSeriesChart"
+import { ErrorState } from "@/components/admin/data/states/ErrorState"
 import {
+  agentDataQuality,
+  formatMetricValue,
+  systemDataQuality,
+} from "@/lib/admin/data-quality"
+import { bucketActivity, deltaPct, type BucketUnit } from "@/lib/admin/activity-series"
+import { buildBusinessAxis, toSeries } from "@/lib/admin/business-series"
+import { businessDataQuality } from "@/lib/admin/data-quality"
+import { presetWindow } from "@/components/admin/kpi/RangePresets"
+import { grafanaLink, type GrafanaDashboard } from "@/lib/admin/grafana"
+import {
+  fetchAgentOverview,
+  fetchBusinessActiveUsers,
+  fetchBusinessGrowth,
+  fetchBusinessPlanMix,
+  fetchSystemAlerts,
   fetchSystemOverview,
-  queryAuditEntries,
   listAdminRequests,
+  queryAuditEntries,
 } from "@/lib/admin/api"
-import type { AuditLogEntry, SystemOverview, AdminApprovalRequestSummary } from "@/types/admin"
-import {
-  ArrowUpRight,
-  TrendingUp,
-  Wifi,
-  Calendar,
-  Plus,
-  Send,
-  Download,
-  Users,
-  Building2,
-  FileCheck2,
-  Radio,
-  Coins,
-  Activity,
-  CheckCircle2,
-} from "lucide-react"
+import type {
+  AdminApprovalRequestSummary,
+  AgentOverviewDto,
+  AuditLogEntry,
+  BusinessActiveUsers,
+  BusinessGrowth,
+  BusinessPlanMix,
+  SystemAlertDto,
+  SystemOverview,
+} from "@/types/admin"
+import { ExternalLink } from "lucide-react"
 
-// Types for chart points
-interface ChartBar {
-  label: string
-  value: number
-  heightPct: number
-  isPeak?: boolean
+type Async<T> =
+  | { kind: "loading" }
+  | { kind: "ready"; value: T }
+  | { kind: "error"; message: string }
+
+function messageOf(err: unknown): string {
+  return err instanceof Error ? err.message : "Unknown error"
 }
 
+/** A KPI's link out. It routes; it never redraws the series. */
+function GrafanaTileLink({ dashboard }: { dashboard: GrafanaDashboard }) {
+  const link = grafanaLink(dashboard)
+  if (!link.enabled) {
+    return <span className="text-[10px] text-muted-foreground">Grafana off</span>
+  }
+  return (
+    <a
+      href={link.href ?? "#"}
+      target="_blank"
+      rel="noreferrer noopener"
+      className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
+    >
+      Grafana
+      <ExternalLink className="size-2.5" />
+    </a>
+  )
+}
+
+const ACTIVITY_CONFIG = {
+  activity: { label: "Business actions", color: "var(--chart-1)" },
+} satisfies ChartConfig
+
+const SIGNUP_CONFIG = {
+  newUsers: { label: "New users", color: "var(--chart-2)" },
+} satisfies ChartConfig
+
+const ACTIVE_USERS_CONFIG = {
+  activeUsers: { label: "Active users", color: "var(--chart-1)" },
+} satisfies ChartConfig
+
+const PLAN_MIX_CONFIG = {
+  Seed: { label: "Seed (free)", color: "var(--chart-4)" },
+  Bloom: { label: "Bloom", color: "var(--chart-1)" },
+  Orchid: { label: "Orchid", color: "var(--chart-2)" },
+  Rose: { label: "Rose", color: "var(--chart-3)" },
+  Enterprise: { label: "Enterprise", color: "var(--chart-5)" },
+} satisfies ChartConfig
+
+/** The permission the business-KPI section needs. Absent, the section does not render at all. */
+const BUSINESS_PERMISSION = "analytics:business:read"
+
+const QUEUE_FIELDS = [
+  ["Telemetry channel", "telemetryChannelDepth"],
+  ["Event bus backlog", "eventBusBacklog"],
+  ["Notification backlog", "notificationBacklog"],
+  ["Inbound messages", "inboundMessageBacklog"],
+  ["Agent runs running", "agentRunsRunning"],
+] as const
+
+/**
+ * The dashboard: **V1–V11** of the plan's §4, the triage-and-action surface.
+ *
+ * *"Is anything wrong, and what do I do about it?"* in under ten seconds. Grafana owns the
+ * platform's time series; this surface owns the current state, the queue, the exception and the
+ * action. Every number traces to a response, and a failed call renders its failure.
+ */
 export function AdminDashboardView() {
   const { userId } = useParams<{ userId: string }>()
-  const { email } = useAdminSession()
+  const { email, permissions } = useAdminSession()
+  // The section is gated on the permission set directly, so a caller without it issues **no**
+  // business request. `Gate` does the same for nav entries; this is the same rule applied to a
+  // section rather than an entry.
+  const canReadBusiness = permissions.has(BUSINESS_PERMISSION)
+  const displayName = email ? email.split("@")[0] : "administrator"
 
-  const [timeframe, setTimeframe] = useState<"weekly" | "monthly">("monthly")
-  const [overview, setOverview] = useState<SystemOverview | null>(null)
-  const [recentAudits, setRecentAudits] = useState<AuditLogEntry[]>([])
-  const [pendingRequests, setPendingRequests] = useState<AdminApprovalRequestSummary[]>([])
+  const [overview, setOverview] = useState<Async<SystemOverview>>({ kind: "loading" })
+  const [alerts, setAlerts] = useState<Async<SystemAlertDto[]>>({ kind: "loading" })
+  const [audits, setAudits] = useState<Async<AuditLogEntry[]>>({ kind: "loading" })
+  const [requests, setRequests] = useState<Async<AdminApprovalRequestSummary[]>>({
+    kind: "loading",
+  })
+  const [agents, setAgents] = useState<Async<AgentOverviewDto>>({ kind: "loading" })
+  const [range, setRange] = useState<"7d" | "12m">("7d")
 
-  const displayName = email ? email.split("@")[0] : "Admin"
-  const formattedName = displayName.charAt(0).toUpperCase() + displayName.slice(1)
+  // The three landing-page business KPIs. Each is loaded independently so one failure names itself
+  // instead of blanking the section.
+  const [businessGrowth, setBusinessGrowth] = useState<Async<BusinessGrowth>>({ kind: "loading" })
+  const [businessActive, setBusinessActive] = useState<Async<BusinessActiveUsers>>({
+    kind: "loading",
+  })
+  const [businessPlanMix, setBusinessPlanMix] = useState<Async<BusinessPlanMix>>({
+    kind: "loading",
+  })
+
+  const businessWindow = useCallback(() => ({
+    ...presetWindow("30d"),
+    granularity: "day" as const,
+  }), [])
+
+  const load = useCallback(async () => {
+    setOverview({ kind: "loading" })
+    setAlerts({ kind: "loading" })
+    setAudits({ kind: "loading" })
+    setRequests({ kind: "loading" })
+    setAgents({ kind: "loading" })
+
+    try {
+      setOverview({ kind: "ready", value: await fetchSystemOverview() })
+    } catch (err: unknown) {
+      setOverview({ kind: "error", message: messageOf(err) })
+    }
+    try {
+      // V2: pass `status=Firing` explicitly, so `Resolved` rows are never counted as active.
+      const page = await fetchSystemAlerts({ status: "Firing", pageSize: 5 })
+      setAlerts({ kind: "ready", value: page.items })
+    } catch (err: unknown) {
+      setAlerts({ kind: "error", message: messageOf(err) })
+    }
+    try {
+      // A wider read than the table needs: the same page feeds the volume chart, which buckets a
+      // 7-day or 12-month window. It is one request, not two.
+      const page = await queryAuditEntries({ pageSize: 200 })
+      setAudits({ kind: "ready", value: page.items })
+    } catch (err: unknown) {
+      setAudits({ kind: "error", message: messageOf(err) })
+    }
+    try {
+      setRequests({ kind: "ready", value: await listAdminRequests() })
+    } catch (err: unknown) {
+      setRequests({ kind: "error", message: messageOf(err) })
+    }
+    try {
+      setAgents({ kind: "ready", value: await fetchAgentOverview() })
+    } catch (err: unknown) {
+      setAgents({ kind: "error", message: messageOf(err) })
+    }
+  }, [])
+
+  /** The business reads are a separate pass, because they are gated separately. */
+  const loadBusiness = useCallback(async () => {
+    if (!canReadBusiness) return
+    setBusinessGrowth({ kind: "loading" })
+    setBusinessActive({ kind: "loading" })
+    setBusinessPlanMix({ kind: "loading" })
+
+    const window = businessWindow()
+    try {
+      setBusinessGrowth({ kind: "ready", value: await fetchBusinessGrowth(window) })
+    } catch (err: unknown) {
+      setBusinessGrowth({ kind: "error", message: messageOf(err) })
+    }
+    try {
+      setBusinessActive({ kind: "ready", value: await fetchBusinessActiveUsers(window) })
+    } catch (err: unknown) {
+      setBusinessActive({ kind: "error", message: messageOf(err) })
+    }
+    try {
+      setBusinessPlanMix({ kind: "ready", value: await fetchBusinessPlanMix() })
+    } catch (err: unknown) {
+      setBusinessPlanMix({ kind: "error", message: messageOf(err) })
+    }
+  }, [canReadBusiness, businessWindow])
 
   useEffect(() => {
-    async function loadDashboardData() {
-      try {
-        const [overviewData, auditData, requestsData] = await Promise.allSettled([
-          fetchSystemOverview(),
-          queryAuditEntries({ pageSize: 5 }),
-          listAdminRequests(),
-        ])
+    void load()
+    void loadBusiness()
+  }, [load, loadBusiness])
 
-        if (overviewData.status === "fulfilled") {
-          setOverview(overviewData.value)
-        } else {
-          // Reliable fallback
-          setOverview({
-            version: {
-              gitSha: "a542a5e",
-              buildTime: new Date().toISOString(),
-              assemblyVersion: "1.0.0.0",
-              environment: "Production",
+  const pending =
+    requests.kind === "ready"
+      ? requests.value.filter((request) => request.status === "Pending")
+      : null
+
+  const auditEntries = audits.kind === "ready" ? audits.value : []
+  const bucketUnit: BucketUnit = range === "7d" ? "day" : "month"
+  const activityPoints = bucketActivity(auditEntries, {
+    unit: bucketUnit,
+    buckets: range === "7d" ? 7 : 12,
+  })
+  const activityDelta = deltaPct(activityPoints)
+  const recentActions = auditEntries.slice(0, 8)
+  const errorEntries = auditEntries.filter((entry) => /error|fail|revoke/i.test(entry.action))
+  const oldestPending =
+    pending !== null && pending.length > 0
+      ? pending.reduce((oldest, item) =>
+          item.requestedAt < oldest.requestedAt ? item : oldest,
+        ).requestedAt
+      : null
+
+  // ── Derived business series ───────────────────────────────────────────────────────────────
+  // The axis comes from the server's own window, so the client never invents buckets; a bucket
+  // the server did not send stays `null` and is drawn as a gap.
+
+  const signupPoints =
+    businessGrowth.kind === "ready"
+      ? toSeries(
+          buildBusinessAxis(
+            businessGrowth.value.window.from,
+            businessGrowth.value.window.to,
+            "day",
+          ),
+          businessGrowth.value.series.map((point) => ({
+            bucketStart: point.bucketStart,
+            isPartial: point.isPartial,
+            values: {
+              newUsers: point.newUsers,
+              newOrganizations: point.newOrganizations,
             },
-            readiness: {
-              status: "Healthy",
-              checks: [
-                { name: "PostgreSQL Database", status: "Healthy", durationMs: 4, message: null },
-                { name: "Redis Key-Value Cache", status: "Healthy", durationMs: 2, message: null },
-                { name: "Clerk Authentication Proxy", status: "Healthy", durationMs: 45, message: null },
-              ],
-            },
-            uptimeSeconds: 86400 * 3.5,
-            alerts: { critical: 0, warning: 0, top: [] },
-            throughput: { requestsPerSecond: 18.4, agentRunsPerMinute: 24, blossomsPerHour: 280, omitted: [] },
-            errors: { errorRate: 0.0008, requestCount: 14200, errorCount: 12, windowSize: "hour", unhandledExceptionsMeasured: true, omitted: [] },
-            queues: { telemetryChannelDepth: 0, eventBusBacklog: 0, notificationBacklog: 0, inboundMessageBacklog: null, agentRunsRunning: 2, omitted: [] },
-            omitted: [],
-            generatedAt: new Date().toISOString(),
-          })
-        }
+          })),
+          "day",
+          ["newUsers", "newOrganizations"],
+        )
+      : []
 
-        if (auditData.status === "fulfilled" && auditData.value.items.length > 0) {
-          setRecentAudits(auditData.value.items.slice(0, 5))
-        } else {
-          // Synthetic demo audits matching Slice 3 / Platform context
-          setRecentAudits([
-            {
-              id: "aud_1",
-              occurredAt: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
-              organizationId: "org-couture-colombo",
-              actorKind: "User",
-              actorUserId: userId || "usr_kaveesha",
-              actorRef: "kaveesha@aveline.lk",
-              action: "Order Approved",
-              entityType: "Order",
-              entityId: "ORD-94021",
-              reason: "Manager sign-off on VIP tier discount",
-              requestId: null,
-              before: null,
-              after: null,
-            },
-            {
-              id: "aud_2",
-              occurredAt: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
-              organizationId: "org-silk-studio",
-              actorKind: "Agent",
-              actorUserId: null,
-              actorRef: "Aveline Commerce Engine",
-              action: "Blossom Debit",
-              entityType: "Ledger",
-              entityId: "TX-88120",
-              reason: "LLM synthesis & courier booking quota",
-              requestId: null,
-              before: null,
-              after: null,
-            },
-            {
-              id: "aud_3",
-              occurredAt: new Date(Date.now() - 1000 * 60 * 110).toISOString(),
-              organizationId: "org-heritage-gems",
-              actorKind: "User",
-              actorUserId: "usr_tharindi",
-              actorRef: "tharindi@aveline.lk",
-              action: "Delivery Dispatched",
-              entityType: "DeliveryPlan",
-              entityId: "DEL-41002",
-              reason: "Courier pickup verified by tracking token",
-              requestId: null,
-              before: null,
-              after: null,
-            },
-          ])
-        }
+  const activeUserPoints =
+    businessActive.kind === "ready"
+      ? toSeries(
+          buildBusinessAxis(
+            businessActive.value.window.from,
+            businessActive.value.window.to,
+            "day",
+          ),
+          businessActive.value.series.map((point) => ({
+            bucketStart: point.bucketStart,
+            isPartial: point.isPartial,
+            values: { activeUsers: point.activeUsers },
+          })),
+          "day",
+          ["activeUsers"],
+        )
+      : []
 
-        if (requestsData.status === "fulfilled") {
-          setPendingRequests(requestsData.value)
-        }
-      } catch {
-        // Fallbacks already in place
-      }
-    }
+  const activeUserPartial =
+    activeUserPoints.at(-1)?.isPartial === true
+      ? (activeUserPoints.at(-1)?.bucket as string)
+      : undefined
 
-    void loadDashboardData()
-  }, [userId])
+  const signupPartial =
+    signupPoints.at(-1)?.isPartial === true
+      ? (signupPoints.at(-1)?.bucket as string)
+      : undefined
 
-  // Chart datasets
-  const monthlyData: ChartBar[] = [
-    { label: "JAN", value: 2100, heightPct: 40 },
-    { label: "FEB", value: 3900, heightPct: 75 },
-    { label: "MAR", value: 3200, heightPct: 62 },
-    { label: "APR", value: 5200, heightPct: 100, isPeak: true },
-    { label: "MAY", value: 4100, heightPct: 78 },
-    { label: "JUN", value: 4600, heightPct: 88 },
-  ]
+  const planMixSegments: DistributionSegment[] =
+    businessPlanMix.kind === "ready"
+      ? businessPlanMix.value.tiers
+          .filter((tier) => tier.organizationCount > 0)
+          .map((tier) => ({
+            key: tier.planTier,
+            label: tier.planTier,
+            value: tier.organizationCount,
+            free: tier.isFree,
+          }))
+      : []
 
-  const weeklyData: ChartBar[] = [
-    { label: "MON", value: 680, heightPct: 45 },
-    { label: "TUE", value: 920, heightPct: 65 },
-    { label: "WED", value: 1280, heightPct: 90 },
-    { label: "THU", value: 1450, heightPct: 100, isPeak: true },
-    { label: "FRI", value: 1100, heightPct: 75 },
-    { label: "SAT", value: 850, heightPct: 58 },
-  ]
-
-  const activeBars = timeframe === "monthly" ? monthlyData : weeklyData
-
-  // Sparkline area path points for Right Top Chart
-  // Points (x, y) coordinates mapped to viewBox 0 0 320 90
-  const sparklineArea = "M 0 60 Q 30 20, 60 45 T 120 20 T 180 50 T 240 25 T 320 15 L 320 90 L 0 90 Z"
-  const sparklineLine = "M 0 60 Q 30 20, 60 45 T 120 20 T 180 50 T 240 25 T 320 15"
-
-  const quickLinks = [
-    { title: "Users & Accounts", to: `/admin/${userId}/users`, icon: Users },
-    { title: "Access Approvals", to: `/admin/${userId}/requests`, icon: FileCheck2 },
-    { title: "Boutiques & Orgs", to: `/admin/${userId}/orgs`, icon: Building2 },
-    { title: "Live Event Stream", to: `/admin/${userId}/logs`, icon: Radio },
-    { title: "Blossom Ledger", to: `/admin/${userId}/blossoms`, icon: Coins },
-    { title: "System Health & Probes", to: `/admin/${userId}/system`, icon: Activity },
-  ]
+  const businessQuality = (() => {
+    const qualities = [businessGrowth, businessActive, businessPlanMix].flatMap((state) =>
+      state.kind === "ready" ? [state.value.dataQuality] : [],
+    )
+    if (qualities.length === 0) return null
+    return businessDataQuality({
+      userAttributionAvailable: qualities.every((quality) => quality.userAttributionAvailable),
+      unresolvedAttributionCount: Math.max(
+        ...qualities.map((quality) => quality.unresolvedAttributionCount),
+      ),
+      subscriptionHistoryBackfilled: qualities.some(
+        (quality) => quality.subscriptionHistoryBackfilled,
+      ),
+      lastActivityIsReconstructed: qualities.some(
+        (quality) => quality.lastActivityIsReconstructed,
+      ),
+      agentMetricsUninstrumented: qualities.some(
+        (quality) => quality.agentMetricsUninstrumented,
+      ),
+      notes: Array.from(new Set(qualities.flatMap((quality) => quality.notes))),
+    })
+  })()
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto pb-12 select-none">
-      {/* 1. Header Bar with Welcome, Date Selector, and Actions */}
+    <div className="flex flex-col gap-6 pb-12">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="font-serif text-3xl font-medium tracking-tight text-foreground">
-            Welcome Back, {formattedName}
+            Welcome, {displayName}
           </h1>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Operational pulse, platform traffic, and administrative governance.
+            Is anything wrong, and what needs doing about it?
           </p>
         </div>
-
-        <div className="flex items-center gap-2.5">
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-border bg-card text-xs text-foreground shadow-xs">
-            <Calendar className="size-3.5 text-muted-foreground" />
-            <span className="font-medium">Current Cycle: 2026 Season</span>
-          </div>
-
-          <Link to={`/admin/${userId}/blossoms`}>
-            <Button size="sm" className="gap-1.5 rounded-full px-4 text-xs font-medium shadow-xs">
-              <Plus className="size-3.5" />
-              Post Adjustment
-            </Button>
-          </Link>
-        </div>
+        <Button variant="outline" size="sm" onClick={() => void load()} className="text-xs">
+          Refresh
+        </Button>
       </div>
 
-      {/* 2. Main Analytics Grid (Cards + Visual Graphs matching reference) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-        {/* LEFT COLUMN: Emerald Wallet Card & Weekly Revenue Indicator (3 cols) */}
-        <div className="lg:col-span-3 space-y-4">
-          <Card className="border-border shadow-xs bg-card overflow-hidden">
-            <CardContent className="p-4 space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-xs font-semibold text-foreground tracking-tight">System Ledger</div>
-                  <div className="text-[10px] text-muted-foreground">Active Blossom Reserve</div>
-                </div>
-                <Link
-                  to={`/admin/${userId}/blossoms`}
-                  className="size-7 rounded-full border border-border flex items-center justify-center hover:bg-accent transition-colors"
+      {/* V1 — readiness banner. A failed call renders an error, never a fabricated "Healthy". */}
+      {overview.kind === "error" ? (
+        <ErrorState
+          error={{ message: overview.message }}
+          title="System overview could not be loaded"
+          onRetry={() => void load()}
+        />
+      ) : overview.kind === "loading" ? (
+        <p className="text-xs text-muted-foreground">Loading system pulse…</p>
+      ) : (
+        <>
+          {/* V1 — readiness, as a single strip. It carries four facts and needs four facts' worth of
+              space; a full-width card for "Healthy" was mostly empty. A failed call still renders
+              an error above, never a fabricated "Healthy". */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+            <span
+              className={
+                overview.value.readiness.status === "Healthy"
+                  ? "inline-flex items-center gap-1.5 font-medium text-success"
+                  : "inline-flex items-center gap-1.5 font-medium text-destructive"
+              }
+            >
+              <span className="size-2 rounded-full bg-current" aria-hidden="true" />
+              Readiness: {overview.value.readiness.status}
+            </span>
+            <span className="text-muted-foreground">
+              {overview.value.readiness.checks.length} dependency probes
+            </span>
+            <span className="font-mono text-[11px] text-muted-foreground">
+              {overview.value.version.gitSha} · {overview.value.version.environment}
+            </span>
+            <span className="font-mono text-[11px] text-muted-foreground">
+              uptime {formatMetricValue(overview.value.uptimeSeconds, "seconds")}
+            </span>
+          </div>
+
+          {/* V6 — the platform-health KPIs. The numbers are the ten-second answer. */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <KpiTile
+              label="Requests / sec"
+              value={overview.value.throughput.requestsPerSecond}
+              source="system/overview → throughput.requestsPerSecond"
+              action={<GrafanaTileLink dashboard="overview" />}
+            />
+            <KpiTile
+              label="Error rate"
+              value={overview.value.errors.errorRate}
+              unit="percent"
+              source={`system/overview → errors.errorRate (${overview.value.errors.windowSize})`}
+              approximate
+              action={<GrafanaTileLink dashboard="overview" />}
+            />
+            <KpiTile
+              label="Firing alerts"
+              value={alerts.kind === "ready" ? alerts.value.length : null}
+              source="system/alerts?status=Firing"
+            />
+          </div>
+
+          {/* Business actions logged. The source is Postgres (`GET /admin/audit`), so this is the
+              console's own chart and not a second copy of a Grafana panel (Q11). The y-axis carries
+              its unit and the description names the three things it deliberately excludes, because
+              a bare "volume" chart does not say what it is a volume *of*. */}
+          <ChartFrame
+            title="Business actions logged"
+            description="Count of write operations recorded in the audit ledger per period: ledger entries, entitlement overrides, plan changes, approvals and pricing edits. Excludes reads, failed requests and sign-ins — the audit table records only actions that changed something."
+            config={ACTIVITY_CONFIG}
+            action={
+              <div className="flex items-center gap-2">
+                {activityDelta !== null && (
+                  <Badge variant="secondary" className="font-mono text-[10px]">
+                    {activityDelta >= 0 ? "+" : ""}
+                    {activityDelta}%
+                  </Badge>
+                )}
+                <ToggleGroup
+                  type="single"
+                  value={range}
+                  onValueChange={(value) => {
+                    if (value !== "") setRange(value as "7d" | "12m")
+                  }}
                 >
-                  <ArrowUpRight className="size-3.5 text-muted-foreground hover:text-foreground" />
-                </Link>
+                  <ToggleGroupItem value="7d" className="text-xs">
+                    Weekly
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="12m" className="text-xs">
+                    Monthly
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              </div>
+            }
+          >
+            <ActivityChart points={activityPoints} />
+          </ChartFrame>
+
+          {/* The three business KPIs. Each uses a different chart type — a line, an area and a
+              stacked distribution bar — so the page does not read as one repeated chart. The whole
+              block is gated on `analytics:business:read`.
+
+              A failed read is rendered by **`ChartFrame`'s own state**, never inside the chart: a
+              message placed inside `ChartContainer` lands in recharts' measured `0×0` box and wraps
+              one character per line. */}
+          {canReadBusiness && (
+            <div className="flex min-w-0 flex-col gap-4">
+              <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+                <div className="min-w-0">
+                  <h2 className="font-serif text-lg font-medium tracking-tight text-foreground">
+                    Business snapshot
+                  </h2>
+                  <p className="text-[11px] text-muted-foreground">
+                    Trailing 30 days, from Aveline&rsquo;s own Postgres tables. Every figure is a
+                    count; a blank reads &ldquo;not measured&rdquo; rather than zero.
+                  </p>
+                </div>
+                <Button asChild variant="outline" size="sm" className="shrink-0 text-xs">
+                  <Link to={`/admin/${userId}/business`}>Open Growth</Link>
+                </Button>
               </div>
 
-              {/* Luxury Styled Serene Concierge Brand Card */}
-              <div className="rounded-xl bg-gradient-to-br from-primary via-[#9b344a] to-[#591b28] p-4 text-white shadow-md relative overflow-hidden">
-                <div className="absolute -right-6 -bottom-6 size-24 rounded-full bg-white/10 blur-xl pointer-events-none" />
-                <div className="flex justify-between items-start">
-                  <div className="font-serif tracking-wider text-xs font-semibold uppercase opacity-90">
-                    AVELINE
-                  </div>
-                  <Wifi className="size-4 rotate-90 opacity-75" />
-                </div>
+              <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-3">
+                {/* KPI 1 — new signups, as a line trend. */}
+                <ChartFrame
+                  title="New signups"
+                  description="New users and new boutiques per day, from the local first-seen timestamp (GET business/growth)"
+                  config={SIGNUP_CONFIG}
+                  action={<GrafanaTileLink dashboard="business" />}
+                  state={businessGrowth.kind === "error" ? "error" : "ready"}
+                  stateMessage={
+                    businessGrowth.kind === "error" ? businessGrowth.message : undefined
+                  }
+                >
+                  <TimeSeriesChart
+                    data={signupPoints}
+                    series={[
+                      { dataKey: "newUsers", label: "New users" },
+                      { dataKey: "newOrganizations", label: "New boutiques" },
+                    ]}
+                    partialBucket={signupPartial}
+                  />
+                </ChartFrame>
 
-                <div className="my-4">
-                  <div className="text-[10px] uppercase tracking-wider text-white/70">
-                    Circulating Units
-                  </div>
-                  <div className="text-2xl font-serif font-bold tracking-tight mt-0.5">
-                    128,450 🌸
-                  </div>
-                </div>
-
-                <div className="flex justify-between items-end text-[10px] text-white/80 font-mono">
-                  <span>•••• 9402</span>
-                  <span className="px-1.5 py-0.5 rounded bg-white/15 text-[9px] font-semibold tracking-wider">ACTIVE</span>
-                </div>
-              </div>
-
-              {/* Live Throughput metric */}
-              <div className="pt-1 flex items-center justify-between">
-                <div>
-                  <div className="text-[10px] text-muted-foreground">Throughput Rate</div>
-                  <div className="text-sm font-semibold text-foreground">
-                    {overview?.throughput.requestsPerSecond ? `${overview.throughput.requestsPerSecond} req/s` : "18.4 req/s"}
-                  </div>
-                </div>
-                <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20 text-[10px] gap-1 font-mono">
-                  <TrendingUp className="size-2.5" />
-                  +12.8%
-                </Badge>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* CENTER COLUMN: Interactive Engagement Rate / Activity Bar Chart (6 cols) */}
-        <div className="lg:col-span-6">
-          <Card className="border-border shadow-xs bg-card h-full flex flex-col justify-between">
-            <CardContent className="p-5 flex flex-col justify-between h-full space-y-6">
-              {/* Header with Title and Toggle Group */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="size-7 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
-                    <Activity className="size-4" />
-                  </div>
-                  <div>
-                    <div className="text-sm font-semibold text-foreground">Request Engagement & Velocity</div>
-                    <div className="text-[11px] text-muted-foreground">System API calls & tenant requests</div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <div className="inline-flex rounded-full p-0.5 border border-border bg-muted/40 text-[11px]">
-                    <button
-                      type="button"
-                      onClick={() => setTimeframe("weekly")}
-                      className={`px-3 py-1 rounded-full font-medium transition-all ${
-                        timeframe === "weekly"
-                          ? "bg-primary text-primary-foreground shadow-xs"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      Weekly
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setTimeframe("monthly")}
-                      className={`px-3 py-1 rounded-full font-medium transition-all ${
-                        timeframe === "monthly"
-                          ? "bg-primary text-primary-foreground shadow-xs"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      Annually
-                    </button>
-                  </div>
-
-                  <Link
-                    to={`/admin/${userId}/logs`}
-                    className="size-7 rounded-full border border-border flex items-center justify-center hover:bg-accent transition-colors"
-                  >
-                    <ArrowUpRight className="size-3.5 text-muted-foreground hover:text-foreground" />
-                  </Link>
-                </div>
-              </div>
-
-              {/* Bar Chart Graphics (SVG styled with patterned stripes and highlighted peak) */}
-              <div className="relative pt-6 pb-2">
-                {/* Background Grid Lines */}
-                <div className="absolute inset-x-0 top-0 bottom-6 flex flex-col justify-between pointer-events-none opacity-20">
-                  <div className="border-b border-border w-full flex justify-between text-[9px] font-mono text-muted-foreground pr-2">
-                    <span>5k</span>
-                  </div>
-                  <div className="border-b border-border w-full flex justify-between text-[9px] font-mono text-muted-foreground pr-2">
-                    <span>3k</span>
-                  </div>
-                  <div className="border-b border-border w-full flex justify-between text-[9px] font-mono text-muted-foreground pr-2">
-                    <span>1k</span>
-                  </div>
-                  <div className="border-b border-border w-full flex justify-between text-[9px] font-mono text-muted-foreground pr-2">
-                    <span>0</span>
-                  </div>
-                </div>
-
-                {/* SVG Bars Container */}
-                <div className="h-44 flex items-end justify-between px-6 z-10 relative">
-                  {activeBars.map((bar) => {
-                    return (
-                      <div key={bar.label} className="flex flex-col items-center gap-2 group flex-1 max-w-[48px]">
-                        {/* Peak Tag */}
-                        {bar.isPeak && (
-                          <div className="animate-bounce">
-                            <span className="text-[9px] font-mono font-semibold px-2 py-0.5 rounded-full bg-primary text-primary-foreground shadow-xs">
-                              +17.8%
-                            </span>
-                          </div>
-                        )}
-
-                        {/* Bar Body */}
-                        <div
-                          style={{ height: `${bar.heightPct}%` }}
-                          className={`w-full rounded-t-xl transition-all duration-300 relative overflow-hidden ${
-                            bar.isPeak
-                              ? "bg-primary shadow-md ring-2 ring-primary/20"
-                              : "bg-primary/20 group-hover:bg-primary/30"
-                          }`}
-                        >
-                          {/* Striped Diagonal Pattern on Non-Peak Bars */}
-                          {!bar.isPeak && (
-                            <svg className="w-full h-full opacity-30 text-primary" xmlns="http://www.w3.org/2000/svg">
-                              <defs>
-                                <pattern id={`stripes-${bar.label}`} width="6" height="6" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
-                                  <line x1="0" y1="0" x2="0" y2="6" stroke="currentColor" strokeWidth="2" />
-                                </pattern>
-                              </defs>
-                              <rect width="100%" height="100%" fill={`url(#stripes-${bar.label})`} />
-                            </svg>
-                          )}
-                        </div>
-
-                        {/* Label */}
-                        <span className={`text-[10px] font-semibold tracking-wider ${
-                          bar.isPeak ? "text-foreground font-bold" : "text-muted-foreground"
-                        }`}>
-                          {bar.label}
+                {/* KPI 2 — active users, as an area trend with the DAU reading above it. */}
+                <ChartFrame
+                  title="Active users"
+                  description="Distinct authenticated users who sent at least one request per day. An unattributed window reads not measured (GET business/active-users)"
+                  config={ACTIVE_USERS_CONFIG}
+                  action={<GrafanaTileLink dashboard="business" />}
+                  state={businessActive.kind === "error" ? "error" : "ready"}
+                  stateMessage={
+                    businessActive.kind === "error" ? businessActive.message : undefined
+                  }
+                >
+                  <div className="flex h-full w-full min-w-0 flex-col">
+                    <p className="shrink-0 text-[11px] text-muted-foreground">
+                      Daily active:{" "}
+                      <span className="font-serif text-base font-semibold text-foreground">
+                        {businessActive.kind === "ready"
+                          ? formatMetricValue(businessActive.value.rolling.dau, "count")
+                          : "…"}
+                      </span>
+                      {businessActive.kind === "ready" && (
+                        <span className="ml-2">
+                          weekly {formatMetricValue(businessActive.value.rolling.wau, "count")} ·
+                          monthly {formatMetricValue(businessActive.value.rolling.mau, "count")}
                         </span>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* RIGHT COLUMN: Total Platform Balance & Area Wave Graph (3 cols) */}
-        <div className="lg:col-span-3 space-y-4">
-          <Card className="border-border shadow-xs bg-card overflow-hidden">
-            <CardContent className="p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-xs font-semibold text-foreground tracking-tight">Platform Volume</div>
-                  <div className="text-[10px] text-muted-foreground">Requests processed</div>
-                </div>
-                <Link
-                  to={`/admin/${userId}/system`}
-                  className="size-7 rounded-full border border-border flex items-center justify-center hover:bg-accent transition-colors"
-                >
-                  <ArrowUpRight className="size-3.5 text-muted-foreground hover:text-foreground" />
-                </Link>
-              </div>
-
-              <div>
-                <div className="text-[10px] text-muted-foreground">Total Invocations</div>
-                <div className="text-2xl font-serif font-bold tracking-tight text-foreground">
-                  {overview?.errors.requestCount ? `${overview.errors.requestCount.toLocaleString()}` : "32,678"}
-                </div>
-              </div>
-
-              {/* Area Wave Sparkline Graph (SVG) styled with Aveline Brand Primary */}
-              <div className="h-20 w-full relative overflow-hidden rounded-lg">
-                <svg className="w-full h-full" viewBox="0 0 320 90" preserveAspectRatio="none">
-                  <defs>
-                    <linearGradient id="areaGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-                      <stop offset="0%" stopColor="#8b2e42" stopOpacity="0.35" />
-                      <stop offset="100%" stopColor="#8b2e42" stopOpacity="0.0" />
-                    </linearGradient>
-                  </defs>
-                  <path d={sparklineArea} fill="url(#areaGrad)" />
-                  <path d={sparklineLine} fill="none" stroke="#8b2e42" strokeWidth="2.5" strokeLinecap="round" />
-                </svg>
-              </div>
-
-              {/* Action Buttons: Inspect & Telemetry */}
-              <div className="grid grid-cols-2 gap-2 pt-1">
-                <Link to={`/admin/${userId}/system`}>
-                  <Button variant="default" size="sm" className="w-full text-xs font-medium rounded-full gap-1 shadow-xs">
-                    <Send className="size-3 rotate-45" />
-                    Pulse
-                  </Button>
-                </Link>
-                <Link to={`/admin/${userId}/logs`}>
-                  <Button variant="outline" size="sm" className="w-full text-xs font-medium rounded-full border-border gap-1">
-                    <Download className="size-3" />
-                    Logs
-                  </Button>
-                </Link>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
-      {/* 3. Bottom Row: Operations Audit Table + Operator Team Widget */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-        {/* Recent Operations Activity (8 cols) */}
-        <div className="lg:col-span-8">
-          <Card className="border-border shadow-xs bg-card">
-            <CardContent className="p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-semibold text-foreground">Operational Audit Stream</h3>
-                  <p className="text-[11px] text-muted-foreground">Recent governance actions and system events</p>
-                </div>
-                <Link
-                  to={`/admin/${userId}/logs`}
-                  className="flex items-center gap-1 text-xs text-primary font-medium hover:underline"
-                >
-                  <span>View All Logs</span>
-                  <ArrowUpRight className="size-3.5" />
-                </Link>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs text-left">
-                  <thead>
-                    <tr className="border-b border-border/80 text-[10px] text-muted-foreground uppercase tracking-wider">
-                      <th className="pb-2.5 font-medium">Actor / Entity</th>
-                      <th className="pb-2.5 font-medium">Timestamp</th>
-                      <th className="pb-2.5 font-medium">Status</th>
-                      <th className="pb-2.5 font-medium text-right">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border/40">
-                    {recentAudits.map((item) => {
-                      const dt = new Date(item.occurredAt)
-                      const timeStr = dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-                      const dateStr = dt.toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })
-
-                      return (
-                        <tr key={item.id} className="group hover:bg-muted/30 transition-colors">
-                          <td className="py-3">
-                            <div className="flex items-center gap-2.5">
-                              <div className="size-7 rounded-full bg-primary/10 text-primary flex items-center justify-center font-medium font-serif text-xs">
-                                {item.actorRef ? item.actorRef.charAt(0).toUpperCase() : "A"}
-                              </div>
-                              <div>
-                                <div className="font-medium text-foreground">{item.action}</div>
-                                <div className="text-[10px] text-muted-foreground font-mono truncate max-w-[180px]">
-                                  {item.entityType}: {item.entityId}
-                                </div>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="py-3 text-muted-foreground text-[11px]">
-                            <div>{dateStr}</div>
-                            <div className="text-[10px] text-muted-foreground/80">{timeStr}</div>
-                          </td>
-                          <td className="py-3">
-                            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-                              <span className="size-1.5 rounded-full bg-emerald-500" />
-                              Recorded
-                            </span>
-                          </td>
-                          <td className="py-3 text-right">
-                            <span className="font-mono text-xs font-semibold text-foreground">
-                              {item.reason || "Audit Log"}
-                            </span>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Reliability & Active Administration Roster (4 cols) */}
-        <div className="lg:col-span-4 space-y-4">
-          <Card className="border-border shadow-xs bg-card">
-            <CardContent className="p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-xs font-semibold text-foreground">Reliability Index</div>
-                  <div className="text-[10px] text-muted-foreground">Probes & subsystem health</div>
-                </div>
-                <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 text-[10px] gap-1 font-mono">
-                  <CheckCircle2 className="size-2.5" />
-                  99.98%
-                </Badge>
-              </div>
-
-              <div className="flex items-baseline gap-2">
-                <div className="text-3xl font-serif font-bold text-foreground">
-                  {overview?.readiness.status || "Healthy"}
-                </div>
-                <span className="text-xs text-muted-foreground font-mono">
-                  {overview?.uptimeSeconds ? `${Math.floor(overview.uptimeSeconds / 3600)}h uptime` : "84h uptime"}
-                </span>
-              </div>
-
-              <div className="pt-2 border-t border-border/60">
-                <div className="flex items-center justify-between text-xs mb-3">
-                  <span className="font-semibold text-foreground">Active Administrators</span>
-                  <Link to={`/admin/${userId}/users`} className="text-[11px] text-primary hover:underline">
-                    View Roster
-                  </Link>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <div className="flex -space-x-2">
-                    <Avatar className="size-8 ring-2 ring-background border border-border">
-                      <AvatarFallback className="bg-primary/20 text-primary text-[10px] font-bold">KN</AvatarFallback>
-                    </Avatar>
-                    <Avatar className="size-8 ring-2 ring-background border border-border">
-                      <AvatarFallback className="bg-primary text-primary-foreground text-[10px] font-bold">KT</AvatarFallback>
-                    </Avatar>
-                    <Avatar className="size-8 ring-2 ring-background border border-border">
-                      <AvatarFallback className="bg-[var(--aveline-visual,#c9972b)]/20 text-[var(--aveline-visual,#c9972b)] text-[10px] font-bold">SY</AvatarFallback>
-                    </Avatar>
-                    <div className="size-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] font-bold ring-2 ring-background">
-                      +2
+                      )}
+                    </p>
+                    <div className="min-h-0 w-full min-w-0 flex-1">
+                      <AreaTrendChart
+                        data={activeUserPoints}
+                        series={[{ dataKey: "activeUsers", label: "Active users" }]}
+                        config={ACTIVE_USERS_CONFIG}
+                        partialBucket={activeUserPartial}
+                      />
                     </div>
                   </div>
+                </ChartFrame>
 
-                  <div className="text-[11px] text-muted-foreground">
-                    <span className="font-medium text-foreground">{pendingRequests.length}</span> pending approvals
+                {/* KPI 3 — the plan mix, as a single stacked distribution bar. */}
+                <ChartFrame
+                  title="Plan mix"
+                  description="Organizations per tier, from Organizations.PlanTier, which is authoritative for every organization (GET business/plan-mix)"
+                  config={PLAN_MIX_CONFIG}
+                  state={businessPlanMix.kind === "error" ? "error" : "ready"}
+                  stateMessage={
+                    businessPlanMix.kind === "error" ? businessPlanMix.message : undefined
+                  }
+                >
+                  <div className="flex h-full w-full min-w-0 flex-col gap-2">
+                    <DistributionBar segments={planMixSegments} config={PLAN_MIX_CONFIG} />
+                    {businessPlanMix.kind === "ready" && (
+                      <p className="text-[11px] text-muted-foreground">
+                        {businessPlanMix.value.organizationsWithBillingRow} of{" "}
+                        {businessPlanMix.value.organizationsTotal} boutiques have a billing record.
+                      </p>
+                    )}
                   </div>
-                </div>
+                </ChartFrame>
               </div>
-            </CardContent>
-          </Card>
 
-          {/* Quick Operations Launchpad Strip */}
-          <div className="grid grid-cols-3 gap-2">
-            {quickLinks.slice(0, 3).map((item) => {
-              const Icon = item.icon
-              return (
-                <Link key={item.title} to={item.to}>
-                  <div className="p-3 rounded-xl border border-border bg-card hover:border-primary/50 transition-all text-center space-y-1 group">
-                    <div className="mx-auto size-7 rounded-lg bg-primary/10 text-primary flex items-center justify-center group-hover:scale-105 transition-transform">
-                      <Icon className="size-3.5" />
-                    </div>
-                    <div className="text-[10px] font-medium text-foreground truncate">{item.title}</div>
-                  </div>
-                </Link>
-              )
-            })}
+              {/* One merged notice, so no endpoint's caveat is dropped. */}
+              {businessQuality !== null && (
+                <DataQualityNotice report={businessQuality} title="Business data quality" />
+              )}
+            </div>
+          )}
+
+          {/* V8 — queue depths; a null field renders "not measured", never 0. */}
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+            {QUEUE_FIELDS.map(([label, field]) => (
+              <KpiTile
+                key={field}
+                label={label}
+                value={overview.value.queues[field]}
+                source="system/overview → queues"
+              />
+            ))}
           </div>
-        </div>
+
+          {/* V7 — the throughput honesty contract, not a chart. */}
+          <DataQualityNotice
+            report={systemDataQuality({
+              omitted: overview.value.throughput.omitted,
+              dataQuality: {
+                points: overview.value.throughput.omitted.length,
+                measured: overview.value.throughput.requestsPerSecond !== null,
+              },
+            })}
+            title="Throughput"
+          />
+        </>
+      )}
+
+      {/* V5 — Blossom reconciliation: a critical banner, never a tile. */}
+      <Card className="border-border/60 bg-muted/20 shadow-xs">
+        <CardContent className="p-3 text-xs text-muted-foreground flex flex-wrap items-center justify-between gap-2">
+          <span>
+            Blossom reconciliation status unavailable — no organization is selected. The console
+            shows the boolean per organization; the drift series is Grafana&rsquo;s.
+          </span>
+          <Button asChild variant="outline" size="sm" className="text-xs">
+            <Link to={`/admin/${userId}/blossoms`}>Open the ledger</Link>
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* V2 — firing alerts. */}
+      <Card className="border-border shadow-xs overflow-hidden">
+        <CardHeader>
+          <CardTitle className="font-serif text-base">Firing alerts</CardTitle>
+          <CardDescription className="text-xs">
+            Product alert rules only; operator alerts live in Grafana by design.
+          </CardDescription>
+        </CardHeader>
+        {alerts.kind === "error" ? (
+          <CardContent className="text-xs text-muted-foreground">
+            Alerts could not be loaded: {alerts.message}
+          </CardContent>
+        ) : alerts.kind === "loading" ? (
+          <CardContent className="text-xs text-muted-foreground">Loading alerts…</CardContent>
+        ) : alerts.value.length === 0 ? (
+          <CardContent className="text-xs text-muted-foreground">No firing alerts.</CardContent>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Alert</TableHead>
+                <TableHead>Severity</TableHead>
+                <TableHead>Occurrences</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {alerts.value.map((alert) => (
+                <TableRow key={alert.id}>
+                  <TableCell className="text-xs text-foreground">{alert.title}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{alert.severity}</TableCell>
+                  <TableCell className="text-xs font-mono text-muted-foreground">
+                    {alert.occurrenceCount}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </Card>
+
+      {/* V3 and V9 — the queue and the derived error hotspot. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <Card className="border-border shadow-xs">
+          <CardHeader>
+            <CardTitle className="font-serif text-base">Pending access requests</CardTitle>
+            <CardDescription className="text-xs">
+              Counted on status === &quot;Pending&quot;; no Grafana equivalent exists.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-2">
+            {requests.kind === "error" ? (
+              <p className="text-xs text-muted-foreground">
+                Access requests could not be loaded: {requests.message}
+              </p>
+            ) : requests.kind === "loading" ? (
+              <p className="text-xs text-muted-foreground">Loading access requests…</p>
+            ) : (
+              <>
+                <div className="text-2xl font-serif font-semibold text-foreground">
+                  {pending?.length ?? 0}
+                </div>
+                {oldestPending !== null && (
+                  <p className="text-xs text-muted-foreground">
+                    oldest requested {new Date(oldestPending).toLocaleString()}
+                  </p>
+                )}
+              </>
+            )}
+            <Button asChild variant="outline" size="sm" className="text-xs">
+              <Link to={`/admin/${userId}/requests`}>Review access requests</Link>
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border shadow-xs">
+          <CardHeader>
+            <CardTitle className="font-serif text-base">Log error hotspot</CardTitle>
+            <CardDescription className="text-xs">
+              Derived: actions whose name matches error, fail or revoke.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-2">
+            <div className="text-2xl font-serif font-semibold text-foreground">
+              {audits.kind === "ready" ? errorEntries.length : "—"}
+            </div>
+            {errorEntries.slice(0, 3).map((entry) => (
+              <div key={entry.id} className="text-xs text-muted-foreground truncate">
+                {entry.action} · {entry.entityType}:{entry.entityId}
+              </div>
+            ))}
+            <Button asChild variant="outline" size="sm" className="text-xs">
+              <Link to={`/admin/${userId}/logs`}>Open the log viewer</Link>
+            </Button>
+          </CardContent>
+        </Card>
       </div>
+
+      {/* V10 — agent activity. "No runs recorded yet" is not "not instrumented". */}
+      <Card className="border-border shadow-xs">
+        <CardHeader>
+          <CardTitle className="font-serif text-base">Agent activity</CardTitle>
+          <CardDescription className="text-xs">
+            The distinction between an empty history and an uninstrumented one is the point.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          {agents.kind === "error" ? (
+            <p className="text-xs text-muted-foreground">
+              Agent statistics could not be loaded: {agents.message}
+            </p>
+          ) : agents.kind === "loading" ? (
+            <p className="text-xs text-muted-foreground">Loading agent statistics…</p>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <KpiTile label="Total runs" value={agents.value.totalRuns} source="agents/overview" />
+                <KpiTile label="Running" value={agents.value.running} source="agents/overview" />
+                <KpiTile
+                  label="Paused for approval"
+                  value={agents.value.pausedForApproval}
+                  source="agents/overview"
+                />
+                <KpiTile
+                  label="Success rate"
+                  value={agents.value.successRate}
+                  unit="percent"
+                  source="agents/overview"
+                  action={<GrafanaTileLink dashboard="business" />}
+                />
+              </div>
+              <DataQualityNotice
+                report={agentDataQuality({
+                  totalRuns: agents.value.totalRuns,
+                  ...agents.value.dataQuality,
+                })}
+              />
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* V4 — recent business actions. */}
+      <Card className="border-border shadow-xs overflow-hidden">
+        <CardHeader>
+          <CardTitle className="font-serif text-base">Recent business actions</CardTitle>
+          <CardDescription className="text-xs">
+            Business actions only; reads and failed requests are not recorded.
+          </CardDescription>
+        </CardHeader>
+        {audits.kind === "error" ? (
+          <CardContent className="text-xs text-muted-foreground">
+            Recent actions could not be loaded: {audits.message}
+          </CardContent>
+        ) : audits.kind === "loading" ? (
+          <CardContent className="text-xs text-muted-foreground">
+            Loading recent actions…
+          </CardContent>
+        ) : recentActions.length === 0 ? (
+          <CardContent className="text-xs text-muted-foreground">
+            No business actions recorded.
+          </CardContent>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Action</TableHead>
+                <TableHead>Entity</TableHead>
+                <TableHead>Actor</TableHead>
+                <TableHead>When</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {recentActions.map((entry) => (
+                <TableRow key={entry.id}>
+                  <TableCell className="text-xs font-medium text-foreground">
+                    {entry.action}
+                  </TableCell>
+                  <TableCell className="text-xs font-mono text-muted-foreground">
+                    {entry.entityType}:{entry.entityId}
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{entry.actorKind}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {new Date(entry.occurredAt).toLocaleString()}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </Card>
+
+      {/* V11 — the Grafana entry point. */}
+      <GrafanaCard />
     </div>
   )
 }

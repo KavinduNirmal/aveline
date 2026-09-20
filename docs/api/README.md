@@ -146,7 +146,17 @@ endpoint code:
 | `BoutiqueConversationAccess` | same, grants `conversations:view` |
 | `BoutiqueCustomerAccess` | same, grants `customers:view` (the tenant customer surface: the client book, a client profile and Home's client highlights) |
 | `InternalServicePolicy` | `X-Internal-Token` + role `InternalService` |
+| `StatsSystemPolicy` | team roles `owner`/`admin` **and** `stats:system` |
+| `AuditViewPolicy` | team roles `owner`/`admin` **and** `audit:view` |
+| `PricingAdminReadPolicy` | team roles `owner`/`admin` **and** `pricing:view` |
 | *one per permission* | policy name **is** the permission string, e.g. `catalog:view` |
+
+> **A9 (B2).** The three team-only policies above previously guarded their routes with
+> `RequireRole(owner, admin)` only, so the `stats:system`, `audit:view` and
+> `pricing:view` permission policies were registered but referenced by no route. Each
+> now also carries its permission requirement. The change is **additive and inert**:
+> `owner` and `admin` already hold all three permissions, so no role that passed
+> before is refused now, and the permission catalogue matches the wire.
 
 **Layer 2 — organization scope.** For any route containing
 `{organizationId:guid}`, `OrganizationScopeAuthorizationHandler` resolves the
@@ -181,6 +191,19 @@ organizations (`Authorization/OrganizationScopeAuthorizationHandler.cs:38-74`).
 `pricing:backdate`, `apikeys:view`, `apikeys:manage`, `stats:view`,
 `stats:view:agent`, `stats:system`, `admin:users:read`, `admin:users:manage`,
 `admin:orgs:read`, `audit:view`.
+
+**`analytics:business:read` (Business KPIs).** Guards the six administrator
+business-KPI reads under `/api/v1/admin/statistics/business/*` — growth, active users,
+plan mix, subscription trend, usage and the organization ranking. It is deliberately
+**separate from `stats:system`**, which is role-guarded to `owner`/`admin` and is about
+system health rather than growth. Granted to `moderator`, `admin` and `owner`; denied to
+`staff`, `customer_relations` and every `org:boutique_*` role. The routes are
+**bearer-only** — the group does not call `AllowBearerOrApiKey`, so an API key is refused —
+matching the other team-only statistics families. Two of the six reads
+(`usage?organizationId=…` and the organization ranking) additionally require
+`admin:orgs:read`, checked in the handler rather than in the policy. See
+[`docs/architecture/authorization.md`](../architecture/authorization.md) for the grant
+matrix.
 
 ### A.3 Error responses
 
@@ -379,7 +402,7 @@ cited.
 
 | Method | Path | Auth | Notes |
 | --- | --- | --- | --- |
-| `GET` | `/api/v1/auth/claims` | authenticated | Raw Clerk claims plus the resolved `AccountState`, `UserRole`, `OrganizationRole`. Source: `Endpoints/AuthEndpoints.cs:16`. |
+| `GET` | `/api/v1/auth/claims` | authenticated | Raw Clerk claims plus the resolved `AccountState`, `UserRole`, `OrganizationRole`. `email` is read from the mapped `ClaimTypes.Email` claim (falling back to the raw `email` name); the JwtBearer inbound map rewrites the token's `email` claim, so reading the raw name alone returned `null` (**A9 B1**). Source: `Endpoints/AuthEndpoints.cs:16`. |
 
 ### B.2 Users
 
@@ -780,7 +803,67 @@ string-backed `AdminApprovalStatus`.
 `502 { "message": "..." }` Clerk Backend API failure.
 **Source:** `Endpoints/AdminEndpoints.cs:18-113`.
 
-### B.14 Authorization policy demo endpoints (fixtures)
+### B.14 Admin business statistics (Business KPIs)
+
+**Auth:** Clerk JWT only. **Not available to API keys.**
+**Permission:** `analytics:business:read` (see [A.2](#a2-authorization)). Granted to
+`moderator`, `admin` and `owner`; denied to `staff`, `customer_relations` and every
+`org:boutique_*` role. Only `owner` and `admin` reach the console, so the `moderator` grant is
+inert at the UI layer and exists so the catalogue is semantically correct.
+**Source:** `Modules/Analytics/Endpoints/BusinessKpiEndpoints.cs`.
+**Catalog:** S-44…S-49 in
+[statistics-catalog.md](../backend/statistics-catalog.md#7b-business-kpis-growth-activity-plan-mix).
+
+| Method | Path | Statistic | Notes |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/admin/statistics/business/growth` | S-44 | New users, new boutiques and access requests per bucket + `previousTotals` |
+| `GET` | `/api/v1/admin/statistics/business/active-users` | S-45 | Distinct active users per bucket + the DAU/WAU/MAU reading and stickiness |
+| `GET` | `/api/v1/admin/statistics/business/plan-mix` | S-46 | Per-tier organization/subscription/user counts and the free-versus-premium split |
+| `GET` | `/api/v1/admin/statistics/business/subscriptions` | S-47 | Active organizations by tier over time, with starts, cancellations and churn |
+| `GET` | `/api/v1/admin/statistics/business/usage` | S-48 | Messages, agent runs, API calls, Blossom units and actual AI cost per bucket |
+| `GET` | `/api/v1/admin/statistics/business/organizations` | S-49 | Organizations ranked by a usage measure, with last-activity recency |
+
+**Shared query parameters**
+
+| Param | Type | Default | Validation |
+| --- | --- | --- | --- |
+| `from` | ISO 8601 datetime | `to − 30 d` | must be `< to` |
+| `to` | ISO 8601 datetime | now (UTC) | `(to − from).TotalDays ≤ BusinessAnalytics:MaxWindowDays` (400) |
+| `granularity` | `day` \| `week` \| `month` | `day` | anything else is `400` |
+| `organizationId` | uuid | absent | `usage` only; additionally requires `admin:orgs:read` |
+| `metric` | `messages` \| `agentRuns` \| `apiRequests` \| `blossomUnits` | `apiRequests` | `organizations` only; anything else is `400` |
+| `limit` | int | `20` | `organizations` only; clamped to 100, and `> 1000`, `0` or negative is `400` |
+
+**Errors:** `400 { message }` on every validation failure; `401` anonymous; `403` a role
+without `analytics:business:read`; `500 { status, message, traceId }` on a database failure.
+An empty source is `200` with a `null` measure and a `dataQuality` note, never a fabricated
+zero baseline.
+
+**Caching:** `Cache-Control: private, max-age=60`. The result is cached in
+`IDistributedCache` at `BusinessAnalytics:CacheSeconds`, so `dataQuality` may be up to 60
+seconds stale.
+
+**Null versus zero.** A count of `0` inside the observed period is `0`. A bucket before the
+earliest observation (`observedFrom`), or a measure that cannot be computed at all, is
+`null`. `dataQuality.userAttributionAvailable = false` accompanies a `null` active-user
+reading.
+
+**Two operations carry a second permission.** `usage?organizationId=…` and `organizations`
+both require `admin:orgs:read` in addition to `analytics:business:read`, because the first
+drills into one tenant's usage and the second enumerates tenant names. The check is performed
+in the handler; a caller holding only the KPI permission is refused with `403`.
+
+**Subscription history is a snapshot, not a read of `OrganizationSubscriptions`.**
+`OrganizationSubscriptionSnapshots` holds one row per organization per UTC day, written at
+02:00 UTC. The tier comes from `Organizations.PlanTier`, so an organization that never changed
+plan (and therefore has no subscription row) is still counted. Buckets reconstructed from the
+audit ledger are flagged `isBackfilled` and `dataQuality.subscriptionHistoryBackfilled`.
+
+**Usage without `organizationId` includes unattributed API requests** (`BR-6.1`), which is
+correct for a platform total and is stated in `dataQuality.notes`. With `organizationId`, those
+rows belong to no organization and are excluded.
+
+### B.15 Authorization policy demo endpoints (fixtures)
 
 These exist to prove the policy wiring end-to-end and are covered by
 `AuthorizationPolicyTests`. They return a fixed message and are **not** part of
@@ -802,6 +885,168 @@ unauthenticated, `403` empty when the policy denies.
 **Source:** `Endpoints/AuthPolicyDemoEndpoints.cs:17-45`.
 **Excluded from `openapi.yaml` deliberately** — they are test fixtures, not
 contract.
+
+### B.16 Admin revenue writes
+
+> **Status: implemented** (Revenue Ledger R2, issue #343). The three verbs that put
+> money into the append-only income ledger. The reads arrive with R3.
+
+**The two entry classes.** There is no payment-provider client in this repository, so
+the ledger distinguishes what a list price says *should* be billed (`Derived`) from
+money an operator confirmed was received (`Verified`). No response in this family may
+conflate them, and only a `Verified` entry may be described as collected.
+
+| Method | Path | Permission | Body | Response |
+| --- | --- | --- | --- | --- |
+| `POST` | `/api/v1/admin/revenue/ledger/verify` | `revenue:manage` | `{ organizationId, sourceKind, sourceRef, amount, reason }` | `201` `IncomeLedgerEntryDto` |
+| `POST` | `/api/v1/admin/revenue/ledger/refund` | `revenue:refund` | `{ organizationId, sourceKind, sourceRef, amount, reason }` | `201` `IncomeLedgerEntryDto` |
+| `POST` | `/api/v1/admin/revenue/ledger/adjust` | `revenue:manage` | `{ organizationId, amount, reason, sourceRef?, supersedesEntryId? }` | `201` `IncomeLedgerEntryDto` |
+
+**Idempotency: required on all three.** A missing key is `400
+{ "code": "idempotency-key-required" }`; a replay returns the stored response with the
+`Idempotency-Replayed: true` header and writes **nothing** a second time. The filter
+fails closed: if the lease store is unreachable the request is `503
+{ "code": "idempotency-unavailable" }` rather than applied twice.
+
+**Authorization.** `revenue:manage` is held by `admin` and `owner`; `revenue:refund`
+by `owner` only, because sending money back is irreversible in a way that correcting
+the ledger is not. A `moderator` holds `revenue:read` and is refused `403` on all
+three. Bearer-only: an API key can never reach these routes.
+
+**Validation.**
+
+| Field | Rule |
+| --- | --- |
+| `amount` | `> 0`. The ledger stores a positive amount and derives the sign from the entry kind, so a non-positive value is a `400` rather than a credit |
+| `reason` | 10–500 characters, matching the Blossom ledger's constraint |
+| `sourceRef` | Required on verify and optional on adjust; it is the dedup identity |
+| actor | Resolved from the Clerk subject. An unresolvable actor is refused, so no money entry can be unattributable |
+
+**Behaviour worth knowing.**
+
+- **Verify takes over the derived charge.** A verified receipt for an existing
+  `(sourceKind, sourceRef)` nulls its derived counterpart rather than sitting beside
+  it: the derived row was an *expectation* of the very charge now collected. The
+  original row survives with `status: "Voided"` and its `sourceRef` cleared, and the
+  new row carries `supersedesEntryId` pointing back at it. Counting both would
+  double-book the period.
+- **A refund needs a real receipt.** Refunding a charge with no `Verified`
+  counterpart is `409 { "code": "refund-not-allowed" }`. You cannot return money the
+  ledger never recorded receiving, and recording it as a negative total would hide
+  that.
+- **An adjustment counts as verified movement**, never as derived revenue: it corrects
+  the ledger rather than being something a list price asked for.
+- **Nothing is ever updated or deleted.** A correction is a new row, and a cancelled
+  one is marked `Voided` by the row that supersedes it.
+
+**Errors:** `400 validation`; `400 idempotency-key-required`; `401`; `403`;
+`404` unknown organization or supersede target; `409 refund-not-allowed`;
+`409 duplicate-revenue-entry`; `409 income-entry-not-voidable`;
+`409 idempotency-key-reuse`; `503 idempotency-unavailable`.
+
+**Audit.** Each verb writes `revenue.ledger.{verified|refunded|adjusted}` through the
+same `IAuditService` the entitlement journal uses, so both money journals read as one
+history in the Audit Explorer. The rollover's derived charges are
+`revenue.ledger.derived` — deliberately not one of the three administrative verbs,
+because a job is not an operator.
+
+**Source:** `Modules/Revenue/Endpoints/RevenueEndpoints.cs`,
+`Modules/Revenue/DTOs/RevenueDtos.cs`.
+
+**The system-side writers**, which write `Derived` and never `Verified`:
+
+| Source | Site | Rule |
+| --- | --- | --- |
+| Blossom top-up | `POST /api/v1/orgs/{organizationId}/blossoms/top-ups` | Writes a `TopUpPurchase` row **only** when `paymentReference` is present. A free or unreferenced grant writes nothing, because a grant is not a charge |
+| Subscription period charge | `BillingPeriodRolloverJob` | Writes one `SubscriptionCharge` for an `Active` subscription with `PriceLkr > 0`. A zero price writes nothing, which is why `subscriptionPricesConfigured` is `false` and MRR is `null` rather than `0` today |
+
+Both dedupe on a natural reference — the provider reference for a top-up, the period
+start in ISO-8601 for a charge — so a retry or a re-run cannot double-book.
+
+### B.18 Blossom reconciliation report (S-56)
+
+> **Status: implemented** (Revenue Ledger R4, issue #345). Gated `stats:system`, matching the rest
+> of the `/admin/statistics/billing` family, and **not** `revenue:read`: a `moderator` reads revenue
+> and does not read system statistics.
+
+| Method | Path | Returns |
+| --- | --- | --- |
+| `GET` | `/api/v1/admin/statistics/billing/reconciliation` | S-56 `BlossomReconciliationResponse` — optional `organizationId` |
+
+**Why it exists.** Drift is already a Critical alert: `SystemMetricCollector` emits
+`aveline.blossom.reconciliation.drift` over the accounts it scans, and `blossom.ledger.drift` watches
+it. An alarm is only actionable if the operator can find **which** account drifted, and until this
+endpoint the only place to look was Grafana.
+
+**The formula is not reimplemented.** It calls the same `BlossomService.LedgerDerivedBalance` and
+`ReconciliationDrift` the collector uses, because a second derivation would let the console and the
+alarm disagree about the same account — the one outcome this surface must never produce.
+
+**Shape.** Only drifted accounts appear, ranked by the **magnitude** of the drift so the worst is
+first regardless of sign; a consistent account is not noise to page through, and `accountsChecked`
+distinguishes *"consistent"* from *"not looked at"*. `reconciliationChecked` is `null` here rather
+than `false`: this read does not itself run a reconciliation pass, so saying `false` would claim it
+checked and found nothing.
+
+**Errors:** `401`; `403`.
+**Source:** `Modules/Billing/Endpoints/BlossomReconciliationEndpoints.cs`.
+
+### B.17 Admin revenue reads
+
+> **Status: implemented** (Revenue Ledger R3, issue #344). All six reads are gated
+> `revenue:read` and are bearer-only: an API key can never reach a revenue figure.
+
+| Method | Path | Returns |
+| --- | --- | --- |
+| `GET` | `/api/v1/admin/revenue/ledger` | S-50 `IncomeLedgerPageResponse` — filters `from`, `to`, `page`, `pageSize` |
+| `GET` | `/api/v1/admin/revenue/accounts` | S-51 `RevenueAccountsResponse` — per-organization derived/verified/net |
+| `GET` | `/api/v1/admin/statistics/revenue/overview` | S-52 `RevenueOverviewResponse` — MRR, ARR, ARPU |
+| `GET` | `/api/v1/admin/statistics/revenue/timeseries` | S-53 `RevenueTimeseriesResponse` |
+| `GET` | `/api/v1/admin/statistics/revenue/collections` | S-54 `RevenueCollectionsResponse` |
+| `GET` | `/api/v1/admin/statistics/revenue/blossoms` | S-55 `RevenueBlossomSalesResponse` |
+
+**Every response carries `dataQuality`** (`IncomeDataQuality`, the fifth vocabulary), and
+every one sets `Cache-Control: private, max-age=…` — `max-age=0` on the ledger register,
+which is deliberately uncached, and the console TTL elsewhere. `private` matters: a shared
+proxy must never hold one organization's revenue figures.
+
+**Windows.** `from`/`to` with `Revenue:MaxWindowDays` (default **400**, matching the
+retention the S-catalog claims). A window over the cap is **`400` naming the effective
+limit**, never silently shortened — the response must describe the period the caller asked
+about. `granularity` is `day | week | month`. Buckets are dense and aligned to calendar
+boundaries, and `isPartial` marks a bucket the window clips at either edge.
+
+**Null is not zero, and this is the contract the family exists to keep.** A measure that
+could not be computed is `null`, never `0`:
+
+- **MRR, ARR and ARPU are `null` while every `PriceLkr` is `0`**, with
+  `subscriptionPricesConfigured: false` and a note. That is the production case today,
+  because `SubscriptionService.UpsertSubscriptionAsync` never assigns the price. A `0` MRR
+  would read as "we earn nothing"; the truth is "no price is configured".
+- **`collectionRate` is `null`, not `0`, when nothing was billed.** `0` would claim that
+  something was billed and none of it collected, which is a different and false statement.
+- **`arpu` is `null` rather than a divide-by-zero** when nothing is priced.
+- A measured `0` inside the observed period stays `0`.
+
+**Derived versus verified is never merged.** The timeseries returns three separate series,
+and the register's reconciliation exposes `derivedTotal`, `verifiedTotal` and the
+`unverifiedGap` between them. The gap is a **magnitude**: a receipt with no matching charge
+is as much a finding as a charge with no receipt. The signed view is
+`collectionRate.outstanding`, which is a balance, so a negative value correctly means more
+came in than was billed. `isBalanced` means at least as much was collected as billed.
+
+**MRR is list-price scheduled revenue**, not recognised or collected revenue. The response
+states `revenueProviderSettlementAvailable: false`, and the console must not label it
+"collected". An `Annual` subscription is divided by twelve before it enters MRR, so a single
+annual row does not appear as twelve times its monthly value.
+
+**The ledger register is uncached and returns the window's totals**, not the page's: the
+reconciliation describes the period the caller asked about rather than the slice on screen.
+Totals and `dataQuality` are computed over the whole window.
+
+**Errors:** `400` invalid window or granularity; `401`; `403`.
+**Source:** `Modules/Revenue/Endpoints/RevenueEndpoints.cs`,
+`Modules/Revenue/DTOs/RevenueReadDtos.cs`.
 
 ---
 
@@ -830,10 +1075,11 @@ below is registered under the `/api/v1` group unless the path says otherwise.
 >    compensating-ledger recompute job is not scheduled yet. See the endpoint below
 >    for the status response and the intended contract.
 
-Permissions: the read routes are enforced by the team-only `PricingAdminRead` policy
-(Admin or Owner, #237); writes need `pricing:manage`, and a past effective date
-additionally needs `pricing:backdate`. `pricing:view` remains in the catalog but no
-longer gates a route. **Never available to boutique roles.**
+Permissions: the read routes are enforced by the team-only `PricingAdminRead` policy,
+which requires the `admin` or `owner` role **and** `pricing:view` (**A9 B2**); writes
+need `pricing:manage`, and a past effective date additionally needs `pricing:backdate`.
+`pricing:view` therefore does gate the read routes again. **Never available to boutique
+roles.**
 
 ---
 
@@ -1090,8 +1336,33 @@ only on consumption or an adjustment.
 
 #### `GET /api/v1/orgs/{organizationId:guid}/blossoms/statement`
 
+> **Changed in Revenue Ledger R4 (issue #345).** The statement is now paged, filtered and ordered
+> **server-side**, gained query parameters and response fields, and its window cap moved from 92 to
+> **400 days**. The wire change is deliberate; the reasoning is below.
+
 **Purpose:** full statement of account with a reconciliation check.
-**Params:** `from`, `to`, `page`, `pageSize`, `entryType?` (`all` \| `entitlement` \| `consumption`).
+
+**Params:**
+
+| Param | Meaning |
+| --- | --- |
+| `from`, `to` | The UTC window. Capped at `Billing:StatementMaxWindowDays` (**400**, matching the retention S-3 claims); a longer one is `400` **naming the effective limit** rather than silently shortened |
+| `page`, `pageSize` | `pageSize` must be within `[1, 200]`; outside it is `400` **naming the range**, not clamped |
+| `kind` | `all` \| `entitlement` \| `consumption`. An unrecognised value is `400`, never ignored |
+| `entryType` | Restricts entitlement rows to one `BlossomLedgerEntryType`. Unrecognised is `400` |
+| `sourceKind` | Restricts entitlement rows to one `BlossomSourceKind` |
+| `q` | Substring match over the reason or the source reference; for consumption rows, over the workflow id, provider or model |
+| `minAmount`, `maxAmount` | Inclusive bounds on the **signed** ledger movement |
+
+**Two filters select the ledger leg only.** `entryType` and an amount bound are both
+ledger concepts — a consumption row has no entry type and no delta — so a request carrying either
+returns **no** consumption rows. This is worth stating because both were bugs before it held: the
+consumption leg ignored `entryType` entirely, and its zero delta satisfied `delta >= 1`.
+
+**Ordering is total and stable** (`occurredAt DESC, id DESC`; `id` is UUIDv7, so it is monotonic).
+A row can therefore be neither repeated nor skipped across pages, which is what makes the pager
+trustworthy. `total` is the window total, not the page length, and it is the same on every page.
+
 **Response `200`:**
 
 ```json
@@ -1121,11 +1392,15 @@ only on consumption or an adjustment.
       "entryType": null,
       "blossomDelta": -3.7,
       "balanceAfter": 612.9,
-      "reason": "Agent workflow",
+      "reason": "AI workflow on gpt-4o.",
       "sourceKind": null,
       "sourceRef": "wf_01J8...",
       "expiresAt": null,
-      "createdByUserId": null
+      "createdByUserId": null,
+      "provider": "openai",
+      "model": "gpt-4o",
+      "normalizedUnits": 3700,
+      "actualCostUsd": 0.0075
     }
   ],
   "total": 39,
@@ -1138,11 +1413,39 @@ only on consumption or an adjustment.
     "drift": 0.0,
     "isConsistent": true
   },
-  "generatedAt": "2026-09-11T09:30:00Z"
+  "generatedAt": "2026-09-11T09:30:00Z",
+  "maxWindowDays": 400,
+  "dataQuality": {
+    "reconciliationChecked": true,
+    "openingBalanceFromProjection": true,
+    "windowCapped": false,
+    "maxWindowDays": 400,
+    "notes": [
+      "The opening balance is derived from the balance projection, not accumulated forward from the ledger rows in this window."
+    ]
+  }
 }
 ```
 
-**Errors:** `400` (bad window), `401`, `403`.
+**The four additive item fields** are `null` on an entitlement row and populated on a consumption
+one: `provider`, `model`, `normalizedUnits` (input + output + cached tokens, so a Blossom charge can
+be checked rather than taken on trust) and `actualCostUsd`. A consumption row's `reason` now names
+the model rather than saying *"Agent workflow"*.
+
+**`availableToRevoke`** is present on a row that is a revocable grant and absent otherwise. It is
+how the console offers a revoke action instead of letting an operator discover non-revocability from
+a `409`. The `409 grant-not-revocable` response remains the server's authoritative answer, and the
+two cannot disagree: both apply the same rule — the right entry type, a positive delta, not expired,
+and not already fully revoked.
+
+**`dataQuality` states what the numbers rest on.** `openingBalanceFromProjection` is always `true`
+today: the opening balance is derived **backwards** from the cached `BlossomRemaining` projection,
+not accumulated forward from the ledger, so it inherits that row's state. `reconciliationChecked`
+is `false` when the reconciliation could not be evaluated, and a client must render that as
+*"reconciliation status unknown"* — **never** as consistent.
+
+**Errors:** `400` (bad window, page size outside `[1, 200]`, unrecognised `kind` or `entryType`,
+`min > max`), `401`, `403`.
 **Related statistics:** [S-3](../backend/statistics-catalog.md).
 **Client guidance:** `reconciliation.isConsistent = false` is a **Critical**
 condition. Surface it to the owner and to Aveline support; do not silently render a
@@ -1205,7 +1508,7 @@ All four require `billing:adjust` (Aveline team only) and `Idempotency-Key`.
 | `POST` | `/api/v1/admin/orgs/{organizationId:guid}/blossoms/credit` | `{ amount, reason, expiresAt?, sourceKind?, sourceRef? }` | `201` `BlossomLedgerEntryDto` (see the field-name note above) |
 | `POST` | `/api/v1/admin/orgs/{organizationId:guid}/blossoms/debit` | `{ amount, reason, allowNegative? }` | `201` `BlossomLedgerEntryDto` (see the field-name note above) |
 | `POST` | `/api/v1/admin/orgs/{organizationId:guid}/blossoms/revoke` | `{ ledgerEntryId, reason }` | `201` `BlossomLedgerEntryDto` (see the field-name note above) |
-| `GET` | `/api/v1/admin/orgs/{organizationId:guid}/blossoms/statement` | query: paging | same shape as the org statement |
+| `GET` | `/api/v1/admin/orgs/{organizationId:guid}/blossoms/statement` | query: `from`, `to`, `page`, `pageSize`, `kind`, `entryType`, `sourceKind`, `q`, `minAmount`, `maxAmount` | same shape as the org statement (§B.9) |
 
 **Validation:**
 
@@ -1457,7 +1760,8 @@ beyond that dialog.
 > `GET /admin/audit/{entryId:guid}`), the Aveline-team organization search
 > (`GET /admin/orgs`, FR-4.8) and per-organization entitlement overrides
 > (`PATCH /admin/orgs/{organizationId}/entitlement-overrides`, FR-4.9). The audit log
-> was previously write-only, so `audit:view` and `AuditViewPolicy` were dead.
+> was previously write-only. `AuditViewPolicy` requires the team `owner`/`admin` role
+> **and** the `audit:view` permission; the permission requirement was added in **A9 B2**.
 
 
 | Method | Path | Policy | Body | Response |
@@ -1957,7 +2261,8 @@ lastUsedAt, topEndpoint }`. **Related statistics:** [S-28](../backend/statistics
 > organization-scoped critical alert creates a `NotificationRecord` because
 > `NotificationRecords.OrganizationId` is a required FK to `Organizations`.
 
-Base: `/api/v1/admin/statistics`. **Auth:** `stats:system` (Aveline team only).
+Base: `/api/v1/admin/statistics`. **Auth:** the `StatsSystem` policy — the team
+`owner`/`admin` role **and** `stats:system` (A9 B2); Aveline team only.
 
 | Endpoint | Params | Returns |
 | --- | --- | --- |
@@ -1968,7 +2273,7 @@ Base: `/api/v1/admin/statistics`. **Auth:** `stats:system` (Aveline team only).
 | `GET /system/throughput` | `from`, `to`, `groupBy` | RPS, agent runs/min, Blossoms/hour |
 | `GET /system/eventbus` | **none** (`from`/`to` are accepted but ignored) | Published, delivered, failed, publish latency — an instantaneous counter snapshot |
 | `GET /system/alerts` | `status?`, `severity?`, `ruleId?`, `page`, `pageSize` | `SystemAlertPage` |
-| `POST /system/alerts/{alertId:guid}/acknowledge` | body `{ "note": string? }` | Updated alert |
+| `POST /system/alerts/{alertId:guid}/acknowledge` | body `{ "note": string? }` | Updated alert; **404** when unknown, **409 `{ message }`** when the alert is already `Resolved` (**A9 B3** — a resolved alert is terminal) |
 
 > **`GET /system/eventbus` is windowless (M-11).** The handler binds only the
 > statistics service and the cancellation token, so the documented `from`/`to`

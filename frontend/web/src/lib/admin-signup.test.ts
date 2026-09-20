@@ -19,14 +19,22 @@ describe('admin-signup', () => {
   })
 
   describe('hasConsoleRole', () => {
-    it('admits team and boutique management roles, case-insensitively', () => {
+    it('admits exactly the owner and admin roles, case-insensitively', () => {
       expect(hasConsoleRole(['owner'])).toBe(true)
       expect(hasConsoleRole(['Admin'])).toBe(true)
-      expect(hasConsoleRole(['moderator'])).toBe(true)
-      expect(hasConsoleRole(['org:boutique_owner'])).toBe(true)
-      expect(hasConsoleRole(['org:boutique_manager'])).toBe(true)
-      expect(hasConsoleRole(['org:boutique_supervisor'])).toBe(true)
+      expect(hasConsoleRole(['OWNER'])).toBe(true)
       expect(hasConsoleRole(['staff', 'owner'])).toBe(true)
+    })
+
+    it('refuses a moderator, which holds no admin surface of its own (C2)', () => {
+      expect(hasConsoleRole(['moderator'])).toBe(false)
+    })
+
+    it('refuses boutique roles, which have their own dashboard at app/b/{slug}', () => {
+      expect(hasConsoleRole(['org:boutique_owner'])).toBe(false)
+      expect(hasConsoleRole(['org:boutique_manager'])).toBe(false)
+      expect(hasConsoleRole(['org:boutique_supervisor'])).toBe(false)
+      expect(hasConsoleRole(['org:boutique_staff'])).toBe(false)
     })
 
     it('rejects roles that do not grant console access', () => {
@@ -34,7 +42,7 @@ describe('admin-signup', () => {
       expect(hasConsoleRole(null)).toBe(false)
       expect(hasConsoleRole(undefined)).toBe(false)
       expect(hasConsoleRole(['staff'])).toBe(false)
-      expect(hasConsoleRole(['org:boutique_staff'])).toBe(false)
+      expect(hasConsoleRole(['customer_relations'])).toBe(false)
     })
   })
 })

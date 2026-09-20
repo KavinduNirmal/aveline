@@ -120,6 +120,30 @@ public static class AuthorizationConfiguration
     public const string PricingAdminReadPolicy = "PricingAdminRead";
 
     /// <summary>
+    /// Team-only policy for the admin revenue read surface: the income ledger, the
+    /// per-organization revenue reads and the four financial statistics routes. Requires
+    /// <c>revenue:read</c>.
+    /// </summary>
+    /// <remarks>
+    /// Wider than the other team-only policies on purpose. A <c>moderator</c> already holds
+    /// <c>analytics:business:read</c> and <c>admin:orgs:read</c>, so reading what a boutique was
+    /// billed is inside their remit; moving money is not, which is what
+    /// <see cref="MoneyOperationsPolicy"/> exists to separate.
+    /// </remarks>
+    public const string MoneyReadPolicy = "MoneyRead";
+
+    /// <summary>
+    /// Team-only policy for the money-moving surfaces: the Blossom ledger's administrative
+    /// credit/debit/revoke, and the revenue verify/refund/adjust writes.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately excludes <c>moderator</c>. The Blossom ledger route carried a bare
+    /// <c>billing:adjust</c> permission before this policy existed; the permission is still
+    /// required, alongside the narrower role guard, so the catalogue and the wire agree.
+    /// </remarks>
+    public const string MoneyOperationsPolicy = "MoneyOperations";
+
+    /// <summary>
     /// An org-scoped policy accepts either a Clerk bearer token or an API key. API-key
     /// principals are evaluated by scope in the authorization handlers (A-10); team-only
     /// policies deliberately omit the API-key scheme.
@@ -254,12 +278,42 @@ public static class AuthorizationConfiguration
             });
 
             // Team-only policies: an API key may never reach these, so they only accept
-            // the default bearer scheme.
-            options.AddPolicy(StatsSystemPolicy, p => p.RequireRole(Roles.Owner, Roles.Admin));
+            // the default bearer scheme. The permission requirement is added alongside the
+            // role guard so the catalogue and the wire agree (A9 B2). It is additive: both
+            // `owner` and `admin` already hold `stats:system`, `audit:view` and
+            // `pricing:view`, so every role the role policy admitted still passes.
+            options.AddPolicy(StatsSystemPolicy, p =>
+            {
+                p.RequireRole(Roles.Owner, Roles.Admin);
+                p.Requirements.Add(new PermissionRequirement(Permissions.StatsSystem));
+            });
 
-            options.AddPolicy(AuditViewPolicy, p => p.RequireRole(Roles.Owner, Roles.Admin));
+            options.AddPolicy(AuditViewPolicy, p =>
+            {
+                p.RequireRole(Roles.Owner, Roles.Admin);
+                p.Requirements.Add(new PermissionRequirement(Permissions.AuditView));
+            });
 
-            options.AddPolicy(PricingAdminReadPolicy, p => p.RequireRole(Roles.Owner, Roles.Admin));
+            options.AddPolicy(PricingAdminReadPolicy, p =>
+            {
+                p.RequireRole(Roles.Owner, Roles.Admin);
+                p.Requirements.Add(new PermissionRequirement(Permissions.PricingView));
+            });
+
+            // The money pair. `MoneyRead` is the one team-only policy that admits a
+            // `moderator`: they read what a boutique was billed without gaining the authority
+            // to move money. `MoneyOperations` is the narrower write side.
+            options.AddPolicy(MoneyReadPolicy, p =>
+            {
+                p.RequireRole(Roles.Owner, Roles.Admin, Roles.Moderator);
+                p.Requirements.Add(new PermissionRequirement(Permissions.RevenueRead));
+            });
+
+            options.AddPolicy(MoneyOperationsPolicy, p =>
+            {
+                p.RequireRole(Roles.Owner, Roles.Admin);
+                p.Requirements.Add(new PermissionRequirement(Permissions.BillingAdjust));
+            });
 
             // Permission-based policies (one per permission in the catalog).
             foreach (var permission in Permissions.All)

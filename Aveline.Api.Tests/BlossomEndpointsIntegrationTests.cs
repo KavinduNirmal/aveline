@@ -439,5 +439,136 @@ public class BlossomEndpointsIntegrationTests : IAsyncLifetime
         var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
         Assert.True(body.GetProperty("reconciliation").GetProperty("isConsistent").GetBoolean());
         Assert.Equal(0m, body.GetProperty("reconciliation").GetProperty("drift").GetDecimal());
+
+        // R4 (issue #345): the response now states what it rests on, and the effective window cap, so
+        // a client can say "reconciliation status unknown" rather than assuming consistency.
+        var quality = body.GetProperty("dataQuality");
+        Assert.True(quality.GetProperty("openingBalanceFromProjection").GetBoolean());
+        Assert.True(quality.GetProperty("reconciliationChecked").GetBoolean());
+        Assert.Equal(400, body.GetProperty("maxWindowDays").GetInt32());
+        Assert.Equal(400, quality.GetProperty("maxWindowDays").GetInt32());
+    }
+
+    /// <summary>
+    /// The statement's window now matches the 400-day retention S-3 claims, rather than the 92 the
+    /// endpoint used to cap at, and a request beyond it is rejected **naming the effective limit**.
+    /// </summary>
+    [Fact]
+    public async Task Statement_WindowBeyondTheCap_Is400NamingTheEffectiveLimit()
+    {
+        var (orgId, ownerClerk) = await SeedBoutiqueAsync("statement-window");
+        var token = CreateToken(ownerClerk, orgRole: Roles.BoutiqueOwner);
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Get,
+            $"/api/v1/orgs/{orgId}/blossoms/statement"
+            + "?from=2025-01-01T00:00:00Z&to=2026-12-31T00:00:00Z",
+            token));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Contains("400", body.GetProperty("message").GetString());
+    }
+
+    /// <summary>
+    /// A page size outside the range is rejected naming it. A caller who asked for 500 rows and
+    /// received 200 would page on a false assumption, so this is not silently clamped.
+    /// </summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(500)]
+    public async Task Statement_PageSizeOutsideTheRange_Is400NamingTheRange(int pageSize)
+    {
+        var (orgId, ownerClerk) = await SeedBoutiqueAsync($"statement-page-{pageSize}");
+        var token = CreateToken(ownerClerk, orgRole: Roles.BoutiqueOwner);
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Get,
+            $"/api/v1/orgs/{orgId}/blossoms/statement?pageSize={pageSize}",
+            token));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        var message = body.GetProperty("message").GetString()!;
+        Assert.Contains("1", message);
+        Assert.Contains("200", message);
+    }
+
+    [Fact]
+    public async Task Statement_UnrecognisedEntryType_Is400RatherThanIgnored()
+    {
+        var (orgId, ownerClerk) = await SeedBoutiqueAsync("statement-entrytype");
+        var token = CreateToken(ownerClerk, orgRole: Roles.BoutiqueOwner);
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Get,
+            $"/api/v1/orgs/{orgId}/blossoms/statement?entryType=NotARealType",
+            token));
+
+        // Silently dropping the filter would return the whole window under a request that asked for
+        // a subset, which is worse than refusing it.
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Statement_UnrecognisedKind_Is400()
+    {
+        var (orgId, ownerClerk) = await SeedBoutiqueAsync("statement-kind");
+        var token = CreateToken(ownerClerk, orgRole: Roles.BoutiqueOwner);
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Get,
+            $"/api/v1/orgs/{orgId}/blossoms/statement?kind=everything",
+            token));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    /// <summary>
+    /// The new filters are accepted together and narrow the merged source, and a consumption row now
+    /// carries the detail that explains it.
+    /// </summary>
+    [Fact]
+    public async Task Statement_FiltersCombine_AndConsumptionCarriesItsDetail()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var (orgId, ownerClerk) = await SeedBoutiqueAsync($"statement-filters-{suffix}");
+        var token = CreateToken(ownerClerk, orgRole: Roles.BoutiqueOwner);
+
+        await using (var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb").Options))
+        {
+            context.AiUsageRecords.Add(new Modules.Billing.Models.AiUsageRecord
+            {
+                OrganizationId = orgId,
+                RequestId = $"req-{suffix}",
+                WorkflowId = $"wf-{suffix}",
+                Provider = "openai",
+                Model = "gpt-4o",
+                InputTokens = 900,
+                OutputTokens = 100,
+                BlossomUnits = 4m,
+                ActualCostUsd = 0.0075m,
+                CreatedAt = DateTime.UtcNow.AddMinutes(-5),
+            });
+            await context.SaveChangesAsync();
+        }
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Get,
+            $"/api/v1/orgs/{orgId}/blossoms/statement"
+            + "?kind=consumption&q=gpt-4o&page=1&pageSize=25",
+            token));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal(1, body.GetProperty("total").GetInt32());
+
+        var item = body.GetProperty("items").EnumerateArray().Single();
+        Assert.Equal("Consumption", item.GetProperty("kind").GetString());
+        Assert.Equal("openai", item.GetProperty("provider").GetString());
+        Assert.Equal("gpt-4o", item.GetProperty("model").GetString());
+        Assert.Equal(1000, item.GetProperty("normalizedUnits").GetInt64());
+        Assert.Equal(0.0075m, item.GetProperty("actualCostUsd").GetDecimal());
     }
 }

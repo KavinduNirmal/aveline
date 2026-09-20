@@ -1731,12 +1731,41 @@ paths:
       parameters:
         - $ref: "#/components/parameters/From"
         - $ref: "#/components/parameters/To"
-        - name: entryType
+        - name: kind
           in: query
+          description: Entitlement rows, consumption rows, or both.
           schema:
             type: string
             enum: [all, entitlement, consumption]
             default: all
+        - name: entryType
+          in: query
+          description: |
+            Restricts entitlement rows to one ledger entry type. A ledger concept, so supplying it
+            excludes consumption rows entirely.
+          schema:
+            $ref: "#/components/schemas/BlossomLedgerEntryType"
+        - name: sourceKind
+          in: query
+          description: Restricts entitlement rows to one source.
+          schema:
+            $ref: "#/components/schemas/BlossomSourceKind"
+        - name: q
+          in: query
+          description: |
+            Substring match over the reason or source reference; for consumption rows, over the
+            workflow id, provider or model.
+          schema: { type: string }
+        - name: minAmount
+          in: query
+          description: |
+            Inclusive lower bound on the signed ledger movement. A ledger concept, so supplying it
+            excludes consumption rows entirely.
+          schema: { type: number, format: decimal }
+        - name: maxAmount
+          in: query
+          description: Inclusive upper bound on the signed ledger movement.
+          schema: { type: number, format: decimal }
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/PageSize"
       responses:
@@ -2149,11 +2178,48 @@ paths:
     get:
       tags: [Admin Billing]
       summary: Read any organization's statement of account
-      description: Phase 2. Requires `billing:adjust`.
+      description: |
+        Requires `billing:adjust`. Paged, filtered and ordered server-side, with the same parameters
+        as the org-scoped statement.
       operationId: adminGetBlossomStatement
       parameters:
         - $ref: "#/components/parameters/From"
         - $ref: "#/components/parameters/To"
+        - name: kind
+          in: query
+          description: Entitlement rows, consumption rows, or both.
+          schema:
+            type: string
+            enum: [all, entitlement, consumption]
+            default: all
+        - name: entryType
+          in: query
+          description: |
+            Restricts entitlement rows to one ledger entry type. A ledger concept, so supplying it
+            excludes consumption rows entirely.
+          schema:
+            $ref: "#/components/schemas/BlossomLedgerEntryType"
+        - name: sourceKind
+          in: query
+          description: Restricts entitlement rows to one source.
+          schema:
+            $ref: "#/components/schemas/BlossomSourceKind"
+        - name: q
+          in: query
+          description: |
+            Substring match over the reason or source reference; for consumption rows, over the
+            workflow id, provider or model.
+          schema: { type: string }
+        - name: minAmount
+          in: query
+          description: |
+            Inclusive lower bound on the signed ledger movement. A ledger concept, so supplying it
+            excludes consumption rows entirely.
+          schema: { type: number, format: decimal }
+        - name: maxAmount
+          in: query
+          description: Inclusive upper bound on the signed ledger movement.
+          schema: { type: number, format: decimal }
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/PageSize"
       responses:
@@ -2516,7 +2582,7 @@ paths:
     get:
       tags: [Pricing]
       summary: List Blossom conversion rules
-      description: Phase 1. Requires the team-only `PricingAdminRead` policy (Admin or Owner). Never available to boutique roles.
+      description: "Phase 1. Requires the team-only `PricingAdminRead` policy: the `admin` or `owner` role **and** `pricing:view`. Never available to boutique roles."
       operationId: listPricingRules
       parameters:
         - $ref: "#/components/parameters/Page"
@@ -2586,7 +2652,7 @@ paths:
     get:
       tags: [Pricing]
       summary: Read one conversion rule
-      description: Phase 1. Requires the team-only `PricingAdminRead` policy (Admin or Owner).
+      description: "Phase 1. Requires the team-only `PricingAdminRead` policy: the `admin` or `owner` role **and** `pricing:view`."
       operationId: getPricingRule
       responses:
         "200":
@@ -2749,7 +2815,7 @@ paths:
       tags: [Pricing]
       summary: List price-book entries
       description: |
-        Phase 1. Requires the team-only `PricingAdminRead` policy (Admin or Owner).
+        Phase 1. Requires the team-only `PricingAdminRead` policy: the `admin` or `owner` role **and** `pricing:view`.
 
         Returns a **bare array of entries — there is no `page`/`pageSize` and no
         `{ items, total }` envelope** (finding M-8, a deliberate deviation from the
@@ -2817,7 +2883,7 @@ paths:
       tags: [Pricing]
       summary: Read one price-book entry
       description: |
-        Phase 1. Requires the team-only `PricingAdminRead` policy (Admin or Owner).
+        Phase 1. Requires the team-only `PricingAdminRead` policy: the `admin` or `owner` role **and** `pricing:view`.
         A global entry (no `organizationId`) is always readable; a per-organization
         override is readable only when the caller passes that same `organizationId`.
       operationId: getPricingPriceEntry
@@ -3883,6 +3949,500 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /api/v1/admin/statistics/billing/reconciliation:
+    get:
+      tags: [Admin Billing Statistics]
+      summary: Read per-account Blossom reconciliation drift
+      description: |
+        S-56. Every open account whose projected balance disagrees with its ledger, ranked by the
+        magnitude of the drift so the worst is first. Uses the same formula
+        `SystemMetricCollector` emits for the `blossom.ledger.drift` alert, so the console and the
+        alarm cannot disagree. Requires `stats:system`.
+      operationId: getBillingReconciliation
+      parameters:
+        - name: organizationId
+          in: query
+          description: Scope the report to one organization.
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The reconciliation report
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlossomReconciliationResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ---------------------------------------------------------------------------
+  # Admin revenue (Aveline's own income ledger, S-50..S-55)
+  # ---------------------------------------------------------------------------
+  /api/v1/admin/revenue/ledger:
+    get:
+      tags: [Admin Revenue]
+      summary: Read the paged income ledger with its window totals
+      description: |
+        S-50. Every entry in the window, with `derivedTotal`, `verifiedTotal` and the
+        `unverifiedGap` between them. The gap is the surface's most important number and is
+        **not** an error. `Amount` is always positive and the sign is derived from `kind`, so a
+        refund can never be netted against a charge by accident. Requires `revenue:read`.
+      operationId: getRevenueLedger
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: One page of the income ledger, with the window's totals
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IncomeLedgerPageResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/revenue/ledger/verify:
+    post:
+      tags: [Admin Revenue]
+      summary: Confirm that a charge was collected
+      description: |
+        Records a `Verified` receipt for an existing `(sourceKind, sourceRef)`. The derived
+        expectation it settles is nulled rather than left beside it, because counting both would
+        double-book the period. **Idempotency-Key required**; a replay writes nothing a second
+        time. Requires `revenue:manage`.
+      operationId: verifyRevenueReceipt
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VerifyIncomeRequest" }
+      responses:
+        "201":
+          description: The recorded entry
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IncomeLedgerEntry" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            `duplicate-revenue-entry`, `income-entry-not-voidable`, `idempotency-key-reuse` or
+            `idempotency-key-in-flight`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "503":
+          description: |
+            `idempotency-unavailable`. The lease store is down, so the operation fails closed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /api/v1/admin/revenue/ledger/refund:
+    post:
+      tags: [Admin Revenue]
+      summary: Refund a charge that was collected
+      description: |
+        Refunding a charge with no `Verified` counterpart is `409 refund-not-allowed`: you cannot
+        return money the ledger never recorded receiving, and recording it as a negative total
+        would hide that. **Idempotency-Key required.** Owner-only, because sending money back is
+        irreversible in a way that correcting the ledger is not. Requires `revenue:refund`.
+      operationId: refundRevenueCharge
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefundIncomeRequest" }
+      responses:
+        "201":
+          description: The recorded refund
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IncomeLedgerEntry" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            `refund-not-allowed`, `idempotency-key-reuse` or `idempotency-key-in-flight`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "503":
+          description: |
+            `idempotency-unavailable`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /api/v1/admin/revenue/ledger/adjust:
+    post:
+      tags: [Admin Revenue]
+      summary: Post a correction to the income ledger
+      description: |
+        An adjustment counts as verified movement and never as derived revenue: it corrects the
+        ledger rather than being something a list price asked for. **Idempotency-Key required.**
+        Requires `revenue:manage`.
+      operationId: adjustRevenueLedger
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdjustIncomeRequest" }
+      responses:
+        "201":
+          description: The recorded adjustment
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IncomeLedgerEntry" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            `duplicate-revenue-entry`, `income-entry-not-voidable` or `idempotency-key-reuse`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "503":
+          description: |
+            `idempotency-unavailable`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /api/v1/admin/revenue/accounts:
+    get:
+      tags: [Admin Revenue]
+      summary: Read revenue per organization over a window
+      description: |
+        S-51. Derived, verified and net revenue per organization. An organization whose
+        subscriptions have no configured price is surfaced rather than shown as free.
+        Requires `revenue:read`.
+      operationId: getRevenueAccounts
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+      responses:
+        "200":
+          description: Per-organization revenue
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RevenueAccountsResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/revenue/overview:
+    get:
+      tags: [Admin Revenue]
+      summary: Read MRR, ARR, ARPU and the paying-organization count
+      description: |
+        S-52. List-price **scheduled** revenue, not recognised or collected revenue. Every measure
+        is `null` rather than `0` when it cannot be computed: `PriceLkr` is unassigned today, so
+        MRR is not measured, and an unassigned price is not a free plan. Requires `revenue:read`.
+      operationId: getRevenueOverview
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+      responses:
+        "200":
+          description: The overview, with its data-quality block
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RevenueOverviewResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/revenue/timeseries:
+    get:
+      tags: [Admin Revenue]
+      summary: Read derived, verified and refunded amounts per bucket
+      description: |
+        S-53. Three separate series, never merged: the gap between derived and verified is the
+        point. The bucket axis is dense and aligned to calendar boundaries, and `isPartial` marks
+        a bucket the window clips. Requires `revenue:read`.
+      operationId: getRevenueTimeseries
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Granularity"
+      responses:
+        "200":
+          description: The revenue series
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RevenueTimeseriesResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/revenue/collections:
+    get:
+      tags: [Admin Revenue]
+      summary: Read the collection rate per period
+      description: |
+        S-54. Verified receipts against derived charges. `collectionRate` is `null`, never `0`,
+        when nothing was billed; a rate above 100% is reported rather than clipped, because a
+        receipt with no matching charge is a finding. Requires `revenue:read`.
+      operationId: getRevenueCollections
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Granularity"
+      responses:
+        "200":
+          description: The collection series
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RevenueCollectionsResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/revenue/blossoms:
+    get:
+      tags: [Admin Revenue]
+      summary: Read Blossom top-up pack sales
+      description: |
+        S-55. Referenced purchases only: a top-up with no payment reference writes no income row at
+        all, so it is not a sale. The unreferenced grant count is reported alongside so the
+        difference is visible rather than inferred. Requires `revenue:read`.
+      operationId: getRevenueBlossomSales
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Granularity"
+      responses:
+        "200":
+          description: Blossom pack sales
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RevenueBlossomSalesResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ---------------------------------------------------------------------------
+  # Admin business statistics (Business KPIs)
+  # ---------------------------------------------------------------------------
+  /api/v1/admin/statistics/business/growth:
+    get:
+      tags: [Admin Business Statistics]
+      summary: Read platform growth per bucket
+      description: |
+        S-44. New users, new organizations and administrator access requests per bucket, with
+        the preceding equal-length window for a delta. Requires `analytics:business:read`.
+        Buckets before the earliest observation are omitted and `observedFrom` names the
+        boundary; buckets inside the period are `0` when truly empty.
+      operationId: getBusinessGrowth
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Granularity"
+      responses:
+        "200":
+          description: Growth series
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BusinessGrowthResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/business/active-users:
+    get:
+      tags: [Admin Business Statistics]
+      summary: Read active users per bucket and the DAU/WAU/MAU reading
+      description: |
+        S-45. An active user is an authenticated user who sent at least one request in the
+        window; `UserId IS NOT NULL` is the filter, so anonymous and API-key traffic is
+        excluded. When no request is attributed the series is `null` with
+        `dataQuality.userAttributionAvailable = false`, never `0`. There is deliberately no
+        `definition` parameter. Requires `analytics:business:read`.
+      operationId: getBusinessActiveUsers
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Granularity"
+      responses:
+        "200":
+          description: Active-user series and rolling readings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BusinessActiveUsersResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/business/plan-mix:
+    get:
+      tags: [Admin Business Statistics]
+      summary: Read the current plan-tier distribution
+      description: |
+        S-46. The tier axis comes from `Organizations.PlanTier`, which is authoritative for
+        every organization; billing columns are supplementary, because an organization that
+        never changed or cancelled its plan has no `OrganizationSubscriptions` row.
+        `organizationsTotal` and `organizationsWithBillingRow` make that gap a visible
+        subtraction. Requires `analytics:business:read`.
+      operationId: getBusinessPlanMix
+      responses:
+        "200":
+          description: Plan mix
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BusinessPlanMixResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/business/subscriptions:
+    get:
+      tags: [Admin Business Statistics]
+      summary: Read active subscriptions over time, split by tier
+      description: |
+        S-47. One row per organization per UTC day, written by the daily 02:00 UTC snapshot job.
+        The tier comes from `Organizations.PlanTier`, so an organization with no billing row is
+        still counted (its absence would otherwise under-count the series silently). Buckets
+        reconstructed from the audit ledger set `dataQuality.subscriptionHistoryBackfilled` and
+        `isBackfilled` on the point. Requires `analytics:business:read`.
+      operationId: getBusinessSubscriptionTrend
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Granularity"
+      responses:
+        "200":
+          description: Subscription trend
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BusinessSubscriptionTrendResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/business/usage:
+    get:
+      tags: [Admin Business Statistics]
+      summary: Read product usage per bucket
+      description: |
+        S-48. Messages sent, agent runs, API calls, Blossom units and actual AI cost. Without
+        `organizationId` the API-call total includes unattributed requests, which is correct for
+        a platform total (BR-6.1) and is stated in `dataQuality.notes`; with it, unattributed rows
+        belong to no organization and are excluded, and the caller must additionally satisfy
+        `admin:orgs:read`. Requires `analytics:business:read`.
+      operationId: getBusinessUsage
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Granularity"
+        - name: organizationId
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+          description: Scope every measure to one organization. Requires `admin:orgs:read`.
+      responses:
+        "200":
+          description: Usage trend
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BusinessUsageResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/business/organizations:
+    get:
+      tags: [Admin Business Statistics]
+      summary: Rank organizations by a usage measure
+      description: |
+        S-49. Ranked usage with a greatest-of last-activity reconstruction. Enumerates tenant
+        names, so `admin:orgs:read` is required in addition to `analytics:business:read`.
+      operationId: getBusinessOrganizationUsage
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: metric
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [messages, agentRuns, apiRequests, blossomUnits]
+            default: apiRequests
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 20 }
+          description: Clamped to `BusinessAnalytics:MaxRankingLimit` (100); above the hard ceiling is a 400.
+      responses:
+        "200":
+          description: Ranked organizations
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BusinessOrganizationUsageResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   # ---------------------------------------------------------------------------
   # Audit
   # ---------------------------------------------------------------------------
@@ -4076,6 +4636,17 @@ components:
         `avl_test_<...>`. Phase 3. Available on the Rose plan and above.
 
   parameters:
+    Granularity:
+      name: granularity
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [day, week, month]
+        default: day
+      description: |
+        Bucket size. Weeks are ISO weeks (Monday-anchored); months are calendar months.
+        A non-empty value outside the enum is a `400`.
     OrganizationId:
       name: organizationId
       in: path
@@ -4203,6 +4774,686 @@ components:
               - $ref: "#/components/schemas/QuotaExceededError"
 
   schemas:
+
+    BlossomLedgerEntryType:
+      type: string
+      enum:
+        - PeriodAllocation
+        - TopUpGrant
+        - AdminCredit
+        - AdminDebit
+        - TopUpRevocation
+        - Expiry
+        - PlanUpgradeProration
+        - PlanDowngradeAdjustment
+        - CorrectionRecompute
+
+    BlossomSourceKind:
+      type: string
+      enum: [Admin, PaymentProvider, PlanChange, Expiry, System]
+
+    BlossomStatementItem:
+      type: object
+      required: [id, occurredAt, kind, blossomDelta, balanceAfter, reason]
+      properties:
+        id: { type: string, format: uuid }
+        occurredAt: { type: string, format: date-time }
+        kind: { type: string, enum: [Entitlement, Consumption] }
+        entryType:
+          allOf: [{ $ref: "#/components/schemas/BlossomLedgerEntryType" }]
+          nullable: true
+        blossomDelta: { type: number, format: decimal }
+        balanceAfter: { type: number, format: decimal }
+        reason: { type: string }
+        sourceKind:
+          allOf: [{ $ref: "#/components/schemas/BlossomSourceKind" }]
+          nullable: true
+        sourceRef: { type: string, nullable: true }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        createdByUserId: { type: string, format: uuid, nullable: true }
+        availableToRevoke:
+          type: number
+          format: decimal
+          nullable: true
+          description: |
+            Present only on a revocable grant. The console offers a revoke action from it; the
+            `409 grant-not-revocable` response stays the authoritative answer, and both apply the
+            same rule.
+        provider: { type: string, nullable: true }
+        model: { type: string, nullable: true }
+        normalizedUnits:
+          type: integer
+          format: int64
+          nullable: true
+          description: Input + output + cached tokens, so a Blossom charge can be checked.
+        actualCostUsd: { type: number, format: decimal, nullable: true }
+
+    BlossomStatementDataQuality:
+      type: object
+      required: [reconciliationChecked, openingBalanceFromProjection, windowCapped, maxWindowDays, notes]
+      properties:
+        reconciliationChecked:
+          type: boolean
+          description: |
+            `false` means the reconciliation could not be evaluated, and a client must render that
+            as "reconciliation status unknown" — never as consistent.
+        openingBalanceFromProjection:
+          type: boolean
+          description: |
+            Always `true` today: the opening balance is derived backwards from the cached projection,
+            not accumulated forward from the ledger.
+        windowCapped: { type: boolean }
+        maxWindowDays: { type: integer }
+        notes:
+          type: array
+          items: { type: string }
+
+    BlossomReconciliationRow:
+      type: object
+      required:
+        - organizationId
+        - organizationName
+        - periodStart
+        - projectedBalance
+        - ledgerDerivedBalance
+        - drift
+        - isConsistent
+      properties:
+        organizationId: { type: string, format: uuid }
+        organizationName: { type: string }
+        periodStart: { type: string, format: date-time }
+        projectedBalance: { type: number, format: decimal }
+        ledgerDerivedBalance: { type: number, format: decimal }
+        drift:
+          type: number
+          format: decimal
+          description: Never zero here — only drifted accounts are reported.
+        isConsistent: { type: boolean }
+
+    BlossomReconciliationResponse:
+      type: object
+      required: [accounts, driftedCount, accountsChecked, checkedAt, notes]
+      properties:
+        organizationId:
+          type: string
+          format: uuid
+          nullable: true
+          description: The scope this report covers, or `null` for every open account.
+        accounts:
+          type: array
+          items: { $ref: "#/components/schemas/BlossomReconciliationRow" }
+        driftedCount: { type: integer }
+        accountsChecked:
+          type: integer
+          description: Distinguishes "consistent" from "not looked at".
+        reconciliationChecked:
+          type: boolean
+          nullable: true
+          description: |
+            `null`: this read does not itself run a reconciliation pass, so it cannot claim one has
+            happened. Never `false`, which would claim it checked and found nothing.
+        checkedAt: { type: string, format: date-time }
+        notes:
+          type: array
+          items: { type: string }
+
+    IncomeDataQuality:
+      type: object
+      description: |
+        The fifth data-quality vocabulary — money. Deliberately not a reuse of the business one:
+        attribution and backfill say nothing about whether a price was configured or a receipt
+        verified.
+      required:
+        - revenueProviderSettlementAvailable
+        - subscriptionPricesConfigured
+        - derivedEntriesUnverified
+        - checkedAt
+        - notes
+      properties:
+        revenueProviderSettlementAvailable:
+          type: boolean
+          description: |
+            `false` until a payment provider settles money. While false, no figure in this family
+            is settled revenue.
+        subscriptionPricesConfigured:
+          type: boolean
+          description: |
+            `false` when every subscription's `PriceLkr` is `0`. A derived charge of `0` then
+            means no list price is configured, not "free", and MRR is `null`.
+        derivedEntriesUnverified:
+          type: integer
+          description: |
+            `Derived` entries with no `Verified` counterpart — the uncollected gap. Not an error.
+        checkedAt: { type: string, format: date-time }
+        notes:
+          type: array
+          items: { type: string }
+
+    RevenueWindow:
+      type: object
+      required: [from, to, granularity, timeZone, bucketCount]
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        granularity: { type: string, enum: [day, week, month] }
+        timeZone: { type: string, example: UTC }
+        bucketCount: { type: integer }
+
+    RevenueReconciliation:
+      type: object
+      description: |
+        `unverifiedGap` is a **magnitude**, not a signed subtraction: a receipt with no matching
+        charge is as much a finding as a charge with no receipt. The signed view is
+        `collectionRate.outstanding`, which is a balance.
+      required: [derivedTotal, verifiedTotal, unverifiedGap, refundTotal, netVerified, isBalanced]
+      properties:
+        derivedTotal: { type: number, format: decimal }
+        verifiedTotal: { type: number, format: decimal }
+        unverifiedGap: { type: number, format: decimal }
+        refundTotal: { type: number, format: decimal }
+        netVerified: { type: number, format: decimal }
+        isBalanced:
+          type: boolean
+          description: True when at least as much was collected as was billed.
+
+    IncomeLedgerEntry:
+      type: object
+      required:
+        - id
+        - organizationId
+        - kind
+        - sourceKind
+        - chargeBasis
+        - status
+        - currency
+        - amount
+        - reason
+        - occurredAt
+      properties:
+        id: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        kind: { type: string, enum: [SubscriptionCharge, TopUpPurchase, Refund, Adjustment] }
+        sourceKind: { type: string, enum: [SubscriptionBilling, BlossomTopUp, Admin, System] }
+        sourceRef:
+          type: string
+          nullable: true
+          description: |
+            The dedup identity within its `sourceKind`. Cleared when an entry is superseded, so a
+            voided row stops occupying the identity.
+        chargeBasis: { type: string, enum: [Derived, Verified] }
+        status: { type: string, enum: [Recorded, Voided] }
+        currency: { type: string, example: LKR }
+        amount:
+          type: number
+          format: decimal
+          description: Always positive. The sign is derived from `kind`.
+        reason: { type: string, minLength: 10, maxLength: 500 }
+        periodStart: { type: string, format: date-time, nullable: true }
+        periodEnd: { type: string, format: date-time, nullable: true }
+        occurredAt: { type: string, format: date-time }
+        recordedByUserId:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Absent only for a system-written entry, where `sourceKind` is `System`.
+        supersedesEntryId: { type: string, format: uuid, nullable: true }
+
+    IncomeLedgerPageResponse:
+      type: object
+      required: [window, items, total, page, pageSize, reconciliation, dataQuality]
+      properties:
+        window: { $ref: "#/components/schemas/RevenueWindow" }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/IncomeLedgerEntry" }
+        total: { type: integer }
+        page: { type: integer }
+        pageSize: { type: integer }
+        reconciliation: { $ref: "#/components/schemas/RevenueReconciliation" }
+        dataQuality: { $ref: "#/components/schemas/IncomeDataQuality" }
+
+    RevenueAccountItem:
+      type: object
+      required:
+        - organizationId
+        - name
+        - planTier
+        - derivedTotal
+        - verifiedTotal
+        - refundTotal
+        - netVerified
+        - unverifiedGap
+      properties:
+        organizationId: { type: string, format: uuid }
+        name: { type: string }
+        planTier: { type: string }
+        derivedTotal: { type: number, format: decimal }
+        verifiedTotal: { type: number, format: decimal }
+        refundTotal: { type: number, format: decimal }
+        netVerified: { type: number, format: decimal }
+        unverifiedGap: { type: number, format: decimal }
+
+    RevenueAccountsResponse:
+      type: object
+      required: [window, items, total, reconciliation, dataQuality]
+      properties:
+        window: { $ref: "#/components/schemas/RevenueWindow" }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/RevenueAccountItem" }
+        total: { type: integer }
+        reconciliation: { $ref: "#/components/schemas/RevenueReconciliation" }
+        dataQuality: { $ref: "#/components/schemas/IncomeDataQuality" }
+
+    RevenueOverviewResponse:
+      type: object
+      required: [asOf, payingOrganizations, activeSubscriptions, dataQuality]
+      properties:
+        asOf: { type: string, format: date-time }
+        mrr:
+          type: number
+          format: decimal
+          nullable: true
+          description: |
+            List-price scheduled monthly revenue. `null`, never `0`, when no price is configured.
+        arr: { type: number, format: decimal, nullable: true }
+        arpu:
+          type: number
+          format: decimal
+          nullable: true
+          description: |
+            `null` when nothing is priced, rather than a divide-by-zero.
+        payingOrganizations: { type: integer }
+        activeSubscriptions: { type: integer }
+        dataQuality: { $ref: "#/components/schemas/IncomeDataQuality" }
+
+    RevenueTimeseriesPoint:
+      type: object
+      required: [bucketStart, isPartial, derived, verified, refunded]
+      properties:
+        bucketStart: { type: string, format: date-time }
+        isPartial: { type: boolean }
+        derived: { type: number, format: decimal }
+        verified: { type: number, format: decimal }
+        refunded: { type: number, format: decimal }
+
+    RevenueTimeseriesResponse:
+      type: object
+      required: [window, series, dataQuality]
+      properties:
+        window: { $ref: "#/components/schemas/RevenueWindow" }
+        series:
+          type: array
+          items: { $ref: "#/components/schemas/RevenueTimeseriesPoint" }
+        dataQuality: { $ref: "#/components/schemas/IncomeDataQuality" }
+
+    RevenueCollectionPoint:
+      type: object
+      required:
+        - bucketStart
+        - isPartial
+        - derivedTotal
+        - verifiedTotal
+        - refundedTotal
+        - outstanding
+      properties:
+        bucketStart: { type: string, format: date-time }
+        isPartial: { type: boolean }
+        derivedTotal: { type: number, format: decimal }
+        verifiedTotal: { type: number, format: decimal }
+        refundedTotal: { type: number, format: decimal }
+        collectionRate:
+          type: number
+          format: decimal
+          nullable: true
+          description: |
+            Percentage. `null`, never `0`, when nothing was billed. Above 100 is reported, not
+            clipped.
+        outstanding:
+          type: number
+          format: decimal
+          description: Signed. Negative means more came in than was billed.
+
+    RevenueCollectionsResponse:
+      type: object
+      required: [window, series, dataQuality]
+      properties:
+        window: { $ref: "#/components/schemas/RevenueWindow" }
+        series:
+          type: array
+          items: { $ref: "#/components/schemas/RevenueCollectionPoint" }
+        dataQuality: { $ref: "#/components/schemas/IncomeDataQuality" }
+
+    RevenueBlossomSalesResponse:
+      type: object
+      required:
+        - window
+        - packsSold
+        - blossomsGranted
+        - listPriceLkr
+        - verifiedLkr
+        - grantedWithoutReference
+        - dataQuality
+      properties:
+        window: { $ref: "#/components/schemas/RevenueWindow" }
+        packsSold: { type: integer, description: Referenced purchases only. }
+        blossomsGranted: { type: number, format: decimal }
+        listPriceLkr: { type: number, format: decimal }
+        verifiedLkr: { type: number, format: decimal }
+        conversion: { type: number, format: decimal, nullable: true }
+        grantedWithoutReference: { type: integer }
+        dataQuality: { $ref: "#/components/schemas/IncomeDataQuality" }
+
+    VerifyIncomeRequest:
+      type: object
+      required: [organizationId, sourceKind, sourceRef, amount, reason]
+      properties:
+        organizationId: { type: string, format: uuid }
+        sourceKind: { type: string, enum: [SubscriptionBilling, BlossomTopUp, Admin, System] }
+        sourceRef: { type: string, maxLength: 128 }
+        amount: { type: number, format: decimal, exclusiveMinimum: 0 }
+        reason: { type: string, minLength: 10, maxLength: 500 }
+
+    RefundIncomeRequest:
+      type: object
+      required: [organizationId, sourceKind, sourceRef, amount, reason]
+      properties:
+        organizationId: { type: string, format: uuid }
+        sourceKind: { type: string, enum: [SubscriptionBilling, BlossomTopUp, Admin, System] }
+        sourceRef:
+          type: string
+          maxLength: 128
+          description: |
+            Must name a live `Verified` receipt, or the request is `409 refund-not-allowed`.
+        amount: { type: number, format: decimal, exclusiveMinimum: 0 }
+        reason: { type: string, minLength: 10, maxLength: 500 }
+
+    AdjustIncomeRequest:
+      type: object
+      required: [organizationId, amount, reason]
+      properties:
+        organizationId: { type: string, format: uuid }
+        amount: { type: number, format: decimal, exclusiveMinimum: 0 }
+        reason: { type: string, minLength: 10, maxLength: 500 }
+        sourceRef: { type: string, maxLength: 128, nullable: true }
+        supersedesEntryId: { type: string, format: uuid, nullable: true }
+
+
+    # --- admin business KPIs (S-44…S-49) -------------------------------------
+    BusinessWindow:
+      type: object
+      required: [from, to, granularity, timeZone, bucketCount]
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        granularity: { type: string, enum: [day, week, month] }
+        timeZone: { type: string, example: UTC }
+        bucketCount: { type: integer }
+    BusinessDataQuality:
+      type: object
+      required:
+        - userAttributionAvailable
+        - unresolvedAttributionCount
+        - subscriptionHistoryBackfilled
+        - lastActivityIsReconstructed
+        - agentMetricsUninstrumented
+        - notes
+      properties:
+        userAttributionAvailable:
+          type: boolean
+          description: False when no request in the window carried a resolved user id.
+        unresolvedAttributionCount:
+          type: integer
+          format: int64
+          description: Requests whose Clerk id was present but not yet in the claim map.
+        subscriptionHistoryBackfilled: { type: boolean }
+        lastActivityIsReconstructed: { type: boolean }
+        agentMetricsUninstrumented: { type: boolean }
+        notes:
+          type: array
+          items: { type: string }
+    GrowthPoint:
+      type: object
+      required:
+        - bucketStart
+        - isPartial
+        - newUsers
+        - newOrganizations
+        - newAdminRequests
+        - approvedAdminRequests
+      properties:
+        bucketStart: { type: string, format: date-time }
+        isPartial:
+          type: boolean
+          description: True for the leading bucket clipped by `from` and the trailing open bucket.
+        newUsers: { type: integer }
+        newOrganizations: { type: integer }
+        newAdminRequests: { type: integer }
+        approvedAdminRequests: { type: integer }
+    GrowthTotals:
+      type: object
+      required: [newUsers, newOrganizations, newAdminRequests, approvedAdminRequests]
+      properties:
+        newUsers: { type: integer }
+        newOrganizations: { type: integer }
+        newAdminRequests: { type: integer }
+        approvedAdminRequests: { type: integer }
+    BusinessGrowthResponse:
+      type: object
+      required: [window, series, totals, previousTotals, dataQuality]
+      properties:
+        window: { $ref: "#/components/schemas/BusinessWindow" }
+        observedFrom:
+          type: string
+          format: date-time
+          nullable: true
+          description: The earliest row date across the measures, or null when every source is empty.
+        series:
+          type: array
+          items: { $ref: "#/components/schemas/GrowthPoint" }
+        totals: { $ref: "#/components/schemas/GrowthTotals" }
+        previousTotals:
+          allOf:
+            - $ref: "#/components/schemas/GrowthTotals"
+          description: The immediately preceding equal-length window.
+        dataQuality: { $ref: "#/components/schemas/BusinessDataQuality" }
+    ActiveUsersPoint:
+      type: object
+      required: [bucketStart, isPartial]
+      properties:
+        bucketStart: { type: string, format: date-time }
+        isPartial: { type: boolean }
+        activeUsers:
+          type: integer
+          nullable: true
+          description: Null when no request in the window is attributed; never 0 in that case.
+        activeOrganizations:
+          type: integer
+          nullable: true
+    RollingActiveUsers:
+      type: object
+      properties:
+        dau: { type: integer, nullable: true }
+        wau: { type: integer, nullable: true }
+        mau: { type: integer, nullable: true }
+        stickiness:
+          type: number
+          format: double
+          nullable: true
+          description: dau / mau; null when mau is unavailable or zero.
+    BusinessActiveUsersResponse:
+      type: object
+      required: [window, series, rolling, dataQuality]
+      properties:
+        window: { $ref: "#/components/schemas/BusinessWindow" }
+        series:
+          type: array
+          items: { $ref: "#/components/schemas/ActiveUsersPoint" }
+        rolling: { $ref: "#/components/schemas/RollingActiveUsers" }
+        dataQuality: { $ref: "#/components/schemas/BusinessDataQuality" }
+    PlanMixItem:
+      type: object
+      required:
+        - planTier
+        - isFree
+        - organizationCount
+        - activeOrganizationCount
+        - billedSubscriptionCount
+        - userCount
+        - monthlyPriceLkr
+      properties:
+        planTier: { type: string, enum: [Seed, Bloom, Orchid, Rose, Enterprise] }
+        isFree: { type: boolean }
+        organizationCount:
+          type: integer
+          description: From Organizations.PlanTier; authoritative for every organization.
+        activeOrganizationCount: { type: integer }
+        billedSubscriptionCount:
+          type: integer
+          description: From OrganizationSubscriptions; smaller than organizationCount when a billing row is absent.
+        userCount: { type: integer }
+        monthlyPriceLkr:
+          type: number
+          description: List-price sum over billed rows only, not recognised revenue.
+    PlanMixSide:
+      type: object
+      required: [organizationCount, userCount, monthlyPriceLkr, shareOfOrganizations]
+      properties:
+        organizationCount: { type: integer }
+        userCount: { type: integer }
+        monthlyPriceLkr: { type: number }
+        shareOfOrganizations: { type: number, format: double }
+    BusinessPlanMixResponse:
+      type: object
+      required:
+        - asOf
+        - tiers
+        - free
+        - premium
+        - organizationsTotal
+        - organizationsWithBillingRow
+        - totalMonthlyPriceLkr
+        - dataQuality
+      properties:
+        asOf: { type: string, format: date-time }
+        tiers:
+          type: array
+          items: { $ref: "#/components/schemas/PlanMixItem" }
+        free: { $ref: "#/components/schemas/PlanMixSide" }
+        premium: { $ref: "#/components/schemas/PlanMixSide" }
+        organizationsTotal: { type: integer }
+        organizationsWithBillingRow:
+          type: integer
+          description: The size of the gap between the organization total and the billed rows.
+        totalMonthlyPriceLkr: { type: number }
+        dataQuality: { $ref: "#/components/schemas/BusinessDataQuality" }
+
+    SubscriptionTrendPoint:
+      type: object
+      required: [bucketStart, isPartial, activeTotal, activeByTier, started, cancelled, isBackfilled]
+      properties:
+        bucketStart: { type: string, format: date-time }
+        isPartial: { type: boolean }
+        activeTotal:
+          type: integer
+          description: Organizations with an Active or Trialing snapshot on the bucket's closing day.
+        activeByTier:
+          type: object
+          additionalProperties: { type: integer }
+        started: { type: integer }
+        cancelled: { type: integer }
+        isBackfilled:
+          type: boolean
+          description: True when this bucket was reconstructed from the audit ledger rather than snapshotted.
+    BusinessSubscriptionTrendResponse:
+      type: object
+      required: [window, series, openingActive, closingActive, churnRate, dataQuality]
+      properties:
+        window: { $ref: "#/components/schemas/BusinessWindow" }
+        series:
+          type: array
+          items: { $ref: "#/components/schemas/SubscriptionTrendPoint" }
+        openingActive: { type: integer }
+        closingActive: { type: integer }
+        churnRate: { type: number, format: double }
+        dataQuality: { $ref: "#/components/schemas/BusinessDataQuality" }
+    UsageTrendPoint:
+      type: object
+      required:
+        - bucketStart
+        - isPartial
+        - messagesSent
+        - agentRuns
+        - apiRequests
+        - blossomUnits
+        - actualCostUsd
+      properties:
+        bucketStart: { type: string, format: date-time }
+        isPartial: { type: boolean }
+        messagesSent: { type: integer, format: int64 }
+        agentRuns: { type: integer }
+        apiRequests: { type: integer, format: int64 }
+        blossomUnits: { type: number }
+        actualCostUsd: { type: number }
+    UsageTotals:
+      type: object
+      required: [messagesSent, agentRuns, apiRequests, blossomUnits, actualCostUsd]
+      properties:
+        messagesSent: { type: integer, format: int64 }
+        agentRuns: { type: integer }
+        apiRequests: { type: integer, format: int64 }
+        blossomUnits: { type: number }
+        actualCostUsd: { type: number }
+    BusinessUsageResponse:
+      type: object
+      required: [window, series, totals, dataQuality]
+      properties:
+        window: { $ref: "#/components/schemas/BusinessWindow" }
+        organizationId: { type: string, format: uuid, nullable: true }
+        series:
+          type: array
+          items: { $ref: "#/components/schemas/UsageTrendPoint" }
+        totals: { $ref: "#/components/schemas/UsageTotals" }
+        dataQuality: { $ref: "#/components/schemas/BusinessDataQuality" }
+    OrganizationUsageItem:
+      type: object
+      required:
+        - rank
+        - organizationId
+        - name
+        - planTier
+        - messagesSent
+        - agentRuns
+        - apiRequests
+        - blossomUnits
+      properties:
+        rank: { type: integer }
+        organizationId: { type: string, format: uuid }
+        name: { type: string }
+        planTier: { type: string, enum: [Seed, Bloom, Orchid, Rose, Enterprise] }
+        messagesSent: { type: integer, format: int64 }
+        agentRuns: { type: integer }
+        apiRequests: { type: integer, format: int64 }
+        blossomUnits: { type: number }
+        lastActivityAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: A greatest-of reconstruction, not a recorded fact.
+        daysSinceLastActivity: { type: integer, nullable: true }
+    BusinessOrganizationUsageResponse:
+      type: object
+      required: [metric, from, to, items, totalCount, dataQuality]
+      properties:
+        metric: { type: string, enum: [messages, agentRuns, apiRequests, blossomUnits] }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/OrganizationUsageItem" }
+        totalCount: { type: integer }
+        dataQuality: { $ref: "#/components/schemas/BusinessDataQuality" }
 
     # --- primitives and enums ------------------------------------------------
     ErrorResponse:

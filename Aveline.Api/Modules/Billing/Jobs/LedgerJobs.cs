@@ -3,6 +3,7 @@ using Aveline.Api.Modules.Billing.Domain;
 using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Billing.Repositories;
 using Aveline.Api.Modules.Billing.Services;
+using Aveline.Api.Modules.Revenue.Models;
 using Microsoft.EntityFrameworkCore;
 
 namespace Aveline.Api.Modules.Billing.Jobs;
@@ -238,12 +239,105 @@ public sealed class BillingPeriodRolloverJob(
             processed++;
         }
 
+        // The revenue journal's derived charges ride the same unit of work as the allowance
+        // rows, so a rollback cannot leave one without the other (Revenue Ledger R2, S-50).
+        await WriteDerivedRevenueChargesAsync(db, now, cancellationToken);
+
         if (processed > 0)
         {
             await db.SaveChangesAsync(cancellationToken);
         }
 
         return processed;
+    }
+
+    /// <summary>
+    /// Records what each period's list price says *should* be billed.
+    /// </summary>
+    /// <remarks>
+    /// This writes <c>IncomeChargeBasis.Derived</c> and **never** `Verified`. There is no
+    /// payment-provider client in this repository, so a period boundary is not a receipt; booking
+    /// it as collected money would invent revenue. `docs/api/README.md` §C.2 records the position.
+    ///
+    /// A subscription with `PriceLkr = 0` writes nothing at all. That is the production case today,
+    /// because `SubscriptionService.UpsertSubscriptionAsync` never assigns the price, and it is why
+    /// the read surface reports `subscriptionPricesConfigured: false` with a `null` MRR rather than
+    /// a zero that would read as free.
+    ///
+    /// The dedup reference is the period start in ISO-8601, so a re-run over the same period
+    /// collides on the ledger's own identity instead of double-booking it.
+    /// </remarks>
+    private static async Task<int> WriteDerivedRevenueChargesAsync(
+        AppDbContext db, DateTime now, CancellationToken cancellationToken)
+    {
+        var billable = await db.OrganizationSubscriptions
+            .Where(subscription =>
+                subscription.Status == SubscriptionStatus.Active
+                && subscription.PriceLkr > 0m
+                && subscription.CurrentPeriodEnd <= now)
+            .Select(subscription => new
+            {
+                subscription.OrganizationId,
+                subscription.PriceLkr,
+                subscription.CurrentPeriodStart,
+                subscription.CurrentPeriodEnd,
+            })
+            .ToListAsync(cancellationToken);
+
+        if (billable.Count == 0)
+        {
+            return 0;
+        }
+
+        var organizationIds = billable.Select(row => row.OrganizationId).ToArray();
+        var periodStarts = billable.Select(row => row.CurrentPeriodStart.ToString("o")).ToArray();
+
+        // One read for the window's existing charges, so a re-run is a no-op rather than a
+        // per-subscription round trip.
+        var alreadyCharged = await db.IncomeLedgerEntries
+            .Where(entry =>
+                organizationIds.Contains(entry.OrganizationId)
+                && entry.SourceKind == IncomeSourceKind.SubscriptionBilling
+                && entry.Status == IncomeEntryStatus.Recorded
+                && entry.SourceRef != null
+                && periodStarts.Contains(entry.SourceRef))
+            .Select(entry => new { entry.OrganizationId, entry.SourceRef })
+            .ToListAsync(cancellationToken);
+
+        var charged = alreadyCharged
+            .Select(row => (row.OrganizationId, row.SourceRef))
+            .ToHashSet();
+
+        var written = 0;
+        foreach (var subscription in billable)
+        {
+            var sourceRef = subscription.CurrentPeriodStart.ToString("o");
+            if (!charged.Add((subscription.OrganizationId, sourceRef)))
+            {
+                continue;
+            }
+
+            db.IncomeLedgerEntries.Add(new IncomeLedgerEntry
+            {
+                OrganizationId = subscription.OrganizationId,
+                Kind = IncomeEntryKind.SubscriptionCharge,
+                SourceKind = IncomeSourceKind.SubscriptionBilling,
+                SourceRef = sourceRef,
+                ChargeBasis = IncomeChargeBasis.Derived,
+                Status = IncomeEntryStatus.Recorded,
+                Currency = "LKR",
+                Amount = subscription.PriceLkr,
+                Reason = $"Plan charge for {subscription.CurrentPeriodStart:yyyy-MM}.",
+                PeriodStart = subscription.CurrentPeriodStart,
+                PeriodEnd = subscription.CurrentPeriodEnd,
+                OccurredAt = now,
+                // A system write has no human actor; `null` is the established convention for that.
+                RecordedByUserId = null,
+            });
+            written++;
+        }
+
+        return written;
     }
 }
 

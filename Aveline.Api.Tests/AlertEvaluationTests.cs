@@ -397,6 +397,50 @@ public class AlertEvaluationTests
     }
 
     [Fact]
+    public async Task Acknowledge_ResolvedAlertIsRejectedAndLeavesTheRowUnchanged()
+    {
+        // A9 B3: the acknowledgement path had no state guard, so it happily moved an
+        // already-Resolved alert back to Acknowledged and stamped AcknowledgedAt.
+        var harness = Build();
+        await SeedAsync(harness, Rule("test.ack.resolved", AlertAggregation.Max, AlertComparisonOperator.Gt, 0m));
+        await SeedSampleAsync(harness, "test.ack.resolved", 1m);
+
+        Guid alertId;
+        using (var scope = harness.Provider.CreateScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<IAlertService>().EvaluateAsync();
+        }
+
+        await using (var context = harness.Context())
+        {
+            var alert = await context.SystemAlerts.SingleAsync();
+            alert.Status = AlertStatus.Resolved;
+            alert.ResolvedAt = DateTime.UtcNow;
+            await context.SaveChangesAsync();
+            alertId = alert.Id;
+        }
+
+        var actorId = Guid.CreateVersion7();
+        using (var scope = harness.Provider.CreateScope())
+        {
+            var service = scope.ServiceProvider.GetRequiredService<IAlertService>();
+
+            // Rejection may be a typed failure throw; the invariant is that it does not
+            // silently succeed.
+            var rejection = await Record.ExceptionAsync(
+                () => service.AcknowledgeAsync(alertId, actorId, "should not apply"));
+            Assert.IsType<AlertStateConflictException>(rejection);
+        }
+
+        await using var verify = harness.Context();
+        var stored = await verify.SystemAlerts.SingleAsync(candidate => candidate.Id == alertId);
+        Assert.Equal(AlertStatus.Resolved, stored.Status);
+        Assert.Null(stored.AcknowledgedAt);
+        Assert.Null(stored.AcknowledgedByUserId);
+        Assert.DoesNotContain(harness.Audit.Entries, entry => entry.Action == "system.alert.acknowledged");
+    }
+
+    [Fact]
     public async Task Acknowledge_UnknownAlertReturnsNull()
     {
         var harness = Build();

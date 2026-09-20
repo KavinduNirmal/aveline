@@ -293,3 +293,76 @@ deployment:
 
 `postgres_exporter` is internal only — no host port — and runs as a dedicated `pg_monitor` role with
 no application-table access. Grafana is operator-only; the admin console does not embed it (D3).
+
+---
+
+## 10. Administrator console — deployment requirements
+
+The console is served by the same SPA as the tenant dashboard, so it inherits every host decision
+above. Two requirements are specific to it and neither can be satisfied from the repository, because
+no production host configuration is committed.
+
+### 10.1 SPA fallback rewrite for deep links
+
+Every console route is a client-side path under `/admin/:userId/*`. A static host must rewrite an
+unmatched path to `index.html`, or a refresh on `/admin/<id>/users` returns a `404`. The Vite dev
+server does this automatically; a production host does not. Required rule (exact syntax depends on
+the host):
+
+```
+/*  →  /index.html   (200)
+```
+
+This applies to the tenant app too (`/app/b/:slug`), so the rewrite is not console-specific — but the
+console makes it visible, because its URLs are the ones an operator bookmarks and shares.
+
+### 10.2 Grafana deep links
+
+The console links out to Grafana; it never embeds it. Two environment variables must be set at build
+time for the links to resolve, and both are inert when unset:
+
+| Variable | Value | Behaviour when unset |
+|---|---|---|
+| `VITE_GRAFANA_ENABLED` | `true` to enable links | a **production** build renders every link **disabled** with *"Grafana is not configured for this environment"*; a dev build points at `http://localhost:3000` |
+| `VITE_GRAFANA_BASE_URL` | e.g. `https://grafana.aveline.internal` | as above; the base is **never hard-coded**, because the compose port is DEV ONLY and no production route exists in the repository |
+
+The four dashboard UIDs the console links to (`aveline-overview`, `aveline-business`,
+`aveline-database`, `aveline-notifications`) are the **provisioned** UIDs from
+`observability/grafana/dashboards/*.json`, so they survive re-provisioning.
+
+### 10.3 The console depends on one backend fix
+
+`GET /api/v1/auth/claims` must return a non-null `email`. Before slice A9 it returned `email: null`
+for every real bearer token because the JwtBearer pipeline maps the claim to `ClaimTypes.Email`
+while the endpoint read the raw name. A deployment pinned to an API build older than that fix will
+show blank operator identities and will not be able to key self-approval on email (the console keys
+it on the Clerk subject, so approval still behaves correctly).
+
+### 10.4 Revenue ledger settings
+
+Three settings, all optional with the defaults below. None is a secret, so none belongs in a secret
+store.
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `Revenue:MaxWindowDays` | `400` | Longest window a revenue read accepts. Matches the retention the statistics catalog claims for the ledger, rather than telemetry's 92-day forensic cap |
+| `Revenue:CacheSeconds` | `60` | Console TTL for the five statistics reads. Every response carries `Cache-Control: private, max-age=…`, and the ledger register is deliberately uncached (`max-age=0`) |
+| `Billing:StatementMaxWindowDays` | `400` | Longest Blossom statement window. Was hard-coded at 92, which was shorter than the 400-day retention S-3 already claimed |
+
+**The revenue cache is an `IDistributedCache` and it degrades rather than fails.** With Redis
+configured it is shared, which matters because the deployment runs two replicas and an in-process
+cache would let them serve different figures for the same request. Without Redis it falls back to
+the per-instance implementation: a cache read or write that throws is swallowed, the request is
+served from an uncached query, and the degradation appears in `dataQuality.notes` so an operator is
+told rather than left to notice two replicas disagreeing. Set `Revenue:CacheSeconds` to `1` to
+disable caching in effect without changing the fallback.
+
+**No new frontend environment variable.** `frontend/web/.env.example` is unchanged by this
+workstream: the console reaches the revenue endpoints through the existing `VITE_API_BASE_URL`.
+
+### 10.5 The console's E2E suite runs signed-out only
+
+`tests/e2e/admin-console/console-access.spec.ts` asserts, for every console route including the four
+`money` ones, that a signed-out visitor lands on `/sign-in`, sees no console chrome and issues **no**
+`/api/v1/admin/*` request. The authenticated walk needs a Clerk test session that CI does not
+provision, so it is not run — stated here rather than implied by a green suite.

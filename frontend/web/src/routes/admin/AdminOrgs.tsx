@@ -1,4 +1,6 @@
-﻿import { useEffect, useState } from "react"
+import { keepPreviousData, useQuery } from "@tanstack/react-query"
+import { useState } from "react"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { searchAdminOrganizations, setEntitlementOverrides } from "@/lib/admin/api"
 import type { AdminOrganizationDto } from "@/types/admin"
 import { Card, CardContent } from "@/components/ui/card"
@@ -8,13 +10,17 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Search, SlidersHorizontal } from "lucide-react"
+import {
+  classifyOverrideError,
+  coerceOverrideValue,
+  inferOverrideValueType,
+  type ClassifiedOverrideError,
+} from "@/lib/admin/overrides"
 import { toast } from "sonner"
 
 export function AdminOrgsView() {
-  const [orgs, setOrgs] = useState<AdminOrganizationDto[]>([])
-  const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
-  const [planTier, setPlanTier] = useState<string>("")
+  const [planTier, setPlanTier] = useState<string>("all")
   const [page] = useState(1)
 
   const [selectedOrg, setSelectedOrg] = useState<AdminOrganizationDto | null>(null)
@@ -22,30 +28,29 @@ export function AdminOrgsView() {
   const [overrideValue, setOverrideValue] = useState("true")
   const [overrideReason, setOverrideReason] = useState("")
   const [savingOverride, setSavingOverride] = useState(false)
+  const [overrideError, setOverrideError] = useState<ClassifiedOverrideError | null>(null)
+
+  /** §3.7: a read-mostly list with operator-driven filtering — `keepPreviousData`, no polling. */
+  const orgsQuery = useQuery({
+    queryKey: ['admin', 'orgs', { search, planTier, page }],
+    queryFn: () =>
+      searchAdminOrganizations({
+        q: search || undefined,
+        planTier: planTier === "all" ? undefined : planTier,
+        page,
+        pageSize: 50,
+      }),
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+  })
+
+  const orgs = orgsQuery.data?.items ?? []
+  const loading = orgsQuery.isPending
 
   const loadOrgs = async () => {
-    setLoading(true)
-    try {
-      const data = await searchAdminOrganizations({
-        q: search || undefined,
-        planTier: planTier || undefined,
-        page,
-        pageSize: 20,
-      })
-      setOrgs(data.items)
-    } catch {
-      toast.error("Failed to load organizations")
-    } finally {
-      setLoading(false)
-    }
+    const result = await orgsQuery.refetch()
+    if (result.error !== null) toast.error("Failed to load organizations")
   }
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      void loadOrgs()
-    }, 250)
-    return () => clearTimeout(timer)
-  }, [search, planTier, page])
 
   const handleOverrideSubmit = async () => {
     if (!selectedOrg) return
@@ -60,33 +65,36 @@ export function AdminOrgsView() {
       const inOneYear = new Date()
       inOneYear.setFullYear(now.getFullYear() + 1)
 
+      const valueType = inferOverrideValueType(overrideKey)
+      const value = coerceOverrideValue(overrideValue, valueType)
+
       await setEntitlementOverrides(selectedOrg.id, {
         overrides: [
           {
             key: overrideKey,
-            valueType: "boolean",
-            value: overrideValue,
+            valueType,
+            value,
+            // The server defaults the window; the client states it explicitly and shows it.
             effectiveFrom: now.toISOString(),
             effectiveTo: inOneYear.toISOString(),
             reason: overrideReason.trim(),
           },
         ],
       })
+      setOverrideError(null)
       toast.success("Entitlement override successfully configured.")
       setSelectedOrg(null)
-    } catch (err: any) {
-      if (err?.code === "override-overlap" || err?.status === 409) {
-        toast.error("Conflict: An active override already exists for this date range.")
-      } else {
-        toast.error(err?.message || "Failed to set entitlement override.")
-      }
+    } catch (err: unknown) {
+      // A 400 is a field-level error; a 409 override-overlap is "the world changed, reload and
+      // retry". Rendering both as one toast leaves the operator editing a stale form.
+      setOverrideError(classifyOverrideError(err))
     } finally {
       setSavingOverride(false)
     }
   }
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6">
       <div>
         <h2 className="font-serif text-2xl font-medium tracking-tight text-foreground">
           Boutiques & Organizations
@@ -109,18 +117,19 @@ export function AdminOrgsView() {
           </div>
 
           <div className="flex items-center gap-2">
-            <select
-              value={planTier}
-              onChange={(e) => setPlanTier(e.target.value)}
-              className="text-xs h-9 px-3 rounded-md border border-input bg-background text-foreground"
-            >
-              <option value="">All Tiers</option>
-              <option value="Seed">Seed</option>
-              <option value="Bloom">Bloom</option>
-              <option value="Orchid">Orchid</option>
-              <option value="Rose">Rose</option>
-              <option value="Enterprise">Enterprise</option>
-            </select>
+            <Select value={planTier} onValueChange={setPlanTier}>
+              <SelectTrigger className="text-xs h-9 w-[160px]">
+                <SelectValue placeholder="All Tiers" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Tiers</SelectItem>
+                <SelectItem value="Seed">Seed</SelectItem>
+                <SelectItem value="Bloom">Bloom</SelectItem>
+                <SelectItem value="Orchid">Orchid</SelectItem>
+                <SelectItem value="Rose">Rose</SelectItem>
+                <SelectItem value="Enterprise">Enterprise</SelectItem>
+              </SelectContent>
+            </Select>
             <Button variant="outline" size="sm" onClick={() => void loadOrgs()} className="text-xs">
               Refresh
             </Button>
@@ -175,6 +184,7 @@ export function AdminOrgsView() {
                       onClick={() => {
                         setSelectedOrg(o)
                         setOverrideReason("")
+                        setOverrideError(null)
                       }}
                     >
                       <SlidersHorizontal className="size-3" />
@@ -197,7 +207,7 @@ export function AdminOrgsView() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-2 text-xs">
+          <div className="flex flex-col gap-4 py-2 text-xs">
             <div>
               <label className="font-medium block mb-1">Entitlement Key</label>
               <Input
@@ -207,13 +217,43 @@ export function AdminOrgsView() {
               />
             </div>
             <div>
-              <label className="font-medium block mb-1">Override Value</label>
+              <label className="font-medium block mb-1">
+                Override Value
+                <span className="ml-2 font-mono text-[10px] text-muted-foreground">
+                  {inferOverrideValueType(overrideKey)}
+                </span>
+              </label>
               <Input
                 value={overrideValue}
                 onChange={(e) => setOverrideValue(e.target.value)}
                 className="text-xs font-mono"
+                aria-invalid={overrideError?.kind === "field"}
+                aria-describedby={overrideError?.kind === "field" ? "override-error" : undefined}
               />
+              {overrideError?.kind === "field" && (
+                <p id="override-error" className="mt-1 text-[11px] text-destructive">
+                  {overrideError.message}
+                  {overrideError.fields !== undefined &&
+                    Object.values(overrideError.fields)
+                      .flat()
+                      .map((message) => <span key={message} className="block">{message}</span>)}
+                </p>
+              )}
             </div>
+
+            {overrideError?.kind === "overlap" && (
+              <div className="rounded-md border border-warning/40 bg-warning/5 p-2 text-[11px] text-foreground">
+                {overrideError.message}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-2 h-7 text-xs"
+                  onClick={() => void loadOrgs()}
+                >
+                  Reload and retry
+                </Button>
+              </div>
+            )}
             <div>
               <label className="font-medium block mb-1">
                 Mandatory Reason <span className="text-destructive">*</span>
@@ -234,7 +274,7 @@ export function AdminOrgsView() {
             <Button
               size="sm"
               onClick={() => void handleOverrideSubmit()}
-              disabled={savingOverride}
+              disabled={savingOverride || overrideReason.trim().length === 0}
             >
               {savingOverride ? "Saving..." : "Apply Override"}
             </Button>

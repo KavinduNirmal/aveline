@@ -75,6 +75,11 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
         builder.Property(u => u.CreatedAt)
             .IsRequired();
 
+        // Supports the platform-wide signup range scan (business KPIs S-44). Without it the
+        // day-range filter on Users is a sequential scan.
+        builder.HasIndex(u => u.CreatedAt)
+            .HasDatabaseName("IX_Users_CreatedAt");
+
         builder.Property(u => u.UpdatedAt)
             .IsRequired();
 

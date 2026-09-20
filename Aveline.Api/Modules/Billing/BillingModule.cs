@@ -38,6 +38,7 @@ public static class BillingModule
     public static IEndpointRouteBuilder MapBillingEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapUsageEndpoints();
+        app.MapBlossomReconciliationEndpoints();
         return app;
     }
 }

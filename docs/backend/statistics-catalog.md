@@ -202,7 +202,7 @@ unless it appears in this catalog **and** in
 | Storage | on-the-fly, with a 5-minute cache |
 | Endpoint | `GET /api/v1/orgs/{organizationId}/entitlements/usage` |
 | Access | `billing:view` |
-| Notes | `UsageAccount.StaffCount` and `ActiveCustomerCount` are **currently never written** (`UsageAccounts` columns exist but no writer updates them). This plan adds the counting job. Until then `dataQuality.materialisedCounts: false` |
+| Notes | **Corrected:** `UsageAccount.StaffCount` and `ActiveCustomerCount` **are** written. `EntitlementCountingJob` (`Modules/Billing/Jobs/LedgerJobs.cs:272-320`, registered at `BillingModule.cs:33`) recomputes both every five minutes, so `dataQuality.materialisedCounts` is `true` once the job has run. The earlier claim that no writer existed came from grepping the column *name* rather than the *writer*; grep the job registry instead. |
 
 ### S-11 · `activeCustomerCount`
 
@@ -782,6 +782,283 @@ unless it appears in this catalog **and** in
 
 ---
 
+## 7b. Business KPIs (growth, activity, plan mix)
+
+These are the administrator console's business reads. They live in
+`Aveline.Api/Modules/Analytics`, are exposed under
+`/api/v1/admin/statistics/business/*`, and are gated by the single permission
+`analytics:business:read` (bearer-only; an API key is refused). Their windows are capped by
+`BusinessAnalytics:MaxWindowDays` (default **400**), deliberately separate from
+`Telemetry:MaxWindowDays` (92), because telemetry's cap is tuned for request forensics rather
+than year-long growth reporting. Results are cached in `IDistributedCache` at
+`BusinessAnalytics:CacheSeconds` (default 60) and carry
+`Cache-Control: private, max-age=…`.
+
+**Null versus zero, stated once for the family.** A count of `0` in a bucket that lies inside
+the observed period is honest and is emitted as `0`. A bucket *before* the earliest
+observation (`observedFrom`), or a measure that could not be computed at all, is `null`.
+Every series point carries `isPartial`, true for the leading bucket clipped by `from` and for
+the trailing bucket the window's `to` falls inside.
+
+### S-44 · `businessGrowth`
+
+| Field | Value |
+| --- | --- |
+| Description | New users, new organizations, and administrator access requests per bucket |
+| Formula | `NewUsers = COUNT(*) FROM Users WHERE CreatedAt ∈ bucket AND DeletedAt IS NULL`; `NewOrganizations = COUNT(*) FROM Organizations WHERE CreatedAt ∈ bucket`; `NewAdminRequests = COUNT(*) FROM AdminApprovalRequests WHERE RequestedAt ∈ bucket`; `ApprovedAdminRequests = … AND Status = 'Approved'` |
+| Dimensions | `granularity` (`day`\|`week`\|`month`) |
+| Granularity | caller-selected |
+| Freshness | `≤ 60 s` (cache TTL) |
+| Retention | indefinite — `Users`/`Organizations` are not pruned |
+| Source | `Users`, `Organizations`, `AdminApprovalRequests` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/admin/statistics/business/growth` |
+| Access | `analytics:business:read` |
+| Notes | Buckets before the earliest row are absent and `observedFrom` names the boundary; buckets inside the period are `0` when truly empty. `previousTotals` covers the immediately preceding equal-length window. `Users.CreatedAt` is the **local first-seen** time, not Clerk's `created_at`: the `user.created` webhook stamps `DateTime.UtcNow`, and the JIT path on the first authenticated request stamps it too, so a user created in Clerk before the webhook was wired carries a later date. |
+
+### S-45 · `businessActiveUsers`
+
+| Field | Value |
+| --- | --- |
+| Description | Active users per bucket, plus the current DAU/WAU/MAU reading and stickiness |
+| Formula | Per bucket: `COUNT(DISTINCT UserId) FROM ApiRequestMetrics WHERE WindowSize = 'day' AND UserId IS NOT NULL AND WindowStart ∈ bucket`. `Dau` = the same distinct-count over the trailing **1 day** ending at `to`; `Wau` over **7 days**; `Mau` over **30 days**. `Stickiness = Dau / Mau`. `ActiveOrganizations` = `COUNT(DISTINCT OrganizationId)` over the same rows. |
+| Dimensions | `granularity` only. **There is no `definition` parameter** — one definition is settled, and offering a choice would invite comparing two numbers that measure different things |
+| Granularity | caller-selected |
+| Freshness | `≤ 60 s` |
+| Retention | 400 days (`ApiStatsRetentionJob`) |
+| Source | `ApiRequestMetrics` (day rows), which are exact and never sampled |
+| Storage | on-the-fly over the existing rollups |
+| Endpoint | `GET /api/v1/admin/statistics/business/active-users` |
+| Access | `analytics:business:read` |
+| Notes | **The definition is: an authenticated user who sent at least one request to the server within the window.** `UserId IS NOT NULL` is the filter, so anonymous and API-key traffic is excluded by construction. Three honesty rules: (1) when no row is attributed across the window the series is **`null`** with `dataQuality.userAttributionAvailable = false`, never `0`; (2) `dataQuality.unresolvedAttributionCount` carries the count of requests whose Clerk id was present but not yet in the claim map, so a stale map shows as a visible undercount rather than a low DAU; (3) SignalR-only sessions do not pass through `ApiTelemetryMiddleware` and are therefore not counted — a stated limit of this definition, not a defect. |
+
+### S-46 · `businessPlanMix`
+
+| Field | Value |
+| --- | --- |
+| Description | Current distribution of organizations, subscriptions and users across plan tiers, and the free-versus-premium split |
+| Formula | **`OrganizationCount` and the free/premium split come from `Organizations.PlanTier`, which is authoritative for every organization.** Per tier: `OrganizationCount = COUNT(Organizations) WHERE PlanTier = tier`; `ActiveOrganizationCount = … AND IsActive`; `BilledSubscriptionCount = COUNT(OrganizationSubscriptions) WHERE PlanTier = tier AND Status IN ('Active','Trialing')`; `UserCount = COUNT(DISTINCT OrganizationMembership.UserId)` where the membership is `Active` and its org is that tier; `MonthlyPriceLkr = SUM(OrganizationSubscriptions.PriceLkr)` over billed rows |
+| Dimensions | `planTier`; `asOf` instant |
+| Granularity | snapshot |
+| Freshness | `≤ 60 s` |
+| Retention | not historical |
+| Source | `Organizations` (**primary**), `OrganizationSubscriptions` (**supplementary**), `OrganizationMemberships` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/admin/statistics/business/plan-mix` |
+| Access | `analytics:business:read` |
+| Notes | **Free = `PlanTier.Seed`; premium = `Bloom`, `Orchid`, `Rose`, `Enterprise`.** The response returns the per-tier rows **and** the two rolled-up sides so the definition is stated once, server-side. **`OrganizationCount` and `BilledSubscriptionCount` are deliberately two different fields**, because they are two different numbers: `OrganizationSubscriptions` holds one current row per organization, created only when a plan changes or is cancelled, so an organization that never changed plan has **no** row. The response exposes `organizationsTotal` and `organizationsWithBillingRow`, making the gap a visible subtraction. `TotalMonthlyPriceLkr` is a *list-price sum over billed rows only*, not recognised revenue: the provider columns exist but no provider client is written. |
+
+### S-47 · `businessSubscriptionTrend`
+
+| Field | Value |
+| --- | --- |
+| Description | Active subscription count over time, split by tier, with starts and cancellations per bucket |
+| Formula | From the daily snapshot: `ActiveTotal` = the number of organizations with `Status IN ('Active','Trialing')` on the bucket's closing snapshot day; `ActiveByTier` the same grouped by `PlanTier`; `ChurnRate = Σ Cancelled over the window / OpeningActive` |
+| Dimensions | `granularity`, `planTier` |
+| Granularity | caller-selected over daily snapshots |
+| Freshness | `≤ 24 h` (the snapshot runs daily at 02:00 UTC) |
+| Retention | 400 days, matching `Telemetry:DailyRollupRetentionDays` |
+| Source | **New** `OrganizationSubscriptionSnapshots`, whose tier column is taken from `Organizations.PlanTier` and whose billing columns come from `OrganizationSubscriptions` where a row exists; backfilled from `AuditLogEntries[Action='org.plan.changed']` |
+| Storage | daily snapshot + rollup |
+| Endpoint | `GET /api/v1/admin/statistics/business/subscriptions` |
+| Access | `analytics:business:read` |
+| Notes | **`ActiveTotal` counts *organizations* by tier, not subscription rows.** A row per active organization is written on every snapshot day whether or not a billing row exists, with `HasBillingRow` recorded, so the series cannot silently under-count. The snapshot is written at **02:00 UTC**, after `BillingRollupJob` at 01:30, so a tier change made the same day is already reflected. `dataQuality.subscriptionHistoryBackfilled` is `true` when any bucket was reconstructed from the audit ledger, and the console marks those buckets **approximate**. The backfill never reproduces the `"Grow"` phantom tier: an unparseable `AfterJson` yields no tier rather than a literal, and before the earliest parseable change the organization's live tier is reported as the series' floor. |
+
+### S-48 · `businessUsageTrend`
+
+| Field | Value |
+| --- | --- |
+| Description | Product usage per bucket: messages sent, agent runs, API calls, Blossom units consumed, and actual AI cost |
+| Formula | `MessagesSent = COUNT(Messages) ⋈ Conversations WHERE CreatedAt ∈ bucket`; `AgentRuns = Σ DailyAgentMetrics.RunCount WHERE Day ∈ bucket`; `ApiRequests = Σ ApiRequestMetrics.RequestCount WHERE WindowSize='day' AND WindowStart ∈ bucket`; `BlossomUnits = Σ DailyBillingMetrics.BlossomUnits`; `ActualCostUsd = Σ DailyBillingMetrics.ActualCostUsd` |
+| Dimensions | `granularity`, `organizationId` (optional) |
+| Granularity | caller-selected |
+| Freshness | `≤ 60 s` from the rollups; the rollups themselves are `≤ 1 h` (hour) / `≤ 24 h` (day) |
+| Retention | 400 days for the rollups; messages indefinite |
+| Source | `Messages` ⋈ `Conversations`, `DailyAgentMetrics`, `ApiRequestMetrics`, `DailyBillingMetrics` |
+| Storage | on-the-fly over existing rollups |
+| Endpoint | `GET /api/v1/admin/statistics/business/usage` |
+| Access | `analytics:business:read`; when `organizationId` is supplied, the caller must additionally satisfy `admin:orgs:read` |
+| Notes | When `organizationId` is absent, `ApiRequests` counts **every** request including unattributed ones (`BR-6.1`), which is correct for a platform total and is said in `dataQuality.notes`. When it is present, unattributed rows belong to no organization and are excluded. `dataQuality.agentMetricsUninstrumented` is `true`: the daily agent rollup has no user dimension, so per-user agent runs are not available. |
+
+### S-49 · `businessOrganizationUsage`
+
+| Field | Value |
+| --- | --- |
+| Description | Organizations ranked by a chosen usage measure over a window, with last-activity recency |
+| Formula | Ranked `SUM` over the window of `messages`\|`agentRuns`\|`apiRequests`\|`blossomUnits`; `LastActivityAt = MAX(GREATEST(Conversation.LastMessageAt, AgentWorkflowRun day, ApiRequestMetric.WindowStart, AuditLogEntry.CreatedAt))`; `DaysSinceLastActivity = (now − LastActivityAt).Days` |
+| Dimensions | `metric`, window, `limit` (≤ 100) |
+| Granularity | window aggregate |
+| Freshness | `≤ 60 s` |
+| Retention | window ≤ 400 days |
+| Source | `Conversations`, `DailyAgentMetrics`, `ApiRequestMetrics`, `AuditLogEntries`, `Organizations` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/admin/statistics/business/organizations` |
+| Access | `analytics:business:read` **and** `admin:orgs:read` |
+| Notes | `LastActivityAt` is explicitly a **greatest-of reconstruction**, not a recorded fact, because there is no per-day user-activity table; the response sets `lastActivityIsReconstructed: true` and the UI labels the column. Ties are broken by `OrganizationId` so paging is stable. The endpoint enumerates tenant names, which is why it carries the second permission. |
+
+---
+
+## 7c. Revenue (Aveline's own income)
+
+These are the administrator console's money reads. They live in
+`Aveline.Api/Modules/Revenue`, are exposed under `/api/v1/admin/revenue/*` and
+`/api/v1/admin/statistics/revenue/*`, and are gated by `revenue:read` (bearer-only; an API
+key is refused), with the writes on `revenue:manage` and `revenue:refund`. Windows are capped
+by `Revenue:MaxWindowDays` (default **400**), and results are cached in `IDistributedCache` at
+`Revenue:CacheSeconds` (default 60) carrying `Cache-Control: private, max-age=…`.
+
+### The two entry classes, stated once for the family
+
+There is **no payment-provider client in this repository**. The provider columns on
+`OrganizationSubscriptions` and `BlossomPriceEntries` exist and nothing writes them; the API
+catalog records the position at `docs/api/README.md` (§C.2): *"Phase 3 attaches a payment
+provider; until then a top-up is a recorded grant, not a charge."*
+
+Money therefore arrives in the ledger in one of two classes, and **no response in this family
+may conflate them**:
+
+| `chargeBasis` | Meaning | Writer |
+| --- | --- | --- |
+| `Derived` | What the list price says *should* be billed. An expectation, not a receipt. | the top-up route (only when a `paymentReference` is supplied) and `BillingPeriodRolloverJob` |
+| `Verified` | Money an Aveline operator confirmed was received, or a refund. | `POST /admin/revenue/ledger/verify` and `/refund` |
+
+`revenueProviderSettlementAvailable` is `false` until a provider client settles money, so a
+`Derived` entry is never described as collected.
+
+### The `IncomeDataQualityDto` vocabulary
+
+A **fifth** vocabulary, alongside system, agent, api and business, and deliberately not a reuse
+of any of them: attribution and backfill say nothing about whether a price was configured or
+whether a receipt was verified.
+
+| Field | Meaning |
+| --- | --- |
+| `revenueProviderSettlementAvailable` | `false` until a provider client settles money. Every figure is then an expectation or an operator's confirmation |
+| `subscriptionPricesConfigured` | `false` when every subscription's `PriceLkr` is `0`. A derived charge of `0` then means **no list price is configured** — not "free" — and MRR is `null`, never `0` |
+| `derivedEntriesUnverified` | Count of `Derived` entries with no `Verified` counterpart. **This gap is the surface's most important number, and it is not an error** |
+| `checkedAt` | When the flags were evaluated, distinct from the window's `to` |
+| `notes` | Free-text, including the shared-cache-degradation note |
+
+> **`PriceLkr` is never assigned today.** `SubscriptionService.UpsertSubscriptionAsync`
+> (`:299-340`) sets tier, seats, status and period and leaves the price at `0m`. Until the price
+> book populates it, `subscriptionPricesConfigured` is `false` and every MRR reading is `null`
+> with that reason stated. A `0` MRR is a defect, not a measurement.
+
+### S-50 · `revenueLedger`
+
+| Field | Value |
+| --- | --- |
+| Description | The append-only revenue journal for a window, with window totals and a reconciliation block |
+| Formula | Rows from `IncomeLedgerEntries` ordered `OccurredAt DESC, Id DESC`. `DerivedTotal = Σ Amount WHERE ChargeBasis = 'Derived' AND Status = 'Recorded'`; `VerifiedTotal = Σ … = 'Verified'`; `RefundTotal = Σ Amount WHERE Kind = 'Refund'`; `UnverifiedGap = DerivedTotal − VerifiedTotal`; `NetVerified = VerifiedTotal − RefundTotal` |
+| Dimensions | `organizationId`, `kind`, `sourceKind`, `chargeBasis`, `q` (reason / `sourceRef` contains), window |
+| Granularity | real-time |
+| Freshness | `0 s` |
+| Retention | indefinite — append-only, never pruned |
+| Source | `IncomeLedgerEntries` |
+| Storage | on-the-fly, paged |
+| Endpoint | `GET /api/v1/admin/revenue/ledger` |
+| Access | `revenue:read` |
+| Notes | **The three totals are always returned as three, never summed into one.** `Amount` is stored positive and the sign is derived from `Kind`, so a refund cannot be mistaken for a charge. A `PriceLkr = 0` derived charge is a real row of `0` with `subscriptionPricesConfigured = false` naming why. An entry is never updated or deleted: a correction is a new row, and a nulled row is marked via `SupersedesEntryId` |
+
+### S-51 · `revenueAccounts`
+
+| Field | Value |
+| --- | --- |
+| Description | Per-organization derived, verified and net revenue over a window |
+| Formula | `GROUP BY OrganizationId` over S-50's rows, with the same three totals plus `NetVerified` per organization |
+| Dimensions | window; `organizationId` filter also accepted |
+| Granularity | window aggregate |
+| Freshness | `≤ 60 s` (cache TTL) |
+| Retention | indefinite |
+| Source | `IncomeLedgerEntries` ⋈ `Organizations` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/admin/revenue/accounts` |
+| Access | `revenue:read` |
+| Notes | An organization whose every subscription has `PriceLkr = 0` appears with `derivedTotal = 0` **and** a `notes` entry explaining it, so a zero is not read as "this tenant is free by design" |
+
+### S-52 · `revenueOverview`
+
+| Field | Value |
+| --- | --- |
+| Description | MRR, ARR, ARPU and the paying-organization count |
+| Formula | `Mrr = Σ OrganizationSubscriptions.PriceLkr WHERE Status IN ('Active','Trialing')` normalised to a month (an `Annual` row divides by 12); `Arr = Mrr × 12`; `PayingOrganizations = COUNT(DISTINCT OrganizationId) WHERE PriceLkr > 0`; `Arpu = Mrr / PayingOrganizations` |
+| Dimensions | `asOf` instant |
+| Granularity | snapshot |
+| Freshness | `≤ 60 s` |
+| Retention | not historical |
+| Source | `OrganizationSubscriptions` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/admin/statistics/revenue/overview` |
+| Access | `revenue:read` |
+| Notes | **`null` is not `0` here.** When `PayingOrganizations = 0`, `Arpu` is `null` rather than a division by zero, and when every `PriceLkr` is `0`, `Mrr` and `Arr` are `null` with `subscriptionPricesConfigured = false`. This is **list-price scheduled revenue**, not recognised or collected revenue — the response states `revenueProviderSettlementAvailable = false` and the console must not label it "collected" |
+
+### S-53 · `revenueTimeseries`
+
+| Field | Value |
+| --- | --- |
+| Description | Derived, verified and refunded amounts per bucket |
+| Formula | `Σ Amount` over `IncomeLedgerEntries` grouped by bucket and `ChargeBasis`/`Kind`; `Refunded` is the `Refund` kind's magnitude |
+| Dimensions | `granularity` (`day`\|`week`\|`month`), `organizationId` |
+| Granularity | caller-selected |
+| Freshness | `≤ 60 s` |
+| Retention | indefinite |
+| Source | `IncomeLedgerEntries` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/admin/statistics/revenue/timeseries` |
+| Access | `revenue:read` |
+| Notes | The bucket axis is **dense**: a bucket with no rows is `0`, because a month with no charges is a real zero. A bucket *before* the earliest entry is absent, and the response names `observedFrom`. Every point carries `isPartial`, true for the leading bucket clipped by `from` and the trailing bucket the window's `to` falls inside. The derived and verified series are returned side by side and never merged into one line |
+
+### S-54 · `revenueCollections`
+
+| Field | Value |
+| --- | --- |
+| Description | Collection rate per period: verified receipts against derived charges |
+| Formula | Per period, `DerivedTotal` and `VerifiedTotal` as S-50; `CollectionRate = VerifiedTotal / DerivedTotal`, `null` when `DerivedTotal = 0`; `Outstanding = DerivedTotal − VerifiedTotal` |
+| Dimensions | `granularity`, `organizationId` |
+| Granularity | caller-selected |
+| Freshness | `≤ 60 s` |
+| Retention | indefinite |
+| Source | `IncomeLedgerEntries` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/admin/statistics/revenue/collections` |
+| Access | `revenue:read` |
+| Notes | `CollectionRate` is `null`, never `0` or `∞`, when `DerivedTotal = 0` — a window with nothing billed has no collection rate. A rate above `100 %` is reported as-is rather than clipped, because it means a receipt arrived without a matching derived charge, which is exactly what an operator needs to see. `Outstanding` may be negative for the same reason |
+
+### S-55 · `revenueBlossomSales`
+
+| Field | Value |
+| --- | --- |
+| Description | Blossom top-up packs sold in a window: count, Blossoms granted, list-price value and conversion |
+| Formula | From `IncomeLedgerEntries` where `Kind = 'TopUpPurchase'`: `PacksSold = COUNT(*)`, `BlossomsGranted = Σ` the matching `BlossomLedgerEntries.BlossomDelta WHERE EntryType = 'TopUpGrant'`, `ListPriceLkr = Σ Amount`, `VerifiedLkr = Σ Amount WHERE ChargeBasis = 'Verified'`; `Conversion = VerifiedLkr / ListPriceLkr`, `null` when `ListPriceLkr = 0` |
+| Dimensions | `granularity`, `organizationId`, `skuCode` |
+| Granularity | caller-selected |
+| Freshness | `≤ 60 s` |
+| Retention | indefinite |
+| Source | `IncomeLedgerEntries` ⋈ `BlossomLedgerEntries` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/admin/statistics/revenue/blossoms` |
+| Access | `revenue:read` |
+| Notes | A top-up **without** a `paymentReference` writes no income row at all, so `PacksSold` counts only referenced purchases. That is a deliberate undercount of *grants* and an accurate count of *sales*; the response states `grantedWithoutReference` so the difference between the two is visible rather than inferred |
+
+### S-56 · `billingReconciliation`
+
+| Field | Value |
+| --- | --- |
+| Description | Per-account Blossom reconciliation drift across every open account |
+| Formula | For each open `UsageAccounts` row: `ledgerDerivedBalance = MonthlyBlossomLimit + Σ deltas excluding PeriodAllocation − BlossomUsed`; `drift = BlossomRemaining − ledgerDerivedBalance`; the response ranks accounts by `abs(drift)` descending |
+| Dimensions | `limit` |
+| Granularity | snapshot |
+| Freshness | `≤ 60 s` |
+| Retention | not stored; the same computation feeds the 30 s `aveline.blossom.reconciliation.drift` sample |
+| Source | `UsageAccounts` ∪ `BlossomLedgerEntries` ∪ `AiUsageRecords` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/admin/statistics/billing/reconciliation` |
+| Access | `stats:system` |
+| Notes | **Uses `BlossomService.LedgerDerivedBalance` and `ReconciliationDrift` unchanged**, because those two helpers are also what `SystemMetricCollector` emits for the `blossom.ledger.drift` alert; a second formula here would let the console and the alarm disagree. A non-zero drift is a **Critical** condition (S-3). This endpoint exists so a drift is findable from the console rather than only from Grafana |
+
+---
+
+
 ## 8. Data quality warnings (must be returned to clients)
 
 Because several underlying data points are not yet instrumented, every
@@ -925,6 +1202,29 @@ than a route that exists. Nothing is exposed until it appears here **and** in
 
 ---
 
+### 8b. The business family's `dataQuality` (S-44…S-49)
+
+The business reads carry their own flags rather than borrowing another family's vocabulary. A false
+flag is named, never absorbed; a `null` measure plus the matching false flag means **"not measured"**,
+which is not `0`.
+
+| Flag | `true` means | Present on |
+| --- | --- | --- |
+| `userAttributionAvailable` | At least one request in the window carried a resolved user id, so the active-user measures are meaningful. `false` accompanies a **`null`** series, never a zero one | S-45 |
+| `unresolvedAttributionCount` | How many requests carried a Clerk id that was present but not yet in the claim map. A non-zero value is a visible **undercount**, not a low DAU | S-45, all |
+| `subscriptionHistoryBackfilled` | Some buckets were reconstructed from `AuditLogEntries[Action='org.plan.changed']` rather than snapshotted, so they are **approximate** | S-47 |
+| `lastActivityIsReconstructed` | `LastActivityAt` is a greatest-of reconstruction over conversation, agent-run, API-metric and audit timestamps, not a recorded fact. Always `true` on S-49 | S-49 |
+| `agentMetricsUninstrumented` | The `DailyAgentMetrics` rollup has no user dimension, so `AgentRuns` is an organization-level total and per-user agent activity is not measured | S-48 |
+| `notes` | The server's own sentences about this answer. The console merges the notes from every endpoint it read rather than showing one and dropping the rest | all |
+
+**What is deliberately not available, and is therefore never offered as a KPI.** Staff attendance
+(the `TimeEntries` table has zero writers), per-user agent runs
+(`AgentWorkflowRun.InitiatedByUserId` is always `null`), per-user AI usage (`AiUsageRecords` has no
+user column) and login/session history (Aveline stores no session state). Each would need new
+instrumentation and none is in this catalog.
+
+---
+
 ## 9. Retention and aggregation summary
 
 | Data | Raw retention | Rollup retention | Rollup job | Rollup table |
@@ -939,6 +1239,7 @@ than a route that exists. Nothing is exposed until it appears here **and** in
 | `SystemMetricSamples` | 30 days | 400 days (hourly) | `SystemMetricCollector` + hourly compaction | `SystemMetricSamples` |
 | `AuditLogEntries` | 400 days minimum; configurable to indefinite | none | — | — |
 | `SystemAlerts` | 400 days | none | — | — |
+| `OrganizationSubscriptionSnapshots` | 400 days | n/a (already daily) | `OrganizationSubscriptionSnapshotJob` daily 02:00 UTC | `OrganizationSubscriptionSnapshots` |
 
 Two rollup tables are implied but not defined in
 [domain-model.md](domain-model.md) because they are derivable and their shape is

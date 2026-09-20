@@ -44,6 +44,22 @@ public class VisualService : IVisualService
         return await _inventoryService.SearchInventoryAsync(dto, cancellationToken);
     }
 
+    public async Task<CatalogPagedResponse> QueryCatalogAsync(
+        Guid orgId,
+        CatalogQueryRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        return await _inventoryService.QueryCatalogAsync(orgId, request, cancellationToken);
+    }
+
+    public async Task<CatalogFacetsResponse> GetFacetsAsync(
+        Guid orgId,
+        CatalogQueryRequest? currentNarrowing = null,
+        CancellationToken cancellationToken = default)
+    {
+        return await _inventoryService.GetFacetsAsync(orgId, currentNarrowing, cancellationToken);
+    }
+
     public async Task<InventoryItemDto?> GetItemByIdAsync(
         Guid itemId,
         Guid orgId,

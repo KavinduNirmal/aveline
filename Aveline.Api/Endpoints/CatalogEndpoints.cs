@@ -80,6 +80,60 @@ public static class CatalogEndpoints
         .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status403Forbidden);
 
+        group.MapPost("/items/query", async (
+            [FromRoute] Guid organizationId,
+            [FromBody] CatalogQueryRequest request,
+            [FromServices] IVisualService visualService,
+            CancellationToken cancellationToken) =>
+        {
+            request.OrganizationId = organizationId;
+            try
+            {
+                var result = await visualService.QueryCatalogAsync(organizationId, request, cancellationToken);
+                return Results.Ok(result);
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        })
+        .WithName("CatalogQueryItems")
+        .WithSummary("Query catalog items with multi-select filters, price bands, and pagination envelope.")
+        .Produces<CatalogPagedResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden);
+
+        group.MapGet("/facets", async (
+            [FromRoute] Guid organizationId,
+            [FromServices] IVisualService visualService,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await visualService.GetFacetsAsync(organizationId, null, cancellationToken);
+            return Results.Ok(result);
+        })
+        .WithName("CatalogGetFacets")
+        .WithSummary("Get active facet options and item counts under mutual constraints.")
+        .Produces<CatalogFacetsResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden);
+
+        group.MapPost("/facets", async (
+            [FromRoute] Guid organizationId,
+            [FromBody] CatalogQueryRequest currentNarrowing,
+            [FromServices] IVisualService visualService,
+            CancellationToken cancellationToken) =>
+        {
+            currentNarrowing.OrganizationId = organizationId;
+            var result = await visualService.GetFacetsAsync(organizationId, currentNarrowing, cancellationToken);
+            return Results.Ok(result);
+        })
+        .WithName("CatalogGetFacetsWithNarrowing")
+        .WithSummary("Get active facet options and item counts under currently selected filter state.")
+        .Produces<CatalogFacetsResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden);
+
         group.MapGet("/items/{itemId:guid}", async (
             [FromRoute] Guid organizationId,
             [FromRoute] Guid itemId,

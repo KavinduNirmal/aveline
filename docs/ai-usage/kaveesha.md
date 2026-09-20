@@ -465,4 +465,74 @@ The multi-file merge conflict was resolved without regressing any Commerce funct
 - `bun run test`: Vitest completed across 29 test files, **209/209 tests passed** (0 failed).
 - `bun run lint`: Oxlint verified 0 errors across 198 files.
 
+---
 
+## Session 2026-09-19 (Flutter to Backend Catalog Filters Integration)
+
+**Tool used:** Antigravity AI Assistant  
+**Task:** Connect the Flutter staff mobile catalog filter screen (`/catalog/filters`) and catalog grid to the ASP.NET Core backend API according to `flutter-to-backend-catalog-filters-implementation.ignore.md`.
+
+### Intended Work
+- Bridge the mobile catalog filter draft editor and grid with the backend API.
+- Introduce multi-value filter querying (`POST /api/v1/orgs/{orgId}/catalog/items/query`) with collection parameters (`categories`, `fabrics`, `sizes`, `statuses`, `priceBands`, `tagIds`) and a paginated envelope returning `{ items, total, page, pageSize }`.
+- Introduce a dynamic facets endpoint (`GET /api/v1/orgs/{orgId}/catalog/facets`) computing option counts under mutual independence rules.
+- Implement an HTTP-backed repository in Flutter (`ApiCatalogProductRepository`) replacing demo mock data.
+- Wire route protection (`PermissionGuard` for `Permissions.catalogView`) and encode draft states in route query parameters.
+- Verify through backend integration tests, Flutter catalog unit/widget tests, and static analysis.
+
+### Work Performed
+- **Backend (`Aveline.Api`)**:
+  - Created `CatalogQueryRequest` DTO supporting multi-value array filters, search, and pagination.
+  - Created `CatalogPagedResponse` standard pagination envelope returning total counts and timestamps.
+  - Created `CatalogFacetsResponse` with group keys, option counts, and availability flags.
+  - Defined `CatalogStatusVocabulary` closed set and validated incoming status values.
+  - Implemented `IInventoryRepository.QueryAsync` and `GetFacetsAsync` with deterministic tie-breaker sorting on `x.Id`, price band expression evaluation, and facet counting.
+  - Implemented `IInventoryService.QueryCatalogAsync` and `GetFacetsAsync` in `InventoryService` and delegated through `IVisualService` / `VisualService`.
+  - Mapped `POST /api/v1/orgs/{orgId}/catalog/items/query` and `GET /api/v1/orgs/{orgId}/catalog/facets` with `BoutiqueAccess` policy.
+- **Flutter Mobile Client (`frontend/aveline_mobile`)**:
+  - Implemented `ApiCatalogProductRepository` over Dio, translating 0-based client paging to 1-based server paging and calculating `hasMore` from `total`.
+  - Added value equality (`operator ==` and `hashCode`) and query parameter serialization (`toQueryParameters` / `fromQueryParameters`) to `CatalogFilters`.
+  - Wired `ApiCatalogProductRepository` in `app.dart` using the active membership organization ID.
+  - Guarded the `/catalog/filters` route with `PermissionGuard(Permissions.catalogView)` and restored drafts from URL query parameters.
+  - Updated `_openFilters` in `CatalogScreen` to pass query parameters in the URI.
+- **Documentation & OpenAPI**:
+  - Added endpoint schemas for `/catalog/items/query` and `/catalog/facets` in `docs/api/openapi.yaml`.
+  - Added metric entries for `S-44 catalogFilterUsage` and `S-45 catalogInventoryCoverage` in `docs/backend/statistics-catalog.md`.
+
+### Files Created or Modified
+- **Created**:
+  - `Aveline.Api/Modules/VisualIntelligence/DTOs/CatalogQueryRequest.cs`
+  - `Aveline.Api/Modules/VisualIntelligence/DTOs/CatalogPagedResponse.cs`
+  - `Aveline.Api/Modules/VisualIntelligence/DTOs/CatalogFacetsResponse.cs`
+  - `Aveline.Api/Modules/VisualIntelligence/Constants/CatalogStatusVocabulary.cs`
+  - `frontend/aveline_mobile/lib/features/catalog/data/api_catalog_product_repository.dart`
+  - `frontend/aveline_mobile/test/features/catalog/api_catalog_product_repository_test.dart`
+- **Modified**:
+  - `Aveline.Api/Modules/VisualIntelligence/Repositories/IInventoryRepository.cs`
+  - `Aveline.Api/Modules/VisualIntelligence/Repositories/InventoryRepository.cs`
+  - `Aveline.Api/Modules/VisualIntelligence/Services/IInventoryService.cs`
+  - `Aveline.Api/Modules/VisualIntelligence/Services/InventoryService.cs`
+  - `Aveline.Api/Modules/VisualIntelligence/Services/IVisualService.cs`
+  - `Aveline.Api/Modules/VisualIntelligence/Services/VisualService.cs`
+  - `Aveline.Api/Endpoints/CatalogEndpoints.cs`
+  - `Aveline.Api.Tests/CatalogEndpointsIntegrationTests.cs`
+  - `frontend/aveline_mobile/lib/features/catalog/domain/catalog_filters.dart`
+  - `frontend/aveline_mobile/lib/features/catalog/presentation/screens/catalog_screen.dart`
+  - `frontend/aveline_mobile/lib/app.dart`
+  - `frontend/aveline_mobile/test/features/catalog/catalog_filters_test.dart`
+  - `docs/api/openapi.yaml`
+  - `docs/backend/statistics-catalog.md`
+  - `docs/ai-usage/kaveesha.md`
+
+### Verification Performed
+- **Backend Tests**: `dotnet test --filter "FullyQualifiedName~CatalogEndpointsIntegrationTests"` passed (including `QueryItems_MultiSelectAndPriceBands_ReturnsEnvelope` and `GetFacets_ReturnsGroupsWithCounts`).
+- **Flutter Tests**: `flutter test test/features/catalog/` — 72/72 tests passed.
+- **Flutter Static Analysis**: `flutter analyze --no-fatal-infos` — **No issues found!**
+- **Physical Device Integration**:
+  - Deployed and launched `app-debug.apk` to physical Android device (`CPH2477`).
+  - Tested reverse proxy configuration via `adb reverse tcp:5091 tcp:5091`.
+  - Verified Clerk authentication flow and token handoff to local backend.
+  - Verified catalog screen load and query integration with backend `/catalog/items/query` endpoint on mobile.
+
+### Remaining Work
+None. Feature implementation, documentation, and device verification are complete.

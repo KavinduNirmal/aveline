@@ -34,8 +34,10 @@ import 'features/auth/data/clerk_auth_repository.dart';
 import 'features/auth/domain/auth_repository.dart';
 import 'features/auth/domain/aveline_user.dart';
 import 'features/auth/presentation/screens/auth_screen.dart';
+import 'core/auth/permission_guard.dart';
+import 'core/auth/permissions.dart';
+import 'features/catalog/data/api_catalog_product_repository.dart';
 import 'features/catalog/data/catalog_product_repository.dart';
-import 'features/catalog/data/demo_catalog_product_repository.dart';
 import 'features/catalog/domain/catalog_filters.dart';
 import 'features/catalog/presentation/screens/catalog_filter_screen.dart';
 import 'features/catalog/presentation/screens/catalog_product_screen.dart';
@@ -341,7 +343,10 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
     _dio = widget.dio;
     _boutiqueProvider = BoutiqueProvider();
     _onboardingProvider = OnboardingProvider(widget.preferences);
-    _catalogRepository = DemoCatalogProductRepository();
+    _catalogRepository = ApiCatalogProductRepository(
+      _dio,
+      organizationId: () => _boutiqueProvider.organizationId,
+    );
     _customerRepository = DemoCustomerRepository();
     // The inbox reads the API through one repository, the same way Home does. The
     // organization id is read at call time because it arrives with `/orgs/my`,
@@ -678,11 +683,18 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
           // A full-screen editor rather than a panel: it is reached from the
           // field row, returns its draft to the catalog, and carries its own
           // back affordance so it does not need the shell's header.
-          builder: (context, state) => CatalogFilterScreen(
-            initial: state.extra is CatalogFilters
+          builder: (context, state) {
+            final initial = state.extra is CatalogFilters
                 ? state.extra as CatalogFilters
-                : null,
-          ),
+                : (state.uri.queryParameters.isNotEmpty
+                    ? CatalogFilters.fromQueryParameters(state.uri.queryParameters)
+                    : null);
+
+            return PermissionGuard(
+              permission: Permissions.catalogView,
+              child: CatalogFilterScreen(initial: initial),
+            );
+          },
         ),
         GoRoute(
           path: AppRoutes.catalogProductPattern,

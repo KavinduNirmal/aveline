@@ -8,6 +8,16 @@ public interface IVisualService
         SearchInventoryDto dto,
         CancellationToken cancellationToken = default);
 
+    Task<CatalogPagedResponse> QueryCatalogAsync(
+        Guid orgId,
+        CatalogQueryRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<CatalogFacetsResponse> GetFacetsAsync(
+        Guid orgId,
+        CatalogQueryRequest? currentNarrowing = null,
+        CancellationToken cancellationToken = default);
+
     Task<InventoryItemDto?> GetItemByIdAsync(
         Guid itemId,
         Guid orgId,

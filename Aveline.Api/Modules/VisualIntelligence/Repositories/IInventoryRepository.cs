@@ -17,6 +17,14 @@ public interface IInventoryRepository
         int page = 1,
         int pageSize = 20,
         CancellationToken cancellationToken = default);
+    Task<(IReadOnlyList<InventoryItem> Items, int Total)> QueryAsync(
+        Guid orgId,
+        DTOs.CatalogQueryRequest request,
+        CancellationToken cancellationToken = default);
+    Task<DTOs.CatalogFacetsResponse> GetFacetsAsync(
+        Guid orgId,
+        DTOs.CatalogQueryRequest? currentNarrowing = null,
+        CancellationToken cancellationToken = default);
     Task<IReadOnlyList<InventoryItem>> GetLowStockAsync(
         Guid orgId,
         int threshold = 5,

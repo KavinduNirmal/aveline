@@ -925,7 +925,43 @@ than a route that exists. Nothing is exposed until it appears here **and** in
 
 ---
 
-## 9. Retention and aggregation summary
+## 9. Catalog and inventory metrics
+
+### S-44 · `catalogFilterUsage`
+
+| Field | Value |
+| --- | --- |
+| Description | Which filter groups and values associates actually apply, and how often a filter combination yields nothing |
+| Formula | `Σ QueryCount GROUP BY GroupKey, ValueKey`; and `zeroResultRate = Σ QueryCount(total = 0) / Σ QueryCount` |
+| Dimensions | `organizationId`, `groupKey` (`availability`/`category`/`fabric`/`size`/`price`), `valueKey`, `resultBucket` (`0`, `1-10`, `11-50`, `>50`), `day`/`month` |
+| Granularity | day |
+| Freshness | `≤ 1 h` |
+| Retention | 400 days (day) |
+| Source | `CatalogFilterMetrics` (rollup keyed by org/group/value/bucket/day) |
+| Storage | rollup |
+| Endpoint | `GET /api/v1/orgs/{organizationId}/statistics/catalog/filters` |
+| Access | `stats:view` |
+| Notes | Value keys are vocabulary-bounded. Directly measures associate discovery friction and zero-result rates. |
+
+### S-45 · `catalogInventoryCoverage`
+
+| Field | Value |
+| --- | --- |
+| Description | How much of the org's inventory can actually be filtered on: counts per status, and the share of items carrying the values the editor offers |
+| Formula | `Σ ItemCount GROUP BY status`; `fabricCoverage = Σ ItemCount(Fabric IS NOT NULL AND Fabric <> '') / Σ ItemCount`; `styleCoverage` likewise; `sizeCoverage = Σ ItemCount(Sizes has ≥1 element) / Σ ItemCount` |
+| Dimensions | `organizationId`, `status`, `category` |
+| Granularity | real-time |
+| Freshness | `0 s` — read directly from `InventoryItems` |
+| Retention | n/a (derived) |
+| Source | `inventory_items` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/orgs/{organizationId}/statistics/catalog/inventory-coverage` |
+| Access | `stats:view` |
+| Notes | Soft-deleted rows excluded. Explains empty facet counts. |
+
+---
+
+## 10. Retention and aggregation summary
 
 | Data | Raw retention | Rollup retention | Rollup job | Rollup table |
 | --- | --- | --- | --- | --- |

@@ -4410,3 +4410,95 @@ Phases, as recorded in the plan's §6:
 - General docs, API docs and the OpenAPI specification are updated at the end of each phase.
 
 *(End-of-session summary for this work is appended below when the session closes.)*
+
+### Session end — what was delivered
+
+All six phases of the plan are delivered, on the current branch `feature/admin-frontend-ui-v3` with
+**no branch created or switched**. Six GitHub issues were opened, one per phase, and each phase
+followed TDD: the failing test was written and observed failing before its implementation.
+
+**Commits on the branch:**
+
+- `5897b58` — P1 + P2: foundations, the attribution fix, growth / active-users / plan-mix.
+- `5c8ecd7` — P3: the subscription snapshot table and job, the D-1-safe backfill, usage and the
+  organization ranking.
+- `671b39f` — P4 + P5: the `business` domain, the `B1…B12` catalogue, the pure series shaping, four
+  components, and the Growth console.
+- `221d04e` — P6: the usage console, the drill-down, the documentation pass and the ratchet.
+
+**The single most important fix is the attribution one (B1).** A Clerk `jwt-aveline-v1` token carries
+Clerk's native `user_…`/`org_…` ids while Aveline stores GUIDs, so every claim failed `Guid.TryParse`
+and `ApiRequestMetric.UserId` was `null` for all human traffic — DAU was not merely missing, it was
+unmeasurable. `IClaimIdentityMap` (two `FrozenDictionary`s, swapped whole) plus a five-minute
+`ClaimIdentityMapRefresher` now resolve the ids **off the request path**, so the telemetry middleware
+keeps its *"does no I/O, well under 1 ms to p99"* contract. A refresh failure keeps the previous map;
+an unmapped Clerk id increments `UnresolvedCount`, which the response surfaces as a visible
+undercount. `AttributionB1Tests` is the acceptance test: a real, signature-validated Clerk-shaped
+token — and this is where the work paid off, because the test **caught the claim mapping itself**.
+The bearer handler renames `sub` to `ClaimTypes.NameIdentifier` (`MapInboundClaims`), so the raw `sub`
+type does not survive; my first expectation asserted it did. Pinning the *mapped* type, not the raw
+one, is now the regression guard against anyone turning inbound claim mapping off.
+
+**Seven design questions the tests forced into the open**, each resolved and documented rather than
+quietly papered over:
+
+1. **The backfill can only start from the earliest parseable plan change.** There is no
+   pre-change evidence in the audit ledger, so before it the organization's live tier is reported
+   as the series' floor. My first test asserted a reconstructed `Seed` prefix that the code cannot
+   honestly produce.
+2. **A data-quality notice must merge every endpoint's caveats**, not pick one. The single-source
+   version silently dropped a note the server had taken the trouble to send; a test caught it.
+3. **A degenerate window still yields one bucket.** The server floors `CountBuckets` at one, so the
+   client returning an empty axis would disagree with the series it was sent.
+4. **An empty query value is "absent", not "invalid"** — matching `ApiStatisticsValidation`. The
+   implementation was right; my test encoded the opposite.
+5. **A leading bucket clipped by `from` is partial too**, not only the trailing open one.
+6. **`0` and `null` are different things on the wire and in the chart.** `business-series.ts` is the
+   one place that decides it, so it cannot drift.
+7. **`name` on a Recharts `<Bar>` is a type trap in v3** — it narrows `children` and rejects the
+   `<Cell>` list. That is the only new third-party trap this work hit.
+
+**Deliberately not built, and stated rather than implied.** The org-owner surface (OQ-1 puts it on
+the tenant tree, which the predecessor plan put out of scope); the seven Prometheus KPI gauges
+(§5.9 layer 3 — alerting plumbing rather than a console requirement, and the layer that reaches into
+`MetricsCatalog` and the seeded alert rules); and a `tests/load/k6-business-kpis.js`, so the
+`COUNT(DISTINCT)` query's real latency is **not measured here** and no budget is claimed for it.
+Two things could not be verified in this environment: the Playwright walk is written for both new
+routes but **not executed** (no browser installed), and the raw-path-vs-route-template check is a
+post-deploy runtime fact.
+
+### Verification performed
+
+- `dotnet test Aveline.Api.Tests` — **1857 passed, 0 failed** (1799 before this session's work, and
+  that baseline included the six new files added in P1–P3 plus the Postgres container tests, which
+  did run: `BusinessKpiPostgresTests` asserts `COUNT(DISTINCT)` correctness and index usage against
+  a real `pgvector/pgvector:pg16` container).
+- `bunx vitest run` — **85 files / 583 tests passed** (554 before the business work).
+- `bunx tsc -b` — exit 0. `bunx oxlint src` — 0 errors.
+- `bun run test:coverage:admin` — the raised ratchet passes: admin subtree **77.09 % lines /
+  64.88 % branches**; `routes/admin` **76.57 % / 62.52 %**.
+- The four frozen mechanical tests (`admin-conformance`, `admin-truthfulness`,
+  `admin-prometheus-boundary`, `admin-install`) pass **unchanged**. An edit to any of them would have
+  been a design failure.
+- `AdminDashboard.dom.test.tsx` continues to pass unchanged with `KpiTile`'s new optional `delta`
+  prop, which is the additivity claim tested rather than asserted.
+
+### Two defects found in the repository while working
+
+- **D-1, reproduced and then avoided.** `BillingStatisticsService.GetPlanChangesAsync` falls back to
+  `toTier = "Grow"` — a tier that does not exist in `PlanTier`. `SubscriptionBackfill.ReconstructTier`
+  returns `null` for an unparseable payload, a missing property, a non-string value, or a string
+  outside the enum, and `SubscriptionBackfillTests` pins each of those cases by name.
+- **D-2 and D-3, corrected in the catalog.** `UsageAccount.StaffCount`/`ActiveCustomerCount` **are**
+  written (by `EntitlementCountingJob`, every five minutes) and `DailyAgentMetrics` **does** have a
+  writer. Both stale claims came from grepping a column *name* rather than reading the *writer*.
+  `DailyAgentMetrics` now also has a reader: the S-48 usage read.
+
+### Process notes
+
+- The pre-commit hook was exercised on every commit. It fails on staged paths containing spaces
+  because it word-splits `$STAGED_FILES`; committing the local `.agents/plans/` directory tripped it,
+  so that directory is left untracked and the repository's source changes are committed normally.
+  The hook itself was **not** modified.
+- The plan file for this work is named `admin-dashboard-business-kpis-implementation.ignore.md`, so it
+  is git-ignored by the repository's own convention and does not appear in any commit.

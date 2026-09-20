@@ -1,5 +1,5 @@
-﻿/**
- * Canonical 25-permission catalog mirroring `Aveline.Api/Authorization/Permissions.cs`.
+/**
+ * Canonical 28-permission catalog mirroring `Aveline.Api/Authorization/Permissions.cs`.
  * This client mirror is used strictly for presentation and navigation gating.
  * Authoritative enforcement is always performed server-side.
  */
@@ -29,6 +29,9 @@ export type Permission =
   | "admin:users:manage"
   | "admin:orgs:read"
   | "audit:view"
+  | "revenue:read"
+  | "revenue:manage"
+  | "revenue:refund"
 
 export const ALL_PERMISSIONS: readonly Permission[] = [
   "catalog:view",
@@ -56,10 +59,25 @@ export const ALL_PERMISSIONS: readonly Permission[] = [
   "admin:users:manage",
   "admin:orgs:read",
   "audit:view",
+  "revenue:read",
+  "revenue:manage",
+  "revenue:refund",
 ]
 
 /**
- * Canonical Role-to-Permissions mapping from `Permissions.cs:99-122`.
+ * The permissions `admin` is deliberately denied, mirroring `Permissions.AdminDeniedPermissions`
+ * (`Permissions.cs`, the `PermissionsDeniedToAdmin` array).
+ *
+ * `pricing:backdate` is the original: the console gates the recompute control on it precisely so
+ * an admin sees it disabled with a stated reason (slice A6). `revenue:refund` joins it because
+ * sending money back is irreversible in a way that correcting the ledger is not. Both are
+ * deliberate denials, which is why they are named rather than derived from a hand-written filter
+ * the server cannot check.
+ */
+const ADMIN_DENIED_PERMISSIONS: readonly Permission[] = ["pricing:backdate", "revenue:refund"]
+
+/**
+ * Canonical Role-to-Permissions mapping from `Permissions.cs`.
  */
 export const ROLE_PERMISSIONS: Record<string, readonly Permission[]> = {
   staff: ["catalog:view", "conversations:view"],
@@ -74,8 +92,9 @@ export const ROLE_PERMISSIONS: Record<string, readonly Permission[]> = {
     "stats:view:agent",
     "admin:orgs:read",
     "analytics:business:read",
+    "revenue:read",
   ],
-  admin: ALL_PERMISSIONS.filter((p) => p !== "pricing:backdate"),
+  admin: ALL_PERMISSIONS.filter((p) => !ADMIN_DENIED_PERMISSIONS.includes(p)),
   owner: ALL_PERMISSIONS,
 
   "org:boutique_staff": [

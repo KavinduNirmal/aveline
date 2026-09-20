@@ -898,6 +898,167 @@ the trailing bucket the window's `to` falls inside.
 
 ---
 
+## 7c. Revenue (Aveline's own income)
+
+These are the administrator console's money reads. They live in
+`Aveline.Api/Modules/Revenue`, are exposed under `/api/v1/admin/revenue/*` and
+`/api/v1/admin/statistics/revenue/*`, and are gated by `revenue:read` (bearer-only; an API
+key is refused), with the writes on `revenue:manage` and `revenue:refund`. Windows are capped
+by `Revenue:MaxWindowDays` (default **400**), and results are cached in `IDistributedCache` at
+`Revenue:CacheSeconds` (default 60) carrying `Cache-Control: private, max-age=…`.
+
+### The two entry classes, stated once for the family
+
+There is **no payment-provider client in this repository**. The provider columns on
+`OrganizationSubscriptions` and `BlossomPriceEntries` exist and nothing writes them; the API
+catalog records the position at `docs/api/README.md` (§C.2): *"Phase 3 attaches a payment
+provider; until then a top-up is a recorded grant, not a charge."*
+
+Money therefore arrives in the ledger in one of two classes, and **no response in this family
+may conflate them**:
+
+| `chargeBasis` | Meaning | Writer |
+| --- | --- | --- |
+| `Derived` | What the list price says *should* be billed. An expectation, not a receipt. | the top-up route (only when a `paymentReference` is supplied) and `BillingPeriodRolloverJob` |
+| `Verified` | Money an Aveline operator confirmed was received, or a refund. | `POST /admin/revenue/ledger/verify` and `/refund` |
+
+`revenueProviderSettlementAvailable` is `false` until a provider client settles money, so a
+`Derived` entry is never described as collected.
+
+### The `IncomeDataQualityDto` vocabulary
+
+A **fifth** vocabulary, alongside system, agent, api and business, and deliberately not a reuse
+of any of them: attribution and backfill say nothing about whether a price was configured or
+whether a receipt was verified.
+
+| Field | Meaning |
+| --- | --- |
+| `revenueProviderSettlementAvailable` | `false` until a provider client settles money. Every figure is then an expectation or an operator's confirmation |
+| `subscriptionPricesConfigured` | `false` when every subscription's `PriceLkr` is `0`. A derived charge of `0` then means **no list price is configured** — not "free" — and MRR is `null`, never `0` |
+| `derivedEntriesUnverified` | Count of `Derived` entries with no `Verified` counterpart. **This gap is the surface's most important number, and it is not an error** |
+| `checkedAt` | When the flags were evaluated, distinct from the window's `to` |
+| `notes` | Free-text, including the shared-cache-degradation note |
+
+> **`PriceLkr` is never assigned today.** `SubscriptionService.UpsertSubscriptionAsync`
+> (`:299-340`) sets tier, seats, status and period and leaves the price at `0m`. Until the price
+> book populates it, `subscriptionPricesConfigured` is `false` and every MRR reading is `null`
+> with that reason stated. A `0` MRR is a defect, not a measurement.
+
+### S-50 · `revenueLedger`
+
+| Field | Value |
+| --- | --- |
+| Description | The append-only revenue journal for a window, with window totals and a reconciliation block |
+| Formula | Rows from `IncomeLedgerEntries` ordered `OccurredAt DESC, Id DESC`. `DerivedTotal = Σ Amount WHERE ChargeBasis = 'Derived' AND Status = 'Recorded'`; `VerifiedTotal = Σ … = 'Verified'`; `RefundTotal = Σ Amount WHERE Kind = 'Refund'`; `UnverifiedGap = DerivedTotal − VerifiedTotal`; `NetVerified = VerifiedTotal − RefundTotal` |
+| Dimensions | `organizationId`, `kind`, `sourceKind`, `chargeBasis`, `q` (reason / `sourceRef` contains), window |
+| Granularity | real-time |
+| Freshness | `0 s` |
+| Retention | indefinite — append-only, never pruned |
+| Source | `IncomeLedgerEntries` |
+| Storage | on-the-fly, paged |
+| Endpoint | `GET /api/v1/admin/revenue/ledger` |
+| Access | `revenue:read` |
+| Notes | **The three totals are always returned as three, never summed into one.** `Amount` is stored positive and the sign is derived from `Kind`, so a refund cannot be mistaken for a charge. A `PriceLkr = 0` derived charge is a real row of `0` with `subscriptionPricesConfigured = false` naming why. An entry is never updated or deleted: a correction is a new row, and a nulled row is marked via `SupersedesEntryId` |
+
+### S-51 · `revenueAccounts`
+
+| Field | Value |
+| --- | --- |
+| Description | Per-organization derived, verified and net revenue over a window |
+| Formula | `GROUP BY OrganizationId` over S-50's rows, with the same three totals plus `NetVerified` per organization |
+| Dimensions | window; `organizationId` filter also accepted |
+| Granularity | window aggregate |
+| Freshness | `≤ 60 s` (cache TTL) |
+| Retention | indefinite |
+| Source | `IncomeLedgerEntries` ⋈ `Organizations` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/admin/revenue/accounts` |
+| Access | `revenue:read` |
+| Notes | An organization whose every subscription has `PriceLkr = 0` appears with `derivedTotal = 0` **and** a `notes` entry explaining it, so a zero is not read as "this tenant is free by design" |
+
+### S-52 · `revenueOverview`
+
+| Field | Value |
+| --- | --- |
+| Description | MRR, ARR, ARPU and the paying-organization count |
+| Formula | `Mrr = Σ OrganizationSubscriptions.PriceLkr WHERE Status IN ('Active','Trialing')` normalised to a month (an `Annual` row divides by 12); `Arr = Mrr × 12`; `PayingOrganizations = COUNT(DISTINCT OrganizationId) WHERE PriceLkr > 0`; `Arpu = Mrr / PayingOrganizations` |
+| Dimensions | `asOf` instant |
+| Granularity | snapshot |
+| Freshness | `≤ 60 s` |
+| Retention | not historical |
+| Source | `OrganizationSubscriptions` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/admin/statistics/revenue/overview` |
+| Access | `revenue:read` |
+| Notes | **`null` is not `0` here.** When `PayingOrganizations = 0`, `Arpu` is `null` rather than a division by zero, and when every `PriceLkr` is `0`, `Mrr` and `Arr` are `null` with `subscriptionPricesConfigured = false`. This is **list-price scheduled revenue**, not recognised or collected revenue — the response states `revenueProviderSettlementAvailable = false` and the console must not label it "collected" |
+
+### S-53 · `revenueTimeseries`
+
+| Field | Value |
+| --- | --- |
+| Description | Derived, verified and refunded amounts per bucket |
+| Formula | `Σ Amount` over `IncomeLedgerEntries` grouped by bucket and `ChargeBasis`/`Kind`; `Refunded` is the `Refund` kind's magnitude |
+| Dimensions | `granularity` (`day`\|`week`\|`month`), `organizationId` |
+| Granularity | caller-selected |
+| Freshness | `≤ 60 s` |
+| Retention | indefinite |
+| Source | `IncomeLedgerEntries` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/admin/statistics/revenue/timeseries` |
+| Access | `revenue:read` |
+| Notes | The bucket axis is **dense**: a bucket with no rows is `0`, because a month with no charges is a real zero. A bucket *before* the earliest entry is absent, and the response names `observedFrom`. Every point carries `isPartial`, true for the leading bucket clipped by `from` and the trailing bucket the window's `to` falls inside. The derived and verified series are returned side by side and never merged into one line |
+
+### S-54 · `revenueCollections`
+
+| Field | Value |
+| --- | --- |
+| Description | Collection rate per period: verified receipts against derived charges |
+| Formula | Per period, `DerivedTotal` and `VerifiedTotal` as S-50; `CollectionRate = VerifiedTotal / DerivedTotal`, `null` when `DerivedTotal = 0`; `Outstanding = DerivedTotal − VerifiedTotal` |
+| Dimensions | `granularity`, `organizationId` |
+| Granularity | caller-selected |
+| Freshness | `≤ 60 s` |
+| Retention | indefinite |
+| Source | `IncomeLedgerEntries` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/admin/statistics/revenue/collections` |
+| Access | `revenue:read` |
+| Notes | `CollectionRate` is `null`, never `0` or `∞`, when `DerivedTotal = 0` — a window with nothing billed has no collection rate. A rate above `100 %` is reported as-is rather than clipped, because it means a receipt arrived without a matching derived charge, which is exactly what an operator needs to see. `Outstanding` may be negative for the same reason |
+
+### S-55 · `revenueBlossomSales`
+
+| Field | Value |
+| --- | --- |
+| Description | Blossom top-up packs sold in a window: count, Blossoms granted, list-price value and conversion |
+| Formula | From `IncomeLedgerEntries` where `Kind = 'TopUpPurchase'`: `PacksSold = COUNT(*)`, `BlossomsGranted = Σ` the matching `BlossomLedgerEntries.BlossomDelta WHERE EntryType = 'TopUpGrant'`, `ListPriceLkr = Σ Amount`, `VerifiedLkr = Σ Amount WHERE ChargeBasis = 'Verified'`; `Conversion = VerifiedLkr / ListPriceLkr`, `null` when `ListPriceLkr = 0` |
+| Dimensions | `granularity`, `organizationId`, `skuCode` |
+| Granularity | caller-selected |
+| Freshness | `≤ 60 s` |
+| Retention | indefinite |
+| Source | `IncomeLedgerEntries` ⋈ `BlossomLedgerEntries` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/admin/statistics/revenue/blossoms` |
+| Access | `revenue:read` |
+| Notes | A top-up **without** a `paymentReference` writes no income row at all, so `PacksSold` counts only referenced purchases. That is a deliberate undercount of *grants* and an accurate count of *sales*; the response states `grantedWithoutReference` so the difference between the two is visible rather than inferred |
+
+### S-56 · `billingReconciliation`
+
+| Field | Value |
+| --- | --- |
+| Description | Per-account Blossom reconciliation drift across every open account |
+| Formula | For each open `UsageAccounts` row: `ledgerDerivedBalance = MonthlyBlossomLimit + Σ deltas excluding PeriodAllocation − BlossomUsed`; `drift = BlossomRemaining − ledgerDerivedBalance`; the response ranks accounts by `abs(drift)` descending |
+| Dimensions | `limit` |
+| Granularity | snapshot |
+| Freshness | `≤ 60 s` |
+| Retention | not stored; the same computation feeds the 30 s `aveline.blossom.reconciliation.drift` sample |
+| Source | `UsageAccounts` ∪ `BlossomLedgerEntries` ∪ `AiUsageRecords` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/admin/statistics/billing/reconciliation` |
+| Access | `stats:system` |
+| Notes | **Uses `BlossomService.LedgerDerivedBalance` and `ReconciliationDrift` unchanged**, because those two helpers are also what `SystemMetricCollector` emits for the `blossom.ledger.drift` alert; a second formula here would let the console and the alarm disagree. A non-zero drift is a **Critical** condition (S-3). This endpoint exists so a drift is findable from the console rather than only from Grafana |
+
+---
+
+
 ## 8. Data quality warnings (must be returned to clients)
 
 Because several underlying data points are not yet instrumented, every

@@ -61,8 +61,13 @@ transitively: `@tanstack/react-query`, `jsdom`, `@testing-library/react`, `@test
 
 `src/lib/admin/permissions.sync.test.ts` reads `Aveline.Api/Authorization/Permissions.cs` and
 `Roles.cs` **from source** (via `src/test/permissions-catalog.ts`) and asserts the client mirror in
-`src/lib/admin/permissions.ts` is exact: 24 permissions, 9 role grant sets. It is generated from the
+`src/lib/admin/permissions.ts` is exact: 28 permissions, 9 role grant sets. It is generated from the
 C#, not transcribed, so a change to `Permissions.cs` fails the test until the mirror follows.
+
+`admin` holds the whole catalog minus the permissions named in `Permissions.cs`'s
+`PermissionsDeniedToAdmin` array (`pricing:backdate` and `revenue:refund`), and the client mirror
+derives its own grant set from the same parsed list rather than a hand-written `.filter()`, so a new
+denial cannot drift.
 
 The same test records, as executable fact, that `audit:view`, `stats:system` and `pricing:view` are
 held **only** by `admin` and `owner` — the audit's claim that a `moderator` holds all three is false
@@ -480,7 +485,8 @@ balances. An unavailable statement reads *"reconciliation status unknown"*, neve
 ### The recompute capability
 
 `lib/admin/pricing.ts` gates recompute on **`pricing:backdate`**, not on the page's
-`pricing:manage`. `admin` holds 23 of the 24 permissions and is deliberately denied backdate, so
+`pricing:manage`. `admin` holds the whole catalog except the named denials and is deliberately
+denied backdate, so
 the control renders **disabled with the stated reason** for an admin and issues **no request**; for
 an owner it runs and renders the `PricingRecomputeResult`, so a zero-effect run is visible. The
 input plan's *"returns `501`, disable it"* is false — it returns `200`.
@@ -800,6 +806,109 @@ is required and Redis is not configured, rather than letting the two replicas se
 - **The Playwright walk is written but not executed here.** `tests/e2e/admin-console/console-access.spec.ts`
   now covers both new routes signed-out, but no browser is installed in this environment — the same
   limitation A8 recorded, stated rather than implied.
+
+## Revenue Ledger — the `money` domain (R0–R6)
+
+**Status:** in progress. R0 is delivered; R1–R6 are open.
+
+The plan is `.agents/plans/revenue-ledger-and-blossom-redesign-implementation.md`; the GitHub
+issues are
+[#341](https://github.com/KavinduNirmal/aveline/issues/341) (R0),
+[#342](https://github.com/KavinduNirmal/aveline/issues/342) (R1),
+[#343](https://github.com/KavinduNirmal/aveline/issues/343) (R2),
+[#344](https://github.com/KavinduNirmal/aveline/issues/344) (R3),
+[#345](https://github.com/KavinduNirmal/aveline/issues/345) (R4),
+[#346](https://github.com/KavinduNirmal/aveline/issues/346) (R5) and
+[#347](https://github.com/KavinduNirmal/aveline/issues/347) (R6).
+
+### What the family is for
+
+The console has no revenue concept. `grep -rniE "\bincome\b"` over `Aveline.Api` and
+`Aveline.Api.Tests` returns zero, and `revenue` appears only as `BlossomRevenue` /
+`TotalBlossomRevenue`, which are Blossom **units**, not currency. Payments in this repository are
+boutique-scoped: `Payment` requires an `OrderId` and reaches only
+`/api/v1/orgs/{organizationId}/payments`, so it is a tenant's sales record rather than platform
+income. The `money` domain answers a different question — *what did Aveline bill, and was any of it
+collected?*
+
+### The two entry classes (D4)
+
+**There is no payment-provider client in this repository.** The provider columns on
+`OrganizationSubscriptions` and `BlossomPriceEntries` exist and nothing writes them;
+`docs/api/README.md` records the position: *"Phase 3 attaches a payment provider; until then a
+top-up is a recorded grant, not a charge."*
+
+Booking income at the top-up or rollover site without that distinction would invent money, so the
+ledger carries two classes and the console must always say which it is showing:
+
+| `chargeBasis` | Meaning | Writer |
+|---|---|---|
+| `Derived` | what the list price says *should* be billed — an expectation | the top-up route when a `paymentReference` is supplied, and `BillingPeriodRolloverJob` |
+| `Verified` | money an operator confirmed was received, or a refund | `POST /admin/revenue/ledger/verify` and `/refund` |
+
+A top-up with **no** `paymentReference` writes no income row at all.
+
+### R0 — foundations and the honesty contract
+
+R0 adds **no UI and no endpoint**. It lands the contract so R1–R6 have nothing left to decide.
+
+**The permission family.** Three constants join a 25-permission catalog, which is now **28**:
+
+| Permission | `admin` | `owner` | `moderator` |
+|---|---|---|---|
+| `revenue:read` | ✅ | ✅ | ✅ |
+| `revenue:manage` | ✅ | ✅ | — |
+| `revenue:refund` | — | ✅ | — |
+
+A `moderator` already holds `analytics:business:read` and `admin:orgs:read`, so reading what a
+boutique was billed is the same class of read and is inside their remit. Moving money is not:
+`revenue:manage` stays team-only, and `revenue:refund` is owner-only, because sending money back is
+irreversible in a way that correcting the ledger is not.
+
+**A structural fix that came out of this.** `admin` is granted the whole catalog minus a denial
+list, and that list was an inline `!= PricingBackdate` at the `All.Where(...)` call site — which
+meant the client mirror had to re-derive the exclusion by hand in a `.filter()` the server could not
+check. Adding `revenue:refund` as a second denial made the drift real: the first test run granted it
+to an admin. `Permissions.cs` now names the denials in
+`PermissionsDeniedToAdmin`, `permissions-catalog.ts` parses that array, and **both sides derive their
+grant set from it** — so a third denial cannot drift.
+
+**Two role policies.** `AuthorizationConfiguration.cs` gains `MoneyRead` (`owner`, `admin`,
+`moderator`) and `MoneyOperations` (`owner`, `admin`), each `RequireRole(...)` plus a
+`PermissionRequirement` in the established team-only shape. `MoneyRead` is the only team-only policy
+that admits a `moderator`.
+
+**A fifth `dataQuality` vocabulary.** `IncomeDataQuality` (`types/admin/index.ts`) and its pinned
+field list (`lib/admin/revenue-quality.ts`), deliberately not a reuse of `BusinessDataQuality`:
+attribution and backfill say nothing about whether a price was configured or whether a receipt was
+verified. Its three load-bearing facts:
+
+- `revenueProviderSettlementAvailable: false` — no figure in this family is settled money.
+- `subscriptionPricesConfigured: false` — every subscription has `PriceLkr = 0`, because
+  `SubscriptionService.UpsertSubscriptionAsync` never assigns it. A derived charge of `0` therefore
+  means *no list price is configured*; it does not mean free, and MRR is `null` rather than `0`.
+- `derivedEntriesUnverified` — the count of `Derived` rows with no `Verified` counterpart. That gap
+  is the most important number on the surface, and it is **not** an error.
+
+**The `money` domain.** Four registry entries: `blossoms` (moved out of `operations`, gated
+`MoneyOperations`), and `revenue`, `revenue-ledger`, `revenue-stats` (gated `MoneyRead`,
+`enabled: false` until R5/R6 build and mount them — the precedent slice A3 set). `operations` keeps
+`pricing` and `price-book`, so its ≥ 2-entry invariant still holds.
+
+**A gate that was missing.** `routes.ts` is the single source of truth for the panel, the breadcrumb
+and the registry invariants, but it mounts nothing: `App.tsx` carries a hand-written `<Route>` block
+and nothing checked the two agreed. An entry registered without a route falls through to the
+`path="*"` catch-all and silently redirects to the dashboard — worse than a 404, because nothing
+looks broken. `lib/admin/routes.router.test.ts` reads `App.tsx` from source and asserts that every
+`enabled` entry is mounted, that a **disabled** entry is *not* mounted, that no sub-path is mounted
+twice, and that every imported view is mounted somewhere.
+
+### The catalog and the wire
+
+S-50 … S-56 are recorded in `docs/backend/statistics-catalog.md` §7c, including the two-entry-class
+table, the `IncomeDataQualityDto` field table, and the `PriceLkr = 0` warning. The endpoints
+themselves land in R2 (writes) and R3 (reads), and the API catalog and OpenAPI entries land with
+them.
 
 ## Documentation and API surface
 

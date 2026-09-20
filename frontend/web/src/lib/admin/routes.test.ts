@@ -81,4 +81,71 @@ describe('ADMIN_ROUTES invariants', () => {
     expect(findRouteById('business-growth')?.subPath).toBe('business')
     expect(findRouteById('business-usage')?.subPath).toBe('business/usage')
   })
+
+  /**
+   * R0. The money domain. Its two gates are deliberately different, and the split is the
+   * point: `MoneyRead` admits a moderator to what a boutique was billed, `MoneyOperations`
+   * (which owns the Blossom ledger) does not. Collapsing them would hand a moderator the
+   * Blossom adjustment surface.
+   */
+  it('lands the four money entries in the new domain', () => {
+    const money = routesForDomain('money')
+
+    expect(money.map((route) => route.id).sort()).toEqual([
+      'blossoms',
+      'revenue',
+      'revenue-ledger',
+      'revenue-stats',
+    ])
+    for (const route of money) {
+      expect(route.gate, route.id).not.toBeNull()
+    }
+  })
+
+  it('gates the three revenue entries on MoneyRead', () => {
+    for (const id of ['revenue', 'revenue-ledger', 'revenue-stats']) {
+      expect(findRouteById(id)?.gate, id).toEqual({
+        kind: 'role',
+        anyOf: ['owner', 'admin', 'moderator'],
+      })
+    }
+  })
+
+  it('gates the Blossom ledger on MoneyOperations rather than MoneyRead', () => {
+    expect(findRouteById('blossoms')?.gate).toEqual({
+      kind: 'role',
+      anyOf: ['owner', 'admin'],
+    })
+    expect(findRouteById('blossoms')?.domain).toBe('money')
+    expect(findRouteById('blossoms')?.subPath).toBe('blossoms')
+    // The page exists (slice A6), so this entry is the one enabled money entry.
+    expect(findRouteById('blossoms')?.enabled).toBe(true)
+  })
+
+  it('routes the revenue entries under the revenue sub-path prefix', () => {
+    expect(findRouteById('revenue')?.subPath).toBe('revenue')
+    expect(findRouteById('revenue-ledger')?.subPath).toBe('revenue/ledger')
+    expect(findRouteById('revenue-stats')?.subPath).toBe('revenue/statistics')
+  })
+
+  /**
+   * The three revenue pages are registered now and built in R5/R6. Registering them disabled
+   * settles the navigation's shape and these invariants before the pages land, and is the
+   * precedent slice A3 set: an entry with `enabled: false` is never linked, and
+   * `routes.router.test.ts` asserts it is not mounted either.
+   */
+  it('registers the three revenue pages but does not yet claim they are built', () => {
+    for (const id of ['revenue', 'revenue-ledger', 'revenue-stats']) {
+      expect(findRouteById(id)?.enabled, id).toBe(false)
+    }
+    expect(navigableRoutes().map((route) => route.id)).not.toContain('revenue')
+    expect(navigableRoutes().map((route) => route.id)).not.toContain('revenue-ledger')
+    expect(navigableRoutes().map((route) => route.id)).not.toContain('revenue-stats')
+  })
+
+  it('declares the money domain, and the operations domain still holds two entries', () => {
+    expect(ADMIN_DOMAINS).toContain('money')
+    // `blossoms` moved out of `operations`; the domain invariant must still hold without it.
+    expect(routesForDomain('operations').length).toBeGreaterThanOrEqual(2)
+  })
 })

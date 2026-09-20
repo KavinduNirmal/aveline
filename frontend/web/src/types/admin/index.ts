@@ -583,3 +583,40 @@ export interface BusinessWindowParams {
 }
 
 export type BusinessRankingMetric = 'messages' | 'agentRuns' | 'apiRequests' | 'blossomUnits'
+
+// ── Revenue (S-50…S-56) ──────────────────────────────────────────────────────────────────────
+// The wire shapes of `/api/v1/admin/revenue/*` and `/api/v1/admin/statistics/revenue/*`.
+// Authority: the C# DTOs in `Aveline.Api/Modules/Revenue/DTOs/RevenueDtos.cs` (R3) and the
+// catalog entries S-50…S-56 (R0).
+
+/**
+ * `IncomeDataQualityDto`. The **fifth** data-quality vocabulary, alongside system, agent, api
+ * and business. Deliberately not a reuse of `BusinessDataQuality`: attribution and backfill say
+ * nothing about whether a price was configured or whether a receipt was verified.
+ *
+ * The three facts this exists to state, so no caller has to infer them:
+ *
+ * - `revenueProviderSettlementAvailable: false` — no payment provider is wired in this
+ *   repository, so **no figure here is settled money**. Every amount is an expectation or an
+ *   operator's confirmation, and the surface must say which.
+ * - `subscriptionPricesConfigured: false` — every subscription currently has `PriceLkr = 0`
+ *   because `SubscriptionService` never assigns it. A derived charge of `0` therefore means
+ *   *no list price is configured*; it does not mean free, and MRR is `null` rather than `0`.
+ * - `derivedEntriesUnverified` — the count of `Derived` rows with no `Verified` counterpart.
+ *   That gap is the most important number on the surface, and it is not an error.
+ *
+ * Field order mirrors the C# record. `INCOME_QUALITY_FIELDS` in `lib/admin/revenue-quality.ts`
+ * pins the set.
+ */
+export interface IncomeDataQuality {
+  /** `false` until a provider client settles money. Never rendered as "collected". */
+  revenueProviderSettlementAvailable: boolean
+  /** `false` when every subscription's `PriceLkr` is `0`, so MRR is not measurable. */
+  subscriptionPricesConfigured: boolean
+  /** `Derived` rows with no `Verified` counterpart — the unverified gap. */
+  derivedEntriesUnverified: number
+  /** When these flags were evaluated, distinct from the window's `to`. */
+  checkedAt: string
+  /** Free-text notes, including the cache-degradation note when a shared cache is absent. */
+  notes: string[]
+}

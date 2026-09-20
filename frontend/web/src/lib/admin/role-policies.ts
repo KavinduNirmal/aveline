@@ -15,15 +15,25 @@ export type Gate =
   | { kind: "role"; anyOf: readonly string[] }
 
 /**
- * Mirrors the four `RequireRole(...)` registrations in
- * `AuthorizationConfiguration.cs:167-168,258,260,262` **by name**. `role-policies.sync.test.ts`
- * is the mechanism that keeps it true.
+ * Mirrors the `RequireRole(...)` registrations in `AuthorizationConfiguration.cs`
+ * **by name**. `role-policies.sync.test.ts` is the mechanism that keeps it true.
  */
 export const ROLE_POLICIES = {
   AdminReview: { policy: "AdminReview", anyOf: ["moderator", "admin", "owner"] },
   StatsSystem: { policy: "StatsSystem", anyOf: ["owner", "admin"] },
   AuditView: { policy: "AuditView", anyOf: ["owner", "admin"] },
   PricingAdminRead: { policy: "PricingAdminRead", anyOf: ["owner", "admin"] },
+  /**
+   * The revenue read overlay. Wider than the other team-only policies: a `moderator` already
+   * holds `analytics:business:read`, so reading what a boutique was billed is inside their
+   * remit.
+   */
+  MoneyRead: { policy: "MoneyRead", anyOf: ["owner", "admin", "moderator"] },
+  /**
+   * The money-moving overlay — the Blossom ledger's administrative operations, and the revenue
+   * verify/refund/adjust writes. Deliberately excludes `moderator`.
+   */
+  MoneyOperations: { policy: "MoneyOperations", anyOf: ["owner", "admin"] },
 } as const
 
 export type RolePolicyName = keyof typeof ROLE_POLICIES
@@ -33,7 +43,7 @@ export interface GateContext {
   can: (permission: Permission) => boolean
 }
 
-/** The four mirrored policy names, in registration order. */
+/** The mirrored policy names, in registration order. */
 export function policyNames(): RolePolicyName[] {
   return Object.keys(ROLE_POLICIES) as RolePolicyName[]
 }

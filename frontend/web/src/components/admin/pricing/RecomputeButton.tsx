@@ -8,10 +8,10 @@ import type { PricingRecomputeResult } from "@/types/admin"
 /**
  * Recompute, gated on the **capability**.
  *
- * `admin` holds 23 of the 24 permissions and is deliberately denied `pricing:backdate`, so an
- * `admin` looking at a page whose permission is `pricing:manage` is still `403` here. Rather than
- * render an enabled button that fails, the control is **disabled with the stated reason** and
- * issues no request at all.
+ * `admin` holds the whole catalog except the named denials (`pricing:backdate` and
+ * `revenue:refund`), so an `admin` looking at a page whose permission is `pricing:manage` is
+ * still `403` here. Rather than render an enabled button that fails, the control is **disabled
+ * with the stated reason** and issues no request at all.
  */
 export function RecomputeButton({
   ruleId,

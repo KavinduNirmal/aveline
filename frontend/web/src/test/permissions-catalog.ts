@@ -17,6 +17,8 @@ export interface BackendPermissionCatalog {
   readonly all: readonly string[]
   /** Role string (e.g. `org:boutique_staff`) to the permission strings it grants. */
   readonly roles: Readonly<Record<string, readonly string[]>>
+  /** The permissions `admin` is deliberately denied, in declaration order. */
+  readonly adminDenied: readonly string[]
 }
 
 const webRoot = fileURLToPath(new URL('../..', import.meta.url))
@@ -56,6 +58,26 @@ function parseAllBlock(source: string, constants: Map<string, string>): string[]
     .map((identifier) => constants.get(identifier) ?? identifier)
 }
 
+/**
+ * Reads the permissions `admin` is deliberately denied.
+ *
+ * The server names them in one array (`PermissionsDeniedToAdmin`) rather than special-casing
+ * them at the `All.Where(...)` call site, precisely so this parse is possible: before that
+ * array existed, the client mirror had to re-derive the exclusion from a hand-written
+ * `.filter()` and the two could drift without any test noticing.
+ */
+function parseAdminDenied(source: string, constants: Map<string, string>): string[] {
+  const block = /PermissionsDeniedToAdmin\s*=\s*\[([\s\S]*?)\];/.exec(source)
+  if (!block) {
+    throw new Error('Permissions.cs: could not locate PermissionsDeniedToAdmin')
+  }
+
+  return block[1]
+    .split(/[\s,]+/)
+    .filter(Boolean)
+    .map((identifier) => constants.get(identifier) ?? identifier)
+}
+
 function parsePermissionNames(
   expression: string,
   constants: Map<string, string>,
@@ -71,6 +93,7 @@ function parseRoleGrants(
   constants: Map<string, string>,
   all: readonly string[],
   roleNames: Map<string, string>,
+  adminDenied: readonly string[],
 ): Record<string, string[]> {
   const section = source.slice(source.indexOf('RolePermissions ='))
   if (section.length === 0) {
@@ -85,10 +108,10 @@ function parseRoleGrants(
   for (const [, roleIdentifier, rawExpression] of entries) {
     const expression = rawExpression.trim().replace(/,$/, '')
     const role = roleNames.get(roleIdentifier) ?? roleIdentifier
-    const exclude = /All\.Where\([^)]*!=\s*(\w+)\)/.exec(expression)
-    if (exclude) {
-      const excluded = constants.get(exclude[1]) ?? exclude[1]
-      roles[role] = all.filter((permission) => permission !== excluded)
+    if (/All\.Where\([\s\S]*PermissionsDeniedToAdmin/.test(expression)) {
+      // The named-denials shape. Before it existed the exclusion was an inline `!= X`, which
+      // had to be re-derived by hand in the client mirror.
+      roles[role] = all.filter((permission) => !adminDenied.includes(permission))
     } else if (expression === 'All') {
       roles[role] = [...all]
     } else if (expression.startsWith('Grant(')) {
@@ -98,9 +121,14 @@ function parseRoleGrants(
       )
       roles[role] = parsePermissionNames(inner, constants)
     } else {
-      throw new Error(
-        `Permissions.cs: unrecognised role grant expression for ${roleIdentifier}: ${expression}`,
-      )
+      const exclude = /All\.Where\([^)]*!=\s*(\w+)\)/.exec(expression)
+      if (!exclude) {
+        throw new Error(
+          `Permissions.cs: unrecognised role grant expression for ${roleIdentifier}: ${expression}`,
+        )
+      }
+      const excluded = constants.get(exclude[1]) ?? exclude[1]
+      roles[role] = all.filter((permission) => permission !== excluded)
     }
   }
   return roles
@@ -114,9 +142,10 @@ export function parsePermissionsCatalog(): BackendPermissionCatalog {
   const constants = parseStringConstants(permissionsSource)
   const roleNames = parseStringConstants(rolesSource)
   const all = parseAllBlock(permissionsSource, constants)
-  const roles = parseRoleGrants(permissionsSource, constants, all, roleNames)
+  const adminDenied = parseAdminDenied(permissionsSource, constants)
+  const roles = parseRoleGrants(permissionsSource, constants, all, roleNames, adminDenied)
 
-  return { all, roles }
+  return { all, roles, adminDenied }
 }
 
 export interface BackendRolePolicy {

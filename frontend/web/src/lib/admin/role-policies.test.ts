@@ -15,17 +15,22 @@ const context = (roles: string[], granted: Permission[] = []) => ({
 })
 
 describe('ROLE_POLICIES mirrors AuthorizationConfiguration.cs by name', () => {
-  it('registers exactly the four role policies, with the roles the C# grants', () => {
+  it('registers exactly the six role policies, with the roles the C# grants', () => {
     expect(policyNames()).toEqual([
       'AdminReview',
       'StatsSystem',
       'AuditView',
       'PricingAdminRead',
+      'MoneyRead',
+      'MoneyOperations',
     ])
     expect(ROLE_POLICIES.AdminReview.anyOf).toEqual(['moderator', 'admin', 'owner'])
     expect(ROLE_POLICIES.StatsSystem.anyOf).toEqual(['owner', 'admin'])
     expect(ROLE_POLICIES.AuditView.anyOf).toEqual(['owner', 'admin'])
     expect(ROLE_POLICIES.PricingAdminRead.anyOf).toEqual(['owner', 'admin'])
+    // The money pair is the one place the read overlay is wider than the write overlay.
+    expect(ROLE_POLICIES.MoneyRead.anyOf).toEqual(['owner', 'admin', 'moderator'])
+    expect(ROLE_POLICIES.MoneyOperations.anyOf).toEqual(['owner', 'admin'])
   })
 
   it('keeps the policy name and the registry key identical', () => {

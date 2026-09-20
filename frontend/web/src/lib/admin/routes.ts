@@ -33,6 +33,10 @@ export type AdminDomain =
   // Postgres tables, not Prometheus: the console may own a business time series, and this domain
   // is where it lives (DR-1).
   | "business"
+  // Aveline's own money — the income ledger, financial statistics, and the Blossom entitlement
+  // ledger. Same Postgres boundary as `business`; separate because the gate is different: the
+  // money read admits a `moderator`, and the operations that move entitlements do not.
+  | "money"
 
 export const ADMIN_DOMAINS: readonly AdminDomain[] = [
   "overview",
@@ -42,6 +46,7 @@ export const ADMIN_DOMAINS: readonly AdminDomain[] = [
   "observability",
   "statistics",
   "business",
+  "money",
 ]
 
 export interface AdminRouteDef {
@@ -148,16 +153,6 @@ export const ADMIN_ROUTES: readonly AdminRouteDef[] = [
   },
 
   {
-    id: "blossoms",
-    subPath: "blossoms",
-    label: "Blossom Ledger",
-    description: "Idempotent credit, debit, and revoke ledger operations",
-    icon: Coins,
-    domain: "operations",
-    gate: { kind: "permission", permission: "billing:adjust" },
-    enabled: true,
-  },
-  {
     id: "pricing",
     subPath: "pricing",
     label: "Pricing & Rules",
@@ -249,6 +244,55 @@ export const ADMIN_ROUTES: readonly AdminRouteDef[] = [
     domain: "business",
     gate: { kind: "permission", permission: "analytics:business:read" },
     enabled: true,
+  },
+
+  // ── Money ────────────────────────────────────────────────────────────────────────────────
+  // Aveline's own revenue and the Blossom entitlement ledger. Two gates, deliberately: the
+  // read overlay admits a `moderator`, who already reads what a boutique was billed through
+  // `analytics:business:read`; the operations overlay does not, because moving entitlements is
+  // not a read. Collapsing the two would hand a moderator the Blossom adjustment surface.
+  {
+    id: "blossoms",
+    subPath: "blossoms",
+    label: "Blossom Ledger",
+    description: "Statement of account, idempotent credit/debit/revoke, and reconciliation",
+    icon: Coins,
+    domain: "money",
+    gate: { kind: "role", anyOf: ROLE_POLICIES.MoneyOperations.anyOf },
+    enabled: true,
+  },
+  {
+    id: "revenue",
+    subPath: "revenue",
+    label: "Revenue",
+    description: "Aveline's own income: derived charges, verified receipts and the gap",
+    icon: TrendingUp,
+    domain: "money",
+    gate: { kind: "role", anyOf: ROLE_POLICIES.MoneyRead.anyOf },
+    // Registered disabled: R0 settles the navigation's shape and the registry invariants
+    // before the page lands, exactly as slice A3 did. R6 flips it to `enabled: true` in the
+    // commit that also mounts its `<Route>` and imports its view.
+    enabled: false,
+  },
+  {
+    id: "revenue-ledger",
+    subPath: "revenue/ledger",
+    label: "Income Ledger",
+    description: "The append-only revenue journal, with verifying and adjusting actions",
+    icon: FileText,
+    domain: "money",
+    gate: { kind: "role", anyOf: ROLE_POLICIES.MoneyRead.anyOf },
+    enabled: false,
+  },
+  {
+    id: "revenue-stats",
+    subPath: "revenue/statistics",
+    label: "Payments Statistics",
+    description: "MRR, ARR, ARPU, collection rate and Blossom pack sales",
+    icon: BarChart3,
+    domain: "money",
+    gate: { kind: "role", anyOf: ROLE_POLICIES.MoneyRead.anyOf },
+    enabled: false,
   },
 ]
 

@@ -67,6 +67,12 @@ export default defineConfig({
           environment: 'jsdom',
           setupFiles: ['./src/test/setup-dom.ts'],
           include: ['src/**/*.dom.test.{ts,tsx}'],
+          // Vitest's 5 s default is a liveness bound, not an assertion, and it is too tight for
+          // the admin DOM tests: several drive `userEvent.type` across a whole filter form, and
+          // v8 coverage instrumentation plus a 2-core CI runner pushed
+          // `AdminAudit.dom.test.tsx` past 5 s — it failed in CI while passing locally, twice.
+          // This bound still catches a genuine hang; it just stops reporting one for a slow test.
+          testTimeout: 20_000,
         },
       },
     ],

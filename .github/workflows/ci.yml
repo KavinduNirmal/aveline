@@ -183,6 +183,13 @@ jobs:
         run: bun run test:coverage
         working-directory: frontend/web
 
+      # The admin ratchet. It is its own run because the tenant gate's glob-scoped thresholds
+      # deliberately exclude the admin subtree (C3), which meant the admin floor only ever bound on a
+      # developer's laptop. This step is what makes it a gate.
+      - name: "Test (admin coverage ratchet)"
+        run: bun run test:coverage:admin
+        working-directory: frontend/web
+
       - name: Upload web coverage report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

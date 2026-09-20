@@ -4254,3 +4254,251 @@ dashboards, the empty ones are all explained by an idle local stack: no agent ru
 `Publish latency p95` — also below the 5-sample floor), no notification deliveries, and no blossom
 consumption in the window. The System overview is **22 of 25** with data, the Database **8 of 8**.
 `docs/backend/observability.md` §6.4 gained a "why a panel is empty" table so this is not re-derived.
+
+## Session 2026-09-19 (b) — Administrator Dashboard overhaul (slices A0–A9)
+
+**Task:** Implement the Admin frontend overhaul from
+`.agents/plans/admin-dashboard-overhaul-implementation-strategy.md` (revision 2, FINAL) and
+`.agents/plans/✅ admin-dashboard-overhaul-implementation.ignore.md` (the executable plan).
+**Tool used:** DeepSeek Harness (deepseek-flash) coding agent.
+
+### Session start
+
+- Read both plan documents in full, plus the executable plan's source audit. Recorded the answered
+  decisions **C1**–**C8** and **Q1**–**Q11**, and the slice cut **A0**–**A9** with the ordering rule
+  *"a slice may merge only when the console is strictly better than before it"*.
+- Confirmed the working branch is `feature/admin-frontend-ui-v3` and that **no branch will be created or
+  switched**; all work lands on the current branch.
+- Confirmed the environment facts the plan depends on: 30 test files / 23 `components/ui` primitives,
+  `recharts@3.10.1` installed but unused, `jsdom` and TanStack Query absent, both `bun.lock` and the
+  forbidden `pnpm-lock.yaml` present.
+- Created one GitHub issue per slice so each phase is independently tracked.
+- TDD is mandatory for every slice: the failing test is written and observed failing before its
+  implementation, then refactored green.
+
+*(End-of-session summary for this work is appended below when the session closes.)*
+
+### Work delivered
+
+Ten GitHub issues were created for the plan's slices — **#325–#334** — and work proceeded on the
+current branch `feature/admin-frontend-ui-v3` with no branch created or switched.
+
+**All ten slices are delivered**: A0–A7 and A9 in full, and A8 everywhere it can be verified in this
+environment. Commit history on the branch:
+
+- `965c555` — A0–A3: harness, truthfulness, identity, shell.
+- `1685cc8` — A9: the three backend defects unlocked by C7.
+- `862782c` — the console-URL identity fix plus A8's `traceId`/`ErrorState` and the doc corrections.
+- `cd660b2`, `2b6156d`, `42deba2`, `60521bd`, `b0c19fd` — roles matrix, the real TanStack Query
+  adoption, the price book, the E2E harness and the last two conformance rules.
+- A4 (dashboard V1–V11), A5 (core management), A6 (pricing and Blossom) and A7 (observability) each
+  committed with their own slice message.
+
+**What A8 does not cover, and why.** The axe sweep, the keyboard walkthrough and the contrast audit
+need a browser; `playwright install chromium` stalled against the CDN and no system browser exists
+here. The authenticated end-to-end walk needs a Clerk test session, which this environment has no
+credentials for. The Playwright suite is delivered and wired (`tests/e2e/admin-console/`,
+`bun run test:e2e`) and covers the signed-out path, but it was **not executed** — that is stated in
+`docs/frontend/admin-console.md` rather than implied.
+
+**Two routes in the plan's target tree are not built, deliberately.** `AdminUserDetail` and
+`AdminOrgDetail` would each need a by-id read the API does not have (`GET /admin/users/{id}`,
+`GET /admin/orgs/{id}`), and the search cannot substitute because `UserRepository` matches `q`
+against email, name, username and `clerkId` but not `id`. Adding those reads would be a fourth item
+in A9, which C7 forbids. The registry keeps both entries disabled, so nothing links to a page that
+cannot be built.
+
+Every slice followed TDD: the failing test was written and observed failing before its
+implementation. Highlights of the defects that are now pinned by a test:
+
+- The fabricated admin session and the two fabricated system fallbacks (a `Healthy` system with
+  `uptimeSeconds: 84200`) — a signed-out visitor previously rendered ten sections against six `401`s.
+- The permission mirror is now checked against `Aveline.Api/Authorization/Permissions.cs` by a
+  **generated** drift test, and the four role policies against `AuthorizationConfiguration.cs`.
+- `revoke` now sends `{ ledgerEntryId, reason }`; the delivered body could not be bound at all.
+- The Blossom `Idempotency-Key` is mandatory and belongs to the payload, so a retry cannot
+  double-apply.
+- Self-approval is keyed on the Clerk subject, not on an email that the captured payload returns as
+  `null` on `/auth/claims` and `""` on every request row.
+- `recompute` is gated on the `pricing:backdate` capability, not on the page's `pricing:manage`.
+
+**A9 (backend, TDD).** `GET /auth/claims` read the raw `email` claim while the JwtBearer pipeline
+maps it to `ClaimTypes.Email`, so every real token got `null`; the three team-only role policies now
+carry their permission requirement alongside the role requirement; and `AcknowledgeAsync` rejects an
+already-`Resolved` alert. `dotnet test` → **1640 passed, 0 failed**.
+
+**Coverage policy (C3).** The tenant surface keeps its exact `80/70/70/80` floor, now expressed as
+glob-scoped thresholds; the admin subtree is measured by its own run (`bun run test:coverage:admin`)
+whose floor started at 0 and ratcheted to **52.1 % lines / 40.4 % branches** by A6.
+
+**Deviations and gaps, stated rather than implied.**
+
+- oxlint 1.79 has no custom-JS-plugin API, so the two blocking conformance rules (raw palette/hex;
+  raw `<select>`/`<input>`) are enforced by `src/test/admin-conformance.test.ts`, which CI runs.
+- The admin-subtree coverage number is produced by a second Vitest config rather than by adding the
+  admin tree to the single global run, because a global number cannot both keep the tenant floor and
+  avoid blocking every admin slice. The tenant floor is untouched.
+- A8's remaining two conformance rules, the Playwright/axe harness, the keyboard walkthrough and the
+  contrast audit were **not** delivered. They are recorded as open in
+  `docs/frontend/admin-console.md`.
+
+### Verification performed
+
+- `bunx vitest run` — **73 files / 456 tests passed** (the baseline was 30 files / 214 tests).
+- `bunx tsc -b` — exit 0.
+- `bunx oxlint src` — 0 errors (51 warnings, all pre-existing).
+- `bun run test:coverage` — the tenant gate passes unchanged, at its original 80/70/70/80 floors.
+- `bun run test:coverage:admin` — the ratchet passes at 69.65 % lines / 57.12 % branches for the
+  admin subtree, 70.02 % lines on `routes/admin`, having started at a floor of 0 at A0.
+- `dotnet test Aveline.Api.Tests` (A9) — **1640 passed, 0 failed**.
+- All four C6 conformance rules plus the chart `connectNulls` rule are blocking, with exactly one
+  documented allow-list entry (the log viewer's virtualised row).
+- A reviewer reported the console rendering a dead-end "Console scope not available" card for a
+  real administrator's URL. Investigating it produced the most useful finding of the session, in
+  two parts.
+  **(a) Q1 is negative by construction.** `UserRepository.SearchAsync` filters on `Email`,
+  `FirstName`, `LastName`, `Username` and `ClerkId` — there is **no `Id` predicate** — so
+  `GET /admin/users?q=<GUID>` can never return an exact-`id` hit. The probe was never going to
+  succeed. C1 therefore degrades to option (c): `self`-only, the segment as a restatement of the
+  caller.
+  **(b) The URL and the session used different id spaces.** `AdminRootRedirect` builds
+  `/admin/<user.id>` from `GET /users/me`, the **database id** (a UUIDv7 `Guid`), while
+  `/auth/claims` returns the **Clerk subject** (`ClaimTypes.NameIdentifier ?? "sub"`). Comparing the
+  segment against only the latter could never match the console's own URL.
+  Fixed: `resolveAdminScope` matches `self` against every caller id (`selfUserIds`), `useAdminScope`
+  supplies the database id and the Clerk subject, `AdminRouteGuard` redirects an `unknown` scope to
+  the caller's own console rather than dead-ending, and a resolver that throws resolves to
+  `unknown` instead of leaving the console on a loader. Five tests pin it. The GUID version was
+  never the issue: UUIDv7 is a valid UUID and the shape check accepts it.
+
+## Session 2026-09-20 — Admin dashboard: Business KPIs (session start)
+
+**Task:** Implement the Business KPIs feature from
+`.agents/plans/admin-dashboard-business-kpis-implementation.ignore.md` — six phases (P1–P6), TDD
+throughout, documentation and OpenAPI updated at the end of every phase, one GitHub issue per phase.
+
+**Tool used:** DeepSeek Harness (deepseek-flash) coding agent.
+
+### Intended work (session start)
+
+The plan delivers a Postgres-first admin analytics family: six read endpoints under
+`/api/v1/admin/statistics/business/*`, one new daily subscription-snapshot table, the B1
+attribution fix (an in-memory `IClaimIdentityMap` refreshed off the request path, read
+synchronously by `RequestPrincipal.Resolve`), a new `analytics:business:read` permission with its
+five collateral mirror files, and a new console surface driven by a separate `B1…Bn` widget
+catalogue (`lib/admin/business-kpis.ts`) that leaves the pinned `V1…V11` catalogue untouched.
+
+Phases, as recorded in the plan's §6:
+
+1. **P1 — Foundations and truth plumbing.** `BusinessAnalyticsOptions`, `BusinessKpiValidation`,
+   the B1 claim-identity map plus refresher, `BusinessKpiCache` over `IDistributedCache`, three
+   EF indexes and a migration, the new permission and its mirror collateral.
+2. **P2 — Growth, active users and plan mix.** `GET business/{growth,active-users,plan-mix}` with
+   the `dataQuality` contract and the dense-bucket null-vs-zero rule.
+3. **P3 — Subscription history and usage.** The snapshot table, job and D-1-safe backfill, plus
+   `GET business/{subscriptions,usage,organizations}`.
+4. **P4 — Frontend foundation.** The `business` domain, two registry entries, the `B1…B12`
+   catalogue, six API wrappers, DTO types, four new components.
+5. **P5 — The Growth console.** `AdminBusinessGrowthView` at `/admin/:userId/business`.
+6. **P6 — Usage console, drill-down, documentation and the coverage ratchet.**
+
+### Constraints observed
+
+- One GitHub issue per phase; **no branch created or switched** — all work stays on
+  `feature/admin-frontend-ui-v3`.
+- TDD is mandatory: the failing test is written and observed failing before the implementation.
+- General docs, API docs and the OpenAPI specification are updated at the end of each phase.
+
+*(End-of-session summary for this work is appended below when the session closes.)*
+
+### Session end — what was delivered
+
+All six phases of the plan are delivered, on the current branch `feature/admin-frontend-ui-v3` with
+**no branch created or switched**. Six GitHub issues were opened, one per phase, and each phase
+followed TDD: the failing test was written and observed failing before its implementation.
+
+**Commits on the branch:**
+
+- `5897b58` — P1 + P2: foundations, the attribution fix, growth / active-users / plan-mix.
+- `5c8ecd7` — P3: the subscription snapshot table and job, the D-1-safe backfill, usage and the
+  organization ranking.
+- `671b39f` — P4 + P5: the `business` domain, the `B1…B12` catalogue, the pure series shaping, four
+  components, and the Growth console.
+- `221d04e` — P6: the usage console, the drill-down, the documentation pass and the ratchet.
+
+**The single most important fix is the attribution one (B1).** A Clerk `jwt-aveline-v1` token carries
+Clerk's native `user_…`/`org_…` ids while Aveline stores GUIDs, so every claim failed `Guid.TryParse`
+and `ApiRequestMetric.UserId` was `null` for all human traffic — DAU was not merely missing, it was
+unmeasurable. `IClaimIdentityMap` (two `FrozenDictionary`s, swapped whole) plus a five-minute
+`ClaimIdentityMapRefresher` now resolve the ids **off the request path**, so the telemetry middleware
+keeps its *"does no I/O, well under 1 ms to p99"* contract. A refresh failure keeps the previous map;
+an unmapped Clerk id increments `UnresolvedCount`, which the response surfaces as a visible
+undercount. `AttributionB1Tests` is the acceptance test: a real, signature-validated Clerk-shaped
+token — and this is where the work paid off, because the test **caught the claim mapping itself**.
+The bearer handler renames `sub` to `ClaimTypes.NameIdentifier` (`MapInboundClaims`), so the raw `sub`
+type does not survive; my first expectation asserted it did. Pinning the *mapped* type, not the raw
+one, is now the regression guard against anyone turning inbound claim mapping off.
+
+**Seven design questions the tests forced into the open**, each resolved and documented rather than
+quietly papered over:
+
+1. **The backfill can only start from the earliest parseable plan change.** There is no
+   pre-change evidence in the audit ledger, so before it the organization's live tier is reported
+   as the series' floor. My first test asserted a reconstructed `Seed` prefix that the code cannot
+   honestly produce.
+2. **A data-quality notice must merge every endpoint's caveats**, not pick one. The single-source
+   version silently dropped a note the server had taken the trouble to send; a test caught it.
+3. **A degenerate window still yields one bucket.** The server floors `CountBuckets` at one, so the
+   client returning an empty axis would disagree with the series it was sent.
+4. **An empty query value is "absent", not "invalid"** — matching `ApiStatisticsValidation`. The
+   implementation was right; my test encoded the opposite.
+5. **A leading bucket clipped by `from` is partial too**, not only the trailing open one.
+6. **`0` and `null` are different things on the wire and in the chart.** `business-series.ts` is the
+   one place that decides it, so it cannot drift.
+7. **`name` on a Recharts `<Bar>` is a type trap in v3** — it narrows `children` and rejects the
+   `<Cell>` list. That is the only new third-party trap this work hit.
+
+**Deliberately not built, and stated rather than implied.** The org-owner surface (OQ-1 puts it on
+the tenant tree, which the predecessor plan put out of scope); the seven Prometheus KPI gauges
+(§5.9 layer 3 — alerting plumbing rather than a console requirement, and the layer that reaches into
+`MetricsCatalog` and the seeded alert rules); and a `tests/load/k6-business-kpis.js`, so the
+`COUNT(DISTINCT)` query's real latency is **not measured here** and no budget is claimed for it.
+Two things could not be verified in this environment: the Playwright walk is written for both new
+routes but **not executed** (no browser installed), and the raw-path-vs-route-template check is a
+post-deploy runtime fact.
+
+### Verification performed
+
+- `dotnet test Aveline.Api.Tests` — **1857 passed, 0 failed** (1799 before this session's work, and
+  that baseline included the six new files added in P1–P3 plus the Postgres container tests, which
+  did run: `BusinessKpiPostgresTests` asserts `COUNT(DISTINCT)` correctness and index usage against
+  a real `pgvector/pgvector:pg16` container).
+- `bunx vitest run` — **85 files / 583 tests passed** (554 before the business work).
+- `bunx tsc -b` — exit 0. `bunx oxlint src` — 0 errors.
+- `bun run test:coverage:admin` — the raised ratchet passes: admin subtree **77.09 % lines /
+  64.88 % branches**; `routes/admin` **76.57 % / 62.52 %**.
+- The four frozen mechanical tests (`admin-conformance`, `admin-truthfulness`,
+  `admin-prometheus-boundary`, `admin-install`) pass **unchanged**. An edit to any of them would have
+  been a design failure.
+- `AdminDashboard.dom.test.tsx` continues to pass unchanged with `KpiTile`'s new optional `delta`
+  prop, which is the additivity claim tested rather than asserted.
+
+### Two defects found in the repository while working
+
+- **D-1, reproduced and then avoided.** `BillingStatisticsService.GetPlanChangesAsync` falls back to
+  `toTier = "Grow"` — a tier that does not exist in `PlanTier`. `SubscriptionBackfill.ReconstructTier`
+  returns `null` for an unparseable payload, a missing property, a non-string value, or a string
+  outside the enum, and `SubscriptionBackfillTests` pins each of those cases by name.
+- **D-2 and D-3, corrected in the catalog.** `UsageAccount.StaffCount`/`ActiveCustomerCount` **are**
+  written (by `EntitlementCountingJob`, every five minutes) and `DailyAgentMetrics` **does** have a
+  writer. Both stale claims came from grepping a column *name* rather than reading the *writer*.
+  `DailyAgentMetrics` now also has a reader: the S-48 usage read.
+
+### Process notes
+
+- The pre-commit hook was exercised on every commit. It fails on staged paths containing spaces
+  because it word-splits `$STAGED_FILES`; committing the local `.agents/plans/` directory tripped it,
+  so that directory is left untracked and the repository's source changes are committed normally.
+  The hook itself was **not** modified.
+- The plan file for this work is named `admin-dashboard-business-kpis-implementation.ignore.md`, so it
+  is git-ignored by the repository's own convention and does not appear in any commit.

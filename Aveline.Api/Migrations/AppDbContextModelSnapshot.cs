@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using Aveline.Api.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -15,7 +14,6 @@ namespace Aveline.Api.Migrations
     [DbContext(typeof(AppDbContext))]
     partial class AppDbContextModelSnapshot : ModelSnapshot
     {
-        /// <inheritdoc />
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
@@ -71,6 +69,65 @@ namespace Aveline.Api.Migrations
                     b.HasIndex("Status");
 
                     b.ToTable("AdminApprovalRequests");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Analytics.Models.OrganizationSubscriptionSnapshot", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BillingCycle")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("HasBillingRow")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<bool>("IsBackfilled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PlanTier")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<decimal>("PriceLkr")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<int>("SeatsIncluded")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("SnapshotDay")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "SnapshotDay")
+                        .IsUnique()
+                        .HasDatabaseName("IX_OrgSubscriptionSnapshots_Org_Day");
+
+                    b.HasIndex("SnapshotDay", "PlanTier")
+                        .HasDatabaseName("IX_OrgSubscriptionSnapshots_Day_Tier");
+
+                    b.ToTable("OrganizationSubscriptionSnapshots", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.ApiAccess.Models.ApiKey", b =>
@@ -1518,6 +1575,9 @@ namespace Aveline.Api.Migrations
                         .IsUnique()
                         .HasFilter("\"ClientMessageId\" IS NOT NULL");
 
+                    b.HasIndex("CreatedAt", "AuthorUserId")
+                        .HasDatabaseName("IX_Messages_CreatedAt");
+
                     b.HasIndex("ConversationId", "CreatedAt", "Id");
 
                     b.ToTable("Messages", (string)null);
@@ -2416,6 +2476,9 @@ namespace Aveline.Api.Migrations
                     b.HasIndex("ClerkOrgId")
                         .IsUnique();
 
+                    b.HasIndex("CreatedAt")
+                        .HasDatabaseName("IX_Organizations_CreatedAt");
+
                     b.HasIndex("OwnerUserId");
 
                     b.HasIndex("Slug")
@@ -2525,6 +2588,97 @@ namespace Aveline.Api.Migrations
                     b.ToTable("OrganizationMemberships", (string)null);
                 });
 
+            modelBuilder.Entity("Aveline.Api.Modules.Revenue.Models.IncomeLedgerEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("ChargeBasis")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("IdempotencyScope")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTime>("OccurredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("PeriodEnd")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("PeriodStart")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<Guid?>("RecordedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SourceKind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("SourceRef")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<Guid?>("SupersedesEntryId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OccurredAt")
+                        .IsDescending();
+
+                    b.HasIndex("Kind", "OccurredAt")
+                        .IsDescending(false, true);
+
+                    b.HasIndex("OrganizationId", "OccurredAt")
+                        .IsDescending(false, true);
+
+                    b.HasIndex("SourceKind", "SourceRef")
+                        .IsUnique()
+                        .HasFilter("\"SourceRef\" IS NOT NULL");
+
+                    b.ToTable("IncomeLedgerEntries", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_IncomeLedgerEntries_Amount", "\"Amount\" > 0");
+                        });
+                });
+
             modelBuilder.Entity("Aveline.Api.Modules.Shared.Models.User", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2625,6 +2779,9 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("ClerkId")
                         .IsUnique();
+
+                    b.HasIndex("CreatedAt")
+                        .HasDatabaseName("IX_Users_CreatedAt");
 
                     b.HasIndex("Email");
 
@@ -3880,6 +4037,15 @@ namespace Aveline.Api.Migrations
                     b.ToTable("Suppliers", (string)null);
                 });
 
+            modelBuilder.Entity("Aveline.Api.Modules.Analytics.Models.OrganizationSubscriptionSnapshot", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Aveline.Api.Modules.ApiAccess.Models.ApiKey", b =>
                 {
                     b.HasOne("Aveline.Api.Modules.Shared.Models.User", null)
@@ -4391,6 +4557,15 @@ namespace Aveline.Api.Migrations
                     b.Navigation("Organization");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Revenue.Models.IncomeLedgerEntry", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Statistics.Models.AgentStepRun", b =>

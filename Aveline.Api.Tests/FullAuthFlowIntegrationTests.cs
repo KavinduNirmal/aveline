@@ -64,7 +64,7 @@ public class FullAuthFlowIntegrationTests : IAsyncLifetime
         Content = new StringContent("{}", Encoding.UTF8, "application/json"),
     };
 
-    private string CreateToken(string userId, string? userRole = null, string? orgRole = null)
+    private string CreateToken(string userId, string? userRole = null, string? orgRole = null, string? email = null)
     {
         var claims = new List<Claim> { new("sub", userId) };
         if (userRole is not null)
@@ -74,6 +74,10 @@ public class FullAuthFlowIntegrationTests : IAsyncLifetime
         if (orgRole is not null)
         {
             claims.Add(new Claim("org_role", orgRole));
+        }
+        if (email is not null)
+        {
+            claims.Add(new Claim("email", email));
         }
 
         var handler = new JsonWebTokenHandler();
@@ -138,6 +142,27 @@ public class FullAuthFlowIntegrationTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.Null(_agentServer.ReceivedInternalToken);
+    }
+
+    [Fact]
+    public async Task Claims_ReturnsTheEmailCarriedByTheToken()
+    {
+        // B1 (A9): the endpoint read FindFirstValue("email") against a principal whose
+        // inbound claim mapping had already rewritten `email` to ClaimTypes.Email, so a
+        // real bearer token yielded a null email. The JwtBearer pipeline below is the
+        // real one (discovery -> signature -> issuer -> inbound map), so this test fails
+        // unless the endpoint reads the claim type the principal actually carries.
+        var token = CreateToken(
+            "user_claims_email", userRole: "staff", email: "owner@boutique.lk");
+
+        var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/claims");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("owner@boutique.lk", body.GetProperty("email").GetString());
     }
 
     [Fact]

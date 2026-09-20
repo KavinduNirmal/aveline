@@ -91,8 +91,13 @@ x86/
 [Aa][Rr][Mm]64/
 
 # Logs
-[Ll]og/
-[Ll]ogs/
+# Anchored to the repo root on purpose. The unanchored Visual Studio template
+# patterns also matched `src/**/logs/`, so they silently swallowed
+# `frontend/web/src/components/admin/logs/` — source files that existed only on
+# the machine that wrote them and broke every clean clone (CI, Vercel).
+# `frontend/web/src/test/ignored-source.test.ts` guards against a recurrence.
+/log/
+/logs/
 
 # NuGet
 *.nupkg

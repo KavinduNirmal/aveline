@@ -12,7 +12,21 @@ import type {
   AdminUserDto,
   AgentOverviewDto,
   AuditLogEntry,
+  IncomeLedgerEntry,
+  IncomeLedgerPage,
+  RefundIncomeRequest,
+  RevenueAccountsPage,
+  RevenueBlossomSales,
+  RevenueCollections,
+  RevenueOverview,
+  RevenueTimeseries,
+  RevenueWindowParams,
+  VerifyIncomeRequest,
+  AdjustIncomeRequest,
+  BlossomReconciliation,
+  BlossomReconciliationParams,
   BlossomStatement,
+  BlossomStatementParams,
   AuthClaims,
   ChangeUserStateRequest,
   CreditBlossomsRequest,
@@ -295,16 +309,196 @@ export async function recomputePricingRule(ruleId: string): Promise<PricingRecom
   return response.data
 }
 
-/** `GET /admin/orgs/{organizationId}/blossoms/statement`. The balance must never be cached. */
+/**
+ * `GET /api/v1/admin/orgs/{organizationId}/blossoms/statement` (`BlossomEndpoints.cs`).
+ *
+ * The balance must never be cached, so callers pass `staleTime: 0`. Paging and filtering are
+ * **server-side** since R4: an unset filter is omitted rather than sent empty, because `?from=`
+ * would bind as an unparseable date and `?q=` would filter on the empty string instead of not
+ * filtering at all.
+ */
 export async function fetchBlossomStatement(
   organizationId: string,
-  params: { from?: string; to?: string; page?: number; pageSize?: number } = {},
+  params: BlossomStatementParams = {},
 ): Promise<BlossomStatement> {
   const response = await apiClient.get<BlossomStatement>(
     `/api/v1/admin/orgs/${organizationId}/blossoms/statement`,
-    { params },
+    {
+      params: {
+        from: params.from || undefined,
+        to: params.to || undefined,
+        kind: params.kind || undefined,
+        entryType: params.entryType || undefined,
+        sourceKind: params.sourceKind || undefined,
+        q: params.query || undefined,
+        minAmount: params.minAmount ?? undefined,
+        maxAmount: params.maxAmount ?? undefined,
+        page: params.page ?? 1,
+        pageSize: params.pageSize ?? 50,
+      },
+    },
   )
   return response.data
+}
+
+// ── Revenue reads (S-50…S-55) ────────────────────────────────────────────────────────────────
+
+/** `GET /api/v1/admin/revenue/ledger` (S-50). The register is deliberately uncached server-side. */
+export async function fetchIncomeLedger(
+  params: { from?: string; to?: string; page?: number; pageSize?: number } = {},
+): Promise<IncomeLedgerPage> {
+  const response = await apiClient.get<IncomeLedgerPage>(
+    "/api/v1/admin/revenue/ledger",
+    {
+      params: {
+        from: params.from || undefined,
+        to: params.to || undefined,
+        page: params.page ?? 1,
+        pageSize: params.pageSize ?? 50,
+      },
+    },
+  )
+  return response.data
+}
+
+/** `GET /api/v1/admin/revenue/accounts` (S-51). */
+export async function fetchIncomeAccounts(
+  params: RevenueWindowParams = {},
+): Promise<RevenueAccountsPage> {
+  const response = await apiClient.get<RevenueAccountsPage>(
+    "/api/v1/admin/revenue/accounts",
+    { params: revenueQuery(params) },
+  )
+  return response.data
+}
+
+/** `GET /api/v1/admin/statistics/revenue/overview` (S-52). */
+export async function fetchIncomeOverview(
+  params: RevenueWindowParams = {},
+): Promise<RevenueOverview> {
+  const response = await apiClient.get<RevenueOverview>(
+    "/api/v1/admin/statistics/revenue/overview",
+    { params: revenueQuery(params) },
+  )
+  return response.data
+}
+
+/** `GET /api/v1/admin/statistics/revenue/timeseries` (S-53). */
+export async function fetchRevenueTimeseries(
+  params: RevenueWindowParams = {},
+): Promise<RevenueTimeseries> {
+  const response = await apiClient.get<RevenueTimeseries>(
+    "/api/v1/admin/statistics/revenue/timeseries",
+    { params: revenueQuery(params) },
+  )
+  return response.data
+}
+
+/** `GET /api/v1/admin/statistics/revenue/collections` (S-54). */
+export async function fetchRevenueCollections(
+  params: RevenueWindowParams = {},
+): Promise<RevenueCollections> {
+  const response = await apiClient.get<RevenueCollections>(
+    "/api/v1/admin/statistics/revenue/collections",
+    { params: revenueQuery(params) },
+  )
+  return response.data
+}
+
+/** `GET /api/v1/admin/statistics/revenue/blossoms` (S-55). */
+export async function fetchRevenueBlossomSales(
+  params: RevenueWindowParams = {},
+): Promise<RevenueBlossomSales> {
+  const response = await apiClient.get<RevenueBlossomSales>(
+    "/api/v1/admin/statistics/revenue/blossoms",
+    { params: revenueQuery(params) },
+  )
+  return response.data
+}
+
+/** `GET /api/v1/admin/statistics/billing/reconciliation` (S-56). */
+export async function reviseReconciliation(
+  params: BlossomReconciliationParams = {},
+): Promise<BlossomReconciliation> {
+  const response = await apiClient.get<BlossomReconciliation>(
+    "/api/v1/admin/statistics/billing/reconciliation",
+    { params: { organizationId: params.organizationId || undefined } },
+  )
+  return response.data
+}
+
+/** The shared query mapping for the revenue series reads; absent values are omitted. */
+function revenueQuery(params: RevenueWindowParams): Record<string, unknown> {
+  return {
+    from: params.from || undefined,
+    to: params.to || undefined,
+    granularity: params.granularity || undefined,
+  }
+}
+
+// ── Revenue writes (S-50) ────────────────────────────────────────────────────────────────────
+
+/** What a revenue write returns, including the `Idempotency-Replayed` signal. */
+export interface IncomeMutationResult {
+  entry: IncomeLedgerEntry
+  /** True when the server replayed a stored response rather than applying the operation again. */
+  replayed: boolean
+}
+
+/**
+ * The three revenue POSTs are idempotency-guarded, so the `Idempotency-Key` header is a
+ * **required argument**. It belongs to the operation rather than the request, so it is derived from
+ * the payload by the caller and reused across a retry of the same payload.
+ */
+export async function verifyIncome(
+  request: VerifyIncomeRequest,
+  idempotencyKey: string,
+): Promise<IncomeMutationResult> {
+  return postRevenue("/api/v1/admin/revenue/ledger/verify", request, idempotencyKey)
+}
+
+export async function refundIncome(
+  request: RefundIncomeRequest,
+  idempotencyKey: string,
+): Promise<IncomeMutationResult> {
+  return postRevenue("/api/v1/admin/revenue/ledger/refund", request, idempotencyKey)
+}
+
+export async function adjustIncome(
+  request: AdjustIncomeRequest,
+  idempotencyKey: string,
+): Promise<IncomeMutationResult> {
+  return postRevenue("/api/v1/admin/revenue/ledger/adjust", request, idempotencyKey)
+}
+
+async function postRevenue<T extends object>(
+  path: string,
+  body: T,
+  idempotencyKey: string,
+): Promise<IncomeMutationResult> {
+  const response = await apiClient.post<IncomeLedgerEntry>(path, body, {
+    headers: { "Idempotency-Key": idempotencyKey },
+  })
+  return {
+    entry: response.data,
+    replayed: readReplayHeader(response.headers),
+  }
+}
+
+/**
+ * Reads the `Idempotency-Replayed` signal case-insensitively.
+ *
+ * Axios lower-cases response header names today, but the header is the server's contract rather
+ * than axios's, so a change in that behaviour would silently turn every replay into a fresh
+ * application — the one confusion the signal exists to prevent.
+ */
+function readReplayHeader(headers: unknown): boolean {
+  if (headers === null || typeof headers !== "object") return false
+  const record = headers as Record<string, unknown>
+  for (const [key, value] of Object.entries(record)) {
+    if (key.toLowerCase() === "idempotency-replayed") return value === "true"
+  }
+  return false
 }
 
 /**

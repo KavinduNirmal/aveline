@@ -315,7 +315,15 @@ export interface PricingRecomputeResult {
   recomputedAt: string
 }
 
-/** `BlossomStatementItem` (`IBlossomService.cs:58-69`). */
+/**
+ * `BlossomStatementItem` (`IBlossomService.cs`).
+ *
+ * The five trailing fields were added in Revenue Ledger R4 (issue #345). The reason is that a
+ * consumption row previously carried a workflow id and the words "Agent workflow", so an operator
+ * asking where 400 Blossoms went had nothing to read. The consumption-only fields are `null` on an
+ * entitlement row, and `availableToRevoke` is `null` on anything that is not a revocable grant —
+ * absent rather than `0`, because "how much can be revoked" has no answer for a non-grant.
+ */
 export interface BlossomStatementItem {
   id: string
   occurredAt: string
@@ -328,6 +336,13 @@ export interface BlossomStatementItem {
   sourceRef: string | null
   expiresAt: string | null
   createdByUserId: string | null
+  /** Present only on a revocable grant. The `409 grant-not-revocable` remains authoritative. */
+  availableToRevoke?: number | null
+  provider?: string | null
+  model?: string | null
+  /** Input + output + cached tokens, so a Blossom charge can be checked rather than trusted. */
+  normalizedUnits?: number | null
+  actualCostUsd?: number | null
 }
 
 /** `BlossomStatementReconciliation` (`IBlossomService.cs:71-72`). */
@@ -339,18 +354,39 @@ export interface BlossomStatementReconciliation {
 }
 
 /** `BlossomStatement` (`IBlossomService.cs:74-85`). */
+/**
+ * `BlossomStatementDataQuality` — what the statement's numbers rest on (R4, S-3).
+ *
+ * Two flags exist because two things a reader would otherwise assume are not true.
+ * `openingBalanceFromProjection` is always `true` today: the opening balance is derived
+ * **backwards** from the cached `BlossomRemaining` projection, not accumulated forward from the
+ * ledger. And a `reconciliationChecked` of `false` must render as *"reconciliation status
+ * unknown"* — **never** as consistent.
+ */
+export interface BlossomStatementDataQuality {
+  reconciliationChecked: boolean
+  openingBalanceFromProjection: boolean
+  windowCapped: boolean
+  maxWindowDays: number
+  notes: string[]
+}
+
 export interface BlossomStatement {
   organizationId: string
   periodStart: string
   periodEnd: string
   openingBalance: number
   items: BlossomStatementItem[]
+  /** The **window** total, not the page length, and the same on every page. */
   total: number
   page: number
   pageSize: number
   closingBalance: number
   reconciliation: BlossomStatementReconciliation
   generatedAt: string
+  /** The effective window cap, so the surface can state it rather than hardcode it. */
+  maxWindowDays?: number
+  dataQuality?: BlossomStatementDataQuality | null
 }
 
 /**
@@ -572,6 +608,223 @@ export interface BusinessOrganizationUsage {
   items: OrganizationUsageItem[]
   totalCount: number
   dataQuality: BusinessDataQuality
+}
+
+// ── Revenue reads (S-50…S-56) ────────────────────────────────────────────────────────────────
+// Authority: `Aveline.Api/Modules/Revenue/DTOs/RevenueReadDtos.cs` and the catalog entries
+// S-50…S-56. Every measure is nullable, and **`null` is not `0`**: it means the measure could not
+// be computed. A `0` MRR would read as "we earn nothing" when the truth is "no price is
+// configured", which is the case in production today.
+
+/** `IncomeLedgerEntryDto` (`RevenueDtos.cs`). The wire shape of one journal row. */
+export interface IncomeLedgerEntry {
+  id: string
+  organizationId: string
+  kind: string
+  sourceKind: string
+  sourceRef: string | null
+  chargeBasis: string
+  status: string
+  currency: string
+  /** Always positive. The sign is derived from `kind`. */
+  amount: number
+  reason: string
+  periodStart: string | null
+  periodEnd: string | null
+  occurredAt: string
+  recordedByUserId: string | null
+  supersedesEntryId: string | null
+}
+
+/** `RevenueWindowDto` — echoed so the client never re-derives the window it asked for. */
+export interface RevenueWindow {
+  from: string
+  to: string
+  granularity: string
+  timeZone: string
+  bucketCount: number
+}
+
+/** `RevenueReconciliationDto`. `unverifiedGap` is a **magnitude**, not a signed subtraction. */
+export interface RevenueReconciliation {
+  derivedTotal: number
+  verifiedTotal: number
+  unverifiedGap: number
+  refundTotal: number
+  netVerified: number
+  isBalanced: boolean
+}
+
+/** `IncomeLedgerPageDto` (S-50). The totals describe the window, not the page. */
+export interface IncomeLedgerPage {
+  window: RevenueWindow
+  items: IncomeLedgerEntry[]
+  total: number
+  page: number
+  pageSize: number
+  reconciliation: RevenueReconciliation
+  dataQuality: IncomeDataQuality
+}
+
+/** `RevenueAccountItemDto` (S-51). */
+export interface RevenueAccountItem {
+  organizationId: string
+  name: string
+  planTier: string
+  derivedTotal: number
+  verifiedTotal: number
+  refundTotal: number
+  netVerified: number
+  unverifiedGap: number
+}
+
+export interface RevenueAccountsPage {
+  window: RevenueWindow
+  items: RevenueAccountItem[]
+  total: number
+  reconciliation: RevenueReconciliation
+  dataQuality: IncomeDataQuality
+}
+
+/** `RevenueOverviewDto` (S-52). List-price **scheduled** revenue, not collected revenue. */
+export interface RevenueOverview {
+  asOf: string
+  mrr: number | null
+  arr: number | null
+  arpu: number | null
+  payingOrganizations: number
+  activeSubscriptions: number
+  dataQuality: IncomeDataQuality
+}
+
+/** `RevenueTimeseriesPointDto` (S-53). Three separate series, never merged. */
+export interface RevenueTimeseriesPoint {
+  bucketStart: string
+  isPartial: boolean
+  derived: number
+  verified: number
+  refunded: number
+}
+
+export interface RevenueTimeseries {
+  window: RevenueWindow
+  series: RevenueTimeseriesPoint[]
+  dataQuality: IncomeDataQuality
+}
+
+/** `RevenueCollectionPointDto` (S-54). */
+export interface RevenueCollectionPoint {
+  bucketStart: string
+  isPartial: boolean
+  derivedTotal: number
+  verifiedTotal: number
+  refundedTotal: number
+  /** Percentage, or `null` when nothing was billed. Never `0` for "no rate". */
+  collectionRate: number | null
+  /** Signed. A negative value means more came in than was billed. */
+  outstanding: number
+}
+
+export interface RevenueCollections {
+  window: RevenueWindow
+  series: RevenueCollectionPoint[]
+  dataQuality: IncomeDataQuality
+}
+
+/** `RevenueBlossomSalesDto` (S-55). Referenced purchases only. */
+export interface RevenueBlossomSales {
+  window: RevenueWindow
+  packsSold: number
+  blossomsGranted: number
+  listPriceLkr: number
+  verifiedLkr: number
+  conversion: number | null
+  grantedWithoutReference: number
+  dataQuality: IncomeDataQuality
+}
+
+/** `BlossomReconciliationRowDto` (S-56). Only drifted accounts appear. */
+export interface BlossomReconciliationRow {
+  organizationId: string
+  organizationName: string
+  periodStart: string
+  projectedBalance: number
+  ledgerDerivedBalance: number
+  drift: number
+  isConsistent: boolean
+}
+
+/**
+ * `BlossomReconciliationDto` (S-56).
+ *
+ * `reconciliationChecked` is `null`, not `false`: the read does not itself run a reconciliation
+ * pass, so it cannot claim one happened. `false` would claim it checked and found nothing.
+ */
+export interface BlossomReconciliation {
+  organizationId: string | null
+  accounts: BlossomReconciliationRow[]
+  driftedCount: number
+  accountsChecked: number
+  reconciliationChecked: boolean | null
+  checkedAt: string
+  notes: string[]
+}
+
+/** The S-56 reconciliation report's scope. */
+export interface BlossomReconciliationParams {
+  organizationId?: string
+}
+
+/** The shared query contract of the revenue reads. */
+export interface RevenueWindowParams {
+  from?: string
+  to?: string
+  granularity?: 'day' | 'week' | 'month'
+}
+
+/**
+ * The statement's filter set (R4). An unset filter is omitted, never sent empty.
+ *
+ * `kind` is **lower-case** because the server lower-cases it before matching
+ * (`BlossomEndpoints.TryParseKind`), so the wire value is lower-case and a client that sends
+ * `Entitlement` is relying on someone else's leniency.
+ */
+export interface BlossomStatementParams {
+  from?: string
+  to?: string
+  kind?: 'all' | 'entitlement' | 'consumption'
+  entryType?: string
+  sourceKind?: string
+  query?: string
+  minAmount?: number
+  maxAmount?: number
+  page?: number
+  pageSize?: number
+}
+
+/** The three administrative revenue verbs' request bodies (S-50). */
+export interface VerifyIncomeRequest {
+  organizationId: string
+  sourceKind: string
+  sourceRef: string
+  amount: number
+  reason: string
+}
+
+export interface RefundIncomeRequest {
+  organizationId: string
+  sourceKind: string
+  sourceRef: string
+  amount: number
+  reason: string
+}
+
+export interface AdjustIncomeRequest {
+  organizationId: string
+  amount: number
+  reason: string
+  sourceRef?: string | null
+  supersedesEntryId?: string | null
 }
 
 /** The shared query contract of the six business reads. */

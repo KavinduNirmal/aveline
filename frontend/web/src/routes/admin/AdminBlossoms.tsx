@@ -16,6 +16,7 @@ import { Switch } from "@/components/ui/switch"
 import { DataTable, type Column } from "@/components/admin/data/DataTable"
 import { Pagination } from "@/components/admin/data/Pagination"
 import { ErrorState } from "@/components/admin/data/states/ErrorState"
+import { BalanceTimeline } from "@/components/admin/blossoms/BalanceTimeline"
 import { IdempotentActionButton } from "@/components/admin/blossoms/IdempotentActionButton"
 import { OrgPicker } from "@/components/admin/orgs/OrgPicker"
 import { useAdminSession } from "@/contexts/AdminSessionContext"
@@ -24,6 +25,7 @@ import {
   debitBlossoms,
   fetchBlossomStatement,
   revokeBlossoms,
+  reviseReconciliation,
 } from "@/lib/admin/api"
 import type { OperationSnapshot } from "@/lib/admin/idempotency"
 import { readListParams, writeListParams } from "@/lib/admin/query-params"
@@ -137,6 +139,16 @@ export function AdminBlossomsView() {
     [filters, setSearchParams],
   )
 
+  // S-56 is gated `stats:system`, not `revenue:read`, so a caller without it issues **no** request
+  // rather than collecting a 403 in the network log.
+  const canSeeDrift = can("stats:system")
+  const driftQuery = useQuery({
+    queryKey: ["admin", "blossoms", "reconciliation"],
+    queryFn: () => reviseReconciliation({}),
+    enabled: canSeeDrift,
+    staleTime: 0,
+  })
+
   const statement = statementQuery.data
   const items = statement?.items ?? []
   const total = statement?.total ?? 0
@@ -228,6 +240,22 @@ export function AdminBlossomsView() {
         </span>
       </div>
 
+      {canSeeDrift && driftQuery.data && driftQuery.data.driftedCount > 0 && (
+        <Card className="border-destructive/40 bg-destructive/5 shadow-xs">
+          <CardContent className="flex flex-col gap-1 p-3 text-xs text-foreground">
+            <span className="font-medium">
+              {driftQuery.data.driftedCount} of {driftQuery.data.accountsChecked} accounts have
+              Blossom reconciliation drift
+            </span>
+            <span className="text-muted-foreground">
+              Worst: {driftQuery.data.accounts[0].organizationName} at{" "}
+              {driftQuery.data.accounts[0].drift}. Drift is Critical: the projected balance and the
+              ledger disagree.
+            </span>
+          </CardContent>
+        </Card>
+      )}
+
       <Card className="border-border shadow-xs">
         <CardHeader>
           <CardTitle className="font-serif text-base">Statement</CardTitle>
@@ -310,6 +338,13 @@ export function AdminBlossomsView() {
 
           {statement && <StatementSummary statement={statement} />}
           {statement && <ReconciliationBanner statement={statement} />}
+
+          {items.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-foreground">Balance across the page</span>
+              <BalanceTimeline items={items} />
+            </div>
+          )}
 
           {statementQuery.isError ? (
             <ErrorState

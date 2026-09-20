@@ -23,8 +23,14 @@ vi.mock('@/lib/admin/api', () => ({
   searchAdminOrganizations: (...args: unknown[]) => searchAdminOrganizations(...args),
 }))
 
+// The session is controllable so the S-56 permission gate can be asserted from both sides: a
+// caller without `stats:system` must render no drift strip **and** issue no request.
+let grantedPermissions: string[] = ['billing:adjust', 'stats:system']
 vi.mock('@/contexts/AdminSessionContext', () => ({
-  useAdminSession: () => ({ can: () => true, roles: ['owner'] }),
+  useAdminSession: () => ({
+    can: (permission: string) => grantedPermissions.includes(permission),
+    roles: ['owner'],
+  }),
 }))
 
 const ORG: AdminOrganizationDto = {
@@ -94,6 +100,7 @@ async function selectOrganization() {
 }
 
 beforeEach(() => {
+  grantedPermissions = ['billing:adjust', 'stats:system']
   fetchBlossomStatement.mockReset()
   fetchBlossomReconciliation.mockReset()
   creditBlossoms.mockReset()
@@ -294,6 +301,58 @@ describe('AdminBlossomsView reconciliation honesty', () => {
     await selectOrganization()
 
     expect(await screen.findByTestId('statement-window-cap')).toHaveTextContent('400')
+  })
+})
+
+/**
+ * S-56 is gated `stats:system`, which a revenue reader may not hold. The strip is a cross-org
+ * report, so a caller who cannot read it must render nothing **and** issue no request: a `403` in
+ * the network log is a worse experience than an absent strip.
+ */
+describe('AdminBlossomsView cross-org drift', () => {
+  it('names the drifted accounts when the caller may read the report', async () => {
+    fetchBlossomReconciliation.mockResolvedValue({
+      organizationId: null,
+      accounts: [
+        {
+          organizationId: 'org-9',
+          organizationName: 'Drifted Boutique',
+          periodStart: '2026-09-01T00:00:00Z',
+          projectedBalance: 617.6,
+          ledgerDerivedBalance: 612.9,
+          drift: 4.7,
+          isConsistent: false,
+        },
+      ],
+      driftedCount: 1,
+      accountsChecked: 12,
+      reconciliationChecked: null,
+      checkedAt: '2026-09-20T00:00:00Z',
+      notes: [],
+    })
+    renderAt('/admin/u1/blossoms')
+
+    expect(await screen.findByText(/1 of 12 accounts/i)).toBeInTheDocument()
+    expect(screen.getByText(/Drifted Boutique/)).toBeInTheDocument()
+  })
+
+  it('renders nothing and issues no request without stats:system', async () => {
+    grantedPermissions = ['billing:adjust']
+    renderAt('/admin/u1/blossoms')
+    await selectOrganization()
+
+    // The statement still loads; only the drift report is withheld.
+    await waitFor(() => expect(fetchBlossomStatement).toHaveBeenCalled())
+    expect(fetchBlossomReconciliation).not.toHaveBeenCalled()
+    expect(screen.queryByText(/accounts have Blossom reconciliation drift/i)).not.toBeInTheDocument()
+  })
+
+  it('stays quiet when every account reconciles', async () => {
+    renderAt('/admin/u1/blossoms')
+    await selectOrganization()
+
+    await waitFor(() => expect(fetchBlossomReconciliation).toHaveBeenCalled())
+    expect(screen.queryByText(/reconciliation drift/i)).not.toBeInTheDocument()
   })
 })
 

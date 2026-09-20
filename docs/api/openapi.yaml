@@ -1731,12 +1731,41 @@ paths:
       parameters:
         - $ref: "#/components/parameters/From"
         - $ref: "#/components/parameters/To"
-        - name: entryType
+        - name: kind
           in: query
+          description: Entitlement rows, consumption rows, or both.
           schema:
             type: string
             enum: [all, entitlement, consumption]
             default: all
+        - name: entryType
+          in: query
+          description: |
+            Restricts entitlement rows to one ledger entry type. A ledger concept, so supplying it
+            excludes consumption rows entirely.
+          schema:
+            $ref: "#/components/schemas/BlossomLedgerEntryType"
+        - name: sourceKind
+          in: query
+          description: Restricts entitlement rows to one source.
+          schema:
+            $ref: "#/components/schemas/BlossomSourceKind"
+        - name: q
+          in: query
+          description: |
+            Substring match over the reason or source reference; for consumption rows, over the
+            workflow id, provider or model.
+          schema: { type: string }
+        - name: minAmount
+          in: query
+          description: |
+            Inclusive lower bound on the signed ledger movement. A ledger concept, so supplying it
+            excludes consumption rows entirely.
+          schema: { type: number, format: decimal }
+        - name: maxAmount
+          in: query
+          description: Inclusive upper bound on the signed ledger movement.
+          schema: { type: number, format: decimal }
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/PageSize"
       responses:
@@ -2149,11 +2178,48 @@ paths:
     get:
       tags: [Admin Billing]
       summary: Read any organization's statement of account
-      description: Phase 2. Requires `billing:adjust`.
+      description: |
+        Requires `billing:adjust`. Paged, filtered and ordered server-side, with the same parameters
+        as the org-scoped statement.
       operationId: adminGetBlossomStatement
       parameters:
         - $ref: "#/components/parameters/From"
         - $ref: "#/components/parameters/To"
+        - name: kind
+          in: query
+          description: Entitlement rows, consumption rows, or both.
+          schema:
+            type: string
+            enum: [all, entitlement, consumption]
+            default: all
+        - name: entryType
+          in: query
+          description: |
+            Restricts entitlement rows to one ledger entry type. A ledger concept, so supplying it
+            excludes consumption rows entirely.
+          schema:
+            $ref: "#/components/schemas/BlossomLedgerEntryType"
+        - name: sourceKind
+          in: query
+          description: Restricts entitlement rows to one source.
+          schema:
+            $ref: "#/components/schemas/BlossomSourceKind"
+        - name: q
+          in: query
+          description: |
+            Substring match over the reason or source reference; for consumption rows, over the
+            workflow id, provider or model.
+          schema: { type: string }
+        - name: minAmount
+          in: query
+          description: |
+            Inclusive lower bound on the signed ledger movement. A ledger concept, so supplying it
+            excludes consumption rows entirely.
+          schema: { type: number, format: decimal }
+        - name: maxAmount
+          in: query
+          description: Inclusive upper bound on the signed ledger movement.
+          schema: { type: number, format: decimal }
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/PageSize"
       responses:
@@ -3883,6 +3949,32 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /api/v1/admin/statistics/billing/reconciliation:
+    get:
+      tags: [Admin Billing Statistics]
+      summary: Read per-account Blossom reconciliation drift
+      description: |
+        S-56. Every open account whose projected balance disagrees with its ledger, ranked by the
+        magnitude of the drift so the worst is first. Uses the same formula
+        `SystemMetricCollector` emits for the `blossom.ledger.drift` alert, so the console and the
+        alarm cannot disagree. Requires `stats:system`.
+      operationId: getBillingReconciliation
+      parameters:
+        - name: organizationId
+          in: query
+          description: Scope the report to one organization.
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The reconciliation report
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlossomReconciliationResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   # ---------------------------------------------------------------------------
   # Admin revenue (Aveline's own income ledger, S-50..S-55)
   # ---------------------------------------------------------------------------
@@ -4682,6 +4774,128 @@ components:
               - $ref: "#/components/schemas/QuotaExceededError"
 
   schemas:
+
+    BlossomLedgerEntryType:
+      type: string
+      enum:
+        - PeriodAllocation
+        - TopUpGrant
+        - AdminCredit
+        - AdminDebit
+        - TopUpRevocation
+        - Expiry
+        - PlanUpgradeProration
+        - PlanDowngradeAdjustment
+        - CorrectionRecompute
+
+    BlossomSourceKind:
+      type: string
+      enum: [Admin, PaymentProvider, PlanChange, Expiry, System]
+
+    BlossomStatementItem:
+      type: object
+      required: [id, occurredAt, kind, blossomDelta, balanceAfter, reason]
+      properties:
+        id: { type: string, format: uuid }
+        occurredAt: { type: string, format: date-time }
+        kind: { type: string, enum: [Entitlement, Consumption] }
+        entryType:
+          allOf: [{ $ref: "#/components/schemas/BlossomLedgerEntryType" }]
+          nullable: true
+        blossomDelta: { type: number, format: decimal }
+        balanceAfter: { type: number, format: decimal }
+        reason: { type: string }
+        sourceKind:
+          allOf: [{ $ref: "#/components/schemas/BlossomSourceKind" }]
+          nullable: true
+        sourceRef: { type: string, nullable: true }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        createdByUserId: { type: string, format: uuid, nullable: true }
+        availableToRevoke:
+          type: number
+          format: decimal
+          nullable: true
+          description: |
+            Present only on a revocable grant. The console offers a revoke action from it; the
+            `409 grant-not-revocable` response stays the authoritative answer, and both apply the
+            same rule.
+        provider: { type: string, nullable: true }
+        model: { type: string, nullable: true }
+        normalizedUnits:
+          type: integer
+          format: int64
+          nullable: true
+          description: Input + output + cached tokens, so a Blossom charge can be checked.
+        actualCostUsd: { type: number, format: decimal, nullable: true }
+
+    BlossomStatementDataQuality:
+      type: object
+      required: [reconciliationChecked, openingBalanceFromProjection, windowCapped, maxWindowDays, notes]
+      properties:
+        reconciliationChecked:
+          type: boolean
+          description: |
+            `false` means the reconciliation could not be evaluated, and a client must render that
+            as "reconciliation status unknown" — never as consistent.
+        openingBalanceFromProjection:
+          type: boolean
+          description: |
+            Always `true` today: the opening balance is derived backwards from the cached projection,
+            not accumulated forward from the ledger.
+        windowCapped: { type: boolean }
+        maxWindowDays: { type: integer }
+        notes:
+          type: array
+          items: { type: string }
+
+    BlossomReconciliationRow:
+      type: object
+      required:
+        - organizationId
+        - organizationName
+        - periodStart
+        - projectedBalance
+        - ledgerDerivedBalance
+        - drift
+        - isConsistent
+      properties:
+        organizationId: { type: string, format: uuid }
+        organizationName: { type: string }
+        periodStart: { type: string, format: date-time }
+        projectedBalance: { type: number, format: decimal }
+        ledgerDerivedBalance: { type: number, format: decimal }
+        drift:
+          type: number
+          format: decimal
+          description: Never zero here — only drifted accounts are reported.
+        isConsistent: { type: boolean }
+
+    BlossomReconciliationResponse:
+      type: object
+      required: [accounts, driftedCount, accountsChecked, checkedAt, notes]
+      properties:
+        organizationId:
+          type: string
+          format: uuid
+          nullable: true
+          description: The scope this report covers, or `null` for every open account.
+        accounts:
+          type: array
+          items: { $ref: "#/components/schemas/BlossomReconciliationRow" }
+        driftedCount: { type: integer }
+        accountsChecked:
+          type: integer
+          description: Distinguishes "consistent" from "not looked at".
+        reconciliationChecked:
+          type: boolean
+          nullable: true
+          description: |
+            `null`: this read does not itself run a reconciliation pass, so it cannot claim one has
+            happened. Never `false`, which would claim it checked and found nothing.
+        checkedAt: { type: string, format: date-time }
+        notes:
+          type: array
+          items: { type: string }
 
     IncomeDataQuality:
       type: object

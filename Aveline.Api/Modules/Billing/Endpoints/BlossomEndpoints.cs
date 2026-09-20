@@ -19,7 +19,9 @@ namespace Aveline.Api.Modules.Billing.Endpoints;
 /// </summary>
 public static class BlossomEndpoints
 {
-    private const int MaxWindowDays = 92;
+    // The effective statement window cap lives on the service (`MaxStatementWindowDays`, 400), so
+    // the endpoint and the response cannot disagree about it.
+    private const int MaxWindowDays = BlossomService.MaxStatementWindowDays;
 
     public static IEndpointRouteBuilder MapBlossomEndpoints(this IEndpointRouteBuilder endpoints)
     {
@@ -72,8 +74,12 @@ public static class BlossomEndpoints
 
         group.MapGet("/statement", (
             Guid organizationId, DateTime? from, DateTime? to, string? entryType,
-            int? page, int? pageSize, IBlossomService blossoms, CancellationToken ct) =>
-            StatementAsync(organizationId, from, to, entryType, page, pageSize, blossoms, ct))
+            string? kind, BlossomSourceKind? sourceKind, string? q,
+            decimal? minAmount, decimal? maxAmount, int? page, int? pageSize,
+            IBlossomService blossoms, CancellationToken ct) =>
+            StatementAsync(
+                organizationId, from, to, entryType, kind, null, sourceKind, q,
+                minAmount, maxAmount, page, pageSize, blossoms, ct))
             .RequireAuthorization(AuthorizationConfiguration.BillingViewPolicy);
 
         group.MapPost("/top-ups", async (
@@ -259,32 +265,116 @@ public static class BlossomEndpoints
 
         group.MapGet("/statement", (
             Guid organizationId, DateTime? from, DateTime? to, string? entryType,
+            BlossomSourceKind? sourceKind, string? q, decimal? minAmount, decimal? maxAmount,
             int? page, int? pageSize, IBlossomService blossoms, CancellationToken ct) =>
-            StatementAsync(organizationId, from, to, entryType, page, pageSize, blossoms, ct))
+            StatementAsync(
+                organizationId, from, to, entryType, null, null, sourceKind, q,
+                minAmount, maxAmount, page, pageSize, blossoms, ct))
             .RequireAuthorization(Permissions.BillingAdjust);
     }
 
+    /// <summary>
+    /// The statement, for both the org-scoped and the admin route (S-3).
+    /// </summary>
+    /// <remarks>
+    /// Filters and paging are applied **server-side** (Revenue Ledger R4). Every rejection names the
+    /// effective limit rather than silently clamping: a caller who asked for 500 rows and got 200
+    /// would page on a false assumption.
+    /// </remarks>
     private static async Task<IResult> StatementAsync(
-        Guid organizationId, DateTime? from, DateTime? to, string? entryType,
-        int? page, int? pageSize, IBlossomService blossoms, CancellationToken ct)
+        Guid organizationId, DateTime? from, DateTime? to, string? entryType, string? kind,
+        BlossomLedgerEntryType? parsedEntryType, BlossomSourceKind? sourceKind, string? q,
+        decimal? minAmount, decimal? maxAmount, int? page, int? pageSize,
+        IBlossomService blossoms, CancellationToken ct)
     {
+        if (!TryParseEntryType(entryType, out var entryFilter, out var entryError))
+        {
+            return Results.BadRequest(new { message = entryError });
+        }
+
+        if (!TryParseKind(kind, out var kindFilter, out var kindError))
+        {
+            return Results.BadRequest(new { message = kindError });
+        }
+
+        if (pageSize is { } requested && (requested < 1 || requested > BlossomService.MaxStatementPageSize))
+        {
+            return Results.BadRequest(new
+            {
+                message = $"pageSize must be between 1 and {BlossomService.MaxStatementPageSize}.",
+            });
+        }
+
+        if (page is { } requestedPage && requestedPage < 1)
+        {
+            return Results.BadRequest(new { message = "page must be at least 1." });
+        }
+
+        if (minAmount is { } min && maxAmount is { } max && min > max)
+        {
+            return Results.BadRequest(new { message = "min must not exceed max." });
+        }
+
         var window = ResolveWindow(from, to);
         if (window is null)
         {
-            return Results.BadRequest(new { message = $"The window must be at most {MaxWindowDays} days." });
+            return Results.BadRequest(new
+            {
+                message = $"The window must be at most {BlossomService.MaxStatementWindowDays} days.",
+            });
         }
 
         try
         {
             var statement = await blossoms.GetStatementAsync(
-                organizationId, window.Value.From, window.Value.To, entryType,
-                page ?? 1, pageSize ?? 50, ct);
+                organizationId, window.Value.From, window.Value.To, kindFilter, entryFilter,
+                sourceKind, q, minAmount, maxAmount,
+                page ?? 1, pageSize ?? BlossomService.DefaultStatementPageSize, ct);
             return Results.Ok(statement);
         }
         catch (Exception exception)
         {
             return MapProblem(exception);
         }
+    }
+
+    /// <summary>
+    /// Parses the `entryType` filter. An unrecognised value is rejected rather than ignored: silently
+    /// dropping it would return the whole window under a request that asked for a subset.
+    /// </summary>
+    private static bool TryParseEntryType(
+        string? value, out BlossomLedgerEntryType? entryType, out string? error)
+    {
+        entryType = null;
+        error = null;
+
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return true;
+        }
+
+        if (!Enum.TryParse<BlossomLedgerEntryType>(value, ignoreCase: true, out var parsed))
+        {
+            error = $"entryType must be one of {string.Join(", ", Enum.GetNames<BlossomLedgerEntryType>())}.";
+            return false;
+        }
+
+        entryType = parsed;
+        return true;
+    }
+
+    private static bool TryParseKind(string? value, out string? kind, out string? error)
+    {
+        kind = string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToLowerInvariant();
+        error = null;
+
+        if (kind is null or "all" or "entitlement" or "consumption")
+        {
+            return true;
+        }
+
+        error = "kind must be one of all, entitlement or consumption.";
+        return false;
     }
 
     /// <summary>

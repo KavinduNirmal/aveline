@@ -47,4 +47,15 @@ public interface IUsageRepository
         DateTime from,
         DateTime to,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Total Blossoms consumed in a UTC window, used to derive the statement's opening balance
+    /// (Revenue Ledger R4). An aggregate rather than a row list, so the statement never has to
+    /// materialise a whole window's consumption to compute one figure.
+    /// </summary>
+    Task<decimal> SumBlossomUnitsInWindowAsync(
+        Guid organizationId,
+        DateTime from,
+        DateTime to,
+        CancellationToken cancellationToken = default);
 }

@@ -963,6 +963,34 @@ because a job is not an operator.
 Both dedupe on a natural reference — the provider reference for a top-up, the period
 start in ISO-8601 for a charge — so a retry or a re-run cannot double-book.
 
+### B.18 Blossom reconciliation report (S-56)
+
+> **Status: implemented** (Revenue Ledger R4, issue #345). Gated `stats:system`, matching the rest
+> of the `/admin/statistics/billing` family, and **not** `revenue:read`: a `moderator` reads revenue
+> and does not read system statistics.
+
+| Method | Path | Returns |
+| --- | --- | --- |
+| `GET` | `/api/v1/admin/statistics/billing/reconciliation` | S-56 `BlossomReconciliationResponse` — optional `organizationId` |
+
+**Why it exists.** Drift is already a Critical alert: `SystemMetricCollector` emits
+`aveline.blossom.reconciliation.drift` over the accounts it scans, and `blossom.ledger.drift` watches
+it. An alarm is only actionable if the operator can find **which** account drifted, and until this
+endpoint the only place to look was Grafana.
+
+**The formula is not reimplemented.** It calls the same `BlossomService.LedgerDerivedBalance` and
+`ReconciliationDrift` the collector uses, because a second derivation would let the console and the
+alarm disagree about the same account — the one outcome this surface must never produce.
+
+**Shape.** Only drifted accounts appear, ranked by the **magnitude** of the drift so the worst is
+first regardless of sign; a consistent account is not noise to page through, and `accountsChecked`
+distinguishes *"consistent"* from *"not looked at"*. `reconciliationChecked` is `null` here rather
+than `false`: this read does not itself run a reconciliation pass, so saying `false` would claim it
+checked and found nothing.
+
+**Errors:** `401`; `403`.
+**Source:** `Modules/Billing/Endpoints/BlossomReconciliationEndpoints.cs`.
+
 ### B.17 Admin revenue reads
 
 > **Status: implemented** (Revenue Ledger R3, issue #344). All six reads are gated
@@ -1308,8 +1336,33 @@ only on consumption or an adjustment.
 
 #### `GET /api/v1/orgs/{organizationId:guid}/blossoms/statement`
 
+> **Changed in Revenue Ledger R4 (issue #345).** The statement is now paged, filtered and ordered
+> **server-side**, gained query parameters and response fields, and its window cap moved from 92 to
+> **400 days**. The wire change is deliberate; the reasoning is below.
+
 **Purpose:** full statement of account with a reconciliation check.
-**Params:** `from`, `to`, `page`, `pageSize`, `entryType?` (`all` \| `entitlement` \| `consumption`).
+
+**Params:**
+
+| Param | Meaning |
+| --- | --- |
+| `from`, `to` | The UTC window. Capped at `Billing:StatementMaxWindowDays` (**400**, matching the retention S-3 claims); a longer one is `400` **naming the effective limit** rather than silently shortened |
+| `page`, `pageSize` | `pageSize` must be within `[1, 200]`; outside it is `400` **naming the range**, not clamped |
+| `kind` | `all` \| `entitlement` \| `consumption`. An unrecognised value is `400`, never ignored |
+| `entryType` | Restricts entitlement rows to one `BlossomLedgerEntryType`. Unrecognised is `400` |
+| `sourceKind` | Restricts entitlement rows to one `BlossomSourceKind` |
+| `q` | Substring match over the reason or the source reference; for consumption rows, over the workflow id, provider or model |
+| `minAmount`, `maxAmount` | Inclusive bounds on the **signed** ledger movement |
+
+**Two filters select the ledger leg only.** `entryType` and an amount bound are both
+ledger concepts — a consumption row has no entry type and no delta — so a request carrying either
+returns **no** consumption rows. This is worth stating because both were bugs before it held: the
+consumption leg ignored `entryType` entirely, and its zero delta satisfied `delta >= 1`.
+
+**Ordering is total and stable** (`occurredAt DESC, id DESC`; `id` is UUIDv7, so it is monotonic).
+A row can therefore be neither repeated nor skipped across pages, which is what makes the pager
+trustworthy. `total` is the window total, not the page length, and it is the same on every page.
+
 **Response `200`:**
 
 ```json
@@ -1339,11 +1392,15 @@ only on consumption or an adjustment.
       "entryType": null,
       "blossomDelta": -3.7,
       "balanceAfter": 612.9,
-      "reason": "Agent workflow",
+      "reason": "AI workflow on gpt-4o.",
       "sourceKind": null,
       "sourceRef": "wf_01J8...",
       "expiresAt": null,
-      "createdByUserId": null
+      "createdByUserId": null,
+      "provider": "openai",
+      "model": "gpt-4o",
+      "normalizedUnits": 3700,
+      "actualCostUsd": 0.0075
     }
   ],
   "total": 39,
@@ -1356,11 +1413,39 @@ only on consumption or an adjustment.
     "drift": 0.0,
     "isConsistent": true
   },
-  "generatedAt": "2026-09-11T09:30:00Z"
+  "generatedAt": "2026-09-11T09:30:00Z",
+  "maxWindowDays": 400,
+  "dataQuality": {
+    "reconciliationChecked": true,
+    "openingBalanceFromProjection": true,
+    "windowCapped": false,
+    "maxWindowDays": 400,
+    "notes": [
+      "The opening balance is derived from the balance projection, not accumulated forward from the ledger rows in this window."
+    ]
+  }
 }
 ```
 
-**Errors:** `400` (bad window), `401`, `403`.
+**The four additive item fields** are `null` on an entitlement row and populated on a consumption
+one: `provider`, `model`, `normalizedUnits` (input + output + cached tokens, so a Blossom charge can
+be checked rather than taken on trust) and `actualCostUsd`. A consumption row's `reason` now names
+the model rather than saying *"Agent workflow"*.
+
+**`availableToRevoke`** is present on a row that is a revocable grant and absent otherwise. It is
+how the console offers a revoke action instead of letting an operator discover non-revocability from
+a `409`. The `409 grant-not-revocable` response remains the server's authoritative answer, and the
+two cannot disagree: both apply the same rule — the right entry type, a positive delta, not expired,
+and not already fully revoked.
+
+**`dataQuality` states what the numbers rest on.** `openingBalanceFromProjection` is always `true`
+today: the opening balance is derived **backwards** from the cached `BlossomRemaining` projection,
+not accumulated forward from the ledger, so it inherits that row's state. `reconciliationChecked`
+is `false` when the reconciliation could not be evaluated, and a client must render that as
+*"reconciliation status unknown"* — **never** as consistent.
+
+**Errors:** `400` (bad window, page size outside `[1, 200]`, unrecognised `kind` or `entryType`,
+`min > max`), `401`, `403`.
 **Related statistics:** [S-3](../backend/statistics-catalog.md).
 **Client guidance:** `reconciliation.isConsistent = false` is a **Critical**
 condition. Surface it to the owner and to Aveline support; do not silently render a
@@ -1423,7 +1508,7 @@ All four require `billing:adjust` (Aveline team only) and `Idempotency-Key`.
 | `POST` | `/api/v1/admin/orgs/{organizationId:guid}/blossoms/credit` | `{ amount, reason, expiresAt?, sourceKind?, sourceRef? }` | `201` `BlossomLedgerEntryDto` (see the field-name note above) |
 | `POST` | `/api/v1/admin/orgs/{organizationId:guid}/blossoms/debit` | `{ amount, reason, allowNegative? }` | `201` `BlossomLedgerEntryDto` (see the field-name note above) |
 | `POST` | `/api/v1/admin/orgs/{organizationId:guid}/blossoms/revoke` | `{ ledgerEntryId, reason }` | `201` `BlossomLedgerEntryDto` (see the field-name note above) |
-| `GET` | `/api/v1/admin/orgs/{organizationId:guid}/blossoms/statement` | query: paging | same shape as the org statement |
+| `GET` | `/api/v1/admin/orgs/{organizationId:guid}/blossoms/statement` | query: `from`, `to`, `page`, `pageSize`, `kind`, `entryType`, `sourceKind`, `q`, `minAmount`, `maxAmount` | same shape as the org statement (§B.9) |
 
 **Validation:**
 

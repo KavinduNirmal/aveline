@@ -959,6 +959,81 @@ than a route that exists. Nothing is exposed until it appears here **and** in
 | Access | `stats:view` |
 | Notes | Soft-deleted rows excluded. Explains empty facet counts. |
 
+### S-46 · `pushOptOutRate`
+
+| Field | Value |
+| --- | --- |
+| Description | Ratio of staff with push notifications disabled relative to all staff holding registered devices |
+| Formula | `count(users with PushNotificationsEnabled = false) / count(users with ≥1 active device token)` per org |
+| Dimensions | `organizationId`, `boutiqueRole` |
+| Granularity | daily |
+| Freshness | `≤ 1 h` |
+| Retention | 400 days (day) |
+| Source | `Users`, `UserDeviceTokens`, `OrganizationMemberships` |
+| Storage | on-the-fly / rollup |
+| Endpoint | `GET /api/v1/orgs/{organizationId}/statistics/engagement` |
+| Access | `stats:view` (org owner/manager) |
+
+### S-47 · `contactPreferenceMix`
+
+| Field | Value |
+| --- | --- |
+| Description | Breakdown of preferred contact channels configured across boutique staff |
+| Formula | `count(users by ContactPreference) / count(users)` |
+| Dimensions | `organizationId`, `contactPreference` |
+| Granularity | daily |
+| Freshness | `≤ 1 h` |
+| Retention | 400 days (day) |
+| Source | `Users`, `OrganizationMemberships` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/orgs/{organizationId}/statistics/engagement` |
+| Access | `stats:view` |
+
+### S-48 · `sessionRevocationCount`
+
+| Field | Value |
+| --- | --- |
+| Description | Frequency of session revocations over a given window |
+| Formula | `count(audit rows where action = user.session.revoked)` |
+| Dimensions | `organizationId`, `actor`, `self-vs-admin-initiated` |
+| Granularity | daily |
+| Freshness | real-time |
+| Retention | 400 days |
+| Source | `AuditLogEntries` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/orgs/{organizationId}/statistics/engagement` |
+| Access | `stats:view` (org), `audit:view` (team admin) |
+
+### S-49 · `accountDeletionCount`
+
+| Field | Value |
+| --- | --- |
+| Description | Number of account deletions occurring within an organization |
+| Formula | `count(users where DeletedAt is not null)` over window |
+| Dimensions | `organizationId`, `boutiqueRole` |
+| Granularity | daily |
+| Freshness | real-time |
+| Retention | 400 days |
+| Source | `Users`, `OrganizationMemberships` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/orgs/{organizationId}/statistics/engagement` |
+| Access | `stats:view` (org), `admin:orgs:read` (team admin) |
+
+### S-50 · `profileUpdateCount`
+
+| Field | Value |
+| --- | --- |
+| Description | Volume of user profile updates across staff |
+| Formula | `count(audit rows where action = user.profile.updated)` |
+| Dimensions | `organizationId`, `field` |
+| Granularity | daily |
+| Freshness | real-time |
+| Retention | 400 days |
+| Source | `AuditLogEntries` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/orgs/{organizationId}/statistics/engagement` |
+| Access | `stats:view` |
+
 ---
 
 ## 10. Retention and aggregation summary

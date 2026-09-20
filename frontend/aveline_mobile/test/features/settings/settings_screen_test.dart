@@ -368,6 +368,19 @@ void main() {
       expect(find.byKey(const Key('settings_section_boutique')), findsNothing);
     });
 
+    testWidgets('hides the shop block for team admin with non-owner boutique role', (tester) async {
+      await _open(
+        tester,
+        profile: _profileJson(
+          userRole: AppRoles.admin,
+          organizationRole: AppRoles.boutiqueStaff,
+        ),
+      );
+
+      await _scrollTo(tester, const Key('settings_sign_out'));
+      expect(find.byKey(const Key('settings_section_boutique')), findsNothing);
+    });
+
     testWidgets('shows the shop block to a role that may manage it', (tester) async {
       await _open(
         tester,

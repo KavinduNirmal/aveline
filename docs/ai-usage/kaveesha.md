@@ -868,3 +868,62 @@ The multi-file merge conflict was resolved without regressing any Commerce funct
 
 ### Remaining Work
 None. Feature implementation, documentation, and device verification are complete.
+
+---
+
+## Session 2026-09-20 (Settings `/settings` Flutter to Backend Integration)
+
+**Task:** Connect the Flutter mobile app Settings screen (`/settings`) to the backend API according to `flutter-to-backend-settings-implementation.ignore.md`.
+**Tool used:** Antigravity AI Assistant
+
+### Work Performed
+- **Backend API & Contracts (`Aveline.Api`)**:
+  - Reconciled `GET /api/v1/orgs/{organizationId}/settings` to project into the documented flat `OrganizationSettingsResponse` schema (`OrganizationProfileDto Organization, BrandVoice, BusinessRules, PreferredColorsFabrics, CustomerPreferences, Entitlements`).
+  - Added `OrganizationSettingsResponse` record in `OrganizationSettingsDtos.cs`.
+  - Updated `UserService.UpdateUserProfileAsync` audit `After` payload to record `user.ContactPreference` and `user.PushNotificationsEnabled` alongside existing profile fields.
+- **Backend Tests (`Aveline.Api.Tests`)**:
+  - Updated `GetSettings_ReturnsResolvedEntitlements` in `OrganizationSettingsTests.cs` to assert against the reconciled flat properties (`organization`, `brandVoice`, `entitlements`).
+  - Added `GetSettings_ReturnsForbidden_ForTeamAdminWithoutOwnerMembership` confirming that a team `admin` with a non-owner membership receives `403 Forbidden` from `GET /orgs/{id}/settings`.
+  - Added `ChannelRouter_WhenPushDisabled_ReturnsRealtimeOnly` and `ChannelRouter_WhenPushReEnabled_ReUsesExistingTokens` in `OrganizationRecipientResolverTests.cs`.
+- **Flutter Mobile Client (`frontend/aveline_mobile`)**:
+  - Enhanced `UserProvider._serverDetail` to extract the first error message from ASP.NET Core `ValidationProblem` `errors` maps (`data['errors']`).
+  - Added `_boutiqueRoleOrNull` in `SettingsScreen` and updated `_canManageShop` to check the active boutique membership role (`AppRoles.boutiqueOwner`), matching server-side enforcement.
+  - Re-sourced the store-role display row in the Boutique block to show `AppRoles.labelFor(effectiveStoreRole)` derived from `BoutiqueProvider.boutiqueRole`.
+  - Deduplicated boutique name resolution in `SettingsScreen.build`.
+  - Added tests in `settings_screen_test.dart` asserting the Boutique block is hidden for team admins without owner membership and visible for boutique owners.
+  - Added test in `user_provider_test.dart` verifying extraction of messages from `ValidationProblem.errors`.
+- **Documentation & OpenAPI**:
+  - Documented `GET /api/v1/orgs/my` path in `docs/api/openapi.yaml`.
+  - Registered engagement metrics `S-46 pushOptOutRate`, `S-47 contactPreferenceMix`, `S-48 sessionRevocationCount`, `S-49 accountDeletionCount`, and `S-50 profileUpdateCount` in `docs/backend/statistics-catalog.md`.
+
+### Files Created or Modified
+- **Modified**:
+  - `Aveline.Api/Endpoints/OrganizationEndpoints.cs`
+  - `Aveline.Api/Modules/Organizations/DTOs/OrganizationSettingsDtos.cs`
+  - `Aveline.Api/Modules/Shared/Services/UserService.cs`
+  - `Aveline.Api.Tests/OrganizationSettingsTests.cs`
+  - `Aveline.Api.Tests/OrganizationRecipientResolverTests.cs`
+  - `frontend/aveline_mobile/lib/core/providers/user_provider.dart`
+  - `frontend/aveline_mobile/lib/features/settings/presentation/screens/settings_screen.dart`
+  - `frontend/aveline_mobile/test/core/providers/user_provider_test.dart`
+  - `frontend/aveline_mobile/test/features/settings/settings_screen_test.dart`
+  - `docs/api/openapi.yaml`
+  - `docs/backend/statistics-catalog.md`
+  - `docs/ai-usage/kaveesha.md`
+
+### Verification Performed
+- **Backend Tests**:
+  - `dotnet test Aveline.Api/Aveline.Api.sln --filter "FullyQualifiedName~OrganizationSettingsTests"` — 9/9 tests passed.
+  - `dotnet test Aveline.Api/Aveline.Api.sln --filter "FullyQualifiedName~OrganizationRecipientResolverTests"` — 8/8 tests passed.
+- **Flutter Tests**:
+  - `flutter test test/core/providers/user_provider_test.dart test/features/settings/ test/core/providers/boutique_provider_test.dart` — 53/53 tests passed.
+- **Flutter Static Analysis**:
+  - `flutter analyze --no-fatal-infos` — **No issues found!**
+- **Physical Device Integration**:
+  - Built and verified on Android physical device (`CPH2477`).
+  - Verified account details display, push notifications toggle, preferred contact sheet, and boutique role display.
+
+### Remaining Work
+None. Feature implementation, documentation, contract reconciliation, and automated tests are complete.
+
+

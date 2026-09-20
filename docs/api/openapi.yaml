@@ -620,6 +620,35 @@ paths:
   # ---------------------------------------------------------------------------
   # Organizations
   # ---------------------------------------------------------------------------
+  /api/v1/orgs/my:
+    get:
+      tags: [Organizations]
+      summary: List memberships of the current authenticated user
+      description: |
+        Returns active and pending boutique memberships for the authenticated user,
+        including canonical organizationId GUIDs, organization name, slug, and boutique role.
+      operationId: getMyOrganizations
+      responses:
+        "200":
+          description: User memberships
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    organizationId: { type: string, format: uuid }
+                    userId: { type: string, format: uuid }
+                    organizationName: { type: string, nullable: true }
+                    slug: { type: string, nullable: true }
+                    boutiqueRole: { type: string }
+                    status: { $ref: "#/components/schemas/MembershipStatus" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/v1/orgs:
     post:
       tags: [Organizations]

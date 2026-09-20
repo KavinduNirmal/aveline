@@ -60,6 +60,18 @@ public sealed record OrganizationSettingsDto(
         org.SuspendedAt);
 }
 
+/// <summary>
+/// The reconciled flat response matching docs/api/openapi.yaml for GET /api/v1/orgs/{organizationId}/settings.
+/// </summary>
+public sealed record OrganizationSettingsResponse(
+    OrganizationProfileDto Organization,
+    string? BrandVoice,
+    string? BusinessRules,
+    string? PreferredColorsFabrics,
+    string? CustomerPreferences,
+    object Entitlements);
+
+
 /// <summary>A member of an organization as returned to owners/managers (FR-3.1).</summary>
 public sealed record OrganizationMemberDto(
     Guid UserId,

@@ -74,15 +74,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  /// The boutique role, or `null` when no provider is above the screen.
+  String? _boutiqueRoleOrNull(BuildContext context) {
+    try {
+      return context.watch<BoutiqueProvider>().boutiqueRole;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Whether this account may manage the shop's own settings.
   ///
-  /// The destination itself is left ungated: an associate without this grant
-  /// still owns their account and their preferences, which is the whole reason
-  /// the retired Profile screen was merged in here.
-  bool _canManageShop(AvelineUser user) => Permissions.anyGranted(
-    [user.userRole, user.organizationRole],
-    Permissions.settingsManage,
-  );
+  /// The server requires `settings:manage` on the active membership's role
+  /// (org:boutique_owner). If an active boutique role is available from
+  /// BoutiqueProvider, it takes precedence over JWT claims.
+  bool _canManageShop(AvelineUser user, String? boutiqueRole) {
+    final effectiveRole = boutiqueRole ?? user.organizationRole;
+    return Permissions.anyGranted(
+      [effectiveRole],
+      Permissions.settingsManage,
+    );
+  }
 
   /// Writes a change through the account the app holds, and says so when the API
   /// refuses it.
@@ -206,7 +218,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             SliverToBoxAdapter(child: _header(boutiqueName)),
             SliverPadding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
-              sliver: SliverList.list(children: _sections(user)),
+              sliver: SliverList.list(children: _sections(user, boutiqueName)),
             ),
             // The animated Blossom floats over the bottom of the shell, so the
             // last row keeps enough room to scroll clear of it.
@@ -247,7 +259,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   /// The page's groups, in the order an associate meets them: themselves first,
   /// then the shop they belong to, then the way out.
-  List<Widget> _sections(AvelineUser? user) => [
+  List<Widget> _sections(AvelineUser? user, String boutiqueName) {
+    final boutiqueRole = _boutiqueRoleOrNull(context);
+    final effectiveStoreRole = boutiqueRole ?? user?.organizationRole ?? '';
+
+    return [
     SettingsSection(
       key: const Key('settings_section_account'),
       title: 'Account',
@@ -278,22 +294,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           SettingsSwitchRow(
             key: const Key('settings_push_notifications'),
-            icon: Icons.notifications_active_outlined,
+            icon: Icons.notifications_none_rounded,
             label: 'Push notifications',
-            description: 'Sent to this device as things happen.',
             value: user.pushNotificationsEnabled,
             onChanged: _setPushNotifications,
           ),
           SettingsRow(
             key: const Key('settings_contact_preference'),
-            icon: Icons.alternate_email_rounded,
+            icon: Icons.forum_outlined,
             label: 'Preferred contact',
             value: user.preferredContact.label,
             onTap: () => _pickContactPreference(user.preferredContact),
           ),
         ],
       ),
-    if (user != null && _canManageShop(user))
+    if (user != null && _canManageShop(user, boutiqueRole))
       SettingsSection(
         key: const Key('settings_section_boutique'),
         title: 'Boutique',
@@ -304,13 +319,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             key: const Key('settings_boutique_name'),
             icon: Icons.storefront_outlined,
             label: 'Boutique',
-            value: widget.boutiqueName ?? _boutiqueNameOrNull(context) ?? _fallbackName,
+            value: boutiqueName,
           ),
           SettingsRow(
             key: const Key('settings_store_role'),
             icon: Icons.badge_outlined,
             label: 'Your store role',
-            value: AppRoles.labelFor(user.organizationRole),
+            value: AppRoles.labelFor(effectiveStoreRole),
           ),
         ],
       ),
@@ -329,6 +344,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ],
     ),
   ];
+  }
 }
 
 /// What the account group shows while the profile is still on its way.

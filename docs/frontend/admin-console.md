@@ -350,6 +350,11 @@ derivation here.
 Admin-subtree coverage at A4: **27.69 % lines** (from 0 % at A0). The floors in
 `vitest.admin-coverage.config.ts` are raised to the achieved values.
 
+**Final, with the business-KPI surface (P1–P6):** the admin subtree is at **77.09 % lines /
+64.88 % branches**; `routes/admin` at **76.57 % / 62.52 %**; `components/admin` at
+**29.41 % / 19.35 %**; `components/admin/shell` is still the drag on that last aggregate, by design.
+The floors are set just below each achieved value, and `bun run test:coverage:admin` passes.
+
 ## A5 — core management: users, orgs, requests
 
 ### URL-backed list state
@@ -637,6 +642,118 @@ the acknowledge path still patches only `status`/`acknowledgedAt` by `id` and ne
 
 `docs/api/README.md`, `docs/api/openapi.yaml` and `docs/architecture/authorization.md` were updated in
 the same change.
+
+## Business KPIs — the `business` domain (P1–P6)
+
+A second, deliberately separate surface answers the question the triage dashboard does not: **what is
+the business doing?** It is the plan
+`.agents/plans/admin-dashboard-business-kpis-implementation.ignore.md`, delivered in six phases.
+
+| # | Phase | GitHub issue | Status |
+|---|---|---|---|
+| **P1** | Foundations and truth plumbing | [#335](https://github.com/KavinduNirmal/aveline/issues/335) | **delivered** |
+| **P2** | Growth, active users and plan mix | [#336](https://github.com/KavinduNirmal/aveline/issues/336) | **delivered** |
+| **P3** | Subscription history and usage | [#337](https://github.com/KavinduNirmal/aveline/issues/337) | **delivered** |
+| **P4** | Frontend foundation | [#338](https://github.com/KavinduNirmal/aveline/issues/338) | **delivered** |
+| **P5** | The Growth console | [#339](https://github.com/KavinduNirmal/aveline/issues/339) | **delivered** |
+| **P6** | Usage console, drill-down, documentation, ratchet | [#340](https://github.com/KavinduNirmal/aveline/issues/340) | **delivered** |
+
+### The scope decision (DR-1): a Postgres series is inside the boundary
+
+Q11's rule — *"Grafana owns the platform's time series; the console owns decisions and actions"* —
+is scoped to **Prometheus**. Its mechanical form is the grep for `aveline_`/`pg_` in
+`src/test/admin-prometheus-boundary.test.ts`, and a series sourced from Aveline's own Postgres tables
+cannot trip it. The delivered console already charts Postgres (`ActivityChart` over `GET /admin/audit`).
+
+**D-1, recorded here as the plan requires:** the console **may** own a time series whose source is
+Aveline's own Postgres tables and whose subject is **business state** — users, organizations,
+subscriptions, usage. It may **not** own a series sourced from Prometheus, and it may not re-draw a
+chart Grafana already renders from the same counter. The `V1–V11` triage surface keeps Q11 unchanged.
+
+### Two surfaces, one new domain
+
+| Entry | Path | Gate | What it shows |
+|---|---|---|---|
+| **Growth** | `/admin/:userId/business` | `analytics:business:read` | Signups, active users and the DAU/WAU/MAU reading, plan mix, subscription trend |
+| **Usage & Engagement** | `/admin/:userId/business/usage` | `analytics:business:read` | Messages, agent runs, API calls and Blossoms per bucket, plus the organization ranking and the org drill-down |
+
+The registry gains a **`business` domain** with those two entries, so the nav, the router and the
+registry invariants stay in one source of truth (`lib/admin/routes.ts`). A caller without
+`analytics:business:read` sees **neither** the nav item nor the route: the panel is a pure filter,
+so a denied entry is absent from the DOM rather than disabled.
+
+### The `B1…B12` catalogue is separate, on purpose (DR-2)
+
+`lib/admin/metrics.ts` is pinned to exactly `V1…V11` by `metrics.test.ts`. Adding a twelfth widget
+there is a test failure, not a feature. The business surface therefore has its own catalogue,
+`lib/admin/business-kpis.ts`, with ids `B1…B12`, its own integrity test, and a cross-catalogue guard
+asserting `V1…V11` is unchanged.
+
+### The honesty contract
+
+Every business endpoint returns a `dataQuality` block, and the console renders it through
+`businessDataQuality` — the fourth vocabulary, alongside system, agent and api. The four rules:
+
+1. **A count of `0` inside the observed period is `0`. A measure that could not be computed is
+   `null`.** `KpiTile` renders `null` as **"not measured"**, never as `0`.
+2. **A `null` measure stays a `null` through the chart layer.** `lib/admin/business-series.ts` is
+   the one place that decides this: a bucket the server did not send is `null`, a measured `0` stays
+   `0`, and an `undefined` measure becomes `null` rather than a disappearing key (`connectNulls`
+   then draws the gap as a gap). That module is pure and unit-tested to 100 % lines.
+3. **A partial bucket is shaded**, on the chart: `TimeSeriesChart` gained `partialBucket`, which
+   renders a `ReferenceArea` over the leading clipped and trailing open buckets.
+4. **A backfilled bucket is drawn dashed and named.** The subscription trend's audit-ledger
+   reconstruction sets `isBackfilled`; the chart marks it and the `dataQuality` note says why.
+
+Three further distinctions the surface keeps:
+
+- **`userAttributionAvailable: false`** accompanies a `null` active-user reading, and the notice says
+  *"active users are not measured for this window"* — so a blank is not read as "nobody uses the
+  product".
+- **`unresolvedAttributionCount`** is surfaced, so a stale claim map shows as a visible undercount
+  rather than a low DAU.
+- **`organizationsTotal` versus `organizationsWithBillingRow`** is a **footnote on the plan-mix
+  chart**, not an unexplained difference between two numbers: an organization that never changed or
+  cancelled its plan has no `OrganizationSubscriptions` row at all.
+
+### The attribution fix behind the active-user KPI (B1)
+
+The Clerk `jwt-aveline-v1` token carries Clerk's native `user_…`/`org_…` ids while Aveline stores
+GUIDs, so every claim failed `Guid.TryParse` and `ApiRequestMetric.UserId` was `null` for all human
+traffic. `IClaimIdentityMap` plus a five-minute `ClaimIdentityMapRefresher` now resolve the ids **off
+the request path**; `RequestPrincipal.Resolve(principal, identities)` is one synchronous dictionary
+read, so the telemetry middleware keeps its *"does no I/O, well under 1 ms to p99"* contract. A
+refresh failure keeps the previous map; an unmapped Clerk id increments `UnresolvedCount` so the
+undercount is visible. `AttributionB1Tests` is the acceptance test: a real, signature-validated
+Clerk-shaped token produces a sample carrying the seeded GUID.
+
+### Caching
+
+The six reads are cached in `IDistributedCache` at `BusinessAnalytics:CacheSeconds` (60 s) and carry
+`Cache-Control: private, max-age=60`. `IDistributedCache` rather than `IMemoryCache` because the
+deployment runs two replicas; `BusinessAnalytics:RequireSharedCache` fails startup when a shared cache
+is required and Redis is not configured, rather than letting the two replicas serve different figures.
+
+### Not built here, and why
+
+- **The organization-owner surface.** OQ-1 puts it out of this plan: it belongs on the tenant tree
+  (`/app/b/:slug`), which the predecessor plan declared out of scope for console work. The console's
+  org drill-down (`usage?organizationId=…`) is how an operator answers an owner's question today.
+- **The seven Prometheus KPI gauges** (§5.9 layer 3 of the plan). The data-quality contract
+  (layer 1), the existing request telemetry (layer 2) and the test contracts (layer 4) are all
+  delivered. The gauges are the one part that reaches into `MetricsCatalog` and the seeded alert
+  rules; they are alerting plumbing rather than a console requirement, and they are recorded as
+  remaining work below rather than implemented half-way.
+- **A `tests/load/k6-business-kpis.js`.** The plan records that this repository already has a
+  load-test script with no CI job, and asks that the precedent not be repeated. The `COUNT(DISTINCT)`
+  query's real latency is therefore **not measured here**; the 60-second cache is the mitigation, and
+  the load test is recorded as remaining work. **No budget is claimed for an unmeasured query.**
+- **A raw-path check on the six new routes.** `RouteTemplateResolver` should record
+  `/api/v1/admin/statistics/business/{endpoint}` rather than a raw path; that is a runtime fact and
+  is listed in the plan's §9 as a post-deploy check, not something this session could measure.
+- **The Playwright walk is written but not executed here.** `tests/e2e/admin-console/console-access.spec.ts`
+  now covers both new routes signed-out, but no browser is installed in this environment — the same
+  limitation A8 recorded, stated rather than implied.
 
 ## Documentation and API surface
 

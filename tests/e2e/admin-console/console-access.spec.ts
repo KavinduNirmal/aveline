@@ -9,6 +9,10 @@ import { expect, test } from '@playwright/test'
 
 const ADMIN_URL = '/admin/01a0ba0b-485f-780e-b465-ae11670539e9/dashboard'
 
+/** The two business-KPI routes added by the Business KPIs plan (P5/P6). */
+const BUSINESS_URL = '/admin/01a0ba0b-485f-780e-b465-ae11670539e9/business'
+const BUSINESS_USAGE_URL = '/admin/01a0ba0b-485f-780e-b465-ae11670539e9/business/usage'
+
 test('signed out, the console is unreachable and issues no admin request', async ({ page }) => {
   const adminRequests: string[] = []
   page.on('request', (request) => {
@@ -24,6 +28,22 @@ test('signed out, the console is unreachable and issues no admin request', async
 
   expect(adminRequests).toEqual([])
 })
+
+for (const url of [BUSINESS_URL, BUSINESS_USAGE_URL]) {
+  test(`signed out, ${url} is unreachable and issues no business-KPI request`, async ({ page }) => {
+    const businessRequests: string[] = []
+    page.on('request', (request) => {
+      const target = request.url()
+      if (target.includes('/api/v1/admin/statistics/business/')) businessRequests.push(target)
+    })
+
+    await page.goto(url)
+
+    await expect(page).toHaveURL(/\/sign-in/)
+    await expect(page.getByText('Aveline Console')).toHaveCount(0)
+    expect(businessRequests).toEqual([])
+  })
+}
 
 test('signed out, the bare /admin entry is also refused', async ({ page }) => {
   await page.goto('/admin')

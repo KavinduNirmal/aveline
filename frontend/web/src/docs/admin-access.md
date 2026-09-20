@@ -41,6 +41,30 @@ door with a stated reason. In particular:
 Within the console, each section declares a **gate**: either a permission the caller must hold, or a
 role policy the server enforces. A section the caller cannot open is not rendered at all.
 
+### Business KPIs (`analytics:business:read`)
+
+The **Growth** and **Usage & Engagement** sections (`/admin/:userId/business` and
+`/admin/:userId/business/usage`) are gated on a single permission, `analytics:business:read`.
+Because the panel is a pure filter over the registry, a caller without it sees neither the
+navigation entry nor the route — there is nothing to open and nothing to return `403` for.
+
+The server is authoritative and holds the same permission on all six reads. Two of them carry a
+**second** requirement in addition to `analytics:business:read`:
+
+| Read | Extra requirement | Why |
+| --- | --- | --- |
+| `usage?organizationId=…` | `admin:orgs:read` | It drills into one tenant's usage |
+| `organizations` | `admin:orgs:read` | It enumerates tenant names and usage |
+
+Both extra checks are performed in the handler, so a caller holding only the KPI permission is
+refused with `403` rather than shown a partial answer. The routes are **bearer-only**: an API key
+cannot reach them, matching the other team-only statistics families.
+
+`moderator` holds `analytics:business:read` as well as `admin:orgs:read` and `billing:view`, so the
+catalogue says a moderator could read growth data. That grant is **inert today** — the console
+admits only `owner` and `admin` — and exists so the permission catalogue is semantically correct
+rather than because it changes what anyone can open.
+
 ---
 
 ## Privileged Operations

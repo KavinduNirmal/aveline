@@ -202,7 +202,7 @@ unless it appears in this catalog **and** in
 | Storage | on-the-fly, with a 5-minute cache |
 | Endpoint | `GET /api/v1/orgs/{organizationId}/entitlements/usage` |
 | Access | `billing:view` |
-| Notes | `UsageAccount.StaffCount` and `ActiveCustomerCount` are **currently never written** (`UsageAccounts` columns exist but no writer updates them). This plan adds the counting job. Until then `dataQuality.materialisedCounts: false` |
+| Notes | **Corrected:** `UsageAccount.StaffCount` and `ActiveCustomerCount` **are** written. `EntitlementCountingJob` (`Modules/Billing/Jobs/LedgerJobs.cs:272-320`, registered at `BillingModule.cs:33`) recomputes both every five minutes, so `dataQuality.materialisedCounts` is `true` once the job has run. The earlier claim that no writer existed came from grepping the column *name* rather than the *writer*; grep the job registry instead. |
 
 ### S-11 · `activeCustomerCount`
 
@@ -1041,6 +1041,29 @@ than a route that exists. Nothing is exposed until it appears here **and** in
 
 ---
 
+### 8b. The business family's `dataQuality` (S-44…S-49)
+
+The business reads carry their own flags rather than borrowing another family's vocabulary. A false
+flag is named, never absorbed; a `null` measure plus the matching false flag means **"not measured"**,
+which is not `0`.
+
+| Flag | `true` means | Present on |
+| --- | --- | --- |
+| `userAttributionAvailable` | At least one request in the window carried a resolved user id, so the active-user measures are meaningful. `false` accompanies a **`null`** series, never a zero one | S-45 |
+| `unresolvedAttributionCount` | How many requests carried a Clerk id that was present but not yet in the claim map. A non-zero value is a visible **undercount**, not a low DAU | S-45, all |
+| `subscriptionHistoryBackfilled` | Some buckets were reconstructed from `AuditLogEntries[Action='org.plan.changed']` rather than snapshotted, so they are **approximate** | S-47 |
+| `lastActivityIsReconstructed` | `LastActivityAt` is a greatest-of reconstruction over conversation, agent-run, API-metric and audit timestamps, not a recorded fact. Always `true` on S-49 | S-49 |
+| `agentMetricsUninstrumented` | The `DailyAgentMetrics` rollup has no user dimension, so `AgentRuns` is an organization-level total and per-user agent activity is not measured | S-48 |
+| `notes` | The server's own sentences about this answer. The console merges the notes from every endpoint it read rather than showing one and dropping the rest | all |
+
+**What is deliberately not available, and is therefore never offered as a KPI.** Staff attendance
+(the `TimeEntries` table has zero writers), per-user agent runs
+(`AgentWorkflowRun.InitiatedByUserId` is always `null`), per-user AI usage (`AiUsageRecords` has no
+user column) and login/session history (Aveline stores no session state). Each would need new
+instrumentation and none is in this catalog.
+
+---
+
 ## 9. Retention and aggregation summary
 
 | Data | Raw retention | Rollup retention | Rollup job | Rollup table |
@@ -1055,6 +1078,7 @@ than a route that exists. Nothing is exposed until it appears here **and** in
 | `SystemMetricSamples` | 30 days | 400 days (hourly) | `SystemMetricCollector` + hourly compaction | `SystemMetricSamples` |
 | `AuditLogEntries` | 400 days minimum; configurable to indefinite | none | — | — |
 | `SystemAlerts` | 400 days | none | — | — |
+| `OrganizationSubscriptionSnapshots` | 400 days | n/a (already daily) | `OrganizationSubscriptionSnapshotJob` daily 02:00 UTC | `OrganizationSubscriptionSnapshots` |
 
 Two rollup tables are implied but not defined in
 [domain-model.md](domain-model.md) because they are derivable and their shape is

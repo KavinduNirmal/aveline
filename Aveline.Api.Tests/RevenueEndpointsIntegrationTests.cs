@@ -604,4 +604,215 @@ public class RevenueEndpointsIntegrationTests : IAsyncLifetime
             .Where(entry => entry.OrganizationId == orgId)
             .ToListAsync());
     }
+
+    // ── R3: the reads (issue #344) ──────────────────────────────────────────────────────────
+
+    private const string LedgerPath = "/api/v1/admin/revenue/ledger";
+    private const string AccountsPath = "/api/v1/admin/revenue/accounts";
+    private const string OverviewPath = "/api/v1/admin/statistics/revenue/overview";
+    private const string TimeseriesPath = "/api/v1/admin/statistics/revenue/timeseries";
+    private const string CollectionsPath = "/api/v1/admin/statistics/revenue/collections";
+    private const string BlossomSalesPath = "/api/v1/admin/statistics/revenue/blossoms";
+
+    private static readonly string[] AllReadPaths =
+    [
+        LedgerPath, AccountsPath, OverviewPath, TimeseriesPath, CollectionsPath, BlossomSalesPath,
+    ];
+
+    [Fact]
+    public async Task WithoutAToken_EveryReadReturns401()
+    {
+        foreach (var path in AllReadPaths)
+        {
+            var response = await _client.GetAsync(path);
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+    }
+
+    /// <summary>
+    /// A `moderator` reads revenue and cannot move it — the split the `MoneyRead` /
+    /// `MoneyOperations` pair exists to express, asserted from both sides.
+    /// </summary>
+    [Fact]
+    public async Task Moderator_MayReadEveryRevenueRoute()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var clerkId = await SeedTeamUserAsync(suffix, Roles.Moderator);
+        var token = CreateToken(clerkId, Roles.Moderator);
+
+        foreach (var path in AllReadPaths)
+        {
+            var request = Authorized(HttpMethod.Get, path, token);
+            var response = await _client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+    }
+
+    [Fact]
+    public async Task ATeamRoleWithoutRevenueRead_Is403()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        // `staff` holds neither revenue:read nor any org role.
+        var clerkId = await SeedTeamUserAsync(suffix, Roles.Staff);
+        var token = CreateToken(clerkId, Roles.Staff);
+
+        var response = await _client.SendAsync(Authorized(HttpMethod.Get, LedgerPath, token));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    /// <summary>
+    /// Every read is a `private` admin response: a shared proxy must never serve one operator's
+    /// revenue figures to another.
+    /// </summary>
+    [Fact]
+    public async Task EveryReadCarriesAPrivateCacheControlHeader()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var clerkId = await SeedTeamUserAsync(suffix, Roles.Owner);
+        var token = CreateToken(clerkId, Roles.Owner);
+
+        foreach (var path in AllReadPaths)
+        {
+            var response = await _client.SendAsync(Authorized(HttpMethod.Get, path, token));
+            var header = response.Headers.CacheControl;
+            Assert.NotNull(header);
+            Assert.True(header!.Private, $"{path} must be `private`");
+
+            // The register is deliberately uncached, so it carries `max-age=0` (revalidate always)
+            // while every statistics read carries a positive console TTL. Both must be `private`:
+            // a shared cache must never hold one organization's revenue figures.
+            if (path.EndsWith("/ledger", StringComparison.Ordinal))
+            {
+                Assert.Equal(TimeSpan.Zero, header.MaxAge);
+            }
+            else
+            {
+                Assert.True(header.MaxAge > TimeSpan.Zero, $"{path} must set a positive max-age");
+            }
+        }
+    }
+
+    [Fact]
+    public async Task EveryReadCarriesTheDataQualityBlock()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var clerkId = await SeedTeamUserAsync(suffix, Roles.Owner);
+        var token = CreateToken(clerkId, Roles.Owner);
+
+        foreach (var path in AllReadPaths)
+        {
+            var response = await _client.SendAsync(Authorized(HttpMethod.Get, path, token));
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var hasQuality = body.RootElement.TryGetProperty("dataQuality", out var quality);
+
+            // The ledger register and the accounts read return `dataQuality` nested only where the
+            // contract says so; everything else must carry it at the top level.
+            Assert.True(hasQuality, $"{path} has no dataQuality");
+            Assert.False(
+                quality.GetProperty("revenueProviderSettlementAvailable").GetBoolean(),
+                $"{path} must state that no provider settles money");
+            Assert.NotEmpty(quality.GetProperty("notes").EnumerateArray());
+        }
+    }
+
+    /// <summary>
+    /// The null-versus-zero rule survives serialisation. A `null` measure must be **present and
+    /// null**, not omitted: an absent key reads as "this deployment does not have the feature",
+    /// which is a different and false claim from "this could not be measured".
+    /// </summary>
+    [Fact]
+    public async Task AMeasurableNull_IsSerialisedAsNull_NotOmitted()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var clerkId = await SeedTeamUserAsync(suffix, Roles.Owner);
+        var orgId = await SeedOrganizationAsync(suffix);
+        // A zero price: the production case, and the one that must not read as "we earn nothing".
+        await SeedSubscriptionAsync(orgId, priceLkr: 0m);
+        var token = CreateToken(clerkId, Roles.Owner);
+
+        var response = await _client.SendAsync(Authorized(HttpMethod.Get, OverviewPath, token));
+
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var root = body.RootElement;
+        Assert.True(root.TryGetProperty("mrr", out var mrr), "mrr must be present");
+        Assert.Equal(JsonValueKind.Null, mrr.ValueKind);
+        Assert.True(root.TryGetProperty("arpu", out var arpu));
+        Assert.Equal(JsonValueKind.Null, arpu.ValueKind);
+        Assert.False(root.GetProperty("dataQuality").GetProperty("subscriptionPricesConfigured").GetBoolean());
+    }
+
+    [Fact]
+    public async Task AWindowOverTheCap_Is400NamingTheEffectiveLimit()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var clerkId = await SeedTeamUserAsync(suffix, Roles.Owner);
+        var token = CreateToken(clerkId, Roles.Owner);
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Get,
+            $"{TimeseriesPath}?from=2025-01-01T00:00:00Z&to=2026-12-31T00:00:00Z",
+            token));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Contains("400", body.RootElement.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public async Task TheLedgerRegister_IsPagedAndCarriesItsReconciliation()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var clerkId = await SeedTeamUserAsync(suffix, Roles.Owner);
+        var orgId = await SeedOrganizationAsync(suffix);
+        var token = CreateToken(clerkId, Roles.Owner);
+
+        await using (var context = Context())
+        {
+            context.IncomeLedgerEntries.Add(new IncomeLedgerEntry
+            {
+                OrganizationId = orgId,
+                Kind = IncomeEntryKind.SubscriptionCharge,
+                SourceKind = IncomeSourceKind.SubscriptionBilling,
+                SourceRef = $"page-{suffix}",
+                ChargeBasis = IncomeChargeBasis.Derived,
+                Status = IncomeEntryStatus.Recorded,
+                Amount = 2500m,
+                Reason = "Plan charge for 2026-09.",
+                OccurredAt = DateTime.UtcNow,
+            });
+            await context.SaveChangesAsync();
+        }
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Get, $"{LedgerPath}?page=1&pageSize=25", token));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var root = body.RootElement;
+        Assert.Equal(1, root.GetProperty("page").GetInt32());
+        Assert.Equal(25, root.GetProperty("pageSize").GetInt32());
+        Assert.True(root.GetProperty("total").GetInt32() >= 1);
+        var reconciliation = root.GetProperty("reconciliation");
+        Assert.True(reconciliation.TryGetProperty("derivedTotal", out _));
+        Assert.True(reconciliation.TryGetProperty("unverifiedGap", out _));
+        Assert.True(reconciliation.TryGetProperty("isBalanced", out _));
+    }
+
+    /// <summary>Seeds an Active subscription with a real price, for the MRR path.</summary>
+    private static async Task SeedSubscriptionAsync(Guid orgId, decimal priceLkr)
+    {
+        await using var context = Context();
+        context.OrganizationSubscriptions.Add(new Modules.Billing.Models.OrganizationSubscription
+        {
+            OrganizationId = orgId,
+            PlanTier = Modules.Billing.Models.PlanTier.Bloom,
+            BillingCycle = Modules.Billing.Models.BillingCycle.Monthly,
+            Status = Modules.Billing.Models.SubscriptionStatus.Active,
+            CurrentPeriodStart = DateTime.UtcNow.AddDays(-15),
+            CurrentPeriodEnd = DateTime.UtcNow.AddDays(15),
+            PriceLkr = priceLkr,
+        });
+        await context.SaveChangesAsync();
+    }
 }

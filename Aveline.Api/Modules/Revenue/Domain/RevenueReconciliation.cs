@@ -77,10 +77,15 @@ public static class RevenueReconciliation
         return new RevenueReconciliationTotals(
             DerivedTotal: derived,
             VerifiedTotal: verified,
-            UnverifiedGap: gap,
+            // Absolute magnitude: the gap is "how far apart are these two figures", and a receipt
+            // with no matching charge is as much a finding as a charge with no receipt. Exposing it
+            // as a signed subtraction would report the first case as a negative number that reads
+            // like a typo.
+            UnverifiedGap: Math.Abs(gap),
             RefundTotal: refunds,
             NetVerified: verified - refunds,
-            // Nothing outstanding. Over-collection is balanced; under-collection is the finding.
+            // Balanced means at least as much was collected as was billed. Over-collection is a
+            // finding reported by the gap's size and the per-organization read, not by this flag.
             IsBalanced: gap <= 0m);
     }
 }

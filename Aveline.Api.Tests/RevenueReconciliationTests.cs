@@ -131,17 +131,21 @@ public class RevenueReconciliationTests
         Assert.True(result.IsBalanced);
     }
 
+    /// <summary>
+    /// Over-collection is reported rather than clipped — but as a **magnitude**. The gap answers
+    /// "how far apart are these two figures", and a receipt with no matching charge is as much a
+    /// finding as a charge with no receipt, so it is not signed. The signed view is
+    /// `collectionRate.outstanding`, which is a balance and where a negative value means something.
+    /// </summary>
     [Fact]
-    public void OverCollection_IsReportedAsANegativeGap_RatherThanClipped()
+    public void OverCollection_IsReportedAsAMagnitude_RatherThanClipped()
     {
         var result = RevenueReconciliation.Of([
             Entry(IncomeEntryKind.SubscriptionCharge, IncomeChargeBasis.Derived, 1000m),
             Entry(IncomeEntryKind.SubscriptionCharge, IncomeChargeBasis.Verified, 1400m),
         ]);
 
-        // A receipt with no matching charge is exactly what an operator needs to see, so this is
-        // reported rather than clamped to zero.
-        Assert.Equal(-400m, result.UnverifiedGap);
+        Assert.Equal(400m, result.UnverifiedGap);
         Assert.True(result.IsBalanced);
     }
 }

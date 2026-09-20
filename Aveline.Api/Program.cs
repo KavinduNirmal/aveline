@@ -64,7 +64,7 @@ builder.Services.AddAgentServiceClient(builder.Configuration);
 builder.Services.AddClerkAdminClient();
 builder.Services.AddWhatsAppProvider(builder.Configuration);
 builder.Services.AddBillingModule();
-builder.Services.AddRevenueModule();
+builder.Services.AddRevenueModule(builder.Configuration);
 builder.Services.AddApiAccessModule();
 builder.Services.AddAvelineIdempotency();
 builder.Services.AddAuditModule();

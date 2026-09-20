@@ -963,6 +963,63 @@ because a job is not an operator.
 Both dedupe on a natural reference — the provider reference for a top-up, the period
 start in ISO-8601 for a charge — so a retry or a re-run cannot double-book.
 
+### B.17 Admin revenue reads
+
+> **Status: implemented** (Revenue Ledger R3, issue #344). All six reads are gated
+> `revenue:read` and are bearer-only: an API key can never reach a revenue figure.
+
+| Method | Path | Returns |
+| --- | --- | --- |
+| `GET` | `/api/v1/admin/revenue/ledger` | S-50 `IncomeLedgerPageResponse` — filters `from`, `to`, `page`, `pageSize` |
+| `GET` | `/api/v1/admin/revenue/accounts` | S-51 `RevenueAccountsResponse` — per-organization derived/verified/net |
+| `GET` | `/api/v1/admin/statistics/revenue/overview` | S-52 `RevenueOverviewResponse` — MRR, ARR, ARPU |
+| `GET` | `/api/v1/admin/statistics/revenue/timeseries` | S-53 `RevenueTimeseriesResponse` |
+| `GET` | `/api/v1/admin/statistics/revenue/collections` | S-54 `RevenueCollectionsResponse` |
+| `GET` | `/api/v1/admin/statistics/revenue/blossoms` | S-55 `RevenueBlossomSalesResponse` |
+
+**Every response carries `dataQuality`** (`IncomeDataQuality`, the fifth vocabulary), and
+every one sets `Cache-Control: private, max-age=…` — `max-age=0` on the ledger register,
+which is deliberately uncached, and the console TTL elsewhere. `private` matters: a shared
+proxy must never hold one organization's revenue figures.
+
+**Windows.** `from`/`to` with `Revenue:MaxWindowDays` (default **400**, matching the
+retention the S-catalog claims). A window over the cap is **`400` naming the effective
+limit**, never silently shortened — the response must describe the period the caller asked
+about. `granularity` is `day | week | month`. Buckets are dense and aligned to calendar
+boundaries, and `isPartial` marks a bucket the window clips at either edge.
+
+**Null is not zero, and this is the contract the family exists to keep.** A measure that
+could not be computed is `null`, never `0`:
+
+- **MRR, ARR and ARPU are `null` while every `PriceLkr` is `0`**, with
+  `subscriptionPricesConfigured: false` and a note. That is the production case today,
+  because `SubscriptionService.UpsertSubscriptionAsync` never assigns the price. A `0` MRR
+  would read as "we earn nothing"; the truth is "no price is configured".
+- **`collectionRate` is `null`, not `0`, when nothing was billed.** `0` would claim that
+  something was billed and none of it collected, which is a different and false statement.
+- **`arpu` is `null` rather than a divide-by-zero** when nothing is priced.
+- A measured `0` inside the observed period stays `0`.
+
+**Derived versus verified is never merged.** The timeseries returns three separate series,
+and the register's reconciliation exposes `derivedTotal`, `verifiedTotal` and the
+`unverifiedGap` between them. The gap is a **magnitude**: a receipt with no matching charge
+is as much a finding as a charge with no receipt. The signed view is
+`collectionRate.outstanding`, which is a balance, so a negative value correctly means more
+came in than was billed. `isBalanced` means at least as much was collected as billed.
+
+**MRR is list-price scheduled revenue**, not recognised or collected revenue. The response
+states `revenueProviderSettlementAvailable: false`, and the console must not label it
+"collected". An `Annual` subscription is divided by twelve before it enters MRR, so a single
+annual row does not appear as twelve times its monthly value.
+
+**The ledger register is uncached and returns the window's totals**, not the page's: the
+reconciliation describes the period the caller asked about rather than the slice on screen.
+Totals and `dataQuality` are computed over the whole window.
+
+**Errors:** `400` invalid window or granularity; `401`; `403`.
+**Source:** `Modules/Revenue/Endpoints/RevenueEndpoints.cs`,
+`Modules/Revenue/DTOs/RevenueReadDtos.cs`.
+
 ---
 
 ## Part C — Planned endpoints

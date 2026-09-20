@@ -2516,7 +2516,7 @@ paths:
     get:
       tags: [Pricing]
       summary: List Blossom conversion rules
-      description: Phase 1. Requires the team-only `PricingAdminRead` policy: the `admin` or `owner` role **and** `pricing:view`. Never available to boutique roles.
+      description: "Phase 1. Requires the team-only `PricingAdminRead` policy: the `admin` or `owner` role **and** `pricing:view`. Never available to boutique roles."
       operationId: listPricingRules
       parameters:
         - $ref: "#/components/parameters/Page"
@@ -2586,7 +2586,7 @@ paths:
     get:
       tags: [Pricing]
       summary: Read one conversion rule
-      description: Phase 1. Requires the team-only `PricingAdminRead` policy: the `admin` or `owner` role **and** `pricing:view`.
+      description: "Phase 1. Requires the team-only `PricingAdminRead` policy: the `admin` or `owner` role **and** `pricing:view`."
       operationId: getPricingRule
       responses:
         "200":
@@ -3884,6 +3884,297 @@ paths:
           $ref: "#/components/responses/Forbidden"
 
   # ---------------------------------------------------------------------------
+  # Admin revenue (Aveline's own income ledger, S-50..S-55)
+  # ---------------------------------------------------------------------------
+  /api/v1/admin/revenue/ledger:
+    get:
+      tags: [Admin Revenue]
+      summary: Read the paged income ledger with its window totals
+      description: |
+        S-50. Every entry in the window, with `derivedTotal`, `verifiedTotal` and the
+        `unverifiedGap` between them. The gap is the surface's most important number and is
+        **not** an error. `Amount` is always positive and the sign is derived from `kind`, so a
+        refund can never be netted against a charge by accident. Requires `revenue:read`.
+      operationId: getRevenueLedger
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: One page of the income ledger, with the window's totals
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IncomeLedgerPageResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/revenue/ledger/verify:
+    post:
+      tags: [Admin Revenue]
+      summary: Confirm that a charge was collected
+      description: |
+        Records a `Verified` receipt for an existing `(sourceKind, sourceRef)`. The derived
+        expectation it settles is nulled rather than left beside it, because counting both would
+        double-book the period. **Idempotency-Key required**; a replay writes nothing a second
+        time. Requires `revenue:manage`.
+      operationId: verifyRevenueReceipt
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VerifyIncomeRequest" }
+      responses:
+        "201":
+          description: The recorded entry
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IncomeLedgerEntry" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            `duplicate-revenue-entry`, `income-entry-not-voidable`, `idempotency-key-reuse` or
+            `idempotency-key-in-flight`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "503":
+          description: |
+            `idempotency-unavailable`. The lease store is down, so the operation fails closed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /api/v1/admin/revenue/ledger/refund:
+    post:
+      tags: [Admin Revenue]
+      summary: Refund a charge that was collected
+      description: |
+        Refunding a charge with no `Verified` counterpart is `409 refund-not-allowed`: you cannot
+        return money the ledger never recorded receiving, and recording it as a negative total
+        would hide that. **Idempotency-Key required.** Owner-only, because sending money back is
+        irreversible in a way that correcting the ledger is not. Requires `revenue:refund`.
+      operationId: refundRevenueCharge
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefundIncomeRequest" }
+      responses:
+        "201":
+          description: The recorded refund
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IncomeLedgerEntry" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            `refund-not-allowed`, `idempotency-key-reuse` or `idempotency-key-in-flight`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "503":
+          description: |
+            `idempotency-unavailable`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /api/v1/admin/revenue/ledger/adjust:
+    post:
+      tags: [Admin Revenue]
+      summary: Post a correction to the income ledger
+      description: |
+        An adjustment counts as verified movement and never as derived revenue: it corrects the
+        ledger rather than being something a list price asked for. **Idempotency-Key required.**
+        Requires `revenue:manage`.
+      operationId: adjustRevenueLedger
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdjustIncomeRequest" }
+      responses:
+        "201":
+          description: The recorded adjustment
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IncomeLedgerEntry" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            `duplicate-revenue-entry`, `income-entry-not-voidable` or `idempotency-key-reuse`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "503":
+          description: |
+            `idempotency-unavailable`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /api/v1/admin/revenue/accounts:
+    get:
+      tags: [Admin Revenue]
+      summary: Read revenue per organization over a window
+      description: |
+        S-51. Derived, verified and net revenue per organization. An organization whose
+        subscriptions have no configured price is surfaced rather than shown as free.
+        Requires `revenue:read`.
+      operationId: getRevenueAccounts
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+      responses:
+        "200":
+          description: Per-organization revenue
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RevenueAccountsResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/revenue/overview:
+    get:
+      tags: [Admin Revenue]
+      summary: Read MRR, ARR, ARPU and the paying-organization count
+      description: |
+        S-52. List-price **scheduled** revenue, not recognised or collected revenue. Every measure
+        is `null` rather than `0` when it cannot be computed: `PriceLkr` is unassigned today, so
+        MRR is not measured, and an unassigned price is not a free plan. Requires `revenue:read`.
+      operationId: getRevenueOverview
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+      responses:
+        "200":
+          description: The overview, with its data-quality block
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RevenueOverviewResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/revenue/timeseries:
+    get:
+      tags: [Admin Revenue]
+      summary: Read derived, verified and refunded amounts per bucket
+      description: |
+        S-53. Three separate series, never merged: the gap between derived and verified is the
+        point. The bucket axis is dense and aligned to calendar boundaries, and `isPartial` marks
+        a bucket the window clips. Requires `revenue:read`.
+      operationId: getRevenueTimeseries
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Granularity"
+      responses:
+        "200":
+          description: The revenue series
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RevenueTimeseriesResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/revenue/collections:
+    get:
+      tags: [Admin Revenue]
+      summary: Read the collection rate per period
+      description: |
+        S-54. Verified receipts against derived charges. `collectionRate` is `null`, never `0`,
+        when nothing was billed; a rate above 100% is reported rather than clipped, because a
+        receipt with no matching charge is a finding. Requires `revenue:read`.
+      operationId: getRevenueCollections
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Granularity"
+      responses:
+        "200":
+          description: The collection series
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RevenueCollectionsResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/revenue/blossoms:
+    get:
+      tags: [Admin Revenue]
+      summary: Read Blossom top-up pack sales
+      description: |
+        S-55. Referenced purchases only: a top-up with no payment reference writes no income row at
+        all, so it is not a sale. The unreferenced grant count is reported alongside so the
+        difference is visible rather than inferred. Requires `revenue:read`.
+      operationId: getRevenueBlossomSales
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Granularity"
+      responses:
+        "200":
+          description: Blossom pack sales
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RevenueBlossomSalesResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ---------------------------------------------------------------------------
   # Admin business statistics (Business KPIs)
   # ---------------------------------------------------------------------------
   /api/v1/admin/statistics/business/growth:
@@ -4391,6 +4682,289 @@ components:
               - $ref: "#/components/schemas/QuotaExceededError"
 
   schemas:
+
+    IncomeDataQuality:
+      type: object
+      description: |
+        The fifth data-quality vocabulary — money. Deliberately not a reuse of the business one:
+        attribution and backfill say nothing about whether a price was configured or a receipt
+        verified.
+      required:
+        - revenueProviderSettlementAvailable
+        - subscriptionPricesConfigured
+        - derivedEntriesUnverified
+        - checkedAt
+        - notes
+      properties:
+        revenueProviderSettlementAvailable:
+          type: boolean
+          description: |
+            `false` until a payment provider settles money. While false, no figure in this family
+            is settled revenue.
+        subscriptionPricesConfigured:
+          type: boolean
+          description: |
+            `false` when every subscription's `PriceLkr` is `0`. A derived charge of `0` then
+            means no list price is configured, not "free", and MRR is `null`.
+        derivedEntriesUnverified:
+          type: integer
+          description: |
+            `Derived` entries with no `Verified` counterpart — the uncollected gap. Not an error.
+        checkedAt: { type: string, format: date-time }
+        notes:
+          type: array
+          items: { type: string }
+
+    RevenueWindow:
+      type: object
+      required: [from, to, granularity, timeZone, bucketCount]
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        granularity: { type: string, enum: [day, week, month] }
+        timeZone: { type: string, example: UTC }
+        bucketCount: { type: integer }
+
+    RevenueReconciliation:
+      type: object
+      description: |
+        `unverifiedGap` is a **magnitude**, not a signed subtraction: a receipt with no matching
+        charge is as much a finding as a charge with no receipt. The signed view is
+        `collectionRate.outstanding`, which is a balance.
+      required: [derivedTotal, verifiedTotal, unverifiedGap, refundTotal, netVerified, isBalanced]
+      properties:
+        derivedTotal: { type: number, format: decimal }
+        verifiedTotal: { type: number, format: decimal }
+        unverifiedGap: { type: number, format: decimal }
+        refundTotal: { type: number, format: decimal }
+        netVerified: { type: number, format: decimal }
+        isBalanced:
+          type: boolean
+          description: True when at least as much was collected as was billed.
+
+    IncomeLedgerEntry:
+      type: object
+      required:
+        - id
+        - organizationId
+        - kind
+        - sourceKind
+        - chargeBasis
+        - status
+        - currency
+        - amount
+        - reason
+        - occurredAt
+      properties:
+        id: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        kind: { type: string, enum: [SubscriptionCharge, TopUpPurchase, Refund, Adjustment] }
+        sourceKind: { type: string, enum: [SubscriptionBilling, BlossomTopUp, Admin, System] }
+        sourceRef:
+          type: string
+          nullable: true
+          description: |
+            The dedup identity within its `sourceKind`. Cleared when an entry is superseded, so a
+            voided row stops occupying the identity.
+        chargeBasis: { type: string, enum: [Derived, Verified] }
+        status: { type: string, enum: [Recorded, Voided] }
+        currency: { type: string, example: LKR }
+        amount:
+          type: number
+          format: decimal
+          description: Always positive. The sign is derived from `kind`.
+        reason: { type: string, minLength: 10, maxLength: 500 }
+        periodStart: { type: string, format: date-time, nullable: true }
+        periodEnd: { type: string, format: date-time, nullable: true }
+        occurredAt: { type: string, format: date-time }
+        recordedByUserId:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Absent only for a system-written entry, where `sourceKind` is `System`.
+        supersedesEntryId: { type: string, format: uuid, nullable: true }
+
+    IncomeLedgerPageResponse:
+      type: object
+      required: [window, items, total, page, pageSize, reconciliation, dataQuality]
+      properties:
+        window: { $ref: "#/components/schemas/RevenueWindow" }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/IncomeLedgerEntry" }
+        total: { type: integer }
+        page: { type: integer }
+        pageSize: { type: integer }
+        reconciliation: { $ref: "#/components/schemas/RevenueReconciliation" }
+        dataQuality: { $ref: "#/components/schemas/IncomeDataQuality" }
+
+    RevenueAccountItem:
+      type: object
+      required:
+        - organizationId
+        - name
+        - planTier
+        - derivedTotal
+        - verifiedTotal
+        - refundTotal
+        - netVerified
+        - unverifiedGap
+      properties:
+        organizationId: { type: string, format: uuid }
+        name: { type: string }
+        planTier: { type: string }
+        derivedTotal: { type: number, format: decimal }
+        verifiedTotal: { type: number, format: decimal }
+        refundTotal: { type: number, format: decimal }
+        netVerified: { type: number, format: decimal }
+        unverifiedGap: { type: number, format: decimal }
+
+    RevenueAccountsResponse:
+      type: object
+      required: [window, items, total, reconciliation, dataQuality]
+      properties:
+        window: { $ref: "#/components/schemas/RevenueWindow" }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/RevenueAccountItem" }
+        total: { type: integer }
+        reconciliation: { $ref: "#/components/schemas/RevenueReconciliation" }
+        dataQuality: { $ref: "#/components/schemas/IncomeDataQuality" }
+
+    RevenueOverviewResponse:
+      type: object
+      required: [asOf, payingOrganizations, activeSubscriptions, dataQuality]
+      properties:
+        asOf: { type: string, format: date-time }
+        mrr:
+          type: number
+          format: decimal
+          nullable: true
+          description: |
+            List-price scheduled monthly revenue. `null`, never `0`, when no price is configured.
+        arr: { type: number, format: decimal, nullable: true }
+        arpu:
+          type: number
+          format: decimal
+          nullable: true
+          description: |
+            `null` when nothing is priced, rather than a divide-by-zero.
+        payingOrganizations: { type: integer }
+        activeSubscriptions: { type: integer }
+        dataQuality: { $ref: "#/components/schemas/IncomeDataQuality" }
+
+    RevenueTimeseriesPoint:
+      type: object
+      required: [bucketStart, isPartial, derived, verified, refunded]
+      properties:
+        bucketStart: { type: string, format: date-time }
+        isPartial: { type: boolean }
+        derived: { type: number, format: decimal }
+        verified: { type: number, format: decimal }
+        refunded: { type: number, format: decimal }
+
+    RevenueTimeseriesResponse:
+      type: object
+      required: [window, series, dataQuality]
+      properties:
+        window: { $ref: "#/components/schemas/RevenueWindow" }
+        series:
+          type: array
+          items: { $ref: "#/components/schemas/RevenueTimeseriesPoint" }
+        dataQuality: { $ref: "#/components/schemas/IncomeDataQuality" }
+
+    RevenueCollectionPoint:
+      type: object
+      required:
+        - bucketStart
+        - isPartial
+        - derivedTotal
+        - verifiedTotal
+        - refundedTotal
+        - outstanding
+      properties:
+        bucketStart: { type: string, format: date-time }
+        isPartial: { type: boolean }
+        derivedTotal: { type: number, format: decimal }
+        verifiedTotal: { type: number, format: decimal }
+        refundedTotal: { type: number, format: decimal }
+        collectionRate:
+          type: number
+          format: decimal
+          nullable: true
+          description: |
+            Percentage. `null`, never `0`, when nothing was billed. Above 100 is reported, not
+            clipped.
+        outstanding:
+          type: number
+          format: decimal
+          description: Signed. Negative means more came in than was billed.
+
+    RevenueCollectionsResponse:
+      type: object
+      required: [window, series, dataQuality]
+      properties:
+        window: { $ref: "#/components/schemas/RevenueWindow" }
+        series:
+          type: array
+          items: { $ref: "#/components/schemas/RevenueCollectionPoint" }
+        dataQuality: { $ref: "#/components/schemas/IncomeDataQuality" }
+
+    RevenueBlossomSalesResponse:
+      type: object
+      required:
+        - window
+        - packsSold
+        - blossomsGranted
+        - listPriceLkr
+        - verifiedLkr
+        - grantedWithoutReference
+        - dataQuality
+      properties:
+        window: { $ref: "#/components/schemas/RevenueWindow" }
+        packsSold: { type: integer, description: Referenced purchases only. }
+        blossomsGranted: { type: number, format: decimal }
+        listPriceLkr: { type: number, format: decimal }
+        verifiedLkr: { type: number, format: decimal }
+        conversion: { type: number, format: decimal, nullable: true }
+        grantedWithoutReference: { type: integer }
+        dataQuality: { $ref: "#/components/schemas/IncomeDataQuality" }
+
+    VerifyIncomeRequest:
+      type: object
+      required: [organizationId, sourceKind, sourceRef, amount, reason]
+      properties:
+        organizationId: { type: string, format: uuid }
+        sourceKind: { type: string, enum: [SubscriptionBilling, BlossomTopUp, Admin, System] }
+        sourceRef: { type: string, maxLength: 128 }
+        amount: { type: number, format: decimal, exclusiveMinimum: 0 }
+        reason: { type: string, minLength: 10, maxLength: 500 }
+
+    RefundIncomeRequest:
+      type: object
+      required: [organizationId, sourceKind, sourceRef, amount, reason]
+      properties:
+        organizationId: { type: string, format: uuid }
+        sourceKind: { type: string, enum: [SubscriptionBilling, BlossomTopUp, Admin, System] }
+        sourceRef:
+          type: string
+          maxLength: 128
+          description: |
+            Must name a live `Verified` receipt, or the request is `409 refund-not-allowed`.
+        amount: { type: number, format: decimal, exclusiveMinimum: 0 }
+        reason: { type: string, minLength: 10, maxLength: 500 }
+
+    AdjustIncomeRequest:
+      type: object
+      required: [organizationId, amount, reason]
+      properties:
+        organizationId: { type: string, format: uuid }
+        amount: { type: number, format: decimal, exclusiveMinimum: 0 }
+        reason: { type: string, minLength: 10, maxLength: 500 }
+        sourceRef: { type: string, maxLength: 128, nullable: true }
+        supersedesEntryId: { type: string, format: uuid, nullable: true }
+
 
     # --- admin business KPIs (S-44…S-49) -------------------------------------
     BusinessWindow:

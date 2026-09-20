@@ -1,5 +1,6 @@
 using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Modules.Notifications.Channels;
+using Aveline.Api.Modules.Notifications.Metrics;
 using Aveline.Api.Modules.Notifications.Models;
 using Aveline.Api.Modules.Notifications.Repositories;
 using Aveline.Api.Modules.Notifications.Services;
@@ -306,5 +307,65 @@ public class NotificationDispatcherTests
         // Each recipient's count reflects only their own inbox.
         Assert.Equal(2, channels.RealtimeCalls.Count);
         Assert.All(channels.RealtimeCalls, call => Assert.Equal(1, call.UnreadCount));
+    }
+
+    /// <summary>
+    /// Slice 7 constraint 2: the delivery counter is incremented in the dispatcher, not derived at
+    /// scrape time. One attempt per (recipient, channel) — the same rows the repository persists.
+    /// </summary>
+    [Fact]
+    public async Task DispatchAsync_IncrementsTheDeliveryCounterPerAttempt()
+    {
+        var recorded = new List<string>();
+        using var metrics = new NotificationMetrics(fcmCredentialConfigured: true);
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, probe) =>
+        {
+            if (instrument.Meter.Name == NotificationMetrics.MeterName
+                && instrument.Name == "aveline.notification.delivery")
+            {
+                probe.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
+        {
+            string? channel = null;
+            string? status = null;
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "channel")
+                {
+                    channel = tag.Value?.ToString();
+                }
+                else if (tag.Key == "status")
+                {
+                    status = tag.Value?.ToString();
+                }
+            }
+
+            lock (recorded)
+            {
+                recorded.Add($"{channel}:{status}:{value}");
+            }
+        });
+        listener.Start();
+
+        var channels = new Channels();
+        var dispatcher = new NotificationDispatcher(
+            new FakeResolver([Recipient()]),
+            new FakeRouter(NotificationChannel.Realtime | NotificationChannel.Push | NotificationChannel.Email),
+            _repository,
+            _inbox,
+            channels.Push,
+            channels.Realtime,
+            channels.Email,
+            _logger,
+            metrics);
+
+        await dispatcher.DispatchAsync(NotificationFor(Guid.NewGuid()));
+
+        recorded.Should().HaveCount(3);
+        recorded.Should().OnlyContain(entry => entry.EndsWith(":1", StringComparison.Ordinal));
+        recorded.Should().Contain(entry => entry.StartsWith("Realtime:Delivered", StringComparison.Ordinal));
     }
 }

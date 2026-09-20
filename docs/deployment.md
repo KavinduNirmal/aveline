@@ -267,3 +267,29 @@ jobs:
   az group delete --name rg-aveline-demo --yes --no-wait
   ```
   This removes all Azure resources and stops all cost.
+
+---
+
+## Observability tier — Prometheus + Grafana (metrics plan, OQ-2)
+
+The metrics workstream commits **one** configuration used in both local development and production:
+`docker-compose.yml` plus `observability/prometheus/**` and `observability/grafana/**`. Production
+self-hosts the same images rather than using a managed Prometheus. Three consequences for the
+deployment:
+
+1. **Prometheus and Grafana must be always-on.** A TSDB cannot scale to zero and keep its data, so
+   both need `minReplicas: 1` **plus persistent storage** — on Container Apps that is an Azure Files
+   mount for `/prometheus` and `/var/lib/grafana`. The rest of the deployment keeps `minReplicas: 0`.
+   Updating `deploy/main.bicep` for this is a **follow-up**, not part of the metrics slices; it is
+   recorded here and in [`docs/backend/observability.md`](backend/observability.md).
+2. **Two new Key Vault secrets** (plus one for the database exporter):
+   `METRICS_SCRAPE_TOKEN` (32+ random bytes; the API refuses to boot in Production without it),
+   `GRAFANA_ADMIN_PASSWORD`, and `POSTGRES_EXPORTER_PASSWORD`. They join the existing secrets at
+   [`docs/deployment.md`](deployment.md) §Key Vault.
+3. **A scale-to-zero API makes "the series stopped" and "the container slept" look identical.**
+   The API keeps `minReplicas: 0`, so its process counters restart on every cold start and its 15 s
+   overview cache is per-replica. The production runbook must say so: a flat line during a quiet
+   period is not necessarily an outage.
+
+`postgres_exporter` is internal only — no host port — and runs as a dedicated `pg_monitor` role with
+no application-table access. Grafana is operator-only; the admin console does not embed it (D3).

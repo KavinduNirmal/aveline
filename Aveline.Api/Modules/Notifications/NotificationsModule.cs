@@ -1,6 +1,7 @@
 using Aveline.Api.Configurations;
 using Aveline.Api.Modules.Notifications.Channels;
 using Aveline.Api.Modules.Notifications.Jobs;
+using Aveline.Api.Modules.Notifications.Metrics;
 using Aveline.Api.Modules.Notifications.Repositories;
 using Aveline.Api.Modules.Notifications.Services;
 
@@ -38,6 +39,11 @@ public static class NotificationsModule
         {
             services.AddScoped<IPushChannel, LoggingPushChannel>();
         }
+
+        // Slice 7: the notification metric family. The FCM gauge is sourced from the same switch
+        // that selects FcmPushChannel, so a silent push no-op becomes a visible 0.
+        services.AddSingleton(new NotificationMetrics(FirebaseConfiguration.IsConfigured(configuration)));
+        services.AddHostedService<NotificationMetricCollector>();
 
         // Purges inbox rows the user is finished with; the audit trail is kept.
         services.AddHostedService<NotificationRetentionJob>();

@@ -193,22 +193,25 @@ async def test_negative_preference_saved_as_dislikes():
 
 
 class _Msg:
-    def __init__(self, content, input_tokens=12, output_tokens=6):
+    def __init__(self, content, input_tokens=12, output_tokens=6, cached_tokens=0):
         self.content = content
         self.usage_metadata = {"input_tokens": input_tokens, "output_tokens": output_tokens}
+        if cached_tokens:
+            self.usage_metadata["input_token_details"] = {"cache_read": cached_tokens}
 
 
 class FakeChatModel:
     """Minimal chat-model double exposing only ``ainvoke``."""
 
-    def __init__(self, draft="LLM-generated draft for Sarah.", fail=False):
+    def __init__(self, draft="LLM-generated draft for Sarah.", fail=False, cached_tokens=0):
         self.draft = draft
         self.fail = fail
+        self.cached_tokens = cached_tokens
 
     async def ainvoke(self, messages):
         if self.fail:
             raise RuntimeError("provider unavailable")
-        return _Msg(self.draft)
+        return _Msg(self.draft, cached_tokens=self.cached_tokens)
 
 
 async def _llm_state():
@@ -233,6 +236,17 @@ async def test_llm_produces_draft_and_usage_when_injected():
     assert result["output"]["draft_response"] == "Ava LLM draft."
     # Token usage captured from the LLM response (surfaced on state, not the schema output).
     assert result["usage"] == {"input_tokens": 12, "output_tokens": 6}
+
+
+async def test_llm_usage_surfaces_the_cached_token_direction():
+    """Slice 4a — cached prompt tokens ride on state so the additive metric can observe them."""
+    registry = FakeRegistry()
+    llm = FakeChatModel(draft="Ava LLM draft.", cached_tokens=64)
+    graph = build_memory_graph(registry, llm=llm)
+    result = await graph.ainvoke(await _llm_state())
+
+    assert result["usage"]["cached_tokens"] == 64
+    assert result["usage"]["input_tokens"] == 12
 
 
 async def test_llm_failure_falls_back_to_template():

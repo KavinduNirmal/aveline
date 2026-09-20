@@ -1,0 +1,16 @@
+# Grafana datasource provisioning (Slice 3).
+# The UID is authored here and referenced by every dashboard panel and alert rule, so a
+# renamed or re-provisioned datasource fails the test rather than emptying every panel.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: aveline-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 15s
+      httpMethod: POST

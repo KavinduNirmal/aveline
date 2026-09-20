@@ -45,6 +45,9 @@ class Settings(BaseSettings):
 
     # --- Observability (OpenTelemetry) ---
     otel_exporter_otlp_endpoint: str = ""
+    # Metrics-specific OTLP endpoint (OTEL_EXPORTER_OTLP_METRICS_ENDPOINT). Used verbatim when
+    # set; otherwise the generic endpoint above gets "/v1/metrics" appended (OTel precedence).
+    otel_exporter_otlp_metrics_endpoint: str = ""
     otel_service_name: str = "aveline-agent-service"
     # When False, prompt/completion content is stripped from exported spans.
     otel_trace_content: bool = True

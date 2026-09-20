@@ -46,7 +46,7 @@ def test_telemetry_collector_lifecycle():
         request_id="req-abc",
     )
 
-    collector.start_step("memory_agent", step_kind="NodeTransition")
+    collector.start_step("memory_agent", step_kind="Decision")
     collector.complete_current_step(status="Succeeded", input_tokens=100, output_tokens=50)
 
     collector.start_step("visual_agent", step_kind="ToolCall", tool_name="search_inventory")

@@ -1,5 +1,7 @@
-﻿import { Navigate, Outlet } from "react-router-dom"
+import { useUser } from "@clerk/react"
+import { Navigate, Outlet } from "react-router-dom"
 import { useAdminSession } from "@/contexts/AdminSessionContext"
+import { isAdminSignUp } from "@/lib/admin-signup"
 import { PageLoader } from "@/components/PageLoader"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -7,6 +9,7 @@ import { ShieldAlert } from "lucide-react"
 
 export function AdminRouteGuard() {
   const { status, roles, error, refresh } = useAdminSession()
+  const { user } = useUser()
 
   if (status === "idle" || status === "loading") {
     return <PageLoader />
@@ -47,8 +50,11 @@ export function AdminRouteGuard() {
   })
 
   if (!isAdmitted) {
-    return <Navigate to="/forbidden" replace />
+    // A pending administrator sign-up has no role yet: park them on the review
+    // screen rather than the generic forbidden page.
+    return <Navigate to={isAdminSignUp(user) ? "/admin/pending" : "/forbidden"} replace />
   }
 
   return <Outlet />
 }
+

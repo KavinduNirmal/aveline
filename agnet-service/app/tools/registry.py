@@ -9,14 +9,50 @@ The registry is shared infrastructure. Slice owners may add agent-specific tools
 in ``app/tools/<slice>/`` but should reuse ``InternalApiClient`` for transport.
 """
 
+import functools
+import inspect
 import logging
 from typing import Any
 
+from app.observability.metrics import get_agent_metrics
+from app.telemetry.agent_telemetry import get_current_collector
 from app.tools.client import InternalApiClient
 
 logger = logging.getLogger("aveline.agent.tools.registry")
 
 
+def _instrument_tool(tool_name: str, tool_fn: Any) -> Any:
+    """Wrap one registry tool so a tool call is both a step row and a metric (G-6)."""
+
+    @functools.wraps(tool_fn)
+    async def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        collector = get_current_collector()
+        if collector is not None:
+            collector.start_step(tool_name, step_kind="ToolCall", tool_name=tool_name)
+        status = "Succeeded"
+        try:
+            return await tool_fn(self, *args, **kwargs)
+        except Exception:
+            status = "Failed"
+            raise
+        finally:
+            if collector is not None:
+                collector.complete_current_step(status=status)
+            get_agent_metrics().record_tool_call(tool=tool_name, status=status)
+
+    return wrapper
+
+
+def _instrumented_registry(cls: Any) -> Any:
+    """Instrument every public coroutine on the registry (the tools are a bounded set)."""
+    for attr_name, attr in list(vars(cls).items()):
+        if attr_name.startswith("_") or not inspect.iscoroutinefunction(attr):
+            continue
+        setattr(cls, attr_name, _instrument_tool(attr_name, attr))
+    return cls
+
+
+@_instrumented_registry
 class ToolRegistry:
     """Authenticated client for the backend internal API, grouped by domain."""
 

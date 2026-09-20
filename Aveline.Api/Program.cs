@@ -48,6 +48,9 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 });
 builder.Services.AddAvelineLogging(builder.Configuration);
 builder.Services.AddAvelineObservability(builder.Configuration);
+// The bridged business-metric gauges; the collector publishes its snapshot here before the
+// database write so a database outage does not blind the operator dashboard.
+builder.Services.AddAvelineMetrics();
 builder.Services.AddAvelineDatabase(builder.Configuration);
 builder.Services.AddAvelineCache(builder.Configuration);
 builder.Services.AddAvelineJobs(builder.Configuration);
@@ -106,6 +109,8 @@ var app = builder.Build();
 
 // Fail fast when Production would hash client IPs with an empty salt (M-1).
 TelemetrySecurityGuard.EnsureIpHashSaltForProduction(app.Environment, app.Configuration);
+// Fail fast when Production would expose /metrics under the committed internal token (S-1).
+MetricsSecurityGuard.EnsureScrapeTokenForProduction(app.Environment, app.Configuration);
 
 // Outermost middleware: it catches every downstream failure, including the security
 // header middleware, and writes the stable error envelope (M-7).

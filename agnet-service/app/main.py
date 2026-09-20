@@ -10,20 +10,26 @@ from app.core.config import get_settings, validate_startup_settings
 from app.core.logging import configure_logging
 from app.events.bus import RedisEventBus
 from app.middleware.rate_limit import RateLimitMiddleware
+from app.observability.metrics import configure_semconv_environment, init_metrics
 from app.observability.tracing import init_tracing
 
 logger = logging.getLogger("aveline.agent.main")
 
 configure_logging(log_format=os.getenv("AVELINE_LOG_FORMAT", "json"))
 
+# Record the semconv convention before FastAPI/HTTPX instrumentation is applied so the agent's
+# HTTP metrics use the API's stable (seconds) names (R-17). init_tracing repeats this defensively.
+configure_semconv_environment()
+
 settings = get_settings()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Validate config, init tracing, start the Redis bus, and stop cleanly."""
+    """Validate config, init tracing + metrics, start the Redis bus, and stop cleanly."""
     validate_startup_settings(settings)
     init_tracing(settings)
+    init_metrics(settings)
     event_bus: RedisEventBus | None = None
     if settings.redis_url:
         redis = aioredis.from_url(settings.redis_url, decode_responses=True)

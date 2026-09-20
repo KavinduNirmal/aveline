@@ -42,6 +42,8 @@ public class EnvironmentHardeningIntegrationTests : IAsyncLifetime
                 ApplyCommonSettings(builder);
                 // Required by the Production startup guard (M-1).
                 builder.UseSetting("Telemetry:IpHashSalt", "test-production-ip-salt");
+                // Required by the Production scrape-token guard (S-1).
+                builder.UseSetting("Metrics:ScrapeToken", "test-production-scrape-token");
             });
 
         _client = _factory.CreateClient();

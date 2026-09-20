@@ -33,7 +33,10 @@ openai
 
 # Observability (OpenTelemetry)
 opentelemetry-sdk
-opentelemetry-exporter-otlp-proto-http
+# Explicit pin (N-6): the agent's MeterProvider imports OTLPMetricExporter from this package,
+# which was previously a transitive dependency of opentelemetry-sdk. 1.44.0 is the version the
+# metric exporter and cumulative-temporality pin were verified against.
+opentelemetry-exporter-otlp-proto-http==1.44.0
 opentelemetry-instrumentation-fastapi
 opentelemetry-instrumentation-httpx
 opentelemetry-instrumentation-langchain

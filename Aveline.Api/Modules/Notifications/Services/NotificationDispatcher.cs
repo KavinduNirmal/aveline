@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Aveline.Api.Modules.Notifications.Channels;
+using Aveline.Api.Modules.Notifications.Metrics;
 using Aveline.Api.Modules.Notifications.Models;
 using Aveline.Api.Modules.Notifications.Repositories;
 using Microsoft.Extensions.Logging;
@@ -22,6 +23,7 @@ public sealed class NotificationDispatcher : INotificationDispatcher
     private readonly IRealtimeChannel _realtime;
     private readonly IEmailChannel _email;
     private readonly ILogger<NotificationDispatcher> _logger;
+    private readonly NotificationMetrics? _metrics;
 
     public NotificationDispatcher(
         IRecipientResolver resolver,
@@ -31,7 +33,8 @@ public sealed class NotificationDispatcher : INotificationDispatcher
         IPushChannel push,
         IRealtimeChannel realtime,
         IEmailChannel email,
-        ILogger<NotificationDispatcher> logger)
+        ILogger<NotificationDispatcher> logger,
+        NotificationMetrics? metrics = null)
     {
         _resolver = resolver;
         _router = router;
@@ -41,6 +44,7 @@ public sealed class NotificationDispatcher : INotificationDispatcher
         _realtime = realtime;
         _email = email;
         _logger = logger;
+        _metrics = metrics;
     }
 
     public async Task<NotificationRecord?> DispatchAsync(Notification notification, CancellationToken cancellationToken = default)
@@ -122,6 +126,11 @@ public sealed class NotificationDispatcher : INotificationDispatcher
         }
 
         await _repository.AddDeliveryAsync(delivery, cancellationToken);
+
+        // Slice 7: the delivery counter is incremented here, on the send path, not derived at
+        // scrape time. A scrape-time derivation would need a query per scrape and still could not
+        // express the notification type.
+        _metrics?.RecordDelivery(channel, delivery.Status);
     }
 
     private static Task SendAsync(

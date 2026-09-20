@@ -1,0 +1,11 @@
+# Grafana notification policy (Slice 3). Operators only; product alerts are owned by
+# AlertEvaluationJob and SystemAlerts, not by this policy.
+apiVersion: 1
+
+policies:
+  - orgId: 1
+    receiver: aveline-operators
+    group_by: ["alertname", "severity"]
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h

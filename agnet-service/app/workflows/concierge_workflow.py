@@ -14,7 +14,10 @@ and resume exactly where it left off. ``run_concierge`` uses the Postgres
 checkpointer when a ``thread_id`` is supplied.
 """
 
+import functools
+import inspect
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any, TypedDict
 
@@ -28,13 +31,23 @@ from app.core.config import get_settings
 from app.customer_resolution import resolve_customer
 from app.gate import classify_by_rules
 from app.llm.runtime import memory_llm_or_none, visual_llm_or_none
+from app.observability.metrics import get_agent_metrics
+from app.observability.tracing import chain_of_thought_span
 from app.schemas.response import AgentMetadata, AgentResponse, AgentStatus
 from app.schemas.state import AgentState
+from app.telemetry.agent_telemetry import (
+    NODE_STEP_KIND,
+    TelemetryCollector,
+    use_telemetry_collector,
+)
 from app.tools.registry import ToolRegistry
 from app.workflows.checkpointer import create_checkpointer
 from app.workflows.state_events import run_graph_with_states
 
 logger = logging.getLogger("aveline.agent.concierge")
+
+#: The bounded ``workflow`` metric-label value. Never the workflow/run id (plan §7.3).
+WORKFLOW_NAME = "concierge"
 
 
 class ConciergeState(TypedDict, total=False):
@@ -378,16 +391,108 @@ def _route_after_visual(state: ConciergeState) -> str:
 # ---------------------------------------------------------------------------
 
 
-def build_concierge_graph():
-    """Build and compile the concierge workflow graph (no checkpointer)."""
+def _node_usage(result: Any) -> dict[str, Any]:
+    """Extract an LLM ``usage`` dict from a node's returned state update, if any."""
+    if isinstance(result, dict):
+        usage = result.get("usage")
+        if isinstance(usage, dict):
+            return usage
+    return {}
+
+
+def _complete_node(
+    name: str,
+    collector: TelemetryCollector | None,
+    started: float,
+    *,
+    usage: dict[str, Any] | None = None,
+    error: Exception | None = None,
+) -> None:
+    """Finish an instrumented node: close its step row and record its metrics."""
+    metrics = get_agent_metrics()
+    if error is not None:
+        error_class = type(error).__name__
+        if collector is not None:
+            collector.complete_current_step(status="Failed", error_code=error_class)
+        metrics.record_node_failure(node=name, error_class=error_class)
+        return
+
+    tokens = usage or {}
+    if collector is not None:
+        collector.complete_current_step(
+            status="Succeeded",
+            input_tokens=int(tokens.get("input_tokens") or 0),
+            output_tokens=int(tokens.get("output_tokens") or 0),
+            cached_tokens=int(tokens.get("cached_tokens") or 0),
+            provider=tokens.get("provider"),
+            model=tokens.get("model"),
+        )
+    metrics.record_node(node=name, duration_s=time.perf_counter() - started)
+
+
+def _instrumented_node(
+    name: str,
+    node_fn: Callable[..., Any],
+    collector: TelemetryCollector | None,
+) -> Callable[..., Any]:
+    """Wrap a concierge node so it produces a step row, a span and node metrics.
+
+    This is the real caller for ``TelemetryCollector`` and ``chain_of_thought_span`` (G-13):
+    both existed but had no application call site before Slice 4b.
+    """
+    if inspect.iscoroutinefunction(node_fn):
+
+        @functools.wraps(node_fn)
+        async def async_node(state: ConciergeState) -> Any:
+            if collector is not None:
+                collector.start_step(name, step_kind=NODE_STEP_KIND)
+            started = time.perf_counter()
+            try:
+                with chain_of_thought_span(f"agent.node.{name}"):
+                    result = await node_fn(state)
+            except Exception as exc:  # noqa: BLE001 - record then re-raise unchanged
+                _complete_node(name, collector, started, error=exc)
+                raise
+            _complete_node(name, collector, started, usage=_node_usage(result))
+            return result
+
+        return async_node
+
+    @functools.wraps(node_fn)
+    def sync_node(state: ConciergeState) -> Any:
+        if collector is not None:
+            collector.start_step(name, step_kind=NODE_STEP_KIND)
+        started = time.perf_counter()
+        try:
+            with chain_of_thought_span(f"agent.node.{name}"):
+                result = node_fn(state)
+        except Exception as exc:  # noqa: BLE001 - record then re-raise unchanged
+            _complete_node(name, collector, started, error=exc)
+            raise
+        _complete_node(name, collector, started, usage=_node_usage(result))
+        return result
+
+    return sync_node
+
+
+def build_concierge_graph(collector: TelemetryCollector | None = None):
+    """Build and compile the concierge workflow graph (no checkpointer).
+
+    Args:
+        collector: Optional run collector. When supplied, every node produces a step row and
+            node-level metrics; when omitted the graph behaves exactly as before.
+    """
     graph = StateGraph(ConciergeState)
 
-    graph.add_node("intent_gate", run_intent_gate)
-    graph.add_node("resolve_customer", run_resolve_customer)
-    graph.add_node("memory_agent", run_memory_agent)
-    graph.add_node("visual_agent", run_visual_agent)
-    graph.add_node("commerce_agent", run_commerce_agent)
-    graph.add_node("formulate_response", formulate_response)
+    def node(name: str, node_fn: Callable[..., Any]) -> Callable[..., Any]:
+        return _instrumented_node(name, node_fn, collector)
+
+    graph.add_node("intent_gate", node("intent_gate", run_intent_gate))
+    graph.add_node("resolve_customer", node("resolve_customer", run_resolve_customer))
+    graph.add_node("memory_agent", node("memory_agent", run_memory_agent))
+    graph.add_node("visual_agent", node("visual_agent", run_visual_agent))
+    graph.add_node("commerce_agent", node("commerce_agent", run_commerce_agent))
+    graph.add_node("formulate_response", node("formulate_response", formulate_response))
 
     graph.add_edge(START, "intent_gate")
     graph.add_conditional_edges("intent_gate", _route_after_intent)
@@ -405,6 +510,7 @@ async def run_concierge(
     org_context: dict[str, Any] | None = None,
     thread_id: str | None = None,
     on_state: Callable[[AgentState], Awaitable[None]] | None = None,
+    collector: TelemetryCollector | None = None,
 ) -> AgentResponse:
     """Run the concierge workflow for ``message`` and return the final response.
 
@@ -416,11 +522,13 @@ async def run_concierge(
         on_state: Optional async callback invoked with each lifecycle state as the
             workflow progresses (e.g. to publish ``agent.status`` events). When omitted
             the workflow runs with plain ``ainvoke`` and no state events are emitted.
+        collector: Optional run collector. When supplied every node writes a step row and
+            node metrics, and tool calls attach ToolCall rows to the same run.
 
     Returns:
         The final ``AgentResponse`` envelope.
     """
-    graph = build_concierge_graph()
+    graph = build_concierge_graph(collector=collector)
     initial: dict[str, Any] = {
         "message": message,
         "org_context": org_context or {},
@@ -433,36 +541,37 @@ async def run_concierge(
         "response": None,
     }
 
-    if on_state is not None:
-        # Stream node boundaries so the caller can publish lifecycle states.
-        config = {"configurable": {"thread_id": thread_id}} if thread_id is not None else None
-        state_delay_ms = get_settings().agent_state_delay_ms
-        if thread_id is not None:
-            async with create_checkpointer() as checkpointer:
+    with use_telemetry_collector(collector):
+        if on_state is not None:
+            # Stream node boundaries so the caller can publish lifecycle states.
+            config = {"configurable": {"thread_id": thread_id}} if thread_id is not None else None
+            state_delay_ms = get_settings().agent_state_delay_ms
+            if thread_id is not None:
+                async with create_checkpointer() as checkpointer:
+                    result = await run_graph_with_states(
+                        graph,
+                        initial,
+                        config,
+                        on_state,
+                        checkpointer=checkpointer,
+                        state_delay_ms=state_delay_ms,
+                    )
+            else:
                 result = await run_graph_with_states(
                     graph,
                     initial,
                     config,
                     on_state,
-                    checkpointer=checkpointer,
                     state_delay_ms=state_delay_ms,
                 )
+        elif thread_id is not None:
+            async with create_checkpointer() as checkpointer:
+                result = await graph.ainvoke(
+                    initial,
+                    config={"configurable": {"thread_id": thread_id}},
+                    checkpointer=checkpointer,
+                )
         else:
-            result = await run_graph_with_states(
-                graph,
-                initial,
-                config,
-                on_state,
-                state_delay_ms=state_delay_ms,
-            )
-    elif thread_id is not None:
-        async with create_checkpointer() as checkpointer:
-            result = await graph.ainvoke(
-                initial,
-                config={"configurable": {"thread_id": thread_id}},
-                checkpointer=checkpointer,
-            )
-    else:
-        result = await graph.ainvoke(initial)
+            result = await graph.ainvoke(initial)
 
     return AgentResponse.model_validate(result["response"])

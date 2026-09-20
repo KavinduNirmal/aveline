@@ -1,6 +1,7 @@
 # OpenTelemetry Collector configuration for local development.
-# Receives OTLP traces from the agent service over HTTP and forwards them to
-# Jaeger for visualization (http://localhost:16686).
+# Receives OTLP traces AND metrics from the agent service over HTTP, forwards traces to
+# Jaeger (http://localhost:16686) and exposes metrics on a Prometheus scrape port
+# (http://otel-collector:8889/metrics) that Prometheus scrapes as job `aveline-agent`.
 receivers:
   otlp:
     protocols:
@@ -13,14 +14,25 @@ processors:
   batch:
 
 exporters:
-  otlp/jaeger:
+  # Was `otlp/jaeger`: the bare `otlp` alias is deprecated and logged a warning on every boot.
+  otlp_grpc/jaeger:
     endpoint: jaeger:4317
     tls:
       insecure: true
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    # Was resource_to_telemetry_conversion (deprecated); setting both is a validation error.
+    resource_constant_labels:
+      included: ["*"]
 
 service:
   pipelines:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [otlp/jaeger]
+      exporters: [otlp_grpc/jaeger]
+    # Without this pipeline the agent's metrics go nowhere, silently.
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]

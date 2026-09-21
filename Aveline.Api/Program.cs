@@ -23,6 +23,7 @@ using Aveline.Api.Modules.CustomerConcierge;
 using Aveline.Api.Modules.Home;
 using Aveline.Api.Modules.Home.Endpoints;
 using Aveline.Api.Modules.Integrations;
+using Aveline.Api.Modules.Media;
 using Aveline.Api.Modules.Notifications;
 using Aveline.Api.Modules.Notifications.Hubs;
 using Aveline.Api.Modules.Organizations.Repositories;
@@ -63,6 +64,10 @@ builder.Services.AddAvelineCors(builder.Configuration);
 builder.Services.AddAgentServiceClient(builder.Configuration);
 builder.Services.AddClerkAdminClient();
 builder.Services.AddWhatsAppProvider(builder.Configuration);
+// The media provider seam (S0): the options and the one explicit credential resolution, then
+// the single place `IMediaStorage` is registered, selected from `Media:Provider`.
+builder.Services.AddMediaOptions(builder.Configuration);
+builder.Services.AddMediaModule(builder.Configuration);
 builder.Services.AddBillingModule();
 builder.Services.AddRevenueModule(builder.Configuration);
 builder.Services.AddApiAccessModule();
@@ -115,6 +120,9 @@ var app = builder.Build();
 TelemetrySecurityGuard.EnsureIpHashSaltForProduction(app.Environment, app.Configuration);
 // Fail fast when Production would expose /metrics under the committed internal token (S-1).
 MetricsSecurityGuard.EnsureScrapeTokenForProduction(app.Environment, app.Configuration);
+// Fail fast when the media provider is half-configured, and warn (never silently accept) when a
+// Production host keeps image bytes in the database via the approved escape hatch (strategy §3.4).
+MediaOptionsValidator.ValidateOrThrow(app.Configuration, app.Environment, app.Logger);
 
 // Outermost middleware: it catches every downstream failure, including the security
 // header middleware, and writes the stable error envelope (M-7).

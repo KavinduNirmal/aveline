@@ -6,6 +6,7 @@ using Aveline.Api.Modules.Conversations.Attachments;
 using Aveline.Api.Modules.Conversations.DTOs;
 using Aveline.Api.Modules.Conversations.Models;
 using Aveline.Api.Modules.Conversations.Repositories;
+using Aveline.Api.Modules.Media;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -364,7 +365,13 @@ public class ConversationService : IConversationService
         }
 
         return await _attachmentStore.StoreAsync(
-            new AttachmentStoreRequest(orgId, conversationId, userId, bytes, contentType, fileName, width, height),
+            new AttachmentStoreRequest(
+                orgId, conversationId, userId, bytes, contentType, fileName, width, height,
+                // A staff device uploaded this through the Salon, so the provenance is `web`; the
+                // media concerns the conversation's customer when the thread is bound to one.
+                MediaSource.Web,
+                conversation.CustomerId,
+                AttachmentContentHash.Compute(bytes)),
             cancellationToken);
     }
 
@@ -695,7 +702,13 @@ public class ConversationService : IConversationService
 
         // No uploader: the bytes came from the customer's channel, not from a staff device.
         return await _attachmentStore.StoreAsync(
-            new AttachmentStoreRequest(orgId, conversation.Id, null, bytes, contentType, fileName, null, null),
+            new AttachmentStoreRequest(
+                orgId, conversation.Id, null, bytes, contentType, fileName, null, null,
+                // Fetched server-side from the provider's media id, so the provenance is the
+                // channel, not the Salon; the customer is the caller's resolution of the phone.
+                MediaSource.WhatsApp,
+                customerId,
+                AttachmentContentHash.Compute(bytes)),
             cancellationToken);
     }
 

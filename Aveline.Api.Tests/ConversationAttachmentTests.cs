@@ -4,6 +4,7 @@ using Aveline.Api.Modules.Conversations.Attachments;
 using Aveline.Api.Modules.Conversations.Models;
 using Aveline.Api.Modules.Conversations.Repositories;
 using Aveline.Api.Modules.Conversations.Services;
+using Aveline.Api.Modules.Media;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -40,7 +41,8 @@ public class ConversationAttachmentTests
 
     private Task<MessageAttachment> UploadAsync(string contentType = "image/jpeg", string fileName = "photo.jpg")
         => _store.StoreAsync(new AttachmentStoreRequest(
-            _orgId, _conversationId, Guid.NewGuid(), Bytes, contentType, fileName, null, null));
+            _orgId, _conversationId, Guid.NewGuid(), Bytes, contentType, fileName, null, null,
+            MediaSource.Web, null, AttachmentContentHash.Compute(Bytes)));
 
     [Fact]
     public async Task StoreAsync_WritesTheRowWithTheDatabaseProviderAndAnAuthenticatedUrl()
@@ -75,7 +77,8 @@ public class ConversationAttachmentTests
             .GetOrCreateSalonAsync(_orgId, Guid.NewGuid(), Guid.NewGuid(), "thread-attach-other")
             .GetAwaiter().GetResult().Conversation.Id;
         var foreign = await _store.StoreAsync(new AttachmentStoreRequest(
-            _orgId, other, Guid.NewGuid(), Bytes, "image/png", "other.png", null, null));
+            _orgId, other, Guid.NewGuid(), Bytes, "image/png", "other.png", null, null,
+            MediaSource.Web, null, AttachmentContentHash.Compute(Bytes)));
         var bound = await UploadAsync();
         bound.MessageId = Guid.NewGuid();
         await _attachments.SaveAsync(bound);
@@ -133,10 +136,12 @@ public class ConversationAttachmentTests
             var orgId = Guid.NewGuid();
 
             var orphan = await store.StoreAsync(new AttachmentStoreRequest(
-                orgId, conversationId, null, Bytes, "image/jpeg", "orphan.jpg", null, null));
+                orgId, conversationId, null, Bytes, "image/jpeg", "orphan.jpg", null, null,
+                MediaSource.Web, null, AttachmentContentHash.Compute(Bytes)));
             orphan.CreatedAtUtc = DateTime.UtcNow - AttachmentSweepJob.Ttl - TimeSpan.FromHours(1);
             var bound = await store.StoreAsync(new AttachmentStoreRequest(
-                orgId, conversationId, null, Bytes, "image/jpeg", "bound.jpg", null, null));
+                orgId, conversationId, null, Bytes, "image/jpeg", "bound.jpg", null, null,
+                MediaSource.Web, null, AttachmentContentHash.Compute(Bytes)));
             bound.MessageId = Guid.NewGuid();
             await context.SaveChangesAsync();
             await repository.SaveAsync(bound);

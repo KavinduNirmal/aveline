@@ -1,17 +1,26 @@
 using Aveline.Api.Common.Media;
+using Aveline.Api.Modules.Media;
 using Aveline.Api.Modules.VisualIntelligence.DTOs;
 using Aveline.Api.Modules.VisualIntelligence.Models;
 using Aveline.Api.Modules.VisualIntelligence.Repositories;
+using Microsoft.Extensions.Options;
 
 namespace Aveline.Api.Modules.VisualIntelligence.Services;
 
 public class InventoryService : IInventoryService
 {
     private readonly IInventoryRepository _repository;
+    private readonly MediaOptions _mediaOptions;
 
-    public InventoryService(IInventoryRepository repository)
+    /// <summary>
+    /// The media options are optional so a caller that constructs the service directly (most of
+    /// the existing unit tests) keeps the documented default cap; the DI graph always supplies
+    /// the bound <see cref="MediaOptions"/>.
+    /// </summary>
+    public InventoryService(IInventoryRepository repository, IOptions<MediaOptions>? mediaOptions = null)
     {
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
+        _mediaOptions = mediaOptions?.Value ?? new MediaOptions();
     }
 
     public async Task<IReadOnlyList<InventoryItemDto>> SearchInventoryAsync(
@@ -122,44 +131,68 @@ public class InventoryService : IInventoryService
         }
 
         var trimmed = imageUrl.Trim();
-        if (trimmed.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+        if (!trimmed.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
         {
-            try
-            {
-                var commaIdx = trimmed.IndexOf(',');
-                if (commaIdx > 0)
-                {
-                    var mimePart = trimmed[5..commaIdx];
-                    var contentType = MediaContentTypes.DefaultImage;
-                    if (mimePart.Contains(';'))
-                    {
-                        contentType = MediaContentTypes.NormalizeImage(mimePart.Split(';')[0]);
-                    }
-                    var bytes = Convert.FromBase64String(trimmed[(commaIdx + 1)..]);
-                    var imageId = Guid.NewGuid();
-                    var imageRecord = new InventoryImage
-                    {
-                        Id = imageId,
-                        OrgId = orgId,
-                        ImageData = bytes,
-                        ContentType = contentType,
-                        FileName = $"item_{DateTime.UtcNow.Ticks}.jpg",
-                        FileSizeBytes = bytes.Length,
-                        ImageUrl = $"/api/v1/orgs/{orgId}/catalog/images/{imageId}",
-                        CreatedAtUtc = DateTime.UtcNow
-                    };
-
-                    await _repository.AddImageAsync(imageRecord, cancellationToken);
-                    return imageRecord.ImageUrl;
-                }
-            }
-            catch
-            {
-                // Retain string if decoding fails
-            }
+            return trimmed;
         }
 
-        return trimmed;
+        var commaIdx = trimmed.IndexOf(',');
+        if (commaIdx <= 0)
+        {
+            return trimmed;
+        }
+
+        var mimePart = trimmed[5..commaIdx];
+        var contentType = MediaContentTypes.DefaultImage;
+        if (mimePart.Contains(';'))
+        {
+            contentType = MediaContentTypes.NormalizeImage(mimePart.Split(';')[0]);
+        }
+
+        byte[] bytes;
+        try
+        {
+            bytes = Convert.FromBase64String(trimmed[(commaIdx + 1)..]);
+        }
+        catch
+        {
+            // Retain string if decoding fails. The decode is the only best-effort step here.
+            return trimmed;
+        }
+
+        // The same catalog ceiling the upload handler applies, checked outside every catch so
+        // an over-cap image is refused visibly rather than swallowed and reported as a
+        // successful item write (strategy §3.4; plan U0.6). The write below stays best-effort.
+        var catalogMaxFileBytes = _mediaOptions.CatalogMaxFileBytes;
+        if (bytes.LongLength > catalogMaxFileBytes)
+        {
+            throw new CatalogImageTooLargeException(bytes.LongLength, catalogMaxFileBytes);
+        }
+
+        var imageId = Guid.NewGuid();
+        var imageRecord = new InventoryImage
+        {
+            Id = imageId,
+            OrgId = orgId,
+            ImageData = bytes,
+            ContentType = contentType,
+            FileName = $"item_{DateTime.UtcNow.Ticks}.jpg",
+            FileSizeBytes = bytes.Length,
+            ImageUrl = $"/api/v1/orgs/{orgId}/catalog/images/{imageId}",
+            CreatedAtUtc = DateTime.UtcNow
+        };
+
+        try
+        {
+            await _repository.AddImageAsync(imageRecord, cancellationToken);
+            return imageRecord.ImageUrl;
+        }
+        catch
+        {
+            // Best-effort storage: if the image cannot be stored, keep the caller's string so
+            // the item write still succeeds (the module's established discipline).
+            return trimmed;
+        }
     }
 
     public async Task<InventoryItemDto?> UpdateStatusAsync(
@@ -203,4 +236,28 @@ public class InventoryService : IInventoryService
         await _repository.DeleteAsync(id, orgId, cancellationToken);
         return true;
     }
+}
+
+/// <summary>
+/// Thrown when a catalog image payload exceeds <see cref="MediaOptions.CatalogMaxFileBytes"/>
+/// (strategy §3.4). It is a dedicated type so a catalog write route can translate the refusal
+/// into its own <c>400 { error }</c> shape without catching unrelated failures, and so an
+/// over-cap image can never be swallowed by the best-effort store in
+/// <c>InventoryService.ProcessImageUrlAsync</c> and reported as a successful item write
+/// (plan U0.6).
+/// </summary>
+public sealed class CatalogImageTooLargeException : InvalidOperationException
+{
+    public CatalogImageTooLargeException(long sizeBytes, long maxFileBytes)
+        : base($"A catalog image may be at most {maxFileBytes} bytes; the payload was {sizeBytes} bytes.")
+    {
+        SizeBytes = sizeBytes;
+        MaxFileBytes = maxFileBytes;
+    }
+
+    /// <summary>The refused payload's size, in bytes.</summary>
+    public long SizeBytes { get; }
+
+    /// <summary>The configured ceiling the payload exceeded, in bytes.</summary>
+    public long MaxFileBytes { get; }
 }

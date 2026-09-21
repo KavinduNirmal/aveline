@@ -283,8 +283,16 @@ public class ConversationServiceTests
     {
         public string Provider => "database";
 
+        /// <summary>
+        /// The last request the seam was handed. The fixture mirrors <see cref="AttachmentStoreRequest"/>
+        /// so it is the seam's contract probe: a new field on the record is a compile error here until
+        /// the fake carries it, which is what proves the boundary moved.
+        /// </summary>
+        public AttachmentStoreRequest? LastRequest { get; private set; }
+
         public async Task<MessageAttachment> StoreAsync(AttachmentStoreRequest request, CancellationToken ct)
         {
+            LastRequest = request;
             var attachment = new MessageAttachment
             {
                 OrganizationId = request.OrganizationId,
@@ -297,6 +305,7 @@ public class ConversationServiceTests
                 SizeBytes = request.Bytes.LongLength,
                 Width = request.Width,
                 Height = request.Height,
+                ContentHash = request.ContentHash,
                 CreatedAtUtc = DateTime.UtcNow,
             };
             attachment.StorageKey = attachment.Id.ToString();

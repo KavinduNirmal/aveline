@@ -2,6 +2,7 @@ using System.IO;
 using System.Text;
 using Aveline.Api.Configurations;
 using Aveline.Api.Common.Media;
+using Aveline.Api.Modules.Media;
 using Aveline.Api.Modules.VisualIntelligence;
 using Aveline.Api.Modules.VisualIntelligence.DTOs;
 using Aveline.Api.Modules.VisualIntelligence.Models;
@@ -10,6 +11,7 @@ using Aveline.Api.Modules.VisualIntelligence.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace Aveline.Api.Endpoints;
 
@@ -108,8 +110,11 @@ public static class CatalogEndpoints
             CancellationToken cancellationToken) =>
         {
             dto.OrganizationId = organizationId;
-            var created = await visualService.CreateInventoryItemAsync(dto, cancellationToken);
-            return Results.Created($"/api/v1/orgs/{organizationId}/catalog/items/{created.Id}", created);
+            return await WriteCatalogItemAsync(async () =>
+            {
+                var created = await visualService.CreateInventoryItemAsync(dto, cancellationToken);
+                return Results.Created($"/api/v1/orgs/{organizationId}/catalog/items/{created.Id}", created);
+            });
         })
         .WithName("CatalogCreateItem")
         .WithSummary("Create a new item in the boutique inventory catalog.")
@@ -126,17 +131,21 @@ public static class CatalogEndpoints
             CancellationToken cancellationToken) =>
         {
             dto.OrganizationId = organizationId;
-            var updated = await visualService.UpdateInventoryItemAsync(itemId, dto, cancellationToken);
-            if (updated is null)
+            return await WriteCatalogItemAsync(async () =>
             {
-                return Results.NotFound(new { error = "Catalog item not found." });
-            }
+                var updated = await visualService.UpdateInventoryItemAsync(itemId, dto, cancellationToken);
+                if (updated is null)
+                {
+                    return Results.NotFound(new { error = "Catalog item not found." });
+                }
 
-            return Results.Ok(updated);
+                return Results.Ok(updated);
+            });
         })
         .WithName("CatalogUpdateItem")
         .WithSummary("Update details of an existing catalog item.")
         .Produces<InventoryItemDto>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status404NotFound)
         .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status403Forbidden);
@@ -527,6 +536,7 @@ public static class CatalogEndpoints
             [FromRoute] Guid organizationId,
             HttpRequest request,
             [FromServices] IInventoryRepository repository,
+            [FromServices] IOptions<MediaOptions> mediaOptions,
             CancellationToken cancellationToken) =>
         {
             byte[]? bytes = null;
@@ -579,6 +589,20 @@ public static class CatalogEndpoints
             if (bytes == null || bytes.Length == 0)
             {
                 return Results.BadRequest(new { error = "No valid image data provided." });
+            }
+
+            // The catalog tier's own ceiling, tighter than the attachment tier's 5 MB: the
+            // web optimizer's raw-bytes fallback can post an unshrunk phone photo here, and a
+            // catalog photo is displayed at a known, much smaller size (strategy §3.4, §3.7).
+            // Checked before anything is built or written, on both the multipart and the
+            // base64-JSON branch, so a refused upload is never stored.
+            var catalogMaxFileBytes = mediaOptions.Value.CatalogMaxFileBytes;
+            if (bytes.LongLength > catalogMaxFileBytes)
+            {
+                return Results.BadRequest(new
+                {
+                    error = $"A catalog image may be at most {catalogMaxFileBytes} bytes."
+                });
             }
 
             var imageId = Guid.NewGuid();
@@ -639,5 +663,24 @@ public static class CatalogEndpoints
         .AllowAnonymous();
 
         return endpoints;
+    }
+
+    /// <summary>
+    /// Runs a catalog item write, translating the catalog tier's image-size refusal
+    /// (<see cref="CatalogImageTooLargeException"/>, raised by
+    /// <c>InventoryService.ProcessImageUrlAsync</c> for a <c>data:</c> image URL) into the same
+    /// <c>400 { error }</c> shape this file's other refusals use. Every other failure keeps
+    /// propagating to the global handler, so this cannot mask an unrelated fault.
+    /// </summary>
+    private static async Task<IResult> WriteCatalogItemAsync(Func<Task<IResult>> write)
+    {
+        try
+        {
+            return await write();
+        }
+        catch (CatalogImageTooLargeException ex)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
     }
 }

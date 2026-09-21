@@ -125,6 +125,19 @@ services:
       Vision__ApiKey: ${VISION_API_KEY:-}
       Vision__BaseUrl: ${VISION_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai/}
       Vision__Model: ${VISION_MODEL:-gemini-2.0-flash}
+      # Cloudinary media provider credentials (strategy §3.4). Read as root configuration keys by
+      # CloudinaryUrlParser, so they keep their SDK names. Required only when Media:Provider is
+      # cloudinary; the pass-through default leaves them empty otherwise. CLOUDINARY_URL is the
+      # primary shape (cloudinary://<key>:<secret>@<cloud_name>); the discrete key/secret pair is
+      # the documented fallback. Passing these names is what makes the Wave 1 live suite
+      # ([Trait("Category","CloudinaryLive")]) runnable from compose (A7.1, closed by Q3).
+      CLOUDINARY_URL: ${CLOUDINARY_URL:-}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:-}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:-}
+      # The discrete fallback's cloud name. CLOUDINARY_URL already carries a cloud name, so this is
+      # read only when the deployment stores the credential as separate variables; it completes the
+      # fallback rather than adding a fourth credential.
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:-}
       # AES-256-GCM key for tenant integration credentials (base64, 32 bytes).
       Credentials__EncryptionKey: ${CREDENTIALS_ENCRYPTION_KEY:?CREDENTIALS_ENCRYPTION_KEY is required}
       # WhatsApp (Meta) integration gateway — base URL + API version (defaults used if unset).

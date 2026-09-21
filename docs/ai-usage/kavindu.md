@@ -4502,3 +4502,68 @@ post-deploy runtime fact.
   The hook itself was **not** modified.
 - The plan file for this work is named `admin-dashboard-business-kpis-implementation.ignore.md`, so it
   is git-ignored by the repository's own convention and does not appear in any commit.
+
+## Session 2026-09-21 — Cloudinary media migration and the Salon image pipeline (session start)
+
+**Task:** Orchestrate a subagent swarm to implement
+`.agents/plans/cloudinary-media-and-salon-image-implementation-strategy.md` (revision 3) and its
+execution plan `.agents/plans/cloudinary-media-and-salon-image-implementation-plan.md` (revision 1).
+**Tool used:** DeepSeek Harness (deepseek-flash) as the orchestrating agent, delegating to subagents.
+**Branch:** `cloudinary-media-and-salon-image` (no branch creation or switching).
+
+### Intended Work (session start)
+
+- **Orchestrate, do not implement.** The agent reads both plans, defines the goal, delegates each
+  phase to subagents, and verifies their output against the plan's gates. Implementation is written
+  by subagents under strict lane-based file ownership (plan §2).
+- **TDD is mandatory** (`.agents/rules/Rules.md:211-224`): the test is written, run, and observed to
+  fail for the expected reason before the production file exists. A unit's tests are its own lane's
+  files (plan §1 invariant 6).
+- **One writer per file.** Every file has exactly one owning lane; a lane never edits a file it does
+  not own, even to fix a compile error. A lane that needs a file it does not own raises a change
+  request instead (plan §1, §3).
+- **Documentation** (general, API and OpenAPI) updated at the end of each delivered phase, with each
+  doc change landing behind the slice that makes it true (S9, continuous).
+- **GitHub issues per phase**, created before implementation (plan §4's waves).
+- **No migrations outside lane L7**, and no parallel migration ever (plan §1 invariant 3).
+
+### The plan, as read
+
+Nine lanes (L1 MEDIA, L2 CATALOG, L3 SALON, L4 VISIONAPI, L5 PYTHON, L6 CLIENT, L7 MIGRATIONS,
+L8 DOCS, L9 SALON-FETCH conditional), six waves with explicit barriers, and a unit-level DAG.
+Critical path: `U0.1 → U0.4/U0.5 → U0.7 → U1.1 → U2.1 → U2.3 → U3.1 → U4.1`. Maximum useful
+concurrency is six agents; beyond that the constraint is review, not lanes (plan §5).
+
+The strategy's frozen contract (§3) is not re-opened anywhere: the three layers and four classes
+(§3.1), the provider-neutral `MediaMetadata` carrier (§3.2), the storage-key encoding and tier map
+(§3.3), the configuration table (§3.4), the two-tier access model (§3.5), the storable-versus-
+analysable split (§3.6), the single-width delivery rule (§3.7), the cache position (§3.8) and the
+"no third-party CDN" decision (§3.9).
+
+### Phases/issues created before implementation
+
+| Issue | Phase | Slice(s) | Units |
+|---|---|---|---|
+| [#361](https://github.com/KavinduNirmal/aveline/issues/361) | Wave 0a — the contract head | S0 | U0.1, U0.2, U0.3 |
+| [#362](https://github.com/KavinduNirmal/aveline/issues/362) | Wave 0b — the row seams | S0 | U0.4, U0.5, U0.6 |
+| [#363](https://github.com/KavinduNirmal/aveline/issues/363) | Wave 0c — the seam closes, then the schema | S0 | U0.7, U0.8 |
+| [#364](https://github.com/KavinduNirmal/aveline/issues/364) | Wave 1 — both tiers write to Cloudinary | S1 ∥ S2 | U1.1–U1.4 |
+| [#365](https://github.com/KavinduNirmal/aveline/issues/365) | Wave 2 — protected access, then the bridge | S3 → S4 | U2.1–U2.4 |
+| [#366](https://github.com/KavinduNirmal/aveline/issues/366) | Wave 3 — the reference contract | S5 | U3.1, U3.2 |
+| [#367](https://github.com/KavinduNirmal/aveline/issues/367) | Wave 4 — retention, fetcher, client delivery | S6 ∥ S7 | U4.1–U4.3 |
+| [#368](https://github.com/KavinduNirmal/aveline/issues/368) | Waves 5–6 — housekeeping and docs | S8, S9 | U5.1–U6.x |
+
+### Baseline established before any delegation
+
+- `dotnet build Aveline.Api/Aveline.Api.sln` — **0 errors**, 63 pre-existing warnings.
+- Last recorded full-suite baseline from the previous session (`docs/ai-usage/kavindu.md`,
+  business-KPIs entry): **1857 passed, 0 failed** for `Aveline.Api.Tests`.
+- `gh` authenticated as `KavinduNirmal` with `repo` scope; branch `cloudinary-media-and-salon-image`
+  at `88f1a5e`.
+
+### Deliberately not done at session start
+
+- No branch was created or switched (explicit constraint).
+- No code was written by the orchestrating agent; all implementation is delegated.
+- Wave 5 (S8) is left open and deferred by design: it is gated on production proof and on the
+  database owner's confirmation, and it contains the only irreversible step in the workstream.

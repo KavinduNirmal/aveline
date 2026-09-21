@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Modules.Conversations.Models;
 using Aveline.Api.Modules.CustomerConcierge.Models;
 using Aveline.Api.Modules.VisualIntelligence.DTOs;
 using Aveline.Api.Modules.VisualIntelligence.Models;
@@ -15,6 +16,15 @@ namespace Aveline.Api.Tests;
 public class VisualEndpointsIntegrationTests : IAsyncLifetime
 {
     private const string InternalKey = "test-key";
+
+    /// <summary>
+    /// Set so the reference arm can mint; U2.2 added these to this fixture's host. They change no
+    /// existing expectation: the analyze-image fallback path never touches the media module.
+    /// </summary>
+    private const string MediaSigningKey = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
+
+    private const string MediaPublicBaseUrl = "https://api.aveline.test";
+
     private WebApplicationFactory<Program> _factory = null!;
     private HttpClient _client = null!;
 
@@ -26,6 +36,8 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
                 builder.UseSetting("Clerk:Authority", "http://localhost:0");
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.UseSetting("AgentService:InternalToken", InternalKey);
+                builder.UseSetting("Media:SigningKey", MediaSigningKey);
+                builder.UseSetting("Media:PublicBaseUrl", MediaPublicBaseUrl);
             });
 
         _client = _factory.CreateClient();
@@ -531,6 +543,119 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
         result!.Category.Should().NotBeNullOrWhiteSpace();
         result.PrimaryColor.Should().NotBeNullOrWhiteSpace();
         result.ConfidenceScore.Should().BeGreaterThan(0);
+    }
+
+    // --- U2.2 (L4): the analyze-image contract the two cases above cannot detect ---
+
+    /// <summary>
+    /// The two cases above run this host with no vision key, so <c>VisionService</c> takes the
+    /// deterministic fallback and their assertions pass either way (strategy §4 C26). This one
+    /// asserts the wire shape instead of the analysis outcome.
+    /// </summary>
+    [Fact]
+    public async Task AnalyzeImage_WithValidImagePayload_PutsPrimaryColorOnTheWireAsSnakeCase()
+    {
+        var body = new
+        {
+            orgId = Guid.NewGuid(),
+            imageUrl = "https://example.com/saree.jpg"
+        };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/internal/visual/analyze-image")
+        {
+            Content = JsonContent.Create(body)
+        };
+        request.Headers.Add("X-Internal-Token", InternalKey);
+
+        var response = await _client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var json = await response.Content.ReadAsStringAsync();
+        json.Should().Contain("\"primary_color\"", "image_tools.py reads `primary_color` first");
+        json.Should().NotContain("primaryColor");
+    }
+
+    [Fact]
+    public async Task AnalyzeImage_WithAnAnalysableReference_Returns200WithoutTheNotAnalysableFlag()
+    {
+        var attachment = await SeedAttachmentAsync("image/png");
+
+        var response = await AnalyzeImageAsync(new
+        {
+            orgId = attachment.OrganizationId,
+            imageRefKind = "attachment",
+            imageRefId = attachment.Id,
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("\"not_analysable\":false");
+    }
+
+    [Fact]
+    public async Task AnalyzeImage_WithAReferenceOutsideTheAnalysableSubset_Returns200AndNotAnalysable()
+    {
+        var attachment = await SeedAttachmentAsync("image/heic");
+
+        var response = await AnalyzeImageAsync(new
+        {
+            orgId = attachment.OrganizationId,
+            imageRefKind = "attachment",
+            imageRefId = attachment.Id,
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("\"not_analysable\":true");
+    }
+
+    [Fact]
+    public async Task AnalyzeImage_WithACrossOrgReference_Returns404()
+    {
+        var attachment = await SeedAttachmentAsync("image/png");
+
+        var response = await AnalyzeImageAsync(new
+        {
+            orgId = Guid.NewGuid(),
+            imageRefKind = "attachment",
+            imageRefId = attachment.Id,
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    private async Task<HttpResponseMessage> AnalyzeImageAsync(object body)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/internal/visual/analyze-image")
+        {
+            Content = JsonContent.Create(body)
+        };
+        request.Headers.Add("X-Internal-Token", InternalKey);
+        return await _client.SendAsync(request);
+    }
+
+    private async Task<MessageAttachment> SeedAttachmentAsync(string contentType)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var attachment = new MessageAttachment
+        {
+            Id = Guid.CreateVersion7(),
+            OrganizationId = Guid.NewGuid(),
+            ConversationId = Guid.NewGuid(),
+            StorageProvider = "database",
+            StorageKey = null,
+            ImageData = [0x89, 0x50, 0x4E, 0x47],
+            ContentType = contentType,
+            FileName = "seeded",
+            SizeBytes = 4,
+            Url = "/api/v1/orgs/x/conversations/y/attachments/z",
+            CreatedAtUtc = DateTime.UtcNow,
+        };
+
+        await db.MessageAttachments.AddAsync(attachment);
+        await db.SaveChangesAsync();
+        return attachment;
     }
 
     // --- Endpoint 8: GET /api/internal/visual/customer-matches/{itemId} ---

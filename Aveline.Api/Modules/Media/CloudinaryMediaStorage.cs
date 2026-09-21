@@ -108,7 +108,11 @@ internal sealed class CloudinaryMediaStorage : IMediaStorage
                 target.PublicId, target.ResourceType, target.DeliveryType, DateTimeOffset.UtcNow + PrivateFetchLifetime)
             : _gateway.BuildDeliveryUrl(target.PublicId, target.ResourceType, target.DeliveryType, signed: true);
 
-        return await _gateway.FetchAsync(url, ct).ConfigureAwait(false);
+        // A 420/5xx on the proxy read is retried with the same bounded backoff as an upload, so the
+        // route answers 503 only when the rate limit genuinely persists (migration plan §7.7).
+        return await _retry
+            .ExecuteFetchAsync("fetch", token => _gateway.FetchAsync(url, token), ct)
+            .ConfigureAwait(false);
     }
 
     /// <inheritdoc />

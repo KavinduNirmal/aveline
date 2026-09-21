@@ -288,8 +288,18 @@ public static class VisualEndpoints
         [FromServices] IVisualService visualService,
         CancellationToken cancellationToken)
     {
-        var analysis = await visualService.AnalyzeImageAsync(dto, cancellationToken);
-        return Results.Ok(analysis);
+        try
+        {
+            var analysis = await visualService.AnalyzeImageAsync(dto, cancellationToken);
+            return Results.Ok(analysis);
+        }
+        catch (KeyNotFoundException)
+        {
+            // A named reference the caller cannot see - another organisation's, unknown, or
+            // deleted - is a 404, never a resolved image and never a token (strategy §3.5,
+            // migration plan §7.5). The same translation this file's QR route already applies.
+            return Results.NotFound(new { error = "Image not found." });
+        }
     }
 
     private static async Task<IResult> GetCustomerMatchesAsync(

@@ -20,6 +20,14 @@ public enum MediaTokenFailure
 
     /// <summary>A single-use nonce was already claimed.</summary>
     Replayed,
+
+    /// <summary>
+    /// The single-use nonce could not be claimed because the nonce store (Redis) is unavailable.
+    /// Kept distinct from <see cref="Replayed"/> so the route can answer <c>503</c> rather than
+    /// <c>401</c>. Either way it fails <b>closed</b>: no claim, no fetch (strategy §3.8,
+    /// migration plan §7.7).
+    /// </summary>
+    NonceStoreUnavailable,
 }
 
 /// <summary>

@@ -146,6 +146,10 @@ app.UseAuthentication();
 app.UseMiddleware<Aveline.Api.Modules.ApiAccess.Middleware.ApiKeyTenantScopeMiddleware>();
 app.UseAuthorization();
 app.UseAvelineAuthAudit();
+// The media token route carries a bearer credential in its path. The audit middleware above and
+// the exception handler outside both log the request path on the way out, so the path is replaced
+// with its route template before either reads it (migration plan §7.7: the token is never logged).
+app.UseMiddleware<MediaTokenPathRedactionMiddleware>();
 app.UseAvelineOnboarding();
 // Telemetry is stamped after authentication/authorization so attribution is available, and
 // before endpoints so every measured request is captured (FR-6.1). It never fails a request.
@@ -200,6 +204,9 @@ app.MapBillingEndpoints();
 app.MapCustomerConciergeEndpoints();
 app.MapVisualEndpoints();
 app.MapStatisticsInternalEndpoints();
+// The protected media tier (unit U2.1): the token proxy at /api/v1/media/{token} and the two
+// mint endpoints, mapped once here from the lane that owns them.
+app.MapMediaEndpoints();
 app.MapControllers();
 
 // Apply EF Core migrations on startup for a fresh/local database. Guarded to the

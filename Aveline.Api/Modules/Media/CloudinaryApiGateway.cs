@@ -144,9 +144,17 @@ internal sealed class CloudinaryApiGateway : ICloudinaryGateway
 
         if (!response.IsSuccessStatusCode)
         {
+            // The provider's own error header is logged, never echoed to a caller. The delivery URL
+            // carries a signature rather than the account secret, so this text cannot leak one.
+            var detail = response.Headers.TryGetValues("X-Cld-Error", out var values)
+                ? string.Join(' ', values)
+                : null;
+
             throw new MediaStorageException(
                 (int)response.StatusCode,
-                $"The provider returned {(int)response.StatusCode} for the signed delivery URL.");
+                detail is null
+                    ? $"The provider returned {(int)response.StatusCode} for the signed delivery URL."
+                    : $"The provider returned {(int)response.StatusCode} for the signed delivery URL ({detail}).");
         }
 
         var bytes = await response.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);

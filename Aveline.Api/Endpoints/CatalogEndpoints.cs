@@ -361,15 +361,29 @@ public static class CatalogEndpoints
             CancellationToken cancellationToken) =>
         {
             dto.OrganizationId = organizationId;
-            var analysis = await visualService.AnalyzeImageAsync(dto, cancellationToken);
-            return Results.Ok(analysis);
+
+            try
+            {
+                var analysis = await visualService.AnalyzeImageAsync(dto, cancellationToken);
+                return Results.Ok(analysis);
+            }
+            catch (KeyNotFoundException)
+            {
+                // The same translation VisualEndpoints.AnalyzeImageAsync applies. A named
+                // reference the caller cannot see - another organisation's, unknown, or deleted -
+                // is a 404, never a resolved image and never a token (strategy §3.5, migration
+                // plan §7.5). Only this one exception type is caught, so every other fault still
+                // reaches the global handler as a 500.
+                return Results.NotFound(new { error = "Image not found." });
+            }
         })
         .WithName("CatalogAnalyzeImage")
         .WithSummary("Extract visual fashion attributes and tags using Elle Vision AI.")
         .Produces<ImageAnalysisResultDto>(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status401Unauthorized)
-        .Produces(StatusCodes.Status403Forbidden);
+        .Produces(StatusCodes.Status403Forbidden)
+        .Produces(StatusCodes.Status404NotFound);
 
         // --- Customer Matches ---
 

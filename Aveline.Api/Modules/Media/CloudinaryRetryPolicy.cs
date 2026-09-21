@@ -152,6 +152,94 @@ internal sealed class CloudinaryRetryPolicy
     }
 
     /// <summary>
+    /// Runs a provider <em>fetch</em>, retrying a Cloudinary <c>420</c>/5xx answer or a transient
+    /// transport failure with the same bounded backoff <see cref="ExecuteAsync"/> uses. The proxy
+    /// path is the one read that pays egress, so a <c>420</c> must not surface as a hard failure
+    /// until the budget is spent (migration plan §7.7).
+    /// </summary>
+    /// <remarks>
+    /// The first non-retryable provider answer is surfaced unchanged, so the caller still sees the
+    /// provider's own status (<c>401</c>/<c>403</c> → <c>502</c> at the route). A transient
+    /// transport failure is surfaced as a status-less <see cref="MediaStorageException"/> carrying
+    /// the cause, which is how a timeout stays distinguishable.
+    /// </remarks>
+    public async Task<Stream> ExecuteFetchAsync(
+        string operation,
+        Func<CancellationToken, Task<Stream>> call,
+        CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(operation);
+        ArgumentNullException.ThrowIfNull(call);
+
+        var maxRetries = Math.Max(0, _options.UploadRetryAttempts);
+        var attempt = 0;
+
+        while (true)
+        {
+            try
+            {
+                return await call(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (MediaStorageException ex)
+                when (ex.StatusCode is int status && CloudinaryAttemptResult.IsRetryableStatus(status))
+            {
+                var message = Redact(ex.Message) ?? $"Cloudinary returned {ex.StatusCode}.";
+
+                if (attempt >= maxRetries)
+                {
+                    _logger.LogError(
+                        "Cloudinary {Operation} exhausted its retries after {Attempts} attempts; last status {StatusCode}: {Message}",
+                        operation, attempt + 1, ex.StatusCode, message);
+                    throw;
+                }
+
+                attempt++;
+                _logger.LogWarning(
+                    "Cloudinary {Operation} returned retryable status {StatusCode}; retrying (attempt {Attempt} of {MaxRetries}): {Message}",
+                    operation, ex.StatusCode, attempt, maxRetries, message);
+                await _delay.DelayAsync(ComputeBackoff(attempt, Random.Shared.NextDouble()), ct)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex) when (IsTransient(ex))
+            {
+                var message = Redact(ex.Message) ?? ex.GetType().Name;
+
+                if (attempt >= maxRetries)
+                {
+                    _logger.LogError(
+                        "Cloudinary {Operation} failed after {Attempts} attempts: {Message}",
+                        operation, attempt + 1, message);
+                    throw Failure(0, message, ex);
+                }
+
+                attempt++;
+                _logger.LogWarning(
+                    "Cloudinary {Operation} hit a transient failure; retrying (attempt {Attempt} of {MaxRetries}): {Message}",
+                    operation, attempt, maxRetries, message);
+                await _delay.DelayAsync(ComputeBackoff(attempt, Random.Shared.NextDouble()), ct)
+                    .ConfigureAwait(false);
+            }
+            catch (MediaStorageException)
+            {
+                // A provider answer that is not worth retrying (401/403/404/…) is surfaced
+                // unchanged: the route maps 401/403 to 502 and everything else to 502, but the
+                // status must survive so the failure is classified and logged as what it is.
+                throw;
+            }
+            catch (Exception ex)
+            {
+                var message = Redact(ex.Message) ?? ex.GetType().Name;
+                _logger.LogError("Cloudinary {Operation} failed: {Message}", operation, message);
+                throw Failure(0, message, ex);
+            }
+        }
+    }
+
+    /// <summary>
     /// Whether an exception is a transport or timeout failure worth another attempt. A
     /// deserialisation failure is not: it will answer the same way every time.
     /// </summary>

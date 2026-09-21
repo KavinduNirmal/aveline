@@ -3,9 +3,12 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Aveline.Api.Common.Media;
+using Aveline.Api.Modules.Media;
 using Aveline.Api.Modules.VisualIntelligence.DTOs;
 using Aveline.Api.Modules.VisualIntelligence.Models;
 using Aveline.Api.Modules.VisualIntelligence.Repositories;
+using Microsoft.Extensions.Logging;
 
 namespace Aveline.Api.Modules.VisualIntelligence.Services;
 
@@ -18,6 +21,9 @@ public class VisualService : IVisualService
     private readonly ISupplierRepository _supplierRepository;
     private readonly IVisionService _visionService;
     private readonly IQrCodeService _qrCodeService;
+    private readonly IMediaAssetLocator _mediaAssets;
+    private readonly MediaTokenMintService _mediaTokens;
+    private readonly ILogger<VisualService> _logger;
 
     public VisualService(
         IInventoryService inventoryService,
@@ -26,7 +32,10 @@ public class VisualService : IVisualService
         IOutfitRepository outfitRepository,
         ISupplierRepository supplierRepository,
         IVisionService visionService,
-        IQrCodeService qrCodeService)
+        IQrCodeService qrCodeService,
+        IMediaAssetLocator mediaAssets,
+        MediaTokenMintService mediaTokens,
+        ILogger<VisualService> logger)
     {
         _inventoryService = inventoryService ?? throw new ArgumentNullException(nameof(inventoryService));
         _sourcingRequestRepository = sourcingRequestRepository ?? throw new ArgumentNullException(nameof(sourcingRequestRepository));
@@ -35,6 +44,9 @@ public class VisualService : IVisualService
         _supplierRepository = supplierRepository ?? throw new ArgumentNullException(nameof(supplierRepository));
         _visionService = visionService ?? throw new ArgumentNullException(nameof(visionService));
         _qrCodeService = qrCodeService ?? throw new ArgumentNullException(nameof(qrCodeService));
+        _mediaAssets = mediaAssets ?? throw new ArgumentNullException(nameof(mediaAssets));
+        _mediaTokens = mediaTokens ?? throw new ArgumentNullException(nameof(mediaTokens));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
     public async Task<IReadOnlyList<InventoryItemDto>> SearchInventoryAsync(
@@ -91,13 +103,116 @@ public class VisualService : IVisualService
         return await _inventoryService.GetLowStockItemsAsync(orgId, threshold, cancellationToken);
     }
 
+    /// <summary>
+    /// Analyses an image, either from a named reference (resolved, tenant-checked, validated and
+    /// minted here) or from a caller-supplied external URL (the permissive compatibility arm).
+    /// </summary>
+    /// <exception cref="KeyNotFoundException">
+    /// A named reference that is unknown, deleted or another organisation's. The caller maps it to
+    /// a <c>404</c> — a reference the caller cannot see never yields a token or an image
+    /// (strategy §3.5, migration plan §7.5).
+    /// </exception>
     public async Task<ImageAnalysisResultDto> AnalyzeImageAsync(
         AnalyzeImageDto dto,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(dto);
-        return await _visionService.AnalyzeAsync(dto.ImageUrl, dto.OrgId, dto.FileName, dto.ContextHint, cancellationToken);
+
+        // The reference arm is additive. `ImageUrl` is non-nullable and empty means absent
+        // (strategy §4 C14), so a stale "" never shadows a named reference; and `externalUrl` or an
+        // unknown kind deliberately falls through to the ImageUrl arm, which is the arm Q7 left
+        // permissive.
+        if (TryReadReference(dto, out var imageRefKind, out var imageRefId))
+        {
+            return await AnalyzeReferenceAsync(dto, imageRefKind, imageRefId, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return await _visionService
+            .AnalyzeAsync(dto.ImageUrl, dto.OrgId, dto.FileName, dto.ContextHint, cancellationToken)
+            .ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Resolves the reference, checks the organisation, validates the analysable subset, mints and
+    /// hands <see cref="IVisionService"/> an absolute tokenised URL (migration plan §8.2). The
+    /// token is never returned to the caller: it exists only inside this call, so the caller's
+    /// request and response carry no credential.
+    /// </summary>
+    private async Task<ImageAnalysisResultDto> AnalyzeReferenceAsync(
+        AnalyzeImageDto dto,
+        string imageRefKind,
+        Guid imageRefId,
+        CancellationToken cancellationToken)
+    {
+        // 1. Resolve. The lookup is tenant-scoped by construction (`IMediaAssetLocator` carries the
+        //    organisation in its predicate), so a cross-org reference is null here — the same
+        //    discipline CatalogEndpoints.cs:637 and ConversationService.cs:381 apply.
+        var asset = await _mediaAssets
+            .FindByReferenceAsync(dto.OrgId, imageRefKind, imageRefId, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (asset is null)
+        {
+            throw new KeyNotFoundException("The referenced image was not found.");
+        }
+
+        // 2. The analysable subset, checked BEFORE the mint (strategy §3.6). The store admits nine
+        //    image types; the provider reads four. An unreadable asset is recorded as such and left
+        //    alone — never minted for a fetch that would fail, never silently degraded.
+        if (!VisionContentTypes.IsAnalysable(asset.ContentType))
+        {
+            _logger.LogWarning(
+                "Vision analysis skipped for reference {ImageRefKind}/{ImageRefId}: stored content "
+                + "type {ContentType} is outside VisionContentTypes.IsAnalysable; recorded as not "
+                + "analysable (strategy §3.6).",
+                imageRefKind,
+                imageRefId,
+                asset.ContentType);
+
+            return NotAnalysable();
+        }
+
+        // 3. Mint through the media module's mint service with the single-use `vision.analyze`
+        //    scope, then pass the absolute URL to the provider.
+        var minted = _mediaTokens.Mint(dto.OrgId, asset.AssetKey, MediaScope.VisionAnalyze);
+        if (!minted.IsSuccess || string.IsNullOrWhiteSpace(minted.Url))
+        {
+            // `Mint` only refuses a reference it cannot see, which step 1 already excluded.
+            throw new KeyNotFoundException("The referenced image was not found.");
+        }
+
+        return await _visionService
+            .AnalyzeAsync(minted.Url, dto.OrgId, dto.FileName, dto.ContextHint, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Whether the request names a tokenisable reference. Only the two row kinds
+    /// <see cref="MediaReferenceKinds"/> names are references; every other kind (including
+    /// <c>externalUrl</c>) belongs to the compatibility arm.
+    /// </summary>
+    private static bool TryReadReference(AnalyzeImageDto dto, out string imageRefKind, out Guid imageRefId)
+    {
+        imageRefKind = dto.ImageRefKind?.Trim() ?? string.Empty;
+        imageRefId = dto.ImageRefId ?? Guid.Empty;
+
+        return imageRefId != Guid.Empty
+               && imageRefKind is MediaReferenceKinds.Attachment or MediaReferenceKinds.InventoryImage;
+    }
+
+    /// <summary>
+    /// The recorded outcome for a stored type the provider cannot read. A fresh instance each time:
+    /// the result DTO is a mutable wire model and must not be shared between responses.
+    /// </summary>
+    private static ImageAnalysisResultDto NotAnalysable() => new()
+    {
+        Category = "unknown",
+        PrimaryColor = "unknown",
+        ConfidenceScore = 0,
+        IsFallback = true,
+        NotAnalysable = true,
+    };
 
     public async Task<IReadOnlyList<CustomerMatchDto>> GetCustomerMatchesAsync(
         Guid itemId,

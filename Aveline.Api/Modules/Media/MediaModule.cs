@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -20,6 +21,12 @@ namespace Aveline.Api.Modules.Media;
 /// <para>
 /// The Cloudinary branch is registered only when it is selected, so a <c>database</c> host gains
 /// no Cloudinary client and no HTTP client.
+/// </para>
+/// <para>
+/// Unit U2.1 adds the protected-tier pieces: the signer, the asset locator, the access service,
+/// the mint service, and the nonce store. The nonce store is Redis when Redis is configured and a
+/// fail-closed stub otherwise, so a host without Redis can mint a <c>vision.analyze</c> token but
+/// can never serve one (strategy §3.8).
 /// </para>
 /// </remarks>
 public static class MediaModule
@@ -56,6 +63,37 @@ public static class MediaModule
                     + "'database' and 'cloudinary'.");
         }
 
+        AddProtectedTier(services, configuration);
         return services;
+    }
+
+    /// <summary>
+    /// Registers the protected-tier services (unit U2.1). Separate so the provider switch stays
+    /// readable; both run from <see cref="AddMediaModule"/>.
+    /// </summary>
+    private static void AddProtectedTier(IServiceCollection services, IConfiguration configuration)
+    {
+        // The same registration the conversations module uses, so a host that resolves the clock
+        // gets one instance.
+        services.TryAddSingleton(TimeProvider.System);
+
+        services.AddScoped<IMediaUrlSigner, HmacMediaUrlSigner>();
+        services.AddScoped<IMediaAssetLocator, DatabaseMediaAssetLocator>();
+        services.AddScoped<MediaAccessService>();
+        services.AddScoped<MediaTokenMintService>();
+
+        // Resolved here rather than through CacheConfiguration so the media module does not reach
+        // into the configuration namespace; it is the same value the shared multiplexer keys on.
+        var redisConnection = configuration["Redis:ConnectionString"]
+                              ?? configuration.GetConnectionString("Redis");
+
+        if (!string.IsNullOrWhiteSpace(redisConnection))
+        {
+            services.AddSingleton<IMediaTokenNonceStore, RedisMediaTokenNonceStore>();
+        }
+        else
+        {
+            services.AddSingleton<IMediaTokenNonceStore, UnavailableMediaTokenNonceStore>();
+        }
     }
 }

@@ -3,6 +3,7 @@ import { Sparkles, Layers } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { formatMoney } from '@/lib/format-money'
 import type { OutfitCompositionMock } from './mockData'
 
 interface LookbooksTabProps {
@@ -27,23 +28,21 @@ export function LookbooksTab({ outfits, onComposeLook }: LookbooksTabProps) {
   })
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6">
       {/* Top Bar with Trigger and Filters */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
           {OCCASION_FILTERS.map((occ) => (
-            <button
+            <Button
               key={occ}
               type="button"
+              variant={selectedOccasion === occ ? 'default' : 'secondary'}
+              size="sm"
               onClick={() => setSelectedOccasion(occ)}
-              className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors shrink-0 ${
-                selectedOccasion === occ
-                  ? 'bg-primary text-white shadow-xs'
-                  : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'
-              }`}
+              className="h-auto shrink-0 rounded-full px-3.5 py-1.5 text-xs font-medium"
             >
               {occ}
-            </button>
+            </Button>
           ))}
         </div>
 
@@ -93,13 +92,13 @@ export function LookbooksTab({ outfits, onComposeLook }: LookbooksTabProps) {
                     Total Ensemble
                   </span>
                   <span className="font-serif text-lg font-bold text-primary">
-                    ${outfit.totalPrice.toLocaleString()}
+                    {formatMoney(outfit.totalPrice)}
                   </span>
                 </div>
               </div>
 
               {/* Items Composition Preview */}
-              <div className="p-5 space-y-4">
+              <div className="flex flex-col p-5 gap-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {outfit.items.map((item) => (
                     <div
@@ -119,7 +118,7 @@ export function LookbooksTab({ outfits, onComposeLook }: LookbooksTabProps) {
                           {item.name}
                         </p>
                         <p className="text-xs font-semibold text-primary">
-                          ${item.price.toLocaleString()}
+                          {formatMoney(item.price)}
                         </p>
                       </div>
                     </div>

@@ -238,11 +238,11 @@ sequenceDiagram
     participant DB as PostgreSQL
 
     Staff->>UI: Clicks "New Sourcing Request" (uploads client mood board photo)
-    Staff->>UI: Enters Target Client Budget ($1,800), selects Partner Atelier
+    Staff->>UI: Enters Target Client Budget (LKR 1,800), selects Partner Atelier
     UI->>API: POST /internal/visual/sourcing-requests
     API->>DB: INSERT into sourcing_requests (Status: "pending")
-    Note over UI,API: Atelier provides quotation: Estimated Cost = $900
-    Staff->>UI: Updates ticket with Cost ($900), Markup (100% / $900)
+    Note over UI,API: Atelier provides quotation: Estimated Cost = LKR 900
+    Staff->>UI: Updates ticket with Cost (LKR 900), Markup (100% / LKR 900)
     UI->>API: PUT /internal/visual/sourcing-requests/{id} (Status: "quoted")
     Staff->>UI: Drags ticket to "Approved" ➔ "Ordered from Atelier"
     API->>DB: UPDATE sourcing_requests status & timestamps

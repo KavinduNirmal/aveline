@@ -39,7 +39,9 @@ export function normalizeInventoryItem(raw: any): InventoryItem {
     stockQuantity: typeof raw.quantity === 'number' ? raw.quantity : Number(raw.stockQuantity || raw.quantity || 0),
     status: (raw.status || 'available') as InventoryItem['status'],
     imageUrl: raw.imageUrl || '',
-    confidenceScore: raw.confidenceScore ?? 0.95,
+    // No invented confidence. `InventoryItemDto` has no such field, so a list row only carries one
+    // when the caller actually supplied it; substituting 0.95 made every card claim "95% Vision AI".
+    confidenceScore: typeof raw.confidenceScore === 'number' ? raw.confidenceScore : undefined,
     description: raw.description || '',
     createdAt: raw.createdAt || new Date().toISOString(),
     updatedAt: raw.updatedAt,
@@ -361,7 +363,14 @@ export function normalizeCategory(rawCategory?: string): CatalogCategory {
   return 'Sarees'
 }
 
-export function getColorHex(colorName?: string, fallback = '#0f5132'): string {
+/**
+ * The colour a piece falls back to when neither the analysis nor the operator named one. It lives
+ * here, beside the colour table, so a component never spells a hex literal of its own: the tenant
+ * conformance gate forbids bare hex anywhere in the dashboard tree.
+ */
+export const DEFAULT_COLOR_HEX = '#0f5132'
+
+export function getColorHex(colorName?: string, fallback = DEFAULT_COLOR_HEX): string {
   if (!colorName) return fallback
   const trimmed = colorName.trim().toLowerCase()
   if (COLOR_HEX_MAP[trimmed]) return COLOR_HEX_MAP[trimmed]
@@ -398,7 +407,8 @@ export function normalizeVisionAnalysis(raw: any): VisionAnalysisResult {
     pattern: raw.pattern || pattern,
     garmentType,
     suggestedItemName,
-    confidenceScore: typeof raw.confidenceScore === 'number' ? raw.confidenceScore : 0.95,
+    // Only a real analysis result has a confidence; the fallback used to invent one here too.
+    confidenceScore: typeof raw.confidenceScore === 'number' ? raw.confidenceScore : undefined,
     isFallback: Boolean(raw.isFallback || raw.is_fallback || false),
     visualAttributes: raw.visualAttributes || raw.suggestedKeywords || [color, fabric, pattern],
     summary: desc,

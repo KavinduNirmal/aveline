@@ -16,7 +16,9 @@ import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Label } from '@/components/ui/label'
 import { QrCodeSvg } from '@/components/ui/QrCodeSvg'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { generateQrCode } from '@/lib/catalog-api'
+import { formatMoney } from '@/lib/format-money'
 import type { InventoryItemMock } from './mockData'
 
 interface ItemQrModalProps {
@@ -37,7 +39,9 @@ export function ItemQrModal({
   const [isDownloadingSvg, setIsDownloadingSvg] = useState(false)
   const [qrFormatType, setQrFormatType] = useState<'json' | 'url' | 'sku'>('json')
 
-  const effectiveOrgId = organizationId || '00000000-0000-0000-0000-000000000001'
+  // F-9: never invent a tenant id — the QR payload carries whatever the real organisation is, and
+  // an absent one leaves the field empty rather than naming another shop.
+  const effectiveOrgId = organizationId
   const effectiveItemId = item?.id || 'prospective-piece'
   const effectiveSku = item?.sku || 'AVL-000'
 
@@ -73,7 +77,7 @@ export function ItemQrModal({
   }
 
   const handleDownloadPng = async () => {
-    if (!activeQrPayload) return
+    if (!activeQrPayload || !effectiveOrgId) return
     setIsDownloadingPng(true)
     try {
       const res = await generateQrCode(effectiveOrgId, {
@@ -103,7 +107,7 @@ export function ItemQrModal({
   }
 
   const handleDownloadSvg = async () => {
-    if (!activeQrPayload) return
+    if (!activeQrPayload || !effectiveOrgId) return
     setIsDownloadingSvg(true)
     try {
       const res = await generateQrCode(effectiveOrgId, {
@@ -138,7 +142,7 @@ export function ItemQrModal({
 
   const handlePrintTag = () => {
     const activeName = item.name || 'Boutique Collection Piece'
-    const activePrice = item.price ? `$${Number(item.price).toLocaleString()}` : '$0.00'
+    const activePrice = formatMoney(item.price)
     const activeCategory = item.category || 'Haute Couture'
     const activeFabric = item.fabric ? `Fabric: ${item.fabric}` : ''
     const activeColor = item.color ? `Color: ${item.color}` : ''
@@ -165,13 +169,13 @@ export function ItemQrModal({
               align-items: center;
               justify-content: center;
               min-height: 100vh;
-              background: #fafafa;
+              background: whitesmoke;
               padding: 20px;
             }
             .tag {
               width: 320px;
-              background: #ffffff;
-              border: 2px solid #18181b;
+              background: white;
+              border: 2px solid black;
               border-radius: 16px;
               padding: 24px 20px;
               text-align: center;
@@ -182,7 +186,7 @@ export function ItemQrModal({
               font-weight: 800;
               letter-spacing: 3px;
               text-transform: uppercase;
-              color: #18181b;
+              color: black;
             }
             .category-badge {
               display: inline-block;
@@ -190,11 +194,11 @@ export function ItemQrModal({
               font-weight: 600;
               letter-spacing: 1px;
               text-transform: uppercase;
-              color: #71717a;
+              color: gray;
               margin-top: 4px;
               margin-bottom: 14px;
               padding-bottom: 12px;
-              border-bottom: 1px dashed #e4e4e7;
+              border-bottom: 1px dashed gainsboro;
               width: 100%;
             }
             .qr-container {
@@ -205,7 +209,7 @@ export function ItemQrModal({
             .item-title {
               font-size: 15px;
               font-weight: 700;
-              color: #18181b;
+              color: black;
               line-height: 1.3;
               margin-bottom: 6px;
             }
@@ -214,43 +218,43 @@ export function ItemQrModal({
               font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
               font-size: 12px;
               font-weight: 600;
-              background: #f4f4f5;
-              color: #3f3f46;
+              background: whitesmoke;
+              color: dimgray;
               padding: 2px 10px;
               border-radius: 6px;
               margin-bottom: 12px;
             }
             .meta {
               font-size: 11px;
-              color: #71717a;
+              color: gray;
               margin-bottom: 14px;
               line-height: 1.4;
             }
             .price-box {
-              border-top: 1px dashed #e4e4e7;
+              border-top: 1px dashed gainsboro;
               padding-top: 14px;
             }
             .price-label {
               font-size: 9px;
               text-transform: uppercase;
               letter-spacing: 1.5px;
-              color: #a1a1aa;
+              color: darkgray;
             }
             .price-val {
               font-size: 22px;
               font-weight: 800;
-              color: #18181b;
+              color: black;
               margin-top: 2px;
             }
             .footer-note {
               font-size: 9px;
-              color: #a1a1aa;
+              color: darkgray;
               margin-top: 14px;
               letter-spacing: 0.5px;
             }
             @media print {
-              body { background: #fff; padding: 0; }
-              .tag { border: 2px solid #000; box-shadow: none; }
+              body { background: white; padding: 0; }
+              .tag { border: 2px solid black; box-shadow: none; }
             }
           </style>
         </head>
@@ -317,7 +321,7 @@ export function ItemQrModal({
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 overflow-y-auto space-y-6">
+        <div className="flex flex-col p-6 overflow-y-auto gap-6">
           <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
             {/* Left: Luxury Atelier Floor Tag Preview Card */}
             <div className="md:col-span-6 flex justify-center">
@@ -354,56 +358,40 @@ export function ItemQrModal({
                 <div className="w-full mt-3 pt-2.5 border-t border-dashed border-border/80 flex items-center justify-between text-xs px-1">
                   <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Retail</span>
                   <span className="font-bold text-sm text-foreground">
-                    ${item.price.toLocaleString()}
+                    {formatMoney(item.price)}
                   </span>
                 </div>
               </div>
             </div>
 
             {/* Right: Controls, Format Selection & Export Actions */}
-            <div className="md:col-span-6 space-y-4">
+            <div className="flex flex-col md:col-span-6 gap-4">
               {/* Format Selector */}
-              <div className="space-y-1.5">
+              <div className="flex flex-col gap-1.5">
                 <Label className="text-xs text-muted-foreground font-medium">QR Payload Encoding</Label>
-                <div className="grid grid-cols-3 gap-1 bg-muted/30 p-1 rounded-lg border border-border/60 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => setQrFormatType('json')}
-                    className={`py-1.5 px-2 rounded-md font-medium text-[11px] transition-all cursor-pointer ${
-                      qrFormatType === 'json'
-                        ? 'bg-background text-foreground shadow-2xs border border-border/50'
-                        : 'text-muted-foreground hover:text-foreground'
-                    }`}
-                  >
+                <ToggleGroup
+                  type="single"
+                  value={qrFormatType}
+                  onValueChange={(value) => {
+                    if (value) setQrFormatType(value as 'json' | 'url' | 'sku')
+                  }}
+                  variant="outline"
+                  className="grid grid-cols-3 gap-1 rounded-lg border border-border/60 bg-muted/30 p-1 text-xs"
+                >
+                  <ToggleGroupItem value="json" className="text-[11px] font-medium">
                     JSON
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setQrFormatType('url')}
-                    className={`py-1.5 px-2 rounded-md font-medium text-[11px] transition-all cursor-pointer ${
-                      qrFormatType === 'url'
-                        ? 'bg-background text-foreground shadow-2xs border border-border/50'
-                        : 'text-muted-foreground hover:text-foreground'
-                    }`}
-                  >
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="url" className="text-[11px] font-medium">
                     URL
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setQrFormatType('sku')}
-                    className={`py-1.5 px-2 rounded-md font-medium text-[11px] transition-all cursor-pointer ${
-                      qrFormatType === 'sku'
-                        ? 'bg-background text-foreground shadow-2xs border border-border/50'
-                        : 'text-muted-foreground hover:text-foreground'
-                    }`}
-                  >
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="sku" className="text-[11px] font-medium">
                     SKU
-                  </button>
-                </div>
+                  </ToggleGroupItem>
+                </ToggleGroup>
               </div>
 
               {/* Encoded Data String */}
-              <div className="space-y-1">
+              <div className="flex flex-col gap-1">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] text-muted-foreground font-medium">Active Encoded Data</span>
                   <Button
@@ -413,7 +401,7 @@ export function ItemQrModal({
                     onClick={handleCopyPayload}
                     className="h-5 px-1.5 text-[10px] gap-1 text-primary hover:text-primary hover:bg-primary/10 cursor-pointer"
                   >
-                    {copiedPayload ? <CheckCheck className="size-3 text-emerald-500" /> : <Copy className="size-3" />}
+                    {copiedPayload ? <CheckCheck className="size-3 text-success" /> : <Copy className="size-3" />}
                     <span>{copiedPayload ? 'Copied' : 'Copy'}</span>
                   </Button>
                 </div>

@@ -84,3 +84,56 @@ public sealed record VisitReceiptDto(
     DateTime? LastVisitAtUtcAfter,
     string TierAfter,
     decimal BlossomsCharged);
+
+/// <summary>
+/// One client's full record on the tenant surface.
+/// </summary>
+/// <remarks>
+/// Deliberately **not** the internal customer shape: no memory, no extracted AI context and no
+/// internal-token fields reach a staff device. <see cref="LoyaltyTierIsDerived"/> is returned as a
+/// constant <c>1</c> so a client cannot render an editable tier control: <c>Status</c> is computed
+/// by <c>CustomerLoyaltyService.RecommendStatus</c> from spend, visits and recency.
+/// </remarks>
+public sealed record TenantCustomerDetailDto(
+    Guid CustomerId,
+    string? FullName,
+    string? Nickname,
+    string? PhoneNumber,
+    string? Email,
+    string? Level,
+    string Status,
+    decimal TotalSpent,
+    int VisitCount,
+    DateTime? LastVisitAtUtc,
+    int LoyaltyTierIsDerived,
+    DateTime CreatedAtUtc,
+    DateTime? UpdatedAtUtc,
+    int InteractionCount,
+    IReadOnlyList<string> Tags);
+
+/// <summary>
+/// The writable subset of a client's record. <c>Status</c> is deliberately absent: it is derived,
+/// so making it writable would let the UI contradict the loyalty rule.
+/// </summary>
+public sealed record UpdateCustomerRequest(
+    string? FullName,
+    string? Nickname,
+    string? PhoneNumber,
+    string? Email,
+    string? Level);
+
+/// <summary>One recorded interaction, as the client detail sheet reads it.</summary>
+public sealed record CustomerInteractionItemDto(
+    Guid InteractionId,
+    DateTime OccurredAtUtc,
+    string Channel,
+    string Direction,
+    string? Note,
+    bool CountedAsVisit);
+
+/// <summary>The paged interaction history.</summary>
+public sealed record CustomerInteractionPageDto(
+    IReadOnlyList<CustomerInteractionItemDto> Items,
+    int Total,
+    int Page,
+    int PageSize);

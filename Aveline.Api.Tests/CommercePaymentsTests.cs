@@ -7,7 +7,10 @@ using Aveline.Api.Modules.Commerce.Repositories;
 using Aveline.Api.Modules.Commerce.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Aveline.Api.Modules.Organizations.Models;
+using Aveline.Api.Modules.Shared.Repositories;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace Aveline.Api.Tests;
@@ -29,6 +32,7 @@ public class CommercePaymentsTests
         var repo = new PaymentRepository(context);
         var orderRepo = new OrderRepository(context);
         var orgId = Guid.NewGuid();
+        EnsureOrganization(context, orgId);
 
         var order = new Order
         {
@@ -71,6 +75,7 @@ public class CommercePaymentsTests
         var repo = new PaymentRepository(context);
         var orderRepo = new OrderRepository(context);
         var orgId = Guid.NewGuid();
+        EnsureOrganization(context, orgId);
 
         var order = new Order
         {
@@ -114,9 +119,11 @@ public class CommercePaymentsTests
         using var context = CreateInMemoryDbContext();
         var paymentRepo = new PaymentRepository(context);
         var orderRepo = new OrderRepository(context);
-        var service = new PaymentService(paymentRepo, orderRepo);
+        var service = new PaymentService(paymentRepo, orderRepo,
+            new BoutiqueSaleLedgerService(context, NullLogger<BoutiqueSaleLedgerService>.Instance));
 
         var orgId = Guid.NewGuid();
+        EnsureOrganization(context, orgId);
         var order = new Order
         {
             Id = Guid.NewGuid(),
@@ -156,9 +163,11 @@ public class CommercePaymentsTests
         using var context = CreateInMemoryDbContext();
         var paymentRepo = new PaymentRepository(context);
         var orderRepo = new OrderRepository(context);
-        var service = new PaymentService(paymentRepo, orderRepo);
+        var service = new PaymentService(paymentRepo, orderRepo,
+            new BoutiqueSaleLedgerService(context, NullLogger<BoutiqueSaleLedgerService>.Instance));
 
         var orgId = Guid.NewGuid();
+        EnsureOrganization(context, orgId);
         var order = new Order
         {
             Id = Guid.NewGuid(),
@@ -206,9 +215,11 @@ public class CommercePaymentsTests
         using var context = CreateInMemoryDbContext();
         var paymentRepo = new PaymentRepository(context);
         var orderRepo = new OrderRepository(context);
-        var service = new PaymentService(paymentRepo, orderRepo);
+        var service = new PaymentService(paymentRepo, orderRepo,
+            new BoutiqueSaleLedgerService(context, NullLogger<BoutiqueSaleLedgerService>.Instance));
 
         var orgId = Guid.NewGuid();
+        EnsureOrganization(context, orgId);
         var order = new Order
         {
             Id = Guid.NewGuid(),
@@ -248,9 +259,11 @@ public class CommercePaymentsTests
         using var context = CreateInMemoryDbContext();
         var paymentRepo = new PaymentRepository(context);
         var orderRepo = new OrderRepository(context);
-        var service = new PaymentService(paymentRepo, orderRepo);
+        var service = new PaymentService(paymentRepo, orderRepo,
+            new BoutiqueSaleLedgerService(context, NullLogger<BoutiqueSaleLedgerService>.Instance));
 
         var orgId = Guid.NewGuid();
+        EnsureOrganization(context, orgId);
         var order = new Order
         {
             Id = Guid.NewGuid(),
@@ -276,7 +289,9 @@ public class CommercePaymentsTests
         };
         await paymentRepo.AddAsync(payment);
 
-        var result = await service.RefundPaymentAsync(orgId, payment.Id, "Customer requested cancellation");
+        var result = await service.RefundPaymentAsync(
+            orgId, payment.Id, "Customer requested cancellation",
+            ct: default, refundedByUserId: Guid.CreateVersion7());
         Assert.Equal("refunded", result.Status);
     }
 
@@ -286,9 +301,11 @@ public class CommercePaymentsTests
         using var context = CreateInMemoryDbContext();
         var paymentRepo = new PaymentRepository(context);
         var orderRepo = new OrderRepository(context);
-        var service = new PaymentService(paymentRepo, orderRepo);
+        var service = new PaymentService(paymentRepo, orderRepo,
+            new BoutiqueSaleLedgerService(context, NullLogger<BoutiqueSaleLedgerService>.Instance));
 
         var orgId = Guid.NewGuid();
+        EnsureOrganization(context, orgId);
         var order = new Order
         {
             Id = Guid.NewGuid(),
@@ -314,7 +331,9 @@ public class CommercePaymentsTests
         await paymentRepo.AddAsync(payment);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.RefundPaymentAsync(orgId, payment.Id, "Refund test"));
+            service.RefundPaymentAsync(
+                orgId, payment.Id, "Refund test",
+                ct: default, refundedByUserId: Guid.CreateVersion7()));
     }
 
     [Fact]
@@ -323,10 +342,12 @@ public class CommercePaymentsTests
         using var context = CreateInMemoryDbContext();
         var paymentRepo = new PaymentRepository(context);
         var orderRepo = new OrderRepository(context);
-        var service = new PaymentService(paymentRepo, orderRepo);
-        var controller = new PaymentsController(service);
+        var service = new PaymentService(paymentRepo, orderRepo,
+            new BoutiqueSaleLedgerService(context, NullLogger<BoutiqueSaleLedgerService>.Instance));
+        var controller = new PaymentsController(service, new UserRepository(context));
 
         var orgId = Guid.NewGuid();
+        EnsureOrganization(context, orgId);
         var order = new Order
         {
             Id = Guid.NewGuid(),
@@ -357,10 +378,12 @@ public class CommercePaymentsTests
         using var context = CreateInMemoryDbContext();
         var paymentRepo = new PaymentRepository(context);
         var orderRepo = new OrderRepository(context);
-        var service = new PaymentService(paymentRepo, orderRepo);
-        var controller = new PaymentsController(service);
+        var service = new PaymentService(paymentRepo, orderRepo,
+            new BoutiqueSaleLedgerService(context, NullLogger<BoutiqueSaleLedgerService>.Instance));
+        var controller = new PaymentsController(service, new UserRepository(context));
 
         var orgId = Guid.NewGuid();
+        EnsureOrganization(context, orgId);
         var order = new Order
         {
             Id = Guid.NewGuid(),
@@ -393,5 +416,27 @@ public class CommercePaymentsTests
         var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
         var response = Assert.IsType<PaymentResponseDto>(okResult.Value);
         Assert.Equal("confirmed", response.Status);
+    }
+
+    /// <summary>
+    /// The ledger reads `Organization.Currency` from the organization row, so a fixture that
+    /// references an organization must actually create one — a real database could not hold an order
+    /// whose organization does not exist.
+    /// </summary>
+    private static void EnsureOrganization(AppDbContext context, Guid organizationId)
+    {
+        if (context.Organizations.Any(org => org.Id == organizationId))
+        {
+            return;
+        }
+
+        context.Organizations.Add(new Organization
+        {
+            Id = organizationId,
+            Name = $"Payment Org {organizationId:N}",
+            Slug = $"pay-{organizationId:N}",
+            OwnerUserId = Guid.CreateVersion7(),
+        });
+        context.SaveChanges();
     }
 }

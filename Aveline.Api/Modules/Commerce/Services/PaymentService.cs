@@ -8,11 +8,16 @@ public class PaymentService : IPaymentService
 {
     private readonly IPaymentRepository _paymentRepository;
     private readonly IOrderRepository _orderRepository;
+    private readonly IBoutiqueSaleLedgerService _ledger;
 
-    public PaymentService(IPaymentRepository paymentRepository, IOrderRepository orderRepository)
+    public PaymentService(
+        IPaymentRepository paymentRepository,
+        IOrderRepository orderRepository,
+        IBoutiqueSaleLedgerService ledger)
     {
         _paymentRepository = paymentRepository ?? throw new ArgumentNullException(nameof(paymentRepository));
         _orderRepository = orderRepository ?? throw new ArgumentNullException(nameof(orderRepository));
+        _ledger = ledger ?? throw new ArgumentNullException(nameof(ledger));
     }
 
     public async Task<PaymentResponseDto> GeneratePaymentRequestAsync(
@@ -104,6 +109,30 @@ public class PaymentService : IPaymentService
         }
 
         await _paymentRepository.UpdateAsync(payment, ct);
+
+        // The confirmation is the only durable signal that money arrived, so it is the one event
+        // that may be recorded as `Verified`. `SourceRef` is the payment id, so a retried
+        // confirmation cannot double-book — and the two early returns above mean an already
+        // confirmed payment never reaches here at all.
+        //
+        // The actor is null: nothing in the order or payment flow resolves one (`OrdersController`
+        // passes `createdBy: null`), so naming a user here would be a fabrication. `OrderPayment` is
+        // therefore one of the sources the ledger permits an unattributed row on.
+        await _ledger.RecordAsync(new RecordBoutiqueSaleCommand(
+            OrganizationId: organizationId,
+            Amount: payment.Amount,
+            Reason: $"Payment of {payment.Amount:0.00} {payment.PaymentMethod} confirmed for order {payment.OrderId}.",
+            Kind: BoutiqueSaleEntryKind.PaymentReceived,
+            ChargeBasis: BoutiqueSaleChargeBasis.Verified,
+            SourceKind: BoutiqueSaleSourceKind.OrderPayment,
+            SourceRef: $"payment:{payment.Id}",
+            // The register is ordered by occurrence, so it must be the confirmation time and not
+            // the time this row happened to be written.
+            OccurredAt: payment.ConfirmedAt.Value,
+            RecordedByUserId: null,
+            OrderId: payment.OrderId,
+            PaymentId: payment.Id), ct);
+
         return MapToDto(payment);
     }
 
@@ -111,7 +140,8 @@ public class PaymentService : IPaymentService
         Guid organizationId,
         Guid paymentId,
         string? reason,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        Guid? refundedByUserId = null)
     {
         var payment = await _paymentRepository.GetByIdAsync(paymentId, organizationId, ct);
         if (payment is null)
@@ -126,6 +156,36 @@ public class PaymentService : IPaymentService
 
         payment.Status = "refunded";
         await _paymentRepository.UpdateAsync(payment, ct);
+
+        // The refund path previously accepted a `reason` and then discarded it: no row, no amount,
+        // no timestamp. It now has a destination, which is the difference between a refund and an
+        // unexplained balance change.
+        //
+        // The client's own words are used when they are long enough to satisfy the ledger's reason
+        // rule, and a stated fallback is used when they are not — a refund is never lost merely
+        // because the operator typed a short note.
+        var note = (reason ?? string.Empty).Trim();
+        var ledgerReason = note.Length >= BoutiqueSaleLedgerService.MinReasonLength
+            ? note
+            : $"Refund of {payment.Amount:0.00} for order {payment.OrderId}; no reason was recorded at the counter.";
+
+        await _ledger.RecordAsync(new RecordBoutiqueSaleCommand(
+            OrganizationId: organizationId,
+            Amount: payment.Amount,
+            // Stored positive; the sign comes from `Kind`, so a column sum cannot net it away.
+            Reason: ledgerReason,
+            Kind: BoutiqueSaleEntryKind.Refund,
+            ChargeBasis: BoutiqueSaleChargeBasis.Verified,
+            SourceKind: BoutiqueSaleSourceKind.Refund,
+            // The payment can only be refunded once (the guard above refuses a second attempt), so
+            // the payment id is a sufficient dedup identity.
+            SourceRef: $"refund:{payment.Id}",
+            OccurredAt: DateTime.UtcNow,
+            // Unlike a confirmation, a refund is always issued by somebody: the route is guarded by
+            // `payments:refund`. Recording who makes the journal answer "who sent this back?".
+            RecordedByUserId: refundedByUserId is { } id && id != Guid.Empty ? id : null,
+            OrderId: payment.OrderId,
+            PaymentId: payment.Id), ct);
 
         return MapToDto(payment);
     }

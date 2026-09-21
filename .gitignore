@@ -310,7 +310,12 @@ docs/final_document/
 # =============================================================================
 .agents/plans/.work/
 .agents/plans/.obsidian/
-.agents/plans/issues/
+.agents/plans/*
 .dsh-tools/
 .research-shots/
 .screenshots/
+
+# The local Vercel project link, and every real environment file. `.env.example` stays tracked
+# because tracked files are unaffected by these patterns.
+.vercel/
+.env*

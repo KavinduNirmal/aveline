@@ -15,9 +15,10 @@ import {
   Store,
   Users,
   UserPlus,
+  Coins,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { Blossom } from '@/components/auth/Blossom'
@@ -25,8 +26,14 @@ import { AvelineChatDrawer } from '@/components/conversation/AvelineChatDrawer'
 import { AvelineChatLauncher } from '@/components/conversation/AvelineChatLauncher'
 import { SalonPanel } from '@/components/conversation/SalonPanel'
 import { Overview } from '@/components/dashboard/Overview'
+import { ApprovalsPanel } from '@/components/dashboard/ApprovalsPanel'
+import { CustomersPanel } from '@/components/dashboard/CustomersPanel'
+import { IncomePanel } from '@/components/dashboard/IncomePanel'
+import { BillingPanel } from '@/components/dashboard/billing/BillingPanel'
+import { SettingsPanel } from '@/components/dashboard/settings/SettingsPanel'
 import { SectionPlaceholder } from '@/components/dashboard/SectionPlaceholder'
 import { TeamManagement } from '@/components/dashboard/TeamManagement'
+import { UpgradePanel } from '@/components/dashboard/UpgradePanel'
 import { IntegrationsPanel } from '@/components/dashboard/IntegrationsPanel'
 import { NotificationBell } from '@/components/dashboard/NotificationBell'
 import { UsagePanel } from '@/components/dashboard/UsagePanel'
@@ -42,9 +49,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { fetchMyOrganizations } from '@/lib/organizations'
 import { hasPermission, type Permission } from '@/lib/permissions'
+import { DASHBOARD_WINDOWS, useDashboardWindow } from '@/hooks/useDashboardWindow'
 import type {
   OrganizationMembership,
   OrganizationProfileDto,
@@ -56,12 +71,15 @@ type SectionId =
   | 'salon'
   | 'customers'
   | 'catalog'
+  | 'income'
   | 'approvals'
   | 'integrations'
   | 'team'
   | 'usage'
   | 'billing'
   | 'settings'
+  // Not a nav entry: `/app/b/:slug/upgrade` is reached from the Usage and Billing CTAs.
+  | 'upgrade'
 
 interface SectionDef {
   id: SectionId
@@ -77,11 +95,18 @@ const SECTIONS: SectionDef[] = [
   { id: 'salon', label: 'Salon', icon: MessageSquare },
   { id: 'customers', label: 'Customers', icon: Users, placeholder: 'Customer concierge & memory', permission: 'customers:view' },
   { id: 'catalog', label: 'Catalog', icon: Shirt, placeholder: 'Visual intelligence & sourcing', permission: 'catalog:view' },
+  // The shop's own takings. `reports:view` is the permission the grant map already gave manager,
+  // supervisor and owner; staff see a reduced card on Overview instead of this register.
+  { id: 'income', label: 'Income', icon: Coins, placeholder: 'Takings, register & reconciliation', permission: 'reports:view' },
   { id: 'approvals', label: 'Approvals', icon: ClipboardCheck, placeholder: 'Commerce approvals', permission: 'approvals:approve' },
   { id: 'integrations', label: 'Integrations', icon: Share2, placeholder: 'Channel connections', permission: 'settings:manage' },
-  { id: 'team', label: 'Team', icon: UserPlus, placeholder: 'Staff & invitations', permission: 'settings:manage' },
+  // `team:manage`, not `settings:manage`: a manager may manage staff without also reaching
+  // Integrations, where the WhatsApp and payment-gateway credentials live (T0a / TD5.5).
+  { id: 'team', label: 'Team', icon: UserPlus, placeholder: 'Staff & invitations', permission: 'team:manage' },
   { id: 'usage', label: 'Usage', icon: BarChart3 },
-  { id: 'billing', label: 'Billing', icon: CreditCard, placeholder: 'Plan, invoices & payment methods' },
+  // "invoices" was a promise the repository cannot keep: no Invoice entity, no payment-provider
+  // client and no currency column exist (TD8). The section is a statement of account.
+  { id: 'billing', label: 'Billing', icon: CreditCard, placeholder: 'Plan, statement & payment methods', permission: 'billing:view' },
   { id: 'settings', label: 'Settings', icon: Settings, placeholder: 'Boutique & plan settings', permission: 'settings:manage' },
 ]
 
@@ -113,21 +138,39 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
   const navigate = useNavigate()
   const { user } = useUser()
   const { signOut } = useClerk()
-  const [section, setSection] = useState<SectionId>('overview')
+  // The section is part of the URL (`/app/b/:slug/:section`), not component state, so a section
+  // is linkable and survives a refresh. The bare slug route redirects here with `overview`.
+  const { section: sectionParam } = useParams<{ section?: string }>()
+  // One window for the whole shell: every KPI panel reads this value, so two panels on the same
+  // screen cannot describe different periods.
+  const dashboardWindow = useDashboardWindow('30d')
   const [boutiques, setBoutiques] = useState<OrganizationMembership[]>([])
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const [chatOpen, setChatOpen] = useState(false)
 
   const allowedSections = SECTIONS.filter(
     (item) => !item.permission || hasPermission(role, item.permission),
   )
 
+  // An unknown segment falls back to `overview` rather than rendering nothing, and a section the
+  // role may not open is refused by the same `allowedSections` filter the nav uses — so a
+  // hand-typed URL cannot render a panel the nav hides.
+  const section =
+    SECTIONS.some((item) => item.id === sectionParam) || sectionParam === 'upgrade'
+      ? (sectionParam as SectionId)
+      : 'overview'
+
   const activeSection =
     section !== 'overview' && !allowedSections.some((s) => s.id === section)
       ? 'overview'
       : section
 
+  const goToSection = (next: SectionId) => navigate(`/app/b/${organization.slug}/${next}`)
+
   // Fetch the caller's other active boutiques so an owner/manager with several can switch
-  // tenants from the top bar.
+  // tenants from the top bar. The same response carries the caller's own membership id, which the
+  // Team section needs to disable their own row with a stated reason rather than letting the server
+  // answer with a 409.
   useEffect(() => {
     let mounted = true
     fetchMyOrganizations()
@@ -138,6 +181,9 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
               (m) => m.status === 'Active' && m.slug && m.slug !== organization.slug,
             ),
           )
+          setCurrentUserId(
+            memberships.find((m) => m.organizationId === organization.id)?.userId ?? null,
+          )
         }
       })
       .catch(() => {
@@ -146,7 +192,7 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
     return () => {
       mounted = false
     }
-  }, [organization.slug])
+  }, [organization.id, organization.slug])
 
   const orgInitials = initialsOf(organization.name)
   const userName = user?.fullName ?? user?.username ?? 'Account'
@@ -186,25 +232,26 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+        <nav className="flex-1 gap-1 overflow-y-auto px-3 py-4">
           {allowedSections.map((item) => {
             const Icon = item.icon
             const active = activeSection === item.id
             return (
-              <button
+              <Button
                 key={item.id}
                 type="button"
-                onClick={() => setSection(item.id)}
+                variant="ghost"
+                onClick={() => goToSection(item.id)}
                 className={cn(
-                  'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors',
+                  'flex h-auto w-full items-center justify-start gap-3 rounded-lg px-3 py-2 text-left text-sm font-medium',
                   active
-                    ? 'bg-primary/10 text-primary'
+                    ? 'bg-primary/10 text-primary hover:bg-primary/10 hover:text-primary'
                     : 'text-muted-foreground hover:bg-muted hover:text-foreground',
                 )}
               >
                 <Icon className="size-4 shrink-0" aria-hidden />
                 {item.label}
-              </button>
+              </Button>
             )
           })}
         </nav>
@@ -213,9 +260,11 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
         <footer className="border-t px-3 py-3">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button
+              <Button
                 type="button"
-                className="flex w-full items-center gap-2.5 rounded-lg px-1 py-1.5 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                variant="ghost"
+                asChild={false}
+                className="h-auto w-full justify-start gap-2.5 rounded-lg px-1 py-1.5 text-left"
               >
                 <div className="relative size-8 shrink-0 overflow-hidden rounded-full ring-1 ring-border">
                   {userImage ? (
@@ -236,7 +285,7 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
                   className="size-4 shrink-0 text-muted-foreground"
                   aria-hidden
                 />
-              </button>
+              </Button>
             </DropdownMenuTrigger>
 
             <DropdownMenuContent align="start" side="top" className="w-64">
@@ -263,7 +312,7 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
               <DropdownMenuSeparator />
 
               {hasPermission(role, 'settings:manage') && (
-                <DropdownMenuItem onClick={() => setSection('settings')}>
+                <DropdownMenuItem onClick={() => goToSection('settings')}>
                   <Settings className="size-4" aria-hidden />
                   Settings
                 </DropdownMenuItem>
@@ -288,28 +337,27 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
         <header className="sticky top-0 z-10 flex h-16 items-center justify-between gap-4 border-b bg-background/80 px-6 backdrop-blur-sm">
           <div className="flex min-w-0 items-center gap-3">
             {boutiques.length > 0 && (
-              <label className="flex items-center gap-1.5 text-sm">
-                <Store className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                <span className="sr-only">Switch boutique</span>
-                <select
-                  value=""
+              <Select
+                value=""
+                onValueChange={(slug) => {
+                  if (slug) navigate(`/app/b/${slug}`)
+                }}
+              >
+                <SelectTrigger
                   aria-label="Switch boutique"
-                  onChange={(event) => {
-                    const slug = event.target.value
-                    if (slug) navigate(`/app/b/${slug}`)
-                  }}
-                  className="rounded-lg border border-border bg-background px-2 py-1 text-sm"
+                  className="h-8 w-[13rem] gap-1.5 rounded-lg text-sm"
                 >
-                  <option value="" disabled>
-                    Switch boutique…
-                  </option>
+                  <Store className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                  <SelectValue placeholder="Switch boutique…" />
+                </SelectTrigger>
+                <SelectContent>
                   {boutiques.map((b) => (
-                    <option key={b.organizationId} value={b.slug ?? ''}>
+                    <SelectItem key={b.organizationId} value={b.slug ?? ''}>
                       {b.organizationName ?? b.slug}
-                    </option>
+                    </SelectItem>
                   ))}
-                </select>
-              </label>
+                </SelectContent>
+              </Select>
             )}
           </div>
 
@@ -318,14 +366,16 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
             {usage ? (
               <span
                 title={`${usage.blossomRemaining.toLocaleString()} of ${usage.monthlyBlossomLimit.toLocaleString()} Blossoms left`}
-                className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-[#8b2e42] to-[#c05267] px-4 py-1.5 text-sm font-semibold text-white shadow-sm"
+                className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-primary to-primary/70 px-4 py-1.5 text-sm font-semibold text-white shadow-sm"
               >
                 <Blossom className="size-4 text-white" />
                 {usage.blossomRemaining.toLocaleString()} Blossoms
               </span>
             ) : (
+              // "Demo mode" was a claim about the product, not a state of the data. A missing
+              // balance means the API did not measure one, so the chip says exactly that.
               <span className="inline-flex items-center gap-2 rounded-full border border-border bg-muted px-4 py-1.5 text-sm font-medium text-muted-foreground">
-                Demo mode
+                Balance unavailable
               </span>
             )}
 
@@ -333,15 +383,33 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
               variant="outline"
               size="sm"
               className="gap-1.5 rounded-full"
-              onClick={() =>
-                toast('Top-ups are in demo mode', {
-                  description: 'We’ll contact you about billing when payments go live.',
+              onClick={() => {
+                goToSection('billing')
+                toast('Choose a Blossom top-up pack', {
+                  description:
+                    'Top-ups are recorded grants until a payment provider is connected.',
                 })
-              }
+              }}
             >
               <Plus className="size-4" aria-hidden />
               Top up
             </Button>
+
+            <Select
+              value={dashboardWindow.window}
+              onValueChange={(value) => dashboardWindow.setWindow(value as typeof dashboardWindow.window)}
+            >
+              <SelectTrigger aria-label="Reporting window" className="h-8 w-[10.5rem] rounded-full text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {DASHBOARD_WINDOWS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
             <NotificationBell />
 
@@ -352,21 +420,51 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
 
         <main className="flex-1 px-6 py-8">
           {activeSection === 'overview' ? (
-            <Overview organization={organization} usage={usage} role={role} />
+            <Overview
+              organization={organization}
+              usage={usage}
+              role={role}
+              window={dashboardWindow.window}
+            />
           ) : activeSection === 'salon' ? (
             <SalonPanel />
+          ) : activeSection === 'customers' ? (
+            <CustomersPanel organization={organization} role={role} />
+          ) : activeSection === 'income' ? (
+            <IncomePanel organizationId={organization.id} organizationName={organization.name} />
           ) : activeSection === 'catalog' ? (
             <CatalogPanel
               organization={organization}
               role={role}
-              onOpenSalonForCustomer={(_id, _name) => setSection('salon')}
+              onOpenSalonForCustomer={(_id, _name) => goToSection('salon')}
             />
           ) : activeSection === 'team' ? (
-            <TeamManagement organization={organization} role={role} />
+            <TeamManagement
+              organization={organization}
+              role={role}
+              currentUserId={currentUserId ?? ''}
+            />
           ) : activeSection === 'integrations' ? (
             <IntegrationsPanel organization={organization} />
           ) : activeSection === 'usage' ? (
-            <UsagePanel organization={organization} usage={usage} />
+            <UsagePanel
+              organization={organization}
+              role={role}
+              window={dashboardWindow.window}
+              onUpgrade={() => goToSection('upgrade')}
+            />
+          ) : activeSection === 'billing' ? (
+            <BillingPanel
+              organization={organization}
+              role={role}
+              onUpgrade={() => goToSection('upgrade')}
+            />
+          ) : activeSection === 'approvals' ? (
+            <ApprovalsPanel organization={organization} role={role} />
+          ) : activeSection === 'upgrade' ? (
+            <UpgradePanel organization={organization} />
+          ) : activeSection === 'settings' ? (
+            <SettingsPanel organization={organization} role={role} />
           ) : (
             (() => {
               const def = allowedSections.find((s) => s.id === activeSection)

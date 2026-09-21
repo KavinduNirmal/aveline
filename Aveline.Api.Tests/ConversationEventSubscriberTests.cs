@@ -57,6 +57,9 @@ public class ConversationEventSubscriberTests
         public Task<ConversationDto> GetOrCreateSalonAsync(Guid orgId, Guid userId, Guid? customerId, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
+        public Task<bool> EnsureCustomerSalonAsync(Guid orgId, Guid customerId, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
         public Task<ConversationDto?> GetAsync(Guid orgId, Guid userId, Guid conversationId, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 

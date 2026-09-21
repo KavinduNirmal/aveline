@@ -425,23 +425,40 @@ public class ConversationEndpointsIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task SignOffDecide_RequiresApprovalsApprove()
+    public async Task SignOffDecide_IsGatedByApprovalsApprove()
     {
         var (owner, org) = await SeedActiveOwnerAsync("conv_owner_signoff_auth", "conversations-signoff-auth");
+        // A membership whose role holds `conversations:view` but not `approvals:approve` is the
+        // clean probe for the release gate. (It used to be `org:boutique_staff`; Q8 grants them
+        // `approvals:approve` so they can approve a customer order, which moves them inside the
+        // grant and makes them the wrong probe.)
+        var nonApprover = await SeedMemberAsync("conv_nonapprover_signoff_auth", org.Id, Roles.CustomerRelations);
         var staff = await SeedMemberAsync("conv_staff_signoff_auth", org.Id, Roles.BoutiqueStaff);
         var ownerToken = CreateToken(owner.ClerkId, owner.Email);
-        var staffToken = CreateToken(staff.ClerkId, staff.Email);
+        var nonApproverToken = CreateToken(nonApprover.ClerkId, nonApprover.Email);
         var create = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
             $"/api/v1/orgs/{org.Id}/conversations", ownerToken, new { customerId = (Guid?)null }));
         var conversation = await create.Content.ReadFromJsonAsync<ConversationDto>();
         var (messageId, contentHash) = await SeedSignOffAsync(conversation!.Id, conversation.ThreadId);
 
-        // An ordinary staff member holds conversations:view but not approvals:approve, so the
-        // release gate refuses them even though they can read the thread.
+        Assert.False(Permissions.IsGranted(Roles.CustomerRelations, Permissions.ApprovalsApprove));
+        Assert.True(Permissions.IsGranted(Roles.BoutiqueStaff, Permissions.ApprovalsApprove));
+
+        // Without `approvals:approve` the release gate refuses the caller at the policy, before
+        // the conversation is ever looked up.
+        var asNonApprover = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation.Id}/messages/{messageId}/sign-off",
+            nonApproverToken, new { approved = true, contentHash }));
+        Assert.Equal(HttpStatusCode.Forbidden, asNonApprover.StatusCode);
+
+        // A staff member now passes the policy. They still cannot reach a conversation the Salon
+        // does not show them, which is why the visibility-aware lookup answers 404 rather than
+        // 200: the policy gate and the visibility gate are separate on purpose.
+        var staffToken = CreateToken(staff.ClerkId, staff.Email);
         var asStaff = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
             $"/api/v1/orgs/{org.Id}/conversations/{conversation.Id}/messages/{messageId}/sign-off",
             staffToken, new { approved = true, contentHash }));
-        Assert.Equal(HttpStatusCode.Forbidden, asStaff.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, asStaff.StatusCode);
 
         var asOwner = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
             $"/api/v1/orgs/{org.Id}/conversations/{conversation.Id}/messages/{messageId}/sign-off",
@@ -450,12 +467,12 @@ public class ConversationEndpointsIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task SignOffRevoke_RequiresApprovalsApprove_AndRelightsTheMarker()
+    public async Task SignOffRevoke_IsGatedByApprovalsApprove_AndRelightsTheMarker()
     {
         var (owner, org) = await SeedActiveOwnerAsync("conv_owner_revoke", "conversations-revoke");
-        var staff = await SeedMemberAsync("conv_staff_revoke", org.Id, Roles.BoutiqueStaff);
+        var nonApprover = await SeedMemberAsync("conv_nonapprover_revoke", org.Id, Roles.CustomerRelations);
         var ownerToken = CreateToken(owner.ClerkId, owner.Email);
-        var staffToken = CreateToken(staff.ClerkId, staff.Email);
+        var nonApproverToken = CreateToken(nonApprover.ClerkId, nonApprover.Email);
         var create = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
             $"/api/v1/orgs/{org.Id}/conversations", ownerToken, new { customerId = (Guid?)null }));
         var conversation = await create.Content.ReadFromJsonAsync<ConversationDto>();
@@ -464,10 +481,11 @@ public class ConversationEndpointsIntegrationTests : IAsyncLifetime
             $"/api/v1/orgs/{org.Id}/conversations/{conversation.Id}/messages/{messageId}/sign-off",
             ownerToken, new { approved = true, contentHash }));
 
-        var asStaff = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+        // The revocation route carries the same `approvals:approve` gate as the decision.
+        var asNonApprover = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
             $"/api/v1/orgs/{org.Id}/conversations/{conversation.Id}/messages/{messageId}/sign-off/revoke",
-            staffToken, new { reason = "no" }));
-        Assert.Equal(HttpStatusCode.Forbidden, asStaff.StatusCode);
+            nonApproverToken, new { reason = "no" }));
+        Assert.Equal(HttpStatusCode.Forbidden, asNonApprover.StatusCode);
 
         var asOwner = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
             $"/api/v1/orgs/{org.Id}/conversations/{conversation.Id}/messages/{messageId}/sign-off/revoke",

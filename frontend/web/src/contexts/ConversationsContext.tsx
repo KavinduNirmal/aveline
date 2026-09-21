@@ -105,9 +105,51 @@ interface ConversationsContextValue {
    * re-triggers the agent with that customer in context.
    */
   selectCustomer: (customerId: string) => Promise<void>
+
+  /**
+   * The Aveline drawer's **own** thread. It shares the conversation list and the hub connection
+   * with the Salon section, but never the open thread: one shared `activeConversationId` meant
+   * opening a client's Salon in either surface moved the other one with it.
+   */
+  avelineConversationId: string | null
+  avelineMessages: ChatMessage[]
+  avelineAgentState: AvelineState
+  avelineAgentActivity: AgentActivity | null
+  avelineLoading: boolean
+  avelineSending: boolean
+  /** Opens the general, client-less Salon in the drawer's thread only. */
+  openAveline: () => Promise<void>
+  sendToAveline: (text: string) => Promise<void>
+  decideAveline: (messageId: string, approved: boolean) => Promise<void>
 }
 
 const ConversationsContext = createContext<ConversationsContextValue | undefined>(undefined)
+
+/**
+ * Fetches the **newest** page of a thread.
+ *
+ * History is served oldest-first, so page 1 is the OLDEST page: once a Salon grows past one page, a
+ * reload would drop the recent messages. Shared by the Salon section and the Aveline drawer so both
+ * threads agree on what "the newest messages" means.
+ */
+/** The paging query `fetchMessages` accepts, without the ids it is already bound to. */
+type MessagePageQuery = Omit<Parameters<typeof fetchMessages>[2] & object, never>
+
+async function loadNewestPage(
+  fetchPage: (query: MessagePageQuery) => Promise<{
+    items: ChatMessage[]
+    total: number
+    pageSize: number
+  }>,
+): Promise<ChatMessage[]> {
+  const page = await fetchPage({ pageSize: 100 })
+  if (page.total <= page.items.length || page.pageSize <= 0) {
+    return page.items
+  }
+  const lastPage = Math.max(1, Math.ceil(page.total / page.pageSize))
+  const newest = await fetchPage({ page: lastPage, pageSize: page.pageSize })
+  return newest.items
+}
 
 interface ConversationsProviderProps {
   organizationId: string
@@ -128,6 +170,15 @@ export function ConversationsProvider({
   const [conversations, setConversations] = useState<ConversationDto[]>([])
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  // The Aveline drawer keeps its **own** thread. It shares one conversation list and one hub
+  // connection with the Salon section, but not the open thread: sharing that made opening a
+  // client's Salon in one surface drag the other surface with it.
+  const [avelineConversationId, setAvelineConversationId] = useState<string | null>(null)
+  const [avelineMessages, setAvelineMessages] = useState<ChatMessage[]>([])
+  const [avelineAgentState, setAvelineAgentState] = useState<AvelineState>('idle')
+  const [avelineAgentActivity, setAvelineAgentActivity] = useState<AgentActivity | null>(null)
+  const [avelineLoading, setAvelineLoading] = useState(false)
+  const [avelineSending, setAvelineSending] = useState(false)
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [agentState, setAgentState] = useState<AvelineState>('idle')
@@ -139,11 +190,16 @@ export function ConversationsProvider({
   const connectionRef = useRef<HubConnection | null>(null)
   const activeRef = useRef<string | null>(null)
   activeRef.current = activeConversationId
+  const avelineIdRef = useRef<string | null>(null)
+  avelineIdRef.current = avelineConversationId
   const messagesRef = useRef<ChatMessage[]>([])
   messagesRef.current = messages
+  const avelineMessagesRef = useRef<ChatMessage[]>([])
+  avelineMessagesRef.current = avelineMessages
   const agentActivityRef = useRef<AgentActivity | null>(null)
   agentActivityRef.current = agentActivity
   const transientTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const avelineTransientTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const handleStateChange = useCallback((state: HubConnectionState) => {
     setConnectionState(state)
@@ -161,6 +217,22 @@ export function ConversationsProvider({
     }
   }, [])
 
+  // The drawer's settle-to-idle, independent of the panel's so a transient state in one thread
+  // cannot clear the other's indicator.
+  const applyAvelineAgentState = useCallback((state: AvelineState) => {
+    setAvelineAgentState(state)
+    if (avelineTransientTimerRef.current) {
+      clearTimeout(avelineTransientTimerRef.current)
+      avelineTransientTimerRef.current = null
+    }
+    if (state === 'success' || state === 'error' || state === 'response') {
+      avelineTransientTimerRef.current = setTimeout(
+        () => setAvelineAgentState('idle'),
+        TRANSIENT_TIMEOUT_MS,
+      )
+    }
+  }, [])
+
   const waiting = ACTIVE_STATES.has(agentState)
 
   const openConversation = useCallback(
@@ -169,20 +241,7 @@ export function ConversationsProvider({
       setMessages([])
       setAgentActivity(null)
       try {
-        const page = await fetchMessages(organizationId, conversationId, { pageSize: 100 })
-        // History is served oldest-first, so page 1 is the OLDEST 100 messages. Once a Salon
-        // grows past a single page, a reload would otherwise drop the newest messages. Fetch
-        // the last (newest) page instead so the recent thread survives a refresh.
-        let items = page.items
-        if (page.total > items.length && page.pageSize > 0) {
-          const lastPage = Math.max(1, Math.ceil(page.total / page.pageSize))
-          const newest = await fetchMessages(organizationId, conversationId, {
-            page: lastPage,
-            pageSize: page.pageSize,
-          })
-          items = newest.items
-        }
-        setMessages(items)
+        setMessages(await loadNewestPage((query) => fetchMessages(organizationId, conversationId, query)))
       } catch {
         setMessages([])
       }
@@ -232,40 +291,63 @@ export function ConversationsProvider({
     connectionRef.current = connection
     cleanupRef.current = startConversations(connection, {
       onMessage: (payload) => {
-        // Only surface messages for the currently open Salon.
-        if (payload.conversationId !== activeRef.current) return
+        // A payload belongs to whichever slot is displaying that conversation. Both slots subscribe
+        // to their own group, so the connection can carry two threads at once.
+        const forPanel = payload.conversationId === activeRef.current
+        const forAveline = payload.conversationId === avelineIdRef.current
+        if (!forPanel && !forAveline) return
 
-        setMessages((prev) => {
+        const isAgent = payload.authorKind === 'Agent'
+        const append = (prev: ChatMessage[]) => {
           if (prev.some((m) => m.id === payload.id)) return prev
           // When an agent reply lands, collapse the live activity into a "Thought for Xs"
           // caption on the incoming message and stream the text in word by word.
-          const isAgent = payload.authorKind === 'Agent'
           const activity = agentActivityRef.current
           const thoughtSeconds =
             isAgent && activity ? Math.max(0, (Date.now() - activity.startedAt) / 1000) : undefined
           return [...prev, { ...payload, thoughtSeconds, streamIn: isAgent }]
-        })
+        }
 
-        if (payload.authorKind === 'Agent') {
-          setAgentActivity(null)
+        if (forPanel) {
+          setMessages(append)
+          if (isAgent) setAgentActivity(null)
+        }
+        if (forAveline) {
+          setAvelineMessages(append)
+          if (isAgent) setAvelineAgentActivity(null)
         }
       },
       onAgentState: (payload: AgentStatePayload) => {
-        // Only reflect states for the currently open Salon.
-        if (payload.conversationId !== activeRef.current) return
+        const forPanel = payload.conversationId === activeRef.current
+        const forAveline = payload.conversationId === avelineIdRef.current
+        if (!forPanel && !forAveline) return
         const state = payload.state as AvelineState
-        applyAgentState(state)
-        // Terminal states (success/error/response) mean the workflow finished: collapse the
-        // live activity bubble so it can't hang as a stale 'Done' card. In-progress states
-        // (thinking/searching/…) keep the "Aveline is working" bubble.
-        if (isTerminalState(state)) {
-          setAgentActivity(null)
-        } else {
-          setAgentActivity((prev) =>
-            prev
-              ? { ...prev, currentState: state }
-              : { startedAt: Date.now(), currentState: state },
-          )
+        if (forPanel) {
+          applyAgentState(state)
+          // Terminal states (success/error/response) mean the workflow finished: collapse the
+          // live activity bubble so it can't hang as a stale 'Done' card. In-progress states
+          // (thinking/searching/…) keep the "Aveline is working" bubble.
+          if (isTerminalState(state)) {
+            setAgentActivity(null)
+          } else {
+            setAgentActivity((prev) =>
+              prev
+                ? { ...prev, currentState: state }
+                : { startedAt: Date.now(), currentState: state },
+            )
+          }
+        }
+        if (forAveline) {
+          applyAvelineAgentState(state)
+          if (isTerminalState(state)) {
+            setAvelineAgentActivity(null)
+          } else {
+            setAvelineAgentActivity((prev) =>
+              prev
+                ? { ...prev, currentState: state }
+                : { startedAt: Date.now(), currentState: state },
+            )
+          }
         }
       },
       onStateChange: handleStateChange,
@@ -287,17 +369,33 @@ export function ConversationsProvider({
         clearTimeout(transientTimerRef.current)
         transientTimerRef.current = null
       }
+      if (avelineTransientTimerRef.current) {
+        clearTimeout(avelineTransientTimerRef.current)
+        avelineTransientTimerRef.current = null
+      }
     }
-  }, [applyAgentState, getToken, handleStateChange, isLoaded, isSignedIn, organizationId])
+  }, [
+    applyAgentState,
+    applyAvelineAgentState,
+    getToken,
+    handleStateChange,
+    isLoaded,
+    isSignedIn,
+    organizationId,
+  ])
 
-  // Re-join the Salon group whenever the active conversation changes so the client keeps
-  // receiving live messages/states for the conversation currently on screen.
+  // Join the groups for both open threads. `JoinSalon` adds to a group without leaving others, so
+  // one connection can carry the Salon section's thread and the Aveline drawer's thread at once.
   useEffect(() => {
     const connection = connectionRef.current
     if (!connection || connection.state !== HubConnectionState.Connected) return
-    if (!activeConversationId) return
-    void connection.invoke('JoinSalon', organizationId, activeConversationId)
-  }, [activeConversationId, connectionState, organizationId])
+    if (activeConversationId) {
+      void connection.invoke('JoinSalon', organizationId, activeConversationId)
+    }
+    if (avelineConversationId && avelineConversationId !== activeConversationId) {
+      void connection.invoke('JoinSalon', organizationId, avelineConversationId)
+    }
+  }, [activeConversationId, avelineConversationId, connectionState, organizationId])
 
   const openOrCreateSalon = useCallback(
     async (customerId?: string | null) => {
@@ -311,6 +409,90 @@ export function ConversationsProvider({
       return conversation
     },
     [openConversation, organizationId],
+  )
+
+  /**
+   * Opens the general, client-less Salon in the **drawer's** slot. Deliberately does not touch the
+   * panel's thread: `openOrCreateSalon` is the Salon section's, and routing the drawer through it is
+   * what coupled the two surfaces.
+   */
+  const openAveline = useCallback(async () => {
+    const existing = conversations.find(
+      (c) => c.customerId === null && c.externalRef === null,
+    )
+    const salon = existing ?? (await getOrCreateConversation(organizationId, null))
+    setConversations((prev) => (prev.some((c) => c.id === salon.id) ? prev : [salon, ...prev]))
+    setAvelineConversationId(salon.id)
+    setAvelineMessages([])
+    setAvelineAgentActivity(null)
+    setAvelineLoading(true)
+    try {
+      setAvelineMessages(
+        await loadNewestPage((options) => fetchMessages(organizationId, salon.id, options)),
+      )
+    } catch {
+      setAvelineMessages([])
+    } finally {
+      setAvelineLoading(false)
+    }
+  }, [conversations, organizationId])
+
+  const sendToAveline = useCallback(
+    async (text: string) => {
+      const conversationId = avelineIdRef.current
+      if (!conversationId || !text.trim()) return
+      const trimmed = text.trim()
+      const optimistic: ChatMessage = {
+        id: `local-${Date.now()}`,
+        conversationId,
+        authorKind: 'User',
+        agentKey: null,
+        authorUserId: null,
+        kind: 'Note',
+        contentBlocks: [{ type: 'text', text: trimmed }],
+        contentHash: null,
+        replyToMessageId: null,
+        status: 'Published',
+        createdAt: new Date().toISOString(),
+        pending: 'sending',
+      }
+
+      setAvelineSending(true)
+      setAvelineMessages((prev) => [...prev, optimistic])
+      try {
+        const message = await sendMessage(organizationId, conversationId, trimmed)
+        setAvelineMessages((prev) =>
+          prev.map((m) => (m.id === optimistic.id ? { ...message } : m)),
+        )
+        setAvelineAgentActivity({ startedAt: Date.now(), currentState: 'thinking' })
+        applyAvelineAgentState('thinking')
+      } catch {
+        setAvelineMessages((prev) =>
+          prev.map((m) => (m.id === optimistic.id ? { ...m, pending: 'failed' } : m)),
+        )
+      } finally {
+        setAvelineSending(false)
+      }
+    },
+    [applyAvelineAgentState, organizationId],
+  )
+
+  const decideAveline = useCallback(
+    async (messageId: string, approved: boolean) => {
+      const conversationId = avelineIdRef.current
+      if (!conversationId) return
+      const message = avelineMessagesRef.current.find((m) => m.id === messageId)
+      if (!message) return
+      const updated = await decideSignOff(
+        organizationId,
+        conversationId,
+        messageId,
+        approved,
+        message.contentHash ?? '',
+      )
+      setAvelineMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)))
+    },
+    [organizationId],
   )
 
   const send = useCallback(
@@ -416,6 +598,15 @@ export function ConversationsProvider({
         send,
         decide,
         selectCustomer,
+        avelineConversationId,
+        avelineMessages,
+        avelineAgentState,
+        avelineAgentActivity,
+        avelineLoading,
+        avelineSending,
+        openAveline,
+        sendToAveline,
+        decideAveline,
       }}
     >
       {children}

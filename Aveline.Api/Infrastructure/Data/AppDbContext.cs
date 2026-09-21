@@ -40,6 +40,12 @@ public class AppDbContext : DbContext
     public DbSet<DeliveryPlan> DeliveryPlans => Set<DeliveryPlan>();
     public DbSet<BusinessRule> BusinessRules => Set<BusinessRule>();
 
+    /// <summary>
+    /// The boutique's own takings journal. Deliberately a **different table** from
+    /// <see cref="IncomeLedgerEntries"/>, which records what Aveline billed the shop.
+    /// </summary>
+    public DbSet<BoutiqueSaleEntry> BoutiqueSaleEntries => Set<BoutiqueSaleEntry>();
+
     public DbSet<AdminApprovalRequest> AdminApprovalRequests => Set<AdminApprovalRequest>();
 
     public DbSet<Organization> Organizations => Set<Organization>();

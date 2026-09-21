@@ -4,7 +4,7 @@ import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { DashboardShell } from '@/components/dashboard/DashboardShell'
 import { PageLoader } from '@/components/PageLoader'
 import { Button } from '@/components/ui/button'
-import { isTenantAdmin } from '@/lib/permissions'
+import { canOpenTenantDashboard } from '@/lib/permissions'
 import {
   fetchOrganizationBySlug,
   fetchOrganizationUsage,
@@ -53,7 +53,7 @@ export function TenantDashboard() {
         if (
           !res.membership ||
           res.membership.status !== 'Active' ||
-          !isTenantAdmin(role)
+          !canOpenTenantDashboard(role)
         ) {
           setState({ kind: 'noAccess' })
           return

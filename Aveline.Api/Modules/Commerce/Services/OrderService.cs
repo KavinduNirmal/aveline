@@ -26,17 +26,39 @@ public class OrderService : IOrderService
     };
 
     private readonly IApprovalRepository? _approvalRepository;
+    private readonly IBoutiqueSaleLedgerService? _ledger;
+    private readonly IPaymentRepository? _paymentRepository;
+
+    /// <summary>
+    /// Every status the product can write, derived from the transition map rather than transcribed
+    /// from the model's comment — which names eleven and forgets `confirmed` and `revised`, both of
+    /// which the approval path writes.
+    /// </summary>
+    /// <remarks>
+    /// Exposed so a KPI that classifies orders can be checked against the real map: adding a status
+    /// to <see cref="ValidTransitions"/> without classifying it fails that test rather than silently
+    /// changing every figure in the tenant dashboard.
+    /// </remarks>
+    public static IReadOnlyCollection<string> KnownOrderStatuses { get; } =
+        ValidTransitions
+            .SelectMany(pair => new[] { pair.Key }.Concat(pair.Value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
     public OrderService(
         IOrderRepository orderRepository,
         ILogger<OrderService> logger,
         IBusinessRulesService? businessRulesService = null,
-        IApprovalRepository? approvalRepository = null)
+        IApprovalRepository? approvalRepository = null,
+        IBoutiqueSaleLedgerService? ledger = null,
+        IPaymentRepository? paymentRepository = null)
     {
         _orderRepository = orderRepository ?? throw new ArgumentNullException(nameof(orderRepository));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _businessRulesService = businessRulesService;
         _approvalRepository = approvalRepository;
+        _ledger = ledger;
+        _paymentRepository = paymentRepository;
     }
 
     public async Task<OrderResponseDto> CreateOrderAsync(
@@ -268,6 +290,10 @@ public class OrderService : IOrderService
 
         var targetStatus = dto.Status.Trim().ToLowerInvariant();
         var currentStatus = order.Status.Trim().ToLowerInvariant();
+        // Kept separately: `previousStatus` names the status the order was in *before* this
+        // transition, which the settled-sale rule below needs in order to tell a paid order from an
+        // unpaid one.
+        var previousStatus = currentStatus;
 
         if (string.Equals(currentStatus, targetStatus, StringComparison.OrdinalIgnoreCase))
         {
@@ -285,8 +311,58 @@ public class OrderService : IOrderService
         var updatedOrder = await _orderRepository.UpdateAsync(order, cancellationToken);
         _logger.LogInformation("Order {OrderId} transitioned from {OldStatus} to {NewStatus}", id, currentStatus, targetStatus);
 
+        if (_ledger is not null && SettledStatuses.Contains(targetStatus))
+        {
+            // The fourth writer: an order that reached a paid terminal status posts its **billed
+            // value** as a `Derived` entry — "this is what the order says was sold", with no
+            // evidence that money moved.
+            //
+            // It is skipped when the order passed through `payment_confirmed`, because
+            // `PaymentService.ConfirmPaymentAsync` has already written a `Verified` entry for the
+            // same money. Posting both would count one sale twice, which is precisely the mistake
+            // the two-basis design exists to prevent.
+            //
+            // The check asks the payment table, not the status history: a confirmed payment row is
+            // direct evidence that the money was collected, whereas an order can reach `delivered`
+            // from several places. `Order.PaymentId` has no foreign key, and
+            // `IPaymentRepository.GetByOrderIdAsync` returns the order's single payment, so reading
+            // it is the same source the payment surface shows.
+            var alreadyCollected = string.Equals(
+                previousStatus, "payment_confirmed", StringComparison.OrdinalIgnoreCase);
+            if (!alreadyCollected && _paymentRepository is not null)
+            {
+                var payment = await _paymentRepository.GetByOrderIdAsync(id, organizationId, cancellationToken);
+                alreadyCollected = payment is not null
+                    && payment.Status.Equals("confirmed", StringComparison.OrdinalIgnoreCase);
+            }
+            if (!alreadyCollected)
+            {
+                await _ledger.RecordAsync(new RecordBoutiqueSaleCommand(
+                    OrganizationId: organizationId,
+                    Amount: order.Total,
+                    Reason: $"Order {id} reached '{targetStatus}'; billed value awaiting confirmation.",
+                    Kind: BoutiqueSaleEntryKind.Sale,
+                    ChargeBasis: BoutiqueSaleChargeBasis.Derived,
+                    SourceKind: BoutiqueSaleSourceKind.OrderSettlement,
+                    SourceRef: $"order:{id}",
+                    OccurredAt: order.UpdatedAt ?? DateTime.UtcNow,
+                    RecordedByUserId: null,
+                    OrderId: id,
+                    CustomerId: order.CustomerId), cancellationToken);
+            }
+        }
+
         return MapToDto(updatedOrder);
     }
+
+    /// <summary>
+    /// The statuses at which an order's value becomes a settled sale. Terminal-negative states
+    /// (`cancelled`, `rejected`) are absent on purpose, and so are the transient ones.
+    /// </summary>
+    private static readonly HashSet<string> SettledStatuses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "completed", "delivered",
+    };
 
     public async Task<bool> CancelOrderAsync(
         Guid id,

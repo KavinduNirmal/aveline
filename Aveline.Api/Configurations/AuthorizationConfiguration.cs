@@ -31,6 +31,53 @@ public static class AuthorizationConfiguration
     public const string BoutiqueMembershipManagePolicy = "BoutiqueMembershipManage";
 
     /// <summary>
+    /// Org-scoped policy for managing the shop's staff: invitations, the member list, role
+    /// changes, suspension and removal. Requires <c>team:manage</c>.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately separate from <see cref="BoutiqueMembershipManagePolicy"/>: that policy is
+    /// <c>settings:manage</c>, which also reaches Integrations — where the WhatsApp and
+    /// payment-gateway credentials live. A manager may manage staff without being handed those.
+    /// </remarks>
+    public const string BoutiqueTeamManagePolicy = "BoutiqueTeamManage";
+
+    /// <summary>
+    /// Org-scoped policy for the permission-free member gate: any active membership in the
+    /// target organization satisfies it.
+    /// </summary>
+    /// <remarks>
+    /// Exists so a route that means "an active member" says so, instead of borrowing
+    /// <c>catalog:view</c> as a proxy for membership. The catalog's operational writes (scan,
+    /// label, photograph, compose) and the order reads use this.
+    /// </remarks>
+    public const string BoutiqueMemberPolicy = "BoutiqueMember";
+
+    /// <summary>
+    /// Org-scoped policy for changing the catalogue itself (create, edit, publish, delete):
+    /// requires <c>catalog:manage</c>.
+    /// </summary>
+    public const string BoutiqueCatalogManagePolicy = "BoutiqueCatalogManage";
+
+    /// <summary>
+    /// Org-scoped policy for editing and deleting a client's record: requires
+    /// <c>customers:manage</c>.
+    /// </summary>
+    public const string BoutiqueCustomerManagePolicy = "BoutiqueCustomerManage";
+
+    /// <summary>
+    /// Org-scoped policy for an order's lifecycle — update, status change, cancel, recalculate —
+    /// and for the business rules that gate discounts and approvals: requires <c>orders:manage</c>.
+    /// </summary>
+    public const string BoutiqueOrderManagePolicy = "BoutiqueOrderManage";
+
+    /// <summary>
+    /// Org-scoped policy for the shop's own takings: the dashboard summary, the revenue series
+    /// and the income ledger. Requires <c>reports:view</c>, which is the permission the grant
+    /// map already gave manager, supervisor and owner before anything enforced it.
+    /// </summary>
+    public const string BoutiqueReportsViewPolicy = "BoutiqueReportsView";
+
+    /// <summary>
     /// Org-scoped policy for approving/rejecting/revising high-value orders and business-rule exceptions.
     /// </summary>
     public const string BoutiqueApprovalDecisionPolicy = "BoutiqueApprovalDecision";
@@ -102,9 +149,6 @@ public static class AuthorizationConfiguration
 
     /// <summary>Org-scoped policy for API-consumption statistics: requires <c>stats:view</c>.</summary>
     public const string StatsViewPolicy = "StatsView";
-
-    /// <summary>Org-scoped policy for agentic statistics: requires <c>stats:view:agent</c>.</summary>
-    public const string StatsAgentPolicy = "StatsAgent";
 
     /// <summary>Team-only policy for system statistics and alerts: requires <c>stats:system</c>.</summary>
     public const string StatsSystemPolicy = "StatsSystem";
@@ -205,6 +249,44 @@ public static class AuthorizationConfiguration
                 p.AddRequirements(new OrganizationScopeRequirement(Permissions.SettingsManage));
             });
 
+            // Tenant-dashboard slice T0a. The permission-free member gate comes first, because
+            // the routes that use it are the ones that previously borrowed `catalog:view`.
+            options.AddPolicy(BoutiqueMemberPolicy, p =>
+            {
+                AllowBearerOrApiKey(p);
+                p.AddRequirements(new OrganizationScopeRequirement());
+            });
+
+            options.AddPolicy(BoutiqueTeamManagePolicy, p =>
+            {
+                AllowBearerOrApiKey(p);
+                p.AddRequirements(new OrganizationScopeRequirement(Permissions.TeamManage));
+            });
+
+            options.AddPolicy(BoutiqueCatalogManagePolicy, p =>
+            {
+                AllowBearerOrApiKey(p);
+                p.AddRequirements(new OrganizationScopeRequirement(Permissions.CatalogManage));
+            });
+
+            options.AddPolicy(BoutiqueCustomerManagePolicy, p =>
+            {
+                AllowBearerOrApiKey(p);
+                p.AddRequirements(new OrganizationScopeRequirement(Permissions.CustomersManage));
+            });
+
+            options.AddPolicy(BoutiqueOrderManagePolicy, p =>
+            {
+                AllowBearerOrApiKey(p);
+                p.AddRequirements(new OrganizationScopeRequirement(Permissions.OrdersManage));
+            });
+
+            options.AddPolicy(BoutiqueReportsViewPolicy, p =>
+            {
+                AllowBearerOrApiKey(p);
+                p.AddRequirements(new OrganizationScopeRequirement(Permissions.ReportsView));
+            });
+
             options.AddPolicy(BoutiqueApprovalDecisionPolicy, p =>
             {
                 AllowBearerOrApiKey(p);
@@ -269,12 +351,6 @@ public static class AuthorizationConfiguration
             {
                 AllowBearerOrApiKey(p);
                 p.AddRequirements(new OrganizationScopeRequirement(Permissions.StatsView));
-            });
-
-            options.AddPolicy(StatsAgentPolicy, p =>
-            {
-                AllowBearerOrApiKey(p);
-                p.AddRequirements(new OrganizationScopeRequirement(Permissions.StatsViewAgent));
             });
 
             // Team-only policies: an API key may never reach these, so they only accept

@@ -773,10 +773,18 @@ paths:
       tags: [Invitations]
       summary: Create a staff invitation
       description: |
-        Requires `settings:manage`. The invitable roles are exactly
-        `org:boutique_supervisor`, `org:boutique_manager`, and `org:boutique_staff`;
-        the owner role is not invitable.
+        SHIPPED. `BoutiqueTeamManage` (`team:manage`) — the eight team routes moved off
+        `settings:manage` in T0a so a manager can manage staff without also reaching Integrations
+        and its gateway credentials. The invitable roles are exactly `org:boutique_supervisor`,
+        `org:boutique_manager`, and `org:boutique_staff`; the owner role is not invitable.
+
+        **Requires `Idempotency-Key`** (T6): a retried invite would otherwise mint a duplicate staff
+        code. `validityHours` is clamped to `[1,720]` and `sendSummaryToOwner` is answered with a
+        three-valued status (`NotRequested` | `Dispatched` | `NotSent`) — a requested notice that
+        was not sent is reported, never silently dropped.
       operationId: createInvitation
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -791,6 +799,16 @@ paths:
                   format: email
                   maxLength: 254
                   nullable: true
+                validityHours:
+                  type: integer
+                  minimum: 1
+                  maximum: 720
+                  default: 24
+                  description: Clamped to [1,720]; reaches the invitation's `expiresAt`.
+                sendSummaryToOwner:
+                  type: boolean
+                  default: false
+                  description: Dispatch a summary notice to the acting user. The response says whether it was sent.
       responses:
         "200":
           description: Invitation created. The code is returned here and in the email.
@@ -798,7 +816,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/CreateInvitationResponse" }
         "400":
-          description: Not an invitable role
+          description: Not an invitable role, or a missing/malformed `Idempotency-Key`
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -808,6 +826,11 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: The `Idempotency-Key` was already used with a different request body
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
         "503":
           description: Invitation code store unavailable
           content:
@@ -829,6 +852,80 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/invitations/bulk:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    post:
+      tags: [Invitations]
+      summary: Mint several staff invitation codes in one call
+      description: |
+        SHIPPED (E-10 / S-none; F-4). `BoutiqueTeamManage` (`team:manage`).
+
+        **Requires `Idempotency-Key`.** A retried bulk create would otherwise mint a duplicate batch
+        of staff codes; a replay returns the stored body with `Idempotency-Replayed: true`.
+
+        **`count` is clamped to `[1,10]`** and `validityHours` to `[1,720]`. The response reports
+        `requestedCount`, `createdCount` and `effectiveValidityHours` side by side so the clamp is
+        visible rather than silent. The clamp is the control; a per-organization limiter
+        (`Invitations:CreateRateLimit`, default 10/min) is the backstop.
+
+        The optional summary notice carries **no codes**, and its outcome is three-valued:
+        `NotRequested` | `Dispatched` | `NotSent`.
+      operationId: createBulkInvitations
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [boutiqueRole, count]
+              properties:
+                boutiqueRole: { $ref: "#/components/schemas/BoutiqueRole" }
+                count:
+                  type: integer
+                  minimum: 1
+                  maximum: 10
+                  description: Clamped to [1,10]; the response reports the requested and created counts.
+                validityHours:
+                  type: integer
+                  minimum: 1
+                  maximum: 720
+                  default: 24
+                sendSummaryToOwner:
+                  type: boolean
+                  default: false
+      responses:
+        "200":
+          description: The minted codes plus what the clamp and the notice actually did
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BulkCreateInvitationResponse" }
+        "400":
+          description: Not an invitable role, or a missing/malformed `Idempotency-Key`
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The `Idempotency-Key` was already used with a different request body
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          description: Invitation code store unavailable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
 
   /api/v1/orgs/{organizationId}/invitations/{invitationId}/revoke:
     parameters:
@@ -1636,8 +1733,14 @@ paths:
       tags: [Billing]
       summary: Read the current period Blossom usage summary
       description: |
-        SHIPPED. Requires `catalog:view` via the `BoutiqueAccess` policy (the
-        balance is not yet gated by a dedicated `billing:view` permission).
+        SHIPPED. Requires `billing:view:self` via the `BoutiqueBillingSelfView`
+        policy.
+
+        The policy was `BoutiqueAccess` (`catalog:view`) until the tenant-dashboard
+        slice's T1. That contradicted this route's own doc comment — a usage read is
+        a *billing* read — and it is why `catalog:manage` could not be enforced
+        without also taking the camera away from staff. Every org role holds
+        `billing:view:self`, so the effective access is unchanged.
 
         KNOWN DEFECT: `monthlyBlossomLimit` is always created as the Seed tier value
         (150) regardless of the organization's actual plan, and is not updated on a
@@ -1653,6 +1756,477 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  # ---------------------------------------------------------------------------
+  # Commerce — orders and business rules (tenant-scoped)
+  #
+  # These routes were undocumented until the tenant-dashboard slice, which is part of how two
+  # blocking defects survived: `OrdersController` and `BusinessRulesController` carried no
+  # `[Authorize]` at all and used an `{orgId}` token the organization-scope handler never reads,
+  # so any authenticated caller could read and write any organization's orders and rules.
+  #
+  # The token is `organizationId` on every route below. The policy split is deliberate: reads and
+  # create stay at member level (the counter creates orders); the lifecycle verbs, the order-status
+  # change and every business-rule route require `orders:manage`, because staff may approve a
+  # customer order but may not change an order's lifecycle or the rules that gate discounts.
+  # ---------------------------------------------------------------------------
+  /api/v1/orgs/{organizationId}/orders:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Commerce]
+      summary: List orders for the organization
+      description: |
+        SHIPPED. `BoutiqueMember` policy — any active member of this organization.
+      operationId: listOrders
+      responses:
+        "200":
+          description: A page of orders
+          content:
+            application/json:
+              schema: { type: object, description: "PagedResult<OrderResponseDto>" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Commerce]
+      summary: Create an order
+      description: |
+        SHIPPED. `BoutiqueMember` policy — the counter associate creates the order they are serving.
+      operationId: createOrder
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { type: object, description: "OrderResponseDto" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/orders/{id}:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Commerce]
+      summary: Read one order
+      description: SHIPPED. `BoutiqueMember` policy.
+      operationId: getOrderById
+      responses:
+        "200":
+          description: The order
+          content:
+            application/json:
+              schema: { type: object, description: "OrderResponseDto" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Commerce]
+      summary: Update an order
+      description: |
+        SHIPPED. `BoutiqueOrderManage` policy (`orders:manage`). Staff hold the read and the
+        create but not this verb.
+      operationId: updateOrder
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { type: object, description: "OrderResponseDto" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/orgs/{organizationId}/orders/{id}/status:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      tags: [Commerce]
+      summary: Transition an order's status
+      description: SHIPPED. `BoutiqueOrderManage` policy (`orders:manage`).
+      operationId: updateOrderStatus
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { type: object, description: "OrderResponseDto" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/orders/{id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Commerce]
+      summary: Cancel an order
+      description: SHIPPED. `BoutiqueOrderManage` policy (`orders:manage`).
+      operationId: cancelOrder
+      responses:
+        "200":
+          description: Cancelled
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/orders/{id}/recalculate:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Commerce]
+      summary: Recalculate an order's money fields
+      description: SHIPPED. `BoutiqueOrderManage` policy (`orders:manage`).
+      operationId: recalculateOrder
+      responses:
+        "200":
+          description: Recalculated
+          content:
+            application/json:
+              schema: { type: object, description: "OrderResponseDto" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/business-rules:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Commerce]
+      summary: List the organization's business rules
+      description: |
+        SHIPPED. `BoutiqueOrderManage` policy (`orders:manage`) — a business rule is order policy:
+        it decides when an order needs approval and what caps a discount.
+      operationId: listBusinessRules
+      responses:
+        "200":
+          description: The rules
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: object, description: "BusinessRuleResponseDto" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Commerce]
+      summary: Create a business rule
+      description: SHIPPED. `BoutiqueOrderManage` policy (`orders:manage`).
+      operationId: createBusinessRule
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { type: object, description: "BusinessRuleResponseDto" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/business-rules/{id}:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Commerce]
+      summary: Read one business rule
+      description: SHIPPED. `BoutiqueOrderManage` policy (`orders:manage`).
+      operationId: getBusinessRuleById
+      responses:
+        "200":
+          description: The rule
+          content:
+            application/json:
+              schema: { type: object, description: "BusinessRuleResponseDto" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Commerce]
+      summary: Update a business rule
+      description: SHIPPED. `BoutiqueOrderManage` policy (`orders:manage`).
+      operationId: updateBusinessRule
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { type: object, description: "BusinessRuleResponseDto" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Commerce]
+      summary: Delete a business rule
+      description: SHIPPED. `BoutiqueOrderManage` policy (`orders:manage`).
+      operationId: deleteBusinessRule
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/business-rules/evaluate:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    post:
+      tags: [Commerce]
+      summary: Evaluate the business rules against a prospective order
+      description: SHIPPED. `BoutiqueOrderManage` policy (`orders:manage`).
+      operationId: evaluateBusinessRules
+      responses:
+        "200":
+          description: The triggered rules and the approval requirement
+          content:
+            application/json:
+              schema: { type: object, description: "EvaluateOrderRulesResponseDto" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ---------------------------------------------------------------------------
+  # Commerce — approvals (the HITL queue)
+  # ---------------------------------------------------------------------------
+  /api/v1/orgs/{organizationId}/approvals:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Approvals]
+      summary: Read the approval queue
+      description: |
+        SHIPPED. `BoutiqueAccess` (`catalog:view`) — the queue is visible to every member; the
+        **decision verbs** are what the permissions shape.
+      operationId: listApprovals
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, approved, rejected, revised] }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        "200":
+          description: A page of approval-queue entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/ApprovalQueueResponseDto" }
+                  page: { type: integer }
+                  pageSize: { type: integer }
+                  total: { type: integer }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/approvals/{id}/decision:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Approvals]
+      summary: Decide an approval by verb in the body
+      description: |
+        SHIPPED. `BoutiqueApprovalDecision` (`approvals:approve`).
+
+        **The verb decides the permission (T6 / Q14).** `reject` cancels the order and `revise`
+        rewrites its discount, total and margin, so a body carrying either is refused with
+        `403 order-manage-required` unless the caller also holds `orders:manage`
+        (`BoutiqueOrderManage`). A route-level policy alone would leave this door open, because the
+        verb travels in the body.
+      operationId: processApprovalDecision
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ApprovalDecisionRequest" }
+      responses:
+        "200":
+          description: The updated entry
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalQueueResponseDto" }
+        "400":
+          description: Invalid body or state transition
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Permission denied, including `403 order-manage-required` for a reject/revise body
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/approvals/{id}/approve:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Approvals]
+      summary: Approve an order
+      description: |
+        SHIPPED. `BoutiqueApprovalDecision` (`approvals:approve`) — **staff hold it** after Q8.
+      operationId: approveApproval
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ApprovalDecisionRequest" }
+      responses:
+        "200":
+          description: The updated entry
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalQueueResponseDto" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/approvals/{id}/reject:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Approvals]
+      summary: Reject an order
+      description: |
+        SHIPPED. `BoutiqueOrderManage` (`orders:manage`, T6 / Q14). **Rejecting cancels the order**,
+        which is why it is not part of `approvals:approve`.
+      operationId: rejectApproval
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ApprovalDecisionRequest" }
+      responses:
+        "200":
+          description: The updated entry
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalQueueResponseDto" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/approvals/{id}/revise:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Approvals]
+      summary: Revise an order's money fields
+      description: |
+        SHIPPED. `BoutiqueOrderManage` (`orders:manage`, T6 / Q14). **Revising rewrites the
+        discount, total and margin**, which is why it is not part of `approvals:approve`.
+      operationId: reviseApproval
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ApprovalDecisionRequest" }
+      responses:
+        "200":
+          description: The updated entry
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalQueueResponseDto" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   # ---------------------------------------------------------------------------
   # Billing — new
@@ -1854,8 +2428,456 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "409":
+          description: |
+            `customer-phone-conflict` — another client in this organization already holds that
+            phone number. The unique `(OrganizationId, PhoneNumber)` index used to surface as an
+            unmapped `DbUpdateException` and therefore a `500`; a pre-check in the service makes the
+            collision a typed outcome on every provider.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string, const: customer-phone-conflict }
+                  message: { type: string }
         "503":
           description: The idempotency lease store is unreachable; the request was refused, not applied.
+
+  # ---------------------------------------------------------------------------
+  # Tenant customer CRUD — read one, patch, delete (E-6…E-9)
+  #
+  # E-6 repairs a dangling contract: `POST …/interactions` already emitted
+  # `Location: …/customers/{customerId}` and that GET did not exist until this route.
+  # ---------------------------------------------------------------------------
+  /api/v1/orgs/{organizationId}/customers/{customerId}:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: customerId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Customers]
+      summary: Read one client (E-6)
+      description: |
+        SHIPPED. `BoutiqueCustomerAccess` (`customers:view`).
+
+        The shape is deliberately **not** the internal customer shape: no memory, no extracted AI
+        context and no internal-token field reaches a staff device. `loyaltyTierIsDerived` is the
+        constant `1` so a client cannot render an editable tier control — `status` is derived by
+        `CustomerLoyaltyService.RecommendStatus` from spend, visits and recency.
+
+        `404` means "not in this boutique, or deleted". The server makes those indistinguishable on
+        purpose, matching the by-slug precedent, so the client must not guess which it was.
+      operationId: getTenantCustomer
+      responses:
+        "200":
+          description: The client
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantCustomerDetail" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Customers]
+      summary: Update one client (E-7)
+      description: |
+        SHIPPED. `BoutiqueCustomerManage` (`customers:manage`) — `customers:view` is held by every
+        role, so there was nothing correct to gate a write on.
+
+        The writable subset is `fullName`, `nickname`, `phoneNumber`, `email` and `level`.
+        **`status` is absent on purpose**: it is derived, so a writable field would let the UI
+        contradict the loyalty rule, and a `status` sent in the body is ignored.
+
+        `phoneNumber` is normalised to E.164 through the existing `PhoneNormalizer`. A number that
+        is not a recognised Sri Lankan form is `400`; a number another client in this organization
+        already holds is `409 customer-phone-conflict`.
+      operationId: updateTenantCustomer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateCustomerRequest" }
+      responses:
+        "200":
+          description: The updated client
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantCustomerDetail" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            `customer-phone-conflict` — another client in this organization already holds that
+            number.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string, const: customer-phone-conflict }
+                  message: { type: string }
+    delete:
+      tags: [Customers]
+      summary: Remove one client (E-8)
+      description: |
+        SHIPPED. `BoutiqueCustomerManage` (`customers:manage`).
+
+        **Soft**: `DeletedAt` is set, matching the existing global query filter, so the client is
+        invisible to every read.
+
+        **Idempotent**: deleting an already-deleted client is `204`, not `404`. The deletion is the
+        end state, and the soft-delete filter means the caller could not have distinguished the two
+        anyway.
+
+        **Refused with 409** when the client has orders in a non-terminal status. Terminal means
+        `completed`, `cancelled` or `rejected` — the three with no outgoing edge in
+        `OrderService.ValidTransitions`. This is a **business guard, not referential integrity**:
+        `Order.CustomerId` is a bare `Guid` with no foreign key, and `Order.CustomerName` is
+        denormalised, so nothing is orphaned and a deleted client's orders stay readable.
+      operationId: deleteTenantCustomer
+      responses:
+        "204":
+          description: The client is removed (or already was)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            `customer-has-open-orders` — the client has orders that are still live.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string, const: customer-has-open-orders }
+                  openOrders: { type: integer }
+                  message: { type: string }
+
+  # ---------------------------------------------------------------------------
+  # Boutique income (S-60, S-61) — the shop's own takings.
+  #
+  # A different economy from `/admin/revenue`, which records what Aveline billed a boutique. The two
+  # are never summed and no route reads both. `amount` is always positive and the sign is applied by
+  # the reader from `kind`, so a column sum cannot net a refund against a sale by accident.
+  # ---------------------------------------------------------------------------
+  # ---------------------------------------------------------------------------
+  # Tenant dashboard KPIs and the reduced takings read (S-57…S-59, E-13).
+  #
+  # Two policies: the reduced read is member-level because every role may see two labelled figures;
+  # the full strip carries margin and the series, so it stays behind `reports:view`.
+  # ---------------------------------------------------------------------------
+  /api/v1/orgs/{organizationId}/dashboard/takings:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Dashboard]
+      summary: Read the boutique's takings, reduced to two labelled figures
+      description: |
+        SHIPPED. `BoutiqueMember` — any active member, because a section is visible when its cheapest
+        panel is readable.
+
+        Carries **exactly** `collected` (verified money minus refunds) and `billedUnconfirmed`
+        (derived billed value). There is deliberately no margin, no per-client or per-operator split,
+        no register and no series. The reduction is enforced by the shape of the response: a test
+        enumerates the serialised field names and fails if anything outside the allowed set appears.
+      operationId: getTenantTakings
+      parameters:
+        - name: window
+          in: query
+          schema: { type: string, enum: [7d, 30d, 90d, mtd, ytd], default: 30d }
+      responses:
+        "200":
+          description: The two labelled figures
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantTakings" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/dashboard/summary:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Dashboard]
+      summary: Read the tenant dashboard's KPI summary for a window
+      description: |
+        SHIPPED. `BoutiqueReportsView` (`reports:view`).
+
+        **Every absent number is `null`, never `0`.** `0` is a measurement — nobody ordered — while
+        `null` is the absence of one. `sales.marginCostsComplete` is `false` when any contributing
+        order carries a zero `WholesaleCost`, which is caller-supplied rather than read from the
+        inventory record. `cash` reports collected, outstanding and refunded separately so an
+        expiring request is never presented as a receivable.
+
+        Cached for 60 seconds per `(organizationId, window)`. **A cache outage degrades rather than
+        fails**: the figures are computed directly and the `dataQuality` notes say so.
+      operationId: getTenantDashboardSummary
+      parameters:
+        - name: window
+          in: query
+          schema: { type: string, enum: [7d, 30d, 90d, mtd, ytd], default: 30d }
+      responses:
+        "200":
+          description: The KPI groups and the data-quality block
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantDashboardSummary" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/dashboard/revenue-series:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Dashboard]
+      summary: Read the boutique's revenue series over a window
+      description: |
+        SHIPPED. `BoutiqueReportsView` (`reports:view`).
+
+        Dense buckets. **A bucket with no orders carries `null`, not `0`**, so the client renders a
+        gap rather than a line drawn through a measurement the server never produced. The window cap
+        is echoed in `windowCapped` rather than applied silently.
+      operationId: getTenantRevenueSeries
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - name: bucket
+          in: query
+          schema: { type: string, enum: [day, week, month], default: day }
+      responses:
+        "200":
+          description: The dense series
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantRevenueSeries" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/dashboard/top-items:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Dashboard]
+      summary: Read the boutique's best-selling pieces in a window
+      description: |
+        SHIPPED. `BoutiqueReportsView` (`reports:view`).
+
+        Grouped on the denormalised `ItemName`, because `OrderItem.ItemId` has no enforced link to the
+        catalogue: a renamed piece appears under both names rather than being silently merged.
+      operationId: getTenantTopItems
+      parameters:
+        - name: window
+          in: query
+          schema: { type: string, enum: [7d, 30d, 90d, mtd, ytd], default: 30d }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 20, default: 5 }
+      responses:
+        "200":
+          description: The ranked pieces
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantTopItems" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/billing/periods:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Billing]
+      summary: Read the boutique's billing-period history
+      description: |
+        SHIPPED (E-12 / S-62). `BillingView` (`billing:view`).
+
+        The most recent billing periods, newest first: the period's Blossom account, its plan, and the
+        top-ups that landed in it.
+
+        **`planListPriceLkr` is `null` whenever the stored `PriceLkr` is zero**, never `0`, with
+        `subscriptionPricesConfigured` saying whether a price was configured. `PriceLkr` is never
+        assigned anywhere in the product, so reading the column directly would print `LKR 0` as the
+        plan price of every subscription.
+
+        `planTier`/`hasSubscriptionRow` come from the day's `OrganizationSubscriptionSnapshot`, not from
+        `Organization.PlanTier`: a tier exists even for an organization that never had a billing row.
+
+        A **statement of account, not an invoice** — no payment provider is connected.
+      operationId: getTenantBillingPeriods
+      parameters:
+        - name: take
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 24, default: 12 }
+      responses:
+        "200":
+          description: The period history, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/BillingPeriod" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/blossoms/top-up-packs:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Blossoms]
+      summary: List the Blossom top-up packs this boutique may purchase
+      description: |
+        SHIPPED (E-11 / S-63). `BillingManage` (`billing:manage`) — deliberately the **same permission
+        as the purchase it feeds**: whoever may not buy may not see what is for sale either.
+
+        The active `TopUpPack` price-book rows, ordered by size. The lookup is identical to the one
+        `POST …/blossoms/top-ups` performs, so a pack offered here cannot be rejected at purchase and a
+        pack accepted there cannot be missing. A draft row is not listed.
+
+        No payment provider is connected, so a purchase records a grant rather than a charge.
+      operationId: getBlossomTopUpPacks
+      responses:
+        "200":
+          description: The active top-up packs, ordered by size
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TopUpPack" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/income/ledger:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Income]
+      summary: Read the boutique's income register with its window totals
+      description: |
+        SHIPPED. `BoutiqueReportsView` (`reports:view`) — org-scoped, so a cross-tenant caller is
+        refused. Staff hold no `reports:view`; their reduced takings card is a separate route.
+
+        `derivedTotal` is **billed value with no evidence of collection** and `verifiedTotal` is
+        money taken. They are reported separately and **never summed into one unlabelled figure**.
+        `unverifiedGap` is the distance between them and is the surface's most important number, not
+        an error. Each `kind` also carries its own total, so a refund is never netted into a sale
+        figure without a label.
+
+        The totals and the reconciliation block cover the **whole window**, not the page.
+
+        A window longer than `TenantDashboard:MaxWindowDays` (default 400) is capped and the cap is
+        **echoed** in `windowCapped` and the effective `window`, never applied silently.
+      operationId: getBoutiqueIncomeLedger
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - name: kind
+          in: query
+          description: An unknown value is a 400 naming the known kinds, never ignored.
+          schema: { type: string, enum: [Sale, PaymentReceived, Refund, Adjustment] }
+        - name: basis
+          in: query
+          description: An unknown value is a 400 naming the known bases, never ignored.
+          schema: { type: string, enum: [Derived, Verified] }
+        - name: q
+          in: query
+          description: Searches `reason` and `sourceRef`.
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: The register page with the window's totals and reconciliation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BoutiqueIncomeLedgerPage" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/income/accounts:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Income]
+      summary: Read the boutique's takings broken down by kind
+      description: |
+        SHIPPED. `BoutiqueReportsView` (`reports:view`).
+
+        One total and count per `kind`, plus a `byPaymentMethod` split for cash entries. That split
+        is read from the **payment rows**, joined on `paymentId`, rather than inferred: a ledger
+        entry carries no payment method of its own, and inventing one would be the fabrication this
+        surface exists to avoid.
+      operationId: getBoutiqueIncomeAccounts
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Per-kind totals and the payment-method split
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BoutiqueIncomeAccounts" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/v1/orgs/{organizationId}/customers/{customerId}/interactions:
     parameters:
@@ -1864,6 +2886,39 @@ paths:
         in: path
         required: true
         schema: { type: string, format: uuid }
+    get:
+      tags: [Customers]
+      summary: Read one client's interaction history (E-9)
+      description: |
+        SHIPPED. `BoutiqueCustomerAccess` (`customers:view`).
+
+        Without this read a client's `visitCount` had no ledger behind it: the detail shape reported a
+        total with nothing to show the visits it counted. The history is the same rows the counter
+        writes through `POST …/interactions`, newest first, and it deliberately carries **no money** —
+        `countedAsVisit` says whether a row moved the client's counters, not what it was worth.
+
+        `404` means "not in this boutique, or deleted". The server makes those indistinguishable on
+        purpose, matching the by-slug precedent, so the client must not guess which it was.
+      operationId: getCustomerInteractions
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: The client's interaction history, newest first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerInteractionPage" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     post:
       tags: [Customers]
       summary: Record a counter interaction (and a visit)
@@ -2946,313 +4001,6 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
-
-  # ---------------------------------------------------------------------------
-  # Agent statistics
-  # ---------------------------------------------------------------------------
-  /api/v1/orgs/{organizationId}/statistics/agents/runs:
-    parameters:
-      - $ref: "#/components/parameters/OrganizationId"
-    get:
-      tags: [Agent Statistics]
-      summary: List agent workflow runs
-      description: Phase 4. Requires `stats:view:agent` (owner and above).
-      operationId: listAgentRuns
-      parameters:
-        - $ref: "#/components/parameters/From"
-        - $ref: "#/components/parameters/To"
-        - $ref: "#/components/parameters/Page"
-        - $ref: "#/components/parameters/PageSize"
-        - name: status
-          in: query
-          schema: { $ref: "#/components/schemas/AgentRunStatus" }
-        - name: agentKey
-          in: query
-          schema: { $ref: "#/components/schemas/AgentKey" }
-        - name: triggerKind
-          in: query
-          schema: { $ref: "#/components/schemas/AgentTriggerKind" }
-        - name: customerId
-          in: query
-          schema: { type: string, format: uuid }
-        - name: conversationId
-          in: query
-          schema: { type: string, format: uuid }
-        - name: sort
-          in: query
-          schema:
-            type: string
-            enum: [startedAt, -startedAt, durationMs, -durationMs]
-            default: -startedAt
-      responses:
-        "200":
-          description: Runs
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/AgentRunPage" }
-        "400":
-          $ref: "#/components/responses/ValidationError"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-
-  /api/v1/orgs/{organizationId}/statistics/agents/runs/{runId}:
-    parameters:
-      - $ref: "#/components/parameters/OrganizationId"
-      - name: runId
-        in: path
-        required: true
-        schema: { type: string, format: uuid }
-    get:
-      tags: [Agent Statistics]
-      summary: Read one agent run with its step trace
-      description: Phase 4. Requires `stats:view:agent`.
-      operationId: getAgentRun
-      responses:
-        "200":
-          description: Run with steps
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/AgentRunDetail" }
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-
-  /api/v1/orgs/{organizationId}/statistics/agents/reliability:
-    parameters:
-      - $ref: "#/components/parameters/OrganizationId"
-    get:
-      tags: [Agent Statistics]
-      summary: Read agent success and failure rates
-      description: Phase 4. Requires `stats:view:agent`.
-      operationId: getAgentReliability
-      parameters:
-        - $ref: "#/components/parameters/From"
-        - $ref: "#/components/parameters/To"
-        - name: groupBy
-          in: query
-          schema:
-            type: string
-            enum: [agentKey, triggerKind, nodeName, day, hour]
-            default: agentKey
-      responses:
-        "200":
-          description: Reliability series
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/AgentReliabilityResponse" }
-        "400":
-          $ref: "#/components/responses/ValidationError"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-
-  /api/v1/orgs/{organizationId}/statistics/agents/latency:
-    parameters:
-      - $ref: "#/components/parameters/OrganizationId"
-    get:
-      tags: [Agent Statistics]
-      summary: Read agent workflow latency percentiles
-      description: |
-        Phase 4. Requires `stats:view:agent`. Percentile fields are `null` with
-        `precision: insufficient-sample` when `sampleCount` is below
-        `Telemetry:MinSampleForPercentile` (default 20).
-      operationId: getAgentLatency
-      parameters:
-        - $ref: "#/components/parameters/From"
-        - $ref: "#/components/parameters/To"
-        - name: groupBy
-          in: query
-          schema:
-            type: string
-            enum: [agentKey, triggerKind, day, hour]
-            default: agentKey
-      responses:
-        "200":
-          description: Latency series
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/PercentileSeriesResponse" }
-        "400":
-          $ref: "#/components/responses/ValidationError"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-
-  /api/v1/orgs/{organizationId}/statistics/agents/tokens:
-    parameters:
-      - $ref: "#/components/parameters/OrganizationId"
-    get:
-      tags: [Agent Statistics]
-      summary: Read agent token usage
-      description: Phase 4. Requires `stats:view:agent`.
-      operationId: getAgentTokens
-      parameters:
-        - $ref: "#/components/parameters/From"
-        - $ref: "#/components/parameters/To"
-        - name: groupBy
-          in: query
-          schema:
-            type: string
-            enum: [agentKey, provider, model, workflowId, day, hour]
-            default: agentKey
-      responses:
-        "200":
-          description: Token usage series
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/AgentTokenResponse" }
-        "400":
-          $ref: "#/components/responses/ValidationError"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-
-  /api/v1/orgs/{organizationId}/statistics/agents/steps:
-    parameters:
-      - $ref: "#/components/parameters/OrganizationId"
-    get:
-      tags: [Agent Statistics]
-      summary: Read per-node agent step statistics
-      description: Phase 4. Requires `stats:view:agent`.
-      operationId: getAgentSteps
-      parameters:
-        - $ref: "#/components/parameters/From"
-        - $ref: "#/components/parameters/To"
-        - name: agentKey
-          in: query
-          schema: { $ref: "#/components/schemas/AgentKey" }
-        - name: nodeName
-          in: query
-          schema: { type: string, maxLength: 128 }
-      responses:
-        "200":
-          description: Step statistics
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/AgentStepStatisticsResponse" }
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-
-  /api/v1/orgs/{organizationId}/statistics/agents/cost:
-    parameters:
-      - $ref: "#/components/parameters/OrganizationId"
-    get:
-      tags: [Agent Statistics]
-      summary: Read agent AI cost
-      description: |
-        Phase 4. Requires `stats:view:agent`. `dataQuality.costIsEstimated` is
-        `true` until the agent service reports actual cost, which it does not today.
-      operationId: getAgentCost
-      parameters:
-        - $ref: "#/components/parameters/From"
-        - $ref: "#/components/parameters/To"
-        - name: groupBy
-          in: query
-          schema:
-            type: string
-            enum: [agentKey, provider, model, day]
-            default: day
-      responses:
-        "200":
-          description: Cost series
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/AgentCostResponse" }
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-
-  /api/v1/orgs/{organizationId}/statistics/agents/tools:
-    parameters:
-      - $ref: "#/components/parameters/OrganizationId"
-    get:
-      tags: [Agent Statistics]
-      summary: Read agent tool-call statistics
-      description: Phase 4. Requires `stats:view:agent`.
-      operationId: getAgentTools
-      parameters:
-        - $ref: "#/components/parameters/From"
-        - $ref: "#/components/parameters/To"
-        - name: toolName
-          in: query
-          schema: { type: string, maxLength: 128 }
-      responses:
-        "200":
-          description: Tool statistics
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/AgentToolStatisticsResponse" }
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-
-  /api/v1/orgs/{organizationId}/statistics/agents/failures:
-    parameters:
-      - $ref: "#/components/parameters/OrganizationId"
-    get:
-      tags: [Agent Statistics]
-      summary: Read agent failure breakdown
-      description: Phase 4. Requires `stats:view:agent`.
-      operationId: getAgentFailures
-      parameters:
-        - $ref: "#/components/parameters/From"
-        - $ref: "#/components/parameters/To"
-        - name: groupBy
-          in: query
-          schema:
-            type: string
-            enum: [errorCode, agentKey, nodeName, toolName, day]
-            default: errorCode
-      responses:
-        "200":
-          description: Failure breakdown
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/AgentFailureResponse" }
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-
-  /api/v1/orgs/{organizationId}/statistics/agents/approvals:
-    parameters:
-      - $ref: "#/components/parameters/OrganizationId"
-    get:
-      tags: [Agent Statistics]
-      summary: Read human-in-the-loop approval wait statistics
-      description: Phase 4. Requires `stats:view:agent`.
-      operationId: getAgentApprovals
-      parameters:
-        - $ref: "#/components/parameters/From"
-        - $ref: "#/components/parameters/To"
-        - name: groupBy
-          in: query
-          schema:
-            type: string
-            enum: [agentKey, day]
-            default: day
-      responses:
-        "200":
-          description: Approval wait statistics
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/PercentileSeriesResponse" }
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
 
   # ---------------------------------------------------------------------------
   # API consumption statistics
@@ -5818,6 +6566,9 @@ components:
     # --- invitations ---------------------------------------------------------
     CreateInvitationResponse:
       type: object
+      description: |
+        T6 added the three summary-email fields so a caller can render the notice's outcome without
+        inferring it from the absence of an error.
       properties:
         invitationId: { type: string, format: uuid }
         code: { type: string }
@@ -5826,6 +6577,33 @@ components:
         boutiqueRole: { type: string }
         recipientEmail: { type: string, nullable: true }
         expiresAt: { type: string, format: date-time }
+        summaryEmailRequested: { type: boolean }
+        summaryEmailStatus:
+          type: string
+          enum: [NotRequested, Dispatched, NotSent]
+          description: |
+            `Dispatched` means the notice was handed to the configured sender, which records a
+            dispatch rather than a delivery.
+        summaryEmailNote: { type: string, nullable: true }
+
+    BulkCreateInvitationResponse:
+      type: object
+      description: |
+        E-10. The minted codes plus what the clamp and the notice actually did. `requestedCount`
+        and `createdCount` are reported side by side so a server-side clamp is visible rather than
+        silent.
+      properties:
+        invitations:
+          type: array
+          items: { $ref: "#/components/schemas/CreateInvitationResponse" }
+        requestedCount: { type: integer }
+        createdCount: { type: integer }
+        effectiveValidityHours: { type: integer, description: The clamped value. }
+        summaryEmailRequested: { type: boolean }
+        summaryEmailStatus:
+          type: string
+          enum: [NotRequested, Dispatched, NotSent]
+        summaryEmailNote: { type: string, nullable: true }
     PendingInvitationDto:
       type: object
       properties:
@@ -5842,6 +6620,48 @@ components:
         boutiqueRole: { type: string }
         clerkOrgId: { type: string, nullable: true }
         accountState: { type: string, nullable: true }
+
+    # --- commerce: approvals -------------------------------------------------
+    ApprovalDecisionRequest:
+      type: object
+      required: [decision]
+      properties:
+        decision:
+          type: string
+          enum: [approve, reject, revise]
+          description: |
+            The verb decides the permission it needs: `reject` and `revise` require
+            `orders:manage` as well as `approvals:approve` (Q14).
+        reason: { type: string, maxLength: 1000, nullable: true }
+        revisedDiscount:
+          type: number
+          format: decimal
+          nullable: true
+          description: Only meaningful for `revise`.
+
+    ApprovalQueueResponseDto:
+      type: object
+      description: |
+        One entry in the human-in-the-loop approval queue. `decidedBy` is the resolved Aveline user
+        id; it was always `null` before T1 fixed the actor resolution (F-5).
+      properties:
+        id: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        orderId: { type: string, format: uuid }
+        approvalType: { type: string }
+        status: { type: string }
+        thresholdExceeded: { type: boolean }
+        reason: { type: string }
+        decisionComment: { type: string, nullable: true }
+        decidedBy: { type: string, format: uuid, nullable: true }
+        threadId: { type: string, nullable: true }
+        conversationId: { type: string, format: uuid, nullable: true }
+        createdAt: { type: string, format: date-time }
+        decidedAt: { type: string, format: date-time, nullable: true }
+        order:
+          type: object
+          nullable: true
+          description: The order under review; `null` when it is not readable, never a fabricated stub.
 
     # --- onboarding ----------------------------------------------------------
     SaveBoutiqueDetailsRequest:
@@ -7179,6 +7999,406 @@ components:
         phoneNumber: { type: string, maxLength: 50, nullable: true, description: Optional; without one the client cannot be de-duplicated against a future identify. }
         nickname: { type: string, nullable: true, description: Stored as a customer preference. }
         source: { type: string, enum: [counter_walkin, phone, whatsapp, instagram], default: counter_walkin }
+
+    ErrorEnvelope:
+      type: object
+      description: |
+        The house error body: a human-readable `message`, plus a machine-readable `code` on the
+        routes that state one.
+      properties:
+        message: { type: string }
+        code: { type: string }
+      required: [message]
+
+    TenantTakings:
+      type: object
+      description: |
+        The reduced takings read (E-13). Exactly two money figures, and the field set is a contract:
+        a test enumerates the serialised names and fails if anything else appears.
+      properties:
+        window: { type: string }
+        windowFrom: { type: string, format: date-time }
+        windowTo: { type: string, format: date-time }
+        generatedAt: { type: string, format: date-time }
+        currency: { type: string }
+        collected:
+          type: number
+          format: decimal
+          nullable: true
+          description: Verified money minus refunds.
+        billedUnconfirmed:
+          type: number
+          format: decimal
+          nullable: true
+          description: Derived billed value, with no evidence that money moved.
+        paymentRowsPresent: { type: boolean }
+        ledgerBackfilled: { type: boolean }
+        dataQuality: { $ref: "#/components/schemas/TenantDashboardDataQuality" }
+
+    TenantDashboardDataQuality:
+      type: object
+      description: The tenant dashboard's own data-quality vocabulary — the seventh in the API.
+      properties:
+        paymentRowsPresent: { type: boolean }
+        orderCostsComplete: { type: boolean }
+        incomeLedgerBackfilled: { type: boolean }
+        usageMetricsAvailable: { type: boolean }
+        refundAndOutstandingExcludedFromCollected: { type: boolean }
+        checkedAt: { type: string, format: date-time }
+        notes:
+          type: array
+          items: { type: string }
+
+    TenantSalesKpis:
+      type: object
+      description: |
+        Billed value, not cash: these come from orders, which say what was sold rather than what was
+        collected. Every absent measure is `null`, never `0`.
+      properties:
+        grossOrderValue: { type: number, format: decimal, nullable: true }
+        orderCount: { type: integer }
+        averageOrderValue: { type: number, format: decimal, nullable: true, description: "Null when no order exists; an average over nothing does not exist." }
+        discountTotal: { type: number, format: decimal, nullable: true }
+        marginAmount: { type: number, format: decimal, nullable: true }
+        marginPercent: { type: number, format: decimal, nullable: true, description: "Null when gross is zero." }
+        marginCostsComplete:
+          type: boolean
+          description: |
+            False when any contributing order carries a zero `WholesaleCost`. That cost is
+            caller-supplied rather than read from the inventory record, so the margin is only as
+            trustworthy as what somebody typed.
+
+    TenantCashKpis:
+      type: object
+      description: Three separate figures, so an expiring request is never a receivable and a refund is never netted invisibly.
+      properties:
+        collected: { type: number, format: decimal, nullable: true }
+        outstanding: { type: number, format: decimal, nullable: true }
+        refunded: { type: number, format: decimal, nullable: true }
+        refundCount: { type: integer }
+
+    TenantCustomerKpis:
+      type: object
+      properties:
+        activeCount: { type: integer }
+        totalCount: { type: integer }
+        newInWindow: { type: integer }
+        repeatCount: { type: integer, description: "Clients with two or more recorded visits." }
+        inactivityThresholdDays: { type: integer, description: "90, per ADR-010." }
+
+    TenantCatalogKpis:
+      type: object
+      properties:
+        itemCount: { type: integer }
+        lowStockCount: { type: integer }
+        outOfStockCount: { type: integer }
+        stockValueAtCost: { type: number, format: decimal, nullable: true, description: "Labelled at cost, never retail value." }
+
+    TenantTeamKpis:
+      type: object
+      properties:
+        activeSeats: { type: integer }
+        allowedSeats: { type: integer, description: "Deliberately 0 in this aggregate; the allowance lives on the entitlements surface." }
+        pendingInvitations: { type: integer }
+        roleBreakdown:
+          type: object
+          additionalProperties: { type: integer }
+
+    TenantUsageKpis:
+      type: object
+      properties:
+        blossomUsed: { type: number, format: decimal, nullable: true }
+        monthlyBlossomLimit: { type: number, format: decimal, nullable: true }
+        blossomRemaining: { type: number, format: decimal, nullable: true }
+        percentUsed: { type: number, format: decimal, nullable: true, description: "Null when the limit is zero." }
+
+    TenantOperationsKpis:
+      type: object
+      properties:
+        pendingApprovals: { type: integer }
+        openConversations: { type: integer }
+        scheduledDeliveries: { type: integer }
+
+    TenantDashboardSummary:
+      type: object
+      properties:
+        window: { type: string }
+        windowFrom: { type: string, format: date-time }
+        windowTo: { type: string, format: date-time }
+        generatedAt: { type: string, format: date-time }
+        currency: { type: string }
+        sales: { $ref: "#/components/schemas/TenantSalesKpis" }
+        cash: { $ref: "#/components/schemas/TenantCashKpis" }
+        customers: { $ref: "#/components/schemas/TenantCustomerKpis" }
+        catalog: { $ref: "#/components/schemas/TenantCatalogKpis" }
+        team: { $ref: "#/components/schemas/TenantTeamKpis" }
+        usage: { $ref: "#/components/schemas/TenantUsageKpis" }
+        operations: { $ref: "#/components/schemas/TenantOperationsKpis" }
+        dataQuality: { $ref: "#/components/schemas/TenantDashboardDataQuality" }
+
+    TenantRevenueBucket:
+      type: object
+      properties:
+        bucketStart: { type: string, format: date-time }
+        grossOrderValue: { type: number, format: decimal, nullable: true, description: "Null when no order exists, so the client renders a gap." }
+        collected: { type: number, format: decimal, nullable: true }
+        refunded: { type: number, format: decimal, nullable: true }
+        isPartial: { type: boolean }
+
+    TenantRevenueSeries:
+      type: object
+      properties:
+        bucket: { type: string, enum: [day, week, month] }
+        windowFrom: { type: string, format: date-time }
+        windowTo: { type: string, format: date-time }
+        windowCapped: { type: boolean }
+        points:
+          type: array
+          items: { $ref: "#/components/schemas/TenantRevenueBucket" }
+
+    TenantTopItem:
+      type: object
+      properties:
+        itemName: { type: string }
+        quantity: { type: integer }
+        revenue: { type: number, format: decimal, nullable: true }
+
+    TenantTopItems:
+      type: object
+      properties:
+        windowFrom: { type: string, format: date-time }
+        windowTo: { type: string, format: date-time }
+        limit: { type: integer }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/TenantTopItem" }
+
+    BillingPeriod:
+      type: object
+      description: |
+        E-12 / S-62. One billing period: the Blossom account, its plan and the top-ups inside it.
+
+        `planListPriceLkr` is `null` — never `0` — whenever no price is configured, because
+        `OrganizationSubscription.PriceLkr` is never assigned in the product and a rendered zero would
+        be a fabricated plan price rather than a free plan.
+      properties:
+        periodStart: { type: string, format: date-time }
+        periodEnd: { type: string, format: date-time }
+        isClosed: { type: boolean }
+        planTier:
+          type: [string, "null"]
+          description: From the day's subscription snapshot, or the live row for the current period.
+        hasSubscriptionRow: { type: boolean }
+        monthlyBlossomLimit: { type: number, format: decimal }
+        blossomGranted: { type: number, format: decimal }
+        blossomAdjusted: { type: number, format: decimal }
+        blossomUsed: { type: number, format: decimal }
+        blossomRemaining: { type: number, format: decimal }
+        planListPriceLkr:
+          type: [number, "null"]
+          format: decimal
+          description: Null whenever the stored price is zero, which today is every subscription.
+        subscriptionPricesConfigured: { type: boolean }
+        topUpBlossoms: { type: number, format: decimal }
+        topUpCount: { type: integer }
+
+    TopUpPack:
+      type: object
+      description: E-11 / S-63. A purchasable Blossom top-up pack from the price book.
+      properties:
+        skuCode: { type: string }
+        blossomQuantity: { type: number, format: decimal }
+        priceLkr: { type: number, format: decimal, description: The published LKR list price. No provider is connected, so a purchase records a grant, not a charge. }
+        currency: { type: string, description: Always `LKR`; the price book stores LKR and no currency column exists. }
+
+    BoutiqueIncomeWindow:
+      type: object
+      properties:
+        from: { type: string, format: date-time, description: The effective window start, after any cap. }
+        to: { type: string, format: date-time }
+        generatedAt: { type: string, format: date-time }
+
+    BoutiqueIncomeDataQuality:
+      type: object
+      description: |
+        The tenant income surface's own data-quality vocabulary — the sixth in the API, deliberately
+        not a reuse of the revenue family's.
+      properties:
+        paymentRowsPresent:
+          type: boolean
+          description: |
+            False when the boutique has no `Payment` rows at all, which is the single most likely
+            reason a real shop's cash figures read zero. Stated rather than left for the owner to
+            read as a measurement of zero.
+        orderCostsComplete: { type: boolean }
+        incomeLedgerBackfilled:
+          type: boolean
+          description: True while the register contains only rows the reconciliation job repaired.
+        refundAndOutstandingExcludedFromCollected: { type: boolean }
+        checkedAt: { type: string, format: date-time }
+        notes:
+          type: array
+          items: { type: string }
+
+    BoutiqueIncomeTotals:
+      type: object
+      description: Window totals over the whole window, not the page. Each kind stated separately.
+      properties:
+        saleTotal: { type: number, format: decimal }
+        paymentTotal: { type: number, format: decimal }
+        refundTotal: { type: number, format: decimal }
+        adjustmentTotal: { type: number, format: decimal }
+
+    BoutiqueIncomeReconciliation:
+      type: object
+      description: |
+        The two-basis reconciliation. `derivedTotal` and `verifiedTotal` are never summed into one
+        unlabelled figure: a derived total is billed value with no evidence of collection, a verified
+        total is money taken, and `unverifiedGap` is the distance between them.
+      properties:
+        verifiedTotal: { type: number, format: decimal }
+        derivedTotal: { type: number, format: decimal }
+        refundTotal: { type: number, format: decimal }
+        netVerified: { type: number, format: decimal, description: "verifiedTotal − refundTotal" }
+        unverifiedGap: { type: number, format: decimal, description: "Equal to derivedTotal. The headline honesty number, not an error." }
+        isReconciled: { type: boolean, description: "True only when derivedTotal is zero." }
+
+    BoutiqueIncomeEntry:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [Sale, PaymentReceived, Refund, Adjustment] }
+        sourceKind: { type: string, enum: [CounterWalkIn, OrderPayment, OrderSettlement, Refund, System] }
+        sourceRef: { type: string, nullable: true, description: "The dedup identity, unique per organization within its source kind." }
+        chargeBasis: { type: string, enum: [Derived, Verified] }
+        status: { type: string, enum: [Recorded, Voided] }
+        currency: { type: string, maxLength: 3 }
+        amount: { type: number, format: decimal, description: "Always positive; the sign is applied by the reader from `kind`." }
+        reason: { type: string, maxLength: 500 }
+        occurredAt: { type: string, format: date-time }
+        recordedAt: { type: string, format: date-time }
+        orderId: { type: string, format: uuid, nullable: true }
+        customerId: { type: string, format: uuid, nullable: true }
+        paymentId: { type: string, format: uuid, nullable: true }
+        recordedByUserId:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Who recorded the entry. Null only for the flow-written sources (`OrderPayment`,
+            `OrderSettlement`) and `System`: the counter sources always name a person.
+
+    BoutiqueIncomeLedgerPage:
+      type: object
+      properties:
+        window: { $ref: "#/components/schemas/BoutiqueIncomeWindow" }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/BoutiqueIncomeEntry" }
+        total: { type: integer }
+        page: { type: integer }
+        pageSize: { type: integer }
+        windowCapped: { type: boolean }
+        totals: { $ref: "#/components/schemas/BoutiqueIncomeTotals" }
+        reconciliation: { $ref: "#/components/schemas/BoutiqueIncomeReconciliation" }
+        currency: { type: string }
+        dataQuality: { $ref: "#/components/schemas/BoutiqueIncomeDataQuality" }
+
+    BoutiqueIncomeKindTotal:
+      type: object
+      properties:
+        kind: { type: string }
+        total: { type: number, format: decimal }
+        count: { type: integer }
+
+    BoutiqueIncomePaymentMethodTotal:
+      type: object
+      properties:
+        paymentMethod: { type: string }
+        total: { type: number, format: decimal }
+        count: { type: integer }
+
+    BoutiqueIncomeAccounts:
+      type: object
+      properties:
+        window: { $ref: "#/components/schemas/BoutiqueIncomeWindow" }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/BoutiqueIncomeKindTotal" }
+        byPaymentMethod:
+          type: array
+          items: { $ref: "#/components/schemas/BoutiqueIncomePaymentMethodTotal" }
+        reconciliation: { $ref: "#/components/schemas/BoutiqueIncomeReconciliation" }
+        currency: { type: string }
+        dataQuality: { $ref: "#/components/schemas/BoutiqueIncomeDataQuality" }
+
+    TenantCustomerDetail:
+      type: object
+      description: |
+        The tenant-safe client record (E-6). Deliberately not the internal customer shape: no
+        memory, no extracted AI context and no internal-token field reaches a staff device.
+      properties:
+        customerId: { type: string, format: uuid }
+        fullName: { type: string, nullable: true }
+        nickname: { type: string, nullable: true, description: Stored as a customer preference. }
+        phoneNumber: { type: string, nullable: true }
+        email: { type: string, nullable: true }
+        level: { type: string, nullable: true, enum: [vip, level3, level2, level1, null] }
+        status: { type: string, description: Derived by CustomerLoyaltyService from spend, visits and recency. }
+        totalSpent: { type: number, format: decimal }
+        visitCount: { type: integer }
+        lastVisitAtUtc: { type: string, format: date-time, nullable: true }
+        loyaltyTierIsDerived:
+          type: integer
+          const: 1
+          description: |
+            Always `1`. Present so the client cannot render an editable tier control: the tier is
+            derived server-side, never authored by the UI.
+        createdAtUtc: { type: string, format: date-time }
+        updatedAtUtc: { type: string, format: date-time, nullable: true }
+        interactionCount: { type: integer }
+        tags:
+          type: array
+          items: { type: string }
+
+    UpdateCustomerRequest:
+      type: object
+      description: |
+        The writable subset of a client's record (E-7). `status` is deliberately absent: it is
+        derived by the loyalty rule, so a client-supplied value is ignored rather than honoured.
+      properties:
+        fullName: { type: string, maxLength: 200, nullable: true }
+        nickname: { type: string, nullable: true }
+        phoneNumber:
+          type: string
+          nullable: true
+          description: |
+            Normalised to E.164. A number that is not a recognised Sri Lankan form is `400`; one
+            another client in the same organization holds is `409 customer-phone-conflict`.
+        email: { type: string, maxLength: 255, nullable: true }
+        level: { type: string, maxLength: 16, nullable: true, description: An empty string clears the grade. }
+
+    CustomerInteractionItem:
+      type: object
+      properties:
+        interactionId: { type: string, format: uuid }
+        occurredAtUtc: { type: string, format: date-time }
+        channel: { type: string, enum: [in_person, phone, whatsapp, instagram] }
+        direction: { type: string, enum: [inbound, outbound] }
+        note: { type: string, nullable: true }
+        countedAsVisit:
+          type: boolean
+          description: True only for an inbound, in-person interaction.
+
+    CustomerInteractionPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/CustomerInteractionItem" }
+        total: { type: integer }
+        page: { type: integer }
+        pageSize: { type: integer }
 
     CustomerCreated:
       type: object

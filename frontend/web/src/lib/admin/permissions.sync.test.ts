@@ -16,7 +16,7 @@ function sorted(values: readonly string[]): string[] {
  */
 describe('permissions mirror ⇄ Aveline.Api Permissions.cs', () => {
   it('parses a sane server catalog first, so a parser bug cannot masquerade as parity', () => {
-    expect(backend.all).toHaveLength(28)
+    expect(backend.all).toHaveLength(31)
     expect(Object.keys(backend.roles)).toHaveLength(9)
     // The facts that have drifted before: the permission count and `billing:view:self`.
     expect(backend.all).toContain('billing:view:self')
@@ -25,6 +25,10 @@ describe('permissions mirror ⇄ Aveline.Api Permissions.cs', () => {
     expect(backend.all).toContain('revenue:read')
     expect(backend.all).toContain('revenue:manage')
     expect(backend.all).toContain('revenue:refund')
+    // T0a adds the three tenant-dashboard permissions.
+    expect(backend.all).toContain('customers:manage')
+    expect(backend.all).toContain('team:manage')
+    expect(backend.all).toContain('orders:manage')
   })
 
   it('mirrors Permissions.All exactly', () => {

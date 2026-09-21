@@ -111,6 +111,11 @@ public static class HomeEndpoints
     /// domain is not hidden from a role that lacks it by a 403; it is simply not
     /// derived, and <c>dataQuality.commerceAvailable</c> says so.
     /// </summary>
+    /// <remarks>
+    /// <c>stats:view:agent</c> is team-only: no <c>org:boutique_*</c> role holds it, so a
+    /// boutique's focus feed never derives the commerce domain. The check is kept rather than
+    /// hardcoded to false so a platform caller that does hold the permission still sees it.
+    /// </remarks>
     private static bool HasAgentStatistics(ClaimsPrincipal principal)
     {
         foreach (var claim in principal.FindAll("user_role").Concat(principal.FindAll("org_role")))

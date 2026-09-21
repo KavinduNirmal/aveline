@@ -1,5 +1,7 @@
 using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Modules.CustomerConcierge.Common;
 using Aveline.Api.Modules.CustomerConcierge.DTOs;
+using Aveline.Api.Modules.Conversations.Services;
 using Aveline.Api.Modules.CustomerConcierge.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -33,6 +35,69 @@ public interface ICustomerTenantService
         CreateWalkInCustomerRequest request,
         Guid actorUserId,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// One client's record, or <c>null</c> when the id is not in this organization (or is deleted).
+    /// The two cases are deliberately indistinguishable to the caller.
+    /// </summary>
+    Task<TenantCustomerDetailDto?> GetDetailAsync(
+        Guid organizationId,
+        Guid customerId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Applies the writable subset of a client's record. Returns <c>null</c> when the client is not
+    /// in this organization, and throws <see cref="CustomerPhoneConflictException"/> when the new
+    /// phone number is already another client's identity key in the same organization.
+    /// </summary>
+    Task<TenantCustomerDetailDto?> UpdateAsync(
+        Guid organizationId,
+        Guid customerId,
+        UpdateCustomerRequest request,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Soft-deletes a client. Returns <c>true</c> when the client is now (or already was) deleted,
+    /// and <c>null</c> when it is not in this organization. Idempotent by design: the deletion is the
+    /// end state, and the soft-delete filter means the caller cannot tell a second delete from a
+    /// first anyway.
+    /// </summary>
+    Task<bool?> DeleteAsync(
+        Guid organizationId,
+        Guid customerId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>The client's interaction history, newest first.</summary>
+    Task<CustomerInteractionPageDto?> GetInteractionsAsync(
+        Guid organizationId,
+        Guid customerId,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// The new phone number belongs to another client in the same organization. The unique
+/// <c>(OrganizationId, PhoneNumber)</c> index is the constraint this makes legible: without it a
+/// collision surfaced as a 500.
+/// </summary>
+public sealed class CustomerPhoneConflictException(string phoneNumber)
+    : Exception($"The phone number '{phoneNumber}' is already in use by another client in this organization.")
+{
+    public string PhoneNumber { get; } = phoneNumber;
+}
+
+/// <summary>
+/// The client has orders that are not in a terminal state. This is a **business guard, not
+/// referential integrity**: <c>Order.CustomerId</c> is a bare <c>Guid</c> with no foreign key or
+/// navigation, and <c>Order.CustomerName</c> is denormalised, so nothing is actually orphaned and a
+/// deleted client's orders stay readable. The guard exists so a sale-to-delete flow cannot remove a
+/// client mid-transaction.
+/// </summary>
+public sealed class CustomerHasOpenOrdersException(int openOrders)
+    : Exception($"The client has {openOrders} order(s) that are not in a terminal state.")
+{
+    public int OpenOrders { get; } = openOrders;
 }
 
 public sealed class CustomerTenantService : ICustomerTenantService
@@ -40,8 +105,13 @@ public sealed class CustomerTenantService : ICustomerTenantService
     private const string NicknameKey = "nickname";
 
     private readonly AppDbContext _context;
+    private readonly IConversationService _conversations;
 
-    public CustomerTenantService(AppDbContext context) => _context = context;
+    public CustomerTenantService(AppDbContext context, IConversationService conversations)
+    {
+        _context = context;
+        _conversations = conversations;
+    }
 
     public async Task<CustomerBookResponseDto> GetBookAsync(
         Guid organizationId,
@@ -161,6 +231,28 @@ public sealed class CustomerTenantService : ICustomerTenantService
             ? string.Empty
             : request.PhoneNumber.Trim();
 
+        // The unique `(OrganizationId, PhoneNumber)` index is the real constraint, but on a
+        // relational provider a collision surfaced as an unmapped `DbUpdateException` and therefore
+        // a 500. Checking first turns it into a typed 409 on every provider, so the behaviour the
+        // client sees does not depend on the storage engine.
+        if (phone.Length > 0)
+        {
+            var normalised = PhoneNormalizer.ToE164(phone) ?? phone;
+            var phoneTaken = await _context.Customers
+                .AsNoTracking()
+                .AnyAsync(
+                    candidate => candidate.OrganizationId == organizationId
+                                 && candidate.DeletedAt == null
+                                 && candidate.PhoneNumber == normalised,
+                    cancellationToken);
+            if (phoneTaken)
+            {
+                throw new CustomerPhoneConflictException(normalised);
+            }
+
+            phone = normalised;
+        }
+
         // A name is enough to start a profile, so the walk-in de-duplicates on the
         // name rather than on a phone number the counter may not have collected.
         var existing = name.Length > 0
@@ -211,6 +303,11 @@ public sealed class CustomerTenantService : ICustomerTenantService
 
         await _context.SaveChangesAsync(cancellationToken);
 
+        // The client's concierge thread is created with the client. Without it the new client is
+        // absent from the Salon list - the list is conversations, not clients - so a walk-in would
+        // exist in the book but have nowhere to be discussed until somebody opened it by hand.
+        await _conversations.EnsureCustomerSalonAsync(organizationId, customer.Id, cancellationToken);
+
         return new CustomerCreatedDto(
             customer.Id,
             customer.FullName,
@@ -220,6 +317,282 @@ public sealed class CustomerTenantService : ICustomerTenantService
             customer.CreatedAt,
             null);
     }
+
+    public async Task<TenantCustomerDetailDto?> GetDetailAsync(
+        Guid organizationId,
+        Guid customerId,
+        CancellationToken cancellationToken = default)
+    {
+        var customer = await _context.Customers
+            .AsNoTracking()
+            .Include(candidate => candidate.Preferences)
+            .Include(candidate => candidate.Tags)
+            .FirstOrDefaultAsync(
+                candidate => candidate.Id == customerId
+                             && candidate.OrganizationId == organizationId
+                             && candidate.DeletedAt == null,
+                cancellationToken);
+
+        if (customer is null)
+        {
+            return null;
+        }
+
+        var interactionCount = await _context.CustomerInteractions
+            .AsNoTracking()
+            .CountAsync(
+                interaction => interaction.OrganizationId == organizationId
+                               && interaction.CustomerId == customerId,
+                cancellationToken);
+
+        return ToDetail(customer, interactionCount);
+    }
+
+    public async Task<TenantCustomerDetailDto?> UpdateAsync(
+        Guid organizationId,
+        Guid customerId,
+        UpdateCustomerRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var customer = await _context.Customers
+            .Include(candidate => candidate.Preferences)
+            .Include(candidate => candidate.Tags)
+            .FirstOrDefaultAsync(
+                candidate => candidate.Id == customerId
+                             && candidate.OrganizationId == organizationId
+                             && candidate.DeletedAt == null,
+                cancellationToken);
+
+        if (customer is null)
+        {
+            return null;
+        }
+
+        if (request.FullName is not null)
+        {
+            var name = request.FullName.Trim();
+            if (name.Length is 0 or > 200)
+            {
+                throw new ArgumentException("A name of 1 to 200 characters is required.", nameof(request));
+            }
+
+            customer.FullName = name;
+        }
+
+        if (request.Email is not null)
+        {
+            var email = request.Email.Trim();
+            if (email.Length > 255)
+            {
+                throw new ArgumentException("An email of at most 255 characters is required.", nameof(request));
+            }
+
+            customer.Email = email.Length == 0 ? null : email;
+        }
+
+        if (request.Level is not null)
+        {
+            var level = request.Level.Trim();
+            if (level.Length > 16)
+            {
+                throw new ArgumentException("A level of at most 16 characters is required.", nameof(request));
+            }
+
+            customer.Level = level.Length == 0 ? null : level;
+        }
+
+        if (request.PhoneNumber is not null)
+        {
+            // Normalise through the existing helper rather than a second implementation. A number
+            // that is not a recognised Sri Lankan form is rejected rather than stored raw, so the
+            // future lookup path (which normalises at query time) can still find it.
+            var raw = request.PhoneNumber.Trim();
+            var normalised = PhoneNormalizer.ToE164(raw);
+            if (normalised is null)
+            {
+                if (raw.Length == 0)
+                {
+                    throw new ArgumentException("A phone number is required.", nameof(request));
+                }
+
+                throw new ArgumentException(
+                    "That does not look like a Sri Lankan phone number.", nameof(request));
+            }
+
+            var takenByAnother = await _context.Customers
+                .AsNoTracking()
+                .AnyAsync(
+                    candidate => candidate.OrganizationId == organizationId
+                                 && candidate.Id != customerId
+                                 && candidate.DeletedAt == null
+                                 && candidate.PhoneNumber == normalised,
+                    cancellationToken);
+            if (takenByAnother)
+            {
+                throw new CustomerPhoneConflictException(normalised);
+            }
+
+            customer.PhoneNumber = normalised;
+        }
+
+        if (request.Nickname is not null)
+        {
+            var nickname = request.Nickname.Trim();
+            var preference = customer.Preferences
+                .FirstOrDefault(candidate => candidate.PreferenceKey == NicknameKey);
+            if (preference is null)
+            {
+                _context.CustomerPreferences.Add(new CustomerPreference
+                {
+                    OrganizationId = organizationId,
+                    CustomerId = customerId,
+                    PreferenceKey = NicknameKey,
+                    PreferenceValue = nickname,
+                });
+            }
+            else
+            {
+                preference.PreferenceValue = nickname;
+            }
+        }
+
+        customer.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync(cancellationToken);
+
+        var interactionCount = await _context.CustomerInteractions
+            .AsNoTracking()
+            .CountAsync(
+                interaction => interaction.OrganizationId == organizationId
+                               && interaction.CustomerId == customerId,
+                cancellationToken);
+
+        return ToDetail(customer, interactionCount);
+    }
+
+    public async Task<bool?> DeleteAsync(
+        Guid organizationId,
+        Guid customerId,
+        CancellationToken cancellationToken = default)
+    {
+        var customer = await _context.Customers
+            // The soft-delete query filter would hide an already-deleted row and turn a repeated
+            // delete into a 404. The tenant scope is preserved explicitly instead, so "already
+            // deleted in *this* organisation" is reachable while another organisation's row is not.
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(
+                candidate => candidate.Id == customerId
+                             && candidate.OrganizationId == organizationId,
+                cancellationToken);
+
+        if (customer is null)
+        {
+            return null;
+        }
+
+        // Already deleted: the end state is reached, so this is the same answer rather than a 404.
+        if (customer.DeletedAt is not null)
+        {
+            return true;
+        }
+
+        var openOrders = await CountOpenOrdersAsync(organizationId, customerId, cancellationToken);
+        if (openOrders > 0)
+        {
+            throw new CustomerHasOpenOrdersException(openOrders);
+        }
+
+        customer.DeletedAt = DateTime.UtcNow;
+        customer.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
+    public async Task<CustomerInteractionPageDto?> GetInteractionsAsync(
+        Guid organizationId,
+        Guid customerId,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken = default)
+    {
+        var exists = await _context.Customers
+            .AsNoTracking()
+            .AnyAsync(
+                candidate => candidate.Id == customerId
+                             && candidate.OrganizationId == organizationId
+                             && candidate.DeletedAt == null,
+                cancellationToken);
+        if (!exists)
+        {
+            return null;
+        }
+
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 200);
+
+        var query = _context.CustomerInteractions
+            .AsNoTracking()
+            .Where(interaction => interaction.OrganizationId == organizationId
+                                  && interaction.CustomerId == customerId);
+
+        var total = await query.CountAsync(cancellationToken);
+        var interactions = await query
+            .OrderByDescending(interaction => interaction.CreatedAt)
+            .ThenByDescending(interaction => interaction.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        return new CustomerInteractionPageDto(
+            interactions.Select(ToInteractionItem).ToList(),
+            total,
+            page,
+            pageSize);
+    }
+
+    /// <summary>
+    /// Orders whose status has an outgoing transition, plus the transient states. Terminal states
+    /// (`completed`, `cancelled`, `rejected`) are the three with no outgoing edge in
+    /// <c>OrderService.ValidTransitions</c>, so they are the only ones that do not block a delete.
+    /// </summary>
+    private static readonly string[] TerminalOrderStatuses = ["completed", "cancelled", "rejected"];
+
+    private Task<int> CountOpenOrdersAsync(
+        Guid organizationId, Guid customerId, CancellationToken cancellationToken)
+        => _context.Orders
+            .AsNoTracking()
+            .CountAsync(
+                order => order.OrganizationId == organizationId
+                         && order.CustomerId == customerId
+                         && !TerminalOrderStatuses.Contains(order.Status.ToLower()),
+                cancellationToken);
+
+    private static CustomerInteractionItemDto ToInteractionItem(CustomerInteraction interaction) => new(
+        interaction.Id,
+        interaction.CreatedAt,
+        interaction.Channel,
+        interaction.Direction,
+        interaction.MessageContent,
+        string.Equals(interaction.Channel, "in_person", StringComparison.OrdinalIgnoreCase)
+        && string.Equals(interaction.Direction, "inbound", StringComparison.OrdinalIgnoreCase));
+
+    private static TenantCustomerDetailDto ToDetail(Customer customer, int interactionCount) => new(
+        customer.Id,
+        customer.FullName,
+        customer.Preferences.FirstOrDefault(preference => preference.PreferenceKey == NicknameKey)?.PreferenceValue,
+        customer.PhoneNumber,
+        customer.Email,
+        customer.Level,
+        customer.Status,
+        customer.TotalSpent,
+        customer.VisitCount,
+        customer.LastVisitAt,
+        // Constant 1: the tier is derived by CustomerLoyaltyService, so the client is told not to
+        // render an editable control for it.
+        LoyaltyTierIsDerived: 1,
+        customer.CreatedAt,
+        customer.UpdatedAt,
+        interactionCount,
+        customer.Tags.Select(tag => tag.Tag).OrderBy(tag => tag).ToList());
 
     private static CustomerBookItemDto ToBookItem(Customer customer) => new(
         customer.Id,

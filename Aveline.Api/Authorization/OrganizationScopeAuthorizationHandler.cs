@@ -50,7 +50,10 @@ public sealed class OrganizationScopeAuthorizationHandler
                 .FindAll(Modules.ApiAccess.Authentication.ApiKeyClaimTypes.Scope)
                 .Select(c => c.Value);
 
-            if (scopes.Contains(requirement.Permission, StringComparer.Ordinal))
+            // A null permission is the permission-free member gate: the middleware has already
+            // fixed the key to its tenant, so any granted scope satisfies it.
+            if (requirement.Permission is null
+                || scopes.Contains(requirement.Permission, StringComparer.Ordinal))
             {
                 context.Succeed(requirement);
             }
@@ -84,7 +87,10 @@ public sealed class OrganizationScopeAuthorizationHandler
             return;
         }
 
-        if (Permissions.IsGranted(membership.BoutiqueRole, requirement.Permission))
+        // A null permission is the permission-free member gate (`BoutiqueMemberPolicy`):
+        // an active membership in the target organisation is the whole requirement.
+        if (requirement.Permission is null
+            || Permissions.IsGranted(membership.BoutiqueRole, requirement.Permission))
         {
             context.Succeed(requirement);
         }

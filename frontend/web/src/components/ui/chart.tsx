@@ -371,3 +371,19 @@ export {
   ChartLegendContent,
   ChartStyle,
 }
+
+// Re-exported so a tenant-tree panel imports every chart primitive from this wrapper rather than
+// from `recharts` directly. The tenant truthfulness gate forbids a raw `from 'recharts'` import
+// precisely because this file is where the shared `connectNulls` decision lives.
+export {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Line,
+  LineChart,
+  ReferenceLine,
+  XAxis,
+  YAxis,
+} from 'recharts'

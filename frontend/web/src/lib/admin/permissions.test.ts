@@ -7,10 +7,12 @@ import {
 } from "./permissions"
 
 describe("Admin Permissions Catalog Mirror", () => {
-  it("contains exactly 28 canonical permissions", () => {
-    expect(ALL_PERMISSIONS).toHaveLength(28)
+  it("contains exactly 31 canonical permissions", () => {
+    // 28 before the tenant-dashboard slice; T0a adds customers:manage, team:manage and
+    // orders:manage.
+    expect(ALL_PERMISSIONS).toHaveLength(31)
     const unique = new Set(ALL_PERMISSIONS)
-    expect(unique.size).toBe(28)
+    expect(unique.size).toBe(31)
   })
 
   it("mirrors admin role omitting exactly the named denials", () => {
@@ -18,7 +20,7 @@ describe("Admin Permissions Catalog Mirror", () => {
     // `revenue:refund` joins it because sending money back is not the same authority as
     // correcting the ledger. Both are named in `PermissionsDeniedToAdmin` on the server.
     const adminPerms = ROLE_PERMISSIONS["admin"]
-    expect(adminPerms).toHaveLength(26)
+    expect(adminPerms).toHaveLength(29)
     expect(adminPerms).not.toContain("pricing:backdate")
     expect(adminPerms).not.toContain("revenue:refund")
     expect(adminPerms).toContain("revenue:read")
@@ -29,7 +31,7 @@ describe("Admin Permissions Catalog Mirror", () => {
 
   it("mirrors owner role granting all permissions", () => {
     const ownerPerms = ROLE_PERMISSIONS["owner"]
-    expect(ownerPerms).toHaveLength(28)
+    expect(ownerPerms).toHaveLength(31)
     expect(ownerPerms).toContain("pricing:backdate")
     expect(ownerPerms).toContain("revenue:refund")
   })

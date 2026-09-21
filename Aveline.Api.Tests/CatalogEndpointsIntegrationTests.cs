@@ -376,6 +376,42 @@ public class CatalogEndpointsIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public void CatalogImageRoute_KeepsTheF7AnonymityCommentAndTheCloudinaryDirection()
+    {
+        // F-7/Q4: the catalog image route is the one deliberate anonymous route on the catalog
+        // group, because catalog imagery is public. U1.2 extends the recorded reason — a
+        // Cloudinary row now answers 302 to the CDN rather than streaming bytes — without
+        // dropping it. The guard is keyed on the source text next to the route template, because
+        // a runtime test can only see the behaviour, not the recorded reason.
+        var source = File.ReadAllText(
+            Path.Combine(RepositoryRoot, "Aveline.Api", "Endpoints", "CatalogEndpoints.cs"));
+
+        var routeStart = source.IndexOf("\"/images/{imageId:guid}\"", StringComparison.Ordinal);
+        routeStart.Should().BeGreaterThanOrEqualTo(0, "the catalog image route must still exist");
+
+        var route = source[routeStart..Math.Min(source.Length, routeStart + 3000)];
+        route.Should().Contain("F-7", "the reason for the anonymity stays recorded on the route");
+        route.Should().Contain("Cloudinary", "the extended comment must name the direction it now redirects to");
+        route.Should().Contain("302", "the redirect is the delivery contract for a Cloudinary row");
+        route.Should().Contain(".AllowAnonymous()", "the route stays deliberately anonymous");
+    }
+
+    private static string RepositoryRoot
+    {
+        get
+        {
+            var directory = new DirectoryInfo(AppContext.BaseDirectory);
+            while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "docker-compose.yml")))
+            {
+                directory = directory.Parent;
+            }
+
+            directory.Should().NotBeNull();
+            return directory!.FullName;
+        }
+    }
+
+    [Fact]
     public async Task CreateItem_WithBase64DataUrlImage_AutoOffloadsToInventoryImages_AndPersistsSuccessfully()
     {
         var (user, org) = await SeedMemberAndOrgAsync("cat_base64_auto");

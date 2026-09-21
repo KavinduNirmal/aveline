@@ -11,16 +11,26 @@ public class InventoryService : IInventoryService
 {
     private readonly IInventoryRepository _repository;
     private readonly MediaOptions _mediaOptions;
+    private readonly IInventoryImageStore? _imageStore;
 
     /// <summary>
     /// The media options are optional so a caller that constructs the service directly (most of
     /// the existing unit tests) keeps the documented default cap; the DI graph always supplies
     /// the bound <see cref="MediaOptions"/>.
     /// </summary>
-    public InventoryService(IInventoryRepository repository, IOptions<MediaOptions>? mediaOptions = null)
+    /// <param name="imageStore">
+    /// The catalog row seam (strategy §3.1). Optional for the same direct-construction reason: a
+    /// caller with no store keeps the repository row write, while every DI host supplies the
+    /// provider-selected store so both catalog write paths share one behaviour.
+    /// </param>
+    public InventoryService(
+        IInventoryRepository repository,
+        IOptions<MediaOptions>? mediaOptions = null,
+        IInventoryImageStore? imageStore = null)
     {
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
         _mediaOptions = mediaOptions?.Value ?? new MediaOptions();
+        _imageStore = imageStore;
     }
 
     public async Task<IReadOnlyList<InventoryItemDto>> SearchInventoryAsync(
@@ -170,20 +180,40 @@ public class InventoryService : IInventoryService
         }
 
         var imageId = Guid.NewGuid();
-        var imageRecord = new InventoryImage
-        {
-            Id = imageId,
-            OrgId = orgId,
-            ImageData = bytes,
-            ContentType = contentType,
-            FileName = $"item_{DateTime.UtcNow.Ticks}.jpg",
-            FileSizeBytes = bytes.Length,
-            ImageUrl = $"/api/v1/orgs/{orgId}/catalog/images/{imageId}",
-            CreatedAtUtc = DateTime.UtcNow
-        };
+        var fileName = $"item_{DateTime.UtcNow.Ticks}.jpg";
 
         try
         {
+            // The same row seam the upload handler uses, so both catalog write paths behave
+            // identically whatever the provider is (strategy §3.1, plan U1.2).
+            if (_imageStore is not null)
+            {
+                var image = await _imageStore.StoreAsync(
+                    new InventoryImageStoreRequest(
+                        orgId,
+                        ItemId: null,
+                        bytes,
+                        contentType,
+                        fileName,
+                        bytes.LongLength),
+                    cancellationToken);
+
+                return image.ImageUrl;
+            }
+
+            // Direct construction with no row seam: the database-tier row write, unchanged.
+            var imageRecord = new InventoryImage
+            {
+                Id = imageId,
+                OrgId = orgId,
+                ImageData = bytes,
+                ContentType = contentType,
+                FileName = fileName,
+                FileSizeBytes = bytes.Length,
+                ImageUrl = $"/api/v1/orgs/{orgId}/catalog/images/{imageId}",
+                CreatedAtUtc = DateTime.UtcNow
+            };
+
             await _repository.AddImageAsync(imageRecord, cancellationToken);
             return imageRecord.ImageUrl;
         }

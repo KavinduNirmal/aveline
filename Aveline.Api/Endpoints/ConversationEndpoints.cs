@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Aveline.Api.Common.Media;
 using Aveline.Api.Configurations;
+using Aveline.Api.Modules.Conversations.Attachments;
 using Aveline.Api.Modules.Conversations.DTOs;
 using Aveline.Api.Modules.Conversations.Services;
 using Aveline.Api.Modules.Shared.Repositories;
@@ -425,7 +426,7 @@ public static class ConversationEndpoints
             });
         }
 
-        var contentType = MediaContentTypes.Resolve(declaredType, fileName);
+        var contentType = AttachmentContentPolicy.ResolveForStorage(declaredType, fileName, bytes);
         if (contentType is null)
         {
             return Results.BadRequest(new { message = "Only images and PDFs can be attached." });

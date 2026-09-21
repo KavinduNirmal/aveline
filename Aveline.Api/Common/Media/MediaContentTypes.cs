@@ -144,15 +144,26 @@ public static class MediaContentTypes
 
     private static readonly byte[] PngSignature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 
+    /// <summary>The literal PDF header marker. A real header adds version digits after it.</summary>
+    private static readonly byte[] PdfSignature = "%PDF-"u8.ToArray();
+
+    /// <summary>
+    /// How far into the payload a PDF header may start and still be accepted. A well-formed PDF
+    /// places <c>%PDF-</c> at byte 0; a small run of leading bytes is a common malformation, so a
+    /// bounded window tolerates it. The bound is what keeps this a header check rather than a
+    /// substring search: a marker buried deeper in the payload is not a header.
+    /// </summary>
+    private const int PdfSignatureWindow = 1024;
+
     /// <summary>An ISO base-media-file box: a 4-byte size, then the <c>ftyp</c> marker and a brand.</summary>
     private const int FtypBrandOffset = 8;
 
     private const int FtypBrandLength = 4;
 
     /// <summary>
-    /// Identifies an image from its leading bytes, ignoring any declared content type or file
-    /// name, and returns the canonical type or <c>null</c> when the bytes are not a recognisable
-    /// image.
+    /// Identifies a stored file's real type from its leading bytes, ignoring any declared content
+    /// type or file name, and returns the canonical type or <c>null</c> when the bytes are not a
+    /// known image or PDF.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -164,9 +175,16 @@ public static class MediaContentTypes
     /// bytes, so we must too (strategy §3.6).
     /// </para>
     /// <para>
+    /// The recognised sets are the image allow-list plus <c>application/pdf</c>. The PDF arm
+    /// exists so a body that claims <c>application/pdf</c> can be confirmed by its bytes rather
+    /// than trusted; a PDF is the most hostile arm the pipeline stores, because a PDF document
+    /// can carry JavaScript. Every type returned is a member of
+    /// <see cref="Allowed"/>; the image members are exactly <see cref="ImageTypes"/>.
+    /// </para>
+    /// <para>
     /// The method is pure and I/O-free: it reads only the array it is handed, allocates nothing
     /// beyond a possible substring, and mutates nothing. Every type it can return is a member of
-    /// <see cref="ImageTypes"/>, so the sniff and the allow-list cannot drift apart.
+    /// <see cref="Allowed"/>, so the sniff and the storage allow-list cannot drift apart.
     /// </para>
     /// <para>
     /// Opting in is per call site. This method does not change <see cref="Resolve"/>, and a
@@ -174,7 +192,9 @@ public static class MediaContentTypes
     /// </para>
     /// </remarks>
     /// <param name="bytes">The leading bytes of an upload. A prefix is enough; <c>null</c> is refused.</param>
-    /// <returns>The canonical image type, or <c>null</c> when the bytes are not a known image.</returns>
+    /// <returns>
+    /// The canonical image or PDF type, or <c>null</c> when the bytes carry no known signature.
+    /// </returns>
     public static string? Sniff(byte[]? bytes)
     {
         if (bytes is null)
@@ -183,6 +203,14 @@ public static class MediaContentTypes
         }
 
         var head = bytes.AsSpan();
+
+        // PDF first, in its own leading window. A hostile body cannot reach a later image branch
+        // by prefixing a `%PDF-` marker, and the bounded window refuses a marker buried in the
+        // payload.
+        if (SniffPdf(head) is { } pdf)
+        {
+            return pdf;
+        }
 
         // JPEG: SOI marker followed by any marker.
         if (head.Length >= 3 && head[0] == 0xFF && head[1] == 0xD8 && head[2] == 0xFF)
@@ -228,9 +256,35 @@ public static class MediaContentTypes
         return SniffIsoBrand(head);
     }
 
-    /// <summary>Whether <see cref="Sniff"/> recognises the bytes as an image.</summary>
+    /// <summary>
+    /// Whether <see cref="Sniff"/> recognises the bytes as a **storable** file. This includes
+    /// <c>application/pdf</c>, which is storable but is not an image; use
+    /// <see cref="IsImage"/> on the sniffed type when the image question is the one being asked.
+    /// </summary>
     /// <param name="bytes">The leading bytes of an upload.</param>
-    public static bool IsRecognisableImage(byte[]? bytes) => Sniff(bytes) is not null;
+    public static bool IsRecognisableImage(byte[]? bytes)
+        => Sniff(bytes) is { } sniffed && IsImage(sniffed);
+
+    /// <summary>
+    /// Finds the PDF header inside its bounded leading window and requires at least one version
+    /// character after the marker, so a truncated <c>%PDF-</c> is not a document.
+    /// </summary>
+    private static string? SniffPdf(ReadOnlySpan<byte> head)
+    {
+        // At least one byte of version must follow the five-byte marker.
+        const int required = 6;
+
+        var lastStart = Math.Min(PdfSignatureWindow, head.Length - required);
+        for (var offset = 0; offset <= lastStart; offset++)
+        {
+            if (head.Slice(offset, PdfSignature.Length).SequenceEqual(PdfSignature))
+            {
+                return Pdf;
+            }
+        }
+
+        return null;
+    }
 
     /// <summary>
     /// Reads the ISO base-media-file <c>ftyp</c> brand. The brand is the one format claim a

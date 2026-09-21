@@ -1,5 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Aveline.Api.Modules.Media;
 
@@ -8,12 +10,17 @@ namespace Aveline.Api.Modules.Media;
 /// is chosen once, here, from <c>Media:Provider</c>; no caller branches on it.
 /// </summary>
 /// <remarks>
-/// The Cloudinary implementation arrives with unit U1.1, so this unit registers only what exists:
-/// the <c>database</c> branch. The <c>cloudinary</c> branch is registered as a factory that
-/// refuses to resolve, rather than silently falling back to the database adapter — the seam may
-/// never quietly store bytes somewhere other than where the configuration says. A half-configured
-/// <c>cloudinary</c> provider is still refused earlier and more specifically by
-/// <see cref="MediaOptionsValidator"/> at startup; this unit does not weaken that.
+/// <para>
+/// <c>database</c> resolves the byte-store pass-through; <c>cloudinary</c> resolves
+/// <see cref="CloudinaryMediaStorage"/> over the SDK gateway (unit U1.1). A half-configured
+/// <c>cloudinary</c> provider is refused earlier and more specifically by
+/// <see cref="MediaOptionsValidator"/> at startup; the seam may never quietly store bytes
+/// somewhere other than where the configuration says.
+/// </para>
+/// <para>
+/// The Cloudinary branch is registered only when it is selected, so a <c>database</c> host gains
+/// no Cloudinary client and no HTTP client.
+/// </para>
 /// </remarks>
 public static class MediaModule
 {
@@ -35,11 +42,12 @@ public static class MediaModule
                 break;
 
             case MediaProvider.Cloudinary:
-                // CloudinaryMediaStorage lands with U1.1 (strategy §5.1 S1). Until then the seam
-                // must not resolve to the database adapter under a cloudinary configuration.
-                services.AddScoped<IMediaStorage>(_ => throw new InvalidOperationException(
-                    "Media:Provider=cloudinary is selected, but CloudinaryMediaStorage does not "
-                    + "exist yet (unit U1.1). Set Media:Provider=database until then."));
+                services.AddHttpClient<ICloudinaryGateway, CloudinaryApiGateway>();
+                services.AddScoped<CloudinaryRetryPolicy>(sp => new CloudinaryRetryPolicy(
+                    sp.GetRequiredService<IOptions<CloudinaryOptions>>().Value,
+                    sp.GetRequiredService<ILoggerFactory>()
+                        .CreateLogger("Aveline.Api.Modules.Media.CloudinaryRetryPolicy")));
+                services.AddScoped<IMediaStorage, CloudinaryMediaStorage>();
                 break;
 
             default:

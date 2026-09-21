@@ -535,7 +535,7 @@ public static class CatalogEndpoints
         group.MapPost("/images/upload", async (
             [FromRoute] Guid organizationId,
             HttpRequest request,
-            [FromServices] IInventoryRepository repository,
+            [FromServices] IInventoryImageStore imageStore,
             [FromServices] IOptions<MediaOptions> mediaOptions,
             CancellationToken cancellationToken) =>
         {
@@ -605,20 +605,20 @@ public static class CatalogEndpoints
                 });
             }
 
-            var imageId = Guid.NewGuid();
-            var imageRecord = new InventoryImage
-            {
-                Id = imageId,
-                OrgId = organizationId,
-                ImageData = bytes,
-                ContentType = contentType,
-                FileName = fileName,
-                FileSizeBytes = fileSizeBytes,
-                ImageUrl = $"/api/v1/orgs/{organizationId}/catalog/images/{imageId}",
-                CreatedAtUtc = DateTime.UtcNow
-            };
-
-            await repository.AddImageAsync(imageRecord, cancellationToken);
+            // The row and the bytes both go through the catalog row seam, which delegates to the
+            // provider chosen once from Media:Provider (strategy §3.1): the database tier keeps
+            // the bytes in the row and returns the relative Aveline route, the Cloudinary tier
+            // stores them at the CDN and returns the absolute delivery URL. The route never
+            // branches on the provider.
+            var imageRecord = await imageStore.StoreAsync(
+                new InventoryImageStoreRequest(
+                    organizationId,
+                    ItemId: null,
+                    bytes,
+                    contentType,
+                    fileName ?? "image",
+                    fileSizeBytes),
+                cancellationToken);
 
             return Results.Ok(new
             {
@@ -630,7 +630,7 @@ public static class CatalogEndpoints
             });
         })
         .WithName("CatalogUploadImage")
-        .WithSummary("Upload and store an image binary directly in the PostgreSQL database.")
+        .WithSummary("Upload an image through the configured media provider and return its row.")
         .Produces(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status401Unauthorized)
@@ -645,7 +645,21 @@ public static class CatalogEndpoints
             CancellationToken cancellationToken) =>
         {
             var image = await repository.GetImageByIdAsync(imageId, organizationId, cancellationToken);
-            if (image == null || image.ImageData == null || image.ImageData.Length == 0)
+            if (image is null)
+            {
+                return Results.NotFound(new { error = "Image not found." });
+            }
+
+            // Per-row dispatch (strategy §3.3): a Cloudinary row's bytes live at the CDN, so this
+            // stable Aveline route answers 302 to the absolute delivery URL instead of streaming
+            // them. A database row keeps streaming bytes exactly as before, and a row with
+            // neither is a 404 — never a 500.
+            if (IsCloudinaryRow(image) && Uri.TryCreate(image.ImageUrl, UriKind.Absolute, out _))
+            {
+                return Results.Redirect(image.ImageUrl, permanent: false);
+            }
+
+            if (image.ImageData == null || image.ImageData.Length == 0)
             {
                 return Results.NotFound(new { error = "Image not found." });
             }
@@ -657,13 +671,33 @@ public static class CatalogEndpoints
             return Results.File(image.ImageData, MediaContentTypes.SafeServe(image.ContentType));
         })
         .WithName("CatalogGetImage")
-        .WithSummary("Retrieve physical image binary from PostgreSQL.")
+        .WithSummary("Retrieve a catalog image: 302 to the CDN for a Cloudinary row, bytes for a database row.")
         .Produces(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status302Found)
         .Produces(StatusCodes.Status404NotFound)
+        // F-7, decided (Q4): **catalog imagery is public.** Product photography is a public
+        // artefact, and the direction is to serve it from Cloudinary: since U1.2 a row whose
+        // StorageProvider is `cloudinary` answers 302 to its absolute CDN delivery URL rather
+        // than streaming bytes from PostgreSQL, while a database row streams exactly as before.
+        // This route therefore overrides the group's member-level policy on purpose. The GUID is
+        // unguessable but not secret, and the database tier's response is
+        // `public, max-age=31536000, immutable`, which means anyone who has ever held the URL
+        // keeps the bytes. Recorded here rather than inherited silently — this is the one
+        // deliberate anonymous route on the catalog group.
         .AllowAnonymous();
 
         return endpoints;
     }
+
+    /// <summary>
+    /// Whether a catalog row's bytes belong to Cloudinary rather than to the row itself
+    /// (strategy §3.3). The row alone decides, so a mixed population needs no data migration.
+    /// </summary>
+    private static bool IsCloudinaryRow(InventoryImage image) =>
+        string.Equals(
+            image.StorageProvider,
+            CloudinaryInventoryImageStore.ProviderName,
+            StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Runs a catalog item write, translating the catalog tier's image-size refusal

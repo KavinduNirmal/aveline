@@ -5,6 +5,7 @@ using Aveline.Api.Common.Media;
 using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Infrastructure.Eventing;
 using Aveline.Api.Infrastructure.RateLimiting;
+using Aveline.Api.Modules.Conversations.Attachments;
 using Aveline.Api.Modules.Integrations.Models;
 using Aveline.Api.Modules.Integrations.Services;
 using Microsoft.AspNetCore.Builder;
@@ -328,13 +329,14 @@ public static class WebhookEndpoints
             }
 
             var fileName = InboundMediaFileName(message.Id, fetched.ContentType ?? media.MimeType);
-            var contentType = MediaContentTypes.Resolve(fetched.ContentType ?? media.MimeType, fileName);
+            var contentType = AttachmentContentPolicy.ResolveForStorage(
+                fetched.ContentType ?? media.MimeType, fileName, fetched.Bytes);
             if (contentType is null)
             {
-                // Audio, video or anything else off the allow-list: recorded as skipped rather
-                // than stored.
+                // Audio, video, anything else off the allow-list, or an image claim the bytes do
+                // not support: recorded as skipped rather than stored.
                 logger.LogInformation(
-                    "Inbound WhatsApp media skipped: unsupported type. organizationId={OrganizationId} type={Type}",
+                    "Inbound WhatsApp media skipped: unsupported or mislabelled type. organizationId={OrganizationId} type={Type}",
                     organizationId, fetched.ContentType ?? media.MimeType);
                 return null;
             }

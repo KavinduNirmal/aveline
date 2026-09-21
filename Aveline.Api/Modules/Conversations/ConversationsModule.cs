@@ -1,8 +1,10 @@
 using Aveline.Api.Modules.Conversations.Attachments;
 using Aveline.Api.Modules.Conversations.Repositories;
 using Aveline.Api.Modules.Conversations.Services;
+using Aveline.Api.Modules.Media;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Aveline.Api.Modules.Conversations;
 
@@ -22,9 +24,31 @@ public static class ConversationsModule
         services.AddScoped<ISignOffDecisionRepository, SignOffDecisionRepository>();
         services.AddScoped<IConversationReadStateRepository, ConversationReadStateRepository>();
         services.AddScoped<IMessageAttachmentRepository, MessageAttachmentRepository>();
-        // The byte boundary: the database adapter today, a CDN adapter later. Every caller goes
-        // through the interface, so the swap changes no read path.
-        services.AddScoped<IAttachmentStore, DatabaseAttachmentStore>();
+        // The byte boundary: one row seam, selected once, by `Media:Provider`. `MediaModule`
+        // (L1) registers the provider seam `IMediaStorage`; this is the row seam only.
+        // This must be the *single* registration: `AddScoped` resolves the last one, so an
+        // unconditional database line would silently win over the provider selection
+        // (strategy §3.1, migration plan §6.2).
+        var provider = configuration.GetValue("Media:Provider", MediaProvider.Database);
+        switch (provider)
+        {
+            case MediaProvider.Database:
+                services.AddScoped<IAttachmentStore, DatabaseAttachmentStore>();
+                break;
+
+            case MediaProvider.Cloudinary:
+                services.AddScoped<IAttachmentStore, CloudinaryAttachmentStore>();
+                break;
+
+            default:
+                throw new InvalidOperationException(
+                    $"Media:Provider value '{provider}' is not recognised. The valid values are "
+                    + "'database' and 'cloudinary'.");
+        }
+
+        // The Cloudinary row seam reads the clock for the `date:` tag and the row's CreatedAtUtc.
+        // `TryAdd` keeps this idempotent with the registration `AnalyticsModule` also makes.
+        services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<IConversationService, ConversationService>();
         services.AddScoped<IMessageBroadcaster, SignalRMessageBroadcaster>();
         services.AddHostedService<ConversationEventSubscriber>();

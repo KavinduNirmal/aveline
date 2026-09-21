@@ -4,7 +4,10 @@ namespace Aveline.Api.Modules.Media;
 /// One write through the provider seam. <see cref="Metadata"/> is optional so a caller with
 /// nothing to say cannot be forced to invent labels (strategy §3.2, verbatim shape).
 /// </summary>
-/// <param name="PublicId">Provider-agnostic key; the Cloudinary adapter prefixes the folder root.</param>
+/// <param name="PublicId">
+/// Provider-agnostic key, used verbatim by the provider adapter (the tagger already roots it under
+/// <c>aveline/</c>, so nothing prefixes it a second time).
+/// </param>
 /// <param name="Bytes">The bytes to store.</param>
 /// <param name="ContentType">The normalised content type, from the allow-list.</param>
 /// <param name="FileName">The original file name; never enters provider context.</param>

@@ -9,20 +9,34 @@ namespace Aveline.Api.Modules.VisualIntelligence.Repositories;
 /// following the shipped precedent for message attachments.
 /// </summary>
 /// <remarks>
+/// <para>
 /// It implements <see cref="IInventoryImageStore"/> only and delegates the bytes to the provider
 /// seam <see cref="IMediaStorage"/> (strategy §3.1: no class implements two seams). It therefore
 /// never learns a provider's public-id format. The reserved <c>StorageProvider</c>/<c>StorageKey</c>
 /// columns are what keep the swap to a CDN adapter to a new adapter plus a config value.
+/// </para>
+/// <para>
+/// The row is written through <see cref="IInventoryRepository"/> when the DI graph supplies it —
+/// the module's single row-write entry point — and through the direct <see cref="AppDbContext"/>
+/// otherwise. The repository is optional so a caller that constructs this store directly (its own
+/// seam test does) keeps writing through the context it was given; every production host
+/// registers the repository, so production has exactly one path.
+/// </para>
 /// </remarks>
 public sealed class DatabaseInventoryImageStore : IInventoryImageStore
 {
     private readonly AppDbContext _context;
     private readonly IMediaStorage _mediaStorage;
+    private readonly IInventoryRepository? _repository;
 
-    public DatabaseInventoryImageStore(AppDbContext context, IMediaStorage mediaStorage)
+    public DatabaseInventoryImageStore(
+        AppDbContext context,
+        IMediaStorage mediaStorage,
+        IInventoryRepository? repository = null)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
         _mediaStorage = mediaStorage ?? throw new ArgumentNullException(nameof(mediaStorage));
+        _repository = repository;
     }
 
     public string Provider => "database";
@@ -50,8 +64,16 @@ public sealed class DatabaseInventoryImageStore : IInventoryImageStore
             CreatedAtUtc = DateTime.UtcNow,
         };
 
-        _context.InventoryImages.Add(image);
-        await _context.SaveChangesAsync(ct);
+        if (_repository is not null)
+        {
+            // The module's single row-write path; it saves on the same context.
+            await _repository.AddImageAsync(image, ct);
+        }
+        else
+        {
+            _context.InventoryImages.Add(image);
+            await _context.SaveChangesAsync(ct);
+        }
 
         return image;
     }

@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Aveline.Api.Tests;
 
@@ -14,9 +15,10 @@ namespace Aveline.Api.Tests;
 /// no caller branches on it.
 /// </summary>
 /// <remarks>
-/// The Cloudinary implementation does not exist yet (unit U1.1), so this unit registers only what
-/// exists: the <c>database</c> branch. A half-configured <c>cloudinary</c> provider is already
-/// refused by <c>MediaOptionsValidator</c> at startup, and this unit does not weaken that.
+/// U1.1 replaced the Wave 0 placeholder that refused a <c>cloudinary</c> provider with the real
+/// <c>CloudinaryMediaStorage</c> registration, so this file's cloudinary expectation moved with
+/// that unit. The invariant it guards is unchanged: a <c>cloudinary</c> configuration must never
+/// resolve the database adapter.
 /// </remarks>
 public class MediaModuleRegistrationTests
 {
@@ -62,18 +64,20 @@ public class MediaModuleRegistrationTests
     }
 
     [Fact]
-    public void CloudinaryProvider_DoesNotSilentlyResolveTheDatabaseStorage()
+    public void CloudinaryProvider_ResolvesTheCloudinaryStorage_NotTheDatabaseStorage()
     {
-        // CloudinaryMediaStorage is U1.1's. Until it exists, the seam must not quietly store
-        // bytes in the database under a cloudinary configuration; a caller that resolves it gets
-        // a refusal, not the wrong provider.
-        var provider = BuildProvider(("Media:Provider", "cloudinary"));
+        // U1.1's real registration. The invariant is unchanged: a cloudinary configuration must
+        // never quietly store bytes in the database.
+        var provider = BuildProvider(
+            ("Media:Provider", "cloudinary"),
+            ("CLOUDINARY_URL", "cloudinary://a-module-test-key:a-module-test-secret@a-cloud"));
 
         using var scope = provider.CreateScope();
 
-        var act = () => scope.ServiceProvider.GetRequiredService<IMediaStorage>();
+        var storage = scope.ServiceProvider.GetRequiredService<IMediaStorage>();
 
-        act.Should().Throw<InvalidOperationException>().WithMessage("*U1.1*");
+        storage.Should().BeOfType<CloudinaryMediaStorage>();
+        storage.Should().NotBeOfType<DatabaseMediaStorage>();
     }
 
     [Fact]
@@ -108,6 +112,10 @@ public class MediaModuleRegistrationTests
         var services = new ServiceCollection();
 
         // The module under test, with no host around it: the registration is the behaviour.
+        // Logging and the options registration mirror the two calls the host makes
+        // (`AddMediaOptions` then `AddMediaModule`, Program.cs).
+        services.AddLogging();
+        services.AddMediaOptions(configuration);
         services.AddMediaModule(configuration);
 
         return services.BuildServiceProvider();

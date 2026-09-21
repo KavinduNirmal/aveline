@@ -208,9 +208,12 @@ public class MediaContentTypesSniffTests
     // ---------------------------------------------------------------------------------------
 
     [Fact]
-    public void Sniff_RefusesPdfAndNonImageBodies()
+    public void Sniff_ConfirmsPdfButStillDoesNotCallItAnImage()
     {
-        Assert.Null(MediaContentTypes.Sniff(PdfBytes));
+        // Superseded expectation, changed deliberately: U0.2 shipped a sniff with no PDF arm, and
+        // this case asserted a PDF was refused. The PDF arm now exists (U1.3a), so the sniff
+        // *confirms* a PDF - while `IsRecognisableImage` keeps its narrower image meaning.
+        Assert.Equal("application/pdf", MediaContentTypes.Sniff(PdfBytes));
         Assert.False(MediaContentTypes.IsRecognisableImage(PdfBytes));
         Assert.False(VisionContentTypes.IsAnalysable("application/pdf"));
     }
@@ -246,6 +249,126 @@ public class MediaContentTypesSniffTests
         wav.AddRange("WAVEfmt "u8.ToArray());
 
         Assert.Null(MediaContentTypes.Sniff([.. wav]));
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // PDF: the `%PDF-` signature.
+    // ---------------------------------------------------------------------------------------
+
+    [Fact]
+    public void Sniff_RecognisesARealPdfHeader()
+    {
+        var sniffed = MediaContentTypes.Sniff(PdfBytes);
+
+        Assert.Equal("application/pdf", sniffed);
+
+        // PDF is admitted by the storage allow-list, but it is not an image and no vision
+        // provider reads it, so it is storable and not analysable.
+        Assert.True(MediaContentTypes.IsAllowed(sniffed));
+        Assert.False(MediaContentTypes.IsImage(sniffed));
+        Assert.False(VisionContentTypes.IsAnalysable(sniffed));
+
+        // `IsRecognisableImage` keeps its name and its narrower meaning: a PDF is recognisable
+        // to the sniff but is still not an image.
+        Assert.False(MediaContentTypes.IsRecognisableImage(PdfBytes));
+    }
+
+    [Fact]
+    public void Sniff_ToleratesASmallLeadingOffsetBeforeThePdfHeader()
+    {
+        // Malformed-but-real PDFs can carry a small run of bytes before `%PDF-`. The sniff
+        // accepts that inside a bounded leading window rather than at byte 0 only.
+        var offsetPdf = new byte[64];
+        "garbage!"u8.CopyTo(offsetPdf);
+        "%PDF-1.4"u8.CopyTo(offsetPdf.AsSpan(8));
+
+        Assert.Equal("application/pdf", MediaContentTypes.Sniff(offsetPdf));
+    }
+
+    [Fact]
+    public void Sniff_RefusesAPdfHeaderThatSitsBeyondTheLeadingWindow()
+    {
+        // The window is bounded on purpose. A `%PDF-` buried in the payload is not a PDF
+        // header, and a full-payload substring search would let an arbitrary body be blessed
+        // by a marker anywhere inside it.
+        var buried = new byte[4096];
+        Array.Fill(buried, (byte)'x');
+        "%PDF-1.7"u8.CopyTo(buried.AsSpan(3000));
+
+        Assert.Null(MediaContentTypes.Sniff(buried));
+    }
+
+    public static TheoryData<string, byte[]> PdfClaimedNonPdfBodies => new()
+    {
+        { "xml", "<?xml version=\"1.0\"?><root><evil/></root>"u8.ToArray() },
+        { "html", "<!DOCTYPE html><html><body>not a pdf</body></html>"u8.ToArray() },
+        { "plain-text", "not a pdf at all"u8.ToArray() },
+        { "leading-whitespace-then-xml", "   \n\t<?xml version=\"1.0\"?><r/>"u8.ToArray() },
+    };
+
+    [Theory]
+    [MemberData(nameof(PdfClaimedNonPdfBodies))]
+    public void Sniff_ReturnsNothingForANonPdfBodyClaimingToBePdf(string label, byte[] bytes)
+    {
+        // The extension and the declared type both say `application/pdf`; only the bytes decide.
+        // This is the arm with the most hostile content (a PDF can carry JavaScript), so an XML
+        // or HTML body must not be confirmed as a PDF on the strength of a `.pdf` name.
+        Assert.Equal("application/pdf", MediaContentTypes.Resolve("application/pdf", "report.pdf"));
+        Assert.Equal("application/pdf", MediaContentTypes.Resolve("application/octet-stream", "report.pdf"));
+
+        // The sniff returns nothing, so a policy that requires the sniff to confirm the PDF arm
+        // refuses these bodies.
+        Assert.Null(MediaContentTypes.Sniff(bytes));
+        _ = label;
+    }
+
+    [Theory]
+    [MemberData(nameof(PdfClaimedNonPdfBodies))]
+    public void APdfDeclaredBodyWithNoRecognisableSignatureIsRefusedByASniffRequiringPolicy(
+        string label, byte[] bytes)
+    {
+        // The exact rule the owner of AttachmentContentPolicy can now apply: a resolved PDF is
+        // kept only when the bytes confirm it.
+        var resolved = MediaContentTypes.Resolve("application/pdf", "report.pdf");
+        var sniffed = MediaContentTypes.Sniff(bytes);
+
+        var stored = resolved == MediaContentTypes.Pdf && sniffed is null ? null : sniffed;
+
+        Assert.Null(stored);
+        _ = label;
+    }
+
+    [Fact]
+    public void Sniff_RefusesALowercasePdfHeader()
+    {
+        // The PDF header is the literal `%PDF-`. A lowercase variant is not a PDF header, and
+        // the sniff must not treat it as one.
+        Assert.Null(MediaContentTypes.Sniff("%pdf-1.7\n"u8.ToArray()));
+    }
+
+    [Fact]
+    public void Sniff_RefusesAPdfMarkerWithNoVersion()
+    {
+        // `%PDF-` is a prefix of the signature, not the signature: a real header carries version
+        // digits, and a file that stops at the marker is not a PDF.
+        Assert.Null(MediaContentTypes.Sniff("%PDF-"u8.ToArray()));
+    }
+
+    [Theory]
+    [InlineData("image/png")]
+    [InlineData("image/jpeg")]
+    public void ARealImageBodyDeclaredAsPdfKeepsItsImageType(string expected)
+    {
+        // The mirror of the refusal: a genuine image body mislabelled `.pdf` is not a PDF, and
+        // it is not refused either - the bytes win and the stored type is the image's.
+        var bytes = expected == "image/png" ? PngBytes : JpegBytes;
+
+        Assert.Equal(expected, MediaContentTypes.Sniff(bytes));
+        Assert.NotEqual(MediaContentTypes.Pdf, MediaContentTypes.Sniff(bytes));
+
+        // `Resolve` still returns the declared PDF; the sniff is what corrects it, which is the
+        // whole reason the policy consults the sniff before keeping a PDF.
+        Assert.Equal("application/pdf", MediaContentTypes.Resolve("application/pdf", "report.pdf"));
     }
 
     [Fact]

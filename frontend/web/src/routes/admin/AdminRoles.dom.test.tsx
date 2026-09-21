@@ -12,8 +12,9 @@ describe('AdminRolesView', () => {
   it('renders a row per permission and a column per canonical role', () => {
     render(<AdminRolesView />)
     const table = screen.getByRole('table')
-    // 28 permissions since the revenue family joined the catalogue (Revenue Ledger R0).
-    expect(within(table).getAllByRole('row')).toHaveLength(1 + 28)
+    // 31 permissions: 28 once the revenue family joined the catalogue (R0), plus the three
+    // the tenant-dashboard slice adds.
+    expect(within(table).getAllByRole('row')).toHaveLength(1 + 31)
     expect(within(table).getAllByRole('columnheader')).toHaveLength(1 + 9)
   })
 

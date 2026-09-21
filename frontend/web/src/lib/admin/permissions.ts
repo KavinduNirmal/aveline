@@ -1,5 +1,5 @@
 /**
- * Canonical 28-permission catalog mirroring `Aveline.Api/Authorization/Permissions.cs`.
+ * Canonical 31-permission catalog mirroring `Aveline.Api/Authorization/Permissions.cs`.
  * This client mirror is used strictly for presentation and navigation gating.
  * Authoritative enforcement is always performed server-side.
  */
@@ -12,6 +12,9 @@ export type Permission =
   | "reports:view"
   | "settings:manage"
   | "conversations:view"
+  | "customers:manage"
+  | "team:manage"
+  | "orders:manage"
   | "billing:view"
   | "billing:view:self"
   | "billing:manage"
@@ -42,6 +45,9 @@ export const ALL_PERMISSIONS: readonly Permission[] = [
   "reports:view",
   "settings:manage",
   "conversations:view",
+  "customers:manage",
+  "team:manage",
+  "orders:manage",
   "billing:view",
   "billing:view:self",
   "billing:manage",
@@ -102,11 +108,15 @@ export const ROLE_PERMISSIONS: Record<string, readonly Permission[]> = {
     "customers:view",
     "conversations:view",
     "billing:view:self",
+    "approvals:approve",
   ],
   "org:boutique_manager": [
     "catalog:view",
     "customers:view",
     "catalog:manage",
+    "customers:manage",
+    "team:manage",
+    "orders:manage",
     "reports:view",
     "conversations:view",
     "billing:view",
@@ -118,6 +128,9 @@ export const ROLE_PERMISSIONS: Record<string, readonly Permission[]> = {
     "catalog:view",
     "customers:view",
     "catalog:manage",
+    "customers:manage",
+    "team:manage",
+    "orders:manage",
     "approvals:approve",
     "reports:view",
     "conversations:view",
@@ -128,6 +141,9 @@ export const ROLE_PERMISSIONS: Record<string, readonly Permission[]> = {
     "catalog:view",
     "customers:view",
     "catalog:manage",
+    "customers:manage",
+    "team:manage",
+    "orders:manage",
     "approvals:approve",
     "payments:refund",
     "reports:view",
@@ -140,7 +156,6 @@ export const ROLE_PERMISSIONS: Record<string, readonly Permission[]> = {
     "apikeys:view",
     "apikeys:manage",
     "stats:view",
-    "stats:view:agent",
   ],
 }
 

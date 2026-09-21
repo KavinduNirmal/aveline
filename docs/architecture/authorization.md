@@ -59,24 +59,106 @@ Server-side enforcement sits on top of the role claims:
 | --- | --- |
 | `staff` | `catalog:view`, `conversations:view` |
 | `customer_relations` | `catalog:view`, `customers:view`, `conversations:view` |
-| `moderator` | `catalog:view`, `customers:view`, `approvals:approve`, `conversations:view`, `billing:view`, `stats:view`, `stats:view:agent`, `admin:orgs:read`, `analytics:business:read` |
-| `admin` | Every permission **except** `pricing:backdate` |
+| `moderator` | `catalog:view`, `customers:view`, `approvals:approve`, `conversations:view`, `billing:view`, `stats:view`, `stats:view:agent`, `admin:orgs:read`, `analytics:business:read`, `revenue:read` |
+| `admin` | Every permission **except** `pricing:backdate` and `revenue:refund` |
 | `owner` | Every permission |
-| `org:boutique_staff` | `catalog:view`, `customers:view`, `conversations:view` |
-| `org:boutique_manager` | `catalog:view`, `customers:view`, `catalog:manage`, `reports:view`, `conversations:view`, `billing:view`, `pricing:view`, `stats:view` |
-| `org:boutique_supervisor` | `catalog:view`, `customers:view`, `catalog:manage`, `approvals:approve`, `reports:view`, `conversations:view`, `stats:view` |
-| `org:boutique_owner` | `catalog:view`, `customers:view`, `catalog:manage`, `approvals:approve`, `payments:refund`, `reports:view`, `settings:manage`, `conversations:view`, `billing:view`, `billing:manage`, `pricing:view`, `apikeys:view`, `apikeys:manage`, `stats:view`, `stats:view:agent` |
+| `org:boutique_staff` | `catalog:view`, `customers:view`, `conversations:view`, `billing:view:self`, `approvals:approve` |
+| `org:boutique_manager` | `catalog:view`, `customers:view`, `catalog:manage`, `customers:manage`, `team:manage`, `orders:manage`, `reports:view`, `conversations:view`, `billing:view`, `billing:view:self`, `pricing:view`, `stats:view` |
+| `org:boutique_supervisor` | `catalog:view`, `customers:view`, `catalog:manage`, `customers:manage`, `team:manage`, `orders:manage`, `approvals:approve`, `reports:view`, `conversations:view`, `billing:view:self`, `stats:view` |
+| `org:boutique_owner` | `catalog:view`, `customers:view`, `catalog:manage`, `customers:manage`, `team:manage`, `orders:manage`, `approvals:approve`, `payments:refund`, `reports:view`, `settings:manage`, `conversations:view`, `billing:view`, `billing:view:self`, `billing:manage`, `pricing:view`, `apikeys:view`, `apikeys:manage`, `stats:view` |
 
 Boutique roles deliberately never hold money-shaped permissions. `pricing:manage`,
 `pricing:backdate`, `billing:adjust`, `stats:system`, `admin:*` and `audit:view` are
-granted only to Aveline team roles, and `pricing:backdate` is owner-only.
+granted only to Aveline team roles, `pricing:backdate` and `revenue:refund` are
+owner-only, and no boutique role holds `revenue:read`/`revenue:manage`/`revenue:refund`
+at all. **Reading the shop's own takings is not a money-shaped permission**: it is the
+existing `reports:view`, which the grant map already gave manager, supervisor and owner
+before any route enforced it.
 
-The current permission catalog is `catalog:view`, `customers:view`, `catalog:manage`,
-`approvals:approve`, `payments:refund`, `reports:view`, `settings:manage`,
-`conversations:view`, `billing:view`, `billing:manage`, `billing:adjust`,
+`stats:view:agent` is team-only for a different reason: the agentic statistics it names
+(runs, tokens, provider cost) are agent internals, and a boutique reads its usage in
+Blossoms. No boutique role holds it, and the org-scoped `/statistics/agents/**` routes are
+not mounted at all.
+
+The current permission catalog is **31** entries: `catalog:view`, `customers:view`,
+`catalog:manage`, `approvals:approve`, `payments:refund`, `reports:view`,
+`settings:manage`, `conversations:view`, `customers:manage`, `team:manage`,
+`orders:manage`, `billing:view`, `billing:view:self`, `billing:manage`, `billing:adjust`,
 `pricing:view`, `pricing:manage`, `pricing:backdate`, `apikeys:view`, `apikeys:manage`,
 `stats:view`, `stats:view:agent`, `stats:system`, `analytics:business:read`,
-`admin:users:read`, `admin:users:manage`, `admin:orgs:read`, and `audit:view`.
+`admin:users:read`, `admin:users:manage`, `admin:orgs:read`, `audit:view`,
+`revenue:read`, `revenue:manage`, and `revenue:refund`.
+
+## Org-scoped policies for the tenant dashboard (T0a)
+
+Every tenant route names an **org-scoped** policy rather than a bare permission string:
+`OrganizationScopeAuthorizationHandler` resolves the caller from the `sub` claim, the target
+organization from the `organizationId` route value, and requires an `Active` membership whose
+boutique role grants the policy's permission. A bare permission policy would authorise on the
+JWT's possibly-stale role claims and never consult the route value, which defeats tenant
+isolation.
+
+The tenant-dashboard slice adds the following, and names each one because the defect it closes
+is precisely "nobody wrote down which permission a route meant":
+
+| Policy | Requirement | Used by |
+| --- | --- | --- |
+| `BoutiqueMember` | `Active` membership, **no permission** | The catalogue's operational writes (scan, label, photograph, compose) and the order reads. Exists so a route that means "an active member" stops borrowing `catalog:view` as a proxy. |
+| `BoutiqueCatalogManage` | `catalog:manage` | The four catalogue writes: create, edit, publish/unpublish, delete. |
+| `BoutiqueCustomerManage` | `customers:manage` | Editing and soft-deleting a client record. |
+| `BoutiqueTeamManage` | `team:manage` | The eight staff routes: invitations ×3 and members ×5. |
+| `BoutiqueOrderManage` | `orders:manage` | Order update, status change, cancel, recalculate, and business-rule writes. |
+| `BoutiqueReportsView` | `reports:view` | The shop's KPIs, revenue series and income ledger. |
+
+**Why `team:manage` is separate from `settings:manage`.** `BoutiqueMembershipManage` is
+`settings:manage`, and `settings:manage` also reaches Integrations, where `IntegrationCredential`
+holds the WhatsApp and payment-gateway secrets (ADR-011). Granting a manager `settings:manage` to
+answer "may a manager manage staff" would have handed them the gateway credentials as well. The
+eight team routes therefore move to `BoutiqueTeamManage`; the two organisation settings routes
+(`PATCH /orgs/{organizationId}` and `GET /orgs/{organizationId}/settings`) stay on
+`BoutiqueMembershipManage`.
+
+**Why staff now hold `approvals:approve`.** A staff member may approve a customer order. The
+approval controller puts one policy on four verbs, so the grant alone would also let them
+`reject` (which **cancels** the order) and `revise` (which **rewrites** discount, total and
+margin). The verb split — `/approve` and `/decision` at `approvals:approve`, `/reject` and
+`/revise` at `BoutiqueOrderManage` — is what makes the grant mean only what it says.
+
+### Two blocking isolation defects closed (T1)
+
+**F-1 — `OrdersController` and `BusinessRulesController` had no authorization at all.** Neither
+controller carried an `[Authorize]` attribute, and both used the route token `{orgId:guid}`. The
+organization-scope handler reads `RouteValues["organizationId"]` and nothing else, so even adding a
+policy would not have bound. The fallback policy is the default one, which requires authentication
+only. The combined effect was that **any authenticated caller — including another boutique's staff —
+could read and write any organization's orders and business rules**. Both controllers now use
+`{organizationId:guid}` and name a policy; the split is:
+
+| Route class | Policy |
+| --- | --- |
+| Order reads (`GET`) and `POST /orders` | `BoutiqueMember` — any active member |
+| Order `PUT`, `PATCH /status`, `/cancel`, `/recalculate` | `BoutiqueOrderManage` (`orders:manage`) |
+| Every business-rule route, including the reads and `/evaluate` | `BoutiqueOrderManage` |
+
+`BoutiqueAccess` (= `catalog:view`) is deliberately **not** used: it is held by every boutique role,
+so it would have let staff cancel orders and rewrite the rules that gate discounts.
+
+**F-2 — every catalog write inherited `catalog:view`.** The group carried one policy and all
+fourteen write routes inherited it, while `catalog:manage` was enforced on **zero** routes in the
+codebase. The fix is a per-route attribute on top of the unchanged group policy (house style, as
+`ConversationEndpoints` composes them): **four managed** routes (create, edit, publish, delete) take
+`BoutiqueCatalogManage`, and the **ten operational** ones (search, QR label, scan, vision analysis,
+VIP matches, outfit compose, sourcing, image upload) take the permission-free `BoutiqueMember`. A
+blanket `catalog:manage` was rejected because it would have taken the camera, the label printer and
+the AI analysis away from `org:boutique_staff`.
+
+Two further corrections rode along: `GET …/usage` moved from `BoutiqueAccess` to
+`BoutiqueBillingSelfView` (a usage read is a billing read; every org role holds
+`billing:view:self`, so access is unchanged), and the approval actor now resolves through
+`IUserRepository.GetByClerkIdAsync` instead of `Guid.TryParse` on the Clerk `sub` — a subject such as
+`user_2abc…` never parsed, so every decision recorded a null actor.
+
+
 
 ## Team-only role policies carry their permission requirement (A9)
 

@@ -321,8 +321,17 @@ public class ConversationService : IConversationService
 
         // The note's own attachments are described to the agent: the bridge carries their
         // identity and an absolute tokenised URL, never their bytes (salon plan §9.3 site 2).
+        //
+        // The conversation's customer binding is forwarded too. Without it a staff question about
+        // the customer in front of them ("what do we have on file for her?") reached the agent with
+        // no customer context at all, so Ava skipped personalization and the Salon showed only
+        // Aveline's one-line summary with nothing under it.
         await TriggerAgentAsync(
-            conversation, text, attachments: attachments, cancellationToken: cancellationToken);
+            conversation,
+            text,
+            customerId: conversation.CustomerId,
+            attachments: attachments,
+            cancellationToken: cancellationToken);
 
         return MessageDto.From(message);
     }

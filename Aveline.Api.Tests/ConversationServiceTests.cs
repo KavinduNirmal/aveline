@@ -460,6 +460,42 @@ public class ConversationServiceTests
         Assert.Equal("/agents/query", _agent.LastPath);
     }
 
+    /// <summary>
+    /// A staff question about the customer in front of them must carry the conversation's customer
+    /// binding. Without it the agent had no customer context, Ava skipped personalization, and the
+    /// Salon rendered only Aveline's one-line summary with nothing beneath it.
+    /// </summary>
+    [Fact]
+    public async Task SendStaffNoteAsync_ForwardsTheConversationsCustomerToTheAgent()
+    {
+        var orgId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
+        var salon = await _sut.GetOrCreateSalonAsync(orgId, userId, customerId, CancellationToken.None);
+
+        await _sut.SendStaffNoteAsync(
+            orgId, userId, salon.Id, "what do we have on file for her?", null, null, CancellationToken.None);
+
+        Assert.Equal(1, _agent.PostCount);
+        Assert.Contains("\"customer_id\":\"" + customerId + "\"", _agent.LastBody);
+    }
+
+    [Fact]
+    public async Task SendStaffNoteAsync_ForwardsNoCustomerForTheGeneralSalon()
+    {
+        // The general Salon has no customer, and inventing one would let Ava pull a stranger's
+        // memories into an unrelated note.
+        var orgId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var salon = await _sut.GetOrCreateSalonAsync(orgId, userId, null, CancellationToken.None);
+
+        await _sut.SendStaffNoteAsync(
+            orgId, userId, salon.Id, "what do we have on file?", null, null, CancellationToken.None);
+
+        Assert.Equal(1, _agent.PostCount);
+        Assert.DoesNotContain("\"customer_id\":\"", _agent.LastBody);
+    }
+
     [Fact]
     public async Task SendStaffNoteAsync_Throws_WhenConversationNotInOrg()
     {

@@ -74,7 +74,13 @@ export default function App() {
             <Route path="/invite" element={<InvitePage />} />
             <Route element={<RequireAccountState />}>
               <Route path="/app" element={<DashboardRedirect />} />
-              <Route path="/app/b/:slug" element={<TenantDashboard />} />
+              {/* The section is part of the URL so a dashboard section is linkable and survives
+                  a refresh (Q6). The bare slug route redirects to `/overview`. */}
+              <Route
+                path="/app/b/:slug"
+                element={<Navigate to="overview" replace />}
+              />
+              <Route path="/app/b/:slug/:section" element={<TenantDashboard />} />
 
               {/* Administrator console. Nested inside the same guards as the tenant app, so an
                   unauthenticated visitor cannot reach it and an account mid-lifecycle is handled

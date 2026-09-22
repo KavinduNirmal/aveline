@@ -142,7 +142,13 @@ endpoint code:
 | `Owners` | `owner`, `org:boutique_owner` |
 | `AdminReview` | `moderator`, `admin`, `owner` |
 | `BoutiqueAccess` | authenticated **and** an `Active` membership in the org in the route that grants `catalog:view` |
-| `BoutiqueMembershipManage` | same, grants `settings:manage` |
+| `BoutiqueMember` | authenticated **and** an `Active` membership in the org — **no permission**. The gate a route uses when it means "an active member" rather than borrowing `catalog:view` |
+| `BoutiqueMembershipManage` | same, grants `settings:manage` (the organisation profile and Integrations) |
+| `BoutiqueTeamManage` | same, grants `team:manage` (invitations, the member list, role changes, suspend/activate, removal) |
+| `BoutiqueCatalogManage` | same, grants `catalog:manage` (create/edit/publish/delete a catalogue item) |
+| `BoutiqueCustomerManage` | same, grants `customers:manage` (edit and soft-delete a client record) |
+| `BoutiqueOrderManage` | same, grants `orders:manage` (order update/status/cancel/recalculate and business-rule writes) |
+| `BoutiqueReportsView` | same, grants `reports:view` (the shop's KPIs, revenue series and income ledger) |
 | `BoutiqueConversationAccess` | same, grants `conversations:view` |
 | `BoutiqueCustomerAccess` | same, grants `customers:view` (the tenant customer surface: the client book, a client profile and Home's client highlights) |
 | `InternalServicePolicy` | `X-Internal-Token` + role `InternalService` |
@@ -165,26 +171,41 @@ caller from `sub`, loads the `OrganizationMembership`, requires
 required permission. A still-valid JWT carrying stale org claims **cannot** cross
 organizations (`Authorization/OrganizationScopeAuthorizationHandler.cs:38-74`).
 
-**Permission catalog (current, 8):**
-`catalog:view`, `customers:view`, `catalog:manage`, `approvals:approve`,
-`payments:refund`, `reports:view`, `settings:manage`, `conversations:view`.
+**Permission catalog (current, 31):** the eight original
+(`catalog:view`, `customers:view`, `catalog:manage`, `approvals:approve`,
+`payments:refund`, `reports:view`, `settings:manage`, `conversations:view`), the
+billing and pricing family (`billing:view`, `billing:view:self`, `billing:manage`,
+`billing:adjust`, `pricing:view`, `pricing:manage`, `pricing:backdate`), the
+API-access pair (`apikeys:view`, `apikeys:manage`), statistics
+(`stats:view`, `stats:view:agent`, `stats:system`, `analytics:business:read`),
+team administration (`admin:users:read`, `admin:users:manage`, `admin:orgs:read`,
+`audit:view`), the revenue family (`revenue:read`, `revenue:manage`,
+`revenue:refund`), and the three the tenant-dashboard slice adds:
+`customers:manage`, `team:manage`, `orders:manage`.
 
-**Role → permission grants (current, from `Authorization/Permissions.cs:29-43`):**
+**Role → permission grants (current, from `Authorization/Permissions.cs`).**
+`admin` holds every permission except `pricing:backdate` and `revenue:refund`;
+`owner` holds every permission.
 
 | Role | Permissions |
 | --- | --- |
 | `staff` | `catalog:view`, `conversations:view` |
 | `customer_relations` | `catalog:view`, `customers:view`, `conversations:view` |
-| `moderator` | `catalog:view`, `customers:view`, `approvals:approve`, `conversations:view` |
-| `admin`, `owner` | all |
-| `org:boutique_staff` | `catalog:view`, `customers:view`, `conversations:view` |
-| `org:boutique_manager` | `catalog:view`, `customers:view`, `catalog:manage`, `reports:view`, `conversations:view` |
+| `moderator` | `catalog:view`, `customers:view`, `approvals:approve`, `conversations:view`, `billing:view`, `stats:view`, `stats:view:agent`, `admin:orgs:read`, `analytics:business:read`, `revenue:read` |
+| `org:boutique_staff` | `catalog:view`, `customers:view`, `conversations:view`, `billing:view:self`, `approvals:approve` |
+| `org:boutique_manager` | `catalog:view`, `customers:view`, `catalog:manage`, `customers:manage`, `team:manage`, `orders:manage`, `reports:view`, `conversations:view`, `billing:view`, `billing:view:self`, `pricing:view`, `stats:view` |
 | `org:boutique_supervisor` | manager grants + `approvals:approve` |
-| `org:boutique_owner` | all |
+| `org:boutique_owner` | every permission that reaches a boutique: adds `payments:refund`, `settings:manage`, `billing:manage`, `apikeys:view`, `apikeys:manage` |
 
-> **Documentation drift warning.** `docs/architecture/authorization.md:51-62`
-> omits `conversations:view` from two rows and from its catalog list. **The code
-> above is authoritative.** Phase 0 regenerates that document.
+> **Tenant-dashboard slice (T0a).** Three permissions were added and one grant widened:
+> `customers:manage` (nothing correct existed to gate a client write on, because
+> `customers:view` is held by every role), `team:manage` (a manager may manage staff
+> without also being handed `settings:manage`, which reaches Integrations and its
+> WhatsApp/payment-gateway credentials), and `orders:manage` (staff may approve a
+> customer order but may not change an order's lifecycle or edit the business rules
+> that gate discounts). `approvals:approve` is now granted to `org:boutique_staff`,
+> and the approval controller splits its verbs so that grant cannot also cancel an
+> order.
 
 **Permissions added by this plan (14, Phase 0–3):** `billing:view`,
 `billing:manage`, `billing:adjust`, `pricing:view`, `pricing:manage`,
@@ -383,9 +404,9 @@ The `:guid` suffix is an ASP.NET Core route constraint that rejects a
 non-Guid segment with `404` **before** authorization runs. It has no effect on the
 wire format of the URL. Always send a Guid.
 
-Grouped sections also use a relative shorthand: `#### GET /runs` inside the
-**Agent statistics** section means
-`GET /api/v1/orgs/{organizationId:guid}/statistics/agents/runs`. Each group states
+Grouped sections also use a relative shorthand: `#### GET /requests` inside the
+**API consumption** section means
+`GET /api/v1/orgs/{organizationId:guid}/statistics/api/requests`. Each group states
 its base path.
 
 **To find an endpoint:** search this README for the last segment (for example
@@ -465,9 +486,9 @@ Unregister a push token. **Response `204`.** **Errors:** `401` empty, `404` no u
 | `GET` | `/api/v1/orgs/my` | authenticated | — | `OrganizationMembershipView[]` |
 | `GET` | `/api/v1/orgs/by-slug/{slug}` | authenticated | — | `{ organization, membership }` or `404` |
 | `GET` | `/api/v1/orgs/{organizationId:guid}` | `BoutiqueAccess` | — | `OrganizationProfileDto` or `404` |
-| `POST` | `/api/v1/orgs/{organizationId:guid}/members/{userId:guid}/suspend` | `BoutiqueMembershipManage` | — | `{ organizationId, userId, boutiqueRole, status }` |
-| `POST` | `/api/v1/orgs/{organizationId:guid}/members/{userId:guid}/activate` | `BoutiqueMembershipManage` | — | same |
-| `DELETE` | `/api/v1/orgs/{organizationId:guid}/members/{userId:guid}` | `BoutiqueMembershipManage` | — | `204` |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/members/{userId:guid}/suspend` | `BoutiqueTeamManage` | — | `{ organizationId, userId, boutiqueRole, status }` |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/members/{userId:guid}/activate` | `BoutiqueTeamManage` | — | same |
+| `DELETE` | `/api/v1/orgs/{organizationId:guid}/members/{userId:guid}` | `BoutiqueTeamManage` | — | `204` |
 
 **Important:** `ClerkOrgId` is **never** accepted from the request body — it is
 derived from the JWT `org_id` claim (`Endpoints/OrganizationEndpoints.cs:169-178`).
@@ -486,18 +507,47 @@ DTOs `Modules/Organizations/DTOs/OrganizationDtos.cs`.
 
 | Method | Path | Policy | Body | Response |
 | --- | --- | --- | --- | --- |
-| `POST` | `/api/v1/orgs/{organizationId:guid}/invitations` | `BoutiqueMembershipManage` | `{ boutiqueRole, recipientEmail? }` | `CreateInvitationResponse { invitationId, code, link, mobileLink, boutiqueRole, recipientEmail, expiresAt }` |
-| `GET` | `/api/v1/orgs/{organizationId:guid}/invitations` | `BoutiqueMembershipManage` | — | `PendingInvitationDto[]` |
-| `POST` | `/api/v1/orgs/{organizationId:guid}/invitations/{invitationId:guid}/revoke` | `BoutiqueMembershipManage` | — | `204` |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/invitations` | `BoutiqueTeamManage` | `{ boutiqueRole, recipientEmail?, validityHours?, sendSummaryToOwner? }` + **`Idempotency-Key`** | `CreateInvitationResponse` |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/invitations/bulk` | `BoutiqueTeamManage` | `{ boutiqueRole, count, validityHours?, sendSummaryToOwner? }` + **`Idempotency-Key`** | `BulkCreateInvitationResponse` |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/invitations` | `BoutiqueTeamManage` | — | `PendingInvitationDto[]` |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/invitations/{invitationId:guid}/revoke` | `BoutiqueTeamManage` | — | `204` |
 | `POST` | `/api/v1/invitations/accept` | authenticated + IP rate limit | `{ code }` | `{ organizationId, userId, boutiqueRole, clerkOrgId, accountState }` |
 
 **Invitable roles are exactly:** `org:boutique_supervisor`, `org:boutique_manager`,
 `org:boutique_staff`. The owner role is **not** invitable.
-**Errors:** `400` not-invitable role / not acceptable / recipient mismatch;
-`404` invitation or user not found; `409` membership already exists;
-`429` too many attempts; `503` invitation code store unavailable.
-**Rate limit:** `POST /invitations/accept`, per client IP, default 10/min.
-**Source:** `Endpoints/OrganizationEndpoints.cs:36-144,349-420`.
+
+**E-10 / F-4 — what changed in T6.**
+
+- `POST …/invitations/bulk` exists. Before T6 the tenant panel POSTed here and got a `404`; it now
+  mints exactly `count` codes for one role in a single call.
+- **`count` is clamped to `[1,10]`** server-side and **`validityHours` to `[1,720]`**. The bulk
+  response reports `requestedCount`, `createdCount` and `effectiveValidityHours` side by side, so a
+  clamp is visible rather than silent. The clamp is the control; a per-organization limiter
+  (`Invitations:CreateRateLimit`, default 10/min) is the backstop.
+- **Both creation routes require an `Idempotency-Key`.** A retried bulk create would otherwise mint a
+  duplicate batch of staff codes. A replay returns the stored response with
+  `Idempotency-Replayed: true`; a replay with a different body is `409 idempotency-key-reuse`.
+- **`validityHours` and `sendSummaryToOwner` are no longer dropped.** They were sent by the panel and
+  silently ignored because the request record did not declare them. `validityHours` reaches
+  `ExpiresAt`; `sendSummaryToOwner` is answered with a three-valued status —
+  `NotRequested` | `Dispatched` | `NotSent` — plus a note, because "not asked for" and "asked for but
+  not sent" are different facts. `Dispatched` means the notice was handed to the configured
+  `IEmailService`; the repository's sender records a dispatch, not a delivery, and the note says so.
+  The summary email never carries a code.
+
+`CreateInvitationResponse` is `{ invitationId, code, link, mobileLink, boutiqueRole, recipientEmail,
+expiresAt, summaryEmailRequested, summaryEmailStatus, summaryEmailNote }`.
+`BulkCreateInvitationResponse` is `{ invitations: CreateInvitationResponse[], requestedCount,
+createdCount, effectiveValidityHours, summaryEmailRequested, summaryEmailStatus, summaryEmailNote }`.
+
+**Errors:** `400` not-invitable role / not acceptable / recipient mismatch / missing or malformed
+`Idempotency-Key`; `404` invitation or user not found; `409` membership already exists;
+`429` too many attempts (accept) or too many batches (bulk);
+`503` invitation code store unavailable.
+**Rate limit:** `POST /invitations/accept`, per client IP, default 10/min;
+`POST /invitations/bulk`, per organization, default 10/min.
+**Source:** `Endpoints/OrganizationEndpoints.cs`,
+`Modules/Organizations/DTOs/InvitationDtos.cs`.
 
 ### B.5 Onboarding
 
@@ -606,6 +656,17 @@ output is published as `kind: Note`), who spoke last in the client's vocabulary
 closed vocabulary `approval | choice | draft` in that priority. `kind` keeps its declared
 meaning; customer context is the separate `customerId` axis, and `externalRef` discloses a
 channel-created thread whose customer is not yet identified.
+
+**A thread with no client and no channel is the organization-shared general Salon** — Aveline's own.
+`customerName` is the client's name when the thread is bound to one, and `null` otherwise, so a
+client that has no recorded name is distinguishable from a thread that has no client. The general
+Salon is the thread a client-less `POST …/conversations` gets or creates.
+
+**`JoinSalon` is additive, and a connection may belong to several Salon groups.** It verifies
+membership and the thread's visibility, then adds the connection to `salon:{conversationId}` without
+leaving any other group. A client can therefore follow two threads at once — the tenant dashboard's
+Salon section and its Aveline drawer do exactly that — and must demultiplex incoming
+`ReceiveMessage` / `ReceiveAgentState` payloads by `conversationId`.
 `MessageDto`: `{ id, conversationId, authorKind, agentKey, authorUserId, kind,
 contentBlocks, contentHash, replyToMessageId, status, createdAt }`.
 
@@ -1050,6 +1111,429 @@ Totals and `dataQuality` are computed over the whole window.
 
 ---
 
+### B.19 Commerce — orders, business rules, payments, deliveries, approvals
+
+These are the tenant-scoped commerce controllers. They were previously **not documented at all**,
+which is part of how the two defects below survived: a route that appears in no catalogue is a route
+nobody reviews.
+
+**The route token is `{organizationId:guid}`.** This matters beyond style: the organization-scope
+authorization handler reads `RouteValues["organizationId"]` and nothing else
+(`Authorization/OrganizationScopeAuthorizationHandler.cs:38`), so a route declared with any other
+token cannot bind an org-scoped policy.
+
+The tenant-dashboard slice's T1 fixed two blocking defects here:
+
+- **F-1** — `OrdersController` and `BusinessRulesController` carried **no `[Authorize]` at all** and
+  used `{orgId:guid}`. The fallback policy is "authenticated", so **any authenticated caller,
+  including another boutique's staff, could read and write any organisation's orders and business
+  rules.** Both controllers now carry an org-scoped policy and the `organizationId` token.
+- **F-5** — the approval actor was resolved by `Guid.TryParse` on the Clerk `sub`. A Clerk subject is
+  a string such as `user_2abc…`, so the parse always failed and every decision recorded a **null
+  actor**. It now resolves through `IUserRepository.GetByClerkIdAsync`, the way every other actor in
+  the codebase does.
+
+#### Orders
+
+| Method | Path | Policy | Permission |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/orders` | `BoutiqueMember` | — (any active member) |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/orders/{id:guid}` | `BoutiqueMember` | — |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/orders` | `BoutiqueMember` | — (the counter creates orders) |
+| `PUT` | `/api/v1/orgs/{organizationId:guid}/orders/{id:guid}` | `BoutiqueOrderManage` | `orders:manage` |
+| `PATCH` | `/api/v1/orgs/{organizationId:guid}/orders/{id:guid}/status` | `BoutiqueOrderManage` | `orders:manage` |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/orders/{id:guid}/cancel` | `BoutiqueOrderManage` | `orders:manage` |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/orders/{id:guid}/recalculate` | `BoutiqueOrderManage` | `orders:manage` |
+
+Reads and create stay at member level because a counter associate must see and create the order they
+are serving. The lifecycle verbs take `orders:manage` because Q8 says staff may **approve** a customer
+order but may not change its lifecycle — and `BoutiqueAccess` (= `catalog:view`, held by every role)
+would have granted staff the ability to cancel orders.
+
+#### Business rules
+
+| Method | Path | Policy | Permission |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/business-rules` | `BoutiqueOrderManage` | `orders:manage` |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/business-rules/{id:guid}` | `BoutiqueOrderManage` | `orders:manage` |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/business-rules` | `BoutiqueOrderManage` | `orders:manage` |
+| `PUT` | `/api/v1/orgs/{organizationId:guid}/business-rules/{id:guid}` | `BoutiqueOrderManage` | `orders:manage` |
+| `DELETE` | `/api/v1/orgs/{organizationId:guid}/business-rules/{id:guid}` | `BoutiqueOrderManage` | `orders:manage` |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/business-rules/evaluate` | `BoutiqueOrderManage` | `orders:manage` |
+
+Every route here is `orders:manage`, including the reads and the evaluator, because a business rule
+*is* order policy: it decides when an order needs approval (`OrderService.cs:112`) and what caps a
+discount.
+
+#### Payments, deliveries, approvals
+
+| Method | Path | Policy | Notes |
+| --- | --- | --- | --- |
+| `GET`/`POST`/… | `/api/v1/orgs/{organizationId:guid}/payments/**` | `BoutiqueAccess`, refund additionally `BoutiquePaymentRefund` | generate / confirm / refund |
+| `GET`/`POST`/… | `/api/v1/orgs/{organizationId:guid}/deliveries/**` | `BoutiqueAccess` | delivery plans |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/approvals` | `BoutiqueAccess` | the pending queue |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/approvals/{id:guid}/decision` | `BoutiqueApprovalDecision`, plus `BoutiqueOrderManage` for a `reject`/`revise` body | `approvals:approve`; `orders:manage` for the cancel/rewrite verbs |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/approvals/{id:guid}/approve` | `BoutiqueApprovalDecision` | `approvals:approve` — **staff hold it** |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/approvals/{id:guid}/reject` | `BoutiqueOrderManage` | **cancels the order**; requires `orders:manage` (T6) |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/approvals/{id:guid}/revise` | `BoutiqueOrderManage` | **rewrites discount/total/margin**; requires `orders:manage` (T6) |
+
+**The four decision verbs are split by what they do, and the split is by verb — not only by route
+(T6 / Q14).** `reject` sets `order.Status = "cancelled"` and `revise` rewrites the money fields, so
+granting `org:boutique_staff` `approvals:approve` (Q8) would otherwise hand them exactly the
+abilities Q8 denied. `/approve` stays on `approvals:approve`; `/reject` and `/revise` move to
+`BoutiqueOrderManage` (`orders:manage`, manager/supervisor/owner). **`/decision` carries its verb in
+its body**, so the route policy alone would leave a door open: a `reject` or `revise` decision
+submitted through `/decision` is refused with `403 order-manage-required` unless the caller also
+holds `orders:manage`. The classification is one named function,
+`Modules/Commerce/Models/ApprovalDecisions.cs`, so a future verb cannot be added without being
+classified.
+
+**Errors:** `400` invalid body or transition; `401`; `403` (policy or cross-tenant); `404` (missing,
+or not in this organisation — deliberately indistinguishable); `409` where a state conflict applies.
+**Source:** `Modules/Commerce/Controllers/{Orders,BusinessRules,Payments,Deliveries,Approvals}Controller.cs`.
+
+---
+
+### B.20 Tenant customer surface
+
+The client book Home and the counter use. Reads take `BoutiqueCustomerAccess` (`customers:view`,
+held by every role); the two writes take `BoutiqueCustomerManage` (`customers:manage`, held by
+manager/supervisor/owner — T0a added it because `customers:view` is held by everyone, so there was
+nothing correct to gate a write on).
+
+| Method | Path | Policy | Notes |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/customers` | `customers:view` | query: `search?`, `level?`, `page`, `pageSize` (clamped `[1,500]`, default 200) |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/customers/highlights` | `customers:view` | Home's client row; `activity` is generated from a real interaction, and there is deliberately **no** `hasNewActivity` flag — no read marker exists in the schema |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}` | `customers:view` | **E-6.** The tenant-safe detail |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/interactions` | `customers:view` | **E-9.** Paged history, newest first |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/customers` | `customers:view` | Walk-in creation; requires `Idempotency-Key`. Also creates the client's organization-shared Salon, seeded with Aveline's greeting (see below) |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/interactions` | `customers:view` | Records an interaction; requires `Idempotency-Key` |
+| `PATCH` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}` | **`customers:manage`** | **E-7.** Partial update of the writable subset |
+| `DELETE` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}` | **`customers:manage`** | **E-8.** Soft delete |
+
+#### The client's Salon is created with the client
+
+Creating a client also creates its **organization-shared Salon** (`Conversations` row with
+`CustomerId` set, `OwnerUserId` `NULL` per ADR-021) and seeds Aveline's greeting into it. This is a
+side effect of `POST …/customers`, not a separate route.
+
+It is load-bearing rather than tidy: the Salon list (`GET …/conversations`) lists **conversations**,
+not clients, so a client without a Salon is invisible to the concierge surface even though it is in
+the client book. The demo tenant was in exactly that state — two clients, no customer-bound
+conversations.
+
+Clients created before this behaviour are repaired once at application start by
+`CustomerSalonBackfillJob`, which inserts the missing Salon **and** its greeting through the same
+service path that the create endpoint uses. It is idempotent, so a restart or a second instance is a
+no-op, and it is capped by `Conversations:CustomerSalonBackfillMaxCustomers` (default 500) per boot.
+It is deliberately not a SQL migration: the greeting is domain text, and duplicating it in SQL would
+give repaired Salons a different opening message from new ones.
+
+#### The detail shape (E-6)
+
+`TenantCustomerDetailDto` carries `customerId`, `fullName`, `nickname`, `phoneNumber`, `email`,
+`level`, `status`, `totalSpent`, `visitCount`, `lastVisitAtUtc`, `loyaltyTierIsDerived`,
+`createdAtUtc`, `updatedAtUtc`, `interactionCount` and `tags`. It is deliberately **not** the
+internal customer shape: no memory, no extracted AI context and no internal-token fields reach a
+staff device.
+
+`loyaltyTierIsDerived` is a constant `1`, not a boolean: it exists so the client cannot render an
+editable tier control. `status` is computed by `CustomerLoyaltyService.RecommendStatus` from spend,
+visits and recency.
+
+**E-6 repairs a dangling contract.** `POST …/interactions` already emitted
+`Location: …/customers/{customerId}` and that GET did not exist. This slice creates it.
+
+#### The update shape (E-7)
+
+`{ fullName?, nickname?, phoneNumber?, email?, level? }` — and nothing else. **`status` is absent on
+purpose**: it is derived, so making it writable would let the UI contradict the loyalty rule, and a
+`status` sent in the body is ignored.
+
+`phoneNumber` is normalised through the existing `PhoneNormalizer.ToE164`. A number that is not a
+recognised Sri Lankan form is a `400`; a number another client in the same organisation already
+holds is a **`409 { "code": "customer-phone-conflict" }`**.
+
+The same `409` applies on **create**: the unique `(OrganizationId, PhoneNumber)` index used to
+surface as an unmapped `DbUpdateException` and therefore a `500`. A pre-check inside the service
+makes the collision a typed outcome on every provider, so the behaviour a client sees does not
+depend on the storage engine.
+
+#### The delete semantics (E-8)
+
+**Soft** — `DeletedAt` is set, matching the existing global query filter, so a deleted client is
+invisible to every read.
+
+**Idempotent** — deleting an already-deleted client is `204`, not `404`. The deletion is the end
+state, and the soft-delete filter means the caller could not have distinguished the two anyway. The
+service reads through `IgnoreQueryFilters()` with the tenant scope applied explicitly, so
+"already deleted in *this* organisation" is reachable while another organisation's row is not.
+
+**Refused with `409 { "code": "customer-has-open-orders", "openOrders": n }`** when the client has
+orders in a **non-terminal** status. Terminal means `completed`, `cancelled` or `rejected` — the
+three with no outgoing edge in `OrderService.ValidTransitions`. This is a **business guard, not
+referential integrity**: `Order.CustomerId` is a bare `Guid` with no foreign key or navigation, and
+`Order.CustomerName` is denormalised, so nothing is orphaned and a deleted client's orders stay
+readable. The guard exists so a sale-to-delete flow cannot remove a client mid-transaction.
+
+#### Errors
+
+`400` invalid body, a non-Sri-Lankan phone, or a visit in the future / older than 30 days;
+`401`; `403` (policy or cross-tenant); `404` missing, deleted, **or in another organisation** —
+deliberately indistinguishable, matching the by-slug precedent; `409` as above.
+**Source:** `Endpoints/CustomerTenantEndpoints.cs`,
+`Modules/CustomerConcierge/Services/CustomerTenantService.cs`,
+`Modules/CustomerConcierge/DTOs/CustomerTenantDtos.cs`.
+
+---
+
+### B.21 Boutique income — the register and the per-kind breakdown
+
+**A different economy from §B.16 and §B.17.** Those are the **admin** revenue surface, which records
+what Aveline billed a boutique. This is what a **boutique** took from **its clients**, from the
+`BoutiqueSaleEntries` table. The two are never summed and no route reads both. The wire calls it
+**Income** because that is the owner-facing word; the entity is a `BoutiqueSaleEntry`, named so that
+nobody merges it with Aveline's revenue journal.
+
+| Method | Path | Policy | Permission |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/income/ledger` | `BoutiqueReportsView` | `reports:view` |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/income/accounts` | `BoutiqueReportsView` | `reports:view` |
+
+Both routes are **org-scoped**: the policy resolves the caller's membership from the database against
+the route's `organizationId`, so a still-valid JWT carrying another organisation's claim cannot cross
+tenants. A staff member holds no `reports:view` and receives `403`; their reduced takings card is a
+separate route.
+
+#### The two-basis rule, and why it cannot be flattened
+
+Every entry carries a `chargeBasis`:
+
+- **`Derived`** — "this is what the order says was sold". **Billed value**, with no evidence that
+  money moved.
+- **`Verified`** — somebody asserted this money was taken: a counter sale, a confirmed payment, a
+  refund.
+
+`amount` is **always positive** and the sign is applied by the reader from `kind`, so a column sum can
+never net a refund against a sale by accident. The figures the response reports are, and must remain,
+separate:
+
+| Field | Meaning |
+| --- | --- |
+| `verifiedTotal` | Money taken, excluding refunds |
+| `derivedTotal` | Billed value awaiting confirmation |
+| `unverifiedGap` | **Equal to `derivedTotal`.** The headline honesty number, not an error |
+| `netVerified` | `verifiedTotal − refundTotal` |
+
+**No screen may present `derivedTotal + verifiedTotal` as one unlabelled figure.** `isReconciled` is
+`true` only when `derivedTotal` is zero.
+
+Each `kind` (`Sale`, `PaymentReceived`, `Refund`, `Adjustment`) is also reported in **its own total**,
+so a refund is never netted into a sale figure without a label.
+
+#### The register
+
+`GET …/income/ledger` — query: `from`, `to`, `kind`, `basis`, `q` (searches `reason` and `sourceRef`),
+`page`, `pageSize` (clamped `[1,200]`, default 50).
+
+The **window totals and the reconciliation block describe the whole window, not the page**, so a
+caller paging through a week still sees the week's figures. An unknown `kind` or `basis` is a **`400`
+naming the known values**, never a silently ignored filter.
+
+**The window cap is echoed, never silent.** A window longer than `TenantDashboard:MaxWindowDays`
+(default 400) is capped, `windowCapped` is `true`, the effective window is returned, and a
+data-quality note says so — a chart labelled "1 year" over 400 days of data is a lie about the shape
+of the series.
+
+**The register is uncached**, because it carries the reconciliation banner.
+
+#### The per-kind breakdown
+
+`GET …/income/accounts` — query: `from`, `to`. Returns one total and count per `kind`, plus a
+`byPaymentMethod` split for cash entries. That split is read from the **payment rows**, joined on
+`paymentId`, rather than inferred: a ledger entry carries no payment method of its own, and inventing
+one would be exactly the fabrication this surface exists to avoid. An entry with no payment simply has
+no method to report.
+
+#### The data-quality block
+
+`BoutiqueIncomeDataQualityDto` is this surface's own vocabulary — the sixth in the API, deliberately
+not a reuse of the revenue family's. `paymentRowsPresent` is `false` when the shop has no `Payments`
+rows at all, which is the single most likely reason a real shop's cash figures read zero; the notes
+say so rather than leaving the owner to conclude their shop took nothing. `incomeLedgerBackfilled`
+reports whether the register contains only rows the reconciliation job repaired. `currency` is read
+from `Organization.Currency` — a real column — rather than hardcoded.
+
+#### The reconciliation job, and the gap it cannot close
+
+`IncomeLedgerReconciliationJob` runs hourly and repairs a ledger write that failed **after** its
+business event succeeded — a payment confirmation returns `200` because the money moved, so a failed
+insert would leave the register silently understating the shop's takings. It is bounded to a 7-day
+window and **idempotent by construction**: each repair reuses the product writer's own `SourceRef`,
+so the ledger's filtered unique index turns a second attempt into a no-op. It reports the repair
+count at **warning** level, because a job that quietly repairs rows every run is telling an operator
+that a writer upstream is broken.
+
+**It cannot repair counter sales, and does not pretend to.** The plan specified it as repairing
+"confirmed payments or interactions carrying a purchase total"; implementation established that the
+second half is impossible, because `CustomerInteraction` has **no amount column** — the purchase
+total is read from the request, folded into `Customer.TotalSpent`, and discarded. The job repairs
+payments, counts the interactions it could not repair, and logs them. A fabricated amount would be
+worse than a known gap. Persisting the amount on the interaction is the honest fix and is its own
+slice.
+
+#### Errors
+
+`400` unknown `kind`/`basis`, or a window whose start is not before its end; `401`; `403` (no
+`reports:view`, or cross-tenant); the route is not reachable with the internal-token scheme.
+**Source:** `Modules/Commerce/Endpoints/IncomeEndpoints.cs`,
+`Modules/Commerce/Services/BoutiqueIncomeReadService.cs`,
+`Modules/Commerce/DTOs/BoutiqueIncomeDtos.cs`.
+
+---
+
+### B.22 Tenant dashboard KPIs and the reduced takings read
+
+**Two policies, and the split is the design.**
+
+| Method | Path | Policy | Permission |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/dashboard/takings` | `BoutiqueMember` | — (any active member) |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/dashboard/summary` | `BoutiqueReportsView` | `reports:view` |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/dashboard/revenue-series` | `BoutiqueReportsView` | `reports:view` |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/dashboard/top-items` | `BoutiqueReportsView` | `reports:view` |
+
+A section is visible when its **cheapest panel is readable**; every richer panel inside it is
+**hidden, never 403'd**. `…/takings` is the cheapest panel, so every boutique role can call it; the
+full strip carries margin, per-catalogue splits and the series, so it stays behind `reports:view`.
+
+#### `GET …/dashboard/takings` — the reduced read (E-13)
+
+Returns **exactly two money figures**: `collected` (verified money minus refunds) and
+`billedUnconfirmed` (derived billed value), plus the window, currency, `paymentRowsPresent`,
+`ledgerBackfilled` and the `dataQuality` block. **There is no margin, no per-client or per-operator
+split, no register row and no series.** The two-basis rule survives the reduction, so there is never
+one unlabelled earnings number even here.
+
+The reduction is enforced by the **shape of the response**, not by a UI convention: a test enumerates
+the serialised field names and fails if anything outside the allowed set appears, so a later addition
+that leaked margin would fail a test rather than quietly ship.
+
+#### `GET …/dashboard/summary` — the KPI strip (S-57)
+
+`?window=7d|30d|90d|mtd|ytd`, default `30d`. Returns the `sales`, `cash`, `customers`, `catalog`,
+`team`, `usage` and `operations` groups plus `dataQuality`.
+
+**Every absent number is `null`, never `0`.** `0` is a measurement — nobody ordered — while `null` is
+the absence of one. An average order value over no orders does not exist, so it is `null`; a margin
+percentage against zero revenue does not exist, so it is `null`.
+
+Two provenance facts the response states rather than implies:
+
+- **`sales.marginCostsComplete`** is `false` when any contributing order's line items carry a zero
+  `WholesaleCost`. That cost is **caller-supplied** rather than read from `InventoryItem.Cost`, so a
+  margin built on it is only as trustworthy as what somebody typed, and the flag is how a reader
+  finds out.
+- **`cash` reports `collected`, `outstanding` and `refunded` separately** so an expiring payment
+  request is never presented as a receivable and a refund is never netted invisibly into what was
+  taken.
+
+**The order-status classification is a named constant with a test that walks the transition map.**
+`payment_expired` is **counted** because it is not terminal — it can return to `payment_requested` —
+and `confirmed` and `revised` are counted because the approval path writes them and the model's own
+comment forgets they exist. Excluded are exactly `cancelled` and `rejected`.
+
+**Caching.** A 60-second `IDistributedCache` entry per `(organizationId, window)`. **A cache outage
+degrades rather than fails**: the figures are computed directly and the `dataQuality` notes say the
+cache was unreachable, so an operator reading the dashboard during a Redis outage can tell that the
+numbers are current and only the caching is degraded.
+
+#### `GET …/dashboard/revenue-series` (S-58)
+
+`?from&to&bucket=day|week|month`. Dense buckets, each with `grossOrderValue`, `collected` and
+`refunded`. **A bucket with no orders carries `null`, not `0`**, so the client sets
+`connectNulls={false}` and renders a gap as a gap rather than drawing a line through a measurement the
+server never produced. The series has its **own** cap (`TenantDashboard:MaxWindowDays`, default 92 for
+this route) and echoes `windowCapped` rather than clamping silently.
+
+#### `GET …/dashboard/top-items` (S-59)
+
+`?window&limit` (1..20, default 5). Grouped on the denormalised `ItemName`, because
+`OrderItem.ItemId` has no enforced link to the catalogue: a **renamed piece appears under both names**
+rather than being silently merged into one.
+
+#### Errors
+
+`400` unknown `window`/`bucket`, a limit outside its clamp, or an inverted window; `401`; `403` (no
+`reports:view` on the three strip routes, or cross-tenant on any of them). `…/takings` admits every
+active member and refuses a cross-tenant caller the same way.
+**Source:** `Modules/Commerce/Endpoints/DashboardEndpoints.cs`,
+`Modules/Commerce/Services/TenantDashboardService.cs`,
+`Modules/Commerce/DTOs/TenantDashboardDtos.cs`.
+
+---
+
+### B.23 Tenant billing reads — period history and the top-up catalogue (E-11, E-12)
+
+Two reads the tenant Billing and Usage sections were missing. Both are org-scoped, both filter
+`OrganizationId` explicitly, and neither writes anything.
+
+| Method | Path | Policy | Permission |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/billing/periods` | `BillingView` | `billing:view` |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/blossoms/top-up-packs` | `BillingManage` | `billing:manage` |
+
+The two permissions are deliberately different. The period history is a read of the same billing
+surface the statement belongs to, so it takes `billing:view`. The pack catalogue feeds the purchase,
+so it takes **the purchase's own permission**: whoever may not buy may not see what is for sale
+either (TD9).
+
+#### `GET …/billing/periods` (S-62)
+
+`?take` (1..24, default 12); an out-of-range value is `400` with the effective range rather than a
+silent clamp. Returns the most recent billing periods, newest first: the period's Blossom account
+(`monthlyBlossomLimit`, `blossomGranted`, `blossomAdjusted`, `blossomUsed`, `blossomRemaining`), its
+plan (`planTier`, `hasSubscriptionRow`), the top-ups that landed in it (`topUpBlossoms`,
+`topUpCount`) and its list price.
+
+Two provenance rules the response states rather than implies:
+
+- **`planListPriceLkr` is `null` whenever the stored `PriceLkr` is zero**, never `0`, with
+  `subscriptionPricesConfigured` saying whether a price was configured at all.
+  `OrganizationSubscription.PriceLkr` **is never assigned anywhere** in the product — creation,
+  upsert and the snapshot job all leave the column default — so "no row ⇒ null, else the column"
+  would print `LKR 0` as the plan price of every subscription (C-4/TD8). The same rule the admin
+  revenue read layer uses is applied here; a zero is "not configured", not "free".
+- **`planTier` and `hasSubscriptionRow` come from the day's `OrganizationSubscriptionSnapshot`**
+  (or the live subscription row for the current period), not from `Organization.PlanTier`. Every
+  organization has a tier; only some have ever had a billing row, and reporting the former as the
+  latter would invent a subscription.
+
+This is a **statement of account, not an invoice.** No payment provider is connected and no invoice
+entity, numbering rule or currency column exists, so no row here is a demand for payment.
+
+#### `GET …/blossoms/top-up-packs` (S-63)
+
+Returns the active `BlossomPriceEntry` rows with `SkuKind = TopUpPack`, ordered by size, as
+`{ skuCode, blossomQuantity, priceLkr, currency }`. The lookup is **identical** to the one
+`POST …/blossoms/top-ups` performs (`BlossomSkuKind.TopUpPack, planTier: null, organizationId: null`,
+filtered to `BlossomRuleStatus.Active`), so a pack the catalogue offers cannot be rejected at
+purchase and a pack the purchase accepts cannot be missing (B-4). A draft price-book row is not for
+sale and is not listed. `currency` is `LKR` because the price book is denominated in LKR; no currency
+column exists to read.
+
+#### Errors
+
+`400` out-of-range `take`; `401`; `403` (no `billing:view` / `billing:manage`, or a cross-tenant
+caller).
+**Source:** `Modules/Billing/Endpoints/OrgUsageEndpoints.cs`,
+`Modules/Billing/Endpoints/BlossomEndpoints.cs`,
+`Modules/Billing/Services/TenantBillingReadService.cs`,
+`Modules/Billing/DTOs/TenantBillingDtos.cs`.
+
+---
+
 ## Part C — Planned endpoints
 
 `Phase` in the right column is from
@@ -1392,15 +1876,15 @@ trustworthy. `total` is the window total, not the page length, and it is the sam
       "entryType": null,
       "blossomDelta": -3.7,
       "balanceAfter": 612.9,
-      "reason": "AI workflow on gpt-4o.",
+      "reason": "Blossom consumption.",
       "sourceKind": null,
-      "sourceRef": "wf_01J8...",
+      "sourceRef": null,
       "expiresAt": null,
       "createdByUserId": null,
-      "provider": "openai",
-      "model": "gpt-4o",
-      "normalizedUnits": 3700,
-      "actualCostUsd": 0.0075
+      "provider": null,
+      "model": null,
+      "normalizedUnits": null,
+      "actualCostUsd": null
     }
   ],
   "total": 39,
@@ -1427,10 +1911,14 @@ trustworthy. `total` is the window total, not the page length, and it is the sam
 }
 ```
 
-**The four additive item fields** are `null` on an entitlement row and populated on a consumption
-one: `provider`, `model`, `normalizedUnits` (input + output + cached tokens, so a Blossom charge can
-be checked rather than taken on trust) and `actualCostUsd`. A consumption row's `reason` now names
-the model rather than saying *"Agent workflow"*.
+**The four additive item fields** are `null` on an entitlement row and populated on a consumption one:
+`provider`, `model`, `normalizedUnits` (input + output + cached tokens) and `actualCostUsd`. **On the
+org-scoped route they are always `null`**, and a consumption row's `reason` is the neutral
+`"Blossom consumption."` with its `sourceRef` (the agent workflow id) nulled: a boutique reads its
+usage in Blossoms, and runs, tokens, provider/model and USD cost are agent internals. The team-only
+admin route (`GET /api/v1/admin/orgs/{id}/blossoms/statement`, `billing:adjust`) keeps the full
+detail. The `q` filter still matches the stored provider/model/workflow id on both routes, because
+that is how the row is found.
 
 **`availableToRevoke`** is present on a row that is a revocable grant and absent otherwise. It is
 how the console offers a revoke action instead of letting an operator discover non-revocability from
@@ -1774,8 +2262,8 @@ beyond that dialog.
 | `PATCH` | `/api/v1/admin/users/{userId:guid}/state` | `admin:users:manage` | `{ accountState: "OnboardingPending" \| "Active" \| "Suspended", reason?: string }` | `UserDto` |
 | `PATCH` | `/api/v1/orgs/{organizationId:guid}` | `settings:manage` | see below | `OrganizationProfileDto` |
 | `GET` | `/api/v1/orgs/{organizationId:guid}/settings` | `settings:manage` | — | settings + entitlements |
-| `GET` | `/api/v1/orgs/{organizationId:guid}/members` | `settings:manage` | query: `page`, `pageSize`, `status?`, `role?`, `q?` | `MemberPage` |
-| `PATCH` | `/api/v1/orgs/{organizationId:guid}/members/{userId:guid}` | `settings:manage` | `{ boutiqueRole }` | `{ organizationId, userId, boutiqueRole, status }` |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/members` | `team:manage` | query: `page`, `pageSize`, `status?`, `role?`, `q?` | `MemberPage` |
+| `PATCH` | `/api/v1/orgs/{organizationId:guid}/members/{userId:guid}` | `team:manage` | `{ boutiqueRole }` | `{ organizationId, userId, boutiqueRole, status }` |
 | `GET` | `/api/v1/admin/orgs` | `admin:orgs:read` | query: `page`, `pageSize`, `q?`, `isActive?`, `planTier?` | `{ items, page, pageSize, total }` |
 | `PATCH` | `/api/v1/admin/orgs/{organizationId:guid}/entitlement-overrides` | `billing:adjust` | `{ overrides: [{ key, valueType, value, reason, effectiveFrom?, effectiveTo? }] }` | `{ organizationId, entitlements }` |
 | `GET` | `/api/v1/admin/audit` | `audit:view` | query: `page`, `pageSize`, `organizationId?`, `actorUserId?`, `entityType?`, `entityId?`, `action?`, `from?`, `to?` | `AuditPage` |
@@ -1880,6 +2368,13 @@ organization is a **404** `{ message }`.
 ---
 
 ### C.6 Agentic statistics (Phase 4)
+
+> **The organisation-facing routes in this section were removed.** A boutique reads its usage in
+> Blossoms; runs, tokens and provider cost are agent internals, so
+> `/api/v1/orgs/{organizationId}/statistics/agents/**` is no longer mounted (every path answers
+> **404**) and no boutique role holds `stats:view:agent`. The team-only subset —
+> `GET /api/v1/admin/statistics/agents/{overview,runs,reliability}` behind `stats:system` — is the
+> live surface. The sketch below is kept as the historical Phase 4 contract for that subset.
 
 Base: `/api/v1/orgs/{organizationId:guid}/statistics/agents`. **Auth:** `stats:view:agent`.
 All accept `from`, `to` (ISO 8601 UTC, max 92 days), plus the filters listed.
@@ -2485,44 +2980,17 @@ different docket for the same underlying row.
 
 ### C.11 Tenant customer surface (Phase 7 — Home and the client book)
 
-All three routes are under the named `BoutiqueCustomerAccess` policy
+> **Status: shipped, and now documented in Part B.** The four routes below were specified here as
+> planned and landed with the tenant-dashboard slice's T2. They previously appeared only in this
+> Part C entry, which is why the read-by-id route could be missing while the write route already
+> advertised its URL in a `Location` header. See **B.20 Tenant customer surface** for the shipped
+> contract, including the two semantics this entry never stated: the **409 phone conflict** (on
+> create as well as update) and the **idempotent soft delete**.
+
+All routes are under the named `BoutiqueCustomerAccess` policy
 (`OrganizationScopeRequirement(customers:view)`), which every boutique role
-holds. They are deliberately **not** in `/internal/customers`.
-
-#### `GET /api/v1/orgs/{organizationId}/customers`
-
-The client book, in one call: the alphabet index has to reach every letter, so
-`pageSize` defaults to 200. `level` is nullable — the server stores no grade
-until the shop sets one.
-
-#### `GET /api/v1/orgs/{organizationId}/customers/highlights`
-
-Home's `Direct client link` row, the `See all` sheet and the status ticker. Each
-item carries `customerId`, `name`, nullable `level`, `activity` (generated from a
-real `Customer_Interactions` row) and `lastActivityAtUtc`. There is **no**
-`hasNewActivity`: no read marker exists in the schema, and a dot that can never
-clear is worse than no dot.
-
-#### `POST /api/v1/orgs/{organizationId}/customers`
-
-Walk-in creation. `{ "fullName": "...", "source": "counter_walkin" }` plus a
-required `Idempotency-Key`. A name is enough; `phoneNumber` is optional and its
-absence is reported honestly.
-
-`201` with `{ customerId, fullName, level, status, consentStatus, createdAtUtc,
-duplicateOfCustomerId }`. A duplicate answers `200` with
-`duplicateOfCustomerId` set rather than creating a second client.
-
-#### `POST /api/v1/orgs/{organizationId}/customers/{customerId}/interactions`
-
-The write path behind Home's `Log a visit`. `{ occurredAtUtc, channel, direction,
-note, purchaseTotal }` plus a required `Idempotency-Key`.
-
-Every call records an interaction; the customer's counters move only for an
-**inbound in-person** interaction. `201` with `{ visitId, customerId,
-occurredAtUtc, channel, countedAsVisit, visitCountAfter, lastVisitAtUtcAfter,
-tierAfter, blossomsCharged }`. `blossomsCharged` is **always `0`** — a visit is
-not billable. `404` when the client is not in this boutique.
+holds, except the two writes, which take `BoutiqueCustomerManage` (`customers:manage`). They are
+deliberately **not** in `/internal/customers`.
 
 ---
 
@@ -2536,7 +3004,7 @@ not billable. `404` when the client is not in this boutique.
 | 2 | `GET /orgs/{id}/entitlements` + `/usage` (Phase 2) | Replaces all hardcoded plan gating |
 | 3 | `GET /orgs/{id}/statistics/billing/burn-rate` (Phase 2) | Drives the upgrade prompt |
 | 4 | `GET /orgs/{id}/statistics/api/**` (Phase 5) | The API-consumption dashboard |
-| 5 | `GET /orgs/{id}/statistics/agents/**` (Phase 4) | Gate behind `stats:view:agent` and only show to owners |
+| 5 | ~~`GET /orgs/{id}/statistics/agents/**` (Phase 4)~~ — **removed**; the team-only `/admin/statistics/agents/**` subset remains | A boutique reads its usage in Blossoms, not in runs/tokens/cost |
 | 6 | `GET /admin/statistics/system/**` (Phase 6) | Internal operations view |
 
 ### D.2 Instances where the backend is currently wrong

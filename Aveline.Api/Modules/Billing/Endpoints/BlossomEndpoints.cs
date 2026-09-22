@@ -23,6 +23,13 @@ public static class BlossomEndpoints
     // the endpoint and the response cannot disagree about it.
     private const int MaxWindowDays = BlossomService.MaxStatementWindowDays;
 
+    /// <summary>
+    /// What a boutique sees in place of the operator-side consumption reason. The stored reason
+    /// names the provider and model that produced the charge ("AI workflow on gpt-4o"), which is
+    /// agent-internals detail a tenant does not read; their usage unit is the Blossom.
+    /// </summary>
+    private const string BoutiqueConsumptionReason = "Blossom consumption.";
+
     public static IEndpointRouteBuilder MapBlossomEndpoints(this IEndpointRouteBuilder endpoints)
     {
         MapOrgEndpoints(endpoints);
@@ -79,7 +86,8 @@ public static class BlossomEndpoints
             IBlossomService blossoms, CancellationToken ct) =>
             StatementAsync(
                 organizationId, from, to, entryType, kind, null, sourceKind, q,
-                minAmount, maxAmount, page, pageSize, blossoms, ct))
+                minAmount, maxAmount, page, pageSize, includeOperatorDetail: false,
+                blossoms, ct))
             .RequireAuthorization(AuthorizationConfiguration.BillingViewPolicy);
 
         group.MapPost("/top-ups", async (
@@ -160,7 +168,46 @@ public static class BlossomEndpoints
         })
         .AddEndpointFilter<IdempotencyEndpointFilter>()
         .RequireAuthorization(AuthorizationConfiguration.BillingManagePolicy);
+
+        // E-11. The catalogue the top-up dialog offers, on the **same** policy as the purchase it
+        // feeds: a caller who may buy a pack is exactly a caller who may see what is for sale, and
+        // nobody else needs either. The lookup is deliberately identical to the purchase route's
+        // (`BlossomSkuKind.TopUpPack, planTier: null, organizationId: null`, filtered to
+        // `BlossomRuleStatus.Active`), so a SKU shown here cannot be rejected there and a SKU
+        // accepted there cannot be missing here (B-4 / TD9).
+        group.MapGet("/top-up-packs", async (
+            Guid organizationId, IPricingService pricing, CancellationToken ct) =>
+        {
+            var entries = await pricing.ListPriceEntriesAsync(
+                BlossomSkuKind.TopUpPack, planTier: null, organizationId: null, ct);
+
+            var packs = entries
+                .Where(entry => entry.Status == BlossomRuleStatus.Active
+                                && !string.IsNullOrWhiteSpace(entry.SkuCode))
+                .OrderBy(entry => entry.BlossomQuantity)
+                .Select(entry => new TopUpPackDto(
+                    entry.SkuCode!, entry.BlossomQuantity, entry.PriceLkr, PriceBookCurrency))
+                .ToList();
+
+            return Results.Ok(packs);
+        })
+        .WithName("getBlossomTopUpPacks")
+        .WithSummary("List the Blossom top-up packs this boutique may purchase")
+        .WithDescription(
+            "The active top-up packs from the price book, ordered by size, with their LKR list "
+            + "price. Requires `billing:manage`, the same permission the purchase needs. No payment "
+            + "provider is connected, so a purchase records a grant rather than a charge.")
+        .Produces<IReadOnlyList<TopUpPackDto>>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BillingManagePolicy);
     }
+
+    /// <summary>
+    /// The currency the price book is denominated in. `BlossomPriceEntry.PriceLkr` stores LKR and
+    /// there is no currency column to read, so this is stated once rather than inferred per row.
+    /// </summary>
+    private const string PriceBookCurrency = "LKR";
 
     private static void MapAdminEndpoints(IEndpointRouteBuilder endpoints)
     {
@@ -269,7 +316,8 @@ public static class BlossomEndpoints
             int? page, int? pageSize, IBlossomService blossoms, CancellationToken ct) =>
             StatementAsync(
                 organizationId, from, to, entryType, null, null, sourceKind, q,
-                minAmount, maxAmount, page, pageSize, blossoms, ct))
+                minAmount, maxAmount, page, pageSize, includeOperatorDetail: true,
+                blossoms, ct))
             .RequireAuthorization(Permissions.BillingAdjust);
     }
 
@@ -285,7 +333,7 @@ public static class BlossomEndpoints
         Guid organizationId, DateTime? from, DateTime? to, string? entryType, string? kind,
         BlossomLedgerEntryType? parsedEntryType, BlossomSourceKind? sourceKind, string? q,
         decimal? minAmount, decimal? maxAmount, int? page, int? pageSize,
-        IBlossomService blossoms, CancellationToken ct)
+        bool includeOperatorDetail, IBlossomService blossoms, CancellationToken ct)
     {
         if (!TryParseEntryType(entryType, out var entryFilter, out var entryError))
         {
@@ -330,13 +378,41 @@ public static class BlossomEndpoints
                 organizationId, window.Value.From, window.Value.To, kindFilter, entryFilter,
                 sourceKind, q, minAmount, maxAmount,
                 page ?? 1, pageSize ?? BlossomService.DefaultStatementPageSize, ct);
-            return Results.Ok(statement);
+            return Results.Ok(includeOperatorDetail ? statement : ForBoutique(statement));
         }
         catch (Exception exception)
         {
             return MapProblem(exception);
         }
     }
+
+    /// <summary>
+    /// Strips operator-side detail from a statement before it reaches a boutique.
+    /// </summary>
+    /// <remarks>
+    /// A grant row keeps its own reason (the tenant needs to know why Blossoms were added). A
+    /// consumption row does not: its stored reason names the provider and model, this response also
+    /// carries the raw normalized units and provider cost behind the charge, and its source
+    /// reference is the agent workflow id. A boutique reads its usage in Blossoms, so the reason
+    /// becomes <see cref="BoutiqueConsumptionReason"/> and the agent-internals fields are nulled.
+    /// The team-only admin route keeps the full detail.
+    /// </remarks>
+    private static BlossomStatement ForBoutique(BlossomStatement statement) => statement with
+    {
+        Items = statement.Items
+            .Select(item => item.Kind == "Consumption"
+                ? item with
+                {
+                    Reason = BoutiqueConsumptionReason,
+                    SourceRef = null,
+                    Provider = null,
+                    Model = null,
+                    NormalizedUnits = null,
+                    ActualCostUsd = null,
+                }
+                : item)
+            .ToArray(),
+    };
 
     /// <summary>
     /// Parses the `entryType` filter. An unrecognised value is rejected rather than ignored: silently

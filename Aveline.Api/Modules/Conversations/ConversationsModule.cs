@@ -58,6 +58,9 @@ public static class ConversationsModule
         // provider and then deleted (S7). Deliberately a separate job from the sweep above:
         // different trigger, different policy (strategy §5.3).
         services.AddHostedService<ConversationAttachmentRetentionJob>();
+        // Clients created before the create path minted a Salon are repaired once at boot. The
+        // repair is idempotent, so a restart is safe and a second instance is a no-op.
+        services.AddHostedService<CustomerSalonBackfillJob>();
 
         return services;
     }

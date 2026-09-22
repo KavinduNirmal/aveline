@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Aveline.Api.Authorization;
 using Aveline.Api.Configurations;
 using Aveline.Api.Infrastructure.Notifications;
+using Aveline.Api.Modules.Billing.Endpoints;
 using Aveline.Api.Modules.Organizations.DTOs;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Organizations.Repositories;
@@ -39,14 +40,14 @@ public static class OrganizationEndpoints
             ClaimsPrincipal principal,
             IUserService userService,
             IOrganizationService organizationService,
+            IOrganizationRepository organizationRepository,
             IEmailService emailService,
             IConfiguration configuration,
             CancellationToken ct) =>
         {
-            if (string.IsNullOrWhiteSpace(request.BoutiqueRole)
-                || !InvitableRoles.Contains(request.BoutiqueRole, StringComparer.Ordinal))
+            if (!TryValidateInvitableRole(request.BoutiqueRole, out var roleError))
             {
-                return Results.BadRequest(new { message = $"'{request.BoutiqueRole}' is not an invitable boutique staff role." });
+                return Results.BadRequest(new { message = roleError });
             }
 
             var recipientEmail = NormalizeEmail(request.RecipientEmail);
@@ -64,13 +65,21 @@ public static class OrganizationEndpoints
                 return Results.NotFound(new { message = "User record does not exist in Aveline database." });
             }
 
-            InviteMemberResult result;
+            var validityHours = InvitationLimits.ClampValidityHours(request.ValidityHours);
+            var organization = await organizationRepository.GetByIdAsync(organizationId, ct);
+
+            CreateInvitationResponse created;
             try
             {
-                result = await organizationService.InviteMemberAsync(
+                created = await CreateInvitationCodeAsync(
                     organizationId,
+                    request.BoutiqueRole,
+                    recipientEmail,
+                    validityHours,
                     profile.Id,
-                    new InviteMemberRequest(request.BoutiqueRole, RecipientEmail: recipientEmail),
+                    organizationService,
+                    emailService,
+                    configuration,
                     ct);
             }
             catch (InvitationCodeStoreUnavailableException ex)
@@ -78,31 +87,115 @@ public static class OrganizationEndpoints
                 return Results.Json(new { message = ex.Message }, statusCode: StatusCodes.Status503ServiceUnavailable);
             }
 
-            var baseUrl = configuration["App:BaseUrl"];
-            var link = string.IsNullOrWhiteSpace(baseUrl)
-                ? $"/invite?code={result.Code}"
-                : $"{baseUrl.TrimEnd('/')}/invite?code={result.Code}";
+            // F-4: `sendSummaryToOwner` used to be silently dropped because the request record did
+            // not declare it. The outcome is now always reported, including "not sent".
+            var summary = await DispatchSummaryEmailAsync(
+                request.SendSummaryToOwner,
+                profile.Email,
+                organization?.Name ?? "your boutique",
+                request.BoutiqueRole,
+                new[] { created.ExpiresAt },
+                emailService,
+                ct);
 
-            // Mobile deep link (custom scheme) that opens the Flutter app directly
-            // into the invite-code step, skipping manual entry.
-            var mobileScheme = configuration["App:MobileScheme"] ?? "aveline";
-            var mobileLink = $"{mobileScheme.TrimEnd('/')}://invite?code={result.Code}";
-
-            if (recipientEmail is not null)
+            return Results.Ok(created with
             {
-                await emailService.SendStaffInvitationAsync(
-                    new StaffInvitationEmail(recipientEmail, link, request.BoutiqueRole), ct);
+                SummaryEmailRequested = summary.Requested,
+                SummaryEmailStatus = summary.Status,
+                SummaryEmailNote = summary.Note,
+            });
+        })
+        .AddEndpointFilter<IdempotencyEndpointFilter>()
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueTeamManagePolicy);
+
+        // E-10. Bulk invitation creation (F-4). The tenant panel POSTs here and the route did not
+        // exist; a request for N codes now mints N codes, `count` is clamped to [1,10] server-side
+        // and echoed in the response, `validityHours` reaches `ExpiresAt`, and the optional summary
+        // notice reports whether it was actually dispatched. The idempotency filter is the reason a
+        // double-click cannot mint a duplicate batch.
+        orgGroup.MapPost("/{organizationId:guid}/invitations/bulk", async (
+            Guid organizationId,
+            BulkCreateInvitationRequest request,
+            ClaimsPrincipal principal,
+            IUserService userService,
+            IOrganizationService organizationService,
+            IOrganizationRepository organizationRepository,
+            IEmailService emailService,
+            Aveline.Api.Infrastructure.RateLimiting.IRateLimiter rateLimiter,
+            IConfiguration configuration,
+            CancellationToken ct) =>
+        {
+            if (!TryValidateInvitableRole(request.BoutiqueRole, out var roleError))
+            {
+                return Results.BadRequest(new { message = roleError });
             }
 
-            return Results.Ok(new CreateInvitationResponse(
-                result.Invitation.Id,
-                result.Code,
-                link,
-                mobileLink,
+            // `count` is the control; this limiter is the backstop against a caller that retries a
+            // large batch. It is per organization, matching the scope the permission already has.
+            var createLimit = int.TryParse(configuration["Invitations:CreateRateLimit"], out var parsed)
+                ? parsed
+                : 10;
+            var allowed = await rateLimiter.TryAllowAsync(
+                $"invite:bulk:{organizationId}", createLimit, TimeSpan.FromMinutes(1), ct);
+            if (!allowed)
+            {
+                return Results.Json(
+                    new { message = "Too many invitation batches. Please wait a minute and try again." },
+                    statusCode: StatusCodes.Status429TooManyRequests);
+            }
+
+            var profile = await ResolveProfileAsync(principal, userService, ct);
+            if (profile is null)
+            {
+                return Results.NotFound(new { message = "User record does not exist in Aveline database." });
+            }
+
+            var count = InvitationLimits.ClampBulkCount(request.Count);
+            var validityHours = InvitationLimits.ClampValidityHours(request.ValidityHours);
+            var organization = await organizationRepository.GetByIdAsync(organizationId, ct);
+
+            var created = new List<CreateInvitationResponse>(count);
+            try
+            {
+                for (var index = 0; index < count; index++)
+                {
+                    created.Add(await CreateInvitationCodeAsync(
+                        organizationId,
+                        request.BoutiqueRole,
+                        recipientEmail: null,
+                        validityHours,
+                        profile.Id,
+                        organizationService,
+                        emailService,
+                        configuration,
+                        ct));
+                }
+            }
+            catch (InvitationCodeStoreUnavailableException ex)
+            {
+                return Results.Json(new { message = ex.Message }, statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+
+            var summary = await DispatchSummaryEmailAsync(
+                request.SendSummaryToOwner,
+                profile.Email,
+                organization?.Name ?? "your boutique",
                 request.BoutiqueRole,
-                result.Invitation.RecipientEmail,
-                result.Invitation.ExpiresAt));
-        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueMembershipManagePolicy);
+                created.Select(item => item.ExpiresAt).ToList(),
+                emailService,
+                ct);
+
+            return Results.Ok(new BulkCreateInvitationResponse(
+                created,
+                request.Count,
+                created.Count,
+                validityHours,
+                summary.Requested,
+                summary.Status,
+                summary.Note));
+        })
+        .AddEndpointFilter<IdempotencyEndpointFilter>()
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueTeamManagePolicy);
 
         orgGroup.MapGet("/{organizationId:guid}/invitations", async (
             Guid organizationId,
@@ -112,7 +205,7 @@ public static class OrganizationEndpoints
             var pending = await organizationService.ListPendingInvitationsAsync(organizationId, ct);
             return Results.Ok(pending.Select(i => new PendingInvitationDto(
                 i.Id, i.BoutiqueRole, i.RecipientEmail, i.CreatedAt, i.ExpiresAt)));
-        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueMembershipManagePolicy);
+        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueTeamManagePolicy);
 
         orgGroup.MapPost("/{organizationId:guid}/invitations/{invitationId:guid}/revoke", async (
             Guid organizationId,
@@ -141,7 +234,7 @@ public static class OrganizationEndpoints
             {
                 return Results.BadRequest(new { message = ex.Message });
             }
-        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueMembershipManagePolicy);
+        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueTeamManagePolicy);
 
         orgGroup.MapPost("", async (
             CreateOrganizationRequest request,
@@ -303,7 +396,7 @@ public static class OrganizationEndpoints
             {
                 return Results.BadRequest(new { message = ex.Message });
             }
-        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueMembershipManagePolicy);
+        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueTeamManagePolicy);
 
         orgGroup.MapPost("/{organizationId:guid}/members/{userId:guid}/activate", async (
             Guid organizationId,
@@ -321,7 +414,7 @@ public static class OrganizationEndpoints
             {
                 return Results.NotFound(new { message = "Organization or membership not found." });
             }
-        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueMembershipManagePolicy);
+        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueTeamManagePolicy);
 
         orgGroup.MapDelete("/{organizationId:guid}/members/{userId:guid}", async (
             Guid organizationId,
@@ -342,7 +435,7 @@ public static class OrganizationEndpoints
             {
                 return Results.BadRequest(new { message = ex.Message });
             }
-        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueMembershipManagePolicy);
+        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueTeamManagePolicy);
 
         orgGroup.MapPatch("/{organizationId:guid}", async (
             Guid organizationId,
@@ -424,7 +517,7 @@ public static class OrganizationEndpoints
             var members = await organizationService.ListMembersAsync(
                 organizationId, status, role, q, page ?? 1, pageSize ?? 20, ct);
             return Results.Ok(members);
-        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueMembershipManagePolicy);
+        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueTeamManagePolicy);
 
         orgGroup.MapPatch("/{organizationId:guid}/members/{userId:guid}", async (
             Guid organizationId,
@@ -472,7 +565,7 @@ public static class OrganizationEndpoints
             {
                 return Results.NotFound(new { message = "Organization or membership not found." });
             }
-        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueMembershipManagePolicy);
+        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueTeamManagePolicy);
 
         var inviteGroup = endpoints.MapGroup("/invitations");
 
@@ -571,6 +664,117 @@ public static class OrganizationEndpoints
 
         var trimmed = email.Trim().ToLowerInvariant();
         return trimmed.Length is > 0 and <= 254 && trimmed.Contains('@') ? trimmed : null;
+    }
+
+    private static bool TryValidateInvitableRole(string? role, out string? error)
+    {
+        if (string.IsNullOrWhiteSpace(role) || !InvitableRoles.Contains(role, StringComparer.Ordinal))
+        {
+            error = $"'{role}' is not an invitable boutique staff role.";
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    /// <summary>
+    /// Mints one invitation code and builds its links. Shared by the single and bulk routes so the
+    /// two cannot drift on validity, link shape or the recipient email.
+    /// </summary>
+    private static async Task<CreateInvitationResponse> CreateInvitationCodeAsync(
+        Guid organizationId,
+        string boutiqueRole,
+        string? recipientEmail,
+        int validityHours,
+        Guid actorUserId,
+        IOrganizationService organizationService,
+        IEmailService emailService,
+        IConfiguration configuration,
+        CancellationToken ct)
+    {
+        var result = await organizationService.InviteMemberAsync(
+            organizationId,
+            actorUserId,
+            new InviteMemberRequest(
+                boutiqueRole,
+                RecipientEmail: recipientEmail,
+                ValidFor: TimeSpan.FromHours(validityHours)),
+            ct);
+
+        var baseUrl = configuration["App:BaseUrl"];
+        var link = string.IsNullOrWhiteSpace(baseUrl)
+            ? $"/invite?code={result.Code}"
+            : $"{baseUrl.TrimEnd('/')}/invite?code={result.Code}";
+
+        // Mobile deep link (custom scheme) that opens the Flutter app directly
+        // into the invite-code step, skipping manual entry.
+        var mobileScheme = configuration["App:MobileScheme"] ?? "aveline";
+        var mobileLink = $"{mobileScheme.TrimEnd('/')}://invite?code={result.Code}";
+
+        if (recipientEmail is not null)
+        {
+            await emailService.SendStaffInvitationAsync(
+                new StaffInvitationEmail(recipientEmail, link, boutiqueRole), ct);
+        }
+
+        return new CreateInvitationResponse(
+            result.Invitation.Id,
+            result.Code,
+            link,
+            mobileLink,
+            boutiqueRole,
+            result.Invitation.RecipientEmail,
+            result.Invitation.ExpiresAt,
+            SummaryEmailRequested: false,
+            SummaryEmailStatus: InvitationSummaryEmailStatus.NotRequested,
+            SummaryEmailNote: null);
+    }
+
+    /// <summary>The outcome of the optional summary notice, as the response reports it.</summary>
+    private sealed record SummaryOutcome(bool Requested, string Status, string? Note);
+
+    /// <summary>
+    /// Dispatches the optional summary notice and reports what actually happened. Three outcomes are
+    /// distinguished rather than collapsed into a boolean, because "not asked for" and "asked for
+    /// but not sent" are different facts and the previous version silently dropped the request.
+    /// </summary>
+    private static async Task<SummaryOutcome> DispatchSummaryEmailAsync(
+        bool requested,
+        string? actorEmail,
+        string organizationName,
+        string boutiqueRole,
+        IReadOnlyList<DateTime> expiresAt,
+        IEmailService emailService,
+        CancellationToken ct)
+    {
+        if (!requested)
+        {
+            return new SummaryOutcome(false, InvitationSummaryEmailStatus.NotRequested, null);
+        }
+
+        if (string.IsNullOrWhiteSpace(actorEmail))
+        {
+            return new SummaryOutcome(
+                true,
+                InvitationSummaryEmailStatus.NotSent,
+                "No summary was sent: the acting user has no email address on record.");
+        }
+
+        await emailService.SendInvitationSummaryAsync(
+            new InvitationSummaryEmail(
+                actorEmail,
+                organizationName,
+                expiresAt.Count,
+                boutiqueRole,
+                expiresAt.Min()),
+            ct);
+
+        return new SummaryOutcome(
+            true,
+            InvitationSummaryEmailStatus.Dispatched,
+            "Handed to the configured email sender. The repository's sender records a dispatch, not a "
+            + "delivery, so this is not proof the owner received it.");
     }
 }
 

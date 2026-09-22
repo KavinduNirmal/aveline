@@ -71,6 +71,27 @@ public class ConversationService : IConversationService
         return ConversationDto.From(conversation);
     }
 
+    /// <inheritdoc />
+    public async Task<bool> EnsureCustomerSalonAsync(
+        Guid orgId,
+        Guid customerId,
+        CancellationToken cancellationToken = default)
+    {
+        var threadId = Guid.NewGuid().ToString("N");
+        // The repository matches a client-bound Salon on (org, customer, kind) without the user, so
+        // the id it receives is irrelevant for a customer thread. `Guid.Empty` states the
+        // organization-shared invariant (ADR-021) at the call site instead of implying an owner.
+        var (conversation, created) = await _conversations.GetOrCreateSalonAsync(
+            orgId, Guid.Empty, customerId, threadId, cancellationToken);
+
+        if (created)
+        {
+            await SeedAvelineGreetingAsync(conversation, customerId, cancellationToken);
+        }
+
+        return created;
+    }
+
     /// <summary>
     /// Inserts Aveline's predefined welcome message into a freshly created Salon.
     /// </summary>

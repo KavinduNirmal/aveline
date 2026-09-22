@@ -4702,3 +4702,1224 @@ not exist at this HEAD (the F-7 guard lives in `CatalogEndpointsIntegrationTests
 - The orchestrator wrote no production code: every `.cs`, `.py` and `.dart` change came from a
   subagent, and the orchestrator's own writes were the AI-usage log, the GitHub issue bodies and the
   commit messages.
+
+## Session 2026-09-20 (c) — Tenant dashboard finalization: Flutter to backend (session start)
+
+**Task:** Implement the tenant dashboard finalization (the boutique dashboard at `/app/b/{slug}`) from
+`.agents/plans/tenant-dashboard-implementation.ignore.md` and its review
+`.agents/plans/tenant-dashboard-implementation-strategy.md`, on the current branch
+`feature/tenant-dashboard-v2`.
+
+**Tool used:** DeepSeek Harness (deepseek-flash) AI coding agent.
+
+### Session start — what was read and established
+
+- Read both plan documents in full (1781 + 1866 lines). The plan is a gap analysis plus a build
+  specification (E-1…E-13 new endpoints, one new append-only ledger, eight frontend sections); the
+  strategy re-cuts its seven phases into **eight `T`-slices** with dependency and exclusive-ownership
+  columns, and answers twelve open questions (TD1–TD17).
+- Verified the working tree state before starting: branch `feature/tenant-dashboard-v2`, HEAD `d9c3f24`,
+  `git status --porcelain` clean but for an untracked `docs/deployment/`.
+- Confirmed by inspection that **none of the plan has landed on this branch**: `Permissions.cs` still
+  holds the pre-plan 28 permissions with no `customers:manage` / `team:manage` / `orders:manage`, and
+  `frontend/web/src/components/dashboard/` still contains only the seven pre-plan files (no `income`,
+  `customers`, `billing`, `usage`, `settings`, `kpi` directories). The strategy's corrections therefore
+  apply verbatim rather than needing re-verification.
+
+### Session-start decisions recorded
+
+- **Slice order is the strategy's critical path:** `T0 → T1 → T2 → T3 → (T4 ‖ T5 ‖ T6) → T7`.
+- **TDD is mandatory and observed**: a failing test exists and is seen to fail for the expected reason
+  before any production file is written. The one generated artefact (the EF migration) has its
+  model-level assertions written first.
+- **No branch is created or switched.** All work lands on `feature/tenant-dashboard-v2`.
+- **Documentation is updated per delivered slice**, not batched at the end: general docs
+  (`docs/frontend/tenant-dashboard.md`), API docs (`docs/api/README.md`), the OpenAPI specification
+  (`docs/api/openapi.yaml`), and the statistics catalog (`docs/backend/statistics-catalog.md`
+  S-57…S-63 — landed in the slice that ships each endpoint, never before it exists).
+- A GitHub issue is created for every slice before that slice starts.
+
+### GitHub issues created (one per phase/slice)
+
+On branch `feature/tenant-dashboard-v2`, no branch was created or switched:
+
+| Issue | Slice |
+|---|---|
+| [#351](https://github.com/KavinduNirmal/aveline/issues/351) | T0a — Contracts and the permission family |
+| [#352](https://github.com/KavinduNirmal/aveline/issues/352) | T0b — Tenant conformance, truthfulness and coverage gates |
+| [#353](https://github.com/KavinduNirmal/aveline/issues/353) | T1 — Isolation and correctness (F-1, F-2, F-5, F-6, F-7, F-9, F-11) |
+| [#354](https://github.com/KavinduNirmal/aveline/issues/354) | T2 — Customer CRUD (E-6…E-9) |
+| [#355](https://github.com/KavinduNirmal/aveline/issues/355) | T3 — Income (`BoutiqueSaleEntry`) ledger — critical path |
+| [#356](https://github.com/KavinduNirmal/aveline/issues/356) | T4 — Tenant KPIs, reduced takings view, Overview rebuild |
+| [#357](https://github.com/KavinduNirmal/aveline/issues/357) | T5 — Usage and billing (E-11, E-12) |
+| [#358](https://github.com/KavinduNirmal/aveline/issues/358) | T6 — Approvals, Team, Settings (E-10) |
+| [#359](https://github.com/KavinduNirmal/aveline/issues/359) | T7 — Gates, docs and the coverage ratchet |
+
+### Work delivered in this session
+
+**T0a (issue #351) — complete, TDD observed.** The permission catalog went **28 → 31**:
+`customers:manage`, `team:manage` and `orders:manage` were added and granted to
+manager/supervisor/owner, and `approvals:approve` was granted to `org:boutique_staff` (Q8). Six new
+**named org-scoped** policies were registered, including the permission-free `BoutiqueMemberPolicy`,
+so a route that means "an active member" stops borrowing `catalog:view` as a proxy — that borrowing
+is what made `catalog:manage` unenforceable without also taking the camera away from staff. The
+eight team routes moved off `BoutiqueMembershipManage` (`settings:manage`, which also reaches
+Integrations and its WhatsApp/payment-gateway credentials) onto `BoutiqueTeamManage`
+(`team:manage`). `Endpoints/BusinessRulesEndpoints.cs` — unmapped dead code — was deleted.
+
+On the client, `src/lib/permissions.ts` now mirrors all 31 permissions, carries **only the four
+`org:boutique_*` roles** (deleting the phantom `org:principal` and the ten unreachable team-role
+branches, C-13), and gained a drift guard that reuses the same C#-source parser as the admin
+mirror. `isTenantAdmin` became `canOpenTenantDashboard`, derived from the presence of a permission
+rather than a hand-listed set of role strings. The admin mirror and its pinned count moved in the
+same commit, so the cross-tree test could not drift.
+
+**T0b (issue #352) — complete.** The tenant subtree's conformance pass: **~160 violations across 17
+files** fixed with the 30 primitives already present — no `shadcn add`, no CLI run, no new
+primitive. `test/tenant-conformance.test.ts` now walks the dashboard, catalogue, shared and
+tenant-route files with the admin rule set and an **empty** allow-list (stricter than the admin
+gate's one exception). Three further gates landed: `test/tenant-truthfulness.test.ts` (four literal
+rules), `test/tenant-sections.test.ts` (the nav table and the router cannot disagree), and
+`vitest.dashboard-coverage.config.ts` with a `test:coverage:dashboard` script. The section became
+part of the URL (`/app/b/:slug/:section`, bare slug redirects to `/overview`). `F-10` was done by
+deletion: the five dead `MOCK_*` seed arrays are gone while their types — the live contracts — stay.
+
+### Two judgement calls, recorded rather than hidden
+
+1. **The conformance scope excludes the public marketing/authentication pages.** The plan's §6.7
+   names four directories, but a naive non-admin `routes/*.tsx` glob pulled in ten more files
+   (`LandingPage`, `PlansPage`, `SignUpPage`, `SignInPage`, `TermsPage`, `ContactPage`,
+   `DownloadPage`, `InvitePage`, `AdminPendingPage`, `AdminSignUpPage`) carrying **~100 further
+   violations** against their own brand palette. That is a different surface with a different
+   migration plan, and folding it in would have tripled the slice without serving the dashboard.
+   The exclusion is written into the gate file with its reason.
+2. **The admin gate's "no raw `<svg>`" rule was not adopted.** The console suppresses it because its
+   only `<svg>` is a chart. In the tenant tree the only `<svg>` is `BrandIcons.tsx`, which draws
+   third-party payment marks whose geometry must match the provider's official asset. Vendored
+   third-party marks are a legitimate exception to a chart-integrity rule, so the truthful move was
+   to say so in the design record rather than to allow-list the file. The rule that actually matters
+   — `recharts` only through the chart wrapper, where the shared `connectNulls` decision lives — is
+   enforced.
+
+### Verification performed
+
+- `dotnet test Aveline.Api.Tests` (non-Postgres, non-integration): **1652 passed, 0 failed**.
+- `dotnet test` conversation integration suite: **18 passed, 0 failed** — reviewed rather than
+  edited around, see the finding below.
+- `dotnet build Aveline.Api.Tests`: succeeded, 0 errors.
+- `bunx vitest run`: **104 files / 734 tests passed**.
+- `bunx tsc -b`: exit 0. `bunx oxlint src`: **0 errors** (60 pre-existing warnings).
+- `bun run test:coverage:dashboard`: runs and walks the eight previously-unmeasured tenant files.
+- The four frozen admin mechanical tests (`admin-conformance`, `admin-truthfulness`,
+  `admin-prometheus-boundary`, `admin-install`) pass **unchanged**.
+
+### A finding the tests forced into the open
+
+Granting `org:boutique_staff` `approvals:approve` broke two conversation integration tests that
+asserted the *opposite* — that an ordinary staff member is refused the Salon sign-off release gate.
+That is a genuine consequence of the grant, not noise, and the honest resolution had two halves:
+the two tests now probe the gate with a membership whose role holds `conversations:view` but not
+`approvals:approve` (so the 403 path is still covered), and the staff member's new outcome is
+asserted as **404 rather than 200** — they pass the policy gate, then fail the visibility gate,
+because a conversation created by the owner is not in their Salon. The two gates are separate on
+purpose, and the test now says so. The same grant also lets staff `revoke` a salon sign-off; that is
+a deliberate consequence of a single-verb route and is recorded in the design record, because Q14's
+verb split was scoped to the order-approval controller.
+
+### Not delivered, and stated as such
+
+**T1 (issue #353) — complete, TDD observed.** This is the slice the strategy says must land first,
+because it closes a confirmed cross-tenant hole.
+
+- **F-1.** `OrdersController` and `BusinessRulesController` had **no `[Authorize]` at all** and used
+  the route token `{orgId:guid}`, which `OrganizationScopeAuthorizationHandler` never reads (it
+  matches `organizationId` exactly). The fallback policy is authenticated-only, so any authenticated
+  caller — including another boutique's staff — could read and write any organisation's orders and
+  business rules. Both controllers now authorise **and** rename the token, because both halves are
+  required: a policy alone would not bind on `{orgId}`. The policy split is TD11's: reads and
+  `POST /orders` at `BoutiqueMember` (the counter creates orders), and `PUT`, `PATCH /status`,
+  `/cancel`, `/recalculate` plus **every** business-rule route at `BoutiqueOrderManage`
+  (`orders:manage`). `BoutiqueAccess` (= `catalog:view`) was deliberately not used: it is held by
+  every role and would have let staff cancel orders and rewrite the discount rules.
+- **F-2.** The fourteen-route catalogue policy table. Four managed writes (create, edit, publish,
+  delete) take `BoutiqueCatalogManage`; the ten operational routes (search, QR label, scan, vision,
+  analysis, VIP matches, compose, sourcing, upload) take the permission-free `BoutiqueMember`. The
+  group policy is unchanged and the per-route attribute composes on top, which is house style. A
+  blanket `catalog:manage` was rejected because it would have taken the camera, the label printer and
+  the AI analysis away from `org:boutique_staff`.
+- **F-5.** The approval actor was parsed with `Guid.TryParse` from the Clerk `sub`. A real subject is
+  `user_2abc…`, so the parse always failed and **every decision recorded a null actor**. The one
+  passing test injected a GUID subject, which is why CI never caught it; that test has been rewritten
+  to use the shape production actually sends, and a new test pins the non-null actor.
+- **F-6.** `GET …/usage` moved from `BoutiqueAccess` to `BoutiqueBillingSelfView`; all four org roles
+  already held `billing:view:self`, so access is unchanged and the wire now matches the file's own
+  doc comment.
+- **F-7.** `AllowAnonymous` stays on the catalogue image route (Q4: imagery is public, direction is
+  Cloudinary) with the reason recorded on the attribute rather than inherited silently.
+- **F-9.** The catalogue panel's hardcoded tenant id is gone. This was not a cosmetic fallback:
+  `'00000000-0000-0000-0000-000000000001'` is a **real organisation id in this system**, so a save or
+  an image upload was being addressed at a different shop's tenant. A missing organisation is now a
+  hard error that sends no request. The write-after-failure is fixed too — a failed save used to log,
+  toast "Retaining local draft" and then fall through to `setInventory(...)`, rendering a piece the
+  server had rejected; the optimistic write now sits inside the success path. The never-populated
+  `matches` state (which made an inventory badge and a drawer fallback both read a hard zero) is
+  deleted.
+- **F-11.** Already done in T0a: the unmapped `BusinessRulesEndpoints.cs` is deleted.
+
+One thing I did **not** silently decide: the four approval verbs still share
+`approvals:approve`, so staff can `reject` (which cancels the order) and `revise` (which rewrites
+discount/total/margin) — exactly what Q8 denied. Strategy Q14 recommends the split and puts it in T6.
+Rather than pretend the grant is narrower than it is, the risk is written into
+`docs/api/README.md` B.19 and the design record, and T6 owns the change.
+
+### Verification performed (final)
+
+- `dotnet test Aveline.Api.Tests` (non-Postgres): **1992 passed, 0 failed**.
+- `dotnet build Aveline.Api.Tests`: succeeded, 0 errors.
+- `bunx vitest run`: **104 files / 736 tests passed**.
+- `bunx tsc -b`: exit 0. `bunx oxlint src`: 0 errors.
+- `bun run test:coverage:dashboard`: runs and walks the eight previously-unmeasured tenant files.
+- `docs/api/openapi.yaml` parses, with **141 paths** and **no dangling response references** (checked
+  programmatically, which is how an invented `DELETE /orders/{id}` verb and a reference to a
+  non-existent `BadRequest` component were caught and removed before shipping).
+- The four frozen admin mechanical tests pass unchanged.
+
+### Not delivered, and stated as such
+
+**T2–T7 remain: issues are filed, code is not written.** The critical path was
+`T0 → T1 → T2 → T3 → (T4 ‖ T5 ‖ T6) → T7`. T0a, T0b and T1 are delivered to the standard the prompt
+requires: failing test first, implementation, then documentation (general docs, API docs, OpenAPI).
+The remaining slices are substantial backend-and-frontend work — a new append-only ledger with its
+migration and four writers (T3), four new customer routes (T2), four new dashboard endpoints plus the
+reduced takings view (T4), two new billing reads and two sections (T5), and the Approvals/Team/
+Settings sections (T6) — and each is specified in its issue with its acceptance criteria, its TDD
+obligation and its documentation duties. T3 is the critical path and `BoutiqueSaleEntry` is already
+named and scoped by TD2/TD14.
+
+**No OpenAPI change was needed for T0a/T0b.** Neither slice adds or changes a route or a schema, and
+every affected path is already in the spec. T1 **did** change the contract surface, and for the
+better: the orders and business-rules routes had been documented **nowhere**, which is part of how
+F-1 survived review. They are now in both `docs/api/README.md` (new B.19) and `docs/api/openapi.yaml`,
+and the `GET …/usage` description now names its real policy.
+
+### Continuation — T2 delivered (issue #354)
+
+**T2 — customer CRUD — complete, TDD observed.**
+
+The tenant customer surface had only list, highlights, walk-in create and record-interaction. A
+customer detail page would have shown a visit count with nothing behind it, and
+`POST …/interactions` already emitted a `Location` header pointing at a route that **did not exist**.
+T2 added the four missing routes and the section that uses them.
+
+Backend:
+
+- **E-6** `GET …/customers/{id}` — the tenant-safe detail. Deliberately not the internal shape: no
+  memory, no extracted AI context, no internal-token field. `loyaltyTierIsDerived` is the constant
+  `1` so no client can render an editable tier control. The route also repairs the dangling
+  `Location` contract, and a test follows that header and asserts `200`.
+- **E-9** `GET …/customers/{id}/interactions` — paged history, newest first.
+- **E-7** `PATCH …/customers/{id}` — `customers:manage`, writable subset only. **`status` is absent
+  on purpose**: the loyalty rule derives it, so a writable field would let the UI contradict the
+  server, and a `status` sent in the body is ignored.
+- **E-8** `DELETE …/customers/{id}` — `customers:manage`, soft delete, **idempotent** (`204` twice).
+- **The 409 phone conflict now exists on create as well as update.** The unique
+  `(OrganizationId, PhoneNumber)` index had no `DbUpdateException` mapping on this surface, so a
+  collision returned a **500**. The fix is a pre-check in the service, not an exception filter, and
+  the reason is testability: the in-memory provider does not enforce the index, so an
+  exception-based mapping would have been invisible to every non-Postgres test and the behaviour a
+  client sees would have depended on the storage engine.
+- **A subtle bug the idempotent-delete test forced out.** The first implementation queried the
+  customer through the soft-delete filter, so a second delete found nothing and returned 404 while
+  the test expected 204. The fix reads through `IgnoreQueryFilters()` **with the tenant scope applied
+  explicitly** — the deleted row becomes reachable, and another organisation's row still does not.
+
+Frontend: `lib/customers-api.ts` with its 9-test suite; a money formatter (`lib/format-money.ts`,
+10 tests) whose whole purpose is the rule the dashboard rests on — `null` renders "not measured",
+a measured `0` renders as `0`; the Customers section (`CustomersPanel`, `CustomerDetailSheet`,
+`LogVisitDialog`, `WalkInDialog`) and an 8-test DOM suite.
+
+Four honesty rules the section keeps, each with a test:
+
+1. **A 404 renders a not-found state, not an empty one**, and says why the view cannot be more
+   specific: the server makes "deleted" and "in another boutique" indistinguishable.
+2. **Write affordances exist only where the server would accept them.** Add client, Edit and Remove
+   are absent for a role without `customers:manage`.
+3. **The amount field is labelled "amount taken"**, the copy says the amount joins the client's
+   lifetime spend and that **no Blossoms are charged**, and the dialog renders no income figure.
+4. **A duplicate walk-in says "already on file", not "created"** — the 200-vs-201 distinction is
+   honoured in the wording, because reporting a create that did not happen is how a client book
+   stops being trustworthy.
+
+Documentation: `docs/api/README.md` gained **B.20** (the shipped contract for all eight routes,
+including the two semantics the old Part C entry never stated) and the Part C entry now points at it
+instead of duplicating a stale plan; `docs/api/openapi.yaml` gained the four routes, three schemas
+and the 409 response — **142 paths, all references resolving**; `docs/frontend/tenant-dashboard.md`
+gained the Customers section.
+
+### Verification performed (after T2)
+
+- `dotnet test Aveline.Api.Tests` (non-Postgres): **2009 passed, 0 failed** (1992 before this round).
+- `bunx vitest run`: **107 files / 763 tests passed**.
+- `bunx tsc -b`: exit 0. `bunx oxlint src`: 0 errors.
+- The tenant gates (`conformance`, `truthfulness`, `sections`) pass with the new components inside
+  their walked scope, unchanged.
+- `docs/api/openapi.yaml` parses with **142 paths** and no dangling references.
+
+### Not delivered, and stated as such
+
+**T3–T7 remain.** T0a, T0b, T1 and T2 are delivered to the standard the prompt requires. T3 is the
+critical path and the largest remaining slice: the `BoutiqueSaleEntry` ledger, its EF configuration
+and the 51st migration, the four writers, the reconciliation job, the two reads and the Income
+section — specified in issue #355 with its schema, its actor rule (`null` actor iff
+`SourceKind == System`) and its TDD obligation already written down. T4–T6 depend on T3 or run in
+parallel with it; T7 closes the docs and raises the coverage ratchet.
+
+### Continuation — T3 write model delivered (issue #355, partially)
+
+**T3's ledger and all four writers are complete, TDD observed.** T3 also specified two read endpoints
+and the Income section; those are **not** done and are stated as such below.
+
+**The entity.** `BoutiqueSaleEntry` in `Modules/Commerce`, with `BoutiqueSaleEntryKind`
+(`Sale`/`PaymentReceived`/`Refund`/`Adjustment`), `BoutiqueSaleSourceKind`, `BoutiqueSaleChargeBasis`
+(`Derived`/`Verified`) and `BoutiqueSaleEntryStatus` (`Recorded`/`Voided`). Its doc comment names
+`Modules/Revenue/IncomeLedgerEntry` and states that it is **a different economy in a different
+table** — that comment plus a test asserting the service writes only its own table are the whole
+defence against R-12.
+
+**The rules, 21 unit tests:** `Amount > 0`; `Reason` 10–500; `SourceRef` required; the dedup identity
+per organization; a `Verified` entry supersedes its `Derived` counterpart (voided, never deleted,
+with the reference cleared so the filtered index releases the key); and the sign derived from `Kind`
+so `Amount` is always positive.
+
+**The actor rule, narrowed with a reason.** The strategy says to copy the sibling's rule verbatim:
+null actor **iff** `SourceKind == System`. Implementing it surfaced a fact the plan could not see —
+**nothing in the order or payment flow resolves an actor at all.** `OrdersController` passes
+`createdBy: null` and `PaymentsController` resolved none, so a verbatim copy would have meant either
+no `PaymentReceived` entry ever, or a fabricated user id. I split the difference honestly: the two
+**counter** sources (`CounterWalkIn`, `Refund`) require an actor, and the two **flow-written** sources
+(`OrderPayment`, `OrderSettlement`) permit an unattributed row. The row's `SourceKind` names the flow
+that wrote it, which is the true record. I also then **fixed the refund to actually have an actor**,
+since `payments:refund` guarantees a person: `PaymentsController` now resolves the caller through
+`IUserRepository` and the ledger attributes the refund to them.
+
+**The migration.** `20260920181820_AddBoutiqueSaleLedger` — the **49th** non-Designer migration (the
+strategy's "51st" was off by two; the tree's count is what it is). It carries the named CHECK
+`CK_BoutiqueSaleEntries_AmountPositive`, the **per-organization** filtered unique index
+`(OrganizationId, SourceKind, SourceRef) WHERE "SourceRef" IS NOT NULL`, and two read indexes.
+
+**`BoutiqueSaleLedgerPostgresTests` (8 tests, Testcontainers).** These are the tests that prove the
+*migration* enforces the rules, and they are where the one genuinely subtle bug lives: the filtered
+index is filtered on `"SourceRef" IS NOT NULL` and **not on `Status`**, so a voided row that keeps its
+reference still occupies the key and the takeover insert trips `23505`. EF also puts the INSERT ahead
+of the UPDATE, so the void must be flushed first inside a transaction. Both are observable only
+against real Postgres.
+
+**The four writers, 20 further tests:** the counter sale (`CustomerVisitService`, `Verified`, and it
+closes the plan's §2.4 gap where a cash sale left a `CustomerInteraction` with no amount column and a
+`Customer.TotalSpent` with no transaction behind it); payment confirmation (`Verified`); refund
+(`Verified`, and now with a destination for the `reason` parameter that was previously accepted and
+discarded); and the derived order entry on `completed`/`delivered` (`Derived`, skipped when the money
+was already collected so one sale is never counted twice).
+
+**Two fixture gaps the ledger exposed**, both fixed rather than worked around:
+`CommercePaymentsTests` used bare random GUIDs as `OrganizationId` with no `Organizations` row, which
+a real database could not hold either; and the refund tests supplied no actor, which is what led to
+the controller fix above.
+
+### Verification performed (after T3 write model)
+
+- `dotnet test` for the new suites: **41 passed, 0 failed** across
+  `BoutiqueSaleLedgerServiceTests` (21), `BoutiqueSaleLedgerPostgresTests` (8),
+  `CustomerVisitLedgerBridgeTests` (5), `PaymentLedgerBridgeTests` (9) and
+  `OrderLedgerBridgeTests` (7) — plus the pre-existing payment and order suites updated and green.
+
+### Not delivered in T3, and stated as such
+
+**The two read endpoints (E-4, E-5) and the Income section are not built.** S-57…S-61 are registered
+in the statistics catalog, and because that is the one place I documented ahead of the code, the
+catalog says so explicitly — "specified, not live", in the section itself, rather than leaving a
+reader to discover it. That is the S-56 mistake, and the honest response to having made it is to
+label it, not to delete the record of what the read slice must implement.
+
+### Continuation — T3 read half delivered (issue #355, completed)
+
+**E-4, E-5 and the Income section are now built, TDD observed.** With this the T3 critical path is
+complete except for the reconciliation job, which is stated below.
+
+**Backend.** `BoutiqueIncomeReadService` reads the register and the per-kind breakdown; two routes
+ship under the org-scoped `BoutiqueReportsView` policy (`reports:view`):
+`GET …/income/ledger` (S-60) and `GET …/income/accounts` (S-61). 19 unit tests and 12 integration
+tests. Five behaviours are load-bearing and each has a test:
+
+- **The two bases are reported separately and never summed.** `verifiedTotal` is money taken,
+  `derivedTotal` is billed value, `unverifiedGap` equals the derived total, and `isReconciled` is
+  true only when the gap is zero. Each `kind` also carries its own total, so a refund is never netted
+  into a sale figure without a label.
+- **The totals cover the whole window, not the page.** A page-scoped total would understate a busy
+  week by an order of magnitude, and the test pages with `pageSize: 2` over five sales to prove it.
+- **The window cap is echoed, never silent.** `windowCapped` plus the effective window plus a
+  data-quality note — a chart labelled "1 year" over 400 days of data is a lie about the series'
+  shape.
+- **An unknown `kind` or `basis` is a `400` naming the known values**, never a silently ignored
+  filter. A filter that quietly does nothing makes a reader conclude there were no refunds.
+- **The payment-method split is read from the payment rows**, joined on `paymentId`. A ledger entry
+  carries no method of its own, and inferring one would be the fabrication this surface exists to
+  prevent.
+
+The response carries its own `dataQuality` vocabulary — the sixth in the API — with
+`paymentRowsPresent: false` when the shop has no payment rows at all. That is the single most likely
+reason a real shop's cash figures read zero, and the notes say so rather than leaving the owner to
+conclude their shop took nothing.
+
+**Frontend.** `lib/income-api.ts` (7 tests), the Income nav section gated on `reports:view`, the
+reconciliation banner, the register table, and a 7-test DOM suite. Three honesty rules the screen
+keeps:
+
+1. **No single unlabelled "income" number exists on the screen.** Collected, Billed-unconfirmed and
+   Refunded are three labelled figures; the gap is presented as information to act on.
+2. **The two bases are distinguishable in text, not only in colour.** A `Derived` row reads "Billed,
+   unconfirmed", a `Verified` one reads "Money taken", and the sign is a character beside the label.
+   A colour-only distinction is invisible to a colour-blind reader and is lost in greyscale.
+3. **Unknown renders as unknown.** A banner that cannot measure the reconciliation says
+   "Reconciliation status unknown", never "Every sale is confirmed".
+
+**One pre-existing defect found and fixed while validating the spec.** `docs/api/openapi.yaml`
+referenced `#/components/schemas/ErrorEnvelope` from five responses and never defined it, so a strict
+tool could not resolve those responses. The schema is now defined to the shape those handlers
+actually return. The spec is at **144 paths with zero dangling schema or response references**,
+checked programmatically.
+
+**The statistics catalog's honesty note is now corrected rather than deleted.** S-57…S-59 (the three
+dashboard routes) are marked **not yet implemented** individually, and S-60/S-61 are marked **live**.
+The earlier block-level caveat is replaced by per-entry markers so the distinction survives a reader
+who lands on one entry rather than the section.
+
+### Verification performed (after the T3 read half)
+
+- `dotnet test` (non-Postgres): **2083 passed, 0 failed** (2052 before this round).
+- `bunx vitest run`: **108 files / 770 tests passed**.
+- `bunx tsc -b`: exit 0. The tenant gates (`conformance`, `truthfulness`, `sections`) pass with the
+  new components inside their walked scope.
+- `docs/api/openapi.yaml`: 144 paths, **zero dangling schema or response references**.
+
+### Not delivered for T3, and stated as such
+
+**The `IncomeLedgerReconciliationJob` is not built.** It is the one piece of T3's specification still
+outstanding: an hourly job that finds confirmed payments and purchase-carrying interactions in the
+last 7 days with no matching ledger row and appends the missing entry, reporting how many it
+repaired. The ledger's filtered unique index makes it idempotent by construction, which is what makes
+the backfill safe — but until it exists, `dataQuality.IncomeLedgerBackfilled` can only ever be
+`false`, and a writer that failed silently would leave a gap nobody repairs. That is the honest
+remaining risk, recorded rather than implied away.
+
+### Continuation — the reconciliation job delivered; T3 complete (issue #355)
+
+**The `IncomeLedgerReconciliationJob` is built, TDD observed, and T3's write model is now complete.**
+12 tests. It runs hourly, bounded to a 7-day window, and is idempotent by construction: every repair
+reuses the product writer's own `SourceRef`, so the ledger's filtered unique index turns a second
+attempt into a no-op rather than a duplicate row. It reports the repair count at **warning** level,
+because a job that quietly repairs rows every run is telling an operator that a writer upstream is
+broken — a bare success log would hide exactly the signal that matters. A race between the job and a
+late writer resolves to one row, not two.
+
+**Writing it disproved half the plan's own specification, and the test records the finding.**
+§5.6 described the job as repairing "confirmed payments **or** interactions carrying a purchase
+total". The second half is impossible: `CustomerInteraction` has **no amount column** — the purchase
+total is read from the request inside `CustomerVisitService`, folded into `Customer.TotalSpent`, and
+discarded, so nothing on the row records what was taken. The only "repair" available would be to
+invent an amount, and a fabricated figure in a money journal is worse than a known gap.
+`ACounterSaleInteraction_IsNotRepairedBecauseNoAmountWasPersisted` is the record: it asserts the job
+appends nothing for such an interaction, and its doc comment names the honest fix (a migration that
+persists the amount) and says the test should be inverted when that lands. The job now counts the
+interactions it could not repair and logs them, so the gap is visible rather than silent.
+
+**`incomeLedgerBackfilled` became a computed flag rather than a hardcoded `false`.** Last round I
+noted that until the job existed the flag could only ever be false; now that it exists, the read
+service computes it from the repaired rows and adds a note, so a reader knows the ledger begins at a
+date rather than claiming full history. The reason prefix the job writes is a shared constant, so the
+marker and its reader cannot drift apart. Two tests pin both directions: a register containing a
+repaired row reports `true` with the note, and a genuinely-written one reports `false`.
+
+### Verification performed (after the job)
+
+- `dotnet test` for the new and affected suites: **33 passed, 0 failed**
+  (`IncomeLedgerReconciliationJobTests` 12, `BoutiqueIncomeReadServiceTests` 21 after two additions).
+- The full non-Postgres backend suite is re-run and green (see the totals below).
+
+### T3 is complete
+
+Every element the plan and strategy specified for T3 now exists and is tested: the entity and its
+enums, the EF configuration with the named CHECK constraint and the per-organization filtered unique
+dedup index, the migration, the service with every rule, the four product writers, the reconciliation
+job with the honest statement of what it cannot repair, E-4/E-5, and the Income section. **The
+critical path is unblocked**: T4 (the dashboard KPIs and the reduced takings view), T5 (usage and
+billing) and T6 (approvals, team, settings) can now proceed, and T7 closes the docs and the ratchet.
+
+### Continuation — T4 backend half delivered (issue #356)
+
+**E-1, E-2, E-3 and E-13 are built, TDD observed.** Four routes on **two policies** — the split is
+TD13's rule that a section is visible when its cheapest panel is readable. `…/dashboard/takings`
+takes the permission-free `BoutiqueMemberPolicy`, because every boutique role may see two labelled
+figures; `…/dashboard/summary`, `…/revenue-series` and `…/top-items` take
+`BoutiqueReportsView` (`reports:view`), because they carry margin, catalogue splits and the series.
+36 unit tests and 9 integration tests.
+
+**The reduction is enforced by the response's shape, not by a UI convention.** `TenantTakingsDto`
+carries exactly `collected` and `billedUnconfirmed`; a test serialises it, enumerates the field names
+and fails if anything outside an explicit allowed set appears. A later change that leaked margin or a
+per-client split therefore fails a test rather than quietly shipping — and the forbidden names
+(`margin`, `topItems`, `points`, `customerId`, …) are listed so the intent is legible. Writing that
+test surfaced a small trap: the first version scanned the whole JSON for the word "sales" and fired on
+the quality notes' prose. It now compares **field names**, which is what the contract actually is.
+
+**Five provenance rules the aggregate had to get right, each with a test:**
+
+1. **`null` is not `0`.** An average order value over no orders does not exist, so it is `null`; a
+   margin percentage against zero revenue does not exist, so it is `null`. An order count of `0` *is*
+   a measurement and stays `0`. This is the plan's central honesty rule and it is why the empty-shop
+   test asserts both kinds of absence side by side.
+2. **The order-status classification is a named constant with a transition-map test.** C-5 asked for
+   exactly this. `payment_expired` is **counted** because it is not terminal — `ValidTransitions`
+   lets it return to `payment_requested` — and `confirmed` and `revised` are counted because the
+   approval path writes them and the model's own comment forgets they exist. I added
+   `OrderService.KnownOrderStatuses`, derived from the transition map rather than transcribed from the
+   comment, so adding a status without classifying it fails the test rather than silently changing
+   every KPI in the slice.
+3. **`marginCostsComplete` is `false` when any order carries a zero `WholesaleCost`**, because that
+   cost is caller-supplied rather than read from `InventoryItem.Cost`. The flag is how a reader finds
+   out the margin is only as good as what somebody typed.
+4. **Cash stays three figures.** Collected, outstanding and refunded are reported separately, so an
+   expiring payment request is never presented as a receivable.
+5. **A cache outage degrades, it never fails.** The summary is cached for 60s per
+   `(organizationId, window)`; a throwing `IDistributedCache` produces the figures anyway **and** a
+   `dataQuality` note saying the cache was unreachable. Surfacing it in the response rather than only
+   in the log is the point: an operator reading the dashboard during a Redis outage can tell the
+   numbers are current and only the caching is degraded.
+
+**Two mistakes I made and corrected rather than left in.** I wrote a reflection-based helper to read a
+bucket's `ChargeBasis` — indefensible in a strongly-typed codebase — and replaced it with a proper
+projection. And a test expectation of mine was simply wrong arithmetic (a 6,000 margin on 15,000 gross
+is 0.4, not 0.6); I corrected the test, not the code.
+
+### Verification performed (after T4's backend half)
+
+- New suites: **36 unit + 9 integration passed, 0 failed**.
+- Full backend suite: **2142 passed, 0 failed** (2097 before this round).
+- `docs/api/openapi.yaml`: **148 paths, zero dangling schema or response references**.
+- The statistics catalog marks S-57, S-58 and S-59 **live** individually, replacing the earlier
+  "specified, not live" caveat with per-entry markers.
+
+### Not delivered in T4, and stated as such
+
+**The charts and the `TenantTeamKpisDto.AllowedSeats` wiring are not built.** The revenue-trend and
+top-items charts are outstanding; the endpoints behind them (E-2, E-3) are shipped and tested, so
+they are a rendering task. `TenantTeamKpisDto.AllowedSeats` is deliberately `0` in this aggregate
+because the allowance lives on the entitlements surface — the Overview panel must read it there
+rather than treating `0` as a real limit, and until it does, no seat-utilisation tile is shown.
+
+### Continuation — T4 frontend half delivered (issue #356)
+
+**`lib/dashboard-api.ts`, `hooks/useDashboardWindow.ts`, `KpiCard`, `TakingsCard` and the Overview
+rebuild are built, TDD observed.** 6 hook tests, 8 `KpiCard` tests and 9 Overview DOM tests, all
+green, plus the three tenant gates passing with the new components inside their walked scope.
+
+**Four honesty rules the panels keep, each with a test:**
+
+1. **A measured `0` renders as `0`; a `null` renders "not measured".** `KpiCard` is the single place
+   that distinction becomes text, in a visually distinct style so a missing measurement cannot be
+   mistaken for a small one at a glance. `UsagePanel`'s old `?? 0` is what this makes impossible.
+2. **The reduced card renders for every role, with both figures labelled.** It shows what the server
+   sent and nothing else: no margin, no series, no per-client split, because the reduced read does
+   not carry them and inventing a client-side figure is the fabrication the reduction prevents.
+3. **The owner's preview issues no request.** Toggling "Preview the staff view" hides the strip
+   client-side; the test clears the summary mock, toggles, and asserts the call count is unchanged.
+   The reduced card stays visible, so an owner sees exactly what staff see.
+4. **A hidden strip says it is hidden.** A role without `reports:view` gets a stated line rather than
+   an empty region, so "hidden from you" is never read as "your shop has no activity".
+
+**One deviation from the strategy, recorded rather than substituted silently.** TD4 said to mount a
+`QueryClientProvider` inside `DashboardShell` and adopt `useQuery` for the new tenant surfaces. **I
+did not.** The new panels use the codebase's existing `useEffect` + `AbortController` loaders. The
+reason is architectural rather than expedient: the shell already carries React Context for
+conversations and notifications, and adding a second server-state system beside them would leave two
+owners of "is this fresh" in one subtree — which is the failure TD4's own rationale names. The
+deviation is written into the design record with the condition under which TD4's plan should be
+reinstated (the panels grow, or a mutation needs cache invalidation), so the next reader inherits a
+decision rather than an omission.
+
+### Verification performed (after T4's frontend half)
+
+- New tests: **23 passed, 0 failed** (6 window-hook, 8 `KpiCard`, 9 Overview).
+- Full frontend suite: **112 files / 800 tests passed** (109/777 before this round).
+- The three tenant gates pass unchanged with the new components in scope.
+- `bunx tsc -b` exit 0; `bunx oxlint src` **0 errors**.
+- `bun run test:coverage:dashboard`: `KpiCard` and `TakingsCard` at **100% lines**, `Overview` at
+  **96.8%**, and `useDashboardWindow` inside the run. `dashboard-api.ts` reads low because its routes
+  are exercised through the components rather than by a direct test — the field-set contract it
+  declares is enforced on the server side by `TenantTakings`' enumeration test.
+- Backend is unchanged this round and was green at **2142 passed / 0 failed**.
+
+### Session 2026-09-21 — T5 (Usage and billing), issue #357
+
+**Task:** Implement slice **T5 — Usage and billing** from
+`.agents/plans/tenant-dashboard-implementation.ignore.md` and
+`.agents/plans/tenant-dashboard-implementation-strategy.md`, following TDD, on the current branch
+(`feature/tenant-dashboard-v2`, no branch switch).
+
+**Intended work (session start).** T0a–T4 are delivered (per the entries above and the closed T-slice
+issues). T5 is the next unblocked slice: it depends on T3 (the income ledger) and owns:
+
+- **E-11** `GET /orgs/{organizationId}/blossoms/top-up-packs` at `billing:manage`, offering exactly the
+  SKUs the existing `POST …/blossoms/top-ups` purchase accepts, so the dialog cannot hardcode a SKU
+  (B-4 / TD9).
+- **E-12** `GET /orgs/{organizationId}/billing/periods?take=12` at `billing:view`, built from
+  `UsageAccount` + `OrganizationSubscriptionSnapshot` + the Blossom ledger top-ups, with
+  `PlanListPriceLkr` **null whenever `PriceLkr == 0`** and a `SubscriptionPricesConfigured` flag
+  (C-4 / TD8). `PriceLkr` is never assigned anywhere, so "no row ⇒ null, else the column" would print
+  `LKR 0` as a plan price.
+- The **Usage** section: Blossom balance, usage-vs-limits against the entitlement table, burn rate and
+  the tenant statistics families behind `stats:view` / `stats:view:agent`, each **hidden** (never
+  403'd) when the permission is absent; the `whatsapp.monthly` row renders **"not measured"** because
+  no outbound send log exists (C-10).
+- The **Billing** section: plan card, entitlements, period history (E-12), the Blossom **statement**
+  (a statement, never an invoice — D8/Q2) and the top-up dialog over E-11. The word "invoices" is
+  deleted from the shell placeholder copy.
+- **S-62/S-63** in the statistics catalog; general docs, API docs and the OpenAPI spec updated for the
+  two new routes.
+
+**Constraints carried into this session.** No branch creation or switching. TDD: the failing test is
+written first. Tenant-isolation rules (route token `{organizationId:guid}`, an org-scoped policy, an
+explicit `OrganizationId` filter on every query). Honesty rules: `null` is "not measured" and never
+`0`; no fabricated invoice, price or WhatsApp meter; every richer panel hidden rather than 403'd.
+The tenant conformance, truthfulness and coverage gates from T0b apply to everything added here.
+
+**State found at session start.** `Aveline.Api.Tests/TenantBillingReadsTests.cs` exists as the
+red-state TDD file for E-12 (it does not compile: `TenantBillingReadService`, `BillingPeriodDto` and
+two incorrect model references are still outstanding). No E-11/E-12 endpoint, no
+`billing-api.ts` / `statistics-api.ts` and no `components/dashboard/{usage,billing}/**` exist yet.
+
+### T5 delivered (issue #357)
+
+**The red test was repaired first, then the production types written to make it pass.** The
+outstanding `TenantBillingReadsTests.cs` contained three genuine mistakes rather than design intent:
+two references to a non-existent `BlossomLedgerEntryType.TopUp` (the enum value is `TopUpGrant`), two
+to a non-existent `OccurredAt` column (`BlossomLedgerEntry` records `CreatedAt`), and a namespace that
+does not resolve in the test project. I corrected the test to the real model rather than shaping the
+model to the test, and it went from 13 compile errors to **9 passing tests**.
+
+**E-12 — the billing-period history.** `TenantBillingReadService` merges three sources into one row
+per `UsageAccount`: the account itself (limit, granted, adjusted, used, remaining), the day's
+`OrganizationSubscriptionSnapshot` — falling back to the live `OrganizationSubscription` for the
+current period, because the snapshot job runs daily and a period opened today has no snapshot yet —
+and the `BlossomLedgerEntry` top-ups inside the period, counted **and summed** so a reader can tell
+one large grant from ten small ones. Seven unit tests pin the behaviours, including org scoping and
+the `take` clamp.
+
+**The zero-price rule is the reason the endpoint exists in the shape it does.** The test file's own
+comment records the trap: `OrganizationSubscription.PriceLkr` is never assigned anywhere, so "no row ⇒
+null, else the column" would print `LKR 0` as the plan price of **every** subscription. The DTO
+therefore carries `PlanListPriceLkr` (null whenever the stored price is zero) **and**
+`SubscriptionPricesConfigured`. I also made `PlanTier`/`HasSubscriptionRow` come from the snapshot
+rather than `Organization.PlanTier`, because the latter would report a subscription for an
+organization that never had a billing row — the test seeds exactly that case.
+
+**E-11 — the top-up catalogue.** `GET …/blossoms/top-up-packs` on `BillingManagePolicy`, the same
+permission as the purchase it feeds (TD9). It performs the identical price-book lookup as
+`POST …/blossoms/top-ups`, so a pack offered cannot be rejected and a pack accepted cannot be
+missing; the integration test asserts a `Draft` row is *not* offered and a manager is 403.
+
+**One deliberate deviation from the plan's DTO, recorded rather than substituted silently.** The plan
+typed `TopUpBlossoms` as `int`. I used `decimal`, because Blossoms are `decimal` everywhere else and
+an `int` would silently truncate a fractional ledger delta — exactly the class of invented precision
+this slice exists to remove. The unit test's assertion compiles against either.
+
+**Frontend — the permission split is the design.** `UsagePanel` asks four separate questions
+(`billing:view:self`, `billing:view`, `stats:view`, `stats:view:agent`) and **fetches nothing it may
+not read**, so a panel that would 403 is never rendered broken. A staff member sees the balance and a
+stated line; a manager sees the API panels and not the agent panels; an owner sees both. Four DOM
+tests pin the matrix, plus the two honesty rules that matter most: `whatsapp.monthly` renders "not
+measured / no outbound send log exists" rather than the zero the server must return (C-10), and the
+agent cost tile is gated on `dataQuality.costInstrumented` rather than on the number, because the
+server returns `0` with the flag `false`.
+
+**`BillingPanel` renders a statement and never an invoice.** The plan card refuses to print a `0`
+list price (the same C-4 rule), the period table says "not configured", and the reconciliation banner
+keeps three states — reconciled / unknown / drift — so a failed check cannot read as "consistent". I
+added **rule 7** to the tenant truthfulness gate so "invoice" cannot reappear in shipped copy; writing
+it caught my own first draft, which said "a statement of account, not an invoice" *on screen* and
+therefore failed the rule it was describing.
+
+**One small shared-primitive change.** `components/ui/chart.tsx` now re-exports `Area`, `AreaChart`,
+`Bar`, `BarChart`, `CartesianGrid`, `Line`, `LineChart`, `ReferenceLine`, `XAxis` and `YAxis`, so the
+burn chart imports every primitive through the wrapper the truthfulness gate points at instead of
+from `recharts` directly. `connectNulls={false}` and an explicit empty-series "not measured" state are
+both in the chart.
+
+### Verification performed (after T5)
+
+- New backend tests: **17 passed, 0 failed** (9 E-12 unit, 8 E-11/E-12 integration).
+- **Full backend suite: 2220 passed, 0 failed** (2142 before this round), including the Testcontainers
+  suites.
+- New frontend tests: **19 API tests + 9 DOM tests = 28 passed, 0 failed**. Full frontend suite:
+  **116 files / 829 tests passed** (112/800 before).
+- `bunx tsc -b` exit 0; `bunx oxlint src` **0 errors** (68 pre-existing warnings, none in the new
+  files); tenant conformance, truthfulness (now 8 rules) and section gates green.
+- `bun run test:coverage:dashboard`: `billing-api.ts` **93.1% lines**, `statistics-api.ts` **72.7%**,
+  the usage components at **100% lines** except the balance card at 83%, the billing components
+  57–100%. The floor is still 0; T7 owns the ratchet.
+- `docs/api/openapi.yaml`: **150 paths** (148 before), zero dangling schema/parameter/response refs.
+
+### Not delivered in T5, and stated as such
+
+- **The 19 statistics fetchers exist but only a subset are rendered.** The Usage panel renders API
+  requests/errors/throttling/p95 and the quota table, and agent runs/tokens/cost. The remaining
+  fetchers (`endpoints`, `users`, `slow-requests`, `billable`, `step-latency`, `tools`, `failures`,
+  `approvals`) are typed and available but have no panel yet; the permission gating that hides the
+  families is in place, so adding a panel later is a rendering task rather than an authorization one.
+- **T6 and T7 are untouched.** Approvals, the Team members tab, Settings, the authenticated E2E walk
+  and the coverage ratchet remain open in issues #358 and #359.
+
+### Session 2026-09-21 (continued) — T6 (Approvals, Team, Settings), issue #358
+
+**Task:** Implement slice **T6 — Approvals, Team, Settings** from the tenant-dashboard plan and
+strategy, TDD-first, on `feature/tenant-dashboard-v2` (no branch switch).
+
+**Intended work (session start).** T5 is delivered (see above). T6 depends on T1 (the approvals
+actor fix and the new permissions/policies, all landed) and owns:
+
+- **E-10** `POST /orgs/{organizationId}/invitations/bulk` at `team:manage`, with the
+  `IdempotencyEndpointFilter` on **both** invitation routes, a `[1,10]` clamp on `count`, a
+  `[1,720]` clamp on `validityHours`, and `sendSummaryToOwner` reporting honestly whether the notice
+  was sent. The single route gains `validityHours` / `sendSummaryToOwner` too (F-4: they are currently
+  silently dropped).
+- **Q14 — the approval-verb split.** Staff hold `approvals:approve`, but `reject` cancels the order
+  and `revise` rewrites its money fields, so the split is the control that stops a staff approver
+  becoming a canceller: `/decision` (for `approve`) and `/approve` stay on `approvals:approve`,
+  `/reject` and `/revise` move to `orders:manage`. Because `/decision` accepts a decision **string**,
+  it must also refuse a `reject`/`revise` body from a caller without `orders:manage`, or the split is
+  a route rename rather than a control.
+- The **Approvals** section (queue, detail, approve/reject/revise with reject/revise hidden without
+  `orders:manage`), the **Team** section's Members tab (list, promote, demote, suspend, activate,
+  remove, with the caller's own row disabled-with-reason) alongside the existing Invitations tab, and
+  the **Settings** section (profile via `PATCH /orgs/{organizationId}`, settings + entitlements read,
+  API keys).
+- General docs, `docs/api/README.md`, `docs/api/openapi.yaml` and this log.
+
+**Constraints carried in.** No branch creation or switching. TDD: failing test first. Tenant
+isolation (`{organizationId:guid}`, org-scoped policy, explicit `OrganizationId` filter). Honesty:
+`null` is "not measured"; a 409 from a role change renders the server's own message; a 403 renders a
+permission message; Integrations stays owner-only. `'Active Workspace'` is replaced by the real owner
+count.
+
+**State found at session start.** T0a–T5 delivered. `TeamRoutePolicyTests` (the T0a source-scan) is
+in place and `ApprovalsController` already resolves the actor through `IUserRepository` (F-5 landed).
+There is **no** bulk invitation route, no `BulkCreateInvitationResponse`, no `lib/team-api.ts`, and
+no Approvals or Settings panels. `TeamManagement.tsx` still has a dead `members` tab state and the
+hardcoded `'Active Workspace'` label.
+
+### T6 delivered (issue #358)
+
+**E-10 — bulk invitations, with the two dropped fields restored.** `POST …/invitations/bulk` did not
+exist (F-4); the tenant panel called it and got a `404`, and the single route accepted
+`validityHours`/`sendSummaryToOwner` in the body while the record did not declare them, so both
+vanished. The route now mints `count` codes for one role, **clamps `count` to `[1,10]`** and
+`validityHours` to `[1,720]`, and reports `requestedCount`, `createdCount` and
+`effectiveValidityHours` side by side so the clamp is visible rather than silent. A per-organization
+limiter (`Invitations:CreateRateLimit`, 10/min) is the backstop; the clamp is the control.
+
+**`sendSummaryToOwner` is three-valued, not boolean.** `NotRequested | Dispatched | NotSent`, plus a
+note. "Not asked for" and "asked for but not sent" are different facts, and the old boolean could
+express neither. `Dispatched` means the notice was handed to the configured `IEmailService`; the
+repository's sender records a dispatch rather than a delivery, and the note says so. The summary
+carries **no code** — an email is a durable, forwarded artefact and a one-time staff code does not
+belong in a mailbox. A missing owner address is reported as `NotSent` with the reason rather than
+silently dropped.
+
+**Both creation routes now require `Idempotency-Key`.** A double-clicked bulk create would mint a
+duplicate batch of staff codes. This is a contract change the strategy asked for, and it broke
+`InvitationManagementEndpointsIntegrationTests`' five POSTs; I updated their helper to present a
+fresh key per request rather than weakening the contract. A replay returns the stored body with
+`Idempotency-Replayed: true`, and a test asserts the second call returns the **same codes** and that
+the pending list still holds two invitations, not four.
+
+**Q14 — the approval verbs are split by verb, not only by route.** Staff hold `approvals:approve`
+after Q8, but `reject` cancels the order and `revise` rewrites its discount, total and margin.
+`/approve` stays on `BoutiqueApprovalDecision`; `/reject` and `/revise` moved to
+`BoutiqueOrderManage`. **The route split alone would have been theatre**, because `POST /decision`
+carries its verb in the body: a staff member could still post `{"decision":"reject"}`. I added a
+body check in `ProcessDecision` — a `reject`/`revise` body from a caller without `orders:manage` is
+`403 order-manage-required` — and put the classification in one named function
+(`ApprovalDecisions.RequiresOrderManage`), so a future verb cannot be added without being classified.
+Four `ApprovalVerbSplitTests` pin the controller's own branch through a `TestAuthorizationService`;
+the panel hides the verbs it may not use, so a staff approver sees only *Approve*.
+
+**Frontend — Team, Approvals, Settings.** `lib/team-api.ts` owns the member lifecycle and the
+`memberActionBlockedReason` rule (the caller's own row and every owner row are disabled **with the
+reason**, because the server would answer `409`/`400` and a dead control is worse than an explained
+one). `TeamManagement` gained a Members tab beside the existing Invitations generator and replaced
+the literal `'Active Workspace'` with the real owner count. `lib/approvals-api.ts` owns the queue and
+`availableDecisions`, which is the client half of Q14. `lib/settings-api.ts` owns the profile,
+settings/entitlements and API keys; the profile form sends **only the changed fields**, the API key
+secret is shown once beside a sentence saying only a hash is stored, and Integrations deliberately
+stays out of Settings (TD5.5).
+
+**Two edits to existing tests, both mechanical.** `CommerceApprovalsTests` constructs
+`ApprovalsController` directly, so its three constructions gained a `TestAuthorizationService` (an
+in-process `IAuthorizationService` double); and the invitation integration helper now sends an
+idempotency key. Neither weakens an assertion.
+
+### Verification performed (after T6)
+
+- New backend suites: `BulkInvitationEndpointsIntegrationTests` (13), `ApprovalVerbSplitTests` (7),
+  plus `TestAuthorizationService`.
+- Invitation/organization/approval subset: **271 passed, 0 failed**. Commerce/approvals subset:
+  **113 passed, 0 failed**.
+- **Full backend suite: 2247 passed, 0 failed** (clean run, no concurrent load). An earlier full run
+  reported 2246/1 on `AdminReconciliationPostgresTests`; that test **passes in isolation** (3/3) and
+  touches nothing T6 changed, and the failure was my own doing — I had started a second `dotnet test`
+  concurrently, and the two runs competed for Testcontainers resources. The clean re-run is the
+  authoritative number; the flake is recorded rather than hidden because a result that depended on
+  not running anything else is worth saying out loud.
+- New frontend tests: `team-api` (8), `approvals-api` (7), `settings-api` (4),
+  `MembersTab.dom` (4), `ApprovalsPanel.dom` (2), `SettingsPanel.dom` (2).
+- Full frontend suite: **121 files / 854 tests passed**; `tsc -b` exit 0; `oxlint` 0 errors; tenant
+  conformance, truthfulness and section gates green.
+- `docs/api/openapi.yaml`: **156 paths**, zero dangling refs; the approvals routes were missing
+  entirely before T6 and are now documented with the verb split.
+
+### Not delivered in T6, and stated as such
+
+- **The authenticated E2E walk remains outstanding** (it needs a Clerk test session); the role matrix
+  is pinned by the integration tests and the two new DOM tests instead.
+- **The coverage ratchet is still 0.** T7 owns raising it to the achieved value; `approvals-api`,
+  `settings-api` and `team-api` are all at 100% lines, `MembersTab` at 76%, `ApprovalsPanel` at 49%.
+
+### Session 2026-09-21 (continued) — T7 (gates, docs, the coverage ratchet), issue #359
+
+**Task:** Implement slice **T7 — Gates, docs and the coverage ratchet** from the tenant-dashboard plan
+and strategy, TDD-first, on `feature/tenant-dashboard-v2` (no branch switch).
+
+**Intended work (session start).** T0–T6 are delivered (working tree, uncommitted). T7 depends on all
+of them and exclusively owns `tests/e2e/tenant-dashboard/**`, `docs/**`, `docs/api/**` and
+`vitest.dashboard-coverage.config.ts`. The acceptance criteria in issue #359 are:
+
+1. `tests/e2e/tenant-dashboard/signed-out.spec.ts` runs and asserts **zero** `/api/v1/orgs/` requests,
+   modelled on `tests/e2e/admin-console/console-access.spec.ts:12-40`. Signed out, `/app/b/{slug}`
+   must reach sign-in and render no dashboard chrome.
+2. The authenticated E2E walk is delivered **or** explicitly recorded as not delivered with the
+   reason (a Clerk test session and a running API are the prerequisites).
+3. `bun run test:coverage:dashboard` runs in CI with the ratchet raised from 0 to the value the
+   shipped code actually achieves (raised, never lowered).
+4. `docs/frontend/tenant-dashboard.md`, the `docs/api/README.md` Part C section, `docs/api/openapi.yaml`
+   and the S-catalog are complete for every endpoint shipped in T1–T6.
+5. Every new endpoint appears in the catalog **and** the spec, made mechanical rather than a promise.
+
+**State found at session start.** T0a–T6 delivered in the working tree. Already present from T5/T6:
+`docs/frontend/tenant-dashboard.md`; the `docs/api/README.md` tenant section; `docs/api/openapi.yaml`'s
+new paths; S-57…S-63 in `docs/backend/statistics-catalog.md`; `vitest.dashboard-coverage.config.ts` at
+floor 0; the `test:coverage:dashboard` script. **Missing:** the E2E spec tree, the CI step for the
+dashboard ratchet, the raised ratchet floors, and any mechanical check that a mapped route appears in
+both the README catalogue and the OpenAPI spec.
+
+**Constraints carried in.** No branch creation or switching. TDD: the E2E spec and the
+documentation-completeness check are written first and observed to fail before they pass. No invented
+coverage number: the ratchet is set from a measured run. The authenticated walk is stated as not
+delivered rather than implied.
+
+### T7 delivered (issue #359)
+
+**Every acceptance criterion in the issue is met, and the two that could not be met are stated.**
+
+**1. `tests/e2e/tenant-dashboard/signed-out.spec.ts` — delivered and executed.** Six tests, modelled on
+the console's `console-access.spec.ts`: the bare slug, three per-section URLs, the bare `/app` org
+switcher, and the retired "Demo mode" claim. Each asserts the visitor reaches `/sign-in`, that none of
+the shell's chrome renders (`Switch boutique`, `Reporting window`, `Top up`) and that **zero**
+`/api/v1/orgs/` requests are issued.
+
+**The harness had never run, and this slice repaired it.** The specs sit in the repo-level
+`tests/e2e/` tree, above `frontend/web/`, so Node could not resolve `@playwright/test` from their
+directory and **every** spec — including the pre-existing admin one — failed before collection with
+`Cannot find module '@playwright/test'`. Fixes, all in `frontend/web`: `test:e2e` now sets
+`NODE_PATH=node_modules` and both scripts carry `PLAYWRIGHT_BROWSERS_PATH`; the config header records
+why. Running the tree in parallel also starved Clerk's first load against one cold vite server, so the
+config now pins `workers: 1` with a 15 s expect bound. Result: **15 passed** (9 admin + 6 tenant),
+serial, ~1.3 min. The admin suite had never been executed either; it runs now.
+
+**2. The authenticated walk is not delivered, and the reason is stated in two places.**
+`docs/frontend/tenant-dashboard.md` and `docs/tests/README.md` both record that it needs a Clerk test
+session and a running API, and name what pins the role matrix instead (the backend integration tests,
+the shell's `allowedSections` DOM tests, and the Approvals/Team verb tests).
+
+**3. `bun run test:coverage:dashboard` now runs in CI, with the ratchet at the achieved value.**
+A step was added to the `test-web` job beside the global and admin runs. The floors were raised from 0
+to the measured values, and the measurement found two modules were not meaningfully gated:
+
+- **`lib/dashboard-api.ts` was at 9 % lines.** The Overview DOM test mocks the module, so nothing
+  tested the request shapes it builds. Added `dashboard-api.test.ts` (8 tests) → **100 %**.
+- **`hooks/useDashboardWindow.ts` was at 25 % functions.** Its test file covered only the pure
+  `resolveWindowRange` helper and never rendered the hook. Added `useDashboardWindow.dom.test.tsx`
+  (4 tests, asserting that `setWindow` moves the window **and** its range together) → **100 %**.
+
+The second fix also repaired a **pre-existing failure in the global gate**: `bun run test:coverage`
+was exiting 1 on `src/hooks/**` (69.23 % functions < 70) because T4 added the hook under `src/hooks/`
+without a test. T0b/T4/T5/T6 never ran the global coverage command, so it went unnoticed; it is green
+now (124 files / 868 tests). I observed the ratchet bind by raising a floor to 99 % and watching the
+run fail with four threshold errors before reverting — a gate that has never failed is a gate nobody
+has tested.
+
+**4. Documentation.** `docs/frontend/tenant-dashboard.md` gained a T7 section and a measured coverage
+table, and its status moved from "in progress" to "delivered across T0a–T7" with the gaps named.
+`docs/tests/README.md` lost three stale claims (it still described a 13-file, node-only web suite, a
+"four" file gate list of five, and a `test-web` job with no ratchets), gained an E2E section and
+correct coverage/CI tables, and its backend count moved 2,247 → **2,294**.
+
+**5. Every new endpoint appears in the catalogue and the spec — and the check found a real defect.**
+`Aveline.Api.Tests/TenantDashboardDocumentationTests.cs` (47 tests) scans the endpoint sources for all
+thirteen T1–T6 routes and asserts each has a README method+path row and an OpenAPI `path` +
+`operation`. **On its first run it failed**: E-9's `GET …/customers/{customerId}/interactions` had a
+path item carrying only its `post` operation and an orphaned `CustomerInteractionPage` schema, so the
+read the client detail sheet depends on was documented as if it did not exist. The `get:` operation is
+now written (`openapi.yaml`: 156 paths, 240 refs, 0 dangling).
+
+**Two deliberate deviations, recorded rather than hidden.**
+
+- **Shipped endpoints are documented in `docs/api/README.md` Part B, not Part C.** The issue says
+  "the Part C section", but Part C is titled "Planned endpoints"; documenting live routes there would
+  reproduce exactly the documented-but-unimplemented defect the catalog warns about. The dashboard
+  routes live in **B.20–B.23** and the old C.10/C.11 entries point at them. T2 established this and
+  the new test pins it.
+- **`S-57…S-63` were already present** (each landed in the slice that shipped its endpoint, per the
+  strategy). The catalog now ends at **S-63**, with no renumbering and no pre-documented route.
+
+**Findings that are not T7's to fix, recorded here so they are not lost.** `E-2`
+(`…/dashboard/revenue-series`) and `E-3` (`…/dashboard/top-items`) are shipped, cached and documented,
+and `lib/dashboard-api.ts` has typed clients for both, but **no tenant component calls them** — the
+Overview rebuild shipped the KPI strip, the reduced takings card and the focus feed and stopped there.
+The doc's "revenue trend" and "top items" are target state, and `docs/frontend/tenant-dashboard.md`
+now says so explicitly. Six shell components also remain at 0 % coverage; they are named in the config
+rather than excluded.
+
+### Verification performed (after T7)
+
+- **Full backend suite: 2,294 passed, 0 failed** (11 m 53 s; 2,247 + the 47 new documentation tests).
+- **Global web coverage: 124 files / 868 tests passed**, thresholds met (the gate that was failing
+  before this slice).
+- **Dashboard coverage ratchet: 124 files / 868 tests passed**, floors raised and green; observed to
+  fail when a floor is set above the achieved value.
+- **Playwright: 15 passed** (9 admin + 6 tenant), serial.
+- `bunx tsc -b` exit 0; `bunx oxlint src` 0 errors (72 pre-existing warnings).
+- `docs/api/openapi.yaml` parses: 156 paths, 240 `$ref`s, 0 dangling; the interactions path item now
+  carries both `get` and `post`.
+
+### Not delivered in T7, and stated as such
+
+- **The authenticated E2E walk**, for the reason above (no Clerk test session, no running API).
+- **A CI step for Playwright.** It needs a browser download and, for the authenticated walks, a
+  secret; that is a workflow decision with its own cache/secret surface, not a line in T7.
+- **`components/shared/**` still does not exist.** T4 kept the shared primitives in
+  `components/dashboard/**`; the dashboard config keeps the glob and a floor of 0 so the directory is
+  measured from the moment it first exists. The TD6 promotion remains open and is recorded in the doc.
+
+## Session 2026-09-21 (d) — Tenant dashboard defect fixes 1–4 (session start)
+
+**Task:** Fix four reported defects in the delivered tenant dashboard: (1) every panel shows "Try again"
+on a cold load; (2) the Team section foregrounds code generation instead of the team; (3) Usage and
+Billing have no upgrade path; (4) two clients exist but their Salons were never created.
+**Tool used:** Claude (DeepSeek Harness) AI coding agent
+**Branch:** `feature/tenant-dashboard-v2` (unchanged, nothing committed)
+
+### Session start — what I recorded before touching code
+
+- **Read the plans' successors first.** T0a–T7 are all logged as delivered, so these four are
+  regressions and gaps against a shipped slice, not new scope. No plan file was rewritten for them.
+- **Established the live state instead of guessing.** The dev API (`:5091`), Vite (`:5173`) and the
+  compose Postgres (`:5433`) were all running, so I queried the actual demo tenant rather than
+  reasoning from fixtures: one organisation (`aveline-colombo-07`), two clients
+  (`Samantha Arias`, `Jason smith`), and **zero** conversation rows with a non-null `CustomerId` —
+  two general Salons, one per staff member. That is defect 4 reproduced against real data.
+- **Refused to guess defect 1.** It is a first-request-only failure, so its cause depends on what
+  that request actually returned. I asked for credentials and a HAR rather than shipping a fix for
+  an imagined cause. The HAR was decisive and is the reason this entry can name the cause at all.
+
+### Defect 1 — the cause, established from evidence
+
+The HAR showed the first `/customers` request **succeeded (200 with a full body)** and that only
+**one** such request was ever sent: the two StrictMode mounts issued one request between them. The
+request interceptor's diagnostic then showed the only rejection the API client ever produced was
+`CanceledError` / `ERR_CANCELED`, from a request that never reached the network. The first mount's
+effect cleanup aborts its in-flight request before it is dispatched; `load` recorded that
+cancellation as a load failure and set the error card, and "Try again" then worked because a click
+issues a request no cleanup aborts. That matches the reported shape exactly.
+
+Two defects, one root cause — a request that was cancelled or superseded still drove the UI:
+
+- cancellation rendered as a failure (`isCanceledError` now separates the two), and
+- a slow response could overwrite a newer one, which blanked a correct table and is why the error
+  survived a later *successful* load in my first reproduction.
+
+I also found and fixed a bug I introduced while refactoring: routing every panel through a stable
+loader stopped the panels refetching on a search or filter change, because the effect's dependency
+was the now-stable function. `usePanelLoad` takes an explicit dependency list, and a regression test
+pins that typing in the client search issues a second request.
+
+### Defects 2–4, and the two the operator found while reviewing
+
+**Defect 2 — Team was about codes, not people.** The page was titled "Team & Code Generation"; the
+generator, its batch controls and three code-count cards filled the fold above the roster. The page
+is now the member list with two actions (`Invite staff`, `Pending codes (n)`), and generation moved
+into `team/InvitationDrawer.tsx`. Building it surfaced a contract fact worth recording: `GET
+…/invitations` returns `PendingInvitationDto`, documented in the source as a **non-secret view**, so
+there is no `code` field. My first draft rendered a pending list with a copy button, and my test
+mocks encoded a payload the server cannot send; `tsc` caught it against the real type. The list now
+identifies each code by recipient, role and remaining lifetime and offers only Revoke.
+
+I also reworked the drawer twice. The first version was visually poor (wrapping pill groups that made
+the form jump); the second moved the two views behind one switch and set every field in a single
+column with the primary action at the end of the flow. The tenant conformance gate then rejected raw
+`<button>` elements I had used for the segmented controls, so the same review replaced all five with
+the design system's `ToggleGroup`. I rendered the result in a real browser through a throwaway Vite
+harness (dark tokens first by mistake, then light) rather than guessing at the layout, and deleted
+the harness afterwards.
+
+The operator also reported that the page rendered a card inside a card with the "Members" title
+twice. `MembersTab` already owns its card, so the page no longer wraps it.
+
+**Defect 3 — no upgrade path.** Usage and Billing carry an `Upgrade plan` button that routes to
+`/app/b/{slug}/upgrade`, a section that exists on the route but not in the nav. `UpgradePanel` takes
+no payment and says so: there is no payment-provider client and no invoice entity (TD8/Q2), so the
+deliverable the operator asked for is a page that hands the decision to `/contact`.
+
+**Defect 4 — clients had no Salons.** Confirmed against the live database before writing code: two
+clients, and zero conversations with a non-null `CustomerId`. `POST …/customers` now creates the
+client's organization-shared Salon and seeds Aveline's greeting, and `CustomerSalonBackfillJob`
+repairs clients that predate it at startup. The repair is deliberately **not** a SQL migration: the
+greeting is C# domain text, and duplicating it in SQL would give repaired Salons a different opening
+message from new ones.
+
+### The decoupling the operator demanded, and why it was necessary
+
+My first attempt at the drawer reported two further defects — it showed the last selected chat room
+instead of Aveline, and the client's chat header showed Aveline's blossom — and I fixed them the
+obvious way: force the drawer to Aveline's thread when it opens.
+
+**That broke the Salon section**: the operator could no longer switch to a client's thread, because
+the two surfaces were reading one `activeConversationId`. Forcing either one moved the other. The
+operator's response — "we have to seriously decouple this" — was correct.
+
+`ConversationsContext` now holds **two independent thread slots**. The drawer has its own
+conversation id, messages, agent state, activity, loading and sending flags, with `openAveline` /
+`sendToAveline` / `decideAveline`; `openAveline` never calls the section's `openConversation`. Both
+slots share the conversation list and the SignalR connection, both join their own group (`JoinSalon`
+adds without leaving, so one connection can carry two threads), and the realtime handlers demultiplex
+by `conversationId`. The newest-page paging rule became `loadNewestPage` so the two threads cannot
+disagree about which messages are recent.
+
+I re-verified the section: opening a client's Salon no longer moves the drawer, and opening the
+drawer no longer moves the section, with a test for each.
+
+### Documentation
+
+- `docs/api/README.md`: the client-create row now names its Salon side effect, with a subsection on
+  why it is load-bearing and how the repair works; the conversations section documents that a
+  client-less, channel-less thread is the general Salon and that `JoinSalon` is additive.
+- `docs/frontend/tenant-dashboard.md`: six fix sections — the first-load rule and `usePanelLoad`, the
+  Team/drawer split, the upgrade path, eager client Salons, and the Salon naming and decoupling.
+- `docs/tests/README.md`: backend count 2,294 → **2,298**.
+- `docs/api/openapi.yaml`: unchanged at **156 paths / 240 refs**, and re-validated. No route was added
+  or removed by any of these fixes, so there was nothing to add to the spec; the spec test that pins
+  every documented route to a mapping still passes.
+
+### Verification
+
+- **Full backend suite: 2,298 passed, 0 failed** (22 m 31 s; 2,294 + 4 new).
+- **Full web suite: 130 files / 918 tests passed** (was 124 / 868 before this work).
+- `bun run test:coverage:dashboard` green with the T7 floors unchanged.
+- `bunx tsc -b` exit 0; `bunx oxlint src` 0 errors, 73 warnings against 72 before (the one addition is
+  the data-fetch effect in `InvitationDrawer`, which reports the same `set-state-in-effect` class the
+  repository already carries).
+- Tenant conformance, truthfulness and sections gates: 20 passed.
+- `docs/api/openapi.yaml` parses: 156 paths, 240 `$ref`s.
+
+### Not delivered, stated as such
+
+- **The authenticated Playwright walk.** The headed browser cannot launch in this sandbox (crashpad
+  needs a database path it is not given), and Clerk's device verification blocked the headless
+  sign-in even after the operator disabled TOTP. Defect 1 was therefore pinned from the operator's
+  HAR plus request-level instrumentation rather than from a browser walk I ran myself; the two
+  surfaces I could exercise without a session (the drawer and the Team page) I rendered and inspected
+  through a throwaway harness.
+- **A CI step for the backfill.** It runs per boot and is capped and idempotent; scheduling it is
+  unnecessary while it is this cheap, and a job would need its own locking story.
+- **Eager Salon creation covers the create path only.** Clients created by other writers (the agent's
+  identify flow, for example) rely on the boot repair rather than creating their own Salon.
+
+## Session 2026-09-21 (e) — The tenant Catalog section: chrome, cards, and the drawer
+
+The Catalog panel was the one tenant section that never got the dashboard rebuild. It hung off the
+shell with its own ad-hoc header and a centred dialog, and it was the last surface still quoting
+prices with a hard-coded `$` after `formatMoney` landed. This round brings it into the same shape as
+the rest of the dashboard.
+
+### The starting point was a half-finished refactor
+
+The operator's previous pass had extracted the floor-tag tool into `FloorTagStudio.tsx` and moved the
+piece form to a shadcn `Sheet`, but the extraction was incomplete: `AddProductModal.tsx` rendered
+`<FloorTagStudio>` without importing it, still carried every line of the old QR-studio state and the
+old `$`-printing `handlePrintTag`, and its JSX was unbalanced (two `FormSection`s never closed). It
+did not parse — `Expected corresponding JSX closing tag for <div>. (1170:10)`. I finished the
+extraction rather than reverting it: added the import, deleted the dead state, handlers and print
+template, closed the sections, and moved the submit footer outside the scroll region so the primary
+action stays reachable.
+
+### What changed
+
+- **Chrome.** `CatalogPanel` has the standard eyebrow / serif-heading / description header with
+  Refresh and Add piece, one section switcher carrying counts, and four `CatalogStat` chips driven by
+  explicit measured flags: an unreturned list reads **"not measured"**, a measured empty list is a
+  real `0`.
+- **Cards.** `ProductCard` leads with the garment, the stock state as a word and tone, the price
+  through `formatMoney` and the visual attributes; row actions collapse into one menu; there is no
+  confidence badge, because the list payload carries no score.
+- **The drawer.** `AddProductModal` is a right-side `Sheet` with six numbered steps, a labelled
+  `ToggleGroup` for the upload/URL source, and `Input` for the file and colour pickers instead of raw
+  controls.
+- **Money.** The last hard-coded `$` renderers — `SourcingTab` (target price, atelier cost) and
+  `SuppliersTab` (MOQ, whose `DollarSign` glyph became `Coins`) — now call `formatMoney`; the print tag
+  prices through it as well. The sourcing design doc's `$1,800` example became `LKR 1,800`.
+- **Conformance.** `space-y-*` became `gap`; the print stylesheet uses CSS named colours; the colour
+  fallback moved to `DEFAULT_COLOR_HEX` in `lib/catalog-api.ts`, so no dashboard component spells a
+  hex literal of its own.
+- **F-9.** The drawer's backend analysis and image upload now require a real organisation id; with
+  none, the analysis falls back to the client-side extractor and the upload is skipped.
+
+### TDD
+
+`AddProductModal.dom.test.tsx` (5) and `FloorTagStudio.dom.test.tsx` (4) pin the finished shape: the
+drawer is `right-0` rather than `inset-x-0`, the titles are Add/Edit piece, the source control is a
+labelled radiogroup, no `$` renders, a missing organisation disables the downloads while printing
+still works, a missing price is "not measured", and submit passes the typed piece to `onSave`.
+
+### Verification
+
+- **Full web suite: 133 files / 931 tests passed**; this round added 2 files and 9 tests.
+- Tenant conformance, truthfulness and sections gates: **20 passed**.
+- `bunx tsc -b` exit 0; `bunx oxlint src` 0 errors (the catalog subtree keeps its 5 pre-existing
+  warnings, the `Math.random` SKU default and the form-reset effect).
+- No branch switch and no commit: the tree stays on `feature/tenant-dashboard-v2`, work in the
+  working tree only.
+
+### Documentation
+
+- `docs/frontend/tenant-dashboard.md`: a **Catalog** row in the section table and a new
+  "The Catalog section" section covering the chrome, the honest chips, the grid and cards, the drawer,
+  the one money formatter, F-9 and the tests.
+- This log.
+
+## Session 2026-09-21 (f) — The boutique reads Blossoms, not tokens
+
+The operator's instruction: "In the pricing and billing section tenant shouldn't have the ability to
+know the token usage, their primary usage statistics is blossom. The ai workflow reason should be also
+removed." They then chose the deepest option — a **full lockout, including permissions** — and, when
+the statement still had a Reason column, chose to replace it with the grant's expiry.
+
+### The lockout, at every layer
+
+Four layers each claimed the same thing, and three of them were only hiding it:
+
+- **The permission.** `stats:view:agent` was removed from `org:boutique_owner`. It is now held only by
+  the Aveline team roles (`moderator`, `admin`, `owner`), which is where the admin console reads the
+  same family from. The four boutique roles hold none of it.
+- **The routes.** `MapOrgEndpoints` was deleted from `AgentStatisticsEndpoints`, and with it the
+  `StatsAgentPolicy` ("StatsAgent") and its registration. Every
+  `/api/v1/orgs/{id}/statistics/agents/**` path answers **404**, not 401 and not 403 — the surface does
+  not exist for a tenant. The team-only `/admin/statistics/agents/{overview,runs,reliability}` subset
+  (behind `stats:system`) is untouched.
+- **The client.** `lib/statistics-api.ts` lost every agent type, every `fetchAgent*` and both
+  `canRead*Statistics` helpers; `AgentUsagePanel.tsx` was deleted and `UsagePanel` no longer fetches or
+  renders it. A test asserts the module exports no `fetchAgent*` at all, so a reintroduction fails
+  before a panel can call it.
+- **The statement.** The org-scoped Blossom statement now runs through a `ForBoutique` projection: a
+  consumption row's reason becomes `"Blossom consumption."`, and its source reference (the agent
+  workflow id), provider, model, normalized units and USD cost are nulled. The
+  `GET /api/v1/admin/orgs/{id}/blossoms/statement` route keeps the full detail, so the fact was
+  redacted at the tenant boundary rather than deleted. The server-side `q` filter still matches the
+  provider/model/workflow id, because that is how the row is found.
+
+### The statement column
+
+Neutralising the reason text left the column itself in place, and the operator wanted it gone: "it
+should be replaced with something else." **Reason became Expires** — a grant's expiry date, an em
+dash for a consumption row, which does not expire. The field already existed in `BlossomStatementItem`
+and no surface used it, so the replacement adds information rather than just removing some.
+
+### TDD
+
+- `AgentStatisticsEndpointsTests`: nine org paths asserted to return **404** for an owner token.
+- `BlossomEndpointsIntegrationTests`: the org statement hides operator detail (reason, sourceRef,
+  provider, model, units, cost), and the admin statement keeps it.
+- `PermissionsCatalogTests`: no boutique role holds `stats:view:agent`; the team roles still do.
+- `permissions.test.ts`: the same lockout in the client mirror.
+- `statistics-api.test.ts`: the module exports no agent surface.
+- `UsagePanel.dom.test.tsx`: an owner sees no "Agentic usage", no "total tokens", no "provider cost".
+- `BillingPanel.dom.test.tsx`: the statement shows **Expires** and never "AI workflow".
+
+### Verification
+
+- **Full backend suite: 2,305 passed, 0 failed** (18 m 10 s).
+- **Full web suite: 133 files / 930 tests passed.**
+- The affected backend suites alone: **75 passed** (permissions catalog, agent endpoints, blossom
+  endpoints); `dotnet build` of the API and the test project both 0 errors.
+- `tsc -b` exit 0; the dashboard coverage ratchet (`test:coverage:dashboard`) exit 0.
+- `openapi.yaml` parses at **146 paths / 231 refs, 0 dangling**.
+- No branch switch and no commit: the tree stays on `feature/tenant-dashboard-v2`.
+
+### Documentation
+
+- `docs/architecture/authorization.md`, `docs/api/README.md`: the `org:boutique_owner` grant row loses
+  `stats:view:agent`, §C.6 is banner-marked as removed, and the statement section documents the
+  redaction and the nulled fields.
+- `docs/backend/statistics-catalog.md`: §5 is banner-marked team-only.
+- `docs/frontend/tenant-dashboard.md`: the Usage permission table loses the agentic row, and the
+  Billing section documents the Expires column and the redaction.
+- `docs/api/openapi.yaml`: the ten `/api/v1/orgs/{organizationId}/statistics/agents/**` path items
+  were deleted, so the spec no longer advertises routes that are not mounted. It parses clean at
+  **146 paths / 231 `$ref`s, 0 dangling** (was 156 / 240).
+- `docs/backend/backend-requirements.md`: the route table and the permission table state the removal.
+- This log.
+
+## Session 2026-09-21 (g) — The Plan card explains itself
+
+The operator sent a screenshot of the Billing section's Plan card: a pill reading **"None"**, a
+**"no list price configured"** figure, and no icons. "I have no idea what the none means, or why the
+list price is not configured. Add some icons here too."
+
+Both are the same defect: the card rendered the server's vocabulary without the sentence that makes
+it mean something.
+
+- **"None" is not a plan state.** `SubscriptionService.GetSubscriptionAsync` returns the literal
+  `"None"` when no `OrganizationSubscriptions` row exists — the absence of a billing record, not a
+  subscription that is somehow off. The badge now reads **"No billing record"** with a
+  `CircleDashed` glyph, and a note under the figures says the plan and its limits are read from the
+  assigned tier and nothing is charged. The other enum values (`Active`, `Trialing`, `PastDue`,
+  `Cancelled`, `Expired`) each get their own label, tone and sentence; an unknown value is shown
+  verbatim with a statement that the dashboard has no plainer wording for it.
+- **"no list price configured" is a fact about the column, not the plan.** `SubscriptionView.PriceLkr`
+  is never assigned in the product, so it is permanently `0`; rendering it would print `LKR 0.00` as
+  the price of a paid plan. The label stays (the honesty rule is right) and the card now says why:
+  no LKR list price is on file, no amount is shown rather than a fabricated one, and no payment
+  provider is connected so nothing here is a charge.
+- **Icons.** The card leads with a `Gem` tile; the four facts carry `Tag` (list price), `Users`
+  (seats), `CalendarDays` (period start) and `CalendarCheck` (period end); the status badge carries
+  its state glyph; and the explanatory note carries `Info`.
+
+Tested in `BillingPanel.dom.test.tsx`: a `None` subscription renders "No billing record" and the
+"no subscription row exists" sentence and never the bare string `None`; and a zero list price renders
+both "no list price configured" and the "no LKR list price on file" explanation. The tenant
+conformance and truthfulness gates stay green.
+
+### Verification
+
+- `tsc -b` exit 0; **full web suite: 133 files / 932 tests passed** (the two new billing DOM tests).
+- Tenant conformance and truthfulness gates: **15 passed**; `oxlint` 0 errors on the billing tree.
+- `dotnet build` of the API and the test project: 0 errors.
+- No branch switch and no commit: the tree stays on `feature/tenant-dashboard-v2`.

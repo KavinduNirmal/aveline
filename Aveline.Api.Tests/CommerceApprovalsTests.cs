@@ -1,10 +1,13 @@
-﻿using System.Security.Claims;
+using System.Security.Claims;
+using Aveline.Api.Authorization;
 using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Modules.Commerce.Controllers;
 using Aveline.Api.Modules.Commerce.DTOs;
 using Aveline.Api.Modules.Commerce.Models;
 using Aveline.Api.Modules.Commerce.Repositories;
 using Aveline.Api.Modules.Commerce.Services;
+using Aveline.Api.Modules.Shared.Models;
+using Aveline.Api.Modules.Shared.Repositories;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -317,7 +320,7 @@ public class CommerceApprovalsTests
         var approvalRepo = new ApprovalRepository(context);
         var orderRepo = new OrderRepository(context);
         var service = new ApprovalService(approvalRepo, orderRepo);
-        var controller = new ApprovalsController(service);
+        var controller = new ApprovalsController(service, new UserRepository(context), new TestAuthorizationService(_ => true));
 
         var orgId = Guid.NewGuid();
         var order = new Order
@@ -356,12 +359,17 @@ public class CommerceApprovalsTests
         var approvalRepo = new ApprovalRepository(context);
         var orderRepo = new OrderRepository(context);
         var service = new ApprovalService(approvalRepo, orderRepo);
-        var controller = new ApprovalsController(service);
+        var controller = new ApprovalsController(service, new UserRepository(context), new TestAuthorizationService(_ => true));
 
+        // The subject is a Clerk id and the actor is resolved from the database, which is the only
+        // shape that occurs in production. This test used to inject a GUID subject, which is a
+        // shape the API never sees and the reason the parse bug survived CI.
         var userId = Guid.NewGuid();
+        context.Users.Add(new User { Id = userId, ClerkId = "user_existingActorTest", Email = "actor@aveline.lk" });
+        await context.SaveChangesAsync();
         var claims = new ClaimsPrincipal(new ClaimsIdentity(new[]
         {
-            new Claim(ClaimTypes.NameIdentifier, userId.ToString())
+            new Claim(ClaimTypes.NameIdentifier, "user_existingActorTest")
         }, "TestAuth"));
 
         controller.ControllerContext = new ControllerContext
@@ -403,5 +411,77 @@ public class CommerceApprovalsTests
         var response = Assert.IsType<ApprovalQueueResponseDto>(okResult.Value);
         Assert.Equal("approved", response.Status);
         Assert.Equal(userId, response.DecidedBy);
+    }
+
+    /// <summary>
+    /// F-5. The actor is resolved from the Clerk subject through <c>IUserRepository</c>, the way
+    /// every other actor in the codebase is. The test above passes a GUID subject, which is why the
+    /// old `Guid.TryParse` implementation never failed in CI — but a real Clerk `sub` is a string
+    /// such as `user_2abc…`, so `TryParse` returned false and every decision was recorded with
+    /// `DecidedBy = null`.
+    /// </summary>
+    [Fact]
+    public async Task ApprovalsController_ResolvesTheActorFromAClerkSubject()
+    {
+        using var context = CreateInMemoryDbContext();
+        var approvalRepo = new ApprovalRepository(context);
+        var orderRepo = new OrderRepository(context);
+        var service = new ApprovalService(approvalRepo, orderRepo);
+        var users = new UserRepository(context);
+        var controller = new ApprovalsController(service, users, new TestAuthorizationService(_ => true));
+
+        var orgId = Guid.NewGuid();
+        var clerkSubject = "user_2abcDEFghiJKLmnoPQRs";
+        var actor = new User
+        {
+            Id = Guid.CreateVersion7(),
+            ClerkId = clerkSubject,
+            Email = "owner@aveline.lk",
+            UserRole = Roles.BoutiqueOwner,
+        };
+        context.Users.Add(actor);
+        await context.SaveChangesAsync();
+
+        var claims = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim(ClaimTypes.NameIdentifier, clerkSubject)
+        }, "TestAuth"));
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext { User = claims }
+        };
+
+        var order = new Order
+        {
+            Id = Guid.NewGuid(),
+            OrganizationId = orgId,
+            CustomerId = Guid.NewGuid(),
+            CustomerName = "Test User",
+            Status = "pending_approval",
+            Subtotal = 1000m,
+            Total = 1000m,
+            CreatedAt = DateTime.UtcNow
+        };
+        await orderRepo.CreateAsync(order);
+
+        var approval = new ApprovalQueueEntry
+        {
+            Id = Guid.NewGuid(),
+            OrganizationId = orgId,
+            OrderId = order.Id,
+            ApprovalType = "discount",
+            Status = "pending",
+            CreatedAt = DateTime.UtcNow
+        };
+        await approvalRepo.AddAsync(approval);
+
+        var actionResult = await controller.ProcessDecision(
+            orgId,
+            approval.Id,
+            new ApprovalDecisionDto { Decision = "approve", Reason = "All good" });
+
+        var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
+        var response = Assert.IsType<ApprovalQueueResponseDto>(okResult.Value);
+        Assert.Equal(actor.Id, response.DecidedBy);
     }
 }

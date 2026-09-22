@@ -1,29 +1,5 @@
 # Aveline tenant dashboard (`/app/b/:slug/:section`)
 
-> ## ⚠️ Branch notice — most of this page is not yet true on this branch
->
-> This page was authored on the **`development`** branch for the tenant-dashboard work
-> (**T0a–T7**) and describes that work as delivered. It was ported to the
-> **`cloudinary-media-and-salon-image`** branch **only so its media statements could be
-> corrected** (see the "Deliberate exclusions" note near the end and F-7 in the gap
-> table): that branch serves catalog imagery from Cloudinary, so the former
-> "No Cloudinary" exclusion is no longer accurate.
->
-> **The tenant-dashboard slices themselves are NOT on this branch.** `git merge-base` shows
-> this branch forked at `88f1a5e`, and the tenant-dashboard commits (`a261f67`) are not
-> ancestors of it. Concretely, on this branch: `Permissions.cs` still has **28** constants
-> (not 31), `frontend/web/src/lib/permissions.ts` still carries the older permission list,
-> `BusinessRulesEndpoints.cs`/`BusinessRulesController.cs` still exist (this page says one
-> was deleted), `OrdersController.cs` still has no `[Authorize]`, and the cited
-> `TenantDashboardService.cs`, `BoutiqueIncomeReadService.cs`, `dashboard-api.ts` and
-> `format-money.ts` do not exist here.
->
-> **Treat every section except the media statements as describing a different branch.**
-> Delete this banner and re-verify the whole page if and when the tenant-dashboard work is
-> merged here. The media decision itself is recorded in
-> [ADR-022](../ADR/ADR-022-media-storage-and-access.md) and
-> [`media-access.md`](../security/media-access.md).
-
 **Status:** delivered across **T0a–T7**, with the gaps recorded rather than implied: no authenticated
 end-to-end walk (no Clerk test session in this environment), `E-2`/`E-3` have no panel caller yet, and
 six shell components are still at 0 % coverage. Each is stated in place below. This page is the

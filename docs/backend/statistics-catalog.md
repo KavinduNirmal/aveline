@@ -239,6 +239,13 @@ unless it appears in this catalog **and** in
 
 ## 5. Agentic statistics
 
+> **S-13…S-23 are team-only.** The organisation-facing
+> `/api/v1/orgs/{organizationId}/statistics/agents/**` routes were removed: a boutique reads its
+> usage in Blossoms, and runs, tokens and provider cost are agent internals. The metric definitions
+> below remain accurate for the live team-only subset
+> (`GET /api/v1/admin/statistics/agents/{overview,runs,reliability}`, `stats:system`); the
+> `Endpoint` and `Access` rows name the historical Phase 4 contract for that subset.
+
 ### S-13 · `agentRunCount`
 
 | Field | Value |
@@ -1055,6 +1062,165 @@ whether a receipt was verified.
 | Endpoint | `GET /api/v1/admin/statistics/billing/reconciliation` |
 | Access | `stats:system` |
 | Notes | **Uses `BlossomService.LedgerDerivedBalance` and `ReconciliationDrift` unchanged**, because those two helpers are also what `SystemMetricCollector` emits for the `blossom.ledger.drift` alert; a second formula here would let the console and the alarm disagree. A non-zero drift is a **Critical** condition (S-3). This endpoint exists so a drift is findable from the console rather than only from Grafana |
+
+---
+
+## 7d. Boutique income (a boutique's own takings)
+
+> **A different economy from §7c, in a different table.** §7c is what **Aveline** billed the shop
+> (subscriptions and Blossom top-ups), sourced from `IncomeLedgerEntries`. This section is what **the
+> shop** took from **its clients**, sourced from `BoutiqueSaleEntries`. The two are never summed
+> together; the domain entity is named `BoutiqueSaleEntry` precisely so a future reader cannot merge
+> them. See `docs/frontend/tenant-dashboard.md`.
+
+### The two entry classes, restated for this family
+
+A **`Verified`** entry means somebody asserted this money was taken (a counter sale, a confirmed
+payment, a refund). A **`Derived`** entry means "this is what the order says was sold" — billed value
+with no evidence of collection. **No screen presents `Derived + Verified` as one unlabelled figure**,
+and every reader reports the two bases separately.
+
+### `TenantDashboardDataQualityDto`
+
+The **sixth** `dataQuality` vocabulary in the API (after the agent, home-feed, business, revenue and
+usage families). A field is named only where it means something specific to this surface:
+`PaymentRowsPresent`, `OrderCostsComplete`, `IncomeLedgerBackfilled`, `UsageMetricsAvailable`,
+`RefundAndOutstandingExcludedFromCollected`, `CheckedAt`, `Notes`. No vocabulary is coerced into
+another.
+
+> **Status: S-57…S-63 are all live.**
+> `BoutiqueSaleEntries` exists, is migrated, is written by all four writers and is read by the two
+> income routes; the dashboard summary, revenue series and top-items routes ship with T4. T5 adds
+> the billing-period history (S-62) and the top-up pack catalogue (S-63). Each entry below is marked
+> individually, because the catalog's own rule is that nothing is exposed unless it appears here
+> *and* in `openapi.yaml`, and a reader who lands on one entry should be able to tell whether it
+> exists without reading the whole section.
+
+### S-57 · `tenantDashboardSummary` — **live**
+
+
+
+| Field | Value |
+| --- | --- |
+| Description | The boutique's KPI strip for one window: sales, cash, customers, catalogue, team, usage and operations |
+| Formula | Per KPI, from `Orders`, `Payments`, `Customers`, `InventoryItems`, `OrganizationMemberships`, `UsageAccounts`, `ApprovalQueue`, `Conversations`, `DeliveryPlans`; each KPI's exact source is named in `docs/frontend/tenant-dashboard.md` |
+| Dimensions | `window` (`7d`/`30d`/`90d`/`mtd`/`ytd`) |
+| Granularity | window aggregate |
+| Freshness | `≤ 60 s` (`TenantDashboard:CacheSeconds`) |
+| Retention | not stored |
+| Source | the operational tables, read directly |
+| Storage | on-the-fly, cached per `(organizationId, window)` |
+| Endpoint | `GET /api/v1/orgs/{organizationId}/dashboard/summary` |
+| Access | `reports:view` |
+| Notes | **Every absent number is `null`, never `0`.** `MarginCostsComplete` is `false` when any contributing order carries a zero `WholesaleCost`, because that cost is caller-supplied rather than read from the inventory record. `Currency` is read from `Organization.Currency`, not hardcoded |
+
+### S-58 · `tenantRevenueTimeseries` — **live**
+
+
+
+| Field | Value |
+| --- | --- |
+| Description | Gross order value, collected and refunded per bucket over a window |
+| Formula | `Σ Order.Total` (excluding the terminal-negative statuses), `Σ Payment.Amount` where `confirmed`, and `Σ` refund entries, bucketed by `day`/`week`/`month` |
+| Dimensions | `from`, `to`, `bucket` |
+| Granularity | day / week / month, dense with `isPartial` on a clipped edge |
+| Freshness | `≤ 60 s` |
+| Retention | not stored |
+| Source | `Orders` ∪ `BoutiqueSaleEntries` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/orgs/{organizationId}/dashboard/revenue-series` |
+| Access | `reports:view` |
+| Notes | The window is capped by **its own setting** (`TenantDashboard:MaxWindowDays`), and a capped response reports `EffectiveWindow` with `WindowCapped: true` rather than clamping silently. A gap is a gap: the chart sets `connectNulls={false}` |
+
+### S-59 · `tenantTopItems` — **live**
+
+
+
+| Field | Value |
+| --- | --- |
+| Description | The best-selling pieces in a window, by revenue |
+| Formula | `Σ OrderItems.TotalPrice` grouped by `ItemName`, over orders in the window and not cancelled, ordered descending, top `limit` |
+| Dimensions | `window`, `limit` (1..20) |
+| Granularity | window aggregate |
+| Freshness | `≤ 60 s` |
+| Retention | not stored |
+| Source | `OrderItems` joined to `Orders` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/orgs/{organizationId}/dashboard/top-items` |
+| Access | `reports:view` |
+| Notes | Grouped on the **denormalised** `ItemName` because `OrderItem.ItemId` has no enforced link to the catalogue; a renamed piece therefore appears under both names rather than being silently merged |
+
+### S-60 · `boutiqueIncomeLedger` — **live**
+
+
+
+| Field | Value |
+| --- | --- |
+| Description | The append-only register of the boutique's takings |
+| Formula | The window's entries, newest first, with per-kind totals and a `Verified`/`Derived` reconciliation block attached to the page |
+| Dimensions | `from`, `to`, `kind`, `basis`, `q`, `page`, `pageSize` (clamped `[1,200]`) |
+| Granularity | row |
+| Freshness | live (uncached) |
+| Retention | the ledger's lifetime |
+| Source | `BoutiqueSaleEntries` |
+| Storage | the table |
+| Endpoint | `GET /api/v1/orgs/{organizationId}/income/ledger` |
+| Access | `reports:view` |
+| Notes | `UnverifiedGap = DerivedTotal` is the headline honesty number. `Amount` is stored positive and the **sign is applied by the reader from `Kind`**, so a total can never come from summing a signed column |
+
+### S-61 · `boutiqueIncomeAccounts` — **live**
+
+
+
+| Field | Value |
+| --- | --- |
+| Description | The window's takings broken down by kind, and by payment method for cash entries |
+| Formula | `Σ Amount` grouped by `Kind`; for cash entries, grouped by `PaymentMethod` (`cash`/`card`/`online`/`bank_transfer`) |
+| Dimensions | `from`, `to` |
+| Granularity | window aggregate |
+| Freshness | `≤ 60 s` |
+| Retention | not stored |
+| Source | `BoutiqueSaleEntries` ∪ `Payments` |
+| Storage | on-the-fly, cached per `(organizationId, window)` |
+| Endpoint | `GET /api/v1/orgs/{organizationId}/income/accounts` |
+| Access | `reports:view` |
+| Notes | Every total is reported per kind, so a refund is never netted into a sale figure without a label |
+
+### S-62 · `tenantBillingPeriods` — **live**
+
+
+
+| Field | Value |
+| --- | --- |
+| Description | The boutique's billing-period history: each period's Blossom account, its plan, and the top-ups that landed in it |
+| Formula | One row per `UsageAccount` (newest first, `take` 1..24), enriched with the day's `OrganizationSubscriptionSnapshot` (or the live subscription row for the current period) and `Σ`/`COUNT` of `BlossomLedgerEntries` with `EntryType = TopUpGrant` inside the period |
+| Dimensions | `take` (1..24, default 12) |
+| Granularity | billing period |
+| Freshness | `≤ 60 s` |
+| Retention | the account's lifetime |
+| Source | `UsageAccounts` ∪ `OrganizationSubscriptionSnapshots` ∪ `OrganizationSubscriptions` ∪ `BlossomLedgerEntries` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/orgs/{organizationId}/billing/periods` |
+| Access | `billing:view` |
+| Notes | **`PlanListPriceLkr` is `null` whenever the stored `PriceLkr` is zero**, with `SubscriptionPricesConfigured` saying whether a price was configured. The column is never assigned anywhere in the product, so "no row ⇒ null, else the column" would print `LKR 0` as a plan price for every subscription (C-4). `PlanTier`/`HasSubscriptionRow` come from the snapshot, not from `Organization.PlanTier`, because a tier exists even for an organization that never had a billing row. **A statement of account, not an invoice** |
+
+### S-63 · `blossomTopUpPacks` — **live**
+
+
+
+| Field | Value |
+| --- | --- |
+| Description | The active Blossom top-up packs a boutique may purchase |
+| Formula | Effective price-book rows with `SkuKind = TopUpPack` and `Status = Active`, ordered by `BlossomQuantity` |
+| Dimensions | none |
+| Granularity | configuration |
+| Freshness | `≤ 60 s` |
+| Retention | not stored |
+| Source | `BlossomPriceEntries` |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/orgs/{organizationId}/blossoms/top-up-packs` |
+| Access | `billing:manage` |
+| Notes | The lookup is **identical** to the one `POST …/blossoms/top-ups` performs (`BlossomSkuKind.TopUpPack, planTier: null, organizationId: null`, filtered to `Active`), so a pack the catalogue offers cannot be rejected at purchase and a pack the purchase accepts cannot be missing (B-4/TD9). A draft price-book row is not for sale and is not listed. No payment provider is connected, so a purchase records a grant rather than a charge |
 
 ---
 

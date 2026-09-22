@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
-  X,
   Sparkles,
   Loader2,
   Check,
@@ -9,29 +8,36 @@ import {
   Link as LinkIcon,
   Trash2,
   RotateCw,
-  QrCode,
-  Download,
-  Printer,
-  Copy,
-  ChevronDown,
-  ChevronUp,
-  CheckCheck,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
-import { QrCodeSvg } from '@/components/ui/QrCodeSvg'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
   analyzeProductImage,
   getColorHex,
   normalizeCategory,
   uploadBase64Image,
-  generateQrCode,
   CATALOG_CATEGORIES,
+  DEFAULT_COLOR_HEX,
   type CatalogCategory,
 } from '@/lib/catalog-api'
 import { extractVisualAttributesAndColor } from '@/lib/color-extractor'
@@ -41,6 +47,7 @@ import {
   isValidImageFile,
 } from '@/lib/image-optimizer'
 import type { InventoryItemMock } from './mockData'
+import { FloorTagStudio } from './FloorTagStudio'
 
 interface AddProductModalProps {
   open: boolean
@@ -52,6 +59,63 @@ interface AddProductModalProps {
 }
 
 const CATEGORIES = [...CATALOG_CATEGORIES]
+
+/**
+ * One task in the piece form. The drawer is long by nature - a photograph, its extracted
+ * attributes, pricing and stock - so it is grouped into labelled steps instead of a single column
+ * of fields, which is what made the previous layout read as a wall.
+ */
+function FormSection({
+  step,
+  title,
+  description,
+  children,
+}: {
+  step: number
+  title: string
+  description?: string
+  children: React.ReactNode
+}) {
+  return (
+    <section className="flex flex-col gap-3.5 border-t pt-5 first:border-t-0 first:pt-0">
+      <div className="flex items-baseline gap-2.5">
+        <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
+          {step}
+        </span>
+        <div>
+          <h3 className="text-sm font-medium">{title}</h3>
+          {description ? (
+            <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+          ) : null}
+        </div>
+      </div>
+      <div className="flex flex-col gap-3.5 pl-0 sm:pl-7.5">{children}</div>
+    </section>
+  )
+}
+
+/** A labelled control with its optional hint, so every field states what it wants the same way. */
+function Field({
+  label,
+  htmlFor,
+  hint,
+  children,
+}: {
+  label: string
+  htmlFor?: string
+  hint?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor={htmlFor} className="text-xs font-medium">
+        {label}
+      </Label>
+      {children}
+      {hint ? <p className="text-[11px] text-muted-foreground">{hint}</p> : null}
+    </div>
+  )
+}
 
 export function AddProductModal({
   open,
@@ -67,7 +131,7 @@ export function AddProductModal({
   const [garmentType, setGarmentType] = useState<string | null>(null)
   const [color, setColor] = useState(editingItem?.color ?? '')
   const [colorHex, setColorHex] = useState(
-    editingItem?.colorHex ?? getColorHex(editingItem?.color, '#0f5132'),
+    editingItem?.colorHex ?? getColorHex(editingItem?.color, DEFAULT_COLOR_HEX),
   )
   const [fabric, setFabric] = useState(editingItem?.fabric ?? '')
   const [style, setStyle] = useState(editingItem?.style ?? '')
@@ -102,251 +166,9 @@ export function AddProductModal({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isSaving, setIsSaving] = useState(false)
 
-  // QR Floor Tag Studio states
-  const [showQrStudio, setShowQrStudio] = useState(true)
-  const [isDownloadingPng, setIsDownloadingPng] = useState(false)
-  const [isDownloadingSvg, setIsDownloadingSvg] = useState(false)
-  const [copiedPayload, setCopiedPayload] = useState(false)
-  const [qrFormatType, setQrFormatType] = useState<'json' | 'url' | 'sku'>('json')
-
+  // The floor-tag studio owns its own encoding, copy, download and print state; it was extracted
+  // into `FloorTagStudio`, so this drawer keeps only the identity that tag needs.
   const effectiveItemId = editingItem?.id || 'prospective-piece'
-  const effectiveOrgId = organizationId || '00000000-0000-0000-0000-000000000001'
-
-  const activeQrPayload = useMemo(() => {
-    if (qrFormatType === 'sku') {
-      return sku || 'AVL-000'
-    }
-    if (qrFormatType === 'url') {
-      const origin = typeof window !== 'undefined' ? window.location.origin : 'https://aveline.app'
-      return `${origin}/catalog/items/${effectiveItemId}`
-    }
-    return JSON.stringify({
-      type: 'aveline_inventory_item',
-      orgId: effectiveOrgId,
-      itemId: effectiveItemId,
-      sku: sku || 'AVL-000',
-      url: `/catalog/items/${effectiveItemId}`,
-      v: 1,
-    })
-  }, [qrFormatType, sku, effectiveItemId, effectiveOrgId])
-
-  const handleCopyPayload = () => {
-    navigator.clipboard.writeText(activeQrPayload)
-    setCopiedPayload(true)
-    toast.success('QR payload copied to clipboard', {
-      description: `${sku || 'Piece'} · Format: ${qrFormatType.toUpperCase()}`,
-    })
-    setTimeout(() => setCopiedPayload(false), 2000)
-  }
-
-  const handleDownloadPng = async () => {
-    setIsDownloadingPng(true)
-    try {
-      const res = await generateQrCode(effectiveOrgId, {
-        payload: activeQrPayload,
-        format: 'json',
-        size: 600,
-        eccLevel: 'M',
-        quietZone: 2,
-      })
-
-      if (res?.dataUrl) {
-        const link = document.createElement('a')
-        link.href = res.dataUrl
-        link.download = `${sku || 'piece'}_floor_tag.png`
-        document.body.appendChild(link)
-        link.click()
-        document.body.removeChild(link)
-        toast.success('High-resolution QR code downloaded (PNG 600px)')
-      } else {
-        throw new Error('No image payload returned')
-      }
-    } catch {
-      toast.error('Failed to download PNG QR code')
-    } finally {
-      setIsDownloadingPng(false)
-    }
-  }
-
-  const handleDownloadSvg = async () => {
-    setIsDownloadingSvg(true)
-    try {
-      const res = await generateQrCode(effectiveOrgId, {
-        payload: activeQrPayload,
-        format: 'svg',
-        size: 300,
-        eccLevel: 'M',
-        quietZone: 2,
-      })
-
-      const svgContent = res?.svg
-      if (svgContent) {
-        const blob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' })
-        const url = URL.createObjectURL(blob)
-        const link = document.createElement('a')
-        link.href = url
-        link.download = `${sku || 'piece'}_floor_tag.svg`
-        document.body.appendChild(link)
-        link.click()
-        document.body.removeChild(link)
-        URL.revokeObjectURL(url)
-        toast.success('Vector QR code downloaded (SVG)')
-      } else {
-        throw new Error('No SVG payload returned')
-      }
-    } catch {
-      toast.error('Failed to download SVG QR code')
-    } finally {
-      setIsDownloadingSvg(false)
-    }
-  }
-
-  const handlePrintTag = () => {
-    const activeName = name || 'Boutique Collection Piece'
-    const activePrice = price ? `$${Number(price).toLocaleString()}` : '$0.00'
-    const activeSku = sku || 'AVL-000'
-    const activeCategory = category || 'Haute Couture'
-    const activeFabric = fabric ? `Fabric: ${fabric}` : ''
-    const activeColor = color ? `Color: ${color}` : ''
-
-    const printWindow = window.open('', '_blank', 'width=420,height=600')
-    if (!printWindow) {
-      toast.error('Pop-up blocked. Please allow pop-ups to print garment tags.')
-      return
-    }
-
-    const svgElement = document.getElementById('modal-qr-preview-svg')
-    const svgHtml = svgElement ? svgElement.outerHTML : ''
-
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Garment Floor Tag - ${activeSku}</title>
-          <style>
-            * { box-sizing: border-box; margin: 0; padding: 0; }
-            body {
-              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              min-height: 100vh;
-              background: #fafafa;
-              padding: 20px;
-            }
-            .tag {
-              width: 320px;
-              background: #ffffff;
-              border: 2px solid #18181b;
-              border-radius: 16px;
-              padding: 24px 20px;
-              text-align: center;
-              box-shadow: 0 4px 20px rgba(0,0,0,0.06);
-            }
-            .brand {
-              font-size: 13px;
-              font-weight: 800;
-              letter-spacing: 3px;
-              text-transform: uppercase;
-              color: #18181b;
-            }
-            .category-badge {
-              display: inline-block;
-              font-size: 10px;
-              font-weight: 600;
-              letter-spacing: 1px;
-              text-transform: uppercase;
-              color: #71717a;
-              margin-top: 4px;
-              margin-bottom: 14px;
-              padding-bottom: 12px;
-              border-bottom: 1px dashed #e4e4e7;
-              width: 100%;
-            }
-            .qr-container {
-              display: flex;
-              justify-content: center;
-              margin: 10px 0 16px;
-            }
-            .item-title {
-              font-size: 15px;
-              font-weight: 700;
-              color: #18181b;
-              line-height: 1.3;
-              margin-bottom: 6px;
-            }
-            .sku-pill {
-              display: inline-block;
-              font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-              font-size: 12px;
-              font-weight: 600;
-              background: #f4f4f5;
-              color: #3f3f46;
-              padding: 2px 10px;
-              border-radius: 6px;
-              margin-bottom: 12px;
-            }
-            .meta {
-              font-size: 11px;
-              color: #71717a;
-              margin-bottom: 14px;
-              line-height: 1.4;
-            }
-            .price-box {
-              border-top: 1px dashed #e4e4e7;
-              padding-top: 14px;
-            }
-            .price-label {
-              font-size: 9px;
-              text-transform: uppercase;
-              letter-spacing: 1.5px;
-              color: #a1a1aa;
-            }
-            .price-val {
-              font-size: 22px;
-              font-weight: 800;
-              color: #18181b;
-              margin-top: 2px;
-            }
-            .footer-note {
-              font-size: 9px;
-              color: #a1a1aa;
-              margin-top: 14px;
-              letter-spacing: 0.5px;
-            }
-            @media print {
-              body { background: #fff; padding: 0; }
-              .tag { border: 2px solid #000; box-shadow: none; }
-            }
-          </style>
-        </head>
-        <body>
-          <div class="tag">
-            <div class="brand">Aveline Boutique</div>
-            <div class="category-badge">${activeCategory} · Floor Collection</div>
-            <div class="qr-container">
-              ${svgHtml}
-            </div>
-            <div class="item-title">${activeName}</div>
-            <div class="sku-pill">${activeSku}</div>
-            ${activeColor || activeFabric ? `<div class="meta">${[activeColor, activeFabric].filter(Boolean).join(' · ')}</div>` : ''}
-            <div class="price-box">
-              <div class="price-label">Retail Price</div>
-              <div class="price-val">${activePrice}</div>
-            </div>
-            <div class="footer-note">Scan with Aveline floor app for live stock & VIP styling</div>
-          </div>
-          <script>
-            window.onload = function() {
-              window.print();
-              setTimeout(function() { window.close(); }, 500);
-            };
-          </script>
-        </body>
-      </html>
-    `)
-    printWindow.document.close()
-  }
 
   useEffect(() => {
     if (open) {
@@ -355,7 +177,7 @@ export function AddProductModal({
         setSku(editingItem.sku || `AVL-${Math.floor(100 + Math.random() * 900)}`)
         setCategory(editingItem.category || 'Sarees')
         setColor(editingItem.color || '')
-        setColorHex(editingItem.colorHex || getColorHex(editingItem.color, '#0f5132'))
+        setColorHex(editingItem.colorHex || getColorHex(editingItem.color, DEFAULT_COLOR_HEX))
         setFabric(editingItem.fabric || '')
         setStyle(editingItem.style || '')
         setPattern(editingItem.pattern || '')
@@ -380,7 +202,7 @@ export function AddProductModal({
         setCategory('Sarees')
         setGarmentType(null)
         setColor('')
-        setColorHex('#0f5132')
+        setColorHex(DEFAULT_COLOR_HEX)
         setFabric('')
         setStyle('')
         setPattern('')
@@ -468,7 +290,9 @@ export function AddProductModal({
     const payload = targetImage.trim()
     const activeFileName = fileNameHint || selectedFileName || undefined
     setAnalyzing(true)
-    const targetOrgId = organizationId || '00000000-0000-0000-0000-000000000001'
+    // F-9: the backend call needs a real organisation id. Without one the analysis falls back to
+    // the client-side extractor below; it never addresses a placeholder tenant.
+    const targetOrgId = organizationId
 
     try {
       // 1. High-precision client-side canvas silhouette & authentic pixel matrix extraction
@@ -476,10 +300,12 @@ export function AddProductModal({
 
       // 2. Call backend Vision AI (Google Gemini / OpenAI / Backend Cloth Engine)
       let backendResult = null
-      try {
-        backendResult = await analyzeProductImage(targetOrgId, payload, activeFileName)
-      } catch {
-        // Backend offline or unreachable fallback
+      if (targetOrgId) {
+        try {
+          backendResult = await analyzeProductImage(targetOrgId, payload, activeFileName)
+        } catch {
+          // Backend offline or unreachable fallback
+        }
       }
 
       // Check whether backend returned a real live multimodal result or fallback
@@ -582,15 +408,17 @@ export function AddProductModal({
       // Run Gemini Vision AI attribute extraction with filename context
       await runVisionAnalysis(dataUrl, file.name)
 
-      // Persist physical image binary directly in PostgreSQL database storage
-      const targetOrgId = organizationId || '00000000-0000-0000-0000-000000000001'
-      try {
-        const uploadRes = await uploadBase64Image(targetOrgId, dataUrl, file.name)
-        if (uploadRes?.url) {
-          setImageUrl(uploadRes.url)
+      // Persist the image only when this dashboard has an organisation id. Without one there is no
+      // tenant to store it against, so the compressed data URL simply stays local (F-9).
+      if (organizationId) {
+        try {
+          const uploadRes = await uploadBase64Image(organizationId, dataUrl, file.name)
+          if (uploadRes?.url) {
+            setImageUrl(uploadRes.url)
+          }
+        } catch {
+          // Retain dataUrl if upload endpoint is unreachable
         }
-      } catch {
-        // Retain dataUrl if upload endpoint is unreachable
       }
     } catch {
       toast.error('Failed to process image file')
@@ -692,70 +520,67 @@ export function AddProductModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
-      <Card className="w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden border-border bg-background shadow-2xl animate-in zoom-in-95 duration-150">
-        {/* Modal Header */}
-        <div className="flex items-center justify-between border-b border-border px-6 py-4 shrink-0">
-          <div>
-            <h3 className="font-serif text-lg font-semibold">
-              {editingItem ? 'Edit Boutique Piece' : 'Add New Boutique Piece'}
-            </h3>
-            <p className="text-xs text-muted-foreground">
-              Import garment photograph for automatic Gemini Vision AI attribute extraction
-            </p>
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onClose}
-            className="size-8 p-0 text-muted-foreground hover:text-foreground"
-          >
-            <X className="size-4" />
-          </Button>
-        </div>
+    <Sheet open={open} onOpenChange={(next) => (!next ? onClose() : undefined)}>
+      <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
+        <SheetHeader className="gap-1.5 border-b px-6 pb-4 pt-6">
+          <SheetTitle className="font-serif text-xl">
+            {editingItem ? 'Edit piece' : 'Add a piece'}
+          </SheetTitle>
+          <SheetDescription className="text-[13px] leading-relaxed">
+            Add a photograph and Aveline reads the garment; every field below stays editable, and
+            nothing is saved until you add it to the catalog.
+          </SheetDescription>
+        </SheetHeader>
 
-        <form onSubmit={handleSave} className="flex flex-col flex-1 overflow-hidden min-h-0">
-          <div className="p-6 space-y-5 overflow-y-auto flex-1">
+        <form onSubmit={handleSave} className="flex min-h-0 flex-1 flex-col">
+          <div className="flex flex-1 flex-col gap-5 overflow-y-auto px-6 py-5">
             {/* Piece Image & Vision AI Analysis Import Area */}
-          <div className="space-y-2">
+          <FormSection
+            step={1}
+            title="The photograph"
+            description="Aveline reads the garment from this image. Every value it returns stays editable."
+          >
+          <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between">
-              <Label className="text-xs font-medium">Piece Image & Vision AI Analysis</Label>
-              <div className="flex items-center gap-1 rounded-md border border-border bg-muted/30 p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setInputMode('upload')}
-                  className={`flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded transition-colors ${
-                    inputMode === 'upload'
-                      ? 'bg-background text-foreground shadow-2xs font-semibold'
-                      : 'text-muted-foreground hover:text-foreground'
-                  }`}
+              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Source
+              </span>
+              <ToggleGroup
+                type="single"
+                value={inputMode}
+                onValueChange={(value) => {
+                  if (value) setInputMode(value as 'upload' | 'url')
+                }}
+                variant="outline"
+                aria-label="Photograph source"
+                className="rounded-md border border-border bg-muted/30 p-0.5"
+              >
+                <ToggleGroupItem
+                  value="upload"
+                  className="h-6 gap-1 px-2.5 text-[11px] data-[state=on]:bg-background data-[state=on]:font-semibold"
                 >
-                  <Upload className="size-3" />
+                  <Upload className="size-3" aria-hidden />
                   <span>Upload File</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setInputMode('url')}
-                  className={`flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded transition-colors ${
-                    inputMode === 'url'
-                      ? 'bg-background text-foreground shadow-2xs font-semibold'
-                      : 'text-muted-foreground hover:text-foreground'
-                  }`}
+                </ToggleGroupItem>
+                <ToggleGroupItem
+                  value="url"
+                  className="h-6 gap-1 px-2.5 text-[11px] data-[state=on]:bg-background data-[state=on]:font-semibold"
                 >
-                  <LinkIcon className="size-3" />
+                  <LinkIcon className="size-3" aria-hidden />
                   <span>Image URL</span>
-                </button>
-              </div>
+                </ToggleGroupItem>
+              </ToggleGroup>
             </div>
 
             {/* Upload File Mode */}
             {inputMode === 'upload' ? (
               <div>
-                <input
+                <Input
                   type="file"
                   ref={fileInputRef}
                   accept="image/*"
                   onChange={handleFileChange}
+                  aria-label="Choose a garment photograph"
                   className="hidden"
                 />
 
@@ -774,7 +599,7 @@ export function AddProductModal({
                     <div className="flex size-10 items-center justify-center rounded-full bg-primary/10 text-primary">
                       <Upload className="size-5" />
                     </div>
-                    <div className="text-center space-y-0.5">
+                    <div className="flex flex-col gap-0.5 text-center">
                       <p className="text-xs font-medium text-foreground">
                         Drag & drop garment photo here, or <span className="text-primary font-semibold underline underline-offset-2">Browse Files</span>
                       </p>
@@ -849,7 +674,7 @@ export function AddProductModal({
               </div>
             ) : (
               /* URL Mode */
-              <div className="space-y-2">
+              <div className="flex flex-col gap-2">
                 <div className="flex gap-2">
                   <Input
                     value={imageUrl}
@@ -886,72 +711,81 @@ export function AddProductModal({
             )}
           </div>
 
+          </FormSection>
+
+          <FormSection
+            step={2}
+            title="The piece"
+            description="How it is named and priced. Cost is the atelier's price, not the customer's."
+          >
+
           {/* Core Info Grid */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label className="text-xs">Item Name</Label>
+          <div className="grid gap-3.5 sm:grid-cols-2">
+            <Field label="Item name" htmlFor="piece-name">
               <Input
+                id="piece-name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="e.g. Royal Emerald Silk Saree"
-                className="text-xs"
                 required
               />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">SKU Code</Label>
+            </Field>
+            <Field label="SKU code" htmlFor="piece-sku" hint="Appears on the floor tag.">
               <Input
+                id="piece-sku"
                 value={sku}
                 onChange={(e) => setSku(e.target.value)}
                 placeholder="AVL-SAR-001"
-                className="text-xs font-mono"
+                className="font-mono"
                 required
               />
-            </div>
+            </Field>
           </div>
 
-          <div className="grid grid-cols-3 gap-4">
-            <div className="space-y-1.5">
-              <Label className="text-xs">Category</Label>
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-xs text-foreground"
-              >
-                {CATEGORIES.map((cat) => (
-                  <option key={cat} value={cat}>
-                    {cat}
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div className="grid gap-3.5 sm:grid-cols-3">
+            <Field label="Category">
+              <Select value={category} onValueChange={setCategory}>
+                <SelectTrigger aria-label="Category" className="w-full">
+                  <SelectValue placeholder="Choose a category" />
+                </SelectTrigger>
+                <SelectContent>
+                  {CATEGORIES.map((cat) => (
+                    <SelectItem key={cat} value={cat}>
+                      {cat}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
 
-            <div className="space-y-1.5">
-              <Label className="text-xs">Retail Price ($)</Label>
+            <Field label="Retail price (LKR)">
               <Input
                 type="number"
                 value={price}
                 onChange={(e) => setPrice(e.target.value)}
                 placeholder="1450"
-                className="text-xs"
                 required
               />
-            </div>
+            </Field>
 
-            <div className="space-y-1.5">
-              <Label className="text-xs">Atelier Cost ($)</Label>
+            <Field label="Atelier cost (LKR)">
               <Input
                 type="number"
                 value={cost}
                 onChange={(e) => setCost(e.target.value)}
                 placeholder="650"
-                className="text-xs"
               />
-            </div>
+            </Field>
           </div>
+          </FormSection>
 
-          {/* AI Extracted Visual Attributes Panel */}
-          <div className="rounded-xl border border-primary/20 bg-primary/5 p-3.5 space-y-3">
+
+          <FormSection
+            step={3}
+            title="What Aveline read"
+            description="Filled from the photograph and editable. A value below was returned by the analysis, not guessed."
+          >
+          <div className="flex flex-col gap-3 rounded-xl border border-primary/20 bg-primary/5 p-3.5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5 text-xs font-semibold text-primary">
                 <Sparkles className="size-3.5" />
@@ -972,7 +806,7 @@ export function AddProductModal({
             </div>
 
             <div className="grid grid-cols-4 gap-3">
-              <div className="space-y-1">
+              <div className="flex flex-col gap-1">
                 <Label className="text-[11px] text-muted-foreground">Cloth / Garment</Label>
                 <Input
                   value={garmentType || category}
@@ -982,14 +816,15 @@ export function AddProductModal({
                 />
               </div>
 
-              <div className="space-y-1">
+              <div className="flex flex-col gap-1">
                 <Label className="text-[11px] text-muted-foreground">Dominant Color</Label>
                 <div className="flex items-center gap-1.5">
-                  <input
+                  <Input
                     type="color"
+                    aria-label="Dominant colour"
                     value={colorHex}
                     onChange={(e) => setColorHex(e.target.value)}
-                    className="size-6 rounded border border-border cursor-pointer shrink-0"
+                    className="size-6 shrink-0 cursor-pointer rounded border border-border p-0"
                   />
                   <Input
                     value={color}
@@ -1005,7 +840,7 @@ export function AddProductModal({
                 </div>
               </div>
 
-              <div className="space-y-1">
+              <div className="flex flex-col gap-1">
                 <Label className="text-[11px] text-muted-foreground">Detected Fabric</Label>
                 <Input
                   value={fabric}
@@ -1015,7 +850,7 @@ export function AddProductModal({
                 />
               </div>
 
-              <div className="space-y-1">
+              <div className="flex flex-col gap-1">
                 <Label className="text-[11px] text-muted-foreground">Style / Pattern</Label>
                 <Input
                   value={pattern || style}
@@ -1030,33 +865,39 @@ export function AddProductModal({
             </div>
           </div>
 
-          {/* Stock and Sizing */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label className="text-xs">Initial Stock Quantity</Label>
+          </FormSection>
+
+          <FormSection
+            step={4}
+            title="Stock and sizes"
+            description="A piece at zero shows as reserved; two or fewer shows as low stock."
+          >
+          <div className="grid gap-3.5 sm:grid-cols-2">
+            <Field label="Initial stock quantity">
               <Input
                 type="number"
                 value={stockQuantity}
                 onChange={(e) => setStockQuantity(e.target.value)}
                 placeholder="4"
-                className="text-xs"
                 required
               />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label className="text-xs">Available Sizes (comma-separated)</Label>
+            </Field>
+            <Field label="Available sizes" hint="Comma-separated, e.g. 36, 38, Free Size.">
               <Input
                 value={sizesInput}
                 onChange={(e) => setSizesInput(e.target.value)}
                 placeholder="36, 38, 40, Free Size"
-                className="text-xs"
               />
-            </div>
+            </Field>
           </div>
+          </FormSection>
 
-          {/* Description */}
-          <div className="space-y-1.5">
+          <FormSection
+            step={5}
+            title="Description"
+            description="What the piece is and how to style it. Aveline can draft it from the photograph."
+          >
+          <div className="flex flex-col gap-1.5">
             <div className="flex items-center justify-between">
               <Label className="text-xs font-medium">Description / Styling Notes</Label>
               <Button
@@ -1076,198 +917,36 @@ export function AddProductModal({
                 <span>{generatingDescription ? 'Generating...' : 'Generate with AI'}</span>
               </Button>
             </div>
-            <textarea
+            <Textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Detailed description, weave information, styling recommendations..."
-              rows={3}
-              className="w-full rounded-md border border-input bg-background p-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 leading-relaxed"
+              rows={4}
+              className="text-[13px] leading-relaxed"
             />
           </div>
+          </FormSection>
 
-          {/* Boutique QR Floor Tag Studio */}
-          <div className="rounded-xl border border-border bg-card/70 overflow-hidden transition-all shadow-2xs">
-            <div
-              onClick={() => setShowQrStudio(!showQrStudio)}
-              className="flex items-center justify-between p-3.5 bg-muted/20 hover:bg-muted/30 cursor-pointer select-none transition-colors"
-            >
-              <div className="flex items-center gap-2.5">
-                <div className="flex size-7 items-center justify-center rounded-lg bg-primary/10 text-primary border border-primary/20">
-                  <QrCode className="size-4" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h4 className="text-xs font-semibold text-foreground">Boutique QR Floor Tag</h4>
-                    <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-primary/30 text-primary font-normal">
-                      Scan & Print Ready
-                    </Badge>
-                  </div>
-                  <p className="text-[10px] text-muted-foreground">
-                    Physical tag barcode for garment labeling, fitting rooms, and POS scanning
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] font-mono text-muted-foreground hidden sm:inline">
-                  {sku || 'AVL-000'}
-                </span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="size-7 p-0 text-muted-foreground hover:text-foreground"
-                >
-                  {showQrStudio ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
-                </Button>
-              </div>
-            </div>
-
-            {showQrStudio && (
-              <div className="p-4 border-t border-border/60 space-y-4 bg-background/50">
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
-                  {/* Left: Luxury Tag Card Visual Preview */}
-                  <div className="md:col-span-5 flex justify-center">
-                    <div className="w-56 bg-card border-2 border-border/90 rounded-2xl p-4 text-center shadow-xs flex flex-col items-center relative overflow-hidden">
-                      <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-primary/80 via-primary to-primary/80" />
-                      <span className="text-[10px] font-bold tracking-[0.2em] uppercase text-foreground/80 mt-1">
-                        Aveline Atelier
-                      </span>
-                      <span className="text-[9px] text-muted-foreground tracking-wider uppercase mb-2">
-                        {category} · Floor Piece
-                      </span>
-
-                      {/* Dynamic Vector QR Code Preview */}
-                      <div className="p-2 bg-white rounded-xl shadow-inner my-1.5 border border-border/40">
-                        <div id="modal-qr-preview-svg">
-                          <QrCodeSvg value={activeQrPayload} size={140} className="rounded-md" />
-                        </div>
-                      </div>
-
-                      <p className="text-xs font-semibold text-foreground mt-2 truncate w-full px-1">
-                        {name || 'Untitled Garment'}
-                      </p>
-                      <span className="text-[11px] font-mono font-medium text-muted-foreground bg-muted/60 px-2 py-0.5 rounded-md mt-1">
-                        {sku || 'AVL-000'}
-                      </span>
-
-                      <div className="w-full mt-3 pt-2.5 border-t border-dashed border-border/80 flex items-center justify-between text-xs px-1">
-                        <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Retail</span>
-                        <span className="font-bold text-sm text-foreground">
-                          {price ? `$${Number(price).toLocaleString()}` : '$0.00'}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Right: Studio Controls & Exports */}
-                  <div className="md:col-span-7 space-y-3.5">
-                    {/* Format Selector */}
-                    <div className="space-y-1.5">
-                      <Label className="text-[11px] text-muted-foreground font-medium">QR Payload Encoding</Label>
-                      <div className="grid grid-cols-3 gap-1.5 bg-muted/30 p-1 rounded-lg border border-border/60 text-xs">
-                        <button
-                          type="button"
-                          onClick={() => setQrFormatType('json')}
-                          className={`py-1 px-2 rounded-md font-medium text-[11px] transition-all ${
-                            qrFormatType === 'json'
-                              ? 'bg-background text-foreground shadow-2xs border border-border/50'
-                              : 'text-muted-foreground hover:text-foreground'
-                          }`}
-                        >
-                          Structured JSON
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setQrFormatType('url')}
-                          className={`py-1 px-2 rounded-md font-medium text-[11px] transition-all ${
-                            qrFormatType === 'url'
-                              ? 'bg-background text-foreground shadow-2xs border border-border/50'
-                              : 'text-muted-foreground hover:text-foreground'
-                          }`}
-                        >
-                          Boutique URL
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setQrFormatType('sku')}
-                          className={`py-1 px-2 rounded-md font-medium text-[11px] transition-all ${
-                            qrFormatType === 'sku'
-                              ? 'bg-background text-foreground shadow-2xs border border-border/50'
-                              : 'text-muted-foreground hover:text-foreground'
-                          }`}
-                        >
-                          Raw SKU
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Encoded Preview String */}
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] text-muted-foreground font-medium">Active Encoded Data</span>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={handleCopyPayload}
-                          className="h-5 px-1.5 text-[10px] gap-1 text-primary hover:text-primary hover:bg-primary/10"
-                        >
-                          {copiedPayload ? <CheckCheck className="size-3 text-emerald-500" /> : <Copy className="size-3" />}
-                          <span>{copiedPayload ? 'Copied' : 'Copy'}</span>
-                        </Button>
-                      </div>
-                      <div className="p-2 rounded-lg bg-muted/40 border border-border/50 font-mono text-[10px] text-muted-foreground break-all max-h-16 overflow-y-auto leading-relaxed">
-                        {activeQrPayload}
-                      </div>
-                    </div>
-
-                    {/* Export Action Buttons */}
-                    <div className="grid grid-cols-3 gap-2 pt-1">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={isDownloadingPng}
-                        onClick={handleDownloadPng}
-                        className="h-8 text-[11px] gap-1.5 border-border hover:border-primary/50 hover:bg-primary/5 hover:text-primary"
-                      >
-                        {isDownloadingPng ? <Loader2 className="size-3 animate-spin" /> : <Download className="size-3" />}
-                        <span>PNG (600px)</span>
-                      </Button>
-
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={isDownloadingSvg}
-                        onClick={handleDownloadSvg}
-                        className="h-8 text-[11px] gap-1.5 border-border hover:border-primary/50 hover:bg-primary/5 hover:text-primary"
-                      >
-                        {isDownloadingSvg ? <Loader2 className="size-3 animate-spin" /> : <Download className="size-3" />}
-                        <span>Vector SVG</span>
-                      </Button>
-
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        onClick={handlePrintTag}
-                        className="h-8 text-[11px] gap-1.5 bg-primary/10 text-primary hover:bg-primary/20 border border-primary/30 font-medium"
-                      >
-                        <Printer className="size-3" />
-                        <span>Print Tag</span>
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+          <FormSection
+            step={6}
+            title="Floor tag"
+            description="A scannable tag for the garment rail, fitting room or POS."
+          >
+            <FloorTagStudio
+              organizationId={organizationId}
+              itemId={effectiveItemId}
+              sku={sku}
+              name={name}
+              price={price}
+              category={category}
+              color={color}
+              fabric={fabric}
+            />
+          </FormSection>
           </div>
 
-          {/* Actions */}
-          <div className="flex items-center justify-between gap-2.5 px-6 py-4 border-t border-border bg-card shrink-0">
+          {/* The footer stays put while the form scrolls, so the primary action is always reachable. */}
+          <div className="flex shrink-0 items-center justify-between gap-2.5 border-t border-border bg-card px-6 py-4">
             <div>
               {editingItem && onDelete && (
                 <Button
@@ -1296,7 +975,7 @@ export function AddProductModal({
             </div>
           </div>
         </form>
-      </Card>
-    </div>
+      </SheetContent>
+    </Sheet>
   )
 }

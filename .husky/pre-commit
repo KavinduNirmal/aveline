@@ -122,11 +122,16 @@ SECRET_FOUND=""
 # Secret-indicating key names (case-insensitive), matched anywhere in the key.
 SECRET_KEY_RE='(password|passwd|secret|token|api[_-]?key|private[_-]?key|access[_-]?key|encryption[_-]?key|publishable[_-]?key|client[_-]?secret|auth[_-]?token|internal[_-]?token)'
 PLACEHOLDER_RE='(change[_-]?me|your[_-]|example|placeholder|xxxx+|xxx+|dev[_-]?placeholder|local[_-]?dev|sk_test_placeholder|pk_test_placeholder|local[_-]development|<\w+>)'
+# Split on newlines only: the default IFS also splits on spaces, so a path like
+# "Catalog UI.md" became two non-paths and `git show` aborted the whole hook under `set -e`.
+OLD_IFS=$IFS
+IFS='
+'
 for file in $STAGED_FILES; do
     case "$file" in
         *.png|*.jpg|*.gif|*.pdf|*.zip|*.lock|*.gitignore|.husky/*) continue ;;
     esac
-    content=$(git show ":$file" 2>/dev/null)
+    content=$(git show ":$file" 2>/dev/null || true)
     # Flag .env-style KEY=value (or quoted) lines whose key indicates a secret
     # and whose value is a real (non-placeholder) token. Covers .env.example too.
     if printf '%s' "$content" | grep -qiE "^[A-Z0-9_]*${SECRET_KEY_RE}[A-Z0-9_]*[[:space:]]*=[[:space:]]*[\"']?[^\"'[:space:]]{8,}" \
@@ -134,6 +139,7 @@ for file in $STAGED_FILES; do
         SECRET_FOUND="$SECRET_FOUND $file"
     fi
 done
+IFS=$OLD_IFS
 if [ -n "$SECRET_FOUND" ]; then
     print_error_block "Potential secrets detected in:"
     printf '%b' "${RED}"

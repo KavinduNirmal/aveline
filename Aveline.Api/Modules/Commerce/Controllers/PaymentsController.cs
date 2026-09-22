@@ -1,6 +1,8 @@
+using System.Security.Claims;
 using Aveline.Api.Configurations;
 using Aveline.Api.Modules.Commerce.DTOs;
 using Aveline.Api.Modules.Commerce.Services;
+using Aveline.Api.Modules.Shared.Repositories;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -12,10 +14,12 @@ namespace Aveline.Api.Modules.Commerce.Controllers;
 public class PaymentsController : ControllerBase
 {
     private readonly IPaymentService _paymentService;
+    private readonly IUserRepository _users;
 
-    public PaymentsController(IPaymentService paymentService)
+    public PaymentsController(IPaymentService paymentService, IUserRepository users)
     {
         _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
+        _users = users ?? throw new ArgumentNullException(nameof(users));
     }
 
     [HttpPost]
@@ -90,11 +94,17 @@ public class PaymentsController : ControllerBase
     public async Task<ActionResult<PaymentResponseDto>> Refund(
         [FromRoute] Guid organizationId,
         [FromRoute] Guid id,
+        [FromBody] RefundPaymentRequest? request = null,
         CancellationToken ct = default)
     {
         try
         {
-            var result = await _paymentService.RefundPaymentAsync(organizationId, id, null, ct);
+            // The ledger attributes a refund to the person who issued it, so the actor is resolved
+            // here — through `IUserRepository`, the way every other actor in this codebase is, and
+            // never by parsing the Clerk subject as a GUID.
+            var actor = await ResolveActorAsync(ct);
+            var result = await _paymentService.RefundPaymentAsync(
+                organizationId, id, request?.Reason, ct, actor);
             return Ok(result);
         }
         catch (KeyNotFoundException ex)
@@ -115,5 +125,22 @@ public class PaymentsController : ControllerBase
     {
         var result = await _paymentService.ListPaymentsAsync(organizationId, query, ct);
         return Ok(result);
+    }
+
+    /// <summary>
+    /// Resolves the acting user from the Clerk subject through <c>IUserRepository</c>. A real
+    /// subject is a string such as <c>user_2abc…</c>, so it is never parsed as a GUID.
+    /// </summary>
+    private async Task<Guid?> ResolveActorAsync(CancellationToken ct)
+    {
+        var clerkId = User.FindFirstValue(ClaimTypes.NameIdentifier)
+                      ?? User.FindFirstValue("sub");
+        if (string.IsNullOrEmpty(clerkId))
+        {
+            return null;
+        }
+
+        var user = await _users.GetByClerkIdAsync(clerkId, ct);
+        return user?.Id;
     }
 }

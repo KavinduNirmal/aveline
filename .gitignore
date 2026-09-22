@@ -162,6 +162,12 @@ wheels/
 htmlcov/
 *.cover
 
+# Playwright (tests/e2e, run from frontend/web): per-run traces, screenshots and videos, and the
+# HTML report. The browsers themselves live in node_modules/.playwright-browsers, already ignored.
+test-results/
+playwright-report/
+blob-report/
+
 # Type checking
 .mypy_cache/
 .dmypy.json
@@ -304,7 +310,12 @@ docs/final_document/
 # =============================================================================
 .agents/plans/.work/
 .agents/plans/.obsidian/
-.agents/plans/issues/
+.agents/plans/*
 .dsh-tools/
 .research-shots/
 .screenshots/
+
+# The local Vercel project link, and every real environment file. `.env.example` stays tracked
+# because tracked files are unaffected by these patterns.
+.vercel/
+.env*

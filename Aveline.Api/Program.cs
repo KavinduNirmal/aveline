@@ -17,6 +17,7 @@ using Aveline.Api.Modules.Billing;
 using Aveline.Api.Modules.Revenue;
 using Aveline.Api.Modules.Billing.Endpoints;
 using Aveline.Api.Modules.Commerce;
+using Aveline.Api.Modules.Commerce.Endpoints;
 using Aveline.Api.Modules.Conversations;
 using Aveline.Api.Modules.Conversations.Hubs;
 using Aveline.Api.Modules.Conversations.Media;
@@ -204,6 +205,8 @@ v1.MapRevenueModuleEndpoints();
 v1.MapCatalogEndpoints();
 v1.MapHomeEndpoints();
 v1.MapCustomerTenantEndpoints();
+        v1.MapIncomeEndpoints();
+        v1.MapDashboardEndpoints();
 
 app.MapBillingEndpoints();
 app.MapCustomerConciergeEndpoints();

@@ -5,7 +5,7 @@ import {
   Mail,
   Phone,
   Clock,
-  DollarSign,
+  Coins,
   Package,
   Layers,
   X,
@@ -13,6 +13,7 @@ import {
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { formatMoney } from '@/lib/format-money'
 import type { SupplierMock } from './mockData'
 
 interface SuppliersTabProps {
@@ -23,7 +24,7 @@ export function SuppliersTab({ suppliers }: SuppliersTabProps) {
   const [activeCatalogSupplier, setActiveCatalogSupplier] = useState<SupplierMock | null>(null)
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6">
       {/* Tab Header */}
       <div>
         <h3 className="font-serif text-base font-semibold text-foreground">
@@ -60,7 +61,7 @@ export function SuppliersTab({ suppliers }: SuppliersTabProps) {
                     variant="outline"
                     className={
                       supplier.isActive
-                        ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20 text-[10px]'
+                        ? 'bg-success/10 text-success border-success/20 text-[10px]'
                         : 'text-muted-foreground text-[10px]'
                     }
                   >
@@ -86,7 +87,7 @@ export function SuppliersTab({ suppliers }: SuppliersTabProps) {
                 </div>
 
                 {/* Contact Info */}
-                <div className="space-y-1.5 text-xs text-muted-foreground mb-4">
+                <div className="flex flex-col gap-1.5 text-xs text-muted-foreground mb-4">
                   <div className="flex items-center gap-2">
                     <Mail className="size-3 text-muted-foreground/70" />
                     <span className="truncate">{supplier.contactEmail}</span>
@@ -109,8 +110,8 @@ export function SuppliersTab({ suppliers }: SuppliersTabProps) {
                   <div className="rounded-lg bg-muted/20 p-2">
                     <span className="text-muted-foreground block text-[10px]">Min. Order (MOQ)</span>
                     <span className="font-semibold text-foreground flex items-center gap-1 mt-0.5">
-                      <DollarSign className="size-3 text-primary" />
-                      ${supplier.minimumOrder.toLocaleString()}
+                      <Coins className="size-3 text-primary" aria-hidden />
+                      {formatMoney(supplier.minimumOrder)}
                     </span>
                   </div>
                 </div>
@@ -138,7 +139,7 @@ export function SuppliersTab({ suppliers }: SuppliersTabProps) {
       {/* Supplier Catalog Modal */}
       {activeCatalogSupplier && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in">
-          <Card className="w-full max-w-2xl border-border bg-background shadow-2xl p-6 space-y-4 animate-in zoom-in-95">
+          <Card className="flex flex-col w-full max-w-2xl border-border bg-background shadow-2xl p-6 gap-4 animate-in zoom-in-95">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div>
                 <h3 className="font-serif text-base font-semibold">

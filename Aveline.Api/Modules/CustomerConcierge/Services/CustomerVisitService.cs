@@ -1,4 +1,6 @@
 using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Modules.Commerce.Models;
+using Aveline.Api.Modules.Commerce.Services;
 using Aveline.Api.Modules.CustomerConcierge.DTOs;
 using Aveline.Api.Modules.CustomerConcierge.Models;
 using Microsoft.EntityFrameworkCore;
@@ -37,8 +39,13 @@ public sealed class CustomerVisitService : ICustomerVisitService
     };
 
     private readonly AppDbContext _context;
+    private readonly IBoutiqueSaleLedgerService _ledger;
 
-    public CustomerVisitService(AppDbContext context) => _context = context;
+    public CustomerVisitService(AppDbContext context, IBoutiqueSaleLedgerService ledger)
+    {
+        _context = context;
+        _ledger = ledger;
+    }
 
     public async Task<VisitReceiptDto?> RecordAsync(
         Guid organizationId,
@@ -121,6 +128,33 @@ public sealed class CustomerVisitService : ICustomerVisitService
             customer.Status = tier;
             customer.UpdatedAt = now;
             await _context.SaveChangesAsync(cancellationToken);
+        }
+
+        if (purchaseTotal > 0m)
+        {
+            // The bridge this service exists to close. Before it, a counter sale left a
+            // `CustomerInteraction` with no amount column and an incremented `Customer.TotalSpent`
+            // — a number with no transaction behind it, so the shop could not answer "what did we
+            // take this week, and how".
+            //
+            // `Verified`, not `Derived`: a staff member asserted this amount, so it is money that
+            // was taken rather than a value an order merely implies. The source reference is the
+            // interaction id, so a retried visit cannot double-book.
+            //
+            // An amount on a non-visit channel (a WhatsApp order, say) still writes the entry: the
+            // money moved whichever channel recorded it. Only the *visit counter* is restricted to
+            // an inbound in-person interaction.
+            await _ledger.RecordAsync(new RecordBoutiqueSaleCommand(
+                OrganizationId: organizationId,
+                Amount: purchaseTotal,
+                Reason: $"Counter sale recorded with the {channel} interaction.",
+                Kind: BoutiqueSaleEntryKind.Sale,
+                ChargeBasis: BoutiqueSaleChargeBasis.Verified,
+                SourceKind: BoutiqueSaleSourceKind.CounterWalkIn,
+                SourceRef: $"interaction:{interaction.Id}",
+                OccurredAt: occurredAt,
+                RecordedByUserId: actorUserId == Guid.Empty ? null : actorUserId,
+                CustomerId: customerId), cancellationToken);
         }
 
         return new VisitReceiptDto(

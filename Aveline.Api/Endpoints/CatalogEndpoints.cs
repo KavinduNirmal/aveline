@@ -80,7 +80,8 @@ public static class CatalogEndpoints
         .WithSummary("Search inventory items via POST request payload.")
         .Produces<IReadOnlyList<InventoryItemDto>>(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status401Unauthorized)
-        .Produces(StatusCodes.Status403Forbidden);
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
 
         group.MapGet("/items/{itemId:guid}", async (
             [FromRoute] Guid organizationId,
@@ -121,7 +122,8 @@ public static class CatalogEndpoints
         .Produces<InventoryItemDto>(StatusCodes.Status201Created)
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status401Unauthorized)
-        .Produces(StatusCodes.Status403Forbidden);
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueCatalogManagePolicy);
 
         group.MapPut("/items/{itemId:guid}", async (
             [FromRoute] Guid organizationId,
@@ -148,7 +150,8 @@ public static class CatalogEndpoints
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status404NotFound)
         .Produces(StatusCodes.Status401Unauthorized)
-        .Produces(StatusCodes.Status403Forbidden);
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueCatalogManagePolicy);
 
         group.MapPatch("/items/{itemId:guid}/status", async (
             [FromRoute] Guid organizationId,
@@ -171,7 +174,8 @@ public static class CatalogEndpoints
         .Produces<InventoryItemDto>(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status404NotFound)
         .Produces(StatusCodes.Status401Unauthorized)
-        .Produces(StatusCodes.Status403Forbidden);
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueCatalogManagePolicy);
 
         group.MapDelete("/items/{itemId:guid}", async (
             [FromRoute] Guid organizationId,
@@ -192,7 +196,8 @@ public static class CatalogEndpoints
         .Produces(StatusCodes.Status204NoContent)
         .Produces(StatusCodes.Status404NotFound)
         .Produces(StatusCodes.Status401Unauthorized)
-        .Produces(StatusCodes.Status403Forbidden);
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueCatalogManagePolicy);
 
         group.MapGet("/low-stock", async (
             [FromRoute] Guid organizationId,
@@ -294,7 +299,8 @@ public static class CatalogEndpoints
         .Produces(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status401Unauthorized)
-        .Produces(StatusCodes.Status403Forbidden);
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
 
         var scanHandler = async (
             [FromRoute] Guid organizationId,
@@ -346,11 +352,13 @@ public static class CatalogEndpoints
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized)
             .Produces(StatusCodes.Status403Forbidden)
-            .DisableAntiforgery();
+            .DisableAntiforgery()
+            .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
 
         group.MapPost("/qr/scan", scanHandler)
             .WithName("CatalogScanQrAlias")
-            .WithSummary("Alias endpoint for scanning and resolving QR codes.");
+            .WithSummary("Alias endpoint for scanning and resolving QR codes.")
+            .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
 
         // --- Vision Analysis ---
 
@@ -383,7 +391,8 @@ public static class CatalogEndpoints
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status403Forbidden)
-        .Produces(StatusCodes.Status404NotFound);
+        .Produces(StatusCodes.Status404NotFound)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
 
         // --- Customer Matches ---
 
@@ -419,7 +428,8 @@ public static class CatalogEndpoints
         .WithSummary("Trigger customer style match computation for a catalog item.")
         .Produces<IReadOnlyList<CustomerMatchDto>>(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status401Unauthorized)
-        .Produces(StatusCodes.Status403Forbidden);
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
 
         // --- Lookbooks & Outfit Composition ---
 
@@ -452,7 +462,8 @@ public static class CatalogEndpoints
         .Produces<ComposedOutfitDto>(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status401Unauthorized)
-        .Produces(StatusCodes.Status403Forbidden);
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
 
         // --- Sourcing Requests ---
 
@@ -486,7 +497,8 @@ public static class CatalogEndpoints
         .Produces<SourcingRequestDto>(StatusCodes.Status201Created)
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status401Unauthorized)
-        .Produces(StatusCodes.Status403Forbidden);
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
 
         group.MapPatch("/sourcing/{id:guid}/status", async (
             [FromRoute] Guid organizationId,
@@ -508,7 +520,8 @@ public static class CatalogEndpoints
         .Produces<SourcingRequestDto>(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status404NotFound)
         .Produces(StatusCodes.Status401Unauthorized)
-        .Produces(StatusCodes.Status403Forbidden);
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
 
         // --- Suppliers & External Catalogs ---
 
@@ -649,7 +662,8 @@ public static class CatalogEndpoints
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status403Forbidden)
-        .DisableAntiforgery();
+        .DisableAntiforgery()
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
 
         group.MapGet("/images/{imageId:guid}", async (
             [FromRoute] Guid organizationId,

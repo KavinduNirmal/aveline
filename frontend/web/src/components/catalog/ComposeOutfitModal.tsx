@@ -12,7 +12,15 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { composeLookbook } from '@/lib/catalog-api'
+import { formatMoney } from '@/lib/format-money'
 import type {
   InventoryItemMock,
   OutfitCompositionMock,
@@ -177,37 +185,39 @@ export function ComposeOutfitModal({
           </Button>
         </div>
 
-        <div className="p-6 space-y-5">
+        <div className="flex flex-col p-6 gap-5">
           {/* Hero Item & Occasion Selection */}
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
+            <div className="flex flex-col gap-1.5">
               <Label className="text-xs">Primary Hero Piece</Label>
-              <select
-                value={selectedHeroId}
-                onChange={(e) => setSelectedHeroId(e.target.value)}
-                className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-xs text-foreground"
-              >
-                {inventory.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name} (${item.price})
-                  </option>
-                ))}
-              </select>
+              <Select value={selectedHeroId} onValueChange={setSelectedHeroId}>
+                <SelectTrigger aria-label="Primary hero piece" className="w-full text-xs">
+                  <SelectValue placeholder="Choose a piece" />
+                </SelectTrigger>
+                <SelectContent>
+                  {inventory.map((item) => (
+                    <SelectItem key={item.id} value={item.id}>
+                      {item.name} (${item.price})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
-            <div className="space-y-1.5">
+            <div className="flex flex-col gap-1.5">
               <Label className="text-xs">Target Occasion</Label>
-              <select
-                value={occasion}
-                onChange={(e) => setOccasion(e.target.value)}
-                className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-xs text-foreground"
-              >
-                {OCCASIONS.map((occ) => (
-                  <option key={occ} value={occ}>
-                    {occ}
-                  </option>
-                ))}
-              </select>
+              <Select value={occasion} onValueChange={setOccasion}>
+                <SelectTrigger aria-label="Target occasion" className="w-full text-xs">
+                  <SelectValue placeholder="Choose an occasion" />
+                </SelectTrigger>
+                <SelectContent>
+                  {OCCASIONS.map((occ) => (
+                    <SelectItem key={occ} value={occ}>
+                      {occ}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
 
@@ -239,13 +249,13 @@ export function ComposeOutfitModal({
 
           {/* Composed Look Preview */}
           {composedItems.length > 0 && (
-            <div className="space-y-4 rounded-xl border border-border p-4 bg-muted/20">
+            <div className="flex flex-col gap-4 rounded-xl border border-border p-4 bg-muted/20">
               <div className="flex items-center justify-between border-b border-border pb-2.5">
                 <h4 className="font-serif text-sm font-semibold">{lookName}</h4>
                 <div className="text-right">
                   <span className="text-[11px] text-muted-foreground mr-1.5">Total Look:</span>
                   <span className="font-serif text-base font-bold text-primary">
-                    ${totalPrice.toLocaleString()}
+                    {formatMoney(totalPrice)}
                   </span>
                 </div>
               </div>
@@ -270,7 +280,7 @@ export function ComposeOutfitModal({
                         {item.name}
                       </p>
                       <p className="text-[11px] font-semibold text-primary">
-                        ${item.price.toLocaleString()}
+                        {formatMoney(item.price)}
                       </p>
                     </div>
                   </div>

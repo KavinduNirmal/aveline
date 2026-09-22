@@ -159,7 +159,7 @@ function IntegrationCard({
 
   return (
     <Card className="flex h-full flex-col overflow-hidden">
-      <CardHeader className="pb-3 flex-row items-start justify-between gap-3 space-y-0">
+      <CardHeader className="pb-3 flex-row items-start justify-between gap-3 gap-0">
         <div className="flex items-start gap-3">
           <div className="size-10 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0">
             <Icon className="size-5" aria-hidden />
@@ -172,13 +172,15 @@ function IntegrationCard({
         <div className="flex items-center gap-1.5 shrink-0">
           <Tooltip>
             <TooltipTrigger asChild>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon-xs"
                 aria-label={`About ${meta.name}`}
-                className="inline-flex size-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="text-muted-foreground"
               >
                 <Info className="size-3.5" aria-hidden />
-              </button>
+              </Button>
             </TooltipTrigger>
             <TooltipContent side="top" align="end" className="max-w-xs">
               {meta.help}
@@ -192,7 +194,7 @@ function IntegrationCard({
         {connected ? (
           <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-muted/40 p-3 text-xs">
             <div className="flex items-center gap-2 text-muted-foreground">
-              <ShieldCheck className="size-3.5 text-emerald-600" aria-hidden />
+              <ShieldCheck className="size-3.5 text-success" aria-hidden />
               <span>Credentials encrypted with AES-256</span>
             </div>
             <div className="flex items-center gap-2 text-muted-foreground">
@@ -201,7 +203,7 @@ function IntegrationCard({
             </div>
             {status?.maskedPreview && (
               <div className="flex items-center gap-2 text-muted-foreground">
-                <CheckCircle2 className="size-3.5 text-emerald-600" aria-hidden />
+                <CheckCircle2 className="size-3.5 text-success" aria-hidden />
                 <span>Token: {status.maskedPreview}</span>
               </div>
             )}
@@ -507,8 +509,8 @@ export function IntegrationsPanel({ organization }: IntegrationsPanelProps) {
       </div>
 
       {/* Third-party cost notice */}
-      <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-muted-foreground">
-        <AlertCircle className="size-4 shrink-0 text-amber-600" aria-hidden />
+      <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/5 p-3 text-xs text-muted-foreground">
+        <AlertCircle className="size-4 shrink-0 text-warning" aria-hidden />
         <p>
           Connecting an integration may incur fees charged by the third-party provider (e.g. Meta
           WhatsApp messaging rates or payment-gateway transaction fees).{' '}
@@ -522,7 +524,7 @@ export function IntegrationsPanel({ organization }: IntegrationsPanelProps) {
       {/* Stats row */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Card className="p-4 flex items-center gap-4">
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600">
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-success/10 text-success">
             <CheckCircle2 className="size-5" aria-hidden />
           </div>
           <div>
@@ -532,7 +534,7 @@ export function IntegrationsPanel({ organization }: IntegrationsPanelProps) {
         </Card>
 
         <Card className="p-4 flex items-center gap-4">
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-rose-500/10 text-rose-600">
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-destructive/10 text-destructive">
             <AlertCircle className="size-5" aria-hidden />
           </div>
           <div>

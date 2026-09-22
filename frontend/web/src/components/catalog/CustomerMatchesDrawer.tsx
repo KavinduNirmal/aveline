@@ -14,11 +14,11 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { generateCustomerMatches } from '@/lib/catalog-api'
+import { formatMoney } from '@/lib/format-money'
 import type { CustomerMatchMock, InventoryItemMock } from './mockData'
 
 interface CustomerMatchesDrawerProps {
   item: InventoryItemMock | null
-  matches: CustomerMatchMock[]
   organizationId?: string
   open: boolean
   onClose: () => void
@@ -27,7 +27,6 @@ interface CustomerMatchesDrawerProps {
 
 export function CustomerMatchesDrawer({
   item,
-  matches,
   organizationId,
   open,
   onClose,
@@ -57,9 +56,9 @@ export function CustomerMatchesDrawer({
 
   if (!open || !item) return null
 
-  const displayMatches = liveMatches.length > 0
-    ? liveMatches
-    : matches.filter((m) => m.itemId === item.id)
+  // One source: the matches generated for the selected item. The removed fallback filtered a state
+  // array in `CatalogPanel` that was never populated, so it could only ever yield an empty list.
+  const displayMatches = liveMatches
 
   const handleAction = (matchId: string, clientName: string, customerId: string) => {
     setActedMatches((prev) => ({ ...prev, [matchId]: true }))
@@ -126,14 +125,14 @@ export function CustomerMatchesDrawer({
               {item.name}
             </h4>
             <div className="mt-0.5 flex items-center justify-between text-xs">
-              <span className="font-semibold text-primary">${item.price.toLocaleString()}</span>
+              <span className="font-semibold text-primary">{formatMoney(item.price)}</span>
               <span className="text-[11px] text-muted-foreground">{item.color}</span>
             </div>
           </div>
         </div>
 
         {/* Matches List */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        <div className="flex-1 overflow-y-auto p-4 gap-3">
           {displayMatches.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
               <Heart className="size-10 stroke-1 text-muted-foreground/40 mb-2" />
@@ -220,7 +219,7 @@ export function CustomerMatchesDrawer({
                   {/* Action row */}
                   <div className="mt-3.5 pt-3 border-t border-border/60 flex items-center justify-between">
                     {acted ? (
-                      <span className="flex items-center gap-1.5 text-xs text-emerald-600 font-medium">
+                      <span className="flex items-center gap-1.5 text-xs text-success font-medium">
                         <CheckCircle2 className="size-3.5" />
                         Outreach Contacted
                       </span>

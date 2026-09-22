@@ -141,13 +141,27 @@ void main() {
         isFalse,
       );
     });
-
-    test('an agent message that was never sent is an internal note too', () {
-      expect(
-        of(author: MessageAuthor.agent, status: MessageStatus.published)
-            .isInternalNote,
-        isTrue,
+    test('an agent reply is drawn as a reply, not as a note', () {
+      // The side is who spoke and the treatment is where it went. Reading
+      // `!isFromClient` as the side test put every persona on the associate's own
+      // side and read every published reply as `NOTE · NOT SENT`.
+      final reply = of(
+        author: MessageAuthor.agent,
+        status: MessageStatus.published,
       );
+
+      expect(reply.isInternalNote, isFalse);
+      expect(reply.isFromStaff, isFalse);
+      expect(reply.isFromAgent, isTrue);
+    });
+
+    test('the side test separates the associate from a persona', () {
+      // The wire has no `Client` author, so `!isFromClient` is true of staff,
+      // agents and system alike and cannot decide which side a bubble sits on.
+      expect(of(author: MessageAuthor.staff).isFromStaff, isTrue);
+      expect(of(author: MessageAuthor.agent).isFromStaff, isFalse);
+      expect(of(author: MessageAuthor.client).isFromStaff, isFalse);
+      expect(of(author: MessageAuthor.system).isFromStaff, isFalse);
     });
 
     test('a client message is never an internal note', () {

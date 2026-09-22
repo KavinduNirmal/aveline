@@ -276,6 +276,21 @@ public class ConversationServiceTests
             var removed = _rows.RemoveAll(a => a.MessageId == null && a.CreatedAtUtc < cutoff);
             return Task.FromResult(removed);
         }
+
+        public Task<IReadOnlyList<MessageAttachment>> ListBoundForRetentionAsync(
+            DateTime cutoff, int limit, CancellationToken ct)
+            => Task.FromResult<IReadOnlyList<MessageAttachment>>(_rows
+                .Where(a => a.MessageId != null && a.CreatedAtUtc < cutoff)
+                .OrderBy(a => a.CreatedAtUtc)
+                .Take(limit)
+                .ToList());
+
+        public Task<int> DeleteRangeAsync(
+            IReadOnlyCollection<MessageAttachment> attachments, CancellationToken ct)
+        {
+            var removed = _rows.RemoveAll(a => attachments.Contains(a));
+            return Task.FromResult(removed);
+        }
     }
 
     /// <summary>The store boundary, faked: bytes in the row, a URL to the authenticated route.</summary>

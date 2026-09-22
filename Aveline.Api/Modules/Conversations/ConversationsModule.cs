@@ -54,6 +54,10 @@ public static class ConversationsModule
         services.AddHostedService<ConversationEventSubscriber>();
         // Unbound uploads (a cancelled picker, a refused send) are swept after the TTL.
         services.AddHostedService<AttachmentSweepJob>();
+        // Bound attachments past `Conversations:AttachmentRetentionDays` are released from the
+        // provider and then deleted (S7). Deliberately a separate job from the sweep above:
+        // different trigger, different policy (strategy §5.3).
+        services.AddHostedService<ConversationAttachmentRetentionJob>();
 
         return services;
     }

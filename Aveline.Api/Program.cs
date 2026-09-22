@@ -19,6 +19,7 @@ using Aveline.Api.Modules.Billing.Endpoints;
 using Aveline.Api.Modules.Commerce;
 using Aveline.Api.Modules.Conversations;
 using Aveline.Api.Modules.Conversations.Hubs;
+using Aveline.Api.Modules.Conversations.Media;
 using Aveline.Api.Modules.CustomerConcierge;
 using Aveline.Api.Modules.Home;
 using Aveline.Api.Modules.Home.Endpoints;
@@ -68,6 +69,10 @@ builder.Services.AddWhatsAppProvider(builder.Configuration);
 // the single place `IMediaStorage` is registered, selected from `Media:Provider`.
 builder.Services.AddMediaOptions(builder.Configuration);
 builder.Services.AddMediaModule(builder.Configuration);
+// The pasted-image-URL fetcher (S6): its own client, its own pinned transport, and deliberately
+// no auth delegating handler — this client must never authenticate to the host it fetches
+// (salon plan §7.5 item 12). The kill switch is `Media:ImageUrlUploadEnabled`, default false.
+builder.Services.AddImageUrlFetcher();
 builder.Services.AddBillingModule();
 builder.Services.AddRevenueModule(builder.Configuration);
 builder.Services.AddApiAccessModule();

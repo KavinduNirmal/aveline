@@ -101,8 +101,18 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
     {
         public List<ConversationTile> ConversationChanged { get; } = [];
 
+        /// <summary>
+        /// Messages actually pushed to subscribers. Recording these is what pins the inbound
+        /// liveness contract: the tile alone refreshes the inbox list, so without the message frame
+        /// an open thread shows nothing new until the page is reloaded.
+        /// </summary>
+        public List<MessageDto> Messages { get; } = [];
+
         public Task BroadcastMessageAsync(MessageDto message, CancellationToken cancellationToken = default)
-            => Task.CompletedTask;
+        {
+            Messages.Add(message);
+            return Task.CompletedTask;
+        }
 
         public Task BroadcastAgentStateAsync(AgentStateDto state, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
@@ -643,6 +653,15 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
         Assert.Null(tile.Tile.CustomerId);
         Assert.Equal("client_message", tile.Tile.LastMessageBlock);
         Assert.Contains("red", tile.Tile.LastMessagePreview);
+
+        // The message frame goes out too, not just the tile. The tile only refreshes the inbox
+        // list; an open thread needs the message itself or it shows nothing new until the page is
+        // reloaded. Agent and staff messages arrive live because they come through
+        // `message.created`; this path writes the row directly, so it must broadcast explicitly.
+        var broadcast = Assert.Single(_broadcaster.Messages);
+        Assert.Equal(conversation.Id, broadcast.ConversationId);
+        Assert.Equal(message.Id, broadcast.Id);
+        Assert.Contains("red", broadcast.ContentBlocks.GetRawText());
     }
 
     [Fact]

@@ -579,7 +579,9 @@ class _NamedRegistry(FakeRegistry):
         return self.profile
 
 
-async def _run_memory(registry, *, customer_id, phone, message, customer_name=None):
+async def _run_memory(
+    registry, *, customer_id, phone, message, customer_name=None, intent_type="item_search"
+):
     graph = build_memory_graph(registry)
     return await graph.ainvoke(
         {
@@ -588,7 +590,9 @@ async def _run_memory(registry, *, customer_id, phone, message, customer_name=No
             "phone_number": phone,
             "customer_name": customer_name,
             "message": message,
-            "intent_type": "item_search",
+            # The upstream gate's decision. In production this is what the memory agent echoes,
+            # so it is the value that has to survive this agent's output schema.
+            "intent_type": intent_type,
             "channel": "whatsapp",
             "direction": "inbound",
         }
@@ -840,3 +844,28 @@ async def test_staff_query_surfaces_what_is_actually_on_file():
     # FakeRegistry.get_customer_memories returns "Prefers emerald silk".
     assert "emerald silk" in brief_text
     assert "nothing on file yet" not in brief_text
+
+
+async def test_purchase_intent_does_not_fail_the_memory_agent():
+    """The reported symptom: a purchase-intent message made Ava go silent.
+
+    The gate emits `order_placement` for "purchase"/"buy"/"order", but the memory output schema did
+    not allow it, so `MemoryAgentOutput` validation failed and the agent emitted an error instead of
+    a brief - which is why the thread showed Aveline's summary and no Ava block for
+    "Is the emerald green saree available for purchase?".
+    """
+    registry = FakeRegistry()
+
+    result = await _run_memory(
+        registry,
+        customer_id="cust-kasha",
+        phone=None,
+        message="Is the emerald green saree available for purchase?",
+        intent_type="order_placement",
+    )
+
+    assert result["status"] == "success", f"memory agent errored: {result.get('reason')}"
+    output = result["output"]
+    assert output["status"] == "success"
+    assert output["parsed_intent"]["intent_type"] == "order_placement"
+    assert output["interaction_brief"]

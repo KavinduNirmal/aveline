@@ -5,6 +5,8 @@ profile summary, and the top-level MemoryAgentOutput. Each model forbids extra f
 contract drift between the agent and the backend fails loudly.
 """
 
+from typing import get_args
+
 import pytest
 from pydantic import ValidationError
 
@@ -85,3 +87,31 @@ def test_memory_agent_output_round_trips_full_result():
     assert data["status"] == "success"
     assert data["extracted_memories"][0]["category"] == "event"
     assert data["detected_events"][0]["event_type"] == "wedding"
+
+
+def test_parsed_intent_accepts_every_intent_the_gate_can_produce():
+    """The two vocabularies must not drift apart.
+
+    The memory agent echoes the intent the gate decided, so a value the gate can emit but
+    `ParsedIntent` rejects makes the agent's own output fail validation. `order_placement` was
+    missing, so every purchase-intent message ("...available for purchase?") made Ava emit an
+    error and contribute nothing to the thread.
+    """
+    from app.gate import IntentType
+
+    # `get_args` gives the Literal members at runtime; the annotation is the source of truth.
+    allowed = set(get_args(ParsedIntent.model_fields["intent_type"].annotation))
+
+    assert allowed == set(get_args(IntentType)), (
+        "ParsedIntent.intent_type and gate.IntentType must allow the same values"
+    )
+
+
+@pytest.mark.parametrize(
+    "intent_type",
+    ["order_placement", "item_search", "pricing_query", "customer_preference",
+     "event_query", "out_of_scope", "general_inquiry"],
+)
+def test_parsed_intent_validates_each_gate_intent(intent_type):
+    parsed = ParsedIntent(intent_type=intent_type)
+    assert parsed.intent_type == intent_type

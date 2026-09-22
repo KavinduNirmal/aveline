@@ -1,13 +1,11 @@
 import os
-import httpx
+
 import pytest
 import respx
 
 from app.core.config import get_settings
 from app.services.usage_reporter import report_agent_run
 from app.telemetry.agent_telemetry import (
-    AgentRunTelemetry,
-    AgentStepTelemetry,
     TelemetryCollector,
     hash_args,
     map_agent_key,

@@ -1,6 +1,5 @@
 """Unit tests for LangGraph visual insight conditional routing behavior."""
 
-import pytest
 
 from app.agents.visual_insight.routing import route_after_visual
 

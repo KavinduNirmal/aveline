@@ -5,6 +5,7 @@ and serializability. Compatible with both pytest and standard unittest.
 """
 
 import unittest
+
 from pydantic import ValidationError
 
 from app.schemas.commerce import (

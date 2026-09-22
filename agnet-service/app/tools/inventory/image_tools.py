@@ -2,11 +2,53 @@
 
 Extracts fashion attributes (category, silhouette, colors, fabric, pattern, occasion)
 from garment photographs or inspiration mood boards.
+
+The analysis outcome is **typed**: a caller can tell a *denied* analysis (the backend
+refused it: cross-org reference, unknown row, bad request) from a *failed* one (the
+backend was unreachable or errored). The old blanket ``except`` collapsed both into a
+fabricated "Curated Piece" answer, which is exactly the silent-wrong-answer shape this
+unit removes (strategy §5.1 S5).
 """
 
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any
 
+import httpx
+
 from app.schemas.visual_insight import ImageAttributes
+
+#: 4xx statuses that are retryable rather than a refusal of the analysis itself.
+_RETRYABLE_CLIENT_STATUSES = frozenset({408, 429})
+
+
+class AnalysisStatus(StrEnum):
+    """The outcome of one vision analysis call."""
+
+    SUCCEEDED = "succeeded"
+    DENIED = "denied"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class ImageAnalysisOutcome:
+    """A typed vision-analysis result.
+
+    ``DENIED`` means the backend actively refused the request (4xx): the reference did not
+    resolve for this organisation, or the request itself was rejected. ``FAILED`` means the
+    analysis could not complete (5xx, timeout, connection error). Neither carries fabricated
+    attributes.
+    """
+
+    status: AnalysisStatus
+    attributes: ImageAttributes | None = None
+    status_code: int | None = None
+    error: str | None = None
+
+    @property
+    def succeeded(self) -> bool:
+        """Whether the analysis returned parsed attributes."""
+        return self.status is AnalysisStatus.SUCCEEDED
 
 
 def parse_image_attributes_dict(data: dict[str, Any]) -> ImageAttributes:
@@ -33,16 +75,43 @@ def parse_image_attributes_dict(data: dict[str, Any]) -> ImageAttributes:
     )
 
 
-async def analyze_product_image(registry: Any, image_url: str) -> ImageAttributes:
-    """Analyze a product image via the tool registry / vision model."""
+async def analyze_product_image(
+    registry: Any,
+    image_url: str | None = None,
+    *,
+    org_id: str | None = None,
+    image_ref_kind: str | None = None,
+    image_ref_id: str | None = None,
+) -> ImageAnalysisOutcome:
+    """Analyze a product image, preferring the reference over the legacy URL arm."""
     try:
-        res = await registry.analyze_product_image(image_url=image_url)
-        data = res.get("attributes") or res
-        return parse_image_attributes_dict(data)
-    except Exception:
-        # Fallback heuristic if endpoint is unavailable
-        return ImageAttributes(
-            category="Curated Piece",
-            primary_color="Bespoke",
-            aesthetic_tags=["Quiet Luxury", "Boutique"],
+        res = await registry.analyze_product_image(
+            image_url=image_url,
+            org_id=org_id,
+            image_ref_kind=image_ref_kind,
+            image_ref_id=image_ref_id,
         )
+    except httpx.HTTPStatusError as exc:
+        status_code = exc.response.status_code
+        if 400 <= status_code < 500 and status_code not in _RETRYABLE_CLIENT_STATUSES:
+            return ImageAnalysisOutcome(
+                status=AnalysisStatus.DENIED,
+                status_code=status_code,
+                error=f"vision backend refused the analysis (HTTP {status_code})",
+            )
+        return ImageAnalysisOutcome(
+            status=AnalysisStatus.FAILED,
+            status_code=status_code,
+            error=f"vision backend error (HTTP {status_code})",
+        )
+    except httpx.RequestError as exc:
+        return ImageAnalysisOutcome(
+            status=AnalysisStatus.FAILED,
+            error=f"vision backend unreachable: {exc}",
+        )
+
+    data = (res or {}).get("attributes") or res or {}
+    return ImageAnalysisOutcome(
+        status=AnalysisStatus.SUCCEEDED,
+        attributes=parse_image_attributes_dict(data),
+    )

@@ -545,6 +545,44 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
         result.ConfidenceScore.Should().BeGreaterThan(0);
     }
 
+    /// <summary>
+    /// Added beside the two cases above by U3.2, changing neither: this host configures no vision
+    /// key, so <c>VisionService</c> takes the deterministic fallback, which is exactly what makes
+    /// those two cases pass whether or not the boundary contract is right (strategy §4 C26). The
+    /// capturing counterpart - the real outbound provider request and the raw payload Python
+    /// receives - lives in <see cref="AnalyzeImageCapturedPayloadTests"/>.
+    /// </summary>
+    [Fact]
+    public async Task AnalyzeImage_WithoutAVisionKey_IsTheDeterministicFallbackTheTwoCasesAboveObserve()
+    {
+        var orgId = Guid.NewGuid();
+        var body = new
+        {
+            orgId = orgId,
+            imageUrl = "https://example.com/saree.jpg",
+            prompt = "Extract visual attributes and color palette"
+        };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/internal/visual/analyze-image")
+        {
+            Content = JsonContent.Create(body)
+        };
+        request.Headers.Add("X-Internal-Token", InternalKey);
+
+        var response = await _client.SendAsync(request);
+
+        response.StatusCode.Should()
+            .Be(HttpStatusCode.OK);
+
+        var json = await response.Content.ReadAsStringAsync();
+        json.Should().Contain(
+            "\"isFallback\":true",
+            "no vision key is configured here, so the deterministic fallback answers (C26)");
+        json.Should().NotContain(
+            "\"isFallback\":false",
+            "only a real provider call sets this, so the fallback cannot be S5's gate");
+    }
+
     // --- U2.2 (L4): the analyze-image contract the two cases above cannot detect ---
 
     /// <summary>

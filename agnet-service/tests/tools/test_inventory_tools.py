@@ -1,13 +1,33 @@
 from unittest.mock import AsyncMock, MagicMock
+
+import httpx
 import pytest
 
 from app.schemas.visual_insight import PieceItem
-from app.tools.inventory.image_tools import analyze_product_image, parse_image_attributes_dict
+from app.tools.inventory.image_tools import (
+    AnalysisStatus,
+    analyze_product_image,
+    parse_image_attributes_dict,
+)
 from app.tools.inventory.inventory_tools import check_stock, dict_to_piece_item, search_inventory
 from app.tools.inventory.matching_tools import match_customers_to_item
 from app.tools.inventory.outfit_tools import compose_outfit
 from app.tools.inventory.sourcing_tools import create_sourcing_request
 from app.tools.inventory.supplier_tools import search_supplier_catalog
+
+
+def _status_error(status_code: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "http://backend/internal/visual/analyze-image")
+    response = httpx.Response(status_code, request=request, json={"error": "x"})
+    return httpx.HTTPStatusError("boom", request=request, response=response)
+
+
+
+def test_parse_image_attributes_dict_keeps_neutral_and_color_fallbacks():
+    """The C# side now sends primary_color; the defensive fallbacks stay (strategy §4 C15)."""
+    assert parse_image_attributes_dict({}).primary_color == "Neutral"
+    assert parse_image_attributes_dict({"color": "Emerald"}).primary_color == "Emerald"
+    assert parse_image_attributes_dict({"primary_color": "Navy", "color": "Emerald"}).primary_color == "Navy"
 
 
 def test_parse_image_attributes_dict():
@@ -26,6 +46,73 @@ def test_parse_image_attributes_dict():
 
 
 @pytest.mark.asyncio
+async def test_analyze_product_image_returns_a_succeeded_typed_outcome():
+    registry = MagicMock()
+    registry.analyze_product_image = AsyncMock(
+        return_value={
+            "category": "Blazer",
+            "primary_color": "Navy",
+            "silhouette": "Double-breasted",
+        }
+    )
+    res = await analyze_product_image(registry, "https://example.com/blazer.jpg", org_id="org-1")
+    assert res.succeeded
+    assert res.status is AnalysisStatus.SUCCEEDED
+    assert res.attributes is not None
+    assert res.attributes.category == "Blazer"
+    assert res.attributes.primary_color == "Navy"
+
+
+@pytest.mark.asyncio
+async def test_analyze_product_image_forwards_the_reference_and_the_organization():
+    registry = MagicMock()
+    registry.analyze_product_image = AsyncMock(
+        return_value={"category": "Blazer", "primary_color": "Navy"}
+    )
+    await analyze_product_image(
+        registry,
+        image_url="https://bridge.example/api/v1/media/token",
+        org_id="org-1",
+        image_ref_kind="attachment",
+        image_ref_id="att-1",
+    )
+    registry.analyze_product_image.assert_awaited_once_with(
+        image_url="https://bridge.example/api/v1/media/token",
+        org_id="org-1",
+        image_ref_kind="attachment",
+        image_ref_id="att-1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_analyze_product_image_denied_is_distinguishable_from_failed():
+    """A refusal (4xx) is DENIED; an unreachable/stale backend is FAILED. They are not one outcome."""
+    denied_registry = MagicMock()
+    denied_registry.analyze_product_image = AsyncMock(side_effect=_status_error(404))
+    denied = await analyze_product_image(denied_registry, "https://x/y.jpg", org_id="org-1")
+
+    failed_registry = MagicMock()
+    failed_registry.analyze_product_image = AsyncMock(side_effect=httpx.ConnectError("refused"))
+    failed = await analyze_product_image(failed_registry, "https://x/y.jpg", org_id="org-1")
+
+    assert denied.status is AnalysisStatus.DENIED
+    assert denied.status_code == 404
+    assert denied.attributes is None
+    assert failed.status is AnalysisStatus.FAILED
+    assert failed.attributes is None
+    assert denied.status is not failed.status
+
+
+@pytest.mark.asyncio
+async def test_analyze_product_image_server_error_is_failed_not_denied():
+    registry = MagicMock()
+    registry.analyze_product_image = AsyncMock(side_effect=_status_error(503))
+    outcome = await analyze_product_image(registry, "https://x/y.jpg", org_id="org-1")
+    assert outcome.status is AnalysisStatus.FAILED
+    assert outcome.status_code == 503
+
+
+@pytest.mark.asyncio
 async def test_analyze_product_image():
     registry = MagicMock()
     registry.analyze_product_image = AsyncMock(
@@ -35,9 +122,9 @@ async def test_analyze_product_image():
             "silhouette": "Double-breasted",
         }
     )
-    res = await analyze_product_image(registry, "https://example.com/blazer.jpg")
-    assert res.category == "Blazer"
-    assert res.primary_color == "Navy"
+    res = await analyze_product_image(registry, "https://example.com/blazer.jpg", org_id="org-1")
+    assert res.attributes.category == "Blazer"
+    assert res.attributes.primary_color == "Navy"
 
 
 def test_dict_to_piece_item():

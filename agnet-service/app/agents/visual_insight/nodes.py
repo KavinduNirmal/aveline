@@ -169,7 +169,13 @@ class VisualInsightAgent:
         }
 
     async def search_inventory(self, state: VisualAgentState) -> dict[str, Any]:
-        """Query boutique inventory using compiled criteria."""
+        """Query boutique inventory using compiled criteria.
+
+        A failed lookup is recorded explicitly rather than collapsed into "no matches". Those are
+        different facts, and the sourcing path downstream reads an empty result as "not in stock" -
+        which would turn a transport error into a confident, false claim about the boutique's
+        stock.
+        """
         criteria = state.get("search_criteria") or {
             "organizationId": state.get("org_id", ""),
             "query": state.get("message", ""),
@@ -177,10 +183,14 @@ class VisualInsightAgent:
 
         try:
             items: list[PieceItem] = await search_inventory(self._registry, criteria)
-            return {"matched_items": [item.model_dump() for item in items]}
-        except Exception as e:
+            return {"matched_items": [item.model_dump() for item in items], "search_failed": False}
+        except Exception as e:  # noqa: BLE001 - recorded in state, surfaced by compose_output
             logger.warning("Inventory search failed: %s", e)
-            return {"matched_items": []}
+            return {
+                "matched_items": [],
+                "search_failed": True,
+                "search_error": str(e),
+            }
 
     async def compose_looks(self, state: VisualAgentState) -> dict[str, Any]:
         """Assemble matched pieces into styled lookbooks."""
@@ -241,7 +251,24 @@ class VisualInsightAgent:
         }
 
     async def check_sourcing(self, state: VisualAgentState) -> dict[str, Any]:
-        """Initiate supplier sourcing when in-stock pieces are unavailable."""
+        """Initiate supplier sourcing when in-stock pieces are unavailable.
+
+        Guarded against the failed-search case: sourcing is only honest when the lookup actually
+        succeeded and matched nothing. Raising a sourcing request after a transport error would
+        tell a customer a piece is unavailable when the truth is that nobody looked properly.
+        """
+        if state.get("search_failed"):
+            reason = state.get("search_error") or "inventory lookup failed"
+            logger.warning("Skipping sourcing: the inventory lookup failed (%s).", reason)
+            return {
+                "sourcing_request": None,
+                "suggestion": None,
+                "summary": None,
+                "text": None,
+                "status": "error",
+                "reason": "inventory_unavailable",
+            }
+
         msg = state.get("message", "")
         org_id = state.get("org_id", "")
         customer_id = state.get("customer_id")

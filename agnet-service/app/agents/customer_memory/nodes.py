@@ -12,6 +12,7 @@ from typing import Any
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from app.agents.customer_memory.introduction import extract_self_introduced_name
 from app.agents.customer_memory.parsing import parse_message
 from app.agents.customer_memory.state import MemoryAgentState
 from app.prompts.assembly import assemble_system_prompt
@@ -99,9 +100,26 @@ class CustomerMemoryAgent:
             return self._skip("no customer context (customer_id/phone) available")
 
         if not customer_id and phone:
-            profile = await self.registry.identify_customer(org_id, phone, state.get("customer_name"))
+            # A first inbound message frequently *is* the introduction ("I'm Kasha vivian, this is
+            # for a cocktail party"). Without reading the name out of it the customer stays
+            # nameless: the profile is created on the phone number alone.
+            name = state.get("customer_name") or extract_self_introduced_name(state.get("message"))
+            profile = await self.registry.identify_customer(org_id, phone, name)
             customer_id = str(profile.get("customerId") or profile.get("id") or "")
             return {"customer_id": customer_id, "profile": profile}
+
+        if customer_id:
+            # The orchestrator may have resolved this customer from the phone before this node ran,
+            # in which case the name was never offered for storage and the record stays unnamed.
+            # Identify is idempotent and only backfills a *missing* name, so an existing name is
+            # never overwritten by a later guess.
+            profile = state.get("profile") or {}
+            already_named = profile.get("fullName") or state.get("customer_name")
+            introduced = extract_self_introduced_name(state.get("message"))
+            if introduced and not already_named and phone:
+                profile = await self.registry.identify_customer(org_id, phone, introduced)
+                return {"customer_id": customer_id, "profile": profile}
+
         return {}
 
     async def check_consent(self, state: MemoryAgentState) -> dict[str, Any]:

@@ -544,3 +544,111 @@ def test_parse_no_event_no_preference():
     assert parsed["event_type"] is None
     assert parsed["preference_signals"] == []
     assert parsed["parsed_intent"]["intent_type"] == "general_inquiry"
+
+
+# ---------------------------------------------------------------------------
+# Learning the customer's name from their own introduction
+# ---------------------------------------------------------------------------
+#
+# The customer stayed "Unknown customer" across messages because the name was never read out of the
+# message. It only ever reached the backend if it arrived in org_context, which an inbound WhatsApp
+# message never carries.
+
+
+class _NamedRegistry(FakeRegistry):
+    """A registry whose stored customer has no name yet, recording what it was offered."""
+
+    def __init__(self, *, existing_name: str | None = None) -> None:
+        super().__init__()
+        self.profile = {
+            "customerId": "cust-kasha",
+            "phoneNumber": "94763475058",
+            "fullName": existing_name,
+            "status": "new",
+            "tags": [],
+        }
+        self.offered_names: list[str | None] = []
+
+    async def identify_customer(self, org_id, phone_number, full_name=None):
+        self.identify_calls += 1
+        self.offered_names.append(full_name)
+        if full_name and not (self.profile.get("fullName") or "").strip():
+            self.profile = {**self.profile, "fullName": full_name}
+        return self.profile
+
+
+async def _run_memory(registry, *, customer_id, phone, message, customer_name=None):
+    graph = build_memory_graph(registry)
+    return await graph.ainvoke(
+        {
+            "org_id": "org-1",
+            "customer_id": customer_id,
+            "phone_number": phone,
+            "customer_name": customer_name,
+            "message": message,
+            "intent_type": "item_search",
+            "channel": "whatsapp",
+            "direction": "inbound",
+        }
+    )
+
+
+async def test_introduction_is_stored_when_the_customer_was_already_resolved_by_phone():
+    """The reported bug: the phone resolved the customer, so identify was never called.
+
+    An inbound message resolves the customer from the sender's own number before this node runs, so
+    the ``not customer_id and phone`` branch is skipped - and with it the only place the name was
+    ever offered for storage. The name must be backfilled on the existing-customer path too.
+    """
+    registry = _NamedRegistry(existing_name=None)
+
+    await _run_memory(
+        registry,
+        customer_id="cust-kasha",
+        phone="94763475058",
+        message="I'm Kasha vivian, this is for a cocktail party",
+    )
+
+    assert registry.offered_names == ["Kasha vivian"]
+
+
+async def test_introduction_is_stored_when_the_customer_is_resolved_for_the_first_time():
+    registry = _NamedRegistry(existing_name=None)
+
+    await _run_memory(
+        registry,
+        customer_id=None,
+        phone="94763475058",
+        message="I'm Kasha vivian, this is for a cocktail party",
+    )
+
+    assert registry.offered_names == ["Kasha vivian"]
+
+
+async def test_an_existing_name_is_never_overwritten_by_a_later_guess():
+    """Identify only backfills a missing name; a stored name wins."""
+    registry = _NamedRegistry(existing_name="Kasha Vivian")
+
+    await _run_memory(
+        registry,
+        customer_id="cust-kasha",
+        phone="94763475058",
+        message="I'm someone else entirely",
+        customer_name="Kasha Vivian",
+    )
+
+    assert registry.offered_names == []
+
+
+async def test_a_message_without_an_introduction_offers_no_name():
+    """A product question must not be mined for a name, or prose would end up on the record."""
+    registry = _NamedRegistry(existing_name=None)
+
+    await _run_memory(
+        registry,
+        customer_id="cust-kasha",
+        phone="94763475058",
+        message="Hello there. Are there any pinkish gowns in your collection?",
+    )
+
+    assert registry.offered_names == []

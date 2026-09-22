@@ -29,6 +29,18 @@ class _ListRepository implements CatalogProductRepository {
   final List<CatalogProduct> pool;
   int calls = 0;
 
+  // A read-only fake: these tests never take an action, so a mutation has nothing to say.
+  @override
+  Future<CatalogProduct> updateStatus(String id, CatalogItemStatus status) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<String> requestSupply({
+    required CatalogProduct piece,
+    int quantityNeeded = 1,
+    String urgency = 'medium',
+  }) => throw UnimplementedError('this fake only reads');
+
   @override
   Future<CatalogProductPage> fetchPage({
     required int page,
@@ -68,6 +80,17 @@ class _ManualRepository implements CatalogProductRepository {
   final List<CatalogProductQuery> queries = [];
 
   @override
+  Future<CatalogProduct> updateStatus(String id, CatalogItemStatus status) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<String> requestSupply({
+    required CatalogProduct piece,
+    int quantityNeeded = 1,
+    String urgency = 'medium',
+  }) => throw UnimplementedError('this fake only reads');
+
+  @override
   Future<CatalogProductPage> fetchPage({
     required int page,
     required int pageSize,
@@ -102,6 +125,17 @@ class _FlakyRepository implements CatalogProductRepository {
 
   @override
   Future<CatalogProduct?> fetchProduct(String id) async => null;
+
+  @override
+  Future<CatalogProduct> updateStatus(String id, CatalogItemStatus status) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<String> requestSupply({
+    required CatalogProduct piece,
+    int quantityNeeded = 1,
+    String urgency = 'medium',
+  }) => throw UnimplementedError('this fake only reads');
 }
 
 void main() {

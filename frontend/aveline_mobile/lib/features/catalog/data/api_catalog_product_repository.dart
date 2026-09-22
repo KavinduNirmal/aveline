@@ -67,6 +67,65 @@ class ApiCatalogProductRepository implements CatalogProductRepository {
     }
   }
 
+  @override
+  Future<CatalogProduct> updateStatus(
+    String id,
+    CatalogItemStatus status,
+  ) async {
+    final orgId = _requireOrganizationId();
+
+    final response = await _dio.patch<Map<String, dynamic>>(
+      '/api/v1/orgs/$orgId/catalog/items/$id/status',
+      data: {'status': status.wireValue},
+    );
+
+    final data = response.data;
+    if (data == null) {
+      throw StateError(
+        'The API accepted ${status.wireValue} for $id but returned no piece.',
+      );
+    }
+    return _parseProduct(data);
+  }
+
+  @override
+  Future<String> requestSupply({
+    required CatalogProduct piece,
+    int quantityNeeded = 1,
+    String urgency = 'medium',
+  }) async {
+    final orgId = _requireOrganizationId();
+
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/api/v1/orgs/$orgId/catalog/sourcing',
+      data: {
+        'category': piece.category,
+        'color': piece.color,
+        // The ticket asks for words about the piece. A piece with no description sends
+        // its name rather than an empty string, which the route would store as a blank.
+        'description': piece.description ?? piece.name,
+        'targetPrice': piece.price,
+        'quantityNeeded': quantityNeeded,
+        'urgency': urgency,
+      },
+    );
+
+    return response.data?['id']?.toString() ?? '';
+  }
+
+  /// The organization every catalog route is scoped to.
+  ///
+  /// A read with no organization can honestly answer with an empty page, but a mutation has
+  /// nowhere to go. Throwing lets the screen say the action did not happen, rather than
+  /// toasting a success for a request that was never made.
+  String _requireOrganizationId() {
+    final orgId = organizationId();
+    if (orgId == null || orgId.isEmpty) {
+      throw StateError('No organization is selected.');
+    }
+    return orgId;
+  }
+
   Map<String, dynamic> _buildQueryBody({
     required int page,
     required int pageSize,

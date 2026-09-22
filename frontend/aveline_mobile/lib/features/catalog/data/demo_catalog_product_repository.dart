@@ -66,6 +66,45 @@ class DemoCatalogProductRepository implements CatalogProductRepository {
     return null;
   }
 
+  @override
+  Future<CatalogProduct> updateStatus(
+    String id,
+    CatalogItemStatus status,
+  ) async {
+    if (pageDelay > Duration.zero) {
+      await Future<void>.delayed(pageDelay);
+    }
+
+    final pool = _pool ??= _buildPool();
+    final index = pool.indexWhere((piece) => piece.id == id);
+    if (index < 0) {
+      throw StateError('No demo piece with id $id.');
+    }
+
+    // The API derives `isAvailable` from the status, so the stand-in derives it the same way
+    // rather than letting the two disagree on the screen. The change is held in the pool, so
+    // it survives for the session and the grid reads it back.
+    final updated = pool[index].copyWith(
+      status: status,
+      isAvailable: status == CatalogItemStatus.available,
+    );
+    pool[index] = updated;
+    return updated;
+  }
+
+  @override
+  Future<String> requestSupply({
+    required CatalogProduct piece,
+    int quantityNeeded = 1,
+    String urgency = 'medium',
+  }) async {
+    if (pageDelay > Duration.zero) {
+      await Future<void>.delayed(pageDelay);
+    }
+
+    return 'demo-sourcing-${piece.id}';
+  }
+
   List<CatalogProduct> _filter(
     List<CatalogProduct> all,
     CatalogProductQuery query,

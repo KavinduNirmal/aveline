@@ -32,6 +32,18 @@ class _StubProductRepository implements CatalogProductRepository {
 
   final List<CatalogProduct> pool;
 
+  // A read-only fake: the grid never takes an action, so a mutation has nothing to say.
+  @override
+  Future<CatalogProduct> updateStatus(String id, CatalogItemStatus status) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<String> requestSupply({
+    required CatalogProduct piece,
+    int quantityNeeded = 1,
+    String urgency = 'medium',
+  }) => throw UnimplementedError('this fake only reads');
+
   @override
   Future<CatalogProductPage> fetchPage({
     required int page,

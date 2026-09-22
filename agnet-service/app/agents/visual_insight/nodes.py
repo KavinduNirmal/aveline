@@ -10,6 +10,7 @@ from typing import Any
 
 from app.agents.visual_insight.state import VisualAgentState
 from app.core.config import get_settings
+from app.llm.replies import unwrap_reply
 from app.prompts.assembly import assemble_system_prompt
 from app.schemas.visual_insight import (
     ImageAttributes,
@@ -25,6 +26,10 @@ from app.tools.inventory.outfit_tools import compose_outfit
 from app.tools.inventory.sourcing_tools import create_sourcing_request
 
 logger = logging.getLogger("aveline.agent.visual")
+
+#: Cap on the styling commentary shown in the Salon. A look's commentary is meant to be a few
+#: sentences; an unbounded reply can dominate the thread, which is exactly what staff saw.
+_MAX_COMMENTARY_CHARS = 700
 
 
 class VisualInsightAgent:
@@ -207,13 +212,30 @@ class VisualInsightAgent:
             if self.llm is not None:
                 try:
                     system_prompt = assemble_system_prompt("visual", {"organization_id": state.get("org_id")})
+                    # Stock is stated as fact because the model otherwise hedges: an unstated
+                    # availability became "availability: unknown" plus a "please verify current
+                    # stock" caveat, on pieces we had just confirmed in stock.
+                    in_stock = "; ".join(
+                        f"{i.name} ({i.category or 'garment'}, {i.color or 'color'}, "
+                        f"{i.stock if i.stock is not None else 'unknown'} in stock)"
+                        for i in items
+                    )
                     user_msg = (
-                        f"Curate a look for occasion '{occasion}' featuring: "
-                        + ", ".join(f"{i.name} ({i.category or 'garment'}, {i.color or 'color'})" for i in items)
+                        f"Curate a look for occasion '{occasion}' featuring these pieces, which are "
+                        f"confirmed in stock: {in_stock}. "
+                        "Reply with ONLY the styling commentary as plain prose (2-4 sentences): "
+                        "no JSON, no code fences, no labels, no lists of pieces."
                     )
                     llm_res = await self.llm.ainvoke([("system", system_prompt), ("human", user_msg)])
                     if hasattr(llm_res, "content") and llm_res.content:
-                        look.text = str(llm_res.content).strip()
+                        # The universal prompt tells the model to emit a JSON envelope, so a
+                        # compliant reply is a curated-look object. Writing that straight into
+                        # `text` rendered a wall of JSON in the Salon, which is what staff saw.
+                        # Never put structured content into a display field: take the prose, or
+                        # keep the deterministic commentary.
+                        look.text = unwrap_reply(
+                            llm_res.content, fallback=look.text, max_chars=_MAX_COMMENTARY_CHARS
+                        )
                     if hasattr(llm_res, "usage_metadata") and llm_res.usage_metadata:
                         prompt_tokens = llm_res.usage_metadata.get("input_tokens", 0)
                         completion_tokens = llm_res.usage_metadata.get("output_tokens", 0)

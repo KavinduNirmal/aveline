@@ -9,12 +9,15 @@ import json
 import logging
 from typing import Any
 
+import httpx
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agents.customer_memory.introduction import extract_self_introduced_name
 from app.agents.customer_memory.parsing import parse_message
 from app.agents.customer_memory.state import MemoryAgentState
+from app.agents.customer_memory.update_instruction import extract_customer_update
+from app.llm.replies import unwrap_reply
 from app.prompts.assembly import assemble_system_prompt
 from app.schemas.customer_memory import MemoryAgentOutput
 from app.tools.registry import ToolRegistry
@@ -43,36 +46,10 @@ def coerce_output(output: dict[str, Any]) -> MemoryAgentOutput | None:
 def _unwrap_reply(content: str) -> str:
     """Extract a plain-text reply from an LLM completion.
 
-    The universal system prompt tells the model to emit a JSON envelope, so a draft call may
-    return fenced JSON (``{status, output: {assistant_reply: ...}}``). This unwraps code fences and
-    any envelope to keep the staff-facing ``draft_response`` plain text. Non-JSON text is returned
-    unchanged.
+    Thin wrapper over the shared helper (``app/llm/replies.py``), which owns the envelope
+    unwrapping because the visual agent needs exactly the same behaviour.
     """
-    text = content.strip()
-
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if lines and lines[0].strip().startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
-
-    try:
-        parsed = json.loads(text)
-    except (ValueError, TypeError):
-        return text
-
-    if not isinstance(parsed, dict):
-        return text
-
-    output = parsed.get("output")
-    candidates = output if isinstance(output, dict) else parsed
-    for key in ("assistant_reply", "draft_response", "reply", "text"):
-        value = candidates.get(key) if isinstance(candidates, dict) else None
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return text
+    return unwrap_reply(content, fallback=content if isinstance(content, str) else "")
 
 
 class CustomerMemoryAgent:
@@ -121,6 +98,119 @@ class CustomerMemoryAgent:
                 return {"customer_id": customer_id, "profile": profile}
 
         return {}
+
+    async def apply_staff_update(self, state: MemoryAgentState) -> dict[str, Any]:
+        """Apply an explicit staff instruction to the bound customer's details.
+
+        Staff type "please update this customer with the name X and number Y" into the Salon. This
+        is the only path that writes identity fields from chat, so it is deliberately narrow:
+
+        - **Staff only.** A customer messaging in is never taken as instructing us to rewrite their
+          own record. ``staff_query`` is what separates the two.
+        - **Explicit only.** ``extract_customer_update`` requires an update verb; a message that
+          merely mentions a name is not an instruction to store one.
+        - **Bound customer only.** With no customer on the conversation there is nobody to update,
+          and guessing from a name would risk editing the wrong record. It asks instead.
+        - **Never creates.** Naming someone not on file is a different operation; silently creating
+          a record from a chat message would be wrong.
+
+        A failure is reported, not swallowed: an update that appears to succeed while doing nothing
+        is worse than one that says why it could not.
+        """
+        if not state.get("staff_query"):
+            return {}
+
+        instruction = extract_customer_update(state.get("message"))
+        if instruction is None or instruction.is_empty:
+            return {}
+
+        org_id = state.get("org_id")
+        customer_id = state.get("customer_id")
+
+        # The run short-circuits before `parse`, so the intent is carried from the upstream decision
+        # instead of being left empty: `MemoryAgentOutput` requires one, and the upstream
+        # classification is the honest value.
+        intent_type = state.get("intent_type") or "general_inquiry"
+        intent = {"intent_type": intent_type}
+
+        if not customer_id:
+            return {
+                "parsed_intent": intent,
+                "customer_update_error": (
+                    "I could not tell which customer to update - no customer is linked to this "
+                    "conversation yet. Open the customer's thread, or say which one you mean."
+                ),
+            }
+
+        try:
+            profile = await self.registry.update_customer(
+                str(org_id),
+                str(customer_id),
+                full_name=instruction.full_name,
+                phone_number=instruction.phone_number,
+            )
+        except httpx.HTTPStatusError as exc:
+            return {
+                "parsed_intent": intent,
+                "customer_update_error": self._update_failure_message(exc, instruction),
+            }
+        except Exception as exc:  # noqa: BLE001 - reported to staff, never silently dropped
+            logger.warning("Customer update failed: %s", exc)
+            return {
+                "parsed_intent": intent,
+                "customer_update_error": "I could not reach the customer book to apply that.",
+            }
+
+        return {
+            "parsed_intent": intent,
+            "profile": profile,
+            "applied_customer_update": {
+                "full_name": instruction.full_name,
+                "phone_number": instruction.phone_number,
+                "customer_id": str(customer_id),
+            },
+        }
+
+    @staticmethod
+    def _update_failure_message(exc: httpx.HTTPStatusError, instruction: Any) -> str:
+        """Turn a backend refusal into something a staff member can act on."""
+        status = exc.response.status_code
+        if status == 409:
+            return (
+                f"Another customer already has {instruction.phone_number}. "
+                "Merge the two records or use a different number, then try again."
+            )
+        if status == 404:
+            return "That customer is not in this boutique, so nothing was changed."
+        if status == 400:
+            return "The customer book rejected that change: the name or number looks invalid."
+        return f"The customer book refused the change (HTTP {status}). Nothing was changed."
+
+    @staticmethod
+    def _update_confirmation(state: MemoryAgentState) -> str | None:
+        """A staff-facing sentence describing what an update instruction did, or ``None``.
+
+        Only reached when the update node short-circuited the run, so it is never produced for an
+        ordinary message.
+        """
+        error = state.get("customer_update_error")
+        if error:
+            return str(error)
+
+        applied = state.get("applied_customer_update")
+        if not applied:
+            return None
+
+        changed: list[str] = []
+        if applied.get("full_name"):
+            changed.append(f"name to {applied['full_name']}")
+        if applied.get("phone_number"):
+            changed.append(f"number to {applied['phone_number']}")
+
+        if not changed:
+            return "Nothing was changed."
+
+        return "Updated this customer's " + " and ".join(changed) + "."
 
     async def check_consent(self, state: MemoryAgentState) -> dict[str, Any]:
         """Refuse to process customers who have revoked consent."""
@@ -264,7 +354,16 @@ class CustomerMemoryAgent:
         staff = bool(state.get("staff_query"))
         backend = await self._backend_brief(state)
 
-        if staff:
+        # A handled update answers the instruction directly. Running the normal brief/draft path
+        # would add a customer-facing suggestion nobody asked for, and `parsed_intent` is empty here
+        # because the run short-circuited before parsing.
+        update_confirmation = self._update_confirmation(state)
+        if update_confirmation is not None:
+            interaction_brief = update_confirmation
+            draft = None
+            usage = None
+            action = None
+        elif staff:
             interaction_brief = self._staff_text(state, name, profile, backend)
             draft = None
             usage = None

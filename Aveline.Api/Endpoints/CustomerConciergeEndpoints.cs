@@ -42,6 +42,15 @@ public static class CustomerConciergeEndpoints
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized);
 
+        group.MapPatch("/{customerId:guid}", UpdateCustomerAsync)
+            .WithName("UpdateCustomerInternal")
+            .WithSummary("Apply an explicit staff instruction to a customer's name or phone.")
+            .Produces<TenantCustomerDetailDto>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status409Conflict)
+            .Produces(StatusCodes.Status401Unauthorized);
+
         group.MapPost("/{customerId:guid}/memories", SaveMemoryAsync)
             .WithName("SaveCustomerMemory")
             .WithSummary("Persist a semantic memory for a customer (embeds content).")
@@ -147,6 +156,57 @@ public static class CustomerConciergeEndpoints
 
         var result = await customers.LookupAsync(request, cancellationToken);
         return Results.Ok(result);
+    }
+
+    /// <summary>
+    /// Applies an explicit staff instruction to a customer's name or phone (ADR-023 follow-up).
+    /// </summary>
+    /// <remarks>
+    /// Reuses <see cref="ICustomerTenantService.UpdateAsync"/> rather than re-implementing the
+    /// write, so the agent inherits the same validation, phone normalization and duplicate-phone
+    /// detection the staff API enforces. The agent is a reasoning engine and must not own business
+    /// rules (SYSTEM_PROMPT "Tools only").
+    ///
+    /// A duplicate phone is a <c>409</c> rather than a silent overwrite: two customers sharing a
+    /// number is a data-integrity problem the caller has to resolve, not one to swallow.
+    /// </remarks>
+    private static async Task<IResult> UpdateCustomerAsync(
+        Guid customerId,
+        [FromQuery] Guid organizationId,
+        UpdateCustomerRequest request,
+        ICustomerTenantService customers,
+        CancellationToken cancellationToken)
+    {
+        if (organizationId == Guid.Empty)
+        {
+            return Results.BadRequest(new { message = "organizationId is required." });
+        }
+
+        if (request.FullName is null && request.PhoneNumber is null)
+        {
+            return Results.BadRequest(new { message = "Provide a name and/or phone number to update." });
+        }
+
+        try
+        {
+            var updated = await customers.UpdateAsync(organizationId, customerId, request, cancellationToken);
+
+            return updated is null
+                ? Results.NotFound(new { message = "That customer is not in this boutique." })
+                : Results.Ok(updated);
+        }
+        catch (CustomerPhoneConflictException)
+        {
+            return Results.Conflict(new
+            {
+                code = "customer-phone-conflict",
+                message = "Another customer in this boutique already has that phone number.",
+            });
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new { message = ex.Message });
+        }
     }
 
     private static async Task<IResult> SaveMemoryAsync(

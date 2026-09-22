@@ -68,6 +68,37 @@ class ToolRegistry:
             body["fullName"] = full_name
         return await self._client.request("POST", "/internal/customers/identify", json=body)
 
+    async def update_customer(
+        self,
+        org_id: str,
+        customer_id: str,
+        full_name: str | None = None,
+        phone_number: str | None = None,
+    ) -> dict[str, Any]:
+        """Apply an explicit staff instruction to a customer's name or phone (ADR-023 follow-up).
+
+        Only the fields actually supplied are sent, so an update that mentions a name cannot blank
+        out the phone. This never creates a customer: naming someone who is not on file is a
+        different operation, and silently creating a record from a chat message would be wrong.
+
+        Raises:
+            httpx.HTTPStatusError: 409 when another customer already holds the phone number, 404
+                when the customer is not in the organization. Both must surface to staff rather
+                than be swallowed - an update that silently did nothing is worse than an error.
+        """
+        body: dict[str, Any] = {}
+        if full_name is not None:
+            body["fullName"] = full_name
+        if phone_number is not None:
+            body["phoneNumber"] = phone_number
+
+        return await self._client.request(
+            "PATCH",
+            f"/internal/customers/{customer_id}",
+            json=body,
+            params={"organizationId": org_id},
+        )
+
     async def lookup_customers(
         self,
         org_id: str,

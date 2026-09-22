@@ -7,6 +7,8 @@ explicit preference extraction.
 """
 
 
+import httpx
+
 from app.agents.customer_memory.graph import build_memory_graph
 from app.agents.customer_memory.parsing import parse_message
 
@@ -652,3 +654,148 @@ async def test_a_message_without_an_introduction_offers_no_name():
     )
 
     assert registry.offered_names == []
+
+
+# ---------------------------------------------------------------------------
+# Applying an explicit staff update instruction
+# ---------------------------------------------------------------------------
+#
+# Staff type "please update this customer with the name X and number Y". This is the only path that
+# writes identity fields from chat, so the guards matter more than the happy path.
+
+
+class _UpdateRegistry(FakeRegistry):
+    """A registry recording customer updates and able to refuse one."""
+
+    def __init__(self, *, fail_with: int | None = None) -> None:
+        super().__init__()
+        self.updates: list[tuple[str, str, str | None, str | None]] = []
+        self._fail_with = fail_with
+
+    async def update_customer(self, org_id, customer_id, full_name=None, phone_number=None):
+        self.updates.append((org_id, customer_id, full_name, phone_number))
+        if self._fail_with is not None:
+            request = httpx.Request("PATCH", "http://api/internal/customers/cust-1")
+            response = httpx.Response(self._fail_with, request=request, json={})
+            raise httpx.HTTPStatusError("refused", request=request, response=response)
+        return {**self.profile, "fullName": full_name or self.profile.get("fullName")}
+
+
+async def _run_update(registry, *, message, customer_id="cust-kasha", staff_query=True):
+    graph = build_memory_graph(registry)
+    return await graph.ainvoke(
+        {
+            "org_id": "org-1",
+            "customer_id": customer_id,
+            "phone_number": "94763475058",
+            "message": message,
+            "channel": "whatsapp",
+            "direction": None if staff_query else "inbound",
+            "staff_query": staff_query,
+        }
+    )
+
+
+UPDATE_MESSAGE = "Please update this customer with the name Kasha Vivian Perera and number 0771234567"
+
+
+async def test_staff_instruction_applies_the_update_and_confirms():
+    registry = _UpdateRegistry()
+
+    result = await _run_update(registry, message=UPDATE_MESSAGE)
+
+    assert registry.updates == [
+        ("org-1", "cust-kasha", "Kasha Vivian Perera", "0771234567")
+    ]
+    # The answer states what changed, so staff can see it landed.
+    assert "Kasha Vivian Perera" in result["output"]["interaction_brief"]
+    assert "0771234567" in result["output"]["interaction_brief"]
+
+
+async def test_a_handled_update_produces_no_customer_draft():
+    """The staff member asked for a record change, not a reply to the customer."""
+    registry = _UpdateRegistry()
+
+    result = await _run_update(registry, message=UPDATE_MESSAGE)
+
+    assert result["output"]["draft_response"] is None
+    assert result["output"]["action_required"] is None
+
+
+async def test_an_inbound_customer_message_never_updates_its_own_record():
+    """A customer is not taken as instructing us to rewrite their identity."""
+    registry = _UpdateRegistry()
+
+    result = await _run_update(registry, message=UPDATE_MESSAGE, staff_query=False)
+
+    assert registry.updates == []
+    assert result["output"]["draft_response"] is not None
+
+
+async def test_a_run_with_no_customer_context_at_all_updates_nothing():
+    """No customer id and no phone: the run has nobody to act on and skips."""
+    registry = _UpdateRegistry()
+    graph = build_memory_graph(registry)
+
+    result = await graph.ainvoke(
+        {
+            "org_id": "org-1",
+            "customer_id": None,
+            "phone_number": None,
+            "message": UPDATE_MESSAGE,
+            "channel": "whatsapp",
+            "staff_query": True,
+        }
+    )
+
+    assert registry.updates == []
+    assert result["status"] == "skipped"
+
+
+async def test_the_update_node_refuses_when_no_customer_is_bound():
+    """The defensive guard, exercised directly: it is unreachable through the graph.
+
+    ``resolve_customer`` either resolves a customer from the phone or skips the run entirely, so by
+    the time this node runs a customer id exists. The guard stays because a future change to that
+    resolution could otherwise let a chat message edit an arbitrary record.
+    """
+    from app.agents.customer_memory.nodes import CustomerMemoryAgent
+
+    agent = CustomerMemoryAgent(_UpdateRegistry())
+    result = await agent.apply_staff_update(
+        {
+            "org_id": "org-1",
+            "customer_id": None,
+            "message": UPDATE_MESSAGE,
+            "staff_query": True,
+        }
+    )
+
+    assert "could not tell which customer" in result["customer_update_error"]
+
+
+async def test_a_duplicate_phone_is_explained_rather_than_silently_dropped():
+    registry = _UpdateRegistry(fail_with=409)
+
+    result = await _run_update(registry, message=UPDATE_MESSAGE)
+
+    brief = result["output"]["interaction_brief"]
+    assert "already has" in brief
+    # The staff member needs to know it did NOT apply.
+    assert result["output"]["draft_response"] is None
+
+
+async def test_a_missing_customer_is_explained():
+    registry = _UpdateRegistry(fail_with=404)
+
+    result = await _run_update(registry, message=UPDATE_MESSAGE)
+
+    assert "not in this boutique" in result["output"]["interaction_brief"]
+
+
+async def test_an_ordinary_message_does_not_touch_the_customer_book():
+    registry = _UpdateRegistry()
+
+    await _run_update(registry, message="Do you have anything pink?", staff_query=True)
+
+    assert registry.updates == []

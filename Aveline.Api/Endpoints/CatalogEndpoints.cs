@@ -544,7 +544,7 @@ public static class CatalogEndpoints
         .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status403Forbidden);
 
-        // --- Binary Media Storage (PostgreSQL bytea) ---
+        // --- Binary Media Storage (the configured provider: database bytea or Cloudinary) ---
 
         group.MapPost("/images/upload", async (
             [FromRoute] Guid organizationId,

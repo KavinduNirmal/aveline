@@ -271,6 +271,7 @@ public sealed class ImageUrlFetcherTests
     // Reserved, benchmarking and documentation ranges.
     [InlineData("192.0.0.1")]
     [InlineData("192.0.2.1")]
+    [InlineData("192.88.99.1")] // 6to4 relay anycast (RFC7526)
     [InlineData("198.18.0.1")]
     [InlineData("198.51.100.1")]
     [InlineData("203.0.113.1")]
@@ -287,6 +288,8 @@ public sealed class ImageUrlFetcherTests
     [InlineData("fd12:3456::1")]
     [InlineData("ff02::1")]
     [InlineData("::")]
+    [InlineData("100::1")] // discard-only prefix (RFC6666)
+    [InlineData("5f00::1")] // SRv6 SIDs (RFC9602)
     [InlineData("::ffff:127.0.0.1")]
     [InlineData("::ffff:10.0.0.1")]
     [InlineData("2001::1")]
@@ -662,12 +665,28 @@ public sealed class ImageUrlFetcherTests
     [Fact]
     public async Task FetchAsync_WithAPdfContentType_IsRefused()
     {
-        // The fetcher is the image path; a PDF is storable but is not a pasted image.
-        var fetcher = CreateFetcher(new StubHandler(_ => OkImage("%PDF-1.7"u8.ToArray(), "application/pdf")));
+        // The fetcher is the image path; a PDF is storable but is not a pasted image. This case
+        // covers the *declared* header only; the sniff arm is the next test.
+        var fetcher = CreateFetcher(new StubHandler(_ => OkImage("%PDF-1.7\n"u8.ToArray(), "application/pdf")));
 
         var refusal = await RefusedAsync(() => fetcher.FetchAsync(PublicHostUrl, CancellationToken.None));
 
         refusal.Reason.Should().Be(ImageUrlFetchReasons.ContentTypeNotAllowed);
+    }
+
+    [Fact]
+    public async Task FetchAsync_WithPdfBytesBehindAnImageContentType_IsRefusedByTheSniff()
+    {
+        // F4a: the sniff guard that a PDF body is refused on the *fetch* path. The declared
+        // header says `image/jpeg`, so the declared-type gate admits the body; the sniff sees the
+        // `%PDF-` bytes and returns `application/pdf`, which `IsImage` then refuses. The reason is
+        // `ContentSignatureMismatch`, not `ContentTypeNotAllowed`, which is what distinguishes this
+        // arm from the declared-`application/pdf` refusal above.
+        var fetcher = CreateFetcher(new StubHandler(_ => OkImage("%PDF-1.7\n"u8.ToArray(), "image/jpeg")));
+
+        var refusal = await RefusedAsync(() => fetcher.FetchAsync(PublicHostUrl, CancellationToken.None));
+
+        refusal.Reason.Should().Be(ImageUrlFetchReasons.ContentSignatureMismatch);
     }
 
     // =======================================================================================
@@ -716,6 +735,30 @@ public sealed class ImageUrlFetcherTests
         var result = await fetcher.FetchAsync(PublicHostUrl, CancellationToken.None);
 
         result.ContentType.Should().Be("image/png");
+    }
+
+    // =======================================================================================
+    // F5: the fetched result itself carries the "this is an image" invariant
+    // =======================================================================================
+
+    [Fact]
+    public void FetchedImage_RefusesANonImageContentType()
+    {
+        // F5 hardening: the guard used to be a separate statement in the fetcher, so a future
+        // caller could hold a FetchedImage whose type was a non-image and store it by forgetting
+        // its own `IsImage` check. The type now refuses construction outright.
+        foreach (var contentType in new[] { "application/pdf", "text/html", "application/octet-stream" })
+        {
+            Assert.Throws<ArgumentException>(() => new FetchedImage(PngBytes, contentType));
+        }
+
+        Assert.Throws<ArgumentNullException>(() => new FetchedImage(PngBytes, null!));
+        Assert.Throws<ArgumentException>(() => new FetchedImage(PngBytes, "  "));
+
+        // The real image path is unaffected, and the sniffed type is preserved verbatim.
+        var image = new FetchedImage(PngBytes, "image/png");
+        image.ContentType.Should().Be("image/png");
+        image.Bytes.Should().Equal(PngBytes);
     }
 
     // =======================================================================================

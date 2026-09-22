@@ -124,7 +124,7 @@ fields. A message may carry a single block or a composite (e.g. a `Note` plus se
 ```
 
 Block types: `text`, `piece`, `look`, `at_a_glance`, `sign_off`, `payment`, `courier`,
-`suggestion`, `client_message`, `choice`.
+`suggestion`, `client_message`, `attachment`, `choice`.
 
 ### 5.1 Emitted blocks from real agent output
 

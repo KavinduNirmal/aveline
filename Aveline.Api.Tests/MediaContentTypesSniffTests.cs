@@ -277,12 +277,58 @@ public class MediaContentTypesSniffTests
     public void Sniff_ToleratesASmallLeadingOffsetBeforeThePdfHeader()
     {
         // Malformed-but-real PDFs can carry a small run of bytes before `%PDF-`. The sniff
-        // accepts that inside a bounded leading window rather than at byte 0 only.
+        // accepts a complete header (marker + major.minor + end-of-line) inside a small leading
+        // window rather than at byte 0 only.
         var offsetPdf = new byte[64];
         "garbage!"u8.CopyTo(offsetPdf);
-        "%PDF-1.4"u8.CopyTo(offsetPdf.AsSpan(8));
+        "%PDF-1.4\n"u8.CopyTo(offsetPdf.AsSpan(8));
 
         Assert.Equal("application/pdf", MediaContentTypes.Sniff(offsetPdf));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(8)]
+    [InlineData(32)]
+    public void Sniff_AcceptsACompletePdfHeaderInsideTheSmallLeadingWindow(int offset)
+    {
+        var bytes = new byte[64];
+        "%PDF-1.7\n"u8.CopyTo(bytes.AsSpan(offset));
+
+        Assert.Equal("application/pdf", MediaContentTypes.Sniff(bytes));
+    }
+
+    [Fact]
+    public void Sniff_RefusesAPdfHeaderJustPastTheSmallLeadingWindow()
+    {
+        // The window is 32 bytes inclusive, so a marker at byte 33 is not a header. That is the
+        // trade-off the narrow window buys: a malformed PDF with a longer leading run is not a
+        // PDF here, and every path that consults the sniff then fails closed (upload refused,
+        // fetch refused) rather than storing or trusting bytes the sniff cannot confirm.
+        var bytes = new byte[64];
+        "%PDF-1.7\n"u8.CopyTo(bytes.AsSpan(33));
+
+        Assert.Null(MediaContentTypes.Sniff(bytes));
+    }
+
+    public static TheoryData<string, byte[]> IncompletePdfHeaders => new()
+    {
+        { "bare-marker", "%PDF-"u8.ToArray() },
+        { "major-only", "%PDF-1"u8.ToArray() },
+        { "no-minor", "%PDF-1."u8.ToArray() },
+        { "version-with-no-terminator", "%PDF-1.7"u8.ToArray() },
+        { "version-then-a-non-eol-byte", "%PDF-1.7x"u8.ToArray() },
+    };
+
+    [Theory]
+    [MemberData(nameof(IncompletePdfHeaders))]
+    public void Sniff_RefusesAnIncompletePdfHeader(string label, byte[] bytes)
+    {
+        // `%PDF-` is a prefix of the signature, not the signature: a header carries a major.minor
+        // version and the end-of-line that terminates the header line. Anything shorter is a
+        // prefix and must not be confirmed as a document.
+        Assert.Null(MediaContentTypes.Sniff(bytes));
+        _ = label;
     }
 
     [Fact]
@@ -293,9 +339,45 @@ public class MediaContentTypesSniffTests
         // by a marker anywhere inside it.
         var buried = new byte[4096];
         Array.Fill(buried, (byte)'x');
-        "%PDF-1.7"u8.CopyTo(buried.AsSpan(3000));
+        "%PDF-1.7\n"u8.CopyTo(buried.AsSpan(3000));
 
         Assert.Null(MediaContentTypes.Sniff(buried));
+    }
+
+    /// <summary>A JPEG whose payload carries a `%PDF-` header deep inside it, at byte 200.</summary>
+    private static byte[] JpegCarryingABuriedPdfMarker()
+    {
+        var bytes = new byte[240];
+        JpegBytes.CopyTo(bytes, 0);
+        "%PDF-1.7\n"u8.CopyTo(bytes.AsSpan(200));
+        return bytes;
+    }
+
+    /// <summary>A PNG whose payload carries a `%PDF-` header deep inside it, at byte 200.</summary>
+    private static byte[] PngCarryingABuriedPdfMarker()
+    {
+        var bytes = new byte[240];
+        PngBytes.CopyTo(bytes, 0);
+        "%PDF-1.7\n"u8.CopyTo(bytes.AsSpan(200));
+        return bytes;
+    }
+
+    [Theory]
+    [InlineData("image/jpeg")]
+    [InlineData("image/png")]
+    public void Sniff_DoesNotClassifyAnImageCarryingABuriedPdfMarkerAsPdf(string imageType)
+    {
+        // F9 defect: SniffPdf used to search the first 1024 bytes for `%PDF-`, so a JPEG or PNG
+        // whose first kilobyte happened to carry that marker was classified `application/pdf`.
+        // On the upload/sniff path that stored image bytes under a PDF content type; on the
+        // fetch path it was a false refusal. The marker at byte 200 sits inside the old window
+        // and outside the PDF header window, so the bytes must decide the image's real type.
+        var bytes = imageType == "image/jpeg"
+            ? JpegCarryingABuriedPdfMarker()
+            : PngCarryingABuriedPdfMarker();
+
+        Assert.Equal(imageType, MediaContentTypes.Sniff(bytes));
+        Assert.True(MediaContentTypes.IsRecognisableImage(bytes));
     }
 
     public static TheoryData<string, byte[]> PdfClaimedNonPdfBodies => new()

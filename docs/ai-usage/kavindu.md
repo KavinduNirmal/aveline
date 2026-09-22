@@ -4567,3 +4567,138 @@ analysable split (§3.6), the single-width delivery rule (§3.7), the cache posi
 - No code was written by the orchestrating agent; all implementation is delegated.
 - Wave 5 (S8) is left open and deferred by design: it is gated on production proof and on the
   database owner's confirmation, and it contains the only irreversible step in the workstream.
+
+## Session 2026-09-21/22 — Cloudinary media migration and the Salon image pipeline (session end)
+
+**Task:** the same workstream, closed out. Orchestration of a subagent swarm against
+`.agents/plans/cloudinary-media-and-salon-image-implementation-strategy.md` (rev 3) and
+`.agents/plans/cloudinary-media-and-salon-image-implementation-plan.md` (rev 1).
+**Tool used:** DeepSeek Harness (deepseek-flash) orchestrating; implementation delegated to subagents.
+**Branch:** `cloudinary-media-and-salon-image` — no branch was created or switched, and every commit
+was made by the orchestrator, never by a subagent.
+
+### Result
+
+Six waves delivered, five commits, **2559 .NET tests / 427 Python tests / 1011 Flutter tests**, all
+green; a live Cloudinary smoke suite run against the real account; and a recorded security review.
+
+| Commit | Wave | Slice | What it established |
+|---|---|---|---|
+| `1dbb789` | 0a–0c | S0 | the seam, the provider-neutral metadata carrier, the two row seams, both caps, the vision content-type subset, the magic-byte sniff, the tagger, fail-fast config, and the two migrations |
+| `8b9d129` | 1 | S1 ∥ S2 | both tiers writing to Cloudinary; the one-width delivery contract; dual-write owned by the row seams; the live suite and the §3.7/§R8 measurements |
+| `0f9cd27` | 2 | S3 → S4 | the HMAC token machinery with a frozen vector, the streaming proxy, both mints, per-row dispatch, the reference DTO, the `primary_color` casing fix, the three `org_context` sites, the tenant fix, and the central credential redaction |
+| `74ff7f1` | 3 | S5 | the Python reference contract, the typed denied-vs-failed outcome, the dead path deleted, the cache re-keyed, and the capturing payload gate |
+| `8324fac` | 4 | S6 ∥ S7 | the 7-day retention job, the fourteen-behaviour SSRF fetcher with a pinned connect, the S6 security review, and the Flutter `Accept`/decode fix |
+
+### What the swarm found that no plan predicted
+
+The value of the orchestration was not the throughput; it was the number of real defects each gate
+surfaced because a unit was forced to prove its claim rather than assert it.
+
+- **A live bearer-credential leak.** U2.1 found that the pre-existing auth-audit middleware logs
+  `Request.Path` on **every** 401/403 — and for `/api/v1/media/{token}` that path *is* the token, so
+  every refused request was writing a live credential to the log. The same value could reach an
+  exported trace, because OpenTelemetry's ASP.NET Core instrumentation creates the request activity
+  before any middleware runs. The fix was made central (one `RequestPathRedaction` rule consulted by
+  the audit middleware, the exception handler and an `ActivityProcessor`) rather than route-local,
+  and it is verified through the real instrumentation with a real exporter.
+- **A second casualty of the `primary_color` casing defect, still live.** U3.2's capturing contract
+  test — the strategy's §7 check 7 — failed on `secondary_colors`, which the Python reader reads and
+  the wire was sending as `secondaryColors`. The test then failed on four counts when
+  `primary_color` was reverted, which is what makes it a gate rather than a formality.
+- **A `noeviction` prerequisite that was already satisfied but unverified.** Checked on the running
+  instance rather than assumed, because an evicted single-use nonce silently weakens the guarantee —
+  a fail-open in the one place the design requires fail-closed.
+- **A time-of-day-dependent pre-existing flake.** A full-suite run went red on
+  `ApiStatsRollupJobTests`; the diagnostic showed the job deliberately also writes a **day** row when
+  the just-closed hour is 23:00 UTC, so an unfiltered `SingleAsync()` saw two rows for one hour of
+  every UTC day. Both files were byte-identical to the pre-work commit, so it was latent and not
+  ours; the assertion is now scoped and the coexistence is asserted as a property.
+- **A PDF sniff that was too broad.** The security review's F9: searching the first 1024 bytes for
+  `%PDF-` misclassified an image carrying that marker deep in its payload. Narrowed to a header check
+  within 32 bytes, requiring `major.minor` and an EOL terminator, and made fail-closed on both paths.
+- **A Flutter stretch trap.** The prescribed `Image.network(cacheWidth:, cacheHeight:)` shorthand
+  builds `ResizeImage` with `ResizeImagePolicy.exact`, which stretches a portrait photo into the
+  landscape grid tile. Measured, then avoided with `ResizeImagePolicy.fit`.
+
+### The gates, and what each one caught
+
+- **Wave 0:** the whole existing suite green with **no expectation edited** — the falsifier for D1's
+  placement. It also forced the four production-host factories to declare the new override, which
+  is a configuration value, not a changed assertion.
+- **Wave 1:** the live suite ran against the real account on day one (A7.1 was closed), and produced
+  the two numbers the strategy said only a live run could: delivered size and derivation count.
+  **Two derivations per asset**, confirming §3.7's arithmetic; and for that high-frequency source
+  WebP was *larger* than JPEG, which is exactly the per-image trade `q_auto` exists to make.
+- **Wave 2:** the full status matrix, the replay, the splice, the expiry boundary, and the decisive
+  test a redirect could not pass. Plus the redaction verification above.
+- **Wave 3:** zero field loss across the .NET→Python boundary, which is what found `secondary_colors`.
+- **Wave 4:** the retention semantics (pinned: window from the attachment's own creation, ceiling 500,
+  a live conversation is swept), the store-before-row ordering asserted against the real Cloudinary
+  adapter, the untagged-asset detector **with a falsifiability control**, and a security review that
+  found no high or medium issue and recommended shipping.
+
+### Deliberate deviations, each with a reason
+
+- **`DatabaseMediaStorage` is an in-process pass-through, not a durable table.** The provider seam
+  owns no row and §3.1 forbids it from touching one, so durability stays with the row seams — which
+  is precisely what keeps `Provider=database` a free rollback.
+- **Dual-write lives on the row seams**, not the provider, for the same reason. U1.1 identified it,
+  U1.2/U1.3 implemented it, and both directions are asserted.
+- **`secondary_colors` was added** by the unit that owned the DTO, after the payload gate proved it
+  was a live defect and grep proved no consumer read the camelCase spelling.
+- **`ResizeImagePolicy.fit` instead of the prescribed shorthand**, because the shorthand stretches.
+- **The retention ceiling was added as `Conversations:AttachmentRetentionMaxPerRun = 500`**, which
+  the strategy's §3.4 table does not list; it mirrors the `CustomerSalonBackfill` pattern.
+
+### What is NOT done, stated plainly
+
+- **Wave 5 (S8) is deferred by design**: the catalog delete path, the orphan reconciler,
+  `Media:DualWrite=false` and the `ImageData` drop. It is gated on production proof **and** the
+  database owner's confirmation, and it contains the only irreversible step in the workstream. It is
+  documented as deferred, not shipped.
+- **The Flutter device check is outstanding.** The widget half is done and green; only a real iOS and
+  Android run proves WebP renders, and the strategy requires both halves. The documented fallback
+  (an explicit `f_jpg`) is a decision, not a patch, because it costs a second derivation set.
+- **No live run was recorded for A7.2** (PDF delivery on the product environment). The SDK-level PDF
+  round trip was proven in the live smoke suite; the product-environment toggle is untested.
+- **The analysis cache is re-keyed but deliberately not wired**, so the vision path is still uncached.
+- **`externalUrl` stays permissive** (Q7 deferred) and the ≤1250-asset item cap is still unenforced
+  (no `MaxCatalogItems` exists), so no cost statement is guaranteed until it is.
+- **`docs/frontend/tenant-dashboard.md` needs an owner decision.** The strategy's C21 says its
+  "No Cloudinary" note must be corrected, but the file does not exist on this branch; it exists only
+  on `development`, where it describes the tenant-dashboard slices (T0a–T7) that are **not** on this
+  branch. The media statements were corrected in a ported copy, but the document as a whole would
+  import stale claims about permissions, deleted files and services that do not exist here. Left for
+  the owner rather than silently shipped or silently dropped.
+- **A pre-existing dangling `$ref`** to `#/components/schemas/ErrorEnvelope` (six sites) in
+  `openapi.yaml`; not invented and not fixed, since it predates this workstream.
+
+### Citations that did not resolve (so the next reader does not chase them)
+
+`openapi.yaml` holds **133** path keys before this work, not the strategy's 146 (156 after the
+additions); the `AttachmentDto.url` sentence is at `:6007-6009`, not `:6826-6829`/`:7133-7136`; the
+catalog DELETE route is `:176-195`, not `:171-191`; the `CatalogEndpoints.cs` bytea banner is at
+`:547`, and the two `.WithSummary` texts the strategy calls stale were already corrected in U1.2;
+`docs/security/` held three files, not "exactly two"; and `CatalogWriteAuthorizationTests.cs` does
+not exist at this HEAD (the F-7 guard lives in `CatalogEndpointsIntegrationTests.cs`).
+
+### Process notes
+
+- **The lane rule earned its keep.** U0.1 hit a compile error caused by a sibling's in-flight file
+  and **raised a change request instead of editing it** — the plan's escalation contract, working as
+  designed. Two further cross-lane gaps (a stale 404 translation, a missing PDF arm) were sequenced
+  to their owners rather than patched in place.
+- **Concurrent full-suite runs were the main process cost.** Running 2500+ tests in more than one
+  lane at once produced load-induced ~3-minute timeouts that looked like failures; each passed in
+  isolation, and the fix was to stop concurrent full runs and give the gate one serial pass.
+- **One `git reset --mixed` was needed** to keep phase history honest: a commit had swept in five
+  unrelated `docs/ai-usage/*` and `scripts/*` files from a different workstream. They were left
+  uncommitted, and the media files were re-committed alone.
+- **One environment workaround, declared:** the sandbox's NuGet cache is read-only, so
+  `NUGET_PACKAGES`/`NUGET_HTTP_CACHE_PATH` point at a workspace-local cache for every build and test.
+  Nothing about that workaround is committed — `obj/` and the cache are untracked, so no sandbox
+  path can leak into history.
+- The orchestrator wrote no production code: every `.cs`, `.py` and `.dart` change came from a
+  subagent, and the orchestrator's own writes were the AI-usage log, the GitHub issue bodies and the
+  commit messages.

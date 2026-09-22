@@ -147,13 +147,23 @@ public static class MediaContentTypes
     /// <summary>The literal PDF header marker. A real header adds version digits after it.</summary>
     private static readonly byte[] PdfSignature = "%PDF-"u8.ToArray();
 
+    /// <summary>The length of <see cref="PdfSignature"/>; kept as a constant for the header bound.</summary>
+    private const int PdfSignatureLength = 5;
+
     /// <summary>
-    /// How far into the payload a PDF header may start and still be accepted. A well-formed PDF
-    /// places <c>%PDF-</c> at byte 0; a small run of leading bytes is a common malformation, so a
-    /// bounded window tolerates it. The bound is what keeps this a header check rather than a
-    /// substring search: a marker buried deeper in the payload is not a header.
+    /// How far past byte 0 a PDF header may begin and still be accepted. A well-formed PDF puts
+    /// <c>%PDF-</c> at byte 0 and the spec treats the marker as a header, not a needle; a short
+    /// run of leading bytes is a common malformation, so a small tolerance is allowed. The bound
+    /// is deliberately tiny, because it is what keeps this a header check rather than a substring
+    /// search: a marker buried deeper in an image payload must not relabel the image as a PDF.
     /// </summary>
-    private const int PdfSignatureWindow = 1024;
+    private const int PdfSignatureWindow = 32;
+
+    /// <summary>
+    /// The shortest complete PDF header: the <c>%PDF-</c> marker, a <c>major.minor</c> version
+    /// pair and the end-of-line that terminates the header line.
+    /// </summary>
+    private const int PdfHeaderLength = PdfSignatureLength + 3 + 1;
 
     /// <summary>An ISO base-media-file box: a 4-byte size, then the <c>ftyp</c> marker and a brand.</summary>
     private const int FtypBrandOffset = 8;
@@ -266,18 +276,28 @@ public static class MediaContentTypes
         => Sniff(bytes) is { } sniffed && IsImage(sniffed);
 
     /// <summary>
-    /// Finds the PDF header inside its bounded leading window and requires at least one version
-    /// character after the marker, so a truncated <c>%PDF-</c> is not a document.
+    /// Finds a complete PDF header inside the small leading window: the <c>%PDF-</c> marker, a
+    /// <c>major.minor</c> version pair and the end-of-line that terminates the header line. A bare
+    /// <c>%PDF-</c> marker, a marker with no version, and a version truncated before its
+    /// terminator are prefixes of a header, not headers, and are refused.
     /// </summary>
     private static string? SniffPdf(ReadOnlySpan<byte> head)
     {
-        // At least one byte of version must follow the five-byte marker.
-        const int required = 6;
-
-        var lastStart = Math.Min(PdfSignatureWindow, head.Length - required);
+        var lastStart = Math.Min(PdfSignatureWindow, head.Length - PdfHeaderLength);
         for (var offset = 0; offset <= lastStart; offset++)
         {
-            if (head.Slice(offset, PdfSignature.Length).SequenceEqual(PdfSignature))
+            if (!head.Slice(offset, PdfSignatureLength).SequenceEqual(PdfSignature))
+            {
+                continue;
+            }
+
+            var version = head.Slice(offset + PdfSignatureLength, 3);
+            var terminator = head[offset + PdfHeaderLength - 1];
+
+            if (IsAsciiDigit(version[0])
+                && version[1] == (byte)'.'
+                && IsAsciiDigit(version[2])
+                && terminator is (byte)'\r' or (byte)'\n')
             {
                 return Pdf;
             }
@@ -285,6 +305,8 @@ public static class MediaContentTypes
 
         return null;
     }
+
+    private static bool IsAsciiDigit(byte value) => value is >= (byte)'0' and <= (byte)'9';
 
     /// <summary>
     /// Reads the ISO base-media-file <c>ftyp</c> brand. The brand is the one format claim a

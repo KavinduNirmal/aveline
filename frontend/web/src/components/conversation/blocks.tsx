@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Maximize2 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -17,6 +18,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Separator } from '@/components/ui/separator'
+import { Spinner } from '@/components/ui/spinner'
 import { apiClient } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
@@ -61,6 +63,12 @@ export interface ContentBlock {
 
 import type { Persona } from './persona'
 
+/**
+ * Which bubble an attachment sits in. The surface has to flip with it: a card painted for the
+ * neutral agent bubble reads as a white patch on the staff bubble's primary fill.
+ */
+type AttachmentTone = 'own' | 'other'
+
 interface BlockRendererProps {
   block: ContentBlock
   onSignOff?: (approved: boolean) => void
@@ -68,6 +76,7 @@ interface BlockRendererProps {
   /** Called with the attachment id when a thread attachment is opened for viewing. */
   onOpenAttachment?: (attachmentId: string) => void
   persona?: Persona | null
+  tone?: AttachmentTone
 }
 
 /** Renders a single content block by type. */
@@ -77,6 +86,7 @@ export function BlockRenderer({
   onSelectCustomer,
   onOpenAttachment,
   persona,
+  tone = 'other',
 }: BlockRendererProps) {
   switch (block.type) {
     case 'text':
@@ -105,6 +115,7 @@ export function BlockRenderer({
           key={block.attachmentId}
           block={block}
           onOpenAttachment={onOpenAttachment}
+          tone={tone}
         />
       )
     default:
@@ -334,12 +345,14 @@ export function BlockList({
   onSelectCustomer,
   onOpenAttachment,
   persona,
+  tone = 'other',
 }: {
   blocks: unknown[]
   onSignOff?: (approved: boolean) => void
   onSelectCustomer?: (customerId: string) => void
   onOpenAttachment?: (attachmentId: string) => void
   persona?: Persona | null
+  tone?: AttachmentTone
 }) {
   const parsed = (blocks ?? []) as ContentBlock[]
   if (parsed.length === 0) return null
@@ -354,6 +367,7 @@ export function BlockList({
             onSelectCustomer={onSelectCustomer}
             onOpenAttachment={onOpenAttachment}
             persona={persona}
+            tone={tone}
           />
         </div>
       ))}
@@ -418,29 +432,72 @@ function attachmentKindLabel(contentType: string): string {
   return 'File'
 }
 
-/** A thread attachment: the file's name and size. */
+/**
+ * The quiet caption under a photo. An uploaded photograph is frequently named by its digest
+ * (`8b420c6fbc31eea2d64a5e2…`), and a wall of hex in a 256 px bubble is noise, not identity: an
+ * opaque name is captioned "Photo" while the real name stays on the tooltip and in the viewer,
+ * where there is room for it. A human name (`dress.png`) is shown as it is.
+ */
+function attachmentDisplayName(fileName: string): string {
+  const base = fileName.replace(/\.[a-z0-9]+$/i, '')
+  const looksOpaque = /^[0-9a-f]{16,}$/i.test(base) || /^\d{10,}$/.test(base)
+  return looksOpaque ? 'Photo' : fileName
+}
+
+/**
+ * The surface an attachment sits on, keyed to the bubble that holds it.
+ *
+ * The staff bubble is filled with `primary`, so a `bg-background` card on it reads as a hole punched
+ * in the message. On that bubble the plate is a translucent tint of the bubble's own ink; on the
+ * neutral agent/guest bubble it is the app's standard muted card. The hover fill matches each so the
+ * button never flashes the ghost variant's accent colour.
+ */
+const ATTACHMENT_SURFACE: Record<AttachmentTone, string> = {
+  own: 'border-primary-foreground/25 bg-primary-foreground/10 text-primary-foreground hover:bg-primary-foreground/15 hover:text-primary-foreground',
+  other: 'border-border bg-muted/40 text-foreground hover:bg-muted/60 hover:text-foreground',
+}
+
+/** The secondary ink for a size, a kind label, or a placeholder on each surface. */
+const ATTACHMENT_MUTED: Record<AttachmentTone, string> = {
+  own: 'text-primary-foreground/70',
+  other: 'text-muted-foreground',
+}
+
+/** A thread attachment in a state that has no picture to show: its name and size. */
 function AttachmentChip({
   label,
   fileName,
   sizeLabel,
   state,
+  tone = 'other',
 }: {
   label: string
   fileName: string
   sizeLabel: string | null
   state: 'loading' | 'unavailable' | 'static'
+  tone?: AttachmentTone
 }) {
   return (
     <div
       data-state={state}
       aria-busy={state === 'loading' || undefined}
-      className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2"
+      className={cn(
+        'flex w-fit max-w-full items-center gap-2 rounded-lg border px-3 py-2',
+        ATTACHMENT_SURFACE[tone],
+      )}
     >
-      <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+      <span
+        className={cn(
+          'shrink-0 text-xs font-medium uppercase tracking-wide',
+          ATTACHMENT_MUTED[tone],
+        )}
+      >
         {label}
       </span>
-      <span className="truncate text-sm">{fileName}</span>
-      {sizeLabel && <span className="text-xs text-muted-foreground">{sizeLabel}</span>}
+      <span className="min-w-0 truncate text-sm">{fileName}</span>
+      {sizeLabel && (
+        <span className={cn('shrink-0 text-xs', ATTACHMENT_MUTED[tone])}>{sizeLabel}</span>
+      )}
     </div>
   )
 }
@@ -497,11 +554,16 @@ function AttachmentViewer({
  * exactly as mobile falls back (`thread_blocks.dart:436-472`). An `<img src={block.url}>` cannot
  * work, because an image element cannot carry the bearer token (strategy §3.8).
  */
-function AttachmentBlock({ block, onOpenAttachment }: BlockRendererProps) {
+function AttachmentBlock({
+  block,
+  onOpenAttachment,
+  tone = 'other',
+}: BlockRendererProps) {
   const attachmentId = block.attachmentId
   const route = block.url
   const contentType = block.contentType ?? ''
   const fileName = block.fileName ?? 'Attachment'
+  const displayName = attachmentDisplayName(fileName)
   const sizeLabel = typeof block.sizeBytes === 'number' ? formatBytes(block.sizeBytes) : null
   const label = attachmentKindLabel(contentType)
   const isImage = contentType.startsWith('image/')
@@ -553,19 +615,67 @@ function AttachmentBlock({ block, onOpenAttachment }: BlockRendererProps) {
         fileName={fileName}
         sizeLabel={sizeLabel}
         state="unavailable"
+        tone={tone}
       />
+    )
+  }
+
+  // A photo waits in the shape it will arrive in, so the bubble does not jump from a text row to a
+  // plate when the bytes land.
+  if (canFetch && isImage && objectUrl === null) {
+    return (
+      <div
+        data-state="loading"
+        aria-busy="true"
+        className={cn(
+          'w-64 max-w-full overflow-hidden rounded-xl border',
+          ATTACHMENT_SURFACE[tone],
+        )}
+      >
+        <div className="flex aspect-4/3 w-full items-center justify-center border-b border-border/40">
+          <Spinner className="size-4" aria-label={`Loading ${fileName}`} />
+        </div>
+        <div className="flex w-full min-w-0 items-center gap-2 px-2.5 py-2">
+          <span
+            className={cn(
+              'shrink-0 text-[10px] font-semibold uppercase tracking-[0.14em]',
+              ATTACHMENT_MUTED[tone],
+            )}
+          >
+            {label}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-xs font-medium">{displayName}</span>
+          {sizeLabel && (
+            <span className={cn('shrink-0 text-[10px] tabular-nums', ATTACHMENT_MUTED[tone])}>
+              {sizeLabel}
+            </span>
+          )}
+        </div>
+      </div>
     )
   }
 
   if (canFetch && objectUrl === null) {
     return (
-      <AttachmentChip label={label} fileName={fileName} sizeLabel={sizeLabel} state="loading" />
+      <AttachmentChip
+        label={label}
+        fileName={fileName}
+        sizeLabel={sizeLabel}
+        state="loading"
+        tone={tone}
+      />
     )
   }
 
   if (objectUrl === null) {
     return (
-      <AttachmentChip label={label} fileName={fileName} sizeLabel={sizeLabel} state="static" />
+      <AttachmentChip
+        label={label}
+        fileName={fileName}
+        sizeLabel={sizeLabel}
+        state="static"
+        tone={tone}
+      />
     )
   }
 
@@ -605,24 +715,55 @@ function AttachmentBlock({ block, onOpenAttachment }: BlockRendererProps) {
 
   return (
     <>
+      {/*
+        The photo is the block. It is framed as a labelled plate — the image on top, a quiet caption
+        rail beneath — rather than a thumbnail with the file beside it, because a side-by-side row
+        let a long generated name push past the bubble's edge. The rail truncates instead, and the
+        expand glyph only appears on hover or keyboard focus, so the photograph is never competing
+        with chrome.
+      */}
       <Button
         type="button"
-        variant="outline"
-        size="sm"
-        className="h-auto max-w-full gap-2 p-1 pr-3"
+        variant="ghost"
         onClick={handleOpen}
+        aria-label={`Open ${fileName}`}
+        title={fileName}
+        className={cn(
+          'group flex h-auto w-64 max-w-full flex-col items-stretch gap-0 overflow-hidden rounded-xl border p-0 text-left shadow-none',
+          ATTACHMENT_SURFACE[tone],
+        )}
       >
-        <img
-          src={objectUrl}
-          alt={fileName}
-          className="size-16 rounded-md object-cover"
-          // Mirrors mobile's `errorBuilder`: bytes that arrive but will not decode fall back to
-          // the chip rather than to a broken-image glyph.
-          onError={() => setFailed(true)}
-        />
-        <span className="flex min-w-0 flex-col items-start">
-          <span className="max-w-56 truncate text-sm">{fileName}</span>
-          {sizeLabel && <span className="text-xs text-muted-foreground">{sizeLabel}</span>}
+        <span className="relative block aspect-4/3 w-full overflow-hidden bg-muted/30">
+          <img
+            src={objectUrl}
+            alt={fileName}
+            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
+            // Mirrors mobile's `errorBuilder`: bytes that arrive but will not decode fall back to
+            // the chip rather than to a broken-image glyph.
+            onError={() => setFailed(true)}
+          />
+          <span
+            aria-hidden
+            className="pointer-events-none absolute right-2 top-2 flex size-6 items-center justify-center rounded-full bg-background/80 text-foreground opacity-0 shadow-2xs backdrop-blur-xs transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+          >
+            <Maximize2 className="size-3" />
+          </span>
+        </span>
+        <span className="flex w-full min-w-0 items-center gap-2 px-2.5 py-2">
+          <span
+            className={cn(
+              'shrink-0 text-[10px] font-semibold uppercase tracking-[0.14em]',
+              ATTACHMENT_MUTED[tone],
+            )}
+          >
+            {label}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-xs font-medium">{displayName}</span>
+          {sizeLabel && (
+            <span className={cn('shrink-0 text-[10px] tabular-nums', ATTACHMENT_MUTED[tone])}>
+              {sizeLabel}
+            </span>
+          )}
         </span>
       </Button>
       <AttachmentViewer

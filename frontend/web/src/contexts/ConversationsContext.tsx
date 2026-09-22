@@ -208,7 +208,11 @@ interface ConversationsContextValue {
   avelineSending: boolean
   /** Opens the general, client-less Salon in the drawer's thread only. */
   openAveline: () => Promise<void>
-  sendToAveline: (text: string) => Promise<void>
+  /**
+   * Sends to the drawer's thread. `attachmentIds` are the stored chips the message binds, exactly as
+   * the Salon's `send` takes them; omitting them sends text alone.
+   */
+  sendToAveline: (text: string, attachmentIds?: string[]) => Promise<void>
   decideAveline: (messageId: string, approved: boolean) => Promise<void>
 }
 
@@ -534,10 +538,11 @@ export function ConversationsProvider({
   }, [conversations, organizationId])
 
   const sendToAveline = useCallback(
-    async (text: string) => {
+    async (text: string, attachmentIds?: string[]) => {
       const conversationId = avelineIdRef.current
       if (!conversationId || !text.trim()) return
       const trimmed = text.trim()
+      const ids = attachmentIds ?? []
       const optimistic: ChatMessage = {
         id: `local-${Date.now()}`,
         conversationId,
@@ -556,16 +561,22 @@ export function ConversationsProvider({
       setAvelineSending(true)
       setAvelineMessages((prev) => [...prev, optimistic])
       try {
-        const message = await sendMessage(organizationId, conversationId, trimmed)
+        const message = await sendMessage(organizationId, conversationId, trimmed, ids)
         setAvelineMessages((prev) =>
           prev.map((m) => (m.id === optimistic.id ? { ...message } : m)),
         )
+        // The message is bound: clear the drawer's tray so a chip cannot linger pending after its
+        // row is attached. Only a confirmed send reaches here, exactly as the Salon's `send` does.
+        setPendingAttachments((prev) => ({ ...prev, [conversationId]: [] }))
         setAvelineAgentActivity({ startedAt: Date.now(), currentState: 'thinking' })
         applyAvelineAgentState('thinking')
-      } catch {
+      } catch (error) {
         setAvelineMessages((prev) =>
           prev.map((m) => (m.id === optimistic.id ? { ...m, pending: 'failed' } : m)),
         )
+        // Rethrow so the composer can tell a failed send from a confirmed one and keep the text and
+        // the tray, which only a confirmed send may clear.
+        throw error
       } finally {
         setAvelineSending(false)
       }

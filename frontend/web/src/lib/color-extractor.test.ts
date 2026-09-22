@@ -4,9 +4,50 @@ import {
   analyzeCanvasMetrics,
   extractDominantColor,
   extractVisualAttributesAndColor,
-  inferGarmentFromMetricsAndMetadata,
   getClosestColorName,
+  isolateGarmentColor,
+  inferGarmentFromMetricsAndMetadata,
 } from './color-extractor'
+
+/**
+ * `inferGarmentFromMetricsAndMetadata` is deliberately nullable now: it returns `null` when it has
+ * neither pixel geometry nor a filename keyword to work from, instead of inventing a complete
+ * analysis. Every case below supplies a metrics object, so `null` here would be a test bug rather
+ * than a result, and asserting that once keeps the individual assertions readable.
+ */
+function inferWithEvidence(
+  metrics: Parameters<typeof inferGarmentFromMetricsAndMetadata>[0],
+  imageUrl: string,
+  fileName?: string,
+  contextHint?: string,
+): NonNullable<ReturnType<typeof inferGarmentFromMetricsAndMetadata>> {
+  const result = inferGarmentFromMetricsAndMetadata(metrics, imageUrl, fileName, contextHint)
+  expect(result).not.toBeNull()
+  return result as NonNullable<ReturnType<typeof inferGarmentFromMetricsAndMetadata>>
+}
+
+/**
+ * Builds a pixel buffer from a per-pixel painter, so the isolation tests state their frame in
+ * terms of what the photograph contains rather than as a wall of channel indices.
+ */
+function frameOf(
+  width: number,
+  height: number,
+  painter: (x: number, y: number) => [number, number, number],
+): Uint8ClampedArray {
+  const buffer = new Uint8ClampedArray(width * height * 4)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const [r, g, b] = painter(x, y)
+      const offset = (y * width + x) * 4
+      buffer[offset] = r
+      buffer[offset + 1] = g
+      buffer[offset + 2] = b
+      buffer[offset + 3] = 255
+    }
+  }
+  return buffer
+}
 
 describe('color-extractor', () => {
   describe('COLOR_PALETTE', () => {
@@ -308,7 +349,7 @@ describe('color-extractor', () => {
         isWarmEthnicTone: true,
         isRoyalJewelTone: false,
       }
-      const res = inferGarmentFromMetricsAndMetadata(warmMetric, 'data:image/jpeg;base64,123')
+      const res = inferWithEvidence(warmMetric, 'data:image/jpeg;base64,123')
       expect(res.category).toBe('Lehengas')
       expect(res.garmentType).toBe('Embroidered Bridal Lehenga')
       expect(res.pattern).toBe('Gold Zari Brocade')
@@ -319,7 +360,7 @@ describe('color-extractor', () => {
         isWarmEthnicTone: false,
         highFreqEdgeCount: 20,
       }
-      const coolRes = inferGarmentFromMetricsAndMetadata(coolMetric, 'data:image/jpeg;base64,123')
+      const coolRes = inferWithEvidence(coolMetric, 'data:image/jpeg;base64,123')
       expect(coolRes.category).toBe('Lehengas')
       expect(coolRes.garmentType).toBe('Flared Silk Lehenga')
       expect(coolRes.pattern).toBe('French Knot Embroidery')
@@ -338,7 +379,7 @@ describe('color-extractor', () => {
         isWarmEthnicTone: true,
         isRoyalJewelTone: false,
       }
-      const banarasiRes = inferGarmentFromMetricsAndMetadata(banarasiMetric, 'data:image/jpeg;base64,123')
+      const banarasiRes = inferWithEvidence(banarasiMetric, 'data:image/jpeg;base64,123')
       expect(banarasiRes.category).toBe('Sarees')
       expect(banarasiRes.garmentType).toBe('Banarasi Silk Brocade Saree')
 
@@ -346,7 +387,7 @@ describe('color-extractor', () => {
         ...banarasiMetric,
         highFreqEdgeCount: 45,
       }
-      const kanjeevaramRes = inferGarmentFromMetricsAndMetadata(kanjeevaramMetric, 'data:image/jpeg;base64,123')
+      const kanjeevaramRes = inferWithEvidence(kanjeevaramMetric, 'data:image/jpeg;base64,123')
       expect(kanjeevaramRes.category).toBe('Sarees')
       expect(kanjeevaramRes.garmentType).toBe('Silk Kanjeevaram Saree')
     })
@@ -364,7 +405,7 @@ describe('color-extractor', () => {
         isWarmEthnicTone: false,
         isRoyalJewelTone: false,
       }
-      const res = inferGarmentFromMetricsAndMetadata(tunicMetric, 'data:image/jpeg;base64,123')
+      const res = inferWithEvidence(tunicMetric, 'data:image/jpeg;base64,123')
       expect(res.category).toBe('Kurtas & Tunics')
       expect(res.garmentType).toBe('Silk Kurta Set')
     })
@@ -382,7 +423,7 @@ describe('color-extractor', () => {
         isWarmEthnicTone: false,
         isRoyalJewelTone: false,
       }
-      const res = inferGarmentFromMetricsAndMetadata(gownMetric, 'data:image/jpeg;base64,123')
+      const res = inferWithEvidence(gownMetric, 'data:image/jpeg;base64,123')
       expect(res.category).toBe('Gowns')
       expect(res.garmentType).toBe('Luminous Evening Gown')
     })
@@ -400,7 +441,7 @@ describe('color-extractor', () => {
         isWarmEthnicTone: true,
         isRoyalJewelTone: false,
       }
-      const jewRes = inferGarmentFromMetricsAndMetadata(jewelryMetric, 'data:image/jpeg;base64,123')
+      const jewRes = inferWithEvidence(jewelryMetric, 'data:image/jpeg;base64,123')
       expect(jewRes.category).toBe('Jewelry & Accessories')
       expect(jewRes.garmentType).toBe('Heirloom Kundan Necklace')
 
@@ -408,9 +449,134 @@ describe('color-extractor', () => {
         ...jewelryMetric,
         specularPoints: 4,
       }
-      const shawlRes = inferGarmentFromMetricsAndMetadata(shawlMetric, 'data:image/jpeg;base64,123')
+      const shawlRes = inferWithEvidence(shawlMetric, 'data:image/jpeg;base64,123')
       expect(shawlRes.category).toBe('Drapes & Shawls')
       expect(shawlRes.garmentType).toBe('Handwoven Cashmere Shawl')
+    })
+  })
+
+  describe('isolateGarmentColor', () => {
+    it('reports a dark saturated green as a green, not as black', () => {
+      // The regression behind this case: rgb(7,29,17) is nine points off pure black per channel,
+      // and the previous RGB metric weighted green 4x, so every shadowed bottle-green pixel
+      // resolved to Midnight Black.
+      expect(getClosestColorName(7, 29, 17)).not.toBe('Midnight Black')
+      expect(getClosestColorName(7, 29, 17)).toMatch(/Green/)
+      expect(getClosestColorName(15, 38, 24)).toMatch(/Green/)
+      // A genuinely neutral dark pixel must still be black.
+      expect(getClosestColorName(18, 18, 18)).toBe('Midnight Black')
+      expect(getClosestColorName(12, 12, 14)).toBe('Midnight Black')
+    })
+
+    it('is not fooled by a room that surrounds the garment', () => {
+      // The failing upload: a green saree photographed against a cream wall, a warm wood console
+      // and cane baskets. The wall and console are more saturated than the old 0.16 gate and
+      // occupy more of the frame than the fabric, so a whole-frame histogram reported taupe.
+      const width = 64
+      const height = 64
+      const buffer = frameOf(width, height, (x, y) => {
+        const inGarment = x >= 22 && x <= 42 && y >= 18 && y <= 58
+        if (inGarment) return [15, 42, 28] // deep bottle green
+        return y < 26 ? [200, 182, 158] : [176, 138, 106] // cream wall, warm wood console
+      })
+
+      const result = isolateGarmentColor(buffer, width, height)
+      expect(result).not.toBeNull()
+      // Lowercase, because `<input type="color">` rejects `#RRGGBB` and silently falls back to
+      // black; the form binds this value straight to the swatch.
+      expect(result!.hex).toMatch(/^#[0-9a-f]{6}$/)
+      expect(result!.colorName).toMatch(/Green/)
+      expect(result!.colorName).not.toBe('Taupe')
+      expect(result!.colorName).not.toBe('Desert Camel')
+      // The green channels must dominate: this is what a taupe answer got wrong.
+      expect(result!.g).toBeGreaterThan(result!.r)
+      expect(result!.g).toBeGreaterThan(result!.b)
+    })
+
+    it('separates a garment from a larger background object of the same hue family', () => {
+      // A saturated brown console is the nearest thing to a green garment's competitor: it passes
+      // any absolute saturation gate and is bigger than the garment. The centre prior is what
+      // stops it winning on raw pixel count.
+      const width = 64
+      const height = 64
+      const buffer = frameOf(width, height, (x, y) => {
+        const inGarment = x >= 24 && x <= 40 && y >= 20 && y <= 56
+        return inGarment ? [26, 80, 52] : [140, 110, 80]
+      })
+
+      const result = isolateGarmentColor(buffer, width, height)
+      expect(result).not.toBeNull()
+      expect(result!.colorName).toMatch(/Green/)
+    })
+
+    it('resolves achromatic garments instead of returning nothing', () => {
+      const width = 64
+      const height = 64
+      const garmentBox = (x: number, y: number) => x >= 20 && x <= 44 && y >= 16 && y <= 56
+
+      const blackOnWhite = frameOf(width, height, (x, y) =>
+        garmentBox(x, y) ? [18, 18, 18] : [245, 245, 245],
+      )
+      const blackResult = isolateGarmentColor(blackOnWhite, width, height)
+      expect(blackResult).not.toBeNull()
+      expect(getClosestColorName(blackResult!.r, blackResult!.g, blackResult!.b)).toBe('Midnight Black')
+
+      const blackOnGrey = frameOf(width, height, (x, y) =>
+        garmentBox(x, y) ? [18, 18, 18] : [210, 210, 210],
+      )
+      const blackOnGreyResult = isolateGarmentColor(blackOnGrey, width, height)
+      expect(blackOnGreyResult).not.toBeNull()
+      expect(getClosestColorName(blackOnGreyResult!.r, blackOnGreyResult!.g, blackOnGreyResult!.b)).toBe(
+        'Midnight Black',
+      )
+
+      // A tinted neutral carries just enough chroma to be segmented away from a chromatic
+      // surround, which is the realistic case for ivory and champagne pieces.
+      const tintedIvoryOnTaupe = frameOf(width, height, (x, y) =>
+        garmentBox(x, y) ? [240, 232, 210] : [120, 110, 96],
+      )
+      const ivoryResult = isolateGarmentColor(tintedIvoryOnTaupe, width, height)
+      expect(ivoryResult).not.toBeNull()
+      const resolved = getClosestColorName(ivoryResult!.r, ivoryResult!.g, ivoryResult!.b)
+      expect(resolved).toBe('Heirloom Ivory')
+      expect(ivoryResult!.r).toBeGreaterThan(200)
+    })
+
+    it('documents the known limit: a pure white piece on a neutral surround reads as the surround', () => {
+      // Honest characterisation rather than an aspiration. `rgb(255,255,240)` is achromatic and
+      // bright, so the backdrop filter (rightly, for a catalogue full of white studio walls) drops
+      // it, and a darker surround is then taken for the subject. Real multimodal extraction covers
+      // this case; the client heuristic cannot, and must not pretend otherwise.
+      const width = 64
+      const height = 64
+      const pureIvoryOnDimNeutral = frameOf(width, height, (x, y) =>
+        x >= 20 && x <= 44 && y >= 16 && y <= 56 ? [255, 255, 240] : [80, 76, 70],
+      )
+      const result = isolateGarmentColor(pureIvoryOnDimNeutral, width, height)
+      expect(result).not.toBeNull()
+      // It resolves to the surround, not to ivory: the limit, stated so a future change that
+      // improves it is visible as a test change.
+      expect(getClosestColorName(result!.r, result!.g, result!.b)).not.toBe('Heirloom Ivory')
+    })
+
+    it('returns null for a degenerate frame rather than throwing', () => {
+      expect(isolateGarmentColor(new Uint8ClampedArray(0), 0, 0)).toBeNull()
+      expect(isolateGarmentColor(new Uint8ClampedArray(4), 4, 4)).toBeNull()
+    })
+
+    it('keeps the garment colour when the frame halves in resolution', () => {
+      // The analyser runs at a fixed SAMPLE_SIZE, so proportions rather than pixels decide. The
+      // same scene at two scales must not change the answer.
+      const build = (width: number, height: number) => frameOf(width, height, (x, y) => {
+        const inGarment = x / width > 0.34 && x / width < 0.66 && y / height > 0.28 && y / height < 0.9
+        return inGarment ? [15, 42, 28] : [190, 170, 145]
+      })
+
+      const small = isolateGarmentColor(build(64, 64), 64, 64)
+      const large = isolateGarmentColor(build(160, 160), 160, 160)
+      expect(small).not.toBeNull()
+      expect(large).not.toBeNull()
+      expect(small!.colorName).toBe(large!.colorName)
     })
   })
 
@@ -420,11 +586,13 @@ describe('color-extractor', () => {
       expect(result).toBeNull()
     })
 
-    it('returns dominant color result when URL is valid', async () => {
+    it('returns null for an image it cannot decode, rather than a fabricated colour', async () => {
+      // jsdom has no image decoder, so this payload yields no pixels and therefore no colour. The
+      // test used to assert `not.toBeNull()` here and passed only because the extractor substituted
+      // a hardcoded `Crimson Red` / `#DC2626` for every image it could not read; that assertion was
+      // locking in the fabrication rather than testing extraction.
       const result = await extractDominantColor('data:image/png;base64,abc')
-      expect(result).not.toBeNull()
-      expect(result?.hex).toBeDefined()
-      expect(result?.colorName).toBeDefined()
+      expect(result).toBeNull()
     })
   })
 })

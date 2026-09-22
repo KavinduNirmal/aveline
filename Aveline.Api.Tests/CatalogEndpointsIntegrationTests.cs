@@ -5,6 +5,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using Aveline.Api.Authorization;
 using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Modules.Commerce.Models;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Shared.Models;
 using Aveline.Api.Modules.VisualIntelligence.DTOs;
@@ -548,6 +549,9 @@ public class CatalogEndpointsIntegrationTests : IAsyncLifetime
         jsonDto!.DataUrl.Should().StartWith("data:image/png;base64,");
         jsonDto.Payload.Should().Contain(created.Id.ToString());
         jsonDto.Payload.Should().Contain("ACC-SCF-003");
+        // The code names the boutique, so the same piece id in another shop cannot be confused for
+        // this one.
+        jsonDto.Payload.Should().Contain($"org={org.Id}");
     }
 
     [Fact]
@@ -773,5 +777,239 @@ public class CatalogEndpointsIntegrationTests : IAsyncLifetime
         var getResponse = await _client.SendAsync(
             Authorized(HttpMethod.Get, $"/api/v1/orgs/{org1.Id}/catalog/items/{created.Id}", token1));
         getResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Lookbook_UpdateAndDelete_Flow_Succeeds()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_lookbook_crud");
+        var token = CreateToken(user.ClerkId);
+
+        var item = await CreateItemAsync(org.Id, token, "Embroidered Velvet Lehenga", 900m, 3);
+
+        var composeResponse = await _client.SendAsync(
+            Authorized(
+                HttpMethod.Post,
+                $"/api/v1/orgs/{org.Id}/catalog/lookbooks/compose",
+                token,
+                JsonContent.Create(new ComposeOutfitDto { PrimaryItemId = item.Id, Occasion = "gala" })));
+        composeResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var listResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{org.Id}/catalog/lookbooks", token));
+        var lookbooks = (await listResponse.Content.ReadFromJsonAsync<List<OutfitCompositionDto>>())!;
+        lookbooks.Should().HaveCount(1);
+        var lookbookId = lookbooks[0].Id;
+
+        // Rename and re-occasion it.
+        var updateDto = new UpdateOutfitCompositionDto
+        {
+            Name = "Royal Gala Ensemble",
+            Occasion = "Cocktail Reception & Gala",
+            StyleNotes = "Pair with a statement choker."
+        };
+        var putResponse = await _client.SendAsync(
+            Authorized(
+                HttpMethod.Put,
+                $"/api/v1/orgs/{org.Id}/catalog/lookbooks/{lookbookId}",
+                token,
+                JsonContent.Create(updateDto)));
+
+        putResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var updated = (await putResponse.Content.ReadFromJsonAsync<OutfitCompositionDto>())!;
+        updated.Name.Should().Be("Royal Gala Ensemble");
+        updated.Occasion.Should().Be("Cocktail Reception & Gala");
+        updated.StyleNotes.Should().Be("Pair with a statement choker.");
+
+        // Delete it, and prove the list no longer carries it.
+        var deleteResponse = await _client.SendAsync(
+            Authorized(
+                HttpMethod.Delete,
+                $"/api/v1/orgs/{org.Id}/catalog/lookbooks/{lookbookId}",
+                token));
+        deleteResponse.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        var afterDelete = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{org.Id}/catalog/lookbooks", token));
+        var remaining = (await afterDelete.Content.ReadFromJsonAsync<List<OutfitCompositionDto>>())!;
+        remaining.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task UpdateLookbook_WithUnknownOrCrossTenantId_Returns404()
+    {
+        var (user1, org1) = await SeedMemberAndOrgAsync("cat_lookbook_iso1");
+        var (user2, org2) = await SeedMemberAndOrgAsync("cat_lookbook_iso2");
+        var token1 = CreateToken(user1.ClerkId);
+        var token2 = CreateToken(user2.ClerkId);
+
+        var item = await CreateItemAsync(org1.Id, token1, "Org One Saree", 500m, 2);
+        await _client.SendAsync(
+            Authorized(
+                HttpMethod.Post,
+                $"/api/v1/orgs/{org1.Id}/catalog/lookbooks/compose",
+                token1,
+                JsonContent.Create(new ComposeOutfitDto { PrimaryItemId = item.Id, Occasion = "wedding" })));
+
+        var listResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{org1.Id}/catalog/lookbooks", token1));
+        var lookbookId = (await listResponse.Content.ReadFromJsonAsync<List<OutfitCompositionDto>>())![0].Id;
+
+        var body = JsonContent.Create(new UpdateOutfitCompositionDto { Name = "Stolen Look" });
+
+        // Unknown id, and another tenant's id: both are 404, never a silent write.
+        (await _client.SendAsync(Authorized(
+            HttpMethod.Put, $"/api/v1/orgs/{org1.Id}/catalog/lookbooks/{Guid.NewGuid()}", token1, body)))
+            .StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+        (await _client.SendAsync(Authorized(
+            HttpMethod.Put, $"/api/v1/orgs/{org2.Id}/catalog/lookbooks/{lookbookId}", token2, body)))
+            .StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+        (await _client.SendAsync(Authorized(
+            HttpMethod.Delete, $"/api/v1/orgs/{org2.Id}/catalog/lookbooks/{lookbookId}", token2)))
+            .StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task RecordSale_DecrementsStockAndWritesTheTakingsJournal()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_sale_ok");
+        var token = CreateToken(user.ClerkId);
+
+        var item = await CreateItemAsync(org.Id, token, "Kanjeevaram Silk Saree", 450m, 5);
+
+        var saleResponse = await _client.SendAsync(
+            Authorized(
+                HttpMethod.Post,
+                $"/api/v1/orgs/{org.Id}/catalog/items/{item.Id}/sales",
+                token,
+                JsonContent.Create(new RecordCatalogSaleDto { Quantity = 2 })));
+
+        saleResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var receipt = (await saleResponse.Content.ReadFromJsonAsync<CatalogSaleReceiptDto>())!;
+        receipt.QuantitySold.Should().Be(2);
+        receipt.UnitPrice.Should().Be(450m);
+        receipt.TotalAmount.Should().Be(900m);
+        receipt.RemainingStock.Should().Be(3);
+        receipt.Status.Should().Be("available");
+
+        // The catalog row is the one source of stock truth, so read it back rather than trusting
+        // the receipt.
+        var getResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{org.Id}/catalog/items/{item.Id}", token));
+        var reloaded = (await getResponse.Content.ReadFromJsonAsync<InventoryItemDto>())!;
+        reloaded.Quantity.Should().Be(3);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var ledgerEntry = db.BoutiqueSaleEntries
+            .Single(entry => entry.OrganizationId == org.Id);
+        ledgerEntry.Id.Should().Be(receipt.LedgerEntryId);
+        ledgerEntry.Amount.Should().Be(900m);
+        ledgerEntry.Kind.Should().Be(BoutiqueSaleEntryKind.Sale);
+        ledgerEntry.ChargeBasis.Should().Be(BoutiqueSaleChargeBasis.Verified);
+        ledgerEntry.Status.Should().Be(BoutiqueSaleEntryStatus.Recorded);
+    }
+
+    [Fact]
+    public async Task RecordSale_ThatEmptiesTheShelf_LeavesThePieceReserved()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_sale_empty");
+        var token = CreateToken(user.ClerkId);
+
+        var item = await CreateItemAsync(org.Id, token, "Single Run Corset", 1200m, 1);
+
+        var saleResponse = await _client.SendAsync(
+            Authorized(
+                HttpMethod.Post,
+                $"/api/v1/orgs/{org.Id}/catalog/items/{item.Id}/sales",
+                token,
+                JsonContent.Create(new RecordCatalogSaleDto { Quantity = 1 })));
+
+        saleResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var receipt = (await saleResponse.Content.ReadFromJsonAsync<CatalogSaleReceiptDto>())!;
+        receipt.RemainingStock.Should().Be(0);
+        // The same derivation the Add/Edit drawer uses for a row at zero.
+        receipt.Status.Should().Be("reserved");
+    }
+
+    [Fact]
+    public async Task RecordSale_WithMorePiecesThanStock_Returns409AndSellsNothing()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_sale_oversell");
+        var token = CreateToken(user.ClerkId);
+
+        var item = await CreateItemAsync(org.Id, token, "Limited Organza Dupatta", 300m, 2);
+
+        var saleResponse = await _client.SendAsync(
+            Authorized(
+                HttpMethod.Post,
+                $"/api/v1/orgs/{org.Id}/catalog/items/{item.Id}/sales",
+                token,
+                JsonContent.Create(new RecordCatalogSaleDto { Quantity = 3 })));
+
+        saleResponse.StatusCode.Should().Be(HttpStatusCode.Conflict);
+
+        var getResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{org.Id}/catalog/items/{item.Id}", token));
+        var reloaded = (await getResponse.Content.ReadFromJsonAsync<InventoryItemDto>())!;
+        reloaded.Quantity.Should().Be(2);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        db.BoutiqueSaleEntries.Count(entry => entry.OrganizationId == org.Id).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task RecordSale_WithZeroPriceOrForeignItem_IsRefused()
+    {
+        var (user1, org1) = await SeedMemberAndOrgAsync("cat_sale_guard1");
+        var (user2, org2) = await SeedMemberAndOrgAsync("cat_sale_guard2");
+        var token1 = CreateToken(user1.ClerkId);
+        var token2 = CreateToken(user2.ClerkId);
+
+        var item = await CreateItemAsync(org1.Id, token1, "Free Sample Stole", 0m, 4);
+
+        // A zero-price sale is a gift, and the ledger refuses a non-positive amount.
+        (await _client.SendAsync(Authorized(
+            HttpMethod.Post,
+            $"/api/v1/orgs/{org1.Id}/catalog/items/{item.Id}/sales",
+            token1,
+            JsonContent.Create(new RecordCatalogSaleDto { Quantity = 1, UnitPrice = 0m }))))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        // Another tenant's piece is a 404, and its stock is untouched.
+        (await _client.SendAsync(Authorized(
+            HttpMethod.Post,
+            $"/api/v1/orgs/{org2.Id}/catalog/items/{item.Id}/sales",
+            token2,
+            JsonContent.Create(new RecordCatalogSaleDto { Quantity = 1 }))))
+            .StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+        var getResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{org1.Id}/catalog/items/{item.Id}", token1));
+        (await getResponse.Content.ReadFromJsonAsync<InventoryItemDto>())!.Quantity.Should().Be(4);
+    }
+
+    /// <summary>Creates one piece through the API and returns it, so a test names real server state.</summary>
+    private async Task<InventoryItemDto> CreateItemAsync(Guid orgId, string token, string name, decimal price, int quantity)
+    {
+        var response = await _client.SendAsync(
+            Authorized(
+                HttpMethod.Post,
+                $"/api/v1/orgs/{orgId}/catalog/items",
+                token,
+                JsonContent.Create(new CreateInventoryItemDto
+                {
+                    ItemName = name,
+                    Category = "Sarees",
+                    Color = "Emerald",
+                    Price = price,
+                    Quantity = quantity
+                })));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        return (await response.Content.ReadFromJsonAsync<InventoryItemDto>())!;
     }
 }

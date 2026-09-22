@@ -20,7 +20,7 @@ The tier is decided by the **Cloudinary delivery type**, never by the caller.
 | Catalog imagery | `upload` | anyone (F-7/Q4) | an absolute CDN URL; no token, no Aveline hop |
 | Conversation attachment, client-facing | `authenticated` | an authenticated org member who can see the conversation | the existing attachment route under `BoutiqueConversationAccessPolicy`; **unchanged** |
 | Conversation attachment, machine-facing | `authenticated` | any holder of a minted token | `GET /api/v1/media/{token}` — HMAC + `exp` + scope (+ single-use nonce) |
-| Vision analysis input | `authenticated` | the API only | the API mints and passes the URL into the outbound request |
+| Vision analysis input | `authenticated` (read server-side) | the API only | the API loads the stored bytes and hands the provider an inline `data:` URL; no token is minted |
 | Conversation PDF | `authenticated` / `raw` | as the conversation tier | same answer as a photo in the same thread |
 
 - **The catalog route is deliberately anonymous** (`CatalogEndpoints` `GET …/catalog/images/{id}`,
@@ -60,7 +60,11 @@ A token carries exactly one scope, bound into the MAC. The wire names are frozen
 **A minted token URL is a bearer credential.** Anyone who holds it can fetch the image until
 `exp`. This was accepted explicitly (Q4) rather than inherited silently, because a third-party
 vision provider cannot hold a credential of ours: it must be handed a fetchable, unauthenticated
-URL.
+URL. The vision reference arm no longer hands over such a URL: it loads the stored asset's bytes and
+passes the provider an inline `data:` URL, because the minted URL is served by this API on an
+in-network origin (`http://api:8080`) that the provider cannot reach, and the stored bytes remove
+the reachability requirement entirely. The bearer-URL consequence still applies to every URL that
+is minted for a protected read.
 
 Within the TTL, a leaked URL is usable by anyone who holds it. That residue is the honest cost of
 the design. What bounds it:

@@ -300,6 +300,14 @@ public static class VisualEndpoints
             // migration plan §7.5). The same translation this file's QR route already applies.
             return Results.NotFound(new { error = "Image not found." });
         }
+        catch (ArgumentException ex)
+        {
+            // The vision target refusal: a blank target, inline data the provider cannot read, or
+            // a relative route that is neither an absolute http(s) URL nor inline image data. A
+            // caller error is a 400 with the service's own message, never the global handler's
+            // 500. Everything else still propagates.
+            return Results.BadRequest(new { error = ex.Message });
+        }
     }
 
     private static async Task<IResult> GetCustomerMatchesAsync(

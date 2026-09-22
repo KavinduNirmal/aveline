@@ -58,15 +58,21 @@ public class CatalogWriteAuthorizationTests
     }
 
     [Fact]
-    public void ExactlyFourRoutesRequireCatalogManage()
+    public void ExactlySixRoutesRequireCatalogManage()
     {
-        Assert.Equal(4, CountPolicy(nameof(AuthorizationConfiguration.BoutiqueCatalogManagePolicy)));
+        // Four item routes (create, edit, publish, delete) plus the two lookbook lifecycle routes
+        // (rename, remove). Editing a composed lookbook is an edit of the catalog's published
+        // content, so it takes the same gate a piece edit does.
+        Assert.Equal(6, CountPolicy(nameof(AuthorizationConfiguration.BoutiqueCatalogManagePolicy)));
     }
 
     [Fact]
-    public void ExactlyTenRoutesUseThePermissionFreeMemberGate()
+    public void ExactlyElevenRoutesUseThePermissionFreeMemberGate()
     {
-        Assert.Equal(10, CountPolicy(nameof(AuthorizationConfiguration.BoutiqueMemberPolicy)));
+        // The ten operational tools plus the counter sale: a staff member who may record a customer
+        // interaction that writes the takings journal must also be able to sell a piece from the
+        // catalog (the customer-interaction route already writes the same journal at member level).
+        Assert.Equal(11, CountPolicy(nameof(AuthorizationConfiguration.BoutiqueMemberPolicy)));
     }
 
     [Theory]
@@ -74,6 +80,8 @@ public class CatalogWriteAuthorizationTests
     [InlineData("Put", "/items/{itemId:guid}")]
     [InlineData("Patch", "/items/{itemId:guid}/status")]
     [InlineData("Delete", "/items/{itemId:guid}")]
+    [InlineData("Put", "/lookbooks/{id:guid}")]
+    [InlineData("Delete", "/lookbooks/{id:guid}")]
     public void EachManagedRouteNamesTheCatalogManagePolicy(string method, string route)
     {
         Assert.Matches(
@@ -89,6 +97,7 @@ public class CatalogWriteAuthorizationTests
     [InlineData("Post", "/qr/scan")]
     [InlineData("Post", "/analyze-image")]
     [InlineData("Post", "/items/{itemId:guid}/matches/generate")]
+    [InlineData("Post", "/items/{itemId:guid}/sales")]
     [InlineData("Post", "/lookbooks/compose")]
     [InlineData("Post", "/sourcing")]
     [InlineData("Patch", "/sourcing/{id:guid}/status")]

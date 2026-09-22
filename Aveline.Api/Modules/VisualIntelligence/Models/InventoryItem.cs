@@ -11,6 +11,13 @@ public class InventoryItem
     public string? Description { get; set; }
     public string Category { get; set; } = string.Empty;
     public string Color { get; set; } = string.Empty;
+    /// <summary>
+    /// The colour the vision analysis actually measured, as a CSS hex literal (<c>#RGB</c> or
+    /// <c>#RRGGBB</c>). Nullable on purpose: every row that predates this column, and every item
+    /// whose analysis named a colour but measured no pixels, has no hex. A null is "not measured",
+    /// never a colour to paint.
+    /// </summary>
+    public string? ColorHex { get; set; }
     public string? Fabric { get; set; }
     public string? Style { get; set; }
     public List<string> Sizes { get; set; } = new();

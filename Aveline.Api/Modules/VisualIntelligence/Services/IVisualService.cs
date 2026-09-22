@@ -60,6 +60,25 @@ public interface IVisualService
         Guid orgId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Renames or re-occasions a composed lookbook. Returns <c>null</c> when the id does not name a
+    /// lookbook in this organisation, so a cross-tenant edit is a 404 rather than a silent write.
+    /// </summary>
+    Task<OutfitCompositionDto?> UpdateLookbookAsync(
+        Guid id,
+        Guid orgId,
+        UpdateOutfitCompositionDto dto,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Removes a composed lookbook (and, by cascade, its item rows). Returns <c>false</c> when the
+    /// id does not name a lookbook in this organisation.
+    /// </summary>
+    Task<bool> DeleteLookbookAsync(
+        Guid id,
+        Guid orgId,
+        CancellationToken cancellationToken = default);
+
     Task<SourcingRequestDto> CreateSourcingRequestAsync(
         CreateSourcingRequestDto dto,
         CancellationToken cancellationToken = default);

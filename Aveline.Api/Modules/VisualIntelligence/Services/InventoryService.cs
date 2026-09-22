@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Aveline.Api.Common.Media;
 using Aveline.Api.Modules.Media;
 using Aveline.Api.Modules.VisualIntelligence.DTOs;
@@ -12,6 +13,15 @@ public class InventoryService : IInventoryService
     private readonly IInventoryRepository _repository;
     private readonly MediaOptions _mediaOptions;
     private readonly IInventoryImageStore? _imageStore;
+
+    /// <summary>
+    /// A CSS hex colour literal and nothing else: <c>#</c> followed by exactly 3 or 6 hexadecimal
+    /// digits, case-insensitive. Anchored so a value that merely contains a valid-looking fragment
+    /// (for example <c>url(#abc)</c>) is refused.
+    /// </summary>
+    private static readonly Regex HexColorPattern = new(
+        "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     /// <summary>
     /// The media options are optional so a caller that constructs the service directly (most of
@@ -82,6 +92,7 @@ public class InventoryService : IInventoryService
             ItemName = string.IsNullOrWhiteSpace(dto.ItemName) ? "Untitled Piece" : dto.ItemName.Trim(),
             Category = string.IsNullOrWhiteSpace(dto.Category) ? "General" : dto.Category.Trim(),
             Color = string.IsNullOrWhiteSpace(dto.Color) ? "Unspecified" : dto.Color.Trim(),
+            ColorHex = NormalizeColorHex(dto.ColorHex),
             Fabric = dto.Fabric?.Trim(),
             Style = dto.Style?.Trim(),
             Sizes = dto.Sizes ?? new List<string>(),
@@ -116,6 +127,10 @@ public class InventoryService : IInventoryService
         if (!string.IsNullOrWhiteSpace(dto.ItemName)) item.ItemName = dto.ItemName.Trim();
         if (!string.IsNullOrWhiteSpace(dto.Category)) item.Category = dto.Category.Trim();
         if (!string.IsNullOrWhiteSpace(dto.Color)) item.Color = dto.Color.Trim();
+        // Applied only when the request actually supplied the field. An omitted `colorHex` means
+        // "leave what is stored alone", exactly like `Description` below; if it was supplied but is
+        // not a valid literal the normaliser stores `null`, which is the honest "not measured".
+        if (dto.ColorHex is not null) item.ColorHex = NormalizeColorHex(dto.ColorHex);
         if (!string.IsNullOrWhiteSpace(dto.Fabric)) item.Fabric = dto.Fabric.Trim();
         if (!string.IsNullOrWhiteSpace(dto.Style)) item.Style = dto.Style.Trim();
         if (dto.Sizes is not null) item.Sizes = dto.Sizes;
@@ -131,6 +146,26 @@ public class InventoryService : IInventoryService
         await _repository.UpdateAsync(item, cancellationToken);
 
         return InventoryItemDto.FromDomain(item);
+    }
+
+    /// <summary>
+    /// The one gate every incoming colour hex passes. The value arrives from a browser, so it is
+    /// trusted only after it matches a CSS hex literal: a trimmed <c>#</c> followed by exactly 3 or
+    /// 6 hexadecimal digits, case-insensitive. Anything else (a colour name, a truncated or
+    /// over-long value, a script URL) is reported as "not measured" (<c>null</c>) rather than
+    /// stored for the UI to paint. Case is preserved; the sheet is case-insensitive and
+    /// lower-casing would rewrite a value the analysis really returned.
+    /// </summary>
+    /// <returns>The trimmed literal, or <c>null</c> when there is no valid hex to store.</returns>
+    public static string? NormalizeColorHex(string? colorHex)
+    {
+        if (string.IsNullOrWhiteSpace(colorHex))
+        {
+            return null;
+        }
+
+        var trimmed = colorHex.Trim();
+        return HexColorPattern.IsMatch(trimmed) ? trimmed : null;
     }
 
     private async Task<string?> ProcessImageUrlAsync(string? imageUrl, Guid orgId, CancellationToken cancellationToken)

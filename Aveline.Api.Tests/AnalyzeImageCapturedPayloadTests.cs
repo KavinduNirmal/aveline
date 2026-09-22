@@ -159,13 +159,14 @@ public class AnalyzeImageCapturedPayloadTests : IAsyncLifetime
 
         var providerUrl = content[1].GetProperty("image_url").GetProperty("url").GetString();
 
-        // The URL the provider receives: absolute, https, under Media:PublicBaseUrl, < 8192 chars
-        // (strategy §3.5, Elle plan §4.3's DeepSeek external-URL maximum).
+        // The provider receives the asset bytes inline as a `data:` URL, not the tokenised media
+        // URL. That token URL is this API proxying the media on an internal hostname
+        // (`http://api:8080`), which an external provider cannot resolve; a real run answered
+        // 400 "Failed to download image" and the analysis was lost. Inline bytes need no reachable
+        // origin and work for every media provider.
         providerUrl.Should().NotBeNullOrWhiteSpace();
-        Uri.TryCreate(providerUrl, UriKind.Absolute, out var uri).Should().BeTrue("the provider must be handed an absolute URL");
-        uri!.Scheme.Should().Be(Uri.UriSchemeHttps);
-        providerUrl.Should().StartWith($"{PublicBaseUrl}/api/v1/media/");
-        providerUrl.Length.Should().BeLessThan(8192, "the provider's external-URL maximum is 8192 characters");
+        providerUrl.Should().StartWith("data:image/");
+        providerUrl.Should().Contain(";base64,");
 
         // The captured bytes really carry that URL, byte for byte.
         outboundText.Should().Contain(providerUrl);

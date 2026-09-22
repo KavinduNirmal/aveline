@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   X,
   Sparkles,
@@ -60,6 +60,23 @@ export function ComposeOutfitModal({
   const [composedItems, setComposedItems] = useState<OutfitItemMock[]>([])
   const [styleNotes, setStyleNotes] = useState<string>('')
   const [lookName, setLookName] = useState<string>('')
+  // The persisted row's id, when the server composed the look. Saving then reuses it rather than
+  // minting a second id, so the list does not show one look twice when it is refetched.
+  const [composedId, setComposedId] = useState<string>('')
+
+  // The hero can change between openings (a "Style look" on one piece, then another), and this
+  // component stays mounted while it is closed, so the selection is re-seeded each time it opens.
+  // Keyed on `open` alone: re-seeding on every inventory identity change would wipe a look the
+  // operator is midway through composing.
+  useEffect(() => {
+    if (!open) return
+    setSelectedHeroId(heroItem?.id ?? inventory[0]?.id ?? '')
+    setComposedItems([])
+    setStyleNotes('')
+    setLookName('')
+    setComposedId('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
 
   if (!open) return null
 
@@ -80,6 +97,7 @@ export function ComposeOutfitModal({
         if (result) {
           setLookName(result.name || `${occasion} - ${activeHero.color} Edition`)
           setStyleNotes(result.styleNotes || `Styling recommendations curated for ${occasion}.`)
+          setComposedId(result.id || '')
           if (result.items && result.items.length > 0) {
             setComposedItems(result.items as unknown as OutfitItemMock[])
             setComposing(false)
@@ -144,7 +162,7 @@ export function ComposeOutfitModal({
     }
 
     const newOutfit: OutfitCompositionMock = {
-      id: `outfit-${Date.now()}`,
+      id: composedId || `outfit-${Date.now()}`,
       name: lookName || `${occasion} Ensemble`,
       occasion,
       totalPrice,
@@ -267,11 +285,17 @@ export function ComposeOutfitModal({
                     key={item.id}
                     className="flex items-center gap-2.5 rounded-lg border border-border/70 bg-card p-2.5 shadow-2xs"
                   >
-                    <img
-                      src={item.imageUrl}
-                      alt={item.name}
-                      className="size-12 rounded object-cover border border-border"
-                    />
+                    {item.imageUrl ? (
+                      <img
+                        src={item.imageUrl}
+                        alt={item.name}
+                        className="size-12 rounded object-cover border border-border"
+                      />
+                    ) : (
+                      <div className="flex size-12 shrink-0 items-center justify-center rounded border border-border bg-muted text-[8px] text-muted-foreground">
+                        No photo
+                      </div>
+                    )}
                     <div className="min-w-0 flex-1">
                       <Badge variant="outline" className="text-[9px] uppercase tracking-wider py-0">
                         {item.position}

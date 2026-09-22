@@ -231,10 +231,10 @@ public class CatalogAnalyzeImageReferenceTests : IAsyncLifetime
             token);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        _signer.Mints.Should().ContainSingle()
-            .Which.Scope.Should().Be(MediaScope.VisionAnalyze);
+        // Bytes inline, so nothing is minted: there is no URL for anyone to fetch.
+        _signer.Mints.Should().BeEmpty("bytes inline need no media token");
         _vision.Urls.Should().ContainSingle()
-            .Which.Should().StartWith($"{PublicBaseUrl}/api/v1/media/");
+            .Which.Should().StartWith("data:image/");
     }
 
     // =======================================================================================
@@ -394,5 +394,176 @@ public class CatalogAnalyzeImageReferenceTests : IAsyncLifetime
 
         public Task<MediaNonceClaim> TryClaimAsync(string nonce, TimeSpan ttl, CancellationToken ct = default)
             => Task.FromResult(_claimed.Add(nonce) ? MediaNonceClaim.Claimed : MediaNonceClaim.AlreadyClaimed);
+    }
+}
+
+/// <summary>
+/// L2 (CATALOG) - the <c>/api/v1/orgs/{organizationId}/catalog/analyze-image</c> route's
+/// translation of a target the vision provider cannot read.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>Why a second fixture.</b> <see cref="CatalogAnalyzeImageReferenceTests"/> replaces
+/// <see cref="IVisionService"/> with a capturing double to assert the argument a reference
+/// resolves to. This unit is about what the <em>real</em>
+/// <see cref="Aveline.Api.Modules.VisualIntelligence.Services.VisionService"/> does with a target
+/// it cannot use, so this fixture leaves the production registration in place: a relative path is
+/// refused by the service and must be translated by the route, not by the global exception handler.
+/// </para>
+/// <para>
+/// The production shape is the literal string the catalog upload stores in
+/// <c>InventoryImages.ImageUrl</c> - <c>/api/v1/orgs/{orgId}/catalog/images/{id}</c> - which the
+/// web modal writes back into its <c>imageUrl</c> state and posts here. The prior handler caught
+/// only <see cref="KeyNotFoundException"/>, so the refusal reached the global handler as a
+/// misleading <c>500</c>.
+/// </para>
+/// </remarks>
+public class CatalogAnalyzeImageBadTargetTests : IAsyncLifetime
+{
+    private const string SigningKey = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
+
+    private const string CatalogBaseUrl = "https://api.aveline.test";
+
+    private RsaSecurityKey _signingKey = null!;
+
+    private StubAuthServer _authServer = null!;
+
+    private WebApplicationFactory<Program> _factory = null!;
+
+    private HttpClient _client = null!;
+
+    public async Task InitializeAsync()
+    {
+        _signingKey = new RsaSecurityKey(RSA.Create(2048)) { KeyId = "test-kid" };
+        _authServer = new StubAuthServer(_signingKey);
+        await _authServer.StartAsync();
+
+        // IVisionService is deliberately NOT replaced here: the production VisionService classifies
+        // the target, and the route's job is to translate that refusal.
+        _factory = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
+                builder.UseSetting("Media:SigningKey", SigningKey);
+                builder.UseSetting("Media:PublicBaseUrl", CatalogBaseUrl);
+            });
+
+        _client = _factory.CreateClient();
+    }
+
+    public async Task DisposeAsync()
+    {
+        _client.Dispose();
+        await _factory.DisposeAsync();
+        await _authServer.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task AnalyzeImage_WithARelativeImageUrl_Returns400Not500()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_bad_relative");
+        var token = CreateToken(user.ClerkId);
+
+        var response = await AuthorizedPostAsync(
+            org.Id,
+            new
+            {
+                imageUrl = $"/api/v1/orgs/{org.Id}/catalog/images/4f0a1e2d-3c4b-5a69-8d7e-9f0a1b2c3d4e",
+            },
+            token);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("absolute http(s) URL");
+    }
+
+    [Fact]
+    public async Task AnalyzeImage_WithABlankImageUrl_Returns400Not500()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_bad_blank");
+        var token = CreateToken(user.ClerkId);
+
+        var response = await AuthorizedPostAsync(org.Id, new { imageUrl = string.Empty }, token);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    private string CreateToken(string clerkId, string userRole = "staff")
+    {
+        var claims = new List<Claim>
+        {
+            new("sub", clerkId),
+            new("user_role", userRole),
+        };
+
+        var handler = new JsonWebTokenHandler();
+        var descriptor = new SecurityTokenDescriptor
+        {
+            Issuer = _authServer.BaseUrl,
+            Subject = new ClaimsIdentity(claims),
+            Expires = DateTime.UtcNow.AddHours(1),
+            SigningCredentials = new SigningCredentials(_signingKey, SecurityAlgorithms.RsaSha256),
+        };
+
+        return handler.CreateToken(descriptor);
+    }
+
+    private async Task<HttpResponseMessage> AuthorizedPostAsync(Guid organizationId, object body, string token)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/api/v1/orgs/{organizationId}/catalog/analyze-image")
+        {
+            Content = JsonContent.Create(body),
+            Headers = { Authorization = new AuthenticationHeaderValue("Bearer", token) },
+        };
+
+        return await _client.SendAsync(request);
+    }
+
+    private async Task<(User User, Organization Org)> SeedMemberAndOrgAsync(string prefix)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var user = new User
+        {
+            Id = Guid.CreateVersion7(),
+            ClerkId = $"{prefix}_clerk_id",
+            Email = $"{prefix}@example.com",
+            FirstName = "Test",
+            LastName = "User",
+            Username = $"{prefix}_user",
+            UserRole = Roles.Staff,
+            OrganizationRole = Roles.BoutiqueOwner,
+            HasCompletedOnboarding = true,
+            AccountState = AccountState.Active,
+            IsActive = true,
+        };
+        db.Users.Add(user);
+
+        var org = new Organization
+        {
+            Id = Guid.CreateVersion7(),
+            Name = $"{prefix} Boutique",
+            Slug = $"{prefix}-boutique",
+            OwnerUserId = user.Id,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        db.Organizations.Add(org);
+
+        db.OrganizationMemberships.Add(new OrganizationMembership
+        {
+            OrganizationId = org.Id,
+            UserId = user.Id,
+            BoutiqueRole = Roles.BoutiqueOwner,
+            Status = MembershipStatus.Active,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        });
+
+        await db.SaveChangesAsync();
+        return (user, org);
     }
 }

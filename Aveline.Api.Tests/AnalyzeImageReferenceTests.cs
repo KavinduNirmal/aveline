@@ -102,7 +102,7 @@ public class AnalyzeImageReferenceTests : IAsyncLifetime
     // =======================================================================================
 
     [Fact]
-    public async Task AnalyzeImage_WithAnAnalysableReference_MintsAndHandsTheVisionProviderAnAbsoluteTokenisedUrl()
+    public async Task AnalyzeImage_WithAnAnalysableReference_HandsTheVisionProviderTheAssetBytesInline()
     {
         var attachment = await SeedAttachmentAsync("image/png");
 
@@ -115,26 +115,20 @@ public class AnalyzeImageReferenceTests : IAsyncLifetime
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        // The argument to IVisionService is absolute, on Media:PublicBaseUrl, and tokenised.
+        // The provider receives the bytes as a `data:` URL, never the tokenised media URL: that URL
+        // is this API proxying the asset on an internal hostname, so an external provider cannot
+        // fetch it. Handing over the bytes removes the reachability requirement for every media
+        // provider (the defect: a catalog/salon image silently failed with
+        // 400 "Failed to download image" and the analysis fell back to a filename guess).
         _vision.Urls.Should().ContainSingle();
         var url = _vision.Urls[0];
-        Uri.TryCreate(url, UriKind.Absolute, out var uri).Should().BeTrue();
-        uri!.Scheme.Should().Be(Uri.UriSchemeHttps);
-        url.Should().StartWith($"{PublicBaseUrl}/api/v1/media/");
-        url.Length.Should().BeLessThan(8192, "the provider's external-URL maximum is 8192 characters");
+        url.Should().StartWith("data:image/");
+        url.Should().Contain(";base64,");
+        url.Length.Should().BeLessThan(8192 * 1024, "a data URL carries the bytes inline");
 
-        // The grant was minted for this organisation with the vision scope, and it verifies.
-        _signer.Mints.Should().ContainSingle();
-        var mint = _signer.Mints[0];
-        mint.OrganizationId.Should().Be(attachment.OrganizationId);
-        mint.Scope.Should().Be(MediaScope.VisionAnalyze);
-        mint.SingleUse.Should().BeTrue();
-
-        var token = url[($"{PublicBaseUrl}/api/v1/media/").Length..];
-        var verified = _signer.Verify(token, MediaScope.VisionAnalyze);
-        verified.IsValid.Should().BeTrue();
-        verified.Scope.Should().Be(MediaScope.VisionAnalyze);
-        verified.OrganizationId.Should().Be(attachment.OrganizationId);
+        // Nothing is minted on this path: there is no URL for anyone to fetch, so no credential is
+        // created and none can leak.
+        _signer.Mints.Should().BeEmpty("bytes inline need no media token");
     }
 
     [Fact]
@@ -152,7 +146,7 @@ public class AnalyzeImageReferenceTests : IAsyncLifetime
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         _vision.Urls.Should().ContainSingle()
-            .Which.Should().StartWith($"{PublicBaseUrl}/api/v1/media/");
+            .Which.Should().StartWith("data:image/");
     }
 
     [Fact]
@@ -188,7 +182,7 @@ public class AnalyzeImageReferenceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AnalyzeImage_ForAnInventoryImageReference_MintsForTheCatalogRow()
+    public async Task AnalyzeImage_ForAnInventoryImageReference_HandsTheBytesInline()
     {
         var imageId = Guid.NewGuid();
         var orgId = Guid.NewGuid();
@@ -202,10 +196,9 @@ public class AnalyzeImageReferenceTests : IAsyncLifetime
         });
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        _signer.Mints.Should().ContainSingle()
-            .Which.Scope.Should().Be(MediaScope.VisionAnalyze);
+        _signer.Mints.Should().BeEmpty("bytes inline need no media token");
         _vision.Urls.Should().ContainSingle()
-            .Which.Should().StartWith($"{PublicBaseUrl}/api/v1/media/");
+            .Which.Should().StartWith("data:image/");
     }
 
     // =======================================================================================

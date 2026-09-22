@@ -295,4 +295,169 @@ public class InventoryServiceTests
         page2Result.Should().HaveCount(2);
         page2Result.Select(x => x.ItemName).Should().ContainInOrder("Item 03", "Item 04");
     }
+
+    // 9. The analysed colour survives create → `InventoryItemDto.FromDomain`. Before `ColorHex`
+    // existed the hex the vision model measured was silently dropped on the way to the database.
+    [Fact]
+    public async Task CreateItem_WithMeasuredColorHex_SurvivesCreateAndDtoMapping()
+    {
+        // Arrange
+        var orgId = Guid.NewGuid();
+        InventoryItem? persisted = null;
+        _repositoryMock
+            .Setup(r => r.AddAsync(It.IsAny<InventoryItem>(), It.IsAny<CancellationToken>()))
+            .Callback<InventoryItem, CancellationToken>((item, _) => persisted = item)
+            .Returns(Task.CompletedTask);
+
+        var dto = new CreateInventoryItemDto
+        {
+            OrgId = orgId,
+            ItemName = "Fuchsia Bodycon Dress",
+            Category = "Gowns",
+            Color = "Fuchsia Pink",
+            ColorHex = "#D5006D",
+            Price = 18000,
+            Cost = 8000,
+            Quantity = 2
+        };
+
+        // Act
+        var result = await _service.CreateItemAsync(dto);
+
+        // Assert
+        persisted.Should().NotBeNull();
+        persisted!.ColorHex.Should().Be("#D5006D");
+        result.ColorHex.Should().Be("#D5006D");
+    }
+
+    // 10. A supplied update replaces the stored measured colour.
+    [Fact]
+    public async Task UpdateItem_WithColorHex_SetsIt()
+    {
+        // Arrange
+        var id = Guid.NewGuid();
+        var orgId = Guid.NewGuid();
+        var existing = new InventoryItem
+        {
+            Id = id,
+            OrgId = orgId,
+            ItemName = "Dress",
+            Color = "Pink",
+            ColorHex = "#111111",
+            CreatedAtUtc = DateTime.UtcNow
+        };
+        _repositoryMock
+            .Setup(r => r.GetByIdAsync(id, orgId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
+        _repositoryMock
+            .Setup(r => r.UpdateAsync(It.IsAny<InventoryItem>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Act
+        var result = await _service.UpdateItemAsync(
+            id,
+            new UpdateInventoryItemDto { OrgId = orgId, ColorHex = "#FF00FF" });
+
+        // Assert
+        existing.ColorHex.Should().Be("#FF00FF");
+        result.Should().NotBeNull();
+        result!.ColorHex.Should().Be("#FF00FF");
+    }
+
+    // 11. An update that says nothing about the colour must not erase what is stored. The field is
+    // nullable, so "absent" and "explicitly null" are indistinguishable on the wire; the service
+    // treats both as "leave it alone", exactly like `Description`.
+    [Fact]
+    public async Task UpdateItem_WithoutColorHex_LeavesTheStoredValueAlone()
+    {
+        // Arrange
+        var id = Guid.NewGuid();
+        var orgId = Guid.NewGuid();
+        var existing = new InventoryItem
+        {
+            Id = id,
+            OrgId = orgId,
+            ItemName = "Dress",
+            Color = "Pink",
+            ColorHex = "#D5006D",
+            CreatedAtUtc = DateTime.UtcNow
+        };
+        _repositoryMock
+            .Setup(r => r.GetByIdAsync(id, orgId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
+        _repositoryMock
+            .Setup(r => r.UpdateAsync(It.IsAny<InventoryItem>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Act — a rename that carries no colour.
+        var result = await _service.UpdateItemAsync(
+            id,
+            new UpdateInventoryItemDto { OrgId = orgId, ItemName = "Renamed Dress" });
+
+        // Assert
+        existing.ItemName.Should().Be("Renamed Dress");
+        existing.ColorHex.Should().Be("#D5006D");
+        result.Should().NotBeNull();
+        result!.ColorHex.Should().Be("#D5006D");
+    }
+
+    // 12. Anything that is not a CSS hex literal is stored as "not measured", never verbatim. A
+    // stored malformed value would be painted by the card as a real colour nobody measured.
+    [Theory]
+    [InlineData("red")]
+    [InlineData("#12345")]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("#gggggg")]
+    public async Task UpdateItem_WithMalformedColorHex_StoresNull(string malformed)
+    {
+        // Arrange
+        var id = Guid.NewGuid();
+        var orgId = Guid.NewGuid();
+        var existing = new InventoryItem
+        {
+            Id = id,
+            OrgId = orgId,
+            ItemName = "Dress",
+            Color = "Pink",
+            ColorHex = "#D5006D",
+            CreatedAtUtc = DateTime.UtcNow
+        };
+        _repositoryMock
+            .Setup(r => r.GetByIdAsync(id, orgId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
+        _repositoryMock
+            .Setup(r => r.UpdateAsync(It.IsAny<InventoryItem>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Act
+        var result = await _service.UpdateItemAsync(
+            id,
+            new UpdateInventoryItemDto { OrgId = orgId, ColorHex = malformed });
+
+        // Assert
+        existing.ColorHex.Should().BeNull();
+        result.Should().NotBeNull();
+        result!.ColorHex.Should().BeNull();
+    }
+
+    // 13. The normaliser itself: trim, accept only `#` + exactly 3 or 6 hex digits, otherwise null.
+    [Theory]
+    [InlineData("#fff", "#fff")]
+    [InlineData("#FFF", "#FFF")]
+    [InlineData("#123456", "#123456")]
+    [InlineData("#D5006D", "#D5006D")]
+    [InlineData("  #abc  ", "#abc")]
+    [InlineData("#12345", null)]
+    [InlineData("#1234567", null)]
+    [InlineData("red", null)]
+    [InlineData("123456", null)]
+    [InlineData("javascript:alert(1)", null)]
+    [InlineData("#gggggg", null)]
+    [InlineData("", null)]
+    [InlineData("   ", null)]
+    [InlineData(null, null)]
+    public void NormalizeColorHex_AcceptsOnlyCssHexLiterals(string? input, string? expected)
+    {
+        InventoryService.NormalizeColorHex(input).Should().Be(expected);
+    }
 }

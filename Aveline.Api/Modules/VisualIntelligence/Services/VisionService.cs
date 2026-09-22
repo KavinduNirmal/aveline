@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using Aveline.Api.Common.Media;
 using Aveline.Api.Modules.Billing.Services;
 using Aveline.Api.Modules.VisualIntelligence.DTOs;
 using Microsoft.Extensions.Configuration;
@@ -34,6 +35,15 @@ public class VisionService : IVisionService
         IUsageTrackerService? usageTracker = null)
     {
         _httpClient = httpClient;
+        _logger = logger;
+        _usageTracker = usageTracker;
+        // Provider keys only. `LLM_API_KEY` deliberately does NOT participate: it is the agent
+        // service's *text* model credential (DeepSeek locally), and this client would combine it
+        // with the Gemini default BaseUrl to post an image to a text-only endpoint. That pairing
+        // always fails, so the failure was invisible: every catalog upload silently degraded to
+        // the deterministic fallback and reported a filename-derived colour as though it were read
+        // from the photograph. A missing vision key now degrades to the same fallback, but for the
+        // honest reason, and `VISION_API_KEY` is documented in .env.example as required.
         _apiKey = configuration["Vision:ApiKey"]
             ?? configuration["Vision__ApiKey"]
             ?? configuration["VISION_API_KEY"]
@@ -46,16 +56,37 @@ public class VisionService : IVisionService
             ?? Environment.GetEnvironmentVariable("VISION_API_KEY")
             ?? Environment.GetEnvironmentVariable("OPENAI_API_KEY")
             ?? Environment.GetEnvironmentVariable("GEMINI_API_KEY")
-            ?? Environment.GetEnvironmentVariable("GOOGLE_API_KEY")
-            ?? Environment.GetEnvironmentVariable("LLM_API_KEY");
+            ?? Environment.GetEnvironmentVariable("GOOGLE_API_KEY");
+
+        if (string.IsNullOrWhiteSpace(_apiKey))
+        {
+            // Loud on purpose. A silent degradation here previously presented a filename-derived
+            // colour to the operator as though a model had read the photograph (the upload was
+            // described as "taupe banarasi" from a green saree). Falling back is correct; falling
+            // back without saying so is not.
+            _logger.LogWarning(
+                "No vision provider key is configured (Vision:ApiKey / VISION_API_KEY / GEMINI_API_KEY). "
+                + "Catalog image analysis will use the deterministic fallback, which derives attributes "
+                + "from the file name and hint text and never inspects the image. Set VISION_API_KEY to "
+                + "enable real multimodal extraction.");
+        }
         _model = configuration["Vision:Model"]
             ?? configuration["Vision__Model"]
             ?? configuration["VISION_MODEL"]
             ?? "gemini-2.0-flash";
-        _logger = logger;
-        _usageTracker = usageTracker;
     }
 
+    /// <summary>
+    /// Analyses the image named by <paramref name="imageUrl"/>. The target is classified before any
+    /// provider call and before any result is produced, so a target the provider cannot read is
+    /// refused as a caller error rather than silently answered from the deterministic fallback.
+    /// </summary>
+    /// <remarks>
+    /// See <see cref="IVisionService.AnalyzeAsync"/> for the three accepted target shapes and the
+    /// refusal contract. The deterministic fallback (no configured key, non-success status,
+    /// unparsable response, transport fault) is deliberately unchanged: those are "we tried and
+    /// could not", never "the request named no readable image".
+    /// </remarks>
     public async Task<ImageAnalysisResultDto> AnalyzeAsync(
         string imageUrl,
         Guid organizationId,
@@ -67,6 +98,11 @@ public class VisionService : IVisionService
         {
             throw new ArgumentException("Image URL must not be empty.", nameof(imageUrl));
         }
+
+        // Refuse a target the provider cannot use before spending a call or fabricating a result.
+        // This runs before the no-key check on purpose: a relative path names no readable image
+        // whether or not a key is configured, and it is a caller error, not a provider failure.
+        EnsureUsableImageTarget(imageUrl);
 
         if (string.IsNullOrWhiteSpace(_apiKey))
         {
@@ -104,10 +140,13 @@ public class VisionService : IVisionService
                          "confidence_score (number 0.0-1.0), " +
                          "suggested_keywords (array of strings - include category, garment_type, color, color theme, fabric, pattern, occasion).";
 
-            var payload = new
+            // A dictionary rather than an anonymous type for one reason: `thinking` below is a
+            // DeepSeek-only field that must be OMITTED, not sent as null, for every other provider.
+            // The wire shape and the property names are otherwise identical.
+            var payload = new Dictionary<string, object?>
             {
-                model = _model,
-                messages = new object[]
+                ["model"] = _model,
+                ["messages"] = new object[]
                 {
                     new
                     {
@@ -119,9 +158,28 @@ public class VisionService : IVisionService
                         }
                     }
                 },
-                response_format = new { type = "json_object" },
-                max_tokens = 750
+                ["response_format"] = new { type = "json_object" },
+                ["max_tokens"] = 2048
             };
+
+            // Reasoning must be off for this call, and not as an optimisation: measured against
+            // DeepSeek, the JSON request with the catalogue prompt spent 1543-2049 *reasoning*
+            // tokens before emitting a single character of output. At the old 750 ceiling it spent
+            // the entire budget thinking and truncated mid-string
+            // ("Path: $.styling_notes | BytePositionInLine: 1050"). Even 2048 was consumed whole:
+            // finish_reason=length with 2049 reasoning tokens and no JSON at all. Disabled, the same
+            // request finishes in ~313 tokens with valid JSON. This mirrors
+            // LLM_THINKING_ENABLED=false, which the agent service already sets for the same reason.
+            //
+            // It is NOT portable, and "an unknown field is ignored" is false: measured against
+            // Gemini's OpenAI-compatible endpoint, the field is a hard schema error -
+            // `400 Invalid JSON payload received. Unknown name "thinking": Cannot find field.` -
+            // which is exactly the silent-degradation class this method refuses to add to. So it is
+            // sent only to the provider that needs it.
+            if (ProviderNeedsThinkingDisabled())
+            {
+                payload["thinking"] = new { type = "disabled" };
+            }
 
             var baseUri = _httpClient.BaseAddress?.ToString().TrimEnd('/') ?? string.Empty;
             var relativePath = baseUri.EndsWith("/openai", StringComparison.OrdinalIgnoreCase) ||
@@ -140,7 +198,14 @@ public class VisionService : IVisionService
             var response = await _httpClient.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("Vision API returned status {StatusCode}; falling back to deterministic analysis.", response.StatusCode);
+                // The body names the actual fault ("max_tokens too large", "unsupported content
+                // type", ...). Without it a 400/404 is indistinguishable from a bad key, which is
+                // how a misconfiguration stays invisible across many uploads.
+                var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+                _logger.LogWarning(
+                    "Vision API returned status {StatusCode}; falling back to deterministic analysis. Provider said: {ErrorBody}",
+                    response.StatusCode,
+                    Truncate(errorBody, 800));
                 return GenerateDeterministicAnalysis(imageUrl, fileName, contextHint);
             }
 
@@ -170,7 +235,10 @@ public class VisionService : IVisionService
                         OrganizationId: organizationId,
                         RequestId: Guid.NewGuid().ToString(),
                         WorkflowId: "visual-image-analysis",
-                        Provider: "openai",
+                        // Derived from the configured BaseUrl rather than hardcoded to "openai":
+                        // the local stack runs this endpoint against DeepSeek, and recording that
+                        // traffic as OpenAI makes ADR-010 spend attribution wrong.
+                        Provider: ResolveProviderName(),
                         Model: _model,
                         InputTokens: promptTokens,
                         OutputTokens: completionTokens,
@@ -192,51 +260,49 @@ public class VisionService : IVisionService
 
             if (!string.IsNullOrWhiteSpace(choiceContent))
             {
-                var parsed = JsonSerializer.Deserialize<VisionApiResponse>(choiceContent, new JsonSerializerOptions
+                var parsed = TryDeserializeVisionResponse(choiceContent, out var repaired);
+                var finishReason = doc.RootElement
+                    .GetProperty("choices")[0]
+                    .TryGetProperty("finish_reason", out var finishElem)
+                    ? finishElem.GetString()
+                    : null;
+
+                if (parsed is null)
                 {
-                    PropertyNameCaseInsensitive = true
-                });
-
-                if (parsed != null)
+                    // Distinct from the outer catch: the transport succeeded and the provider
+                    // answered, but the answer was not usable. `finish_reason=length` names
+                    // truncation, which is the case the token ceiling controls; anything else here
+                    // is malformed output.
+                    _logger.LogWarning(
+                        "Vision provider returned unparsable JSON (finish_reason={FinishReason}, {Length} chars); "
+                        + "falling back to deterministic analysis.",
+                        finishReason ?? "unknown",
+                        choiceContent.Length);
+                }
+                else
                 {
-                    var desc = parsed.Description;
-                    if (!string.IsNullOrWhiteSpace(parsed.StylingNotes))
+                    if (repaired)
                     {
-                        desc = string.IsNullOrWhiteSpace(desc)
-                            ? parsed.StylingNotes
-                            : $"{desc} Styling Notes: {parsed.StylingNotes}";
+                        // Name the recovery for what it is. A repaired document is a THINNER answer
+                        // than the model was asked for: the fields after the truncation point are
+                        // simply absent, and a value cut mid-string is kept only up to the cut. It
+                        // must not be presented as a complete reading.
+                        _logger.LogWarning(
+                            "Vision provider hit the output token ceiling (finish_reason={FinishReason}); the "
+                            + "response was truncated and the leading fields were recovered by closing the "
+                            + "JSON. Fields after the cut are absent. Raise max_tokens if attributes look thin.",
+                            finishReason ?? "unknown");
+                    }
+                    else if (string.Equals(finishReason, "length", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // The ceiling was hit but the document still parsed whole, so nothing was
+                        // lost; log at the same place for diagnosis without claiming a repair.
+                        _logger.LogWarning(
+                            "Vision provider reported finish_reason=length but returned parseable JSON; "
+                            + "no fields were dropped.");
                     }
 
-                    var keywords = parsed.SuggestedKeywords ?? new List<string>();
-                    if (!string.IsNullOrWhiteSpace(parsed.ColorTheme) && !keywords.Exists(k => string.Equals(k, parsed.ColorTheme, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        keywords.Add(parsed.ColorTheme);
-                    }
-                    if (!string.IsNullOrWhiteSpace(parsed.Undertone) && !keywords.Exists(k => string.Equals(k, $"{parsed.Undertone} Undertone", StringComparison.OrdinalIgnoreCase)))
-                    {
-                        keywords.Add($"{parsed.Undertone} Undertone");
-                    }
-                    if (!string.IsNullOrWhiteSpace(parsed.GarmentType) && !keywords.Exists(k => string.Equals(k, parsed.GarmentType, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        keywords.Add(parsed.GarmentType);
-                    }
-
-                    return new ImageAnalysisResultDto
-                    {
-                        Category = parsed.Category ?? "garment",
-                        PrimaryColor = parsed.PrimaryColor ?? "unknown",
-                        ColorHex = parsed.ColorHex,
-                        SecondaryColors = parsed.SecondaryColors ?? new List<string>(),
-                        Pattern = parsed.Pattern,
-                        Style = parsed.Style,
-                        Fabric = parsed.Fabric,
-                        GarmentType = parsed.GarmentType,
-                        SuggestedItemName = parsed.SuggestedItemName,
-                        Description = desc,
-                        StylingNotes = parsed.StylingNotes,
-                        ConfidenceScore = parsed.ConfidenceScore > 0 ? parsed.ConfidenceScore : 0.95,
-                        SuggestedKeywords = keywords
-                    };
+                    return BuildResultFromParsed(parsed);
                 }
             }
         }
@@ -246,6 +312,289 @@ public class VisionService : IVisionService
         }
 
         return GenerateDeterministicAnalysis(imageUrl, fileName, contextHint);
+    }
+
+    /// <summary>Keeps a provider error body within a loggable size.</summary>
+    private static string Truncate(string value, int maxLength)
+        => value.Length <= maxLength ? value : value[..maxLength] + "...(truncated)";
+
+    /// <summary>
+    /// Refuses a target the provider cannot read, before a provider call is spent and before the
+    /// deterministic fallback could present a filename-derived guess as a model reading.
+    /// </summary>
+    /// <remarks>
+    /// Exactly three shapes exist and only two are usable: inline <c>data:</c> bytes the provider
+    /// reads directly, an absolute <c>http(s)</c> URL the provider fetches itself, and everything
+    /// else. The provider answers
+    /// <c>400 {"error":{"message":".messages[0]: Unsupported image_url format"}}</c> for the third
+    /// shape - the production case was the relative Aveline route
+    /// <c>/api/v1/orgs/{orgId}/catalog/images/{id}</c> stored in <c>InventoryImages.ImageUrl</c>.
+    /// That is a caller error, so it is refused here instead of degrading silently.
+    /// </remarks>
+    private void EnsureUsableImageTarget(string imageUrl)
+    {
+        if (imageUrl.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+        {
+            EnsureAnalysableInlineData(imageUrl);
+            return;
+        }
+
+        if (IsAbsoluteHttpUrl(imageUrl))
+        {
+            return;
+        }
+
+        var shape = DescribeRejectedTarget(imageUrl);
+        _logger.LogWarning(
+            "Refusing vision analysis for image target {ImageTargetShape}: it is not an absolute "
+            + "http(s) URL or inline image data, so the provider cannot fetch it. The deterministic "
+            + "fallback was deliberately not used because the request named no readable image.",
+            shape);
+        throw new ArgumentException(
+            $"Image target '{shape}' is not an absolute http(s) URL or inline image data, so the "
+            + "vision provider cannot fetch it. Provide an absolute http(s) URL or a "
+            + "data:image/...;base64,... URL. The deterministic fallback was deliberately not used "
+            + "because the request named no readable image.",
+            nameof(imageUrl));
+    }
+
+    /// <summary>
+    /// Validates inline <c>data:</c> bytes: the declared media type must be one the provider reads
+    /// (<see cref="VisionContentTypes.IsAnalysable"/>) and the base64 payload must be non-empty.
+    /// </summary>
+    /// <remarks>
+    /// The warnings name the media type or the reason, never the payload, so a large or sensitive
+    /// inline image is never written to the log.
+    /// </remarks>
+    private void EnsureAnalysableInlineData(string imageUrl)
+    {
+        var afterScheme = imageUrl["data:".Length..];
+        var semicolonIndex = afterScheme.IndexOf(';');
+        var commaIndex = afterScheme.IndexOf(',');
+        var mediaTypeEnd = (semicolonIndex, commaIndex) switch
+        {
+            (< 0, < 0) => afterScheme.Length,
+            (< 0, _) => commaIndex,
+            (_, < 0) => semicolonIndex,
+            _ => Math.Min(semicolonIndex, commaIndex),
+        };
+        var mediaType = afterScheme[..mediaTypeEnd].Trim();
+
+        if (!VisionContentTypes.IsAnalysable(mediaType))
+        {
+            var named = string.IsNullOrEmpty(mediaType) ? "(absent)" : mediaType;
+            _logger.LogWarning(
+                "Refusing vision analysis for inline image data: media type {MediaType} is not one of "
+                + "the analysable types ({AnalysableTypes}). The deterministic fallback was "
+                + "deliberately not used because the request named no readable image.",
+                named,
+                string.Join(", ", VisionContentTypes.AnalysableTypes));
+            throw new ArgumentException(
+                $"Inline image data declares media type '{named}', which the vision provider cannot "
+                + "analyse. Supported types are image/jpeg, image/png, image/gif and image/webp. The "
+                + "request was refused rather than answered from the deterministic fallback, which "
+                + "reads no pixels.",
+                nameof(imageUrl));
+        }
+
+        var payload = commaIndex >= 0 ? afterScheme[(commaIndex + 1)..] : string.Empty;
+        if (string.IsNullOrWhiteSpace(payload))
+        {
+            _logger.LogWarning(
+                "Refusing vision analysis for inline image data: media type {MediaType} carries no "
+                + "base64 payload. The deterministic fallback was deliberately not used because the "
+                + "request named no readable image.",
+                mediaType);
+            throw new ArgumentException(
+                $"Inline image data declares media type '{mediaType}' but carries no base64 payload, "
+                + "so there are no bytes for the vision provider to read. The request was refused "
+                + "rather than answered from the deterministic fallback, which reads no pixels.",
+                nameof(imageUrl));
+        }
+
+        // The media type must also *say* base64. A percent-encoded payload without the marker is a
+        // shape this API never produces and the provider does not read, so accepting it would buy a
+        // provider 400 and, with it, the fabricated fallback this method exists to prevent.
+        //
+        // The marker lives after the media type and before the comma (`image/jpeg;base64,<payload>`),
+        // so the section that carries it runs to the comma, not to the end of the media type.
+        var headerSection = afterScheme[..(commaIndex >= 0 ? commaIndex : afterScheme.Length)];
+        if (!headerSection.Contains("base64", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning(
+                "Refusing vision analysis for inline image data: media type {MediaType} does not "
+                + "declare a base64 payload (the payload itself is never logged). The deterministic "
+                + "fallback was deliberately not used because the request named no readable image.",
+                mediaType);
+            throw new ArgumentException(
+                $"Inline image data declares media type '{mediaType}' but no base64 payload, so there "
+                + "are no bytes for the vision provider to read. Provide a "
+                + "data:image/...;base64,... URL.",
+                nameof(imageUrl));
+        }
+    }
+
+    /// <summary>
+    /// The shape of a refused target, safe to log and to put in an error message.
+    /// </summary>
+    /// <remarks>
+    /// A <c>data:</c> URL that reached the "everything else" branch does not start with
+    /// <c>data:</c> (a leading character put it there), but its payload must still never be echoed
+    /// into a log or an error, so the value is reduced to a label. Every other shape is truncated
+    /// to <c>maxLength</c> characters so a pathological caller-supplied value stays loggable.
+    /// </remarks>
+    private static string DescribeRejectedTarget(string imageUrl)
+        => imageUrl.TrimStart().StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+            ? "(inline image data)"
+            : Truncate(imageUrl, 80);
+
+    /// <summary>
+    /// Whether the provider can fetch the target itself. <see cref="Uri.TryCreate(string?, UriKind, out Uri?)"/>
+    /// accepts <c>file://</c> and other schemes, so the scheme check is not optional.
+    /// </summary>
+    private static bool IsAbsoluteHttpUrl(string value)
+        => Uri.TryCreate(value, UriKind.Absolute, out var uri)
+           && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
+    /// <summary>
+    /// The provider name for usage accounting, inferred from the configured base URL.
+    /// </summary>
+    private string ResolveProviderName()
+    {
+        var baseUri = _httpClient.BaseAddress?.ToString() ?? string.Empty;
+
+        if (baseUri.Contains("deepseek", StringComparison.OrdinalIgnoreCase)) return "deepseek";
+        if (baseUri.Contains("googleapis", StringComparison.OrdinalIgnoreCase)) return "google";
+        if (baseUri.Contains("anthropic", StringComparison.OrdinalIgnoreCase)) return "anthropic";
+        if (baseUri.Contains("openai", StringComparison.OrdinalIgnoreCase)) return "openai";
+
+        return "openai-compatible";
+    }
+
+    /// <summary>
+    /// Whether the configured provider is one that accepts the <c>thinking</c> request field and
+    /// needs it to stop its reasoning tokens consuming the whole output budget.
+    /// </summary>
+    /// <remarks>
+    /// Only DeepSeek, today. The field is not an OpenAI-compatible extension that others tolerate:
+    /// Gemini rejects the whole request with
+    /// <c>400 Invalid JSON payload received. Unknown name "thinking": Cannot find field.</c> (measured
+    /// 2026-09-22). Sending it unconditionally therefore broke every analysis against the Gemini
+    /// configuration `.env.example` used to recommend, and the failure was invisible because the
+    /// non-success branch answers from the filename-derived deterministic fallback.
+    /// </remarks>
+    private bool ProviderNeedsThinkingDisabled() =>
+        string.Equals(ResolveProviderName(), "deepseek", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Deserialises the provider's JSON, closing a truncated response when possible.
+    /// </summary>
+    /// <remarks>
+    /// A real failure observed in production: the provider stopped mid-string
+    /// (<c>Path: $.styling_notes | BytePositionInLine: 1050</c>) because the output ceiling was
+    /// reached, the whole document failed to parse, and callers saw an HTTP 500 instead of an
+    /// analysis. Everything before the truncation point is usually valid and useful, so the
+    /// partial object is closed and kept rather than discarded. The token ceiling is the real fix;
+    /// this is the safety net that turns a repeat into a thin-but-usable answer.
+    /// </remarks>
+    private static VisionApiResponse? TryDeserializeVisionResponse(string content, out bool repaired)
+    {
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+
+        try
+        {
+            repaired = false;
+            return JsonSerializer.Deserialize<VisionApiResponse>(content, options);
+        }
+        catch (JsonException)
+        {
+            // fall through to repair
+        }
+
+        foreach (var candidate in EnumerateClosedVariants(content))
+        {
+            try
+            {
+                var parsed = JsonSerializer.Deserialize<VisionApiResponse>(candidate, options);
+                // The document only parsed after the closing braces and/or the open string were
+                // synthesised, so everything after the cut is absent and a value cut mid-string is
+                // present only up to the cut. The caller logs that honestly.
+                repaired = true;
+                return parsed;
+            }
+            catch (JsonException)
+            {
+                // try the next variant
+            }
+        }
+
+        repaired = false;
+        return null;
+    }
+
+    /// <summary>
+    /// The ways a JSON object truncated inside a string value can be closed so that the completed
+    /// fields survive. Each variant is cheap to try and the caller keeps the first that parses.
+    /// </summary>
+    private static IEnumerable<string> EnumerateClosedVariants(string content)
+    {
+        var trimmed = content.TrimEnd();
+
+        // Cut back to the last complete key/value pair, then close the object.
+        var lastComma = trimmed.LastIndexOf(',');
+        if (lastComma > 0)
+        {
+            yield return trimmed[..lastComma] + "}";
+        }
+
+        // The truncation landed inside the final string: close the string, then the object.
+        yield return trimmed + "\"}";
+        yield return trimmed + "\"}}";
+
+        // Some providers also lose the closing brace only.
+        yield return trimmed + "}";
+    }
+
+    private static ImageAnalysisResultDto BuildResultFromParsed(VisionApiResponse parsed)
+    {
+        var desc = parsed.Description;
+        if (!string.IsNullOrWhiteSpace(parsed.StylingNotes))
+        {
+            desc = string.IsNullOrWhiteSpace(desc)
+                ? parsed.StylingNotes
+                : $"{desc} Styling Notes: {parsed.StylingNotes}";
+        }
+
+        var keywords = parsed.SuggestedKeywords ?? new List<string>();
+        if (!string.IsNullOrWhiteSpace(parsed.ColorTheme) && !keywords.Exists(k => string.Equals(k, parsed.ColorTheme, StringComparison.OrdinalIgnoreCase)))
+        {
+            keywords.Add(parsed.ColorTheme);
+        }
+        if (!string.IsNullOrWhiteSpace(parsed.Undertone) && !keywords.Exists(k => string.Equals(k, $"{parsed.Undertone} Undertone", StringComparison.OrdinalIgnoreCase)))
+        {
+            keywords.Add($"{parsed.Undertone} Undertone");
+        }
+        if (!string.IsNullOrWhiteSpace(parsed.GarmentType) && !keywords.Exists(k => string.Equals(k, parsed.GarmentType, StringComparison.OrdinalIgnoreCase)))
+        {
+            keywords.Add(parsed.GarmentType);
+        }
+
+        return new ImageAnalysisResultDto
+        {
+            Category = parsed.Category ?? "garment",
+            PrimaryColor = parsed.PrimaryColor ?? "unknown",
+            ColorHex = parsed.ColorHex,
+            SecondaryColors = parsed.SecondaryColors ?? new List<string>(),
+            Pattern = parsed.Pattern,
+            Style = parsed.Style,
+            Fabric = parsed.Fabric,
+            GarmentType = parsed.GarmentType,
+            SuggestedItemName = parsed.SuggestedItemName,
+            Description = desc,
+            StylingNotes = parsed.StylingNotes,
+            ConfidenceScore = parsed.ConfidenceScore > 0 ? parsed.ConfidenceScore : 0.95,
+            SuggestedKeywords = keywords
+        };
     }
 
     private static ImageAnalysisResultDto GenerateDeterministicAnalysis(string imageUrl, string? fileName = null, string? contextHint = null)
@@ -613,6 +962,13 @@ public class VisionService : IVisionService
             SuggestedItemName = suggestedName,
             Description = $"{description} Styling: {stylingNotes}",
             StylingNotes = stylingNotes,
+            // `ConfidenceScore` is NOT a liveness signal. It is primed above zero so the existing
+            // boundary contract (VisualEndpointsIntegrationTests asserts `> 0`) holds, but this
+            // fallback read no pixels: it pattern-matched the filename and hint text. The only
+            // honest liveness signal is `IsFallback`, and consumers must branch on that rather
+            // than on the score. The web client previously required `!isFallback && score > 0.85`
+            // and then, in a separate defect, still let its own client-side result win outright, so
+            // the `isFallback` flag was the signal that mattered and was discarded.
             ConfidenceScore = 0.95,
             IsFallback = true,
             SuggestedKeywords = new List<string> { category, garmentType, color, theme, fabric, pattern }

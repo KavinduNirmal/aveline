@@ -1,8 +1,11 @@
 using System.IO;
+using System.Security.Claims;
 using System.Text;
 using Aveline.Api.Configurations;
 using Aveline.Api.Common.Media;
+using Aveline.Api.Modules.Commerce.Services;
 using Aveline.Api.Modules.Media;
+using Aveline.Api.Modules.Shared.Repositories;
 using Aveline.Api.Modules.VisualIntelligence;
 using Aveline.Api.Modules.VisualIntelligence.DTOs;
 using Aveline.Api.Modules.VisualIntelligence.Models;
@@ -199,6 +202,56 @@ public static class CatalogEndpoints
         .Produces(StatusCodes.Status403Forbidden)
         .RequireAuthorization(AuthorizationConfiguration.BoutiqueCatalogManagePolicy);
 
+        group.MapPost("/items/{itemId:guid}/sales", async (
+            [FromRoute] Guid organizationId,
+            [FromRoute] Guid itemId,
+            [FromBody] RecordCatalogSaleDto dto,
+            ClaimsPrincipal principal,
+            [FromServices] ICatalogSaleService sales,
+            [FromServices] IUserRepository users,
+            CancellationToken cancellationToken) =>
+        {
+            dto.OrganizationId = organizationId;
+            var actorUserId = await ResolveUserIdAsync(principal, users, cancellationToken);
+
+            try
+            {
+                var receipt = await sales.RecordSaleAsync(
+                    organizationId, itemId, dto, actorUserId, cancellationToken);
+                return receipt is null
+                    ? Results.NotFound(new { error = "Catalog item not found." })
+                    : Results.Ok(receipt);
+            }
+            catch (InsufficientStockException ex)
+            {
+                // The request was well-formed; the shop's stock is what says no, so this is a
+                // conflict rather than a validation error.
+                return Results.Conflict(new
+                {
+                    code = "insufficient-stock",
+                    error = ex.Message,
+                    available = ex.Available,
+                    requested = ex.Requested
+                });
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        })
+        .WithName("CatalogRecordSale")
+        .WithSummary("Sell a catalog piece over the counter: decrements stock and records the takings.")
+        .Produces<CatalogSaleReceiptDto>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status409Conflict)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        // Selling at the counter is an operational act every admitted role performs, exactly like
+        // recording the customer interaction that already writes the same journal (a staff member
+        // must not be blocked from selling). It is not a `catalog:manage` edit of the piece.
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
+
         group.MapGet("/low-stock", async (
             [FromRoute] Guid organizationId,
             [FromQuery] int? threshold,
@@ -380,9 +433,17 @@ public static class CatalogEndpoints
                 // The same translation VisualEndpoints.AnalyzeImageAsync applies. A named
                 // reference the caller cannot see - another organisation's, unknown, or deleted -
                 // is a 404, never a resolved image and never a token (strategy §3.5, migration
-                // plan §7.5). Only this one exception type is caught, so every other fault still
-                // reaches the global handler as a 500.
+                // plan §7.5).
                 return Results.NotFound(new { error = "Image not found." });
+            }
+            catch (ArgumentException ex)
+            {
+                // The vision target refusal: a blank target, inline data the provider cannot read,
+                // or - the production defect - a relative Aveline media route that is neither an
+                // absolute http(s) URL nor inline image data. That is a caller error, not a
+                // provider fault, so it is a 400 with the service's own message rather than the
+                // global handler's 500. Everything else still propagates.
+                return Results.BadRequest(new { error = ex.Message });
             }
         })
         .WithName("CatalogAnalyzeImage")
@@ -464,6 +525,53 @@ public static class CatalogEndpoints
         .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status403Forbidden)
         .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
+
+        group.MapPut("/lookbooks/{id:guid}", async (
+            [FromRoute] Guid organizationId,
+            [FromRoute] Guid id,
+            [FromBody] UpdateOutfitCompositionDto dto,
+            [FromServices] IVisualService visualService,
+            CancellationToken cancellationToken) =>
+        {
+            dto.OrganizationId = organizationId;
+            var updated = await visualService.UpdateLookbookAsync(id, organizationId, dto, cancellationToken);
+            if (updated is null)
+            {
+                return Results.NotFound(new { error = "Lookbook not found." });
+            }
+
+            return Results.Ok(updated);
+        })
+        .WithName("CatalogUpdateLookbook")
+        .WithSummary("Rename or re-occasion a composed lookbook.")
+        .Produces<OutfitCompositionDto>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueCatalogManagePolicy);
+
+        group.MapDelete("/lookbooks/{id:guid}", async (
+            [FromRoute] Guid organizationId,
+            [FromRoute] Guid id,
+            [FromServices] IVisualService visualService,
+            CancellationToken cancellationToken) =>
+        {
+            var deleted = await visualService.DeleteLookbookAsync(id, organizationId, cancellationToken);
+            if (!deleted)
+            {
+                return Results.NotFound(new { error = "Lookbook not found." });
+            }
+
+            return Results.NoContent();
+        })
+        .WithName("CatalogDeleteLookbook")
+        .WithSummary("Remove a composed lookbook from the boutique.")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueCatalogManagePolicy);
 
         // --- Sourcing Requests ---
 
@@ -726,6 +834,28 @@ public static class CatalogEndpoints
             image.StorageProvider,
             CloudinaryInventoryImageStore.ProviderName,
             StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Resolves the authenticated caller's user id for the one catalog route that attributes a
+    /// write to a person (the counter sale). Returns <c>null</c> when the principal carries no
+    /// resolvable subject, which the ledger accepts as "written by a job or an unattributable
+    /// path" rather than inventing an id.
+    /// </summary>
+    private static async Task<Guid?> ResolveUserIdAsync(
+        ClaimsPrincipal principal,
+        IUserRepository users,
+        CancellationToken cancellationToken)
+    {
+        var clerkId = principal.FindFirstValue(ClaimTypes.NameIdentifier)
+                      ?? principal.FindFirstValue("sub");
+        if (string.IsNullOrEmpty(clerkId))
+        {
+            return null;
+        }
+
+        var dbUser = await users.GetByClerkIdAsync(clerkId, cancellationToken);
+        return dbUser?.Id;
+    }
 
     /// <summary>
     /// Runs a catalog item write, translating the catalog tier's image-size refusal

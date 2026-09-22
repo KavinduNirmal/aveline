@@ -133,6 +133,9 @@ export function MessageBubble({
               onSelectCustomer={onSelectCustomer}
               onOpenAttachment={onOpenAttachment}
               persona={persona}
+              // The staff bubble is filled with `primary`; the attachment surface has to know so it
+              // tints with the bubble's ink instead of punching a background-coloured hole in it.
+              tone={isOwn ? 'own' : 'other'}
             />
           )}
         </div>

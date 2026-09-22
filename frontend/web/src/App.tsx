@@ -80,6 +80,10 @@ export default function App() {
                 path="/app/b/:slug"
                 element={<Navigate to="overview" replace />}
               />
+              {/* One catalogue piece has its own URL, so its information page is linkable and
+                  survives a refresh. React Router ranks the literal `catalog` above `:section`, so
+                  this route wins for `/app/b/:slug/catalog/:itemId`. */}
+              <Route path="/app/b/:slug/catalog/:itemId" element={<TenantDashboard />} />
               <Route path="/app/b/:slug/:section" element={<TenantDashboard />} />
 
               {/* Administrator console. Nested inside the same guards as the tenant app, so an

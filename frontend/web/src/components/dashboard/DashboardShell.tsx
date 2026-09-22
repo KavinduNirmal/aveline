@@ -140,7 +140,10 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
   const { signOut } = useClerk()
   // The section is part of the URL (`/app/b/:slug/:section`), not component state, so a section
   // is linkable and survives a refresh. The bare slug route redirects here with `overview`.
-  const { section: sectionParam } = useParams<{ section?: string }>()
+  const { section: sectionParam, itemId: catalogItemId } = useParams<{
+    section?: string
+    itemId?: string
+  }>()
   // One window for the whole shell: every KPI panel reads this value, so two panels on the same
   // screen cannot describe different periods.
   const dashboardWindow = useDashboardWindow('30d')
@@ -155,8 +158,13 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
   // An unknown segment falls back to `overview` rather than rendering nothing, and a section the
   // role may not open is refused by the same `allowedSections` filter the nav uses — so a
   // hand-typed URL cannot render a panel the nav hides.
-  const section =
-    SECTIONS.some((item) => item.id === sectionParam) || sectionParam === 'upgrade'
+  //
+  // The piece route (`/app/b/:slug/catalog/:itemId`) spells `catalog` as a literal, so it carries an
+  // `itemId` param and **no** `section` param. Reading only `section` therefore sent a piece URL to
+  // `overview`; an `itemId` is what says the catalog is the section being viewed.
+  const section: SectionId = catalogItemId
+    ? 'catalog'
+    : SECTIONS.some((item) => item.id === sectionParam) || sectionParam === 'upgrade'
       ? (sectionParam as SectionId)
       : 'overview'
 
@@ -436,6 +444,9 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
             <CatalogPanel
               organization={organization}
               role={role}
+              openItemId={catalogItemId ?? null}
+              onOpenItem={(item) => navigate(`/app/b/${organization.slug}/catalog/${item.id}`)}
+              onCloseItem={() => navigate(`/app/b/${organization.slug}/catalog`)}
               onOpenSalonForCustomer={(_id, _name) => goToSection('salon')}
             />
           ) : activeSection === 'team' ? (

@@ -6064,3 +6064,126 @@ harnesses, which were corrected the same way the real composer handles it.
   `24 h × upload rate × 5 MB` per member, bounded in steady state by the 24 h sweep and the 7-day job.
 - **`conversations-api.test.ts` asserts the multipart header on a mocked client only.** The header's
   real behaviour was proven separately in a browser, which is why the browser check mattered.
+
+## Session 2026-09-22 (b) — The catalog media tier, the vision image target, and the colour nobody read (session start)
+
+**Task:** the owner uploaded catalog pieces and reported that they went to the **local database instead
+of Cloudinary**, that the vision agent then could not read the image (the only URL for it was a
+localhost/in-network route), and later that the **colour identification was wrong** — first the chip
+said "Emerald Green" for a fuchsia dress, then the colour *dot* reverted to a default.
+**Tool used:** DeepSeek Harness (deepseek-flash). The previous workstream's agents had been terminated;
+two of the three dispatched here were also cut off mid-flight (one before reporting, one after its first
+follow-up), so their work was verified from the tree rather than from a report, and the remainder was
+finished directly.
+**Branch:** `cloudinary-media-and-salon-image` — no branch created or switched; the orchestrator commits.
+
+### The four causes, each reproduced rather than inferred
+
+**RC-1 — the Cloudinary write tier had never been selected.** `Media:Provider` defaults to `database`
+(`MediaOptions.cs:13`), and `docker-compose.yml` passed **none** of the `Media__*` keys (the `api`
+service has no `env_file:`). The operator's documented `Media__Provider=cloudinary` opt-in in
+`.env.example` was therefore inert: `docker inspect aveline_api` showed `Media__SigningKey` and
+`Media__PublicBaseUrl` but no `Media__Provider`, and all eight `InventoryImages` rows carried
+`StorageProvider='database'`, an empty `StorageKey` and the bytes in `ImageData`. The credential was
+also incomplete (`CLOUDINARY_CLOUD_NAME` and `CLOUDINARY_URL` both empty), and
+`MediaOptionsValidator.ValidateOrThrow` refuses the boot on an incomplete credential, so the switch
+could not have booted even with the pass-through.
+
+**RC-2 — a *relative* URL reached the vision provider.** `AddProductModal.handleProcessFile` uploads the
+compressed image and then does `setImageUrl(uploadRes.url)`; that `url` is the relative Aveline route
+`/api/v1/orgs/{orgId}/catalog/images/{id}` (the literal value stored in `InventoryImages.ImageUrl`). A
+later "Analyze" click posted that relative path, `VisionService` forwarded it verbatim into
+`image_url.url`, and the provider answered
+`400 {"error":{"message":".messages[0]: Unsupported image_url format"}}`. `VisionService` then logged
+and silently returned `GenerateDeterministicAnalysis(...)` — a filename-derived colour with
+`IsFallback=true` and a primed `ConfidenceScore=0.95`. The API log timestamp `16:08:30` matches the row
+created at `16:08:25`. Reproduced directly against the configured endpoint: a relative path gives that
+exact error, `http://localhost:5091/…` and `http://api:8080/…` give "Failed to download image", and a
+`data:` URL gives **200**.
+
+**RC-3 — the agent's `HTTP 500`.** `aveline_agent` logged `Image analysis failed: vision backend error
+(HTTP 500)` twice: the reference arm minted a media token and threw
+`Media:SigningKey must be configured`. Compose now passes `MEDIA_SIGNING_KEY`, and the reference arm no
+longer mints at all.
+
+**RC-4 — the colour was computed, sent, and dropped twice over.** Two independent faults, both found by
+following the owner's screenshot rather than by reading the tests:
+- the **wire name**: `ImageAnalysisResultDto.PrimaryColor` is pinned to snake_case `primary_color` (for
+  the Python consumer) while the web read `raw.primaryColor`, so the colour was always `undefined` and
+  the literal `|| 'Emerald Green'` in `normalizeVisionAnalysis` won. That is the Elle plan's G5, fixed on
+  the .NET→Python boundary and left broken on the .NET→web one. An existing test appeared to cover it,
+  but its sample value *was* the default literal, so it passed for the wrong reason.
+- the **hex had nowhere to live**: the model's real `colorHex` (`#D5006D` for the dress) reached
+  `AddProductModal`, was put on the item, and was then omitted from the API payload;
+  `InventoryItems` has no `ColorHex` column and `InventoryItemDto` has no such field, so
+  `normalizeInventoryItem`'s `raw.colorHex || '#4B5563'` — a hardcoded gray — became the dot.
+
+### A fifth defect, found while proving the fix portable
+
+`thinking = new { type = "disabled" }` was sent on every request because DeepSeek's reasoning tokens
+otherwise consume the whole output budget (measured: 2049 reasoning tokens and no JSON at 2048). The
+comment claimed "Providers that do not know the field ignore it". **That is false**: Gemini's
+OpenAI-compatible endpoint answers `400 Invalid JSON payload received. Unknown name "thinking": Cannot
+find field.` Together with `.env.example` recommending a Gemini key and a **retired** model id
+(`gemini-2.0-flash` now answers `404`), a deployment following the documentation would have 400'd on
+every analysis and silently shown the filename-derived fallback — the same failure class as RC-2, masked
+locally because `.env` overrides all three `VISION_*` values to DeepSeek.
+
+### Fixes, in order
+
+| Cause | Fix |
+|---|---|
+| RC-1 | `docker-compose.yml` now passes **every** documented `Media__*` key through (17 names), not only the three rollout flags: the same inert-switch class applied to the image-URL kill switch and the Production escape hatch. `.env` set to `cloudinary` / `true` / `false`; docs corrected |
+| RC-2 server | `VisionService` classifies the target before spending a call and **refuses** an unusable one with `ArgumentException`; both analyze-image endpoints map it to `400`, which also fixed a blank target being a `500` |
+| RC-2 client | the drawer remembers the uploaded row id and re-analyses by `imageRefKind=inventoryImage`, so the provider is handed the stored bytes inline; a relative path is never posted (the modal skips the backend entirely when it has no usable target) |
+| RC-4a | the web reads `primary_color`, and `normalizeVisionAnalysis` no longer invents `'Emerald Green'`, `'Pure Mulberry Silk'`, `'Gold Zari Brocade'`, `'Contemporary Luxe'` or a synthesized couture description |
+| RC-4b | `ColorHex` persisted on `InventoryItems` (model, DTOs, service, migration) and carried in the web payload; the client stops defaulting an unknown hex to gray |
+| RC-5 | `thinking` is sent only when the resolved provider is DeepSeek; the provider guidance and the compose/appsettings defaults were made coherent |
+| hygiene | `VisualService` no longer injects the mint service it stopped using, and its XML doc no longer claims it mints a tokenised URL |
+
+### Baseline, and what the gates said
+
+- Full .NET suite **2930 passed / 0 failed** (25 m 34 s), up from 2910, after the vision-target slice.
+- Web full suite 1013 passed with **one** failure, `tenant-conformance.test.ts` rule 2. That rule greps
+  the **raw source text**, and two new *comments* in `AddProductModal.tsx` contained the literal
+  `<input`; rewording them fixed it. Not a component regression, and worth recording because the rule
+  reads comments as code.
+- Python 427 passed / 2 skipped **only** with the session's leaked `.env` variables unset:
+  `test_config.py::test_defaults_are_sane` asserts library defaults and the ambient `LLM_MODEL` etc.
+  override them. Proven by running the file under `env -i` (9/9 green), so the failure was environment
+  contamination, not a regression.
+- `flutter analyze` could not be re-run in this session: the Flutter SDK's `bin/cache` is read-only
+  under the current sandbox policy and `update_engine_version.sh` fails there. This change set contains
+  **no Dart changes** (`git status` shows only the unrelated `android/app/build.gradle.kts` and
+  `android/gradle.properties`, which belong to another workstream and were deliberately left
+  uncommitted), so the Flutter gate is untouched; the previously verified 1017 tests / clean analyze
+  stand.
+
+### Live end-to-end proof against the running stack
+
+- `GET /api/v1/orgs/{org}/catalog/images/{id}` for a Cloudinary row answers **302** to
+  `https://res.cloudinary.com/dj4k3qu2n/image/upload/w_800,f_auto,q_auto/v…/aveline/{org}/catalog/{id}.jpg`.
+- `POST /internal/visual/analyze-image` with `imageRefKind=inventoryImage` returns **200** with
+  `isFallback: false`, `primary_color: "Fuchsia Pink"`, `colorHex: "#D5006D"` — read back from
+  Cloudinary with `DualWrite=false`, which is the new code path that matters.
+- The same row addressed by its relative URL returns **400** with the new refusal message; a blank
+  target returns **400** instead of the old 500.
+- A fresh write through `/internal/visual/inventory` stored `StorageProvider='cloudinary'` with a real
+  `StorageKey` and **no** `ImageData`, and the CDN asset resolved (verified, then destroyed and the test
+  item deleted).
+- Before the composer change, the inlined-bytes approach was proven safe at the ceiling: DeepSeek
+  accepts a **3.24 M-character** `data:` URL (a 2.43 MB PNG, above the 2 MB catalog cap) with HTTP 200
+  in ~10.5 s, so the documented 8192-character limit applies to external URLs, not base64.
+
+### Outstanding, stated plainly
+
+- **The four pre-existing items keep their fabricated colour.** Their `Color` was written as
+  "Emerald Green" before the fix and no re-analysis is triggered by editing an item; correcting them
+  means re-running the analysis per item and updating the row, which needs the owner's go-ahead.
+- The authenticated browser walk for the drawer still needs a Clerk session; the live proof above used
+  the internal agent routes, which exercise the same row seams.
+- `Media:VisionUsePrivateDownload` remains declared and unread; `Vision:TimeoutSeconds`/`MaxRetries`
+  from the Elle plan are still unimplemented; `detail: "original"` is still not sent.
+- `AddProductModal` still invents a few save-time fallbacks (`'Multicolor'`, `'Silk Blend'`,
+  `'Classic Luxury'`, `confidenceScore ?? 0.92`). They were left because the reported defect was the
+  colour, but they are the same class as the ones removed and are recorded here rather than forgotten.

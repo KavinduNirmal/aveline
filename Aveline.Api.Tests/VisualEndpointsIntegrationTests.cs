@@ -583,6 +583,40 @@ public class VisualEndpointsIntegrationTests : IAsyncLifetime
             "only a real provider call sets this, so the fallback cannot be S5's gate");
     }
 
+    // --- The target refusal is a 400, never the global handler's 500 ---
+
+    /// <summary>
+    /// The production defect this pins: the catalog modal's upload response stores the relative
+    /// Aveline route <c>/api/v1/orgs/{orgId}/catalog/images/{id}</c> and posts it back to
+    /// analyze-image. <c>VisionService</c> refused it as a caller error, but this route's handler
+    /// translated only <see cref="KeyNotFoundException"/>, so the refusal reached the global
+    /// exception handler as a misleading <c>500</c>. This host runs the real
+    /// <see cref="Aveline.Api.Modules.VisualIntelligence.Services.VisionService"/>.
+    /// </summary>
+    [Fact]
+    public async Task AnalyzeImage_WithARelativeImageUrl_Returns400Not500()
+    {
+        var body = new
+        {
+            orgId = Guid.NewGuid(),
+            imageUrl = "/api/v1/orgs/2c8e6f14-5f0a-4d1e-9a3b-6b0f0d2c9a11/catalog/images/4f0a1e2d",
+        };
+
+        var response = await AnalyzeImageAsync(body);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var json = await response.Content.ReadAsStringAsync();
+        json.Should().Contain("absolute http(s) URL", "the error names the actual problem for the operator");
+    }
+
+    [Fact]
+    public async Task AnalyzeImage_WithABlankImageUrl_Returns400Not500()
+    {
+        var response = await AnalyzeImageAsync(new { orgId = Guid.NewGuid(), imageUrl = string.Empty });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
     // --- U2.2 (L4): the analyze-image contract the two cases above cannot detect ---
 
     /// <summary>

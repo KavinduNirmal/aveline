@@ -9,6 +9,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { cn } from '@/lib/utils'
 import { formatMoney } from '@/lib/format-money'
 import { generateQrCode } from '@/lib/catalog-api'
+import { buildItemQrJson, buildItemQrUrl } from './qrPayload'
 
 /** How the tag encodes the piece. */
 type QrFormat = 'json' | 'url' | 'sku'
@@ -22,6 +23,8 @@ const FORMATS: { id: QrFormat; label: string; hint: string }[] = [
 interface FloorTagStudioProps {
   /** The organization the QR is generated for. A missing id means no download is possible. */
   organizationId?: string | null
+  /** The boutique's slug, so the encoded URL names the shop rather than a bare piece id. */
+  organizationSlug?: string | null
   /** The piece's id, or the prospective id while it is still unsaved. */
   itemId: string
   sku: string
@@ -42,6 +45,7 @@ interface FloorTagStudioProps {
  */
 export function FloorTagStudio({
   organizationId,
+  organizationSlug,
   itemId,
   sku,
   name,
@@ -55,19 +59,13 @@ export function FloorTagStudio({
   const [downloadingPng, setDownloadingPng] = useState(false)
   const [downloadingSvg, setDownloadingSvg] = useState(false)
 
+  const target = { itemId, sku, organizationId, organizationSlug }
   const payload =
     format === 'sku'
       ? sku || 'AVL-000'
       : format === 'url'
-        ? `${typeof window !== 'undefined' ? window.location.origin : 'https://aveline.app'}/catalog/items/${itemId}`
-        : JSON.stringify({
-            type: 'aveline_inventory_item',
-            orgId: organizationId,
-            itemId,
-            sku: sku || 'AVL-000',
-            url: `/catalog/items/${itemId}`,
-            v: 1,
-          })
+        ? buildItemQrUrl(target)
+        : buildItemQrJson(target)
 
   const activeFormat = FORMATS.find((f) => f.id === format) ?? FORMATS[0]
 

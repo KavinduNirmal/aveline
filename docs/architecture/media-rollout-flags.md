@@ -16,8 +16,16 @@
 - **Locally / docker compose:** environment variables, `__` for `:` — `Media__Provider=cloudinary`,
   `Conversations__AttachmentRetentionDays=30`. `docker-compose.yml` passes the four Cloudinary
   credential names through (`CLOUDINARY_URL`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`,
-  `CLOUDINARY_CLOUD_NAME`); the `Media:*` keys themselves come from `appsettings.json` unless the
-  deployment overrides them.
+  `CLOUDINARY_CLOUD_NAME`) and every documented `Media:*` key, falling back to the
+  `appsettings.json` (`MediaOptions.cs`) default when the `.env` value is unset. Two exceptions are
+  worth knowing:
+  - the token signing pair keeps its own `.env` names: `MEDIA_SIGNING_KEY` and
+    `MEDIA_PUBLIC_BASE_URL` are interpolated and mapped into the container as `Media__SigningKey`
+    and `Media__PublicBaseUrl`;
+  - `Media__PublicBaseUrl`'s compose fallback is `http://api:8080` (the API's in-network origin),
+    **not** the empty `appsettings.json` value, because a token URL built from an empty origin is
+    useless to the agent service that fetches it. `MediaOptionsValidator` therefore cannot catch a
+    missing value here, which is why `.env.example` says it must be an origin the *caller* can reach.
 - **Production:** the deployment's secret/configuration store, using the same names as
   `appsettings.json` (`Media:Provider`) or their double-underscore environment form
   (`Media__Provider`). The three Cloudinary credentials are **never** bound into the committed
@@ -74,13 +82,14 @@ is resolved separately (below).
 | Name | Default | What it gates |
 |---|---|---|
 | `CLOUDINARY_URL` | empty | The primary credential form: `cloudinary://<key>:<secret>@<cloud_name>`, parsed once at startup |
-| `CLOUDINARY_API_KEY` | empty | The discrete fallback; must be set together with the secret |
+| `CLOUDINARY_API_KEY` | empty | The discrete fallback; must be set together with the secret and the cloud name |
 | `CLOUDINARY_API_SECRET` | empty | The discrete fallback's secret |
 | `CLOUDINARY_CLOUD_NAME` | empty | The discrete fallback's cloud name (not a secret; also carried by `CLOUDINARY_URL`) |
 
 `MediaOptionsValidator` refuses a boot when `Media:Provider=cloudinary` and no complete credential
-can be resolved (neither `CLOUDINARY_URL` nor the `API_KEY` + `API_SECRET` pair), and the
-implementation never reads the SDK's ambient global.
+can be resolved (neither `CLOUDINARY_URL` nor the `CLOUDINARY_API_KEY` +
+`CLOUDINARY_API_SECRET` + `CLOUDINARY_CLOUD_NAME` triple), and the implementation never reads the
+SDK's ambient global.
 
 ## Operational prerequisites (not configuration keys)
 

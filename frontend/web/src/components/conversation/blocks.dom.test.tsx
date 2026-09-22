@@ -14,6 +14,8 @@ vi.mock('@/lib/api', () => ({
 }))
 
 import { BlockList, BlockRenderer } from './blocks'
+import { MessageBubble } from './MessageBubble'
+import type { ChatMessage } from '@/contexts/ConversationsContext'
 
 /** The authenticated serve route a stored attachment carries in `block.url` (strategy §3.8). */
 const STORED_ROUTE =
@@ -194,5 +196,76 @@ describe('AttachmentBlock rendering and access', () => {
 
     expect(apiGet).not.toHaveBeenCalled()
     expect(screen.getAllByText('dress.png')).toHaveLength(2)
+  })
+
+  it('captions an opaque generated filename as "Photo" and keeps the real name on the control', async () => {
+    apiGet.mockResolvedValue({
+      data: new ArrayBuffer(4),
+      headers: { 'content-type': 'image/png' },
+    })
+    const generated = '8b420c6fbc31eea2d64a5e2b1c3d4e5f.jpg'
+
+    render(<BlockRenderer block={attachmentBlock('a-hash', { fileName: generated })} />)
+
+    const image = await screen.findByRole('img', { name: generated })
+    const plate = image.closest('button') as HTMLButtonElement
+
+    // The wall of hex is not the caption; it stays reachable as the tooltip and in the viewer.
+    expect(within(plate).getByText('Photo')).toBeInTheDocument()
+    expect(within(plate).queryByText(generated)).not.toBeInTheDocument()
+    expect(plate).toHaveAttribute('title', generated)
+  })
+
+  it('keeps a human filename in the caption', async () => {
+    apiGet.mockResolvedValue({
+      data: new ArrayBuffer(4),
+      headers: { 'content-type': 'image/png' },
+    })
+
+    render(<BlockRenderer block={attachmentBlock('a-human')} />)
+
+    const image = await screen.findByRole('img', { name: 'dress.png' })
+    const plate = image.closest('button') as HTMLButtonElement
+    expect(within(plate).getByText('dress.png')).toBeInTheDocument()
+  })
+
+  it('tints the plate with the bubble ink on the staff surface, not a background-coloured hole', async () => {
+    apiGet.mockResolvedValue({
+      data: new ArrayBuffer(4),
+      headers: { 'content-type': 'image/png' },
+    })
+
+    render(<BlockList blocks={[attachmentBlock('a-own')]} tone="own" />)
+
+    const image = await screen.findByRole('img', { name: 'dress.png' })
+    const plate = image.closest('button') as HTMLButtonElement
+    expect(plate.className).toContain('text-primary-foreground')
+    expect(plate.className).not.toContain('bg-background')
+  })
+
+  it('puts a staff message\'s image attachment on the staff surface', async () => {
+    apiGet.mockResolvedValue({
+      data: new ArrayBuffer(4),
+      headers: { 'content-type': 'image/png' },
+    })
+    const message = {
+      id: 'm-own',
+      conversationId: 'c1',
+      authorKind: 'Staff',
+      agentKey: null,
+      authorUserId: 'u1',
+      kind: 'Note',
+      contentBlocks: [attachmentBlock('a-msg')],
+      contentHash: null,
+      replyToMessageId: null,
+      status: 'Published',
+      createdAt: new Date().toISOString(),
+    } as unknown as ChatMessage
+
+    render(<MessageBubble message={message} isOwn />)
+
+    const image = await screen.findByRole('img', { name: 'dress.png' })
+    const plate = image.closest('button') as HTMLButtonElement
+    expect(plate.className).toContain('text-primary-foreground')
   })
 })

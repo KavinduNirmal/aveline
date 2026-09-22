@@ -1815,6 +1815,48 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/v1/orgs/{organizationId}/catalog/items/{itemId}/sales:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - $ref: "#/components/parameters/CatalogItemId"
+    post:
+      tags: [Catalog & Visual Intelligence]
+      summary: Sell a catalog piece over the counter
+      operationId: catalogRecordSale
+      description: |
+        Decrements the piece's stock by `quantity`, derives its stock status (zero becomes
+        `reserved`, two or fewer `low_stock`, otherwise `available`) and appends the money to the
+        boutique's takings journal as one `Sale` / `Verified` entry. The two writes are one call,
+        so the catalog and the register cannot disagree about whether a sale happened.
+
+        `unitPrice` defaults to the piece's catalog price. A sale must have a positive total; a
+        zero-amount sale is refused (`400`) rather than allowed to fail the journal's
+        positive-amount constraint. Asking for more pieces than are on hand is `409`
+        `insufficient-stock`, and an archived piece cannot be sold (`400`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CatalogSaleRequest" }
+      responses:
+        "200":
+          description: The sale receipt, naming the journal row it wrote
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogSaleReceipt" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            `insufficient-stock` — the request asked for more pieces than the catalog row holds.
+            Nothing was sold and the stock is unchanged.
+
   /api/v1/orgs/{organizationId}/catalog/items/{itemId}/status:
     parameters:
       - $ref: "#/components/parameters/OrganizationId"
@@ -2131,6 +2173,55 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/catalog/lookbooks/{id}:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      tags: [Catalog & Visual Intelligence]
+      summary: Rename or re-occasion a composed lookbook
+      operationId: catalogUpdateLookbook
+      description: |
+        Every field is optional: an omitted field keeps the value the row already stores, and
+        `styleNotes` set to an empty string clears the note. The item composition is not editable
+        here — a look's pieces are set by the stylist compose route, so a rename cannot change the
+        total the row describes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CatalogLookbookUpdateRequest" }
+      responses:
+        "200":
+          description: The updated lookbook
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogLookbook" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Catalog & Visual Intelligence]
+      summary: Remove a composed lookbook from the boutique
+      operationId: catalogDeleteLookbook
+      responses:
+        "204":
+          description: Removed, with its item rows cascading
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /api/v1/orgs/{organizationId}/catalog/sourcing:
     parameters:
@@ -7955,6 +8046,55 @@ components:
           type: array
           items: { $ref: "#/components/schemas/CatalogItem" }
         totalLookPrice: { type: number }
+    CatalogSaleRequest:
+      type: object
+      description: The counter-sale body (`RecordCatalogSaleDto`). `organizationId` comes from the route.
+      required: [quantity]
+      properties:
+        quantity:
+          type: integer
+          minimum: 1
+          description: How many pieces sold. Must not exceed the stock on hand.
+        unitPrice:
+          type: number
+          nullable: true
+          description: |
+            The price one piece sold for. Omitted means the catalog price; supplied means the
+            counter agreed a different one. Must be greater than zero.
+        customerId:
+          type: string
+          format: uuid
+          nullable: true
+          description: The client the sale is attributed to, when the counter captured one.
+        note: { type: string, nullable: true }
+    CatalogSaleReceipt:
+      type: object
+      description: What the counter gets back (`CatalogSaleReceiptDto`).
+      properties:
+        itemId: { type: string, format: uuid }
+        itemName: { type: string }
+        sku: { type: string, nullable: true }
+        quantitySold: { type: integer }
+        unitPrice: { type: number }
+        totalAmount: { type: number }
+        remainingStock:
+          type: integer
+          description: The stock left after the sale. A real measurement, including a measured zero.
+        status: { type: string, enum: [available, low_stock, reserved, archived] }
+        ledgerEntryId:
+          type: string
+          format: uuid
+          description: The takings-journal row the register will show for this sale.
+        recordedAtUtc: { type: string, format: date-time }
+    CatalogLookbookUpdateRequest:
+      type: object
+      description: |
+        The editable metadata of a composed lookbook (`UpdateOutfitCompositionDto`). Every field is
+        optional; an omitted field keeps the stored value, and an empty `styleNotes` clears it.
+      properties:
+        name: { type: string, nullable: true }
+        occasion: { type: string, nullable: true }
+        styleNotes: { type: string, nullable: true }
     CatalogSourcingRequest:
       type: object
       properties:

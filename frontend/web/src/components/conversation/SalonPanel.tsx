@@ -60,9 +60,17 @@ export function SalonPanel() {
     send,
     decide,
     selectCustomer,
+    pendingAttachments,
+    attach,
+    retryAttachment,
+    removeAttachment,
   } = useConversations()
 
   const activeConversation = conversations.find((c) => c.id === activeConversationId)
+  // The tray is keyed by conversation in the context, so a section switch does not orphan it.
+  const pendingForActive = activeConversationId
+    ? (pendingAttachments[activeConversationId] ?? [])
+    : []
   const headerTitle = activeConversation ? salonLabel(activeConversation) : 'Salon'
   const headerSubtitle = activeConversation
     ? isGeneralSalon(activeConversation)
@@ -168,7 +176,17 @@ export function SalonPanel() {
             />
           </div>
           <Composer
-            onSend={(text) => void send(text)}
+            onSend={(text, attachmentIds) => send(text, attachmentIds)}
+            onAttach={(files) =>
+              activeConversationId ? attach(activeConversationId, files) : Promise.resolve([])
+            }
+            pendingAttachments={pendingForActive}
+            onRetryAttachment={(attachmentId) => {
+              if (activeConversationId) void retryAttachment(activeConversationId, attachmentId)
+            }}
+            onRemoveAttachment={(attachmentId) => {
+              if (activeConversationId) removeAttachment(activeConversationId, attachmentId)
+            }}
             disabled={!activeConversationId}
             sending={sending}
           />

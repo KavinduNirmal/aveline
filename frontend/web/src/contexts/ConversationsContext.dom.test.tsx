@@ -147,7 +147,18 @@ function Harness({ file }: { file: File }) {
       >
         remove
       </button>
-      <button onClick={() => void ctx.send(text, ['att-held'])}>send</button>
+      {/*
+        The real Composer awaits this and keeps the text on rejection. The harness has no such
+        caller, so it acknowledges the rejection explicitly: a failed send must reject (the
+        Composer depends on that signal), and an unhandled rejection here would fail the run.
+      */}
+      <button
+        onClick={() => {
+          void ctx.send(text, ['att-held']).catch(() => {})
+        }}
+      >
+        send
+      </button>
     </div>
   )
 }

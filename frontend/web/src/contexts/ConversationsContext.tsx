@@ -108,6 +108,12 @@ export interface PendingAttachment {
   analysable: boolean
   sizeBytes: number
   error?: string
+  /**
+   * Whether retrying this upload could plausibly succeed. False for a denial the server will not
+   * reconsider (403/404), true for a network, timeout or 5xx failure. The tray reads this rather
+   * than matching the error wording, so the two cannot drift apart.
+   */
+  retryable: boolean
 }
 
 /** Mints the idempotency key for a composed message; every retry of that message reuses it. */
@@ -118,9 +124,23 @@ function mintClientMessageId(): string {
   return `cmsg-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
+/** The HTTP status an axios-style upload failure carries, when it carries one. */
+function uploadFailureStatus(error: unknown): number | undefined {
+  return (error as { response?: { status?: number } } | null)?.response?.status
+}
+
+/**
+ * Whether the failure is a denial the server will not reconsider, so a retry would be pointless.
+ * The value travels on the chip so the tray never has to match the message text.
+ */
+function isPermanentUploadFailure(error: unknown): boolean {
+  const status = uploadFailureStatus(error)
+  return status === 403 || status === 404
+}
+
 /** A message for a failed upload, distinguishing a genuine denial from a transient failure. */
 function describeUploadFailure(error: unknown): string {
-  const status = (error as { response?: { status?: number } } | null)?.response?.status
+  const status = uploadFailureStatus(error)
   if (status === 403) return "You don't have access to this thread."
   if (status === 404) return 'This thread is no longer available.'
   return 'That file could not be uploaded. Check your connection and try again.'
@@ -610,7 +630,16 @@ export function ConversationsProvider({
       } catch (error) {
         updatePending(conversationId, (held) =>
           held.map((a) =>
-            a.id === chip.id ? { ...a, status: 'failed', error: describeUploadFailure(error) } : a,
+            a.id === chip.id
+              ? {
+                  ...a,
+                  status: 'failed',
+                  error: describeUploadFailure(error),
+                  // A denial the server will not reconsider is not worth retrying; everything
+                  // else (network, timeout, 5xx) is.
+                  retryable: !isPermanentUploadFailure(error),
+                }
+              : a,
           ),
         )
       }
@@ -651,6 +680,8 @@ export function ConversationsProvider({
         storedContentType: null,
         analysable: false,
         sizeBytes: item.byteLength,
+        // A fresh pick can always be retried: nothing has been denied yet.
+        retryable: true,
       }))
       updatePending(conversationId, (held) => [...held, ...chips])
       await Promise.all(chips.map((chip) => runUpload(conversationId, chip)))
@@ -745,10 +776,14 @@ export function ConversationsProvider({
         // Only once the user message is confirmed does Aveline's activity bubble appear.
         setAgentActivity({ startedAt: Date.now(), currentState: 'thinking' })
         applyAgentState('thinking')
-      } catch {
+      } catch (error) {
         setMessages((prev) =>
           prev.map((m) => (m.id === optimisticId ? { ...m, pending: 'failed' } : m)),
         )
+        // Rethrow so the caller can tell a failed send from a confirmed one. The optimistic row
+        // above is the visual state; this rejection is the control-flow signal the Composer needs
+        // to keep the textarea and the tray, because only a confirmed send may clear them.
+        throw error
       } finally {
         setSending(false)
       }

@@ -122,10 +122,17 @@ public class CatalogWriteAuthorizationTests
         var index = source.IndexOf("images/{imageId:guid}", StringComparison.Ordinal);
         Assert.True(index > 0, "the image route must exist");
 
-        var tail = source[index..Math.Min(source.Length, index + 2000)];
-        Assert.Contains(".AllowAnonymous()", tail);
+        // The reason must sit between the route and its .AllowAnonymous(): that is what "recorded
+        // beside the attribute" means. The window is *found*, not a fixed character count, because
+        // a fixed count silently stops covering the attribute as the route body grows.
+        var allowAnonymous = source.IndexOf(".AllowAnonymous()", index, StringComparison.Ordinal);
+        Assert.True(
+            allowAnonymous > index,
+            "the image route must still call .AllowAnonymous()");
+
+        var between = source[index..allowAnonymous];
         Assert.Matches(
             new Regex(@"public imagery|Cloudinary", RegexOptions.IgnoreCase),
-            tail);
+            between);
     }
 }

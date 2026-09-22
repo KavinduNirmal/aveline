@@ -84,6 +84,30 @@ void main() {
       expect(original.isEmpty, isTrue);
       expect(changed.isSelected(CatalogFilterGroup.fabric, 'Velvet'), isTrue);
     });
+
+    test('value equality and hashCode work across identical selections', () {
+      final a = const CatalogFilters.none()
+          .toggle(CatalogFilterGroup.category, 'Sarees')
+          .toggle(CatalogFilterGroup.size, '38');
+      final b = const CatalogFilters.none()
+          .toggle(CatalogFilterGroup.size, '38')
+          .toggle(CatalogFilterGroup.category, 'Sarees');
+
+      expect(a, equals(b));
+      expect(a.hashCode, equals(b.hashCode));
+    });
+
+    test('round-trips through query parameters', () {
+      final filters = const CatalogFilters.none()
+          .toggle(CatalogFilterGroup.category, 'Sarees')
+          .toggle(CatalogFilterGroup.category, 'Gowns')
+          .toggle(CatalogFilterGroup.price, '25k - 75k');
+
+      final params = filters.toQueryParameters();
+      final restored = CatalogFilters.fromQueryParameters(params);
+
+      expect(restored, equals(filters));
+    });
   });
 
   group('CatalogFilterGroup', () {

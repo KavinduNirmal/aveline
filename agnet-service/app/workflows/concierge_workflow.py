@@ -27,10 +27,11 @@ from app.agents.commerce.graph import build_commerce_graph
 from app.agents.customer_memory.graph import build_memory_graph
 from app.agents.customer_memory.parsing import parse_message
 from app.agents.visual_insight.graph import build_visual_graph
+from app.context import compact
 from app.core.config import get_settings
 from app.customer_resolution import resolve_customer
 from app.gate import classify_by_rules
-from app.llm.runtime import memory_llm_or_none, visual_llm_or_none
+from app.llm.runtime import memory_llm_or_none, visual_llm_or_none, workflow_llm_or_none
 from app.observability.metrics import get_agent_metrics
 from app.observability.tracing import chain_of_thought_span
 from app.schemas.response import AgentMetadata, AgentResponse, AgentStatus
@@ -55,6 +56,12 @@ class ConciergeState(TypedDict, total=False):
 
     message: str
     org_context: dict[str, Any]
+    # Conversation context (ADR-023, W1). `history` is the bounded transcript window, newest
+    # last; `thread_summary` is what fell outside it; `pinned_slots` is the working set that must
+    # survive trimming. All three are additive: a run without a conversation id leaves them empty.
+    history: list[dict[str, Any]]
+    thread_summary: str | None
+    pinned_slots: dict[str, str]
     intent: dict[str, Any] | None
     # Shared customer resolution (Issue #161): a serialized CustomerResolution.
     resolution: dict[str, Any] | None
@@ -69,6 +76,60 @@ class ConciergeState(TypedDict, total=False):
 # ---------------------------------------------------------------------------
 # Nodes
 # ---------------------------------------------------------------------------
+
+
+async def run_load_context(state: ConciergeState) -> dict[str, Any]:
+    """Load the conversation's transcript window and compact it to the token budget (ADR-023, W1).
+
+    Runs before the intent gate so every downstream decision sees the same bounded context. It is
+    deliberately best-effort: a backend failure leaves the window empty and the run proceeds,
+    because losing history degrades an answer but must never prevent one.
+    """
+    org_context = state.get("org_context") or {}
+    org_id = org_context.get("organization_id") or org_context.get("org_id")
+    conversation_id = org_context.get("conversation_id")
+
+    if not org_id or not conversation_id:
+        # A staff query with no bound conversation, or a caller that did not supply one.
+        return {"history": [], "thread_summary": None, "pinned_slots": {}}
+
+    settings = get_settings()
+    try:
+        payload = await ToolRegistry().get_conversation_history(
+            str(org_id), str(conversation_id), limit=settings.context_window_turns
+        )
+    except Exception:  # noqa: BLE001 - context is an enhancement, never a precondition
+        logger.exception(
+            "Failed to load conversation history; continuing without a transcript window. "
+            "conversationId=%s",
+            conversation_id,
+        )
+        return {"history": [], "thread_summary": None, "pinned_slots": {}}
+
+    turns = (payload or {}).get("items") or []
+    if not isinstance(turns, list):
+        turns = []
+
+    window = await compact(
+        turns,
+        token_budget=settings.context_window_tokens,
+        llm=workflow_llm_or_none(settings),
+        prior_summary=state.get("thread_summary"),
+        prior_pinned=state.get("pinned_slots"),
+    )
+
+    logger.debug(
+        "Context window: %d turn(s) kept, %d compacted, ~%d tokens.",
+        len(window.kept),
+        len(turns) - len(window.kept),
+        window.estimated_tokens,
+    )
+
+    return {
+        "history": window.kept,
+        "thread_summary": window.thread_summary,
+        "pinned_slots": window.pinned_slots,
+    }
 
 
 def run_intent_gate(state: ConciergeState) -> dict[str, Any]:
@@ -515,6 +576,7 @@ def build_concierge_graph(collector: TelemetryCollector | None = None):
     def node(name: str, node_fn: Callable[..., Any]) -> Callable[..., Any]:
         return _instrumented_node(name, node_fn, collector)
 
+    graph.add_node("load_context", node("load_context", run_load_context))
     graph.add_node("intent_gate", node("intent_gate", run_intent_gate))
     graph.add_node("resolve_customer", node("resolve_customer", run_resolve_customer))
     graph.add_node("memory_agent", node("memory_agent", run_memory_agent))
@@ -522,7 +584,8 @@ def build_concierge_graph(collector: TelemetryCollector | None = None):
     graph.add_node("commerce_agent", node("commerce_agent", run_commerce_agent))
     graph.add_node("formulate_response", node("formulate_response", formulate_response))
 
-    graph.add_edge(START, "intent_gate")
+    graph.add_edge(START, "load_context")
+    graph.add_edge("load_context", "intent_gate")
     graph.add_conditional_edges("intent_gate", _route_after_intent)
     graph.add_conditional_edges("resolve_customer", _route_after_resolve)
     graph.add_conditional_edges("memory_agent", _route_after_memory)
@@ -560,6 +623,9 @@ async def run_concierge(
     initial: dict[str, Any] = {
         "message": message,
         "org_context": org_context or {},
+        "history": [],
+        "thread_summary": None,
+        "pinned_slots": {},
         "intent": None,
         "resolution": None,
         "memory_output": None,

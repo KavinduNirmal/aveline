@@ -40,6 +40,15 @@ class Settings(BaseSettings):
     # 0 disables the delay (production-safe default).
     agent_state_delay_ms: int = 0
 
+    # --- Conversation context window (ADR-023, W1) ---
+    # How many transcript turns are fetched per run. Bounded because the window is a context
+    # budget, not an archive: the full transcript stays in the API's Messages table.
+    context_window_turns: int = 20
+    # Approximate token ceiling for the transcript window before it is compacted into the
+    # rolling thread summary. Measured in tokens rather than messages because one turn carrying
+    # an image is not one turn of text.
+    context_window_tokens: int = 2000
+
     # --- Database (PostgreSQL + pgvector) ---
     database_url: str = ""
 

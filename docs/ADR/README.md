@@ -34,6 +34,7 @@ control as an audit trail.
 | `ADR-020-multimodal-vision-provider.md` | Multimodal vision provider — centralized OpenAI-compatible `VisionService`, config resolution, ADR-010 Blossom usage tracking, deterministic offline fallback |
 | `ADR-021-per-user-salon-ownership.md` | Per-user ownership of the general Salon — supersedes ADR-016 decision 1 in part; customer-bound Salons stay organization-shared |
 | `ADR-022-media-storage-and-access.md` | Media storage and access — the two-tier Cloudinary model (`upload` catalog vs `authenticated` protected), the streaming token proxy, the tag/context schema, "no third-party CDN" (AUP §4.2), R2 as the recorded escape hatch, and the deferred `ImageData` drop |
+| `ADR-023-conversation-context-and-supervisor.md` | Layered conversation context (bounded turn window + rolling thread summary + reusable pgvector memory + on-demand tools) and the supervisor LLM that replaces the keyword table as routing authority; clarification becomes a first-class outcome instead of a resolution veto; handbook/product-help lane deferred to its own ADR |
 
 ## ADR Template
 

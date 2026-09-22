@@ -1007,6 +1007,76 @@ public class ConversationServiceTests
     }
 
     [Fact]
+    public async Task SendStaffNoteAsync_ReplaysWithTheSameAttachmentIds_ReturnsTheStoredMessage()
+    {
+        // A retry after an ambiguous timeout resends the whole composed message: the same key
+        // **and** the same attachment ids. The first attempt already bound those ids, so the
+        // replay must return the stored row (with its blocks) instead of re-resolving the ids
+        // and refusing them as "already attached".
+        var orgId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var salon = await _sut.GetOrCreateSalonAsync(orgId, userId, null, CancellationToken.None);
+        var attachment = await _sut.CreateAttachmentAsync(
+            orgId, userId, salon.Id, [1, 2, 3], "image/png", "photo.png", 800, 600, CancellationToken.None);
+        var key = Guid.NewGuid();
+
+        var first = await _sut.SendStaffNoteAsync(
+            orgId, userId, salon.Id, "Here it is.", key, [attachment!.Id], CancellationToken.None);
+        var second = await _sut.SendStaffNoteAsync(
+            orgId, userId, salon.Id, "Here it is.", key, [attachment.Id], CancellationToken.None);
+
+        // The same stored row, with identical attachment blocks, and no second bind or brief.
+        Assert.Equal(first.Id, second.Id);
+        Assert.Equal(first.ContentBlocks.GetRawText(), second.ContentBlocks.GetRawText());
+        Assert.Equal("attachment", second.ContentBlocks[1].GetProperty("type").GetString());
+        Assert.Equal(attachment.Id, second.ContentBlocks[1].GetProperty("attachmentId").GetGuid());
+        Assert.Equal(1, _agent.PostCount);
+        // The greeting plus exactly one staff note.
+        Assert.Equal(2, _messages.SaveCount);
+    }
+
+    [Fact]
+    public async Task SendStaffNoteAsync_RejectsAReusedKeyWithDifferentTextAndTheSameAttachments()
+    {
+        // The replay lookup runs before attachment resolution, so a same-key retry whose words
+        // changed reaches the conflict check instead of being refused as "already attached".
+        var orgId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var salon = await _sut.GetOrCreateSalonAsync(orgId, userId, null, CancellationToken.None);
+        var attachment = await _sut.CreateAttachmentAsync(
+            orgId, userId, salon.Id, [1], "image/png", "photo.png", null, null, CancellationToken.None);
+        var key = Guid.NewGuid();
+        await _sut.SendStaffNoteAsync(
+            orgId, userId, salon.Id, "On my way.", key, [attachment!.Id], CancellationToken.None);
+
+        await Assert.ThrowsAsync<MessageIdempotencyConflictException>(() => _sut.SendStaffNoteAsync(
+            orgId, userId, salon.Id, "Something else entirely.", key, [attachment.Id], CancellationToken.None));
+
+        Assert.Equal(1, _agent.PostCount);
+    }
+
+    [Fact]
+    public async Task SendStaffNoteAsync_ValidatesAttachmentsBeforeWritingTheMessage()
+    {
+        // A fresh write resolves and validates its attachments before the row is written: when
+        // any id in the send is bad, no message is stored and the good upload stays unbound and
+        // sweepable rather than half-bound to a row that exists.
+        var orgId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var salon = await _sut.GetOrCreateSalonAsync(orgId, userId, null, CancellationToken.None);
+        var good = await _sut.CreateAttachmentAsync(
+            orgId, userId, salon.Id, [1], "image/png", "good.png", null, null, CancellationToken.None);
+        var savesBefore = _messages.SaveCount;
+
+        await Assert.ThrowsAsync<AttachmentBindingException>(() => _sut.SendStaffNoteAsync(
+            orgId, userId, salon.Id, "Mixed.", null, [good!.Id, Guid.NewGuid()], CancellationToken.None));
+
+        Assert.Equal(savesBefore, _messages.SaveCount);
+        Assert.Null(_attachments.All.Single(a => a.Id == good.Id).MessageId);
+        Assert.Equal(0, _agent.PostCount);
+    }
+
+    [Fact]
     public async Task GetAttachmentAsync_RequiresAVisibleConversation()
     {
         var orgId = Guid.NewGuid();

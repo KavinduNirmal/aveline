@@ -222,14 +222,12 @@ public class ConversationService : IConversationService
         var conversation = await _conversations.GetVisibleToUserAsync(orgId, conversationId, userId, cancellationToken)
             ?? throw new InvalidOperationException("Conversation not found in this organization.");
 
-        // Resolved and validated **before** the message is written, so a bad id leaves the
-        // uploads unbound and sweepable rather than half-binding them to a stored message.
-        var attachments = await ResolveAttachmentsAsync(orgId, conversationId, attachmentIds, cancellationToken);
-        var contentBlocksJson = SerializeNoteBlocks(text, attachments);
-
         // A retry of one composed message must land on the row the first attempt stored. The
         // same key with the same words is a replay (200 with that row, no second agent brief);
         // the same key with different words is refused rather than silently written twice.
+        // This lookup runs before the attachments are resolved: the stored row already carries
+        // its blocks, so a retry naming the ids the first attempt bound must return that row
+        // rather than re-resolve (and refuse) ids that are, correctly, already attached.
         if (clientMessageId is not null)
         {
             var existing = await _messages.GetByClientMessageIdAsync(
@@ -239,6 +237,12 @@ public class ConversationService : IConversationService
                 return ResolveReplay(existing, text, conversationId, clientMessageId.Value);
             }
         }
+
+        // A fresh write resolves and validates its attachments **before** the message is
+        // written, so a bad id leaves the uploads unbound and sweepable rather than
+        // half-binding them to a stored message.
+        var attachments = await ResolveAttachmentsAsync(orgId, conversationId, attachmentIds, cancellationToken);
+        var contentBlocksJson = SerializeNoteBlocks(text, attachments);
 
         var message = new Message
         {

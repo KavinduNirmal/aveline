@@ -173,3 +173,49 @@ export async function compressAndResizeImage(
     }
   })
 }
+
+/**
+ * The decoded byte length of a data URL's payload, without allocating the bytes.
+ *
+ * Base64 inflates a payload by roughly 4/3, so a data URL's string length is not the size of the
+ * file it carries and must never be compared against a byte cap. This is the number to compare.
+ */
+export function dataUrlByteLength(dataUrl: string): number {
+  const comma = dataUrl.indexOf(',')
+  if (comma < 0) return 0
+  const meta = dataUrl.slice(0, comma)
+  const payload = dataUrl.slice(comma + 1)
+
+  if (!/;base64/i.test(meta)) {
+    return new TextEncoder().encode(decodeURIComponent(payload)).length
+  }
+
+  const clean = payload.replace(/\s/g, '')
+  if (clean.length === 0) return 0
+  const padding = clean.endsWith('==') ? 2 : clean.endsWith('=') ? 1 : 0
+  return Math.floor((clean.length * 3) / 4) - padding
+}
+
+/**
+ * Rebuilds the bytes a data URL carries as a Blob, preserving its declared media type.
+ *
+ * This is what turns the optimizer's canvas output back into something uploadable as multipart
+ * form data instead of re-encoding the same bytes as base64 JSON.
+ */
+export function dataUrlToBlob(dataUrl: string): Blob {
+  const comma = dataUrl.indexOf(',')
+  const meta = comma < 0 ? '' : dataUrl.slice(0, comma)
+  const payload = comma < 0 ? '' : dataUrl.slice(comma + 1)
+  const contentType = /^data:([^;,]*)/i.exec(meta)?.[1] || 'application/octet-stream'
+
+  if (!/;base64/i.test(meta)) {
+    return new Blob([new TextEncoder().encode(decodeURIComponent(payload))], { type: contentType })
+  }
+
+  const binary = atob(payload.replace(/\s/g, ''))
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+  return new Blob([bytes], { type: contentType })
+}

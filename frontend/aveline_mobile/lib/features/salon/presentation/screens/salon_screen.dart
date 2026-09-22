@@ -8,6 +8,8 @@ import '../../../../core/network/conversation_realtime_service.dart';
 import '../../../../core/notifications/realtime_connection_factory.dart';
 import '../../../../core/providers/agent_state_provider.dart';
 import '../../../../core/providers/user_provider.dart';
+import '../../../conversations/presentation/attachment_picker.dart';
+import '../../../conversations/presentation/client_thread_controller.dart';
 import '../../data/conversation_api.dart';
 import '../../domain/agent_activity.dart';
 import '../../domain/agent_state.dart';
@@ -24,7 +26,10 @@ import '../widgets/salon_composer.dart';
 /// Staff messages are sent optimistically (shown immediately with a Sending… status), and
 /// Aveline's live reasoning is reflected in an activity bubble until her reply lands.
 class SalonScreen extends StatefulWidget {
-  const SalonScreen({super.key});
+  const SalonScreen({super.key, this.attachmentPicker = pickWithImagePicker});
+
+  /// Opens the platform picker. Injectable so a widget test never touches the plugin.
+  final AttachmentPicker attachmentPicker;
 
   @override
   State<SalonScreen> createState() => _SalonScreenState();
@@ -40,6 +45,14 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
   String? _conversationId;
   AgentActivity? _agentActivity;
   bool _sending = false;
+
+  /// The files picked and not yet sent, keyed by the local id the tray draws.
+  final Map<String, PendingThreadAttachment> _attachments = {};
+  int _attachmentCount = 0;
+
+  /// Why a pick was refused or a file could not be read, in the API's own words where it
+  /// has them.
+  String? _attachmentError;
 
   /// True while the thread is scrolled to (or within [_atBottomThreshold] of) the newest
   /// message. Drives both auto-following replies and the jump-to-latest button.
@@ -214,9 +227,153 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
     if (wasAtBottom) _scrollToBottom();
   }
 
+  /// Whether every held file is stored. A send waits for its uploads rather than naming
+  /// bytes the server has not written.
+  bool get _attachmentsReady =>
+      _attachments.values.every((attachment) => attachment.isUploaded);
+
+  /// Picks from [source] and uploads each file, holding it until the send binds it.
+  Future<void> _attach(AttachmentSource source) async {
+    final organizationId = _organizationId;
+    final conversationId = _conversationId;
+    final api = _conversationApi;
+
+    final List<PickedAttachment> picked;
+    try {
+      picked = await widget.attachmentPicker(source);
+    } catch (_) {
+      if (mounted) {
+        setState(() => _attachmentError = 'That file could not be read.');
+      }
+      return;
+    }
+
+    for (final file in picked) {
+      // The server refuses a sixth file when the send binds it, so refusing here means
+      // nothing is uploaded that could never be bound.
+      if (_attachments.length >= ClientThreadController.maxAttachmentsPerMessage) {
+        if (mounted) {
+          setState(
+            () => _attachmentError =
+                ClientThreadController.attachmentCapMessage,
+          );
+        }
+        return;
+      }
+
+      final pending = PendingThreadAttachment(
+        localId: 'local_att_${++_attachmentCount}',
+        fileName: file.fileName,
+        contentType: file.contentType,
+        bytes: file.bytes,
+      );
+
+      if (mounted) {
+        setState(() {
+          _attachments[pending.localId] = pending;
+          _attachmentError = null;
+        });
+      }
+
+      // Without a live conversation there is nowhere to store the bytes (tests, or a Salon
+      // that has not connected yet), so the file is held and marked rather than dropped.
+      if (organizationId == null || conversationId == null || api == null) {
+        pending.error = 'Could not upload ${pending.fileName}.';
+        if (mounted) setState(() {});
+        continue;
+      }
+
+      pending.uploading = true;
+      await _upload(
+        pending,
+        api: api,
+        organizationId: organizationId,
+        conversationId: conversationId,
+      );
+    }
+  }
+
+  /// Stores one held file. The upload is its own step: the message binds the id afterwards,
+  /// so a file the associate removes before sending stays unbound and the API sweeps it.
+  Future<void> _upload(
+    PendingThreadAttachment pending, {
+    required ConversationApi api,
+    required String organizationId,
+    required String conversationId,
+  }) async {
+    try {
+      final id = await api.uploadAttachment(
+        organizationId: organizationId,
+        conversationId: conversationId,
+        bytes: pending.bytes,
+        contentType: pending.contentType,
+        fileName: pending.fileName,
+        width: pending.width,
+        height: pending.height,
+      );
+      pending.attachmentId = id.isEmpty ? null : id;
+      // Named after the file: the tray draws this beside the retry control, and "Could not
+      // upload." would not say which of several held files failed.
+      pending.error = pending.attachmentId == null
+          ? 'Could not upload ${pending.fileName}.'
+          : null;
+    } catch (_) {
+      pending.attachmentId = null;
+      pending.error = 'Could not upload ${pending.fileName}.';
+    } finally {
+      pending.uploading = false;
+      if (mounted) setState(() {});
+    }
+  }
+
+  /// Tries a failed upload again, with the bytes the associate already picked.
+  Future<void> _retryAttachment(String localId) async {
+    final pending = _attachments[localId];
+    final organizationId = _organizationId;
+    final conversationId = _conversationId;
+    final api = _conversationApi;
+    if (pending == null || !pending.isFailed) return;
+    if (api == null || organizationId == null || conversationId == null) return;
+
+    setState(() {
+      pending.error = null;
+      pending.uploading = true;
+    });
+    await _upload(
+      pending,
+      api: api,
+      organizationId: organizationId,
+      conversationId: conversationId,
+    );
+  }
+
+  /// Drops a held file before it is sent.
+  void _removeAttachment(String localId) {
+    setState(() {
+      _attachments.remove(localId);
+      _attachmentError = null;
+    });
+  }
+
+  /// Drops the files a send just bound.
+  void _clearAttachments() {
+    if (_attachments.isEmpty) return;
+    if (!mounted) {
+      _attachments.clear();
+      return;
+    }
+    setState(() => _attachments.clear());
+  }
+
   Future<void> _send(String text) async {
     final trimmed = text.trim();
-    if (trimmed.isEmpty || _sending) return;
+    // A send waits for its uploads rather than naming bytes the server has not stored.
+    if (trimmed.isEmpty || _sending || !_attachmentsReady) return;
+
+    final attachmentIds = [
+      for (final attachment in _attachments.values)
+        if (attachment.attachmentId != null) attachment.attachmentId!,
+    ];
 
     final optimistic = SalonMessage(
       id: 'local-${DateTime.now().microsecondsSinceEpoch}',
@@ -240,6 +397,7 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
     // confirm the optimistic bubble locally.
     if (organizationId == null || conversationId == null || api == null) {
       _confirmMessage(optimistic.id, optimistic.copyWith(deliveryStatus: null));
+      _clearAttachments();
       return;
     }
 
@@ -248,8 +406,10 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
         organizationId: organizationId,
         conversationId: conversationId,
         text: trimmed,
+        attachmentIds: attachmentIds,
       );
       _confirmMessage(optimistic.id, confirmed);
+      _clearAttachments();
 
       // Only once the user message is confirmed does Aveline's activity bubble appear.
       setState(() {
@@ -482,7 +642,16 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
                     ],
                   ),
           ),
-          SalonComposer(onSend: (text) => _send(text)),
+          if (_attachmentError != null)
+            _AttachmentNotice(message: _attachmentError!),
+          SalonComposer(
+            onSend: (text) => _send(text),
+            onAttach: _attach,
+            attachments: _attachments.values.toList(growable: false),
+            sendReady: _attachmentsReady,
+            onRemoveAttachment: _removeAttachment,
+            onRetryAttachment: _retryAttachment,
+          ),
         ],
       ),
     );
@@ -549,6 +718,40 @@ class _AnimatedEntryState extends State<_AnimatedEntry>
 }
 
 /// Shown when the Salon has no messages yet.
+/// Why a file was refused, above the composer that would have held it.
+class _AttachmentNotice extends StatelessWidget {
+  const _AttachmentNotice({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Container(
+      key: const Key('salon_attachment_notice'),
+      width: double.infinity,
+      color: scheme.errorContainer,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          Icon(Icons.error_outline, size: 16, color: scheme.onErrorContainer),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: scheme.onErrorContainer,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _EmptySalon extends StatelessWidget {
   const _EmptySalon();
 

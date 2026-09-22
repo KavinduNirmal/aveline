@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 
@@ -38,16 +40,50 @@ class ConversationApi {
 
   /// Sends a staff note in [conversationId] and triggers the agent. Returns the confirmed
   /// message (real id + timestamp).
+  ///
+  /// [attachmentIds] are ids the upload route already stored, bound to this message. The
+  /// Salon picks and uploads before it sends, the same way a client thread does, so a file
+  /// that is never sent stays unbound and the API sweeps it.
   Future<SalonMessage> sendMessage({
     required String organizationId,
     required String conversationId,
     required String text,
+    List<String> attachmentIds = const [],
   }) async {
     final response = await _dio.post<Map<String, dynamic>>(
       '/api/v1/orgs/$organizationId/conversations/$conversationId/messages',
-      data: {'text': text},
+      data: {
+        'text': text,
+        if (attachmentIds.isNotEmpty) 'attachmentIds': attachmentIds,
+      },
     );
     return SalonMessage.fromJson(response.data ?? const {});
+  }
+
+  /// Stores one picked file against [conversationId] and returns its id.
+  ///
+  /// Sent as a `data:` URL so the server sees the type the picker reported rather than
+  /// guessing from the file name. The upload is its own step: the message binds the ids
+  /// afterwards, so a file the associate removes before sending is never bound.
+  Future<String> uploadAttachment({
+    required String organizationId,
+    required String conversationId,
+    required Uint8List bytes,
+    required String contentType,
+    required String fileName,
+    int? width,
+    int? height,
+  }) async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/api/v1/orgs/$organizationId/conversations/$conversationId/attachments',
+      data: {
+        'imageData': 'data:$contentType;base64,${base64Encode(bytes)}',
+        'fileName': fileName,
+        'width': ?width,
+        'height': ?height,
+      },
+    );
+    return response.data?['attachmentId']?.toString() ?? '';
   }
 
   /// Fetches the persisted messages of [conversationId] (newest page, ascending) so the Salon

@@ -1,5 +1,7 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 
+import 'package:aveline_mobile/features/conversations/presentation/attachment_picker.dart';
 import 'package:aveline_mobile/features/salon/presentation/screens/salon_screen.dart';
 import 'package:aveline_mobile/features/salon/presentation/widgets/salon_composer.dart';
 import 'package:flutter/material.dart';
@@ -147,6 +149,69 @@ void main() {
     expect(
       controller.offset,
       moreOrLessEquals(controller.position.maxScrollExtent, epsilon: 0.5),
+    );
+  });
+
+  // A document rather than an image, so the tray draws an icon instead of decoding bytes.
+  PickedAttachment document(String name) => PickedAttachment(
+    bytes: Uint8List.fromList([1, 2, 3]),
+    contentType: 'application/pdf',
+    fileName: name,
+  );
+
+  Widget salonWithPicker(List<PickedAttachment> Function() files) => MaterialApp(
+    home: SalonScreen(attachmentPicker: (source) async => files()),
+  );
+
+  Future<void> pickFromGallery(WidgetTester tester) async {
+    await tester.tap(find.byKey(const Key('salon_attach')));
+    await settle(tester);
+    await tester.tap(find.byKey(const Key('salon_attach_gallery')));
+    await settle(tester);
+  }
+
+  testWidgets('the paperclip picks a file and holds it in the tray', (
+    tester,
+  ) async {
+    await tester.pumpWidget(salonWithPicker(() => [document('lookbook.pdf')]));
+    await settle(tester);
+
+    await pickFromGallery(tester);
+
+    // The web draws its Salon drawer with the same `Composer` as its threads, so the
+    // paperclip and the tray are the parity that was missing here.
+    expect(find.byKey(const Key('salon_attachment_tray')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('salon_pending_local_att_1')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('a held file can be removed before sending', (tester) async {
+    await tester.pumpWidget(salonWithPicker(() => [document('lookbook.pdf')]));
+    await settle(tester);
+    await pickFromGallery(tester);
+
+    await tester.tap(find.byKey(const ValueKey('salon_remove_local_att_1')));
+    await settle(tester);
+
+    expect(find.byKey(const Key('salon_attachment_tray')), findsNothing);
+  });
+
+  testWidgets('a sixth file is refused in the API\u2019s words', (tester) async {
+    await tester.pumpWidget(salonWithPicker(() => [document('lookbook.pdf')]));
+    await settle(tester);
+
+    for (var i = 0; i < 6; i++) {
+      await pickFromGallery(tester);
+    }
+
+    // Refused before a byte is uploaded, in the server's own sentence, so the client
+    // cannot drift from the API on either the rule or the wording.
+    expect(find.byKey(const Key('salon_attachment_notice')), findsOneWidget);
+    expect(
+      find.text('A message may carry at most 5 attachments.'),
+      findsOneWidget,
     );
   });
 }

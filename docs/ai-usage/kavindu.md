@@ -5923,3 +5923,144 @@ conformance and truthfulness gates stay green.
 - Tenant conformance and truthfulness gates: **15 passed**; `oxlint` 0 errors on the billing tree.
 - `dotnet build` of the API and the test project: 0 errors.
 - No branch switch and no commit: the tree stays on `feature/tenant-dashboard-v2`.
+
+## Session 2026-09-22 — Web media picker and Salon attachments (session start)
+
+**Task:** a new workstream, approved by the product owner and driven from a strategy document
+rather than a plan: build the **media picker and file-attachment UI for the web dashboard**, which
+the Cloudinary media workstream deliberately did not include (it shipped the backend and the agent
+bridge; only Flutter had a picker).
+**Tool used:** DeepSeek Harness (deepseek-flash) orchestrating; implementation delegated to subagents.
+**Branch:** `cloudinary-media-and-salon-image` — no branch created or switched; the orchestrator makes
+every commit.
+
+### Why this exists
+
+The completed workstream left a real gap: `frontend/web/src/components/conversation/Composer.tsx` is
+text-only while `blocks.tsx` already renders an `AttachmentBlock`, so a boutique on the web dashboard
+can *see* an attachment and cannot *create* one. A subagent was asked to design the strategy; the
+result is `.agents/plans/web-media-picker-and-attachments-implementation-strategy.md` (899 lines,
+git-ignored by convention).
+
+### The owner's decisions, applied
+
+| # | Question | Answer |
+|---|---|---|
+| Q1 | Per-org/per-thread attachment cap | **Deferred**, with the residual recorded (`24 h × upload rate × 5 MB` per member, bounded in steady state by the 24 h unbound sweep and the 7 d retention job) |
+| Q2 | PDFs in v1 | **Yes** (accept, Open/Download) |
+| Q3 | HEIC over the cap in Chrome | **Accept** with a clear message; no server-side transcode |
+| Q4 | Pasted-URL field in the composer | **Leave it out** — the SSRF kill switch defaults `false`, so a field would always `400` |
+| Q5 | Analysability note | **Per file**, driven by the response's sniffed `contentType` |
+| Q6 | Retention clock | **On upload** (so a photo sent 23 h later is deleted ~6 d after send — accepted and to be documented) |
+| Q7 | Flutter parity | **Now**, not as follow-ups — this added slice **W7** to the strategy's six |
+
+### Slices and issues (created before implementation)
+
+| Issue | Slice | Lane | What |
+|---|---|---|---|
+| [#380](https://github.com/KavinduNirmal/aveline/issues/380) | W5 | L3 | the idempotent-retry backend fix (replay check before attachment resolution) |
+| [#381](https://github.com/KavinduNirmal/aveline/issues/381) | W1 | L6 | the web API-client seam (upload helper + send parameters), inert |
+| [#382](https://github.com/KavinduNirmal/aveline/issues/382) | W2 | L6 | `attachment-preparation` + pending-tray context state |
+| [#383](https://github.com/KavinduNirmal/aveline/issues/383) | W3 | L6 | the Composer affordance and `AttachmentTray` |
+| [#384](https://github.com/KavinduNirmal/aveline/issues/384) | W4 | L6 | interactive rendering (authenticated blob fetch, viewer) |
+| [#385](https://github.com/KavinduNirmal/aveline/issues/385) | W7 | L10 | Flutter parity: client-side 5-cap and rendered failures |
+| [#386](https://github.com/KavinduNirmal/aveline/issues/386) | W6 | L8 | documentation |
+
+### A real defect found by the design, and verified by the orchestrator
+
+`ConversationService.SendStaffNoteAsync` resolves and validates attachments (`:227`) **before** the
+`clientMessageId` replay check (`:233-241`). A retry of one composed message that carries attachments
+therefore re-resolves already-bound ids, throws `AttachmentBindingException`, and answers
+`400 "…already attached"` instead of returning the stored message — which is precisely what an
+idempotency key is for.
+
+Two things make it worse and both were confirmed in the code rather than assumed:
+
+- the suite cannot catch it: every replay case uses `null` attachments and every binding case uses a
+  `null` key;
+- **the web client never sends `clientMessageId` at all** (`conversations-api.ts:88-97` posts
+  `{ text }`), while Flutter does (`api_thread_repository.dart:104`). So a web timeout-retry already
+  duplicates the note silently today, and would become a hard `400` the moment attachments are added.
+
+W5 fixes the ordering and W3 passes the key; the pair is what makes retry-with-attachments safe.
+
+### Baseline before delegation
+
+- `dotnet build Aveline.Api/Aveline.Api.sln` — 0 errors (the Cloudinary workstream's last full run was
+  **2591 passed / 0 failed**).
+- `bun` 1.3.14 present; `cd frontend/web && bun run test` is the web gate.
+- The strategy's own finding: the repo's only existing multipart helper (`uploadCatalogImage`) is
+  **dead code**, so the multipart header pattern has never met the real API. W3 therefore carries a
+  browser check through the Vite proxy, and if a browser cannot be run here that must be reported as
+  outstanding rather than claimed.
+
+### Session end — the web media picker and Salon attachments, delivered
+
+All seven slices landed, one commit each by the orchestrator, and the owner's seven decisions applied.
+
+| Commit | Slice | What |
+|---|---|---|
+| `3b3ec72` | W5 | the idempotent-retry backend fix |
+| `43cf12a` | W1 | the web attachment API seam (inert) |
+| `4b55f30` | W2 | attachment preparation and the pending tray |
+| `3aace35` | W3+W4 | the composer affordance, the tray, and interactive rendering |
+| `efa6b09` | W7 | Flutter parity: the client-side 5-cap and rendered failures |
+
+**Verification at the end of this workstream:** 2591 .NET tests green (the full suite, re-run because W5
+touched `ConversationService`); 992 web tests across 138 files with no unhandled rejections; 1017
+Flutter tests; `flutter analyze` clean; `bun run lint` unchanged at its pre-existing warning count;
+`bun run build` passing.
+
+#### The two defects this workstream found, not wrote
+
+**1. The replay check ran after attachment resolution (fixed in W5).** A retry of one composed message
+that carried attachments answered `400 "…already attached"` instead of returning the stored row,
+because `ResolveAttachmentsAsync` ran before the `clientMessageId` lookup. The suite could not catch
+it: every replay case used `null` attachments and every binding case used a `null` key. The new case
+combines them and was observed failing first with the real `AttachmentBindingException`. One intended
+behaviour change: the same key with different words now answers `409` even when attachments are
+present, which is the correct answer for that condition.
+
+**2. `send` swallowed its failure (fixed in `3aace35`).** It marked the optimistic row `failed` and
+still resolved, so no caller could distinguish a failed send from a confirmed one — which would have
+made the composer clear the textarea on failure, contradicting the slice's own requirement that only
+a confirmed send clears it. It now rethrows. Fixing it surfaced two silent unhandled rejections in test
+harnesses, which were corrected the same way the real composer handles it.
+
+#### Deliberate deviations, each with a reason
+
+- **W7 was not in the strategy.** The owner chose parity *now* rather than as follow-ups, so the two
+  Flutter gaps became a slice: the client-side 5-cap (mirroring the server's sentence) and rendering
+  the failure states that were previously only `debugPrint`ed or left unrendered.
+- **Upload progress is indeterminate, not a percentage.** The API helper measures nothing, so a bar
+  would have been fabricated. The tray test asserts that no `%` is rendered.
+- **Rendering fetches through the authenticated client, never a token URL.** A minted attachment token
+  is anonymous with a 900 s TTL; caching one in an `<img src>` would go stale silently mid-session.
+- **The `retryable` flag replaced prose matching.** The tray had inferred "do not offer retry" by
+  matching two error sentences; the chip now carries the classification set where the HTTP status is
+  known, so the control cannot drift when the wording changes.
+- **A Kotlin compiler cache was committed and then removed.** `git add frontend/aveline_mobile` swept
+  in `android/.kotlin/sessions/*.salive`. The commit was amended to drop it and `.gitignore` gained
+  `frontend/aveline_mobile/android/.kotlin/`, alongside the already-ignored `.gradle/`.
+- **The branch received a merge of `origin/development`** (the owner's action, author
+  `KavinduNirmal`, 18:32). It brought the tenant-dashboard slices and thereby resolved away the
+  branch-staleness banner added earlier in the previous workstream, leaving the F-7 delivery note
+  correct. No action was needed, but it is worth recording that the branch is no longer a
+  develop-free fork.
+
+#### What is outstanding, stated plainly
+
+- **The authenticated end-to-end browser walk.** A real headless browser disproved the multipart-header
+  risk (the browser supplies the boundary; the shared client's JSON default does not leak, on the
+  direct path and through the Vite proxy), but the signed-in walk — pick a JPEG, send, see the bubble —
+  needs a Clerk session this environment does not provide. The exact eight steps are recorded in
+  `docs/security/media-access.md` §10.7.
+- **The web attachment response was never fetched against a real provider here**; the rendering tests
+  mock the authenticated client.
+- **The web byte cache is process-lifetime and unbounded per session** (mirroring mobile's documented
+  residual); acceptable now because rows are immutable, a reload clears it, object URLs are revoked on
+  unmount, and 7-day retention bounds the fetchable population.
+- **No per-org or per-thread attachment cap** (owner decision Q1): the residual is
+  `24 h × upload rate × 5 MB` per member, bounded in steady state by the 24 h sweep and the 7-day job.
+- **`conversations-api.test.ts` asserts the multipart header on a mocked client only.** The header's
+  real behaviour was proven separately in a browser, which is why the browser check mattered.

@@ -208,4 +208,157 @@ Two related facts:
   are one `SET NX` per `vision.analyze` analysis, and — if the analysis cache is ever wired —
   1 GET + 1 SET per analysis. The cache module is **re-keyed to `{orgId}:{publicId}` and
   deliberately not wired**; it runs on no path today.
-</content>
+
+---
+
+## 10. The web attachment picker — shipped behaviour and residuals
+
+> **Scope.** The web dashboard's file picker and the flow it drives: the composer affordance, the
+> pending tray, the client seam, and interactive attachment rendering under
+> `frontend/web/src/components/conversation/`, `frontend/web/src/contexts/ConversationsContext.tsx`
+> and `frontend/web/src/lib/` (`attachment-preparation.ts`, `conversations-api.ts`). The two-tier
+> access model above is unchanged by it; this section records what the web picker does, the product
+> decisions it carries, and what is **not** yet proven. The mobile client has run the same flow since
+> the client-thread workstream, so most of this is parity rather than new policy.
+
+### 10.1 Upload on pick, and the 24 h sweep
+
+A picked file is uploaded **as it is picked**, not when the message is sent. The upload route stores
+the row **unbound**; the send binds it by naming its `attachmentId` in the message's `attachmentIds`.
+That is the API's designed two-step flow, and the picker follows it rather than buffering bytes until
+send.
+
+The consequence is deliberate and covered: a pick the user abandons — a cancelled composer, a send
+that failed validation, a tab that never returned — leaves an unbound row and its provider asset
+behind until `AttachmentSweepJob` collects it. The TTL is 24 hours and the sweep runs hourly, and it
+releases the provider asset before deleting the row. **That is the designed cleanup, not a leak.**
+
+The pending tray lives in `ConversationsContext`, keyed by conversation id, so switching dashboard
+sections (which unmounts the Salon panel) does not silently orphan an upload the user still means to
+send. A full page reload still loses the tray; the sweep covers those rows. There is deliberately **no
+attachment-delete route**: removing a chip leaves an already-stored upload to the sweep, and the
+composer never claims it can un-store bytes.
+
+### 10.2 The caps, and where each is enforced
+
+| Cap | Value | Client | Server |
+|---|---|---|---|
+| Per file | **5 MB** | `MAX_ATTACHMENT_BYTES` in `lib/attachment-preparation.ts`; `prepareAttachment` refuses before any request | `MediaContentTypes.MaxFileBytes` (`Aveline.Api/Common/Media/MediaContentTypes.cs`), checked in the upload handler **before anything is written** |
+| Per message | **5 files** | `MAX_ATTACHMENTS_PER_MESSAGE`; `checkAttachmentCap` runs in the composer before `onAttach`, so the sixth file never starts an upload | `MediaContentTypes.MaxPerMessage`, enforced when the send binds its ids; over the cap is an `AttachmentBindingException` → `400` |
+
+The client is a **fast, honest refusal**, never the authority: the server's `400` remains the
+backstop for anything the client gets wrong. Two details matter:
+
+- The per-file gate compares the **decoded byte length of the payload that would actually be sent**,
+  not the source file's `size`. `compressAndResizeImage` falls back to the raw bytes whenever its
+  canvas path fails, so an 8 MB photo that resizes to 300 KB is accepted, while the same photo whose
+  decode fails is refused with the size the server would have received. A base64 data URL's string
+  length is never compared to the cap, because base64 inflates a payload by about a third.
+- A PDF has no resize to bring it down, so its `file.size` is checked directly. The cap here is the
+  **5 MB attachment cap**, not the catalog's 2 MB `Media:CatalogMaxFileBytes`, which is read only on
+  the catalog write paths.
+
+The sixth-file refusal uses the server's own sentence (`"A message may carry at most 5 attachments."`)
+so the two clients and the API cannot disagree about the rule or its wording.
+
+### 10.3 The analysable subset is accepted, stored, tagged, served — and recorded as not analysable
+
+Only JPEG, PNG, GIF and WebP are analysable by the vision provider
+(`Aveline.Api/Common/Media/VisionContentTypes.cs`). HEIC, HEIF, AVIF, BMP, TIFF and PDF are on the
+**storage** allow-list but outside that subset, and the contract is that such a file is *stored,
+served and tagged normally, and recorded as not analysable — never silently degraded and never
+blocked at upload*.
+
+The web picker honours that: it accepts every type the route stores, uploads it, and then derives the
+per-file note from the **stored** content type the upload **response** reports — never the picked
+file's declared type. So a HEIC the browser re-encodes to JPEG is stored as `image/jpeg`, is
+analysable, and gets no note; a HEIC whose decode fell back to raw bytes, or a PDF, gets a
+non-blocking note beside a chip that is still `Ready`. The note never blocks the upload and never
+blocks the send.
+
+### 10.4 Rendering is the authenticated serve route, not a token URL
+
+A stored attachment's `Url` is the authenticated Aveline serve route
+(`GET /api/v1/orgs/{orgId}/conversations/{conversationId}/attachments/{attachmentId}`, guarded by the
+conversation access policy, streaming with `nosniff` and `Content-Disposition: inline`). The web
+fetches those bytes **through the shared authenticated axios client**
+(`apiClient.get(url, { responseType: 'arraybuffer' })`), which attaches the Clerk bearer token, builds
+a `Blob` with the **response's** `Content-Type`, and hands `URL.createObjectURL` to the `<img>`; the
+object URL is revoked on unmount.
+
+It deliberately does **not** mint an `attachment.view` token and put it in an `<img src>`. The token
+route is anonymous because the token *is* the credential, and the token's default TTL is 900 s, so a
+cached image would go stale mid-session (§3). An `<img src={stored route}>` cannot work either: an
+image element cannot carry an `Authorization` header. A failed or undecodable fetch degrades to the
+name-and-size chip, never a broken image.
+
+### 10.5 The retention clock starts at upload (Q6, accepted)
+
+The 7-day bound retention is measured from the attachment's own `MessageAttachment.CreatedAtUtc`,
+which is set at **store** time. Because the web uploads on pick, **the clock starts at upload, not at
+send**: a photo uploaded and sent much later is still deleted on the upload-based window (a file
+uploaded 23 hours before send is dropped roughly 6 days after it was sent, not 7).
+
+This is a **deliberate product decision the owner accepted (Q6)**, not an oversight. Changing it
+means changing the pinned semantics the retention job's remarks defend — the attachment is the item
+the 7-day policy drops, and anchoring on the conversation would let an active thread hold every image
+it ever received.
+
+### 10.6 The per-org/per-thread cap is deliberately deferred (Q1, with a named residual)
+
+No per-org or per-thread attachment cap exists, and adding one is **explicitly deferred** (owner
+decision Q1). The steady state is already bounded by three real mechanisms: 5 per message, the 24 h
+unbound sweep (hourly), and bound-row retention at 7 days.
+
+**The residual, named rather than left to be rediscovered:** the *number* of unbound uploads one
+member can create within 24 hours is not bounded, so a scripted client — or a user who picks and
+abandons repeatedly — can hold up to **`24 h × upload rate × 5 MB`** of provider bytes per member.
+If a ceiling is wanted later, the cheapest correct place is the existing upload handler (server-side,
+reusing the org-scoped count), **not** a client-side guard, which a scripted client ignores.
+
+### 10.7 Outstanding work and known residuals
+
+These are stated so nobody has to rediscover them. None is a surprise in the code; each is a check
+this environment could not complete or a trade already made.
+
+1. **The authenticated end-to-end browser walk is outstanding.** A real headless browser *did*
+   disprove the one transport risk this feature carried: the browser supplies the multipart boundary
+   and the shared client's JSON default does not leak into the request, on the direct API path and
+   through the Vite dev proxy. What it could not do is the signed-in walk — pick a JPEG, send, and
+   see the bubble — because that needs a Clerk session this environment does not provide. The
+   outstanding manual check is:
+
+   1. Start the API: `cd Aveline.Api && dotnet run` (listens on `http://localhost:5091`; the dev
+      Clerk authority is already wired in `appsettings.Development.json`).
+   2. Start the web dashboard: `cd frontend/web && bun install`, copy `.env.example` to `.env.local`
+      and set `VITE_CLERK_PUBLISHABLE_KEY` from the Aveline Clerk instance, then `bun dev` (Vite on
+      `http://localhost:5173`, proxying `/api` to `http://localhost:5091`).
+   3. Sign in at `http://localhost:5173` as a member of an organization that holds
+      `conversations:view` (any of the four boutique roles). Do this once against the **direct**
+      API path and once **through the Vite proxy**, because the multipart header/proxy interaction
+      is exactly what was flagged.
+   4. Open the **Salon** section (`/app/b/{slug}/salon`, or its nav entry) and select the thread.
+   5. Click the paperclip (`Attach files`) and choose a real JPEG (a few hundred KB to a few MB).
+      Watch the chip move from "Uploading…" to "Ready"; there is deliberately no percentage.
+   6. Type a message and press Send (or Enter). The optimistic bubble appears and is replaced by the
+      confirmed one, and the image renders as a thumbnail fetched from the authenticated route.
+   7. Click the thumbnail: the dialog shows the image. Repeat with a PDF and confirm Open/Download.
+   8. Negative check: pick a `.txt` file and a photo over 5 MB, and confirm each is refused with its
+      own message and that text can still be sent.
+
+2. **The attachment response was never fetched against a real provider in this environment.** Every
+   rendering test mocks the authenticated client (`components/conversation/blocks.dom.test.tsx`
+   replaces `@/lib/api`), so the round trip through the real serve route and a real Cloudinary or
+   database asset is unproven here. The route, the policy and the store are the shipped ones; the
+   browser check in item 1 is what closes this.
+
+3. **The in-memory byte cache is process-lifetime and unbounded per session.** `blocks.tsx` keeps a
+   module-level `Map<string, Promise<AttachmentBytes>>` keyed by attachment id; it is never evicted
+   except when a request rejects (so a later mount can retry rather than caching the failure
+   forever). It is not persisted and a page reload clears it, and object URLs are revoked on unmount,
+   so only the fetched byte arrays are retained. It is the same trade mobile already makes and
+   documents at its own repository-level cache. It is acceptable now because the entries are
+   immutable (attachment rows are written once), the 7-day retention bounds the population that can
+   still be fetched, and no eviction policy is invented that would either refetch immutable bytes or
+   hold a stale blob. An LRU or a size ceiling is the obvious follow-up if a long-lived session over
+   many threads becomes a real cost.

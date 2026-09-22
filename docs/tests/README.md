@@ -20,7 +20,7 @@ Aveline tests four independent codebases, one per technology stack:
 
 ## 2. Backend Tests (`Aveline.Api.Tests/`)
 
-569 test cases across unit and integration test suites. Two distinct approaches:
+2,298 test cases across unit and integration test suites. Two distinct approaches:
 
 - **Unit tests** — exercise a single class in isolation, with collaborators mocked
   via **Moq** (e.g. `OrganizationServiceTests`, `CredentialEncryptionServiceTests`,
@@ -28,7 +28,7 @@ Aveline tests four independent codebases, one per technology stack:
 - **Integration tests** — boot the real app with
   `WebApplicationFactory<Program>` against an **in-memory EF Core database**
   (`UseInMemoryDatabase`), with external dependencies replaced by stub servers
-  and fake stores (see §5).
+  and fake stores (see §6).
 
 Shared test infrastructure:
 
@@ -121,17 +121,52 @@ Configuration lives in `agnet-service/pyproject.toml` (`[tool.pytest.ini_options
 
 ## 4. Web Dashboard Tests (`frontend/web/`)
 
-Vitest (node environment, no jsdom) across 13 files covering the `lib/` service
-layer and React contexts. Component/context rendering uses `renderToString` from
-`react-dom/server`; heavy dependencies (`@clerk/react`, `sonner`,
-`@microsoft/signalr`) are stubbed with `vi.mock` + `vi.hoisted`.
+Vitest across **two projects** declared in one config: a `node` environment for the service layer
+(`lib/`, hooks, types) and a `jsdom` environment for component and context rendering, selected by the
+`*.dom.test.tsx` filename convention. Heavy dependencies (`@clerk/react`, `sonner`,
+`@microsoft/signalr`, `recharts`) are stubbed with `vi.mock` + `vi.hoisted`, and the DOM project
+raises the per-test timeout to 20 s because v8 coverage instrumentation plus a 2-core CI runner pushes
+the form-driving tests past Vitest's 5 s liveness default.
 
 ### Run
 
 ```bash
-bun run test            # vitest run
-bun run test:coverage   # with coverage thresholds
+bun run test                      # vitest run
+bun run test:coverage             # global run; excludes the admin and tenant subtrees
+bun run test:coverage:admin       # the admin subtree only (its own ratchet)
+bun run test:coverage:dashboard   # the tenant-dashboard subtree only (its own ratchet)
 ```
+
+### Three coverage runs, on purpose
+
+The global run deliberately **excludes** `src/routes/**`, `src/components/**` and
+`src/contexts/**`, because those subtrees carry their own gates. Each subtree run is
+`include`-only — a gate added after the work is a gate that measures nothing — writes to its own
+reports directory, and carries a **ratchet** that never lowers: it starts at 0 and is raised to the
+value actually achieved (the admin ratchet in R0–R6, the tenant one in T7).
+
+| Run | Measures | Config |
+| --- | --- | --- |
+| `test:coverage` | the shared layer: `src/lib/**`, `src/hooks/**`, `src/types/**`, `src/*` | `vite.config.ts` |
+| `test:coverage:admin` | `src/routes/admin/**`, `src/components/admin/**`, `AdminSessionContext` | `vitest.admin-coverage.config.ts` |
+| `test:coverage:dashboard` | `src/components/dashboard/**`, `src/components/shared/**`, the tenant `lib/*-api.ts` modules, `useDashboardWindow` | `vitest.dashboard-coverage.config.ts` |
+
+The dashboard run exists because the tenant surface was previously measured by **nothing**: a file
+under `src/components/shared/**` fell outside both the global and the admin denominators. All three
+runs execute in the `test-web` CI job. See `docs/frontend/tenant-dashboard.md`.
+
+### Mechanical gates in the web suite
+
+Five test files assert rules a linter cannot: they are the reason the two UIs cannot drift into
+fabricated numbers or a broken dark mode.
+
+| File | Enforces |
+| --- | --- |
+| `test/admin-conformance.test.ts` | the admin tree's brand rules (no raw palette/hex/controls, `gap-*` not `space-*`) |
+| `test/admin-truthfulness.test.ts` | the console cannot render an invented number |
+| `test/tenant-conformance.test.ts` | the same conformance rule set over the tenant dashboard, with an **empty** allow-list |
+| `test/tenant-truthfulness.test.ts` | the tenant tree's four literal truthfulness rules (`null` is not `0`; no "demo mode"; recharts only through the chart wrapper) |
+| `test/tenant-sections.test.ts` | the nav table and the router agree about the section list and the section gates |
 
 ### Files
 
@@ -195,7 +230,41 @@ in-memory EF Core DB seeded per test, external HTTP via stub servers or
 
 ---
 
-## 7. Coverage
+## 7. End-to-End Tests (`tests/e2e/`)
+
+Playwright walks the two authenticated UI trees in a real browser, from the repository-level
+`tests/e2e/` tree rather than inside the web package. Each spec covers the **signed-out** path — the
+one walk buildable without a Clerk test session — and asserts both the redirect and the absence of
+that tree's own API traffic.
+
+| Spec | Asserts |
+|---|---|
+| `admin-console/console-access.spec.ts` | signed out, `/admin/{userId}` reaches `/sign-in`, renders no console chrome, and issues **zero** `/api/v1/admin/` requests |
+| `tenant-dashboard/signed-out.spec.ts` | signed out, `/app/b/{slug}` and `/app/b/{slug}/{section}` reach `/sign-in`, render no dashboard chrome (`Switch boutique`, `Reporting window`, `Top up`), and issue **zero** `/api/v1/orgs/` requests |
+
+### Run
+
+```bash
+bun run test:e2e:install   # chromium into node_modules/.playwright-browsers (git-ignored)
+bun run test:e2e           # all specs; starts vite on :5173 unless E2E_BASE_URL is set
+```
+
+Run it through the script rather than `playwright test` directly: the specs sit **above** the web
+package, so Node cannot resolve `@playwright/test` from their directory, and the script sets
+`NODE_PATH=node_modules` for exactly that reason. `E2E_BASE_URL` points the suite at a deployed
+origin instead of starting a local server. The suite is run in parallel workers; one admin
+assertion waiting on Clerk's first load is timing-sensitive under a cold, loaded server and can
+flake, so a red admin run should be re-run in isolation before it is believed.
+
+**Not delivered, and stated as such.** The authenticated walks need a Clerk test session and a
+running API, which this environment does not provide. The tenant role matrix is pinned instead by the
+backend integration tests plus the DOM tests on the shell's `allowedSections` logic; the console
+walks are pinned by the admin DOM tests. `docs/frontend/tenant-dashboard.md` records the same
+limitation.
+
+---
+
+## 8. Coverage
 
 Each stack instruments coverage with its own tooling and enforces a threshold in CI:
 
@@ -203,7 +272,9 @@ Each stack instruments coverage with its own tooling and enforces a threshold in
 |---|---|---|---|
 | **Backend** | Coverlet (coverage.cobertura.xml) | `dotnet test --collect:"XPlat Code Coverage"` + ReportGenerator (HTML) | line ≥ **30%** (CI gate) |
 | **Agent Service** | `pytest-cov` | `pytest --cov=app --cov-report=xml --cov-report=term --cov-fail-under=90` | **90%** |
-| **Web** | `@vitest/coverage-v8` | `vitest run --coverage` (config in `vite.config.ts`) | lines 80 / functions 70 / branches 70 / statements 80 |
+| **Web (global)** | `@vitest/coverage-v8` | `bun run test:coverage` (config in `vite.config.ts`) | lines 80 / functions 70 / branches 70 / statements 80 |
+| **Web (admin)** | `@vitest/coverage-v8` | `bun run test:coverage:admin` (`vitest.admin-coverage.config.ts`) | ratchet: `routes/admin` 80/74/70/79, `components/admin` 82/74/68/80 |
+| **Web (tenant dashboard)** | `@vitest/coverage-v8` | `bun run test:coverage:dashboard` (`vitest.dashboard-coverage.config.ts`) | ratchet raised in T7: `components/dashboard` 44/31/42/42, `useDashboardWindow` and most `lib/*-api.ts` modules at 100 |
 | **Mobile** | `flutter test --coverage` | `flutter test --coverage` → `coverage/lcov.info` | none (report uploaded only) |
 
 Local coverage reports:
@@ -220,12 +291,13 @@ Local coverage reports:
   line coverage — the integration tests exercise `Program` and all configuration
   end-to-end.
 - The backend CI gate is deliberately low (30%) because feature modules are still
-  scaffolding; the agent service (90%) and web (80%) gates are strict and enforced
-  on every PR.
+  scaffolding; the agent service (90%) and the global web run (80 %) are enforced on
+  every PR, and the admin and tenant subtrees each carry their own **ratchet** in their
+  own run (see §4).
 
 ---
 
-## 8. CI Integration
+## 9. CI Integration
 
 `ci.yml` runs each suite in its own job:
 
@@ -233,14 +305,19 @@ Local coverage reports:
 |---|---|
 | `build-api` | build solution → `dotnet test` → collect coverage → enforce ≥30% line → ReportGenerator HTML → upload `aveline-api-coverage` |
 | `test-python` | `ruff check` → `pytest --cov --cov-fail-under=90` → upload `aveline-agent-coverage` |
-| `test-web` | `oxlint` → `bun run test:coverage` (thresholds) → upload `aveline-web-coverage` → build |
+| `test-web` | `oxlint` → `bun run test:coverage` (global thresholds) → `bun run test:coverage:admin` → `bun run test:coverage:dashboard` → upload `aveline-web-coverage` → build |
 | `test-flutter` | `flutter analyze` → `flutter test --coverage` → upload `aveline-mobile-coverage` → build APK |
 
 All four coverage artifacts are uploaded as GitHub Actions artifacts for inspection.
 
+**The Playwright suite is not a CI step.** It needs a browser download and (for the authenticated
+walks) a Clerk test session, neither of which the workflow provides; it is a local and
+pre-release check. Adding it is a workflow change with its own cache and secret decisions rather
+than a line in this table.
+
 ---
 
-## 9. Related Documentation
+## 10. Related Documentation
 
 - [ADR-007: Clerk Authentication & JWT Validation Strategy](../ADR/ADR-007-clerk-authentication.md)
 - [Authentication Flow — Architecture](../architecture/authentication.md)

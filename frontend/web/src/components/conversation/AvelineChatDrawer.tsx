@@ -17,31 +17,37 @@ interface AvelineChatDrawerProps {
 /**
  * The slide-in Aveline chat panel. Rendered at the shell root (NOT inside the header,
  * whose backdrop-blur would otherwise become the containing block for `fixed`
- * positioning) so it spans the full viewport height. Shares the same Salon thread as the
- * full Salon tab via the shared ConversationsContext.
+ * positioning) so it spans the full viewport height.
+ *
+ * This is **Aveline's own thread and only that**. It shares the conversation list and the SignalR
+ * connection with the Salon section, but not the open thread: while both surfaces read one
+ * `activeConversationId`, opening a client's Salon in the section turned this panel into that
+ * client's chat, and pinning this panel to Aveline moved the section off whatever the operator had
+ * selected. The two now hold separate thread slots, so neither can move the other.
  */
 export function AvelineChatDrawer({ open, onClose }: AvelineChatDrawerProps) {
   const {
-    activeConversationId,
-    messages,
-    loading,
-    sending,
-    agentState,
-    agentActivity,
-    openOrCreateSalon,
-    send,
-    decide,
-    selectCustomer,
+    avelineConversationId,
+    avelineMessages,
+    avelineLoading,
+    avelineSending,
+    avelineAgentState,
+    avelineAgentActivity,
+    openAveline,
+    sendToAveline,
+    decideAveline,
   } = useConversations()
 
-  // Ensure a Salon is open so the drawer has somewhere to send.
+  // Opening the drawer opens Aveline's thread, once. Guarding on the id rather than only on `open`
+  // keeps this from re-opening (and re-fetching) when `openAveline` is re-created by a conversation
+  // list update.
   useEffect(() => {
-    if (open && !activeConversationId) {
-      void openOrCreateSalon(null)
+    if (open && !avelineConversationId) {
+      void openAveline()
     }
-  }, [activeConversationId, open, openOrCreateSalon])
+  }, [avelineConversationId, open, openAveline])
 
-  const stateConfig = avelineStateConfig(agentState)
+  const stateConfig = avelineStateConfig(avelineAgentState)
 
   return (
     <div
@@ -56,7 +62,7 @@ export function AvelineChatDrawer({ open, onClose }: AvelineChatDrawerProps) {
       <header className="flex items-center justify-between border-b px-4 py-3">
         <div className="flex items-center gap-2.5">
           <AvelineAvatar
-            state={agentState}
+            state={avelineAgentState}
             className="size-8"
             blossomClassName="size-5"
           />
@@ -72,21 +78,19 @@ export function AvelineChatDrawer({ open, onClose }: AvelineChatDrawerProps) {
 
       <div className="flex-1 overflow-y-auto">
         <MessageThread
-          messages={messages}
-          loading={loading && !activeConversationId}
-          agentActivity={agentActivity}
-          onSignOff={(messageId, approved) => void decide(messageId, approved)}
-          onSelectCustomer={(customerId) => void selectCustomer(customerId)}
+          messages={avelineMessages}
+          loading={avelineLoading && !avelineConversationId}
+          agentActivity={avelineAgentActivity}
+          onSignOff={(messageId, approved) => void decideAveline(messageId, approved)}
         />
       </div>
 
       <Composer
-        onSend={(text) => void send(text)}
-        disabled={!activeConversationId}
-        sending={sending}
+        onSend={(text) => void sendToAveline(text)}
+        disabled={!avelineConversationId}
+        sending={avelineSending}
         placeholder="Ask Aveline…"
       />
     </div>
   )
 }
-

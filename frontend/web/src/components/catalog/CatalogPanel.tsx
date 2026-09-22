@@ -4,7 +4,6 @@ import {
   Layers,
   Clock,
   Building2,
-  Sparkles,
   Package,
   AlertTriangle,
   RefreshCw,
@@ -12,17 +11,18 @@ import {
   Trash2,
   X,
   Loader2,
+  Plus,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card } from '@/components/ui/card'
 
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import type { OrganizationProfileDto } from '@/types/organization'
+import { formatCount, formatMoney } from '@/lib/format-money'
+import { cn } from '@/lib/utils'
 
 import type {
   InventoryItemMock,
-  CustomerMatchMock,
   OutfitCompositionMock,
   SourcingRequestMock,
   SupplierMock,
@@ -51,6 +51,56 @@ import { ItemQrModal } from './ItemQrModal'
 
 export type CatalogSubTab = 'inventory' | 'lookbooks' | 'sourcing' | 'suppliers'
 
+/**
+ * One count on the catalog header. `value` is `null` when the server did not return the list, and
+ * the tile says "not measured" rather than showing a zero nobody established.
+ */
+function CatalogStat({
+  icon: Icon,
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  icon: typeof Package
+  label: string
+  value: string | null
+  hint?: string
+  tone?: 'warning'
+}) {
+  return (
+    <Card
+      className={cn(
+        'flex items-center gap-3 p-4',
+        tone === 'warning' && 'border-warning/40 bg-warning/[0.06]',
+      )}
+    >
+      <span
+        className={cn(
+          'flex size-9 shrink-0 items-center justify-center rounded-xl',
+          tone === 'warning' ? 'bg-warning/15 text-warning' : 'bg-primary/10 text-primary',
+        )}
+      >
+        <Icon className="size-4" aria-hidden />
+      </span>
+      <div className="min-w-0">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          {label}
+        </p>
+        <p
+          className={cn(
+            'truncate text-lg font-semibold tabular-nums',
+            value === null && 'text-sm font-normal italic text-muted-foreground',
+          )}
+        >
+          {value ?? 'not measured'}
+        </p>
+        {hint ? <p className="truncate text-xs text-muted-foreground">{hint}</p> : null}
+      </div>
+    </Card>
+  )
+}
+
 interface CatalogPanelProps {
   organization?: OrganizationProfileDto | null
   role?: string | null
@@ -64,10 +114,15 @@ export function CatalogPanel({
 }: CatalogPanelProps) {
   const [activeTab, setActiveTab] = useState<CatalogSubTab>('inventory')
   const [isLoading, setIsLoading] = useState<boolean>(false)
+  // Whether the server actually returned each list. `null` renders "not measured"; a measured but
+  // empty catalog is a real zero, and conflating the two is how a failed read becomes "0 pieces".
+  const [inventoryMeasured, setInventoryMeasured] = useState(false)
+  const [outfitsMeasured, setOutfitsMeasured] = useState(false)
+  const [sourcingMeasured, setSourcingMeasured] = useState(false)
+  const [suppliersMeasured, setSuppliersMeasured] = useState(false)
 
   // Reactive state initialized with real datasets from backend API
   const [inventory, setInventory] = useState<InventoryItemMock[]>([])
-  const [matches] = useState<CustomerMatchMock[]>([])
   const [outfits, setOutfits] = useState<OutfitCompositionMock[]>([])
   const [sourcingRequests, setSourcingRequests] = useState<SourcingRequestMock[]>([])
   const [suppliers, setSuppliers] = useState<SupplierMock[]>([])
@@ -98,18 +153,22 @@ export function CatalogPanel({
 
       if (apiItems.status === 'fulfilled') {
         setInventory(apiItems.value as unknown as InventoryItemMock[])
+        setInventoryMeasured(true)
       }
 
       if (apiLookbooks.status === 'fulfilled') {
         setOutfits(apiLookbooks.value as unknown as OutfitCompositionMock[])
+        setOutfitsMeasured(true)
       }
 
       if (apiSourcing.status === 'fulfilled') {
         setSourcingRequests(apiSourcing.value as unknown as SourcingRequestMock[])
+        setSourcingMeasured(true)
       }
 
       if (apiSuppliers.status === 'fulfilled') {
         setSuppliers(apiSuppliers.value as unknown as SupplierMock[])
+        setSuppliersMeasured(true)
       }
     } catch {
       // Handled cleanly
@@ -137,12 +196,17 @@ export function CatalogPanel({
   // Handlers
   const handleConfirmDelete = async () => {
     if (!itemToDelete) return
+    if (!orgId) {
+      toast.error('Cannot delete: this dashboard has no organisation id', {
+        description: 'Reload the page. No request was sent.',
+      })
+      return
+    }
     setIsDeleting(true)
-    const effectiveOrgId = orgId || '00000000-0000-0000-0000-000000000001'
 
     try {
       if (itemToDelete.id) {
-        await deleteCatalogItem(effectiveOrgId, itemToDelete.id)
+        await deleteCatalogItem(orgId, itemToDelete.id)
       }
       setInventory((prev) => prev.filter((i) => i.id !== itemToDelete.id))
       toast.success('Piece deleted from catalog', {
@@ -162,12 +226,21 @@ export function CatalogPanel({
   }
 
   const handleSaveProduct = async (item: InventoryItemMock) => {
-    const effectiveOrgId = orgId || '00000000-0000-0000-0000-000000000001'
+    // A missing organisation id is a hard error state, not a reason to write to a placeholder
+    // tenant. The previous fallback wrote a real record into organisation
+    // `00000000-…-0001`, which is worse than refusing.
+    if (!orgId) {
+      toast.error('Cannot save: this dashboard has no organisation id', {
+        description: 'Reload the page. No request was sent.',
+      })
+      return
+    }
+
     let savedItem = item
 
     try {
       if (editingItem) {
-        const updated = await updateCatalogItem(effectiveOrgId, editingItem.id, {
+        const updated = await updateCatalogItem(orgId, editingItem.id, {
           itemName: item.name,
           category: item.category,
           color: item.color,
@@ -201,7 +274,7 @@ export function CatalogPanel({
           }
         }
       } else {
-        const created = await createCatalogItem(effectiveOrgId, {
+        const created = await createCatalogItem(orgId, {
           itemName: item.name,
           category: item.category,
           color: item.color,
@@ -235,6 +308,17 @@ export function CatalogPanel({
           }
         }
       }
+      setInventory((prev) => {
+        const exists = prev.some(
+          (i) => i.id === savedItem.id || (editingItem && i.id === editingItem.id),
+        )
+        if (exists) {
+          return prev.map((i) =>
+            i.id === savedItem.id || (editingItem && i.id === editingItem.id) ? savedItem : i,
+          )
+        }
+        return [savedItem, ...prev]
+      })
       toast.success(editingItem ? 'Piece updated in database' : 'New piece saved to database', {
         description: `${savedItem.name} (${savedItem.sku || 'AVL'})`,
       })
@@ -245,18 +329,12 @@ export function CatalogPanel({
         err?.response?.data?.error ||
         err?.message ||
         'Server error'
-      toast.error('Could not save to database. Retaining local draft.', {
-        description: errorMsg,
+      toast.error('Could not save to database. Nothing was changed.', {
+        description: `${errorMsg} The list still shows the server's state.`,
       })
+      return
     }
 
-    setInventory((prev) => {
-      const exists = prev.some((i) => i.id === savedItem.id || (editingItem && i.id === editingItem.id))
-      if (exists) {
-        return prev.map((i) => (i.id === savedItem.id || (editingItem && i.id === editingItem.id) ? savedItem : i))
-      }
-      return [savedItem, ...prev]
-    })
     setEditingItem(null)
   }
 
@@ -315,150 +393,117 @@ export function CatalogPanel({
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header & Metrics Strip */}
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+    <div className="flex flex-col gap-6">
+      {/* Page header: what this section is, and one way to add a piece. */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <h2 className="font-serif text-2xl font-bold tracking-tight text-foreground">
-              Catalog & Visual Intelligence
-            </h2>
-            <Badge
-              variant="outline"
-              className="border-primary/20 bg-primary/5 text-primary text-[10px] font-medium gap-1"
-            >
-              <Sparkles className="size-3" />
-              Vision AI Active
-            </Badge>
-            {orgId && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="size-7 p-0 text-muted-foreground hover:text-foreground"
-                onClick={() => {
-                  void loadCatalogData()
-                  toast.success('Catalog refreshed')
-                }}
-                title="Refresh catalog from server"
-              >
-                <RefreshCw className={`size-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-              </Button>
-            )}
-          </div>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Manage boutique inventory, extract visual fabric tags, match VIP clients, and track atelier sourcing
+          <p className="text-sm font-medium uppercase tracking-[0.15em] text-muted-foreground">
+            {organization?.name ?? 'Catalog'}
+          </p>
+          <h1 className="mt-2 font-serif text-4xl font-medium tracking-tight">Catalog</h1>
+          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+            The boutique&apos;s pieces and what Aveline read from each photograph. A figure the
+            server did not return reads &quot;not measured&quot; rather than zero.
           </p>
         </div>
-
-        {/* Quick Metric Chips */}
-        <div className="flex flex-wrap items-center gap-2.5">
-          <div className="flex items-center gap-2 rounded-xl border border-border/70 bg-card px-3 py-1.5 shadow-2xs">
-            <Package className="size-4 text-primary" />
-            <div className="text-left">
-              <span className="text-[10px] text-muted-foreground block leading-none">In Stock</span>
-              <span className="text-xs font-semibold text-foreground font-mono">
-                {totalStockCount} units
-              </span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 rounded-xl border border-border/70 bg-card px-3 py-1.5 shadow-2xs">
-            <TrendingUp className="size-4 text-emerald-600" />
-            <div className="text-left">
-              <span className="text-[10px] text-muted-foreground block leading-none">Valuation</span>
-              <span className="text-xs font-semibold text-foreground font-mono">
-                ${totalValuation.toLocaleString()}
-              </span>
-            </div>
-          </div>
-
-          {lowStockCount > 0 && (
-            <div className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 shadow-2xs">
-              <AlertTriangle className="size-4 text-amber-600" />
-              <div className="text-left">
-                <span className="text-[10px] text-amber-800 dark:text-amber-300 block leading-none">
-                  Low Stock
-                </span>
-                <span className="text-xs font-semibold text-amber-900 dark:text-amber-200 font-mono">
-                  {lowStockCount} items
-                </span>
-              </div>
-            </div>
-          )}
-
-          <div className="flex items-center gap-2 rounded-xl border border-border/70 bg-card px-3 py-1.5 shadow-2xs">
-            <Clock className="size-4 text-primary" />
-            <div className="text-left">
-              <span className="text-[10px] text-muted-foreground block leading-none">Sourcing</span>
-              <span className="text-xs font-semibold text-foreground font-mono">
-                {activeSourcingCount} active
-              </span>
-            </div>
-          </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            className="gap-1.5"
+            onClick={() => {
+              void loadCatalogData()
+              toast.success('Catalog refreshed')
+            }}
+            disabled={isLoading || !orgId}
+          >
+            <RefreshCw className={cn('size-4', isLoading && 'animate-spin')} aria-hidden />
+            Refresh
+          </Button>
+          <Button
+            type="button"
+            className="gap-1.5"
+            onClick={() => {
+              setEditingItem(null)
+              setAddModalOpen(true)
+            }}
+          >
+            <Plus className="size-4" aria-hidden />
+            Add piece
+          </Button>
         </div>
       </div>
 
-      {/* Sub-Tabs Navigation */}
-      <div className="flex border-b border-border gap-1 overflow-x-auto">
-        <button
-          type="button"
-          onClick={() => setActiveTab('inventory')}
-          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-xs font-medium transition-colors shrink-0 ${
-            activeTab === 'inventory'
-              ? 'border-primary text-primary font-semibold'
-              : 'border-transparent text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <Shirt className="size-4" />
-          <span>Inventory & Visual Pieces ({inventory.length})</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('lookbooks')}
-          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-xs font-medium transition-colors shrink-0 ${
-            activeTab === 'lookbooks'
-              ? 'border-primary text-primary font-semibold'
-              : 'border-transparent text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <Layers className="size-4" />
-          <span>Lookbooks & Outfits ({outfits.length})</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('sourcing')}
-          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-xs font-medium transition-colors shrink-0 ${
-            activeTab === 'sourcing'
-              ? 'border-primary text-primary font-semibold'
-              : 'border-transparent text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <Clock className="size-4" />
-          <span>Sourcing Requests ({sourcingRequests.length})</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('suppliers')}
-          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-xs font-medium transition-colors shrink-0 ${
-            activeTab === 'suppliers'
-              ? 'border-primary text-primary font-semibold'
-              : 'border-transparent text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <Building2 className="size-4" />
-          <span>Partner Ateliers ({suppliers.length})</span>
-        </button>
+      {/* Counts. `null` means the server did not return the list; a measured empty catalog is 0. */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <CatalogStat
+          icon={Package}
+          label="Pieces"
+          value={inventoryMeasured ? formatCount(inventory.length) : null}
+          hint={inventoryMeasured ? `${formatCount(totalStockCount)} units in stock` : undefined}
+        />
+        <CatalogStat
+          icon={TrendingUp}
+          label="Stock value"
+          value={inventoryMeasured ? formatMoney(totalValuation) : null}
+          hint={inventoryMeasured ? 'Price at the recorded quantity' : undefined}
+        />
+        <CatalogStat
+          icon={AlertTriangle}
+          label="Low stock"
+          value={inventoryMeasured ? formatCount(lowStockCount) : null}
+          hint={lowStockCount > 0 ? 'Two or fewer pieces left' : undefined}
+          tone={lowStockCount > 0 ? 'warning' : undefined}
+        />
+        <CatalogStat
+          icon={Clock}
+          label="Sourcing"
+          value={sourcingMeasured ? formatCount(activeSourcingCount) : null}
+          hint={sourcingMeasured ? `${formatCount(sourcingRequests.length)} requests on file` : undefined}
+        />
       </div>
+
+      {/* One section switcher, one selected state. */}
+      <div className="flex gap-1 overflow-x-auto border-b">
+        {(
+          [
+            { id: 'inventory', label: 'Pieces', icon: Shirt, count: inventory.length, measured: inventoryMeasured },
+            { id: 'lookbooks', label: 'Lookbooks', icon: Layers, count: outfits.length, measured: outfitsMeasured },
+            { id: 'sourcing', label: 'Sourcing', icon: Clock, count: sourcingRequests.length, measured: sourcingMeasured },
+            { id: 'suppliers', label: 'Ateliers', icon: Building2, count: suppliers.length, measured: suppliersMeasured },
+          ] as const
+        ).map((tab) => {
+          const active = activeTab === tab.id
+          return (
+            <Button
+              key={tab.id}
+              type="button"
+              variant="ghost"
+              aria-current={active ? 'page' : undefined}
+              onClick={() => setActiveTab(tab.id)}
+              className={cn(
+                '-mb-px h-auto shrink-0 gap-2 rounded-none border-b-2 bg-transparent px-4 py-2.5 text-sm font-medium hover:bg-transparent',
+                active
+                  ? 'border-primary font-semibold text-primary'
+                  : 'border-transparent text-muted-foreground hover:text-foreground',
+              )}
+            >
+              <tab.icon className="size-4" aria-hidden />
+              {tab.label}
+              <span className="text-xs tabular-nums text-muted-foreground">
+                {tab.measured ? tab.count : '—'}
+              </span>
+            </Button>
+          )
+        })}
+      </div>
+
 
       {/* Active Tab View */}
       <div className="pt-2">
         {activeTab === 'inventory' && (
           <InventoryTab
             inventory={inventory}
-            matches={matches}
             onAddNewPiece={() => {
               setEditingItem(null)
               setAddModalOpen(true)
@@ -509,7 +554,6 @@ export function CatalogPanel({
       {/* Customer Matches Drawer */}
       <CustomerMatchesDrawer
         item={selectedMatchItem}
-        matches={matches}
         organizationId={orgId}
         open={selectedMatchItem !== null}
         onClose={() => setSelectedMatchItem(null)}
@@ -570,7 +614,7 @@ export function CatalogPanel({
               </Button>
             </div>
 
-            <div className="p-6 space-y-4">
+            <div className="flex flex-col p-6 gap-4">
               <div className="flex items-center gap-3.5 p-3 rounded-xl border border-border/80 bg-muted/20">
                 {itemToDelete.imageUrl && (
                   <img
@@ -588,7 +632,7 @@ export function CatalogPanel({
                       {itemToDelete.sku}
                     </span>
                     <span className="text-xs font-semibold text-foreground">
-                      ${itemToDelete.price.toLocaleString()}
+                      {formatMoney(itemToDelete.price)}
                     </span>
                   </div>
                   <span className="text-[10px] text-muted-foreground mt-0.5 block">

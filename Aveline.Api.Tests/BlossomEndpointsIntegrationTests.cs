@@ -525,14 +525,15 @@ public class BlossomEndpointsIntegrationTests : IAsyncLifetime
     }
 
     /// <summary>
-    /// The new filters are accepted together and narrow the merged source, and a consumption row now
-    /// carries the detail that explains it.
+    /// A boutique reads its usage in Blossoms, so a consumption row reaches it without the
+    /// operator-side detail: no provider, no model, no raw units, no USD cost, and a neutral reason.
+    /// The server-side filter still matches on the model, because that is how the row is found.
     /// </summary>
     [Fact]
-    public async Task Statement_FiltersCombine_AndConsumptionCarriesItsDetail()
+    public async Task Statement_ConsumptionRow_HidesOperatorDetailFromTheBoutique()
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
-        var (orgId, ownerClerk) = await SeedBoutiqueAsync($"statement-filters-{suffix}");
+        var (orgId, ownerClerk) = await SeedBoutiqueAsync($"statement-redact-{suffix}");
         var token = CreateToken(ownerClerk, orgRole: Roles.BoutiqueOwner);
 
         await using (var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
@@ -566,6 +567,55 @@ public class BlossomEndpointsIntegrationTests : IAsyncLifetime
 
         var item = body.GetProperty("items").EnumerateArray().Single();
         Assert.Equal("Consumption", item.GetProperty("kind").GetString());
+        Assert.Equal("Blossom consumption.", item.GetProperty("reason").GetString());
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("sourceRef").ValueKind);
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("provider").ValueKind);
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("model").ValueKind);
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("normalizedUnits").ValueKind);
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("actualCostUsd").ValueKind);
+    }
+
+    /// <summary>
+    /// The team-only admin statement is where the operator detail lives, so the redaction is a
+    /// tenant boundary rather than a deletion of the fact.
+    /// </summary>
+    [Fact]
+    public async Task AdminStatement_ConsumptionRow_KeepsOperatorDetail()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var (orgId, _) = await SeedBoutiqueAsync($"admin-statement-{suffix}");
+        var adminClerk = $"blossom_admin_{suffix}";
+        await SeedAdminAsync(adminClerk);
+        var token = CreateToken(adminClerk, userRole: Roles.Admin);
+
+        await using (var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb").Options))
+        {
+            context.AiUsageRecords.Add(new Modules.Billing.Models.AiUsageRecord
+            {
+                OrganizationId = orgId,
+                RequestId = $"req-{suffix}",
+                WorkflowId = $"wf-{suffix}",
+                Provider = "openai",
+                Model = "gpt-4o",
+                InputTokens = 900,
+                OutputTokens = 100,
+                BlossomUnits = 4m,
+                ActualCostUsd = 0.0075m,
+                CreatedAt = DateTime.UtcNow.AddMinutes(-5),
+            });
+            await context.SaveChangesAsync();
+        }
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Get,
+            $"/api/v1/admin/orgs/{orgId}/blossoms/statement"
+            + "?kind=consumption&q=gpt-4o&page=1&pageSize=25",
+            token));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        var item = body.GetProperty("items").EnumerateArray().Single();
         Assert.Equal("openai", item.GetProperty("provider").GetString());
         Assert.Equal("gpt-4o", item.GetProperty("model").GetString());
         Assert.Equal(1000, item.GetProperty("normalizedUnits").GetInt64());

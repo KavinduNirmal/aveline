@@ -30,6 +30,9 @@ public static class ConversationsModule
         services.AddHostedService<ConversationEventSubscriber>();
         // Unbound uploads (a cancelled picker, a refused send) are swept after the TTL.
         services.AddHostedService<AttachmentSweepJob>();
+        // Clients created before the create path minted a Salon are repaired once at boot. The
+        // repair is idempotent, so a restart is safe and a second instance is a no-op.
+        services.AddHostedService<CustomerSalonBackfillJob>();
 
         return services;
     }

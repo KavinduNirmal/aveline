@@ -29,4 +29,17 @@ public sealed class LoggingEmailService : IEmailService
 
         return Task.CompletedTask;
     }
+
+    public Task SendInvitationSummaryAsync(
+        InvitationSummaryEmail email, CancellationToken cancellationToken = default)
+    {
+        // No codes are logged, matching the rule the invitation sender above follows: a one-time
+        // staff code is not an artefact that belongs in a log line.
+        _logger.LogInformation(
+            "Invitation summary email (demo delivery, provider not configured). To={ToEmail} "
+            + "Organization={OrganizationName} Count={Count} Role={Role} FirstExpiresAt={FirstExpiresAt}",
+            email.ToEmail, email.OrganizationName, email.Count, email.BoutiqueRole, email.FirstExpiresAt);
+
+        return Task.CompletedTask;
+    }
 }

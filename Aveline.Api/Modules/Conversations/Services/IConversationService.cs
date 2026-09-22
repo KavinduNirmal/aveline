@@ -38,6 +38,20 @@ public interface IConversationService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Ensures the organization-shared Salon for one client exists, seeding Aveline's greeting when
+    /// it has to create it. Returns <c>true</c> when this call created the Salon.
+    ///
+    /// A client is only visible in the Salon list once its thread exists, so a client created
+    /// without one is missing from the concierge view until somebody opens it by hand. Ownership is
+    /// deliberately not a parameter: a client-bound Salon is organization-shared
+    /// (<c>OwnerUserId IS NULL</c>, ADR-021), so a staff member's id must never be bound to it.
+    /// </summary>
+    Task<bool> EnsureCustomerSalonAsync(
+        Guid orgId,
+        Guid customerId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Fetches a conversation the caller may see. Returns <c>null</c> when it does not exist in
     /// the organization or belongs to another user (ADR-021).
     /// </summary>

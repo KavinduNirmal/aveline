@@ -580,7 +580,7 @@ Rose tier advertises "API Access" (`docs/architecture/pricing_plan.md:303`) and
 | `apikeys:view` | `admin`, `owner`, `org:boutique_owner` | List/read API keys |
 | `apikeys:manage` | `admin`, `owner`, `org:boutique_owner` | Create/revoke/delete API keys |
 | `stats:view` | `admin`, `owner`, `moderator`, `org:boutique_owner`, `org:boutique_manager`, `org:boutique_supervisor` | All statistics endpoints |
-| `stats:view:agent` | `admin`, `owner`, `moderator`, `org:boutique_owner` | Agentic statistics (reveals prompt/cost internals) |
+| `stats:view:agent` | `admin`, `owner`, `moderator` | Agentic statistics (reveals prompt/cost internals). **Not held by any boutique role**, and the org-scoped route group is removed |
 | `stats:system` | `admin`, `owner` | System statistics and alerts |
 | `admin:users:read` / `admin:users:manage` | `admin`, `owner` | Cross-org user administration |
 | `admin:orgs:read` | `admin`, `owner`, `moderator` | Cross-org org search |
@@ -742,7 +742,7 @@ Key design decisions:
 
 | Endpoint group | Permission |
 | --- | --- |
-| `GET /api/v1/orgs/{organizationId}/statistics/agents*` | `stats:view:agent` |
+| ~~`GET /api/v1/orgs/{organizationId}/statistics/agents*`~~ | **removed** — a boutique reads its usage in Blossoms |
 | `GET /api/v1/admin/statistics/agents*` | `stats:system` |
 | `POST /internal/agent-runs` | `InternalServicePolicy` |
 

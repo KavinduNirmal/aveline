@@ -11,7 +11,16 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { formatMoney } from '@/lib/format-money'
 import type { SourcingRequestMock, SupplierMock } from './mockData'
 
 interface SourcingTabProps {
@@ -26,11 +35,11 @@ const STAGES: {
   label: string
   color: string
 }[] = [
-  { id: 'pending', label: 'Pending Quote', color: 'bg-amber-500/10 text-amber-600 border-amber-500/20' },
-  { id: 'quoted', label: 'Quoted by Atelier', color: 'bg-blue-500/10 text-blue-600 border-blue-500/20' },
-  { id: 'approved', label: 'Approved', color: 'bg-purple-500/10 text-purple-600 border-purple-500/20' },
-  { id: 'ordered', label: 'Ordered from Atelier', color: 'bg-indigo-500/10 text-indigo-600 border-indigo-500/20' },
-  { id: 'fulfilled', label: 'Fulfilled', color: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' },
+  { id: 'pending', label: 'Pending Quote', color: 'bg-warning/10 text-warning border-warning/20' },
+  { id: 'quoted', label: 'Quoted by Atelier', color: 'bg-chart-1/10 text-chart-1 border-chart-1/20' },
+  { id: 'approved', label: 'Approved', color: 'bg-chart-2/10 text-chart-2 border-chart-2/20' },
+  { id: 'ordered', label: 'Ordered from Atelier', color: 'bg-chart-3/10 text-chart-3 border-chart-3/20' },
+  { id: 'fulfilled', label: 'Fulfilled', color: 'bg-success/10 text-success border-success/20' },
 ]
 
 export function SourcingTab({
@@ -90,7 +99,7 @@ export function SourcingTab({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6">
       {/* Sourcing Header Action */}
       <div className="flex items-center justify-between">
         <div>
@@ -130,7 +139,7 @@ export function SourcingTab({
               </div>
 
               {/* Tickets Column */}
-              <div className="flex-1 space-y-3 min-h-[300px]">
+              <div className="flex-1 gap-3 min-h-[300px]">
                 {stageTickets.length === 0 ? (
                   <div className="flex h-32 items-center justify-center rounded-lg border border-dashed border-border/60 text-center p-3 text-[11px] text-muted-foreground">
                     No tickets in this stage
@@ -168,18 +177,18 @@ export function SourcingTab({
                         </p>
 
                         {/* Financials & Markup */}
-                        <div className="rounded-lg bg-muted/40 p-2 text-[11px] space-y-1 mb-3">
+                        <div className="flex flex-col rounded-lg bg-muted/40 p-2 text-[11px] gap-1 mb-3">
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Target Retail:</span>
                             <span className="font-semibold text-primary">
-                              ${ticket.targetPrice.toLocaleString()}
+                              {formatMoney(ticket.targetPrice)}
                             </span>
                           </div>
                           <div className="flex justify-between text-muted-foreground">
                             <span>Atelier Cost:</span>
-                            <span>${ticket.estimatedCost.toLocaleString()}</span>
+                            <span>{formatMoney(ticket.estimatedCost)}</span>
                           </div>
-                          <div className="flex justify-between font-medium text-emerald-600 dark:text-emerald-400 pt-1 border-t border-border/50">
+                          <div className="flex justify-between font-medium text-success dark:text-success pt-1 border-t border-border/50">
                             <span>Margin:</span>
                             <span>+{marginPct}%</span>
                           </div>
@@ -193,19 +202,26 @@ export function SourcingTab({
 
                         {/* Stage transition buttons */}
                         <div className="pt-2 border-t border-border/60">
-                          <select
+                          <Select
                             value={ticket.status}
-                            onChange={(e) =>
-                              onUpdateStatus(ticket.id, e.target.value as SourcingRequestMock['status'])
+                            onValueChange={(value) =>
+                              onUpdateStatus(ticket.id, value as SourcingRequestMock['status'])
                             }
-                            className="w-full rounded-md border border-input bg-background py-1 px-2 text-[10px] text-foreground"
                           >
-                            <option value="pending">Stage: Pending Quote</option>
-                            <option value="quoted">Stage: Quoted</option>
-                            <option value="approved">Stage: Approved</option>
-                            <option value="ordered">Stage: Ordered</option>
-                            <option value="fulfilled">Stage: Fulfilled</option>
-                          </select>
+                            <SelectTrigger
+                              aria-label={`Stage for ${ticket.itemDescription}`}
+                              className="h-8 w-full text-[10px]"
+                            >
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="pending">Stage: Pending Quote</SelectItem>
+                              <SelectItem value="quoted">Stage: Quoted</SelectItem>
+                              <SelectItem value="approved">Stage: Approved</SelectItem>
+                              <SelectItem value="ordered">Stage: Ordered</SelectItem>
+                              <SelectItem value="fulfilled">Stage: Fulfilled</SelectItem>
+                            </SelectContent>
+                          </Select>
                         </div>
                       </Card>
                     )
@@ -220,7 +236,7 @@ export function SourcingTab({
       {/* New Sourcing Ticket Modal */}
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in">
-          <Card className="w-full max-w-lg border-border bg-background shadow-2xl p-6 space-y-4 animate-in zoom-in-95">
+          <Card className="flex flex-col w-full max-w-lg border-border bg-background shadow-2xl p-6 gap-4 animate-in zoom-in-95">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <h3 className="font-serif text-base font-semibold">New Sourcing Request Ticket</h3>
               <Button
@@ -233,8 +249,8 @@ export function SourcingTab({
               </Button>
             </div>
 
-            <form onSubmit={handleCreateTicket} className="space-y-4">
-              <div className="space-y-1">
+            <form onSubmit={handleCreateTicket} className="flex flex-col gap-4">
+              <div className="flex flex-col gap-1">
                 <Label className="text-xs">Client Name</Label>
                 <Input
                   value={clientName}
@@ -246,7 +262,7 @@ export function SourcingTab({
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
+                <div className="flex flex-col gap-1">
                   <Label className="text-xs">Category</Label>
                   <Input
                     value={category}
@@ -255,7 +271,7 @@ export function SourcingTab({
                     className="text-xs"
                   />
                 </div>
-                <div className="space-y-1">
+                <div className="flex flex-col gap-1">
                   <Label className="text-xs">Target Color</Label>
                   <Input
                     value={color}
@@ -266,20 +282,20 @@ export function SourcingTab({
                 </div>
               </div>
 
-              <div className="space-y-1">
+              <div className="flex flex-col gap-1">
                 <Label className="text-xs">Bespoke Requirements / Description</Label>
-                <textarea
+                <Textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="Describe custom drape, embroidery style, and deadline..."
                   rows={3}
-                  className="w-full rounded-md border border-input bg-background p-2.5 text-xs text-foreground"
+                  className="text-xs"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label className="text-xs">Target Retail Price ($)</Label>
+                <div className="flex flex-col gap-1">
+                  <Label className="text-xs">Target retail price (LKR)</Label>
                   <Input
                     type="number"
                     value={targetPrice}
@@ -287,8 +303,8 @@ export function SourcingTab({
                     className="text-xs"
                   />
                 </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Est. Atelier Cost ($)</Label>
+                <div className="flex flex-col gap-1">
+                  <Label className="text-xs">Est. atelier cost (LKR)</Label>
                   <Input
                     type="number"
                     value={estimatedCost}
@@ -298,19 +314,20 @@ export function SourcingTab({
                 </div>
               </div>
 
-              <div className="space-y-1">
+              <div className="flex flex-col gap-1">
                 <Label className="text-xs">Assign Partner Atelier</Label>
-                <select
-                  value={supplierId}
-                  onChange={(e) => setSupplierId(e.target.value)}
-                  className="w-full rounded-md border border-input bg-background p-2 text-xs"
-                >
-                  {suppliers.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} ({s.location})
-                    </option>
-                  ))}
-                </select>
+                <Select value={supplierId} onValueChange={setSupplierId}>
+                  <SelectTrigger aria-label="Assign partner atelier" className="w-full text-xs">
+                    <SelectValue placeholder="Choose an atelier" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {suppliers.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name} ({s.location})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="flex justify-end gap-2 pt-3 border-t border-border">

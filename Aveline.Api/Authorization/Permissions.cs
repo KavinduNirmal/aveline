@@ -25,6 +25,26 @@ public static class Permissions
     public const string SettingsManage = "settings:manage";
     public const string ConversationsView = "conversations:view";
 
+    /// <summary>
+    /// Writing a client's record: the profile edit and the soft delete. Separate from
+    /// <see cref="CustomersView"/> because every boutique role holds the read, so there was
+    /// nothing correct to gate a write on.
+    /// </summary>
+    public const string CustomersManage = "customers:manage";
+
+    /// <summary>
+    /// Managing the shop's staff: invitations, membership listing, role changes, suspension and
+    /// removal. Deliberately separate from <see cref="SettingsManage"/>, which also reaches the
+    /// Integrations surface where the WhatsApp and payment-gateway credentials live.
+    /// </summary>
+    public const string TeamManage = "team:manage";
+
+    /// <summary>
+    /// Changing an order's lifecycle or editing the business rules that gate discounts and
+    /// approvals. Reads and order creation stay at member level; this is the write half.
+    /// </summary>
+    public const string OrdersManage = "orders:manage";
+
     // Billing and pricing.
     public const string BillingView = "billing:view";
 
@@ -100,6 +120,9 @@ public static class Permissions
         ReportsView,
         SettingsManage,
         ConversationsView,
+        CustomersManage,
+        TeamManage,
+        OrdersManage,
         BillingView,
         BillingViewSelf,
         BillingManage,
@@ -167,18 +190,22 @@ public static class Permissions
                 All.Where(permission => !PermissionsDeniedToAdmin.Contains(permission)).ToArray()),
             [Roles.Owner] = All,
 
-            [Roles.BoutiqueStaff] = Grant(CatalogView, CustomersView, ConversationsView, BillingViewSelf),
+            [Roles.BoutiqueStaff] = Grant(
+                CatalogView, CustomersView, ConversationsView, BillingViewSelf, ApprovalsApprove),
             [Roles.BoutiqueManager] = Grant(
-                CatalogView, CustomersView, CatalogManage, ReportsView, ConversationsView,
+                CatalogView, CustomersView, CatalogManage, CustomersManage, TeamManage, OrdersManage,
+                ReportsView, ConversationsView,
                 BillingView, BillingViewSelf, PricingView, StatsView),
             [Roles.BoutiqueSupervisor] = Grant(
-                CatalogView, CustomersView, CatalogManage, ApprovalsApprove, ReportsView, ConversationsView,
+                CatalogView, CustomersView, CatalogManage, CustomersManage, TeamManage, OrdersManage,
+                ApprovalsApprove, ReportsView, ConversationsView,
                 BillingViewSelf, StatsView),
             [Roles.BoutiqueOwner] = Grant(
-                CatalogView, CustomersView, CatalogManage, ApprovalsApprove, PaymentsRefund,
+                CatalogView, CustomersView, CatalogManage, CustomersManage, TeamManage, OrdersManage,
+                ApprovalsApprove, PaymentsRefund,
                 ReportsView, SettingsManage, ConversationsView,
                 BillingView, BillingViewSelf, BillingManage, PricingView, ApiKeysView, ApiKeysManage,
-                StatsView, StatsViewAgent),
+                StatsView),
         };
 
     /// <summary>

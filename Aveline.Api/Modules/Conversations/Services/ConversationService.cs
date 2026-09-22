@@ -888,6 +888,12 @@ public class ConversationService : IConversationService
                     // The agent reads its transcript window from this id (ADR-023, W1.3). Without
                     // it the workflow sees only the newest message and cannot resolve references.
                     conversation_id = conversation.Id,
+                    // The conversation's own binding wins over re-deriving identity from the
+                    // sender's number. Resolving by phone alone breaks the moment a customer's
+                    // number changes: the old ref stops matching, so the agent finds nobody and
+                    // creates a second, nameless customer - and every later message is answered as
+                    // an unknown customer. Null for a first contact, which falls back to the phone.
+                    customer_id = conversation.CustomerId,
                     phone_number = from,
                     channel = "whatsapp",
                     direction = "inbound",

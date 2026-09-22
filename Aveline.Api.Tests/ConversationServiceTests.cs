@@ -785,6 +785,38 @@ public class ConversationServiceTests
     }
 
     [Fact]
+    public async Task RecordInboundClientMessageAsync_ForwardsTheConversationsCustomerToTheAgent()
+    {
+        // The agent must not re-derive identity from the sender's number alone. A number that has
+        // since changed no longer matches, so resolving by phone finds nobody and creates a second,
+        // nameless customer - after which every message is answered as an unknown customer. The
+        // conversation's own binding is authoritative and travels with the brief.
+        var orgId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
+
+        await _sut.RecordInboundClientMessageAsync(
+            orgId, "94763475058", "94763475058", "Please recheck the emerald saree", customerId, null,
+            CancellationToken.None);
+
+        Assert.Equal(1, _agent.PostCount);
+        Assert.Contains("\"customer_id\":\"" + customerId + "\"", _agent.LastBody);
+    }
+
+    [Fact]
+    public async Task RecordInboundClientMessageAsync_SendsNoCustomerForAFirstContact()
+    {
+        // A first-contact thread is unbound, so the agent falls back to the phone - which is what
+        // creates the customer in the first place.
+        var orgId = Guid.NewGuid();
+
+        await _sut.RecordInboundClientMessageAsync(
+            orgId, "+94779998888", "+94779998888", "Hello", null, null, CancellationToken.None);
+
+        Assert.Equal(1, _agent.PostCount);
+        Assert.DoesNotContain("\"customer_id\":\"", _agent.LastBody);
+    }
+
+    [Fact]
     public async Task RecordInboundClientMessageAsync_LeavesAnUnknownCustomerUnbound_ButIdentifiable()
     {
         // A phone that is not on file is a rendered state, not a silent one: the thread keeps its

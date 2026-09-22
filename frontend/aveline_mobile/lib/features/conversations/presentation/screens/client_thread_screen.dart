@@ -175,7 +175,12 @@ class _ClientThreadScreenState extends State<ClientThreadScreen> {
         );
       }
     } catch (error) {
+      // The platform picker refused, and that is still an outcome the associate is owed:
+      // a log line is not an answer. The thread is left exactly as it was.
       debugPrint('[thread] picking an attachment failed: $error');
+      if (mounted) {
+        AppToast.show(context, 'That file could not be attached.', error: true);
+      }
     }
   }
 

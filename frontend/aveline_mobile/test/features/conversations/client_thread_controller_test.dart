@@ -929,6 +929,78 @@ void main() {
       expect(controller.pendingAttachments, isEmpty);
       expect(thread.sentAttachments.single, isEmpty);
     });
+
+    test('a full tray of five uploads, and the message binds all five', () async {
+      final thread = _FakeThread(_five());
+      final controller = _controller(thread);
+      await controller.load();
+
+      for (var n = 1; n <= 5; n++) {
+        await controller.attach(
+          bytes: Uint8List.fromList([n]),
+          contentType: 'image/png',
+          fileName: 'photo_$n.png',
+        );
+      }
+
+      expect(thread.uploaded, hasLength(5));
+      expect(controller.pendingAttachments, hasLength(5));
+      expect(controller.areAttachmentsReady, isTrue);
+
+      await controller.send('All five.');
+
+      expect(thread.sentAttachments.single, hasLength(5));
+      expect(controller.pendingAttachments, isEmpty);
+    });
+
+    test('refuses a sixth file in the server\u2019s own words, before it is uploaded', () async {
+      // The cap is the API's (`MediaContentTypes.cs:31`, enforced at
+      // `ConversationService.cs:307-310`); the client moves the same rule to the pick path so
+      // nothing that could never be bound is uploaded, and so the associate gets a specific
+      // answer rather than the generic send failure.
+      final thread = _FakeThread(_five());
+      final controller = _controller(thread);
+      await controller.load();
+
+      for (var n = 1; n <= 5; n++) {
+        await controller.attach(
+          bytes: Uint8List.fromList([n]),
+          contentType: 'image/png',
+          fileName: 'photo_$n.png',
+        );
+      }
+      expect(thread.uploaded, hasLength(5));
+
+      await controller.attach(
+        bytes: Uint8List.fromList([6]),
+        contentType: 'image/png',
+        fileName: 'photo_6.png',
+      );
+
+      // The upload call count is unchanged: the sixth file never reaches the API.
+      expect(thread.uploaded, hasLength(5));
+      expect(controller.pendingAttachments, hasLength(5));
+      // Exactly the message the API itself would answer with.
+      expect(controller.actionError, 'A message may carry at most 5 attachments.');
+    });
+
+    test('a failure names the file it could not upload', () async {
+      final thread = _FakeThread(_five())..failUpload = true;
+      final controller = _controller(thread);
+      await controller.load();
+
+      await controller.attach(
+        bytes: Uint8List.fromList([1]),
+        contentType: 'image/png',
+        fileName: 'photo.png',
+      );
+
+      expect(controller.pendingAttachments.single.isFailed, isTrue);
+      expect(
+        controller.pendingAttachments.single.error,
+        'Could not upload photo.png.',
+      );
+    });
   });
 
   group('ClientThreadController.revokeSignOff', () {

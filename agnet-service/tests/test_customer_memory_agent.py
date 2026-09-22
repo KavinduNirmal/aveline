@@ -799,3 +799,44 @@ async def test_an_ordinary_message_does_not_touch_the_customer_book():
     await _run_update(registry, message="Do you have anything pink?", staff_query=True)
 
     assert registry.updates == []
+
+
+async def test_staff_query_surfaces_what_is_actually_on_file():
+    """A question about the customer must reflect the memories the boutique has stored.
+
+    The interaction brief carries preferences, dated events and tags - not semantic memories. So
+    "what do we have on file for her?" answered "nothing on file yet" while memories sat in the
+    store. The retrieved context is now part of the staff answer.
+    """
+    registry = FakeRegistry()
+
+    async def brief(org_id, customer_id):
+        # The brief knows nothing, exactly as the backend does for a customer whose only facts are
+        # undated memories.
+        return {
+            "customerName": "Kasha Vivian",
+            "status": "new",
+            "upcomingEvents": None,
+            "preferenceSummary": None,
+            "tags": [],
+        }
+
+    registry.generate_interaction_brief = brief
+    graph = build_memory_graph(registry)
+
+    result = await graph.ainvoke(
+        {
+            "org_id": "org-1",
+            "customer_id": "cust-kasha",
+            "message": "what do we have on file for her?",
+            "intent_type": "general_inquiry",
+            "channel": "whatsapp",
+            "direction": None,
+            "staff_query": True,
+        }
+    )
+
+    brief_text = result["output"]["interaction_brief"]
+    # FakeRegistry.get_customer_memories returns "Prefers emerald silk".
+    assert "emerald silk" in brief_text
+    assert "nothing on file yet" not in brief_text

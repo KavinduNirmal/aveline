@@ -465,26 +465,54 @@ class CustomerMemoryAgent:
         prefs = backend.get("preferenceSummary")
         tags = backend.get("tags") if isinstance(backend.get("tags"), list) else []
 
+        # What the boutique has actually recorded about this customer. These are semantic memories
+        # (events, preferences, complaints), which the interaction brief does not carry - so a
+        # question like "what do we have on file for her?" answered "nothing on file yet" while
+        # three memories sat in the store.
+        remembered = [
+            str(memory.get("content")).strip()
+            for memory in (state.get("semantic_context") or [])
+            if isinstance(memory, dict) and memory.get("content")
+        ]
+
+        def _details() -> list[str]:
+            """The grounded facts, in a stable order."""
+            facts: list[str] = []
+            if prefs:
+                facts.append(f"preferences: {prefs}")
+            if events:
+                facts.append(f"upcoming events: {events}")
+            if remembered:
+                facts.append(f"on file: {'; '.join(remembered)}")
+            if tags:
+                facts.append(f"tags: {', '.join(tags)}")
+            return facts
+
         if intent_type == "event_query":
             if events:
                 return f"Upcoming events for {display_name}: {events}."
+            # The absence of a dated event stays the headline answer; anything else on file is
+            # added because it is usually what the staff member actually wanted to know.
+            if remembered:
+                return (
+                    f"No upcoming events on file for {display_name}. "
+                    f"On file: {'; '.join(remembered)}."
+                )
             return f"No upcoming events on file for {display_name}."
 
         # General staff query: give the staff a readable, grounded summary.
-        if status == "new" and not events and not prefs and not tags:
-            return f"{display_name} is a new customer - nothing on file yet."
-        if not events and not prefs and not tags:
-            return f"{display_name} ({status}) has no preferences or events on file yet."
+        if status == "new":
+            facts = _details()
+            if not facts:
+                return f"{display_name} is a new customer - nothing on file yet."
+            # Announcing "new" stays useful for onboarding even when some memory exists, so the
+            # framing is kept and the facts are appended rather than replacing it.
+            return f"{display_name} is a new customer - {'; '.join(facts)}."
 
-        details: list[str] = []
-        if prefs:
-            details.append(f"preferences: {prefs}")
-        if events:
-            details.append(f"upcoming events: {events}")
-        if tags:
-            details.append(f"tags: {', '.join(tags)}")
-        summary = "; ".join(details)
-        return f"{display_name} ({status}) - {summary}."
+        facts = _details()
+        if not facts:
+            return f"{display_name} ({status}) has no preferences or events on file yet."
+        return f"{display_name} ({status}) - {'; '.join(facts)}."
 
     async def _generate_draft(
         self,

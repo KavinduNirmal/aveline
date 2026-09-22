@@ -383,7 +383,12 @@ class CustomerMemoryAgent:
             "customer": {
                 "customer_id": state.get("customer_id"),
                 "phone_number": profile.get("phoneNumber") or state.get("phone_number"),
-                "full_name": profile.get("fullName") or name,
+                # The backend brief is the one source that reliably knows the name: when the
+                # conversation already carries a customer id, the resolver takes its fast path and
+                # returns no profile, so `fullName` is absent and this block fell back to the
+                # placeholder "The customer" - while the brief right beside it named them. Aveline's
+                # summary line renders this field, so the two disagreed in the same message.
+                "full_name": backend.get("customerName") or profile.get("fullName") or name,
                 "status": profile.get("status") or "new",
                 "consent_status": state.get("consent_status") or "pending",
             },

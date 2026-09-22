@@ -869,3 +869,27 @@ async def test_purchase_intent_does_not_fail_the_memory_agent():
     assert output["status"] == "success"
     assert output["parsed_intent"]["intent_type"] == "order_placement"
     assert output["interaction_brief"]
+
+
+async def test_customer_name_matches_the_brief_when_the_resolver_took_the_fast_path():
+    """Aveline's summary names the customer; it must not say "The customer" beside a named brief.
+
+    When the conversation already carries a customer id, the resolver's fast path returns no
+    profile, so `full_name` had nothing to fall back on but the placeholder - while the backend
+    brief named them. Both appear in one message, so the mismatch was visible to staff.
+    """
+    registry = FakeRegistry()
+
+    async def brief(org_id, customer_id):
+        return {"customerName": "Kasha Vivian Perera", "status": "new", "tags": []}
+
+    registry.generate_interaction_brief = brief
+
+    result = await _run_memory(
+        registry,
+        customer_id="cust-kasha",
+        phone=None,
+        message="Do you still have the emerald green saree?",
+    )
+
+    assert result["output"]["customer"]["full_name"] == "Kasha Vivian Perera"

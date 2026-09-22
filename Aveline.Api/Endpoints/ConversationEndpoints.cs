@@ -1,12 +1,17 @@
 using System.Security.Claims;
 using Aveline.Api.Common.Media;
 using Aveline.Api.Configurations;
+using Aveline.Api.Modules.Conversations.Attachments;
 using Aveline.Api.Modules.Conversations.DTOs;
+using Aveline.Api.Modules.Conversations.Media;
+using Aveline.Api.Modules.Conversations.Repositories;
 using Aveline.Api.Modules.Conversations.Services;
+using Aveline.Api.Modules.Media;
 using Aveline.Api.Modules.Shared.Repositories;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 
 namespace Aveline.Api.Endpoints;
 
@@ -227,6 +232,10 @@ public static class ConversationEndpoints
         IConversationService conversations,
         IMessageBroadcaster broadcaster,
         IUserRepository users,
+        IConversationRepository conversationRepository,
+        IAttachmentStore attachmentStore,
+        IImageUrlFetcher imageUrlFetcher,
+        ILoggerFactory loggerFactory,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(request.Text))
@@ -240,11 +249,38 @@ public static class ConversationEndpoints
             return Results.Unauthorized();
         }
 
+        // The pasted URL, when there is one, is fetched and stored before the message is written:
+        // a refused URL adds no attachment (salon plan §7.5 item 14), and the one refusal that is
+        // not "send without the image" — the disabled feature — is answered before any write.
+        Guid? imageAttachmentId;
         try
         {
+            imageAttachmentId = await ResolvePastedImageAsync(
+                organizationId, conversationId, userId.Value, request.ImageUrl,
+                conversationRepository, attachmentStore, imageUrlFetcher, loggerFactory,
+                cancellationToken);
+        }
+        catch (ImageUrlFetchException refusal) when (refusal.Reason == ImageUrlFetchReasons.Disabled)
+        {
+            // A deployment that does not offer the feature says so, rather than dropping the image
+            // from a message the client thought carried it (strategy §4 C7). The fetcher already
+            // logged the refusal at Warning.
+            return Results.BadRequest(new
+            {
+                code = refusal.Reason,
+                message = "Pasting an image URL is not enabled on this deployment. Upload the image file instead.",
+            });
+        }
+
+        try
+        {
+            var attachmentIds = imageAttachmentId is null
+                ? request.AttachmentIds
+                : (request.AttachmentIds ?? []).Append(imageAttachmentId.Value).ToList();
+
             var message = await conversations.SendStaffNoteAsync(
                 organizationId, userId.Value, conversationId, request.Text,
-                request.ClientMessageId, request.AttachmentIds, cancellationToken);
+                request.ClientMessageId, attachmentIds, cancellationToken);
             // The staff note moves the thread's preview, so the list is told directly rather
             // than waiting for the agent's reply.
             await BroadcastTileAsync(conversations, broadcaster, conversationId, cancellationToken);
@@ -271,6 +307,100 @@ public static class ConversationEndpoints
             return Results.NotFound(new { message = "Conversation not found." });
         }
     }
+
+    /// <summary>
+    /// Fetches a pasted image URL through the SSRF-guarded fetcher and stores it unbound, or
+    /// returns <c>null</c> when there is nothing to fetch or the fetch was refused for any reason
+    /// other than the feature being disabled.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The refusal discipline is the webhook's (<c>WebhookEndpoints.cs:346-358</c>; salon plan
+    /// §7.5 item 14): a rejected or failed fetch logs at <see cref="LogLevel.Warning"/> and returns
+    /// without an attachment, leaving the message's own words to be sent untouched. Only
+    /// <see cref="ImageUrlFetchReasons.Disabled"/> escapes, because a deployment that does not
+    /// offer the feature can tell the client so — the client can act on that answer by uploading
+    /// the file, whereas a refused URL would silently drop the image (strategy §4 C7).
+    /// </para>
+    /// <para>
+    /// The content type stored is the fetcher's <em>sniffed</em> type, never the peer's declared
+    /// header: the bytes are the truth (strategy §3.6, salon plan §7.5 item 11). The byte hash is
+    /// computed with <see cref="AttachmentContentHash.Compute"/>, the one convention every
+    /// conversation attachment shares.
+    /// </para>
+    /// </remarks>
+    private static async Task<Guid?> ResolvePastedImageAsync(
+        Guid organizationId,
+        Guid conversationId,
+        Guid userId,
+        string? imageUrl,
+        IConversationRepository conversationRepository,
+        IAttachmentStore attachmentStore,
+        IImageUrlFetcher imageUrlFetcher,
+        ILoggerFactory loggerFactory,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(imageUrl))
+        {
+            return null;
+        }
+
+        var logger = loggerFactory.CreateLogger(typeof(ConversationEndpoints));
+
+        try
+        {
+            var fetched = await imageUrlFetcher.FetchAsync(imageUrl, cancellationToken);
+
+            // The store's tag and `context` pair need the customer the media concerns, which is
+            // the conversation's own binding. An invisible conversation resolves to null here and
+            // the send below answers 404, exactly as it would without an image.
+            var conversation = await conversationRepository.GetVisibleToUserAsync(
+                organizationId, conversationId, userId, cancellationToken);
+
+            var stored = await attachmentStore.StoreAsync(
+                new AttachmentStoreRequest(
+                    organizationId,
+                    conversationId,
+                    userId,
+                    fetched.Bytes,
+                    fetched.ContentType,
+                    FileNameFor(fetched.ContentType),
+                    Width: null,
+                    Height: null,
+                    // The provenance is the call path, and this one fetched from a URL.
+                    MediaSource.Url,
+                    conversation?.CustomerId,
+                    AttachmentContentHash.Compute(fetched.Bytes)),
+                cancellationToken);
+
+            return stored.Id;
+        }
+        catch (ImageUrlFetchException refusal) when (refusal.Reason != ImageUrlFetchReasons.Disabled)
+        {
+            // The message text is untouched and no attachment is added; the send proceeds. The
+            // reason travels, never the URL (item 13). The disabled feature is the one refusal
+            // this helper does not absorb: the caller answers it with an explicit 400.
+            logger.LogWarning(
+                "A pasted image URL was refused; the message is sent without it. reason={Reason}",
+                refusal.Reason);
+
+            return null;
+        }
+    }
+
+    /// <summary>A provider-neutral file name, since a fetched URL carries none.</summary>
+    private static string FileNameFor(string contentType) => contentType switch
+    {
+        "image/png" => "pasted-image.png",
+        "image/gif" => "pasted-image.gif",
+        "image/webp" => "pasted-image.webp",
+        "image/avif" => "pasted-image.avif",
+        "image/bmp" => "pasted-image.bmp",
+        "image/tiff" => "pasted-image.tiff",
+        "image/heic" => "pasted-image.heic",
+        "image/heif" => "pasted-image.heif",
+        _ => "pasted-image.jpg",
+    };
 
     private static async Task<IResult> DecideSignOffAsync(
         Guid organizationId,
@@ -425,7 +555,7 @@ public static class ConversationEndpoints
             });
         }
 
-        var contentType = MediaContentTypes.Resolve(declaredType, fileName);
+        var contentType = AttachmentContentPolicy.ResolveForStorage(declaredType, fileName, bytes);
         if (contentType is null)
         {
             return Results.BadRequest(new { message = "Only images and PDFs can be attached." });

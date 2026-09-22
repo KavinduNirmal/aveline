@@ -50,6 +50,7 @@ public static class VisualEndpoints
             .WithName("UpdateInventoryItem")
             .WithSummary("Update details of an existing inventory item.")
             .Produces<InventoryItemDto>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status404NotFound)
             .Produces(StatusCodes.Status401Unauthorized);
 
@@ -213,8 +214,11 @@ public static class VisualEndpoints
             return Results.BadRequest(new { error = "Valid OrganizationId is required." });
         }
 
-        var created = await visualService.CreateInventoryItemAsync(dto, cancellationToken);
-        return Results.Created($"/internal/visual/inventory/{created.Id}?organizationId={created.OrganizationId}", created);
+        return await WriteInventoryItemAsync(async () =>
+        {
+            var created = await visualService.CreateInventoryItemAsync(dto, cancellationToken);
+            return Results.Created($"/internal/visual/inventory/{created.Id}?organizationId={created.OrganizationId}", created);
+        });
     }
 
     private static async Task<IResult> UpdateInventoryItemAsync(
@@ -223,13 +227,16 @@ public static class VisualEndpoints
         [FromServices] IVisualService visualService,
         CancellationToken cancellationToken)
     {
-        var updated = await visualService.UpdateInventoryItemAsync(itemId, dto, cancellationToken);
-        if (updated is null)
+        return await WriteInventoryItemAsync(async () =>
         {
-            return Results.NotFound(new { error = "Inventory item not found." });
-        }
+            var updated = await visualService.UpdateInventoryItemAsync(itemId, dto, cancellationToken);
+            if (updated is null)
+            {
+                return Results.NotFound(new { error = "Inventory item not found." });
+            }
 
-        return Results.Ok(updated);
+            return Results.Ok(updated);
+        });
     }
 
     private static async Task<IResult> UpdateInventoryStatusAsync(
@@ -281,8 +288,26 @@ public static class VisualEndpoints
         [FromServices] IVisualService visualService,
         CancellationToken cancellationToken)
     {
-        var analysis = await visualService.AnalyzeImageAsync(dto, cancellationToken);
-        return Results.Ok(analysis);
+        try
+        {
+            var analysis = await visualService.AnalyzeImageAsync(dto, cancellationToken);
+            return Results.Ok(analysis);
+        }
+        catch (KeyNotFoundException)
+        {
+            // A named reference the caller cannot see - another organisation's, unknown, or
+            // deleted - is a 404, never a resolved image and never a token (strategy §3.5,
+            // migration plan §7.5). The same translation this file's QR route already applies.
+            return Results.NotFound(new { error = "Image not found." });
+        }
+        catch (ArgumentException ex)
+        {
+            // The vision target refusal: a blank target, inline data the provider cannot read, or
+            // a relative route that is neither an absolute http(s) URL nor inline image data. A
+            // caller error is a 400 with the service's own message, never the global handler's
+            // 500. Everything else still propagates.
+            return Results.BadRequest(new { error = ex.Message });
+        }
     }
 
     private static async Task<IResult> GetCustomerMatchesAsync(
@@ -393,5 +418,26 @@ public static class VisualEndpoints
     {
         var result = qrService.GenerateQrResponse(dto);
         return Results.Ok(result);
+    }
+
+    /// <summary>
+    /// Runs an inventory write, translating the catalog tier's image-size refusal
+    /// (<see cref="CatalogImageTooLargeException"/>, raised by
+    /// <c>InventoryService.ProcessImageUrlAsync</c> for a <c>data:</c> image URL) into the same
+    /// <c>400 { error }</c> shape this file's other refusals use. The catalog item routes in
+    /// <c>CatalogEndpoints.cs</c> answer the identical refusal the same way, so one cap has one
+    /// answer across both lanes (strategy §3.4, plan U0.6). Every other failure keeps
+    /// propagating to the global handler, so this cannot mask an unrelated fault.
+    /// </summary>
+    private static async Task<IResult> WriteInventoryItemAsync(Func<Task<IResult>> write)
+    {
+        try
+        {
+            return await write();
+        }
+        catch (CatalogImageTooLargeException ex)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
     }
 }

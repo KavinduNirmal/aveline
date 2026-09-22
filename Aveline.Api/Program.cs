@@ -20,10 +20,12 @@ using Aveline.Api.Modules.Commerce;
 using Aveline.Api.Modules.Commerce.Endpoints;
 using Aveline.Api.Modules.Conversations;
 using Aveline.Api.Modules.Conversations.Hubs;
+using Aveline.Api.Modules.Conversations.Media;
 using Aveline.Api.Modules.CustomerConcierge;
 using Aveline.Api.Modules.Home;
 using Aveline.Api.Modules.Home.Endpoints;
 using Aveline.Api.Modules.Integrations;
+using Aveline.Api.Modules.Media;
 using Aveline.Api.Modules.Notifications;
 using Aveline.Api.Modules.Notifications.Hubs;
 using Aveline.Api.Modules.Organizations.Repositories;
@@ -64,6 +66,14 @@ builder.Services.AddAvelineCors(builder.Configuration);
 builder.Services.AddAgentServiceClient(builder.Configuration);
 builder.Services.AddClerkAdminClient();
 builder.Services.AddWhatsAppProvider(builder.Configuration);
+// The media provider seam (S0): the options and the one explicit credential resolution, then
+// the single place `IMediaStorage` is registered, selected from `Media:Provider`.
+builder.Services.AddMediaOptions(builder.Configuration);
+builder.Services.AddMediaModule(builder.Configuration);
+// The pasted-image-URL fetcher (S6): its own client, its own pinned transport, and deliberately
+// no auth delegating handler — this client must never authenticate to the host it fetches
+// (salon plan §7.5 item 12). The kill switch is `Media:ImageUrlUploadEnabled`, default false.
+builder.Services.AddImageUrlFetcher();
 builder.Services.AddBillingModule();
 builder.Services.AddRevenueModule(builder.Configuration);
 builder.Services.AddApiAccessModule();
@@ -116,6 +126,9 @@ var app = builder.Build();
 TelemetrySecurityGuard.EnsureIpHashSaltForProduction(app.Environment, app.Configuration);
 // Fail fast when Production would expose /metrics under the committed internal token (S-1).
 MetricsSecurityGuard.EnsureScrapeTokenForProduction(app.Environment, app.Configuration);
+// Fail fast when the media provider is half-configured, and warn (never silently accept) when a
+// Production host keeps image bytes in the database via the approved escape hatch (strategy §3.4).
+MediaOptionsValidator.ValidateOrThrow(app.Configuration, app.Environment, app.Logger);
 
 // Outermost middleware: it catches every downstream failure, including the security
 // header middleware, and writes the stable error envelope (M-7).
@@ -139,6 +152,10 @@ app.UseAuthentication();
 app.UseMiddleware<Aveline.Api.Modules.ApiAccess.Middleware.ApiKeyTenantScopeMiddleware>();
 app.UseAuthorization();
 app.UseAvelineAuthAudit();
+// The media token route carries a bearer credential in its path. The audit middleware above and
+// the exception handler outside both log the request path on the way out, so the path is replaced
+// with its route template before either reads it (migration plan §7.7: the token is never logged).
+app.UseMiddleware<MediaTokenPathRedactionMiddleware>();
 app.UseAvelineOnboarding();
 // Telemetry is stamped after authentication/authorization so attribution is available, and
 // before endpoints so every measured request is captured (FR-6.1). It never fails a request.
@@ -195,6 +212,9 @@ app.MapBillingEndpoints();
 app.MapCustomerConciergeEndpoints();
 app.MapVisualEndpoints();
 app.MapStatisticsInternalEndpoints();
+// The protected media tier (unit U2.1): the token proxy at /api/v1/media/{token} and the two
+// mint endpoints, mapped once here from the lane that owns them.
+app.MapMediaEndpoints();
 app.MapControllers();
 
 // Apply EF Core migrations on startup for a fresh/local database. Guarded to the

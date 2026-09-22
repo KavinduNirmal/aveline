@@ -4,7 +4,12 @@ export interface InventoryItemMock {
   sku: string
   category: string
   color: string
-  colorHex: string
+  /**
+   * Optional: the analysed colour hex, absent whenever nothing measured one. Mirrors
+   * `InventoryItem.colorHex` and `InventoryItemDto.ColorHex`, which are both nullable for the same
+   * reason — a swatch must come from a measurement, and "no measurement" is a real state.
+   */
+  colorHex?: string
   fabric: string
   style: string
   pattern?: string
@@ -43,7 +48,12 @@ export interface OutfitItemMock {
   category: string
   price: number
   imageUrl: string
-  position: 'top' | 'bottom' | 'drape' | 'accessory' | 'footwear'
+  /**
+   * The slot the piece fills in the look. Free-form because the server names it `role` and the
+   * composer names it `position`, and neither is a closed set: the value is displayed, not switched
+   * on, so a new slot must not fail the type.
+   */
+  position: string
   notes?: string
 }
 

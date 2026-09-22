@@ -21,6 +21,15 @@ public class OutfitRepository : IOutfitRepository
             .FirstOrDefaultAsync(x => x.Id == id && x.OrgId == orgId, cancellationToken);
     }
 
+    public async Task<OutfitComposition?> GetTrackedByIdAsync(Guid id, Guid orgId, CancellationToken cancellationToken = default)
+    {
+        // Tracked on purpose: the caller mutates the returned row and calls UpdateAsync. The
+        // no-tracking read above stays the one every list and detail view uses.
+        return await _db.OutfitCompositions
+            .Include(x => x.Items)
+            .FirstOrDefaultAsync(x => x.Id == id && x.OrgId == orgId, cancellationToken);
+    }
+
     public async Task<IReadOnlyList<OutfitComposition>> GetByCustomerIdAsync(Guid customerId, Guid orgId, CancellationToken cancellationToken = default)
     {
         return await _db.OutfitCompositions
@@ -45,6 +54,20 @@ public class OutfitRepository : IOutfitRepository
     {
         ArgumentNullException.ThrowIfNull(composition);
         await _db.OutfitCompositions.AddAsync(composition, cancellationToken);
+        await _db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task UpdateAsync(OutfitComposition composition, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(composition);
+        _db.OutfitCompositions.Update(composition);
+        await _db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task DeleteAsync(OutfitComposition composition, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(composition);
+        _db.OutfitCompositions.Remove(composition);
         await _db.SaveChangesAsync(cancellationToken);
     }
 }

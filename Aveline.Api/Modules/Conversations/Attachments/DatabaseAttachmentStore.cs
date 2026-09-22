@@ -41,6 +41,7 @@ public sealed class DatabaseAttachmentStore : IAttachmentStore
             SizeBytes = request.Bytes.LongLength,
             Width = request.Width,
             Height = request.Height,
+            ContentHash = request.ContentHash,
             CreatedAtUtc = DateTime.UtcNow,
         };
 

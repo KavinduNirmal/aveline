@@ -441,3 +441,63 @@ mandatory cross-platform workflow's human-approval pause does not survive a
 restart. It is flagged here because it affects the *statistics* this plan defines
 (S-21, `agentApprovalWaitTime`) and because the plan would otherwise be silently
 built on top of a broken assumption.
+
+---
+
+## 6. The media workstream's numbers and its decided retention semantics
+
+Recorded here because the media strategy named them as inputs this document tracks. See
+[ADR-022](../ADR/ADR-022-media-storage-and-access.md) and
+[docs/architecture/media-rollout-flags.md](../architecture/media-rollout-flags.md).
+
+### A11 · The two measured media numbers
+
+**Assumption.** The Free-plan arithmetic rests on two numbers: the **average stored image size**
+and the **real derivation count per asset**.
+
+**The values the strategy reports (strategy §3.7, §R8).**
+
+- **Average stored image size: 200–400 KB.** Not the 5 MB safety ceiling. Both clients shrink
+  before uploading: the web catalog resizes to a longest edge of 1280 px at JPEG q0.85 and
+  re-encodes every source format to JPEG; the mobile chat resizes to width 1600 px at q82. The
+  exceptional upload is the one that matters — the web optimizer falls back to the **raw** bytes
+  when its canvas path errors, which is why a server-side cap exists at all.
+- **Real derivation count: 2 per catalog asset** (one width × the `f_auto` WebP + JPEG fallback),
+  → 10 credits at 5,000 assets and **30 credits at 15,000** — the dimension that breaks first.
+
+**The measurement state, stated plainly.** The strategy labels both numbers **Unmeasured**, and
+nothing in this repository records a live measurement. The opt-in smoke test
+(`Aveline.Api.Tests/CloudinaryLiveSmokeTests.CatalogDelivery_ReportsDeliveredSizeAndDerivationCount`)
+**prints** the delivered sizes and the Admin API's reported derivation count but persists no
+artefact, and it returns early unless a Cloudinary credential is present. So the values above are
+the design estimates from the clients' resize behaviour and the delivery contract, not the output
+of a recorded live run. Any cost statement that depends on them remains conditional until the live
+run is recorded.
+
+### The conversation retention semantics are **decided**, not open
+
+The retention job's semantics were the strategy's open implementation input (§10 item 7). They are
+now pinned in `ConversationAttachmentRetentionJob` and in
+[ADR-022](../ADR/ADR-022-media-storage-and-access.md), so they are no longer an open question:
+
+1. **The window is measured from the attachment's own creation** (`MessageAttachment.CreatedAtUtc`),
+   not the conversation's last activity and not the message's timestamp.
+2. **A live conversation is swept.** Retention is per attachment; no later message resets an older
+   attachment's clock. A boutique permanently loses a customer's photo one week after it arrived.
+3. **The catalog is exempt.** The job selects only `MessageAttachment`; a catalog image is an
+   `InventoryImage`, and its own delete path is S8's (deferred).
+4. **The store is told before the row disappears**, and a store failure keeps the row for the next
+   run.
+5. The window is configuration (`Conversations:AttachmentRetentionDays`, default 7), and the job
+   can be stopped outright — the documented rollback.
+
+### Still open
+
+- **A7.2** — whether PDF/ZIP delivery can be enabled on this Cloudinary product environment (a
+  Security-settings toggle, not code). It is testable now that the account exists, but it has not
+  been tested and no live run is recorded.
+- **The `externalUrl` arm's permissiveness** (Q7, deferred): any host is forwarded to the provider
+  with no validation.
+- **The item cap** (`≤1250 assets/tenant`) is a stated intention with nothing enforcing it: there
+  is no `MaxCatalogItems`-style constant and `AddImageAsync` performs no count check.
+

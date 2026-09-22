@@ -1,7 +1,17 @@
+import json
 from unittest.mock import AsyncMock, MagicMock
+
 import pytest
+import respx
 
 from app.agents.visual_insight.graph import build_visual_graph
+from app.agents.visual_insight.nodes import VisualInsightAgent
+from app.tools.client import InternalApiClient
+from app.tools.registry import ToolRegistry
+
+REAL_ORG = "11111111-2222-3333-4444-555555555555"
+REAL_ATTACHMENT = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+ALL_ZEROS = "00000000-0000-0000-0000-000000000000"
 
 
 @pytest.mark.asyncio
@@ -204,6 +214,7 @@ async def test_visual_insight_graph_staff_query_emits_text_summary_no_suggestion
 
 def test_coerce_visual_output_runtime_validation():
     from pydantic import ValidationError
+
     from app.schemas.visual_insight import coerce_visual_output
 
     valid_payload = {
@@ -224,4 +235,138 @@ def test_coerce_visual_output_runtime_validation():
     }
     with pytest.raises(ValidationError):
         coerce_visual_output(invalid_payload)
+
+
+def test_dead_non_graph_entrypoints_are_gone():
+    """U3.1 deletes the rule-based non-graph path rather than porting it (strategy §1, plan §4).
+
+    ``graph.py`` never wired ``run`` or its ``_handle_*`` siblings; the image-analysis branch
+    carried an unbound call. The path is gone, so its absence is asserted here.
+    """
+    for name in ("run", "_handle_image_analysis", "_handle_outfit_composition", "_handle_item_search"):
+        assert not hasattr(VisualInsightAgent, name), f"{name} is the deleted non-graph path"
+
+
+def _registry() -> ToolRegistry:
+    return ToolRegistry(InternalApiClient(base_url="http://backend", internal_token="secret-token"))
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_graph_sends_reference_with_real_organization_not_all_zeros():
+    """The graph route posts the reference and the real tenant, never the all-zeros sentinel."""
+    analyze_route = respx.post("http://backend/internal/visual/analyze-image").respond(
+        status_code=200,
+        json={"category": "Cocktail Dress", "primary_color": "Emerald"},
+    )
+    respx.post("http://backend/internal/visual/inventory/search").respond(
+        status_code=200,
+        json={"items": [{"itemId": "item-1", "name": "Emerald Slip", "price": 750.0, "stock": 1}]},
+    )
+
+    graph = build_visual_graph(_registry())
+    await graph.ainvoke({
+        "org_id": REAL_ORG,
+        "message": "Do you have anything matching this photo?",
+        "image_url": "https://bridge.example/api/v1/media/rotating-token",
+        "image_ref_kind": "attachment",
+        "image_ref_id": REAL_ATTACHMENT,
+    })
+
+    assert analyze_route.called
+    body = json.loads(analyze_route.calls.last.request.content)
+    assert body["organizationId"] == REAL_ORG
+    assert body["organizationId"] != ALL_ZEROS
+    assert body["imageRefKind"] == "attachment"
+    assert body["imageRefId"] == REAL_ATTACHMENT
+    assert "imageUrl" not in body
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_graph_legacy_image_url_arm_still_works():
+    """With no reference present the graph still analyses the legacy absolute URL."""
+    analyze_route = respx.post("http://backend/internal/visual/analyze-image").respond(
+        status_code=200,
+        json={"category": "Cocktail Dress", "primary_color": "Emerald"},
+    )
+    respx.post("http://backend/internal/visual/inventory/search").respond(
+        status_code=200,
+        json={"items": []},
+    )
+    respx.post("http://backend/internal/visual/sourcing-requests").respond(
+        status_code=200,
+        json={"requestId": "src-1", "status": "pending"},
+    )
+
+    graph = build_visual_graph(_registry())
+    await graph.ainvoke({
+        "org_id": REAL_ORG,
+        "message": "Do you have anything matching this photo?",
+        "image_url": "https://example.com/legacy.jpg",
+    })
+
+    assert analyze_route.called
+    body = json.loads(analyze_route.calls.last.request.content)
+    assert body["organizationId"] == REAL_ORG
+    assert body["imageUrl"] == "https://example.com/legacy.jpg"
+    assert "imageRefKind" not in body
+    assert "imageRefId" not in body
+
+
+@pytest.mark.asyncio
+async def test_graph_refuses_to_analyse_without_an_organization():
+    """No organisation means no request: the all-zeros sentinel is unreachable."""
+    registry = MagicMock()
+    registry.analyze_product_image = AsyncMock(return_value={"category": "Dress", "primary_color": "Red"})
+    registry.search_inventory = AsyncMock(return_value={"items": []})
+    registry.create_sourcing_request = AsyncMock(return_value={"requestId": "src-1"})
+
+    graph = build_visual_graph(registry)
+    result = await graph.ainvoke({
+        "org_id": "",
+        "message": "match this",
+        "image_url": "https://example.com/x.jpg",
+    })
+
+    registry.analyze_product_image.assert_not_called()
+    assert result["output"]["image_attributes"] is None
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_analyze_image_node_surfaces_a_denied_analysis_distinctly():
+    respx.post("http://backend/internal/visual/analyze-image").respond(
+        status_code=403, json={"error": "forbidden"}
+    )
+    agent = VisualInsightAgent(_registry())
+
+    update = await agent.analyze_image({
+        "org_id": REAL_ORG,
+        "image_ref_kind": "attachment",
+        "image_ref_id": REAL_ATTACHMENT,
+        "search_criteria": {},
+    })
+
+    assert update["image_attributes"] is None
+    assert update["reason"] == "image_analysis_denied"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_analyze_image_node_surfaces_a_failed_analysis_distinctly():
+    respx.post("http://backend/internal/visual/analyze-image").respond(
+        status_code=503, json={"error": "unavailable"}
+    )
+    agent = VisualInsightAgent(_registry())
+
+    update = await agent.analyze_image({
+        "org_id": REAL_ORG,
+        "image_ref_kind": "attachment",
+        "image_ref_id": REAL_ATTACHMENT,
+        "search_criteria": {},
+    })
+
+    assert update["image_attributes"] is None
+    assert update["reason"] == "image_analysis_failed"
 

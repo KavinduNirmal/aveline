@@ -32,6 +32,26 @@ public interface IMessageAttachmentRepository
         CancellationToken cancellationToken = default);
 
     Task<int> DeleteOrphansAsync(DateTime cutoff, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Bound rows created before <paramref name="cutoff"/>, oldest first, capped at
+    /// <paramref name="limit"/>. The cap is what makes the retention job's pass bounded (S7);
+    /// only rows with a <c>MessageId</c> are eligible, because the unbound case belongs to the
+    /// orphan sweep.
+    /// </summary>
+    Task<IReadOnlyList<MessageAttachment>> ListBoundForRetentionAsync(
+        DateTime cutoff,
+        int limit,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Removes exactly the rows whose remote assets were already released. Called only after
+    /// <c>IAttachmentStore.DeleteAsync</c> has succeeded for each, so a provider failure leaves
+    /// the row rather than orphaning an asset nothing names.
+    /// </summary>
+    Task<int> DeleteRangeAsync(
+        IReadOnlyCollection<MessageAttachment> attachments,
+        CancellationToken cancellationToken = default);
 }
 
 public class MessageAttachmentRepository : IMessageAttachmentRepository
@@ -93,5 +113,29 @@ public class MessageAttachmentRepository : IMessageAttachmentRepository
         _context.MessageAttachments.RemoveRange(orphans);
         await _context.SaveChangesAsync(cancellationToken);
         return orphans.Count;
+    }
+
+    public async Task<IReadOnlyList<MessageAttachment>> ListBoundForRetentionAsync(
+        DateTime cutoff,
+        int limit,
+        CancellationToken cancellationToken = default)
+        => await _context.MessageAttachments
+            .Where(a => a.MessageId != null && a.CreatedAtUtc < cutoff)
+            .OrderBy(a => a.CreatedAtUtc)
+            .Take(limit)
+            .ToListAsync(cancellationToken);
+
+    public async Task<int> DeleteRangeAsync(
+        IReadOnlyCollection<MessageAttachment> attachments,
+        CancellationToken cancellationToken = default)
+    {
+        if (attachments.Count == 0)
+        {
+            return 0;
+        }
+
+        _context.MessageAttachments.RemoveRange(attachments);
+        await _context.SaveChangesAsync(cancellationToken);
+        return attachments.Count;
     }
 }

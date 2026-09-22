@@ -164,4 +164,17 @@ public class InventoryRepository : IInventoryRepository
         await _db.InventoryImages.AddAsync(image, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
     }
+
+    public async Task DeleteImageAsync(Guid imageId, Guid orgId, CancellationToken cancellationToken = default)
+    {
+        // Separate from DeleteAsync, which soft-deletes the item only and touches no image row.
+        var image = await _db.InventoryImages
+            .FirstOrDefaultAsync(img => img.Id == imageId && img.OrgId == orgId, cancellationToken);
+
+        if (image is not null)
+        {
+            _db.InventoryImages.Remove(image);
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+    }
 }

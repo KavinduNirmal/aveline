@@ -45,3 +45,13 @@ Image analysis must satisfy three core constraints:
 - External vision API credentials are centrally managed in `appsettings.json`, `appsettings.Development.json`, `.env`, and `docker-compose.yml`.
 - All multimodal API usage is auditable and tracked in the `ai_usage_records` table with calculated Blossom credits.
 - Development and test suites remain 100% deterministic and offline-capable without requiring real OpenAI API keys.
+- **The image reference and its URL contract were extended by the media workstream**
+  ([ADR-022](ADR-022-media-storage-and-access.md)). `AnalyzeImageDto` gained an additive named
+  reference arm (`imageRefKind` = `attachment` | `inventoryImage`, plus `imageRefId`); `imageUrl`
+  stays **non-nullable** and empty-means-absent. For a referenced protected asset the API mints an
+  absolute, expiring, single-use token URL and hands **that** to the provider, because the provider
+  fetches the URL itself. The URL handed to the vision path is the **original**, not the catalog's
+  `w_800,f_auto,q_auto` display variant: the display variant is for the grid, and the colour-hex
+  extraction wants the pixels. The response wire names `primary_color` and `secondary_colors` are
+  pinned snake_case, and `not_analysable` distinguishes "this stored type is outside the provider's
+  four analysable formats" from "the provider failed".

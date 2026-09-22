@@ -105,6 +105,16 @@ tags:
     description: Audit log. Aveline team only.
   - name: Health
     description: Liveness, readiness, and metrics.
+  - name: Catalog & Visual Intelligence
+    description: >
+      The tenant-facing catalog, visual intelligence, lookbook, sourcing and supplier surface.
+      Media uploads go through the configured provider seam; the catalog image GET answers 302
+      to the CDN for a Cloudinary-backed row.
+  - name: Media
+    description: >
+      Protected media: the streaming token proxy and the two mint routes. The token was minted
+      for either `attachment.view` or `vision.analyze`; `asset.public` (catalog imagery) is
+      deliberately not tokenised.
 
 security:
   - bearerAuth: []
@@ -1350,6 +1360,22 @@ paths:
                     whole send with `400` rather than half-binding, so the uploads stay
                     sweepable.
                   items: { type: string, format: uuid }
+                imageUrl:
+                  type: string
+                  nullable: true
+                  description: |
+                    Optional absolute URL of an image the server should fetch and attach
+                    (`SendMessageRequest.ImageUrl`). The path is explicit rather than scanned out
+                    of `text`: a regex would fire on a product link and miss `…/image?id=123`, and
+                    it would turn a typo into a server-side request.
+
+                    The fetch is **best-effort**: a refused URL leaves the text intact, adds no
+                    attachment, logs at `Warning` and the message is still stored, with `200`. The
+                    one exception is the kill switch: when `Media:ImageUrlUploadEnabled=false`
+                    (the shipped default) the send is answered with `400` and
+                    `code: "feature-disabled"`, because that is a capability answer the client can
+                    act on rather than a bad URL. The operator's controls are the kill switch, the
+                    `Media:ImageUrlAllowlist` host allow-list, and the existing route rate limiting.
       responses:
         "200":
           description: Message
@@ -1620,6 +1646,998 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------------------
+  # Catalog & Visual Intelligence
+  #
+  # The tenant-facing catalog surface. Every route is scoped under
+  # `/api/v1/orgs/{organizationId}/catalog` and guarded by the boutique access policy (a
+  # valid Clerk bearer token, an active organisation membership, and `catalog:view`).
+  #
+  # Media note: `images/upload` goes through the configured provider seam; `images/{imageId}`
+  # answers `302` to the absolute CDN URL for a Cloudinary-backed row and streams bytes for a
+  # database-backed row. `analyze-image` and the internal vision route share one `404`
+  # translation: a named reference that does not resolve for this organisation is `404`, never
+  # a resolved image and never a token.
+  # ---------------------------------------------------------------------------
+  /api/v1/orgs/{organizationId}/catalog/items:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Catalog & Visual Intelligence]
+      summary: Search inventory items for the boutique catalog
+      operationId: catalogSearchInventory
+      description: |
+        Filtered, paginated item search. `inStockOnly` defaults `false` here (the internal
+        vision route's default is `true`); `page` defaults 1 and `pageSize` 50.
+      parameters:
+        - name: category
+          in: query
+          schema: { type: string, nullable: true }
+        - name: color
+          in: query
+          schema: { type: string, nullable: true }
+        - name: size
+          in: query
+          schema: { type: string, nullable: true }
+        - name: minPrice
+          in: query
+          schema: { type: number, nullable: true }
+        - name: maxPrice
+          in: query
+          schema: { type: number, nullable: true }
+        - name: inStockOnly
+          in: query
+          schema: { type: boolean, nullable: true, default: false }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Matching items
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CatalogItem" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Catalog & Visual Intelligence]
+      summary: Create a new item in the boutique inventory catalog
+      operationId: catalogCreateItem
+      description: |
+        `imageUrl` may be an absolute URL, a raw base64 value, or a `data:` URL. A `data:` image
+        is stored through the configured provider **and** capped at `Media:CatalogMaxFileBytes`
+        (2 MB default); an over-cap image is refused rather than reported as a successful write.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CatalogItemCreateRequest" }
+      responses:
+        "201":
+          description: The created item
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogItem" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/catalog/items/search:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    post:
+      tags: [Catalog & Visual Intelligence]
+      summary: Search inventory items via POST request payload
+      operationId: catalogSearchInventoryPost
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CatalogItemSearchRequest" }
+      responses:
+        "200":
+          description: Matching items
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CatalogItem" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/catalog/items/{itemId}:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - $ref: "#/components/parameters/CatalogItemId"
+    get:
+      tags: [Catalog & Visual Intelligence]
+      summary: Get a specific catalog item by ID
+      operationId: catalogGetItem
+      responses:
+        "200":
+          description: The item
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogItem" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Catalog & Visual Intelligence]
+      summary: Update details of an existing catalog item
+      operationId: catalogUpdateItem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CatalogItemUpdateRequest" }
+      responses:
+        "200":
+          description: The updated item
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogItem" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Catalog & Visual Intelligence]
+      summary: Delete (soft-delete) an inventory item from the boutique catalog
+      operationId: catalogDeleteItem
+      description: |
+        Soft-deletes the `InventoryItems` row only. **No image row and no stored image byte is
+        touched**: the catalog image delete path is deliberately deferred (S8 / Wave 5) and is
+        not shipped. A Cloudinary asset therefore outlives its item until that slice lands.
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/catalog/items/{itemId}/sales:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - $ref: "#/components/parameters/CatalogItemId"
+    post:
+      tags: [Catalog & Visual Intelligence]
+      summary: Sell a catalog piece over the counter
+      operationId: catalogRecordSale
+      description: |
+        Decrements the piece's stock by `quantity`, derives its stock status (zero becomes
+        `reserved`, two or fewer `low_stock`, otherwise `available`) and appends the money to the
+        boutique's takings journal as one `Sale` / `Verified` entry. The two writes are one call,
+        so the catalog and the register cannot disagree about whether a sale happened.
+
+        `unitPrice` defaults to the piece's catalog price. A sale must have a positive total; a
+        zero-amount sale is refused (`400`) rather than allowed to fail the journal's
+        positive-amount constraint. Asking for more pieces than are on hand is `409`
+        `insufficient-stock`, and an archived piece cannot be sold (`400`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CatalogSaleRequest" }
+      responses:
+        "200":
+          description: The sale receipt, naming the journal row it wrote
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogSaleReceipt" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            `insufficient-stock` — the request asked for more pieces than the catalog row holds.
+            Nothing was sold and the stock is unchanged.
+
+  /api/v1/orgs/{organizationId}/catalog/items/{itemId}/status:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - $ref: "#/components/parameters/CatalogItemId"
+    patch:
+      tags: [Catalog & Visual Intelligence]
+      summary: Update status (available/reserved/archived) of a catalog item
+      operationId: catalogUpdateItemStatus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [available, reserved, archived] }
+      responses:
+        "200":
+          description: The updated item
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogItem" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/catalog/low-stock:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Catalog & Visual Intelligence]
+      summary: Get inventory items with low stock
+      operationId: catalogGetLowStock
+      parameters:
+        - name: threshold
+          in: query
+          schema: { type: integer, nullable: true }
+      responses:
+        "200":
+          description: Low-stock items
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CatalogItem" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/catalog/items/{itemId}/qr:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - $ref: "#/components/parameters/CatalogItemId"
+    get:
+      tags: [Catalog & Visual Intelligence]
+      summary: Generate and retrieve a QR code for a specific catalog inventory item
+      operationId: catalogGetItemQr
+      responses:
+        "200":
+          description: The generated QR code
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QrCodeResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/catalog/qr/generate:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    post:
+      tags: [Catalog & Visual Intelligence]
+      summary: Generate a custom QR code (PNG, SVG, or JSON base64 data URL) for any payload
+      operationId: catalogGenerateQr
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [payload]
+              properties:
+                payload: { type: string }
+                format: { type: string, enum: [png, svg, json], default: png }
+                size: { type: integer, default: 300 }
+                eccLevel: { type: string, enum: [L, M, Q, H], default: M }
+                quietZone: { type: integer, default: 2 }
+      responses:
+        "200":
+          description: The generated QR code
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QrCodeResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/catalog/items/scan-qr:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    post:
+      tags: [Catalog & Visual Intelligence]
+      summary: Scan and resolve a QR barcode or uploaded camera image to an inventory catalog piece
+      operationId: catalogScanItemQr
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code: { type: string, nullable: true }
+                payload: { type: string, nullable: true }
+                imageData: { type: string, nullable: true }
+      responses:
+        "200":
+          description: The resolution result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QrScanResult" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/catalog/qr/scan:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    post:
+      tags: [Catalog & Visual Intelligence]
+      summary: Alias endpoint for scanning and resolving QR codes
+      operationId: catalogScanQrAlias
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code: { type: string, nullable: true }
+                payload: { type: string, nullable: true }
+                imageData: { type: string, nullable: true }
+      responses:
+        "200":
+          description: The resolution result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QrScanResult" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/catalog/analyze-image:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    post:
+      tags: [Catalog & Visual Intelligence]
+      summary: Extract visual fashion attributes and tags using Elle Vision AI
+      operationId: catalogAnalyzeImage
+      description: |
+        Runs one image analysis for the organisation. The request carries **either** a named
+        reference (the arm the agent should use) **or** a caller-supplied external URL (the
+        compatibility arm).
+
+        `imageUrl` remains a **non-nullable** string defaulting to empty: making it nullable
+        would be a nullability change on a live DTO and would alter binder behaviour, so the
+        reference arm treats **empty as absent** (strategy §4 C14). `imageRefKind` may name
+        `attachment` or `inventoryImage` (the two tokenisable row kinds); `externalUrl` and any
+        unknown kind fall through to the `imageUrl` arm, which stays deliberately permissive.
+
+        A named reference that does not resolve for this organisation — another tenant's, an
+        unknown row, or a deleted row — is **`404`, never a resolved image and never a token**.
+        This is the same translation the internal vision route applies. Only `KeyNotFoundException`
+        is caught, so every other fault is a `500`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AnalyzeImageRequest" }
+      responses:
+        "200":
+          description: The analysis result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImageAnalysisResult" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: |
+            The named reference does not resolve for this organisation. (The `imageUrl` arm
+            does not produce this: it is forwarded to the provider.)
+
+  /api/v1/orgs/{organizationId}/catalog/items/{itemId}/matches:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - $ref: "#/components/parameters/CatalogItemId"
+    get:
+      tags: [Catalog & Visual Intelligence]
+      summary: Get customers matching a specific catalog item
+      operationId: catalogGetCustomerMatches
+      parameters:
+        - name: minScore
+          in: query
+          schema: { type: number, default: 0.7 }
+      responses:
+        "200":
+          description: Matching customers
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CatalogCustomerMatch" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/catalog/items/{itemId}/matches/generate:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - $ref: "#/components/parameters/CatalogItemId"
+    post:
+      tags: [Catalog & Visual Intelligence]
+      summary: Trigger customer style match computation for a catalog item
+      operationId: catalogGenerateCustomerMatches
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                maxMatches: { type: integer, default: 10 }
+      responses:
+        "200":
+          description: The computed matches
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CatalogCustomerMatch" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/catalog/lookbooks:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Catalog & Visual Intelligence]
+      summary: List all composed lookbooks and outfit capsules
+      operationId: catalogGetLookbooks
+      responses:
+        "200":
+          description: The lookbooks
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CatalogLookbook" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/catalog/lookbooks/compose:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    post:
+      tags: [Catalog & Visual Intelligence]
+      summary: Compose a styled outfit look around a primary item
+      operationId: catalogComposeOutfit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [primaryItemId]
+              properties:
+                primaryItemId: { type: string, format: uuid }
+                occasion: { type: string, nullable: true }
+                style: { type: string, nullable: true }
+      responses:
+        "200":
+          description: The composed look
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogComposedOutfit" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/catalog/lookbooks/{id}:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      tags: [Catalog & Visual Intelligence]
+      summary: Rename or re-occasion a composed lookbook
+      operationId: catalogUpdateLookbook
+      description: |
+        Every field is optional: an omitted field keeps the value the row already stores, and
+        `styleNotes` set to an empty string clears the note. The item composition is not editable
+        here — a look's pieces are set by the stylist compose route, so a rename cannot change the
+        total the row describes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CatalogLookbookUpdateRequest" }
+      responses:
+        "200":
+          description: The updated lookbook
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogLookbook" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Catalog & Visual Intelligence]
+      summary: Remove a composed lookbook from the boutique
+      operationId: catalogDeleteLookbook
+      responses:
+        "204":
+          description: Removed, with its item rows cascading
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/catalog/sourcing:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Catalog & Visual Intelligence]
+      summary: List sourcing request tickets for the boutique
+      operationId: catalogGetSourcingRequests
+      responses:
+        "200":
+          description: The sourcing tickets
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CatalogSourcingRequest" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Catalog & Visual Intelligence]
+      summary: Create a new sourcing request ticket
+      operationId: catalogCreateSourcingRequest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category, color, description]
+              properties:
+                category: { type: string }
+                color: { type: string }
+                description: { type: string }
+                targetPrice: { type: number, nullable: true }
+                quantityNeeded: { type: integer, default: 1 }
+                customerId: { type: string, format: uuid, nullable: true }
+                urgency: { type: string, default: medium }
+      responses:
+        "201":
+          description: The created ticket
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogSourcingRequest" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/catalog/sourcing/{id}/status:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      tags: [Catalog & Visual Intelligence]
+      summary: Update the status of a sourcing request ticket
+      operationId: catalogUpdateSourcingStatus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string }
+      responses:
+        "200":
+          description: The updated ticket
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogSourcingRequest" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/catalog/suppliers:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Catalog & Visual Intelligence]
+      summary: List integrated suppliers for the boutique
+      operationId: catalogGetSuppliers
+      responses:
+        "200":
+          description: The suppliers
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CatalogSupplier" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/catalog/suppliers/{supplierId}/catalog:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: supplierId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Catalog & Visual Intelligence]
+      summary: Query an external supplier catalog
+      operationId: catalogGetSupplierCatalog
+      parameters:
+        - name: category
+          in: query
+          schema: { type: string, nullable: true }
+        - name: color
+          in: query
+          schema: { type: string, nullable: true }
+        - name: maxPrice
+          in: query
+          schema: { type: number, nullable: true }
+      responses:
+        "200":
+          description: The supplier's catalog items
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CatalogSupplierItem" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/catalog/images/upload:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    post:
+      tags: [Catalog & Visual Intelligence]
+      summary: Upload an image through the configured media provider and return its row
+      operationId: catalogUploadImage
+      description: |
+        Stores one catalog image through the selected `IInventoryImageStore` and returns the
+        row's id, URL and metadata. The response shape is unchanged from the database tier; only
+        the meaning of `url` changes with the provider: the database tier returns the relative
+        Aveline catalog route, the Cloudinary tier returns the **absolute CDN delivery URL**
+        carrying `w_{Media:CatalogDisplayWidth},f_auto,q_auto`.
+
+        The catalog cap is `Media:CatalogMaxFileBytes` (2 MB default), tighter than the 5 MB
+        attachment cap, and it is checked on **both** the multipart and the base64-JSON branch
+        before anything is written. An over-cap or empty body is a `400` and stores nothing.
+
+        Accepts `multipart/form-data` with a `file` field, or JSON with `imageData` (raw base64
+        or a `data:` URL). The content type is normalised to the image allow-list.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
+          application/json:
+            schema:
+              type: object
+              required: [imageData]
+              properties:
+                imageData: { type: string }
+                fileName: { type: string, nullable: true }
+                contentType: { type: string, nullable: true }
+      responses:
+        "200":
+          description: The stored image row
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogImage" }
+        "400":
+          description: No data, or a body over `Media:CatalogMaxFileBytes`
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/catalog/images/{imageId}:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: imageId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Catalog & Visual Intelligence]
+      summary: "Retrieve a catalog image: 302 to the CDN for a Cloudinary row, bytes for a database row"
+      operationId: catalogGetImage
+      description: |
+        **Deliberately anonymous** (F-7/Q4): catalog imagery is public, so this route overrides
+        the group's member-level policy on purpose. The GUID is unguessable but not secret.
+
+        **Per-row dispatch** (strategy §3.3). A row whose `StorageProvider` is `cloudinary` with
+        an absolute `imageUrl` answers **`302`** to the absolute CDN delivery URL. A database
+        row streams its bytes exactly as before, with
+        `Cache-Control: public, max-age=31536000, immutable` and `X-Content-Type-Options: nosniff`.
+        A row with neither is a `404`, never a `500`.
+
+        **The `302` is a success, not a failure.** Support and log readers must treat it as the
+        documented Cloudinary-tier response; the redirect target is the CDN and is not served by
+        this process. The delivery URL carries exactly one `w_{Media:CatalogDisplayWidth}`,
+        `f_auto` and `q_auto` (risk R21).
+      responses:
+        "200":
+          description: The image bytes (database tier)
+          content:
+            image/*:
+              schema: { type: string, format: binary }
+        "302":
+          description: |
+            The absolute CDN delivery URL for a Cloudinary-backed row. The `Location` header is
+            the catalog delivery URL built by `CatalogDeliveryUrl` from the row's storage key.
+          headers:
+            Location:
+              description: The absolute Cloudinary delivery URL.
+              schema: { type: string, format: uri }
+        "404":
+          description: No image row, or a row with neither a CDN URL nor stored bytes
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  # ---------------------------------------------------------------------------
+  # Protected media
+  # ---------------------------------------------------------------------------
+  /api/v1/media/{token}:
+    get:
+      tags: [Media]
+      summary: Stream a protected media asset named by a minted, expiring Aveline token
+      operationId: serveMediaToken
+      security: []
+      description: |
+        **Anonymous by design: the token *is* the credential.** The route verifies the token in a
+        fixed order — MAC then `exp` then scope then single-use nonce — and then streams the
+        bytes server-side.
+
+        **It never redirects.** A `302` to a permanent signed Cloudinary URL would make
+        "time-limited" decorative, because the caller keeps the redirect target and replays it
+        after `exp`. The proxy is the only place `exp` can be re-checked.
+
+        Accepted scopes are `attachment.view` and `vision.analyze`; `vision.analyze` tokens are
+        single-use. The response is always `private, no-store`, including failures; a success also
+        carries `X-Content-Type-Options: nosniff` and `Content-Disposition: inline`. The token is
+        never logged: the audit middleware, the global exception handler and the OpenTelemetry
+        span exporter all resolve the path through `RequestPathRedaction`.
+
+        The failure body is deliberately uninformative, so an attacker cannot distinguish a wrong
+        key from an expired token from a missing asset.
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+          description: The opaque media token (`base64url(payload).base64url(hmac)`).
+      responses:
+        "200":
+          description: The asset bytes
+          headers:
+            Cache-Control:
+              schema: { type: string }
+              description: Always `private, no-store`.
+          content:
+            image/*:
+              schema: { type: string, format: binary }
+            application/pdf:
+              schema: { type: string, format: binary }
+        "401":
+          description: Malformed token, bad MAC, expired token, or a replayed nonce
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+        "403":
+          description: The token is valid but its scope is not one this route serves
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+        "404":
+          description: The token verifies but the row does not exist for its organisation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+        "502":
+          description: The media provider failed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediaProviderError" }
+        "503":
+          description: The nonce store is unavailable, or the provider is rate-limited
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediaProviderError" }
+        "504":
+          description: The media provider timed out
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediaProviderError" }
+
+  /internal/visual/media-token:
+    post:
+      tags: [Media]
+      summary: Mint a single-use `vision.analyze` token for a referenced asset
+      operationId: mintMediaToken
+      security:
+        - internalToken: []
+      description: |
+        The internal (service-to-service) mint, consumed by the Python agent service over the
+        `X-Internal-Token` channel. It is also mapped at `/api/internal/visual/media-token`.
+
+        The scope this route may request is exactly `vision.analyze`: a caller cannot obtain an
+        `attachment.view` grant here (`403`), or an `asset.public` grant at all. The referenced
+        row is resolved against `organizationId`; a cross-tenant or unknown reference is `404`,
+        never a token. `imageRefKind` must be `attachment` or `inventoryImage` (`externalUrl` is
+        not tokenised).
+
+        The returned `publicId` exists so the analysis cache can key on `{orgId}:{publicId}`
+        instead of the ever-changing token URL.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [organizationId, imageRefKind, imageRefId]
+              properties:
+                organizationId: { type: string, format: uuid }
+                imageRefKind:
+                  type: string
+                  enum: [attachment, inventoryImage]
+                imageRefId: { type: string, format: uuid }
+                scope:
+                  type: string
+                  enum: [vision.analyze]
+                  description: Optional; the only scope this route serves.
+      responses:
+        "200":
+          description: The minted token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediaTokenResponse" }
+        "400":
+          description: A missing or malformed field, or an unknown scope name
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The requested scope is not `vision.analyze`
+        "404":
+          description: The referenced media was not found for this organisation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/orgs/{organizationId}/conversations/{conversationId}/attachments/{attachmentId}/media-token:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - $ref: "#/components/parameters/ConversationId"
+      - $ref: "#/components/parameters/AttachmentId"
+    post:
+      tags: [Conversations]
+      summary: Mint an `attachment.view` token for one attachment of one conversation
+      operationId: mintConversationAttachmentMediaToken
+      description: |
+        The member's mint. It serves `attachment.view` only: naming any other scope in the body
+        is a `403` before the row is read. Visibility is resolved on the conversation and the row
+        is tenant-scoped, so a cross-org or invisible attachment is a `404` and never mints.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scope:
+                  type: string
+                  enum: [attachment.view]
+                  description: Optional; the only scope this route serves.
+      responses:
+        "200":
+          description: The minted token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediaTokenResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The requested scope is not `attachment.view`
+        "404":
+          description: The attachment was not found, or is not visible to the caller
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
 
   # ---------------------------------------------------------------------------
   # Integrations
@@ -5418,6 +6436,17 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    AttachmentId:
+      name: attachmentId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    CatalogItemId:
+      name: itemId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: The catalog inventory item id, scoped to the route's organizationId.
     NotificationId:
       name: id
       in: path
@@ -6824,9 +7853,12 @@ components:
         url:
           type: string
           description: |
-            Where a reader fetches the bytes. The database provider stores the authenticated
-            conversations attachment route; a CDN provider would store its own secure URL, which
-            is why every reader uses this field rather than building a path.
+            Where a reader fetches the bytes. **Always the authenticated Aveline route**, whichever
+            provider stores the bytes: `MessageAttachment.Url` is deliberately not rewritten to a
+            Cloudinary URL, because a provider URL is not a stable value to persist (a signed URL
+            is permanent, an expiring one is not, and an `authenticated` one is neither). Every
+            reader uses this field rather than building a path; the provider's own key lives on
+            the row, not on the wire.
         contentType: { type: string }
         fileName: { type: string }
         sizeBytes: { type: integer, format: int64 }
@@ -6837,6 +7869,365 @@ components:
           format: uuid
           nullable: true
           description: Null until a send binds the attachment to its message.
+
+    # --- catalog & visual intelligence ---------------------------------------
+    CatalogItem:
+      type: object
+      description: One catalog inventory item (`InventoryItemDto`).
+      properties:
+        id: { type: string, format: uuid }
+        orgId: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        itemName: { type: string }
+        category: { type: string }
+        color: { type: string }
+        sizes:
+          type: array
+          items: { type: string }
+        price: { type: number }
+        cost: { type: number }
+        quantity: { type: integer }
+        status: { type: string, enum: [available, reserved, archived] }
+        fabric: { type: string, nullable: true }
+        style: { type: string, nullable: true }
+        imageUrl:
+          type: string
+          nullable: true
+          description: |
+            The item's stored image reference. On the Cloudinary tier this is the **absolute CDN
+            delivery URL** carrying one width, `f_auto` and `q_auto`; on the database tier it is
+            the relative Aveline catalog route.
+        sku: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+          nullable: true
+        deletedAt: { type: string, format: date-time, nullable: true }
+        isAvailable: { type: boolean }
+        createdAtUtc: { type: string, format: date-time }
+    CatalogItemCreateRequest:
+      type: object
+      required: [itemName, category, color, price]
+      properties:
+        itemName: { type: string }
+        category: { type: string }
+        color: { type: string }
+        sizes:
+          type: array
+          items: { type: string }
+        price: { type: number }
+        cost: { type: number }
+        quantity: { type: integer }
+        status: { type: string, enum: [available, reserved, archived], default: available }
+        fabric: { type: string, nullable: true }
+        style: { type: string, nullable: true }
+        imageUrl:
+          type: string
+          nullable: true
+          description: An absolute URL, a raw base64 value, or a `data:` URL.
+        sku: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+    CatalogItemUpdateRequest:
+      type: object
+      properties:
+        itemName: { type: string, nullable: true }
+        category: { type: string, nullable: true }
+        color: { type: string, nullable: true }
+        sizes:
+          type: array
+          nullable: true
+          items: { type: string }
+        price: { type: number, nullable: true }
+        cost: { type: number, nullable: true }
+        quantity: { type: integer, nullable: true }
+        status: { type: string, nullable: true, enum: [available, reserved, archived] }
+        fabric: { type: string, nullable: true }
+        style: { type: string, nullable: true }
+        imageUrl: { type: string, nullable: true }
+        sku: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+          nullable: true
+    CatalogItemSearchRequest:
+      type: object
+      description: The POST search body (`SearchInventoryDto`). `organizationId` is taken from the route.
+      properties:
+        category: { type: string, nullable: true }
+        color: { type: string, nullable: true }
+        size: { type: string, nullable: true }
+        minPrice: { type: number, nullable: true }
+        maxPrice: { type: number, nullable: true }
+        inStockOnly: { type: boolean, default: false }
+        page: { type: integer, default: 1 }
+        pageSize: { type: integer, default: 50 }
+    CatalogImage:
+      type: object
+      description: The catalog upload response, echoing the stored row.
+      properties:
+        id: { type: string, format: uuid }
+        url:
+          type: string
+          description: |
+            The stored image reference. The response shape is identical across providers; the
+            database tier returns the relative Aveline catalog route and the Cloudinary tier
+            returns the absolute CDN delivery URL carrying
+            `w_{Media:CatalogDisplayWidth},f_auto,q_auto`.
+        fileName: { type: string, nullable: true }
+        size: { type: integer, format: int64 }
+        contentType: { type: string }
+    QrCodeResponse:
+      type: object
+      properties:
+        payload: { type: string }
+        format: { type: string, enum: [png, svg, json] }
+        dataUrl: { type: string, nullable: true }
+        base64: { type: string, nullable: true }
+        svg: { type: string, nullable: true }
+        size: { type: integer }
+        eccLevel: { type: string, enum: [L, M, Q, H] }
+        createdAtUtc: { type: string, format: date-time }
+    QrScanResult:
+      type: object
+      properties:
+        success: { type: boolean }
+        found: { type: boolean }
+        scanType: { type: string }
+        rawPayload: { type: string }
+        matchedIdentifier: { type: string, nullable: true }
+        item: { $ref: "#/components/schemas/CatalogItem" }
+        message: { type: string }
+    CatalogCustomerMatch:
+      type: object
+      properties:
+        customerId: { type: string, format: uuid }
+        customerName: { type: string }
+        customerPhone: { type: string, nullable: true }
+        matchScore: { type: number }
+        matchReason: { type: string }
+        matchingPreferences:
+          type: array
+          items: { type: string }
+    CatalogLookbook:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        customerId: { type: string, format: uuid, nullable: true }
+        name: { type: string }
+        occasion: { type: string }
+        totalPrice: { type: number }
+        styleNotes: { type: string, nullable: true }
+        heroImageUrl: { type: string, nullable: true }
+        createdAtUtc: { type: string, format: date-time }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              inventoryItemId: { type: string, format: uuid }
+              role: { type: string }
+              itemName: { type: string, nullable: true }
+              category: { type: string, nullable: true }
+              price: { type: number }
+              imageUrl: { type: string, nullable: true }
+    CatalogComposedOutfit:
+      type: object
+      properties:
+        lookName: { type: string }
+        style: { type: string }
+        occasion: { type: string }
+        stylingNotes: { type: string }
+        primaryItem: { $ref: "#/components/schemas/CatalogItem" }
+        complementaryItems:
+          type: array
+          items: { $ref: "#/components/schemas/CatalogItem" }
+        totalLookPrice: { type: number }
+    CatalogSaleRequest:
+      type: object
+      description: The counter-sale body (`RecordCatalogSaleDto`). `organizationId` comes from the route.
+      required: [quantity]
+      properties:
+        quantity:
+          type: integer
+          minimum: 1
+          description: How many pieces sold. Must not exceed the stock on hand.
+        unitPrice:
+          type: number
+          nullable: true
+          description: |
+            The price one piece sold for. Omitted means the catalog price; supplied means the
+            counter agreed a different one. Must be greater than zero.
+        customerId:
+          type: string
+          format: uuid
+          nullable: true
+          description: The client the sale is attributed to, when the counter captured one.
+        note: { type: string, nullable: true }
+    CatalogSaleReceipt:
+      type: object
+      description: What the counter gets back (`CatalogSaleReceiptDto`).
+      properties:
+        itemId: { type: string, format: uuid }
+        itemName: { type: string }
+        sku: { type: string, nullable: true }
+        quantitySold: { type: integer }
+        unitPrice: { type: number }
+        totalAmount: { type: number }
+        remainingStock:
+          type: integer
+          description: The stock left after the sale. A real measurement, including a measured zero.
+        status: { type: string, enum: [available, low_stock, reserved, archived] }
+        ledgerEntryId:
+          type: string
+          format: uuid
+          description: The takings-journal row the register will show for this sale.
+        recordedAtUtc: { type: string, format: date-time }
+    CatalogLookbookUpdateRequest:
+      type: object
+      description: |
+        The editable metadata of a composed lookbook (`UpdateOutfitCompositionDto`). Every field is
+        optional; an omitted field keeps the stored value, and an empty `styleNotes` clears it.
+      properties:
+        name: { type: string, nullable: true }
+        occasion: { type: string, nullable: true }
+        styleNotes: { type: string, nullable: true }
+    CatalogSourcingRequest:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        category: { type: string }
+        color: { type: string }
+        description: { type: string }
+        targetPrice: { type: number, nullable: true }
+        quantityNeeded: { type: integer }
+        customerId: { type: string, format: uuid, nullable: true }
+        urgency: { type: string, default: medium }
+        status: { type: string, default: pending }
+        createdAtUtc: { type: string, format: date-time }
+    CatalogSupplier:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        supplierName: { type: string }
+        contactEmail: { type: string, nullable: true }
+        contactPhone: { type: string, nullable: true }
+        minimumOrder: { type: number, nullable: true }
+        deliveryTimeDays: { type: integer, nullable: true }
+        isActive: { type: boolean }
+        createdAtUtc: { type: string, format: date-time }
+    CatalogSupplierItem:
+      type: object
+      properties:
+        supplierId: { type: string, format: uuid }
+        supplierName: { type: string }
+        sku: { type: string }
+        itemName: { type: string }
+        category: { type: string }
+        color: { type: string }
+        wholesalePrice: { type: number }
+        leadTimeDays: { type: integer }
+        availableStock: { type: integer }
+        imageUrl: { type: string, nullable: true }
+    AnalyzeImageRequest:
+      type: object
+      description: |
+        `AnalyzeImageDto`. `organizationId` is overwritten from the route, so it need not be sent.
+        The request carries **either** a named reference (`imageRefKind` + `imageRefId`) **or**
+        `imageUrl`.
+      properties:
+        organizationId: { type: string, format: uuid }
+        orgId: { type: string, format: uuid }
+        imageRefKind:
+          type: string
+          nullable: true
+          enum: [attachment, inventoryImage, externalUrl]
+          description: |
+            The reference arm's row kind. `attachment` and `inventoryImage` are the two
+            tokenisable kinds; `externalUrl` (or an unknown value) falls through to `imageUrl`.
+        imageRefId:
+          type: string
+          format: uuid
+          nullable: true
+          description: The referenced row's id. Absent means the reference arm does not apply.
+        imageUrl:
+          type: string
+          default: ""
+          description: |
+            **Non-nullable and defaulting to empty** (strategy §4 C14). Empty is treated as
+            absent, so a stale `""` never shadows a named reference. The arm stays deliberately
+            permissive and any host is forwarded to the provider.
+        fileName: { type: string, nullable: true }
+        contextHint: { type: string, nullable: true }
+        prompt: { type: string, nullable: true }
+    ImageAnalysisResult:
+      type: object
+      description: |
+        `ImageAnalysisResultDto`. Only the fields whose wire name is pinned by an external
+        consumer are listed with the exact spelling; the remainder serialise camelCase.
+      properties:
+        category: { type: string }
+        primary_color:
+          type: string
+          description: |
+            The extracted dominant colour. On the wire as `primary_color` (snake_case) because
+            `image_tools.py` reads `primary_color` first and silently lost the camelCase value.
+        colorHex: { type: string, nullable: true }
+        secondary_colors:
+          type: array
+          items: { type: string }
+          description: |
+            The accent colours. Also `secondary_colors` (snake_case): the same boundary read the
+            camelCase spelling as absent.
+        pattern: { type: string, nullable: true }
+        style: { type: string, nullable: true }
+        fabric: { type: string, nullable: true }
+        garmentType: { type: string, nullable: true }
+        suggestedItemName: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        stylingNotes: { type: string, nullable: true }
+        confidenceScore: { type: number, default: 0.95 }
+        isFallback:
+          type: boolean
+          default: false
+          description: True when the deterministic offline fallback produced the answer.
+        not_analysable:
+          type: boolean
+          default: false
+          description: |
+            The referenced asset's stored type is outside the vision provider's analysable subset,
+            so no analysis was attempted and no access was minted. Carried explicitly so a caller
+            can tell "this format cannot be analysed" from "the provider failed" (`isFallback`).
+        suggestedKeywords:
+          type: array
+          items: { type: string }
+    MediaTokenResponse:
+      type: object
+      description: A mint's wire answer.
+      properties:
+        token:
+          type: string
+          description: The opaque media token (`base64url(payload).base64url(hmac)`).
+        url:
+          type: string
+          description: The absolute Aveline URL a fetcher should call, built from `Media:PublicBaseUrl`.
+        publicId:
+          type: string
+          description: |
+            The provider public id. Carried so the analysis cache can key on `{orgId}:{publicId}`
+            instead of the ever-changing token URL.
+        expiresAtUtc: { type: string, format: date-time }
+    MediaProviderError:
+      type: object
+      description: A provider failure on the protected media route. The body carries a correlation id, never provider detail.
+      properties:
+        message: { type: string }
+        correlationId: { type: string }
     MessageDto:
       type: object
       properties:

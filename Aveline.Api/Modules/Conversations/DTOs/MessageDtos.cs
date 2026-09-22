@@ -78,10 +78,18 @@ public sealed record MessagePage(
 /// <c>MediaContentTypes.MaxPerMessage</c> of them; a bad id fails the whole send rather than
 /// half-binding.
 /// </param>
+/// <param name="ImageUrl">
+/// Optional absolute URL of an image the server should fetch and attach. The path is explicit
+/// rather than scanned out of <paramref name="Text"/>: a regex would fire on a product link and
+/// miss <c>…/image?id=123</c>, and it would turn a typo into a server-side request (salon plan
+/// §7.1). The fetch is best-effort — a refused URL leaves the text intact and adds no attachment —
+/// except when the feature is disabled, which is an explicit <c>400</c>.
+/// </param>
 public sealed record SendMessageRequest(
     string Text,
     Guid? ClientMessageId = null,
-    IReadOnlyList<Guid>? AttachmentIds = null);
+    IReadOnlyList<Guid>? AttachmentIds = null,
+    string? ImageUrl = null);
 
 /// <summary>
 /// Request to revoke an approved SignOff. <see cref="Reason"/> is optional and is only

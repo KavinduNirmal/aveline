@@ -24,12 +24,18 @@ public class MessageAttachmentConfiguration : IEntityTypeConfiguration<MessageAt
         builder.Property(a => a.ContentType).IsRequired().HasMaxLength(100);
         builder.Property(a => a.FileName).IsRequired().HasMaxLength(255);
         builder.Property(a => a.SizeBytes).IsRequired();
+        // Lowercase-hex SHA-256 is exactly 64 characters; nullable so pre-existing rows read back.
+        builder.Property(a => a.ContentHash).HasMaxLength(64);
         builder.Property(a => a.Url).IsRequired().HasMaxLength(1000);
         builder.Property(a => a.CreatedAtUtc).IsRequired();
         builder.Property(a => a.BoundAtUtc);
 
         // The conversation's attachments, for a read or a re-list.
         builder.HasIndex(a => new { a.OrganizationId, a.ConversationId });
+
+        // Dedup lookup per tenant: same bytes, same organization. Never authorise from this
+        // index — it is a duplicate detector for observability, not a security boundary.
+        builder.HasIndex(a => new { a.OrganizationId, a.ContentHash });
 
         // The send's binding check, and the message's own blocks.
         builder.HasIndex(a => a.MessageId);

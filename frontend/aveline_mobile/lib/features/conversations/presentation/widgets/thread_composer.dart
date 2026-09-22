@@ -191,83 +191,125 @@ class _AttachmentTray extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
-    return SizedBox(
-      key: const Key('thread_attachment_tray'),
-      height: 76,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: attachments.length,
-        separatorBuilder: (context, index) => const SizedBox(width: 8),
-        itemBuilder: (context, index) {
-          final attachment = attachments[index];
-          return Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Container(
-                key: ValueKey('thread_pending_${attachment.localId}'),
-                width: 64,
-                height: 64,
-                decoration: BoxDecoration(
-                  color: scheme.surfaceContainerHigh,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: attachment.isFailed
-                        ? scheme.error
-                        : scheme.outlineVariant,
-                  ),
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: attachment.contentType.startsWith('image/')
-                    ? Image.memory(attachment.bytes, fit: BoxFit.cover)
-                    : Icon(
-                        Icons.description_outlined,
-                        color: scheme.primary,
+    // The first failure's reason, if any. The tray used to say a file failed with a red border
+    // and a retry icon alone; those stay, and this gives them words so the associate knows
+    // which file failed and can decide whether to retry it.
+    String? failure;
+    for (final attachment in attachments) {
+      if (attachment.isFailed) {
+        failure = attachment.error;
+        if (failure != null) {
+          break;
+        }
+      }
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          key: const Key('thread_attachment_tray'),
+          height: 76,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: attachments.length,
+            separatorBuilder: (context, index) => const SizedBox(width: 8),
+            itemBuilder: (context, index) {
+              final attachment = attachments[index];
+              return Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Container(
+                    key: ValueKey('thread_pending_${attachment.localId}'),
+                    width: 64,
+                    height: 64,
+                    decoration: BoxDecoration(
+                      color: scheme.surfaceContainerHigh,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: attachment.isFailed
+                            ? scheme.error
+                            : scheme.outlineVariant,
                       ),
-              ),
-              if (attachment.uploading)
-                const Positioned.fill(
-                  child: Center(
-                    child: SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
                     ),
+                    clipBehavior: Clip.antiAlias,
+                    child: attachment.contentType.startsWith('image/')
+                        ? Image.memory(attachment.bytes, fit: BoxFit.cover)
+                        : Icon(
+                            Icons.description_outlined,
+                            color: scheme.primary,
+                          ),
                   ),
-                ),
-              if (attachment.isFailed)
-                Positioned.fill(
-                  child: Center(
+                  if (attachment.uploading)
+                    const Positioned.fill(
+                      child: Center(
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                    ),
+                  if (attachment.isFailed)
+                    Positioned.fill(
+                      child: Center(
+                        child: IconButton(
+                          key: ValueKey(
+                            'thread_retry_upload_${attachment.localId}',
+                          ),
+                          onPressed: onRetry == null
+                              ? null
+                              : () => onRetry!(attachment.localId),
+                          icon: Icon(Icons.refresh_rounded, color: scheme.error),
+                          tooltip: 'Upload again',
+                        ),
+                      ),
+                    ),
+                  Positioned(
+                    top: -6,
+                    right: -6,
                     child: IconButton(
-                      key: ValueKey('thread_retry_upload_${attachment.localId}'),
-                      onPressed: onRetry == null
+                      key: ValueKey('thread_remove_${attachment.localId}'),
+                      onPressed: onRemove == null
                           ? null
-                          : () => onRetry!(attachment.localId),
-                      icon: Icon(Icons.refresh_rounded, color: scheme.error),
-                      tooltip: 'Upload again',
+                          : () => onRemove!(attachment.localId),
+                      iconSize: 16,
+                      visualDensity: VisualDensity.compact,
+                      style: IconButton.styleFrom(
+                        backgroundColor: scheme.surfaceContainerHighest,
+                      ),
+                      icon: const Icon(Icons.close_rounded),
+                      tooltip: 'Remove',
                     ),
                   ),
-                ),
-              Positioned(
-                top: -6,
-                right: -6,
-                child: IconButton(
-                  key: ValueKey('thread_remove_${attachment.localId}'),
-                  onPressed: onRemove == null
-                      ? null
-                      : () => onRemove!(attachment.localId),
-                  iconSize: 16,
-                  visualDensity: VisualDensity.compact,
-                  style: IconButton.styleFrom(
-                    backgroundColor: scheme.surfaceContainerHighest,
+                ],
+              );
+            },
+          ),
+        ),
+        if (failure != null)
+          Padding(
+            key: const Key('thread_attachment_error'),
+            padding: const EdgeInsets.only(top: 2, left: 4, right: 4),
+            child: Row(
+              children: [
+                Icon(Icons.error_outline, size: 16, color: scheme.error),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    failure,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: scheme.error),
                   ),
-                  icon: const Icon(Icons.close_rounded),
-                  tooltip: 'Remove',
                 ),
-              ),
-            ],
-          );
-        },
-      ),
+              ],
+            ),
+          ),
+      ],
     );
   }
 }

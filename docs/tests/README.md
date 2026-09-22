@@ -73,6 +73,7 @@ Reports are written to `Aveline.Api.Tests/TestResults/` (gitignored).
 | **Integrations** | `IntegrationServiceTests`, `IntegrationEndpointsIntegrationTests` |
 | **Usage & Billing** | `UsageTrackerServiceTests`, `UsageEndpointsIntegrationTests` |
 | **Security / Resilience** | `CredentialEncryptionServiceTests`, `DistributedRateLimiterTests` |
+| **Conversations / Salon** | `ConversationServiceTests` — **extended by the web media picker (W5)**: a replay that presents its `clientMessageId` *and* the attachment ids the first attempt bound returns the stored row with its blocks instead of re-resolving (and refusing) them, the same key with different words is a `409`, and a fresh write still validates every attachment before the message is stored. The module's other suites (`ConversationEndpointsIntegrationTests`, `ConversationRepositoryTests`, `ConversationHubTests`, `ConversationReadStateRepositoryTests`, `ConversationAttachmentTests`, `AttachmentContentHashTests`, `AttachmentRetentionTests`, `AttachmentSniffIntegrationTests`, `CloudinaryAttachmentStoreTests`, `SalonAttachmentRequestTests`, `ConversationTileMapperTests`, `AgentContextAttachmentTests`, and others) are outside this workstream |
 
 ---
 
@@ -179,15 +180,30 @@ fabricated numbers or a broken dark mode.
 | `lib/notifications.test.ts`, `lib/notifications-api.test.ts` | Notification client + API |
 | `contexts/UserContext.test.tsx`, `contexts/NotificationsContext.test.tsx` | Context providers (default state + misuse guards) |
 
+**The web attachment picker (W1–W4).** The layer is in the filename: `*.test.ts(x)` runs in the
+`node` project and `*.dom.test.tsx` in the `jsdom` project.
+
+| File | Covers |
+|---|---|
+| `lib/attachment-preparation.test.ts` *(node, new)* | the picker's pure decisions, over a mocked resize: the nine-image-plus-PDF allow-list, including the extension rescue for a missing/generic declared type and the refusal to rescue a declared disallowed type; the analysable four against the storable-but-unreadable rest; a PDF passed through untouched (identity, not equality); a HEIC source the browser re-encodes to JPEG; the 5 MB cap checked against the **decoded** length, so a byte-over payload and an 8 MB source that resizes under the cap are decided by what would actually be sent; and the sixth-held-file refusal in the server's own wording |
+| `lib/conversations-api.test.ts` *(node, extended)* | the attachment seam: `uploadConversationAttachment` posts `FormData` to the attachments route with the `file` field and the multipart content type (using the supplied name for a `Blob`), while `sendMessage` keeps the text-only body byte-for-byte when neither optional field is given, adds `attachmentIds` only when the list is non-empty, and adds `clientMessageId` when supplied |
+| `contexts/ConversationsContext.dom.test.tsx` *(jsdom, new)* | the pending tray's state: a pick uploads immediately and the chip records the **response's** stored type (a PDF the server stored as JPEG is analysable, and the upload is never blocked); readiness is false while a chip uploads and true once stored; a failed chip's retry re-uploads the **same bytes**; removing a chip keeps the composed text; a sixth file is refused client-side with only five uploaded; and a send carries the held ids with a `clientMessageId` identical across a retry |
+| `components/conversation/Composer.dom.test.tsx` *(jsdom, new)* | the composer affordance: the paperclip's accessible name and a hidden `multiple` input restricted to `image/*,application/pdf`; chosen files reach `onAttach`; send is disabled with an accessible reason while a chip uploads or has failed; the sixth file shows the cap message without calling `onAttach`; an over-cap refusal shows the size message; the textarea is cleared only on a confirmed send; stored chips' ids are bound to the send; and text still sends while a refused file is displayed |
+| `components/conversation/AttachmentTray.dom.test.tsx` *(jsdom, new)* | the tray's own contract: nothing renders with no chips; each chip names itself with size and state; an upload in flight is an indeterminate busy state with **no fabricated percentage**; a failure renders its message and offers retry only when the chip is `retryable` (never for a 403/404 refusal); a remove control exists in every state; and the not-analysable note appears for a stored PDF and not for an analysable image |
+| `components/conversation/blocks.dom.test.tsx` *(jsdom, new)* | interactive rendering and access: bytes are fetched **through the authenticated client** (`apiClient.get`, `responseType: 'arraybuffer'`) from the stored route, never a token URL, and the `<img>` loads a `blob:` object URL rather than the stored route; each attachment id is fetched once however many blocks show it; the object URL is revoked on unmount; a PDF offers Open/Download with an `<embed>` preview; a rejected fetch degrades to the name-and-size chip with no broken image; and nothing is fetched without both an id and a stored route |
+
 ---
 
 ## 5. Flutter Tests (`frontend/aveline_mobile/`)
 
-A single widget test bootstraps the mobile suite.
+A bootstrap widget test plus the feature trees' own widget and unit tests. The two conversations
+files the attachment parity slice (**W7**) extended are listed alongside it.
 
 | File | Covers |
 |---|---|
 | `test/widget_test.dart` | `AppTheme.light` builds a `MaterialApp` with the expected color scheme |
+| `test/features/conversations/client_thread_controller_test.dart` | the thread controller's flows, **extended by the parity slice**: a full five-file tray uploads and the message binds all five; a sixth file is refused in the server's own words **before** it is uploaded; and an upload failure names the file it could not upload |
+| `test/features/conversations/client_thread_screen_test.dart` | the thread screen's widget flows, **extended by the parity slice**: a picker that throws says so on screen rather than only in the log; a sixth file is refused in the API's words and never uploaded; and a failed upload is readable in the tray and can be retried |
 
 ### Run
 

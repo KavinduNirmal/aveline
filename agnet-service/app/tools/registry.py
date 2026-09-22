@@ -207,12 +207,40 @@ class ToolRegistry:
             url += f"?organizationId={org_id}"
         return await self._client.request("GET", url)
 
-    async def analyze_product_image(self, image_url: str, org_id: str | None = None) -> dict[str, Any]:
-        """Analyze a product image and return extracted attributes."""
-        body = {
-            "imageUrl": image_url,
-            "organizationId": org_id or "00000000-0000-0000-0000-000000000000",
-        }
+    async def analyze_product_image(
+        self,
+        image_url: str | None = None,
+        org_id: str | None = None,
+        image_ref_kind: str | None = None,
+        image_ref_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Analyze a product image and return extracted attributes.
+
+        The reference arm is preferred: when ``image_ref_kind``/``image_ref_id`` are present the
+        body carries only them (plus the organisation), and the rotating ``imageUrl`` bridge is not
+        sent alongside.
+
+        The organisation is mandatory and its absence fails loudly. The previous all-zeros default
+        (``00000000-0000-0000-0000-000000000000``) was the C15 defect: the API rejects
+        ``Guid.Empty`` with a ``400`` and a wrong-but-valid organisation resolves nothing, so the
+        sentinel could only ever produce a tenant-scoped misfire (strategy §1, §4 C15).
+        """
+        if not org_id:
+            raise ValueError(
+                "analyze_product_image requires the real organizationId; refusing to substitute "
+                "Guid.Empty (strategy §4 C15)."
+            )
+
+        body: dict[str, Any] = {"organizationId": org_id}
+        if image_ref_kind and image_ref_id:
+            body["imageRefKind"] = image_ref_kind
+            body["imageRefId"] = image_ref_id
+        elif image_url:
+            body["imageUrl"] = image_url
+        else:
+            raise ValueError(
+                "analyze_product_image requires either an image reference or an imageUrl."
+            )
         return await self._client.request("POST", "/internal/visual/analyze-image", json=body)
 
     async def match_customers_to_item(self, item_id: str, org_id: str | None = None) -> dict[str, Any]:

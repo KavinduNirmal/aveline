@@ -36,6 +36,12 @@ export function AvelineChatDrawer({ open, onClose }: AvelineChatDrawerProps) {
     openAveline,
     sendToAveline,
     decideAveline,
+    // The drawer's thread shares the one pending-attachment tray, keyed by conversation id, with the
+    // Salon. It was only ever wired for the Salon, so the drawer's composer had no paperclip at all.
+    pendingAttachments,
+    attach,
+    retryAttachment,
+    removeAttachment,
   } = useConversations()
 
   // Opening the drawer opens Aveline's thread, once. Guarding on the id rather than only on `open`
@@ -48,6 +54,9 @@ export function AvelineChatDrawer({ open, onClose }: AvelineChatDrawerProps) {
   }, [avelineConversationId, open, openAveline])
 
   const stateConfig = avelineStateConfig(avelineAgentState)
+  const pendingForAveline = avelineConversationId
+    ? pendingAttachments[avelineConversationId] ?? []
+    : []
 
   return (
     <div
@@ -86,7 +95,19 @@ export function AvelineChatDrawer({ open, onClose }: AvelineChatDrawerProps) {
       </div>
 
       <Composer
-        onSend={(text) => void sendToAveline(text)}
+        // Return the promise rather than discarding it: the composer awaits it to keep the text and
+        // the tray when a send fails, and only clears them once the server confirms.
+        onSend={(text, attachmentIds) => sendToAveline(text, attachmentIds)}
+        onAttach={(files) =>
+          avelineConversationId ? attach(avelineConversationId, files) : Promise.resolve([])
+        }
+        pendingAttachments={pendingForAveline}
+        onRetryAttachment={(attachmentId) => {
+          if (avelineConversationId) void retryAttachment(avelineConversationId, attachmentId)
+        }}
+        onRemoveAttachment={(attachmentId) => {
+          if (avelineConversationId) removeAttachment(avelineConversationId, attachmentId)
+        }}
         disabled={!avelineConversationId}
         sending={avelineSending}
         placeholder="Ask Aveline…"

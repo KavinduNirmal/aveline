@@ -22,7 +22,15 @@ import {
   getOrCreateConversation,
   selectConversationCustomer,
   sendMessage,
+  uploadConversationAttachment,
 } from '@/lib/conversations-api'
+import {
+  checkAttachmentCap,
+  isAnalysableContentType,
+  prepareAttachment,
+  type AttachmentRefusal,
+  type PreparedAttachment,
+} from '@/lib/attachment-preparation'
 import type { ConversationDto, MessageDto } from '@/types/conversation'
 import type { AvelineState } from '@/components/conversation/avelineStates'
 import { isTerminalState } from '@/components/conversation/avelineStates'
@@ -76,6 +84,68 @@ export interface AgentActivity {
   currentState: AvelineState
 }
 
+/**
+ * A file held in the composer's pending tray. Picked files upload immediately (upload-on-pick) and
+ * the tray is keyed by conversation id so switching dashboard sections does not lose it, mirroring
+ * the mobile client. The prepared bytes are retained after a failure so a retry re-uploads the
+ * exact payload rather than re-encoding the original file.
+ */
+export interface PendingAttachment {
+  /** Stable client-side id for the chip (also its list key). */
+  id: string
+  fileName: string
+  /** The bytes an upload sends; retained so a retry reuses them. */
+  payload: Blob
+  status: 'uploading' | 'ready' | 'failed'
+  /** The server's id once the upload is stored; null until then. */
+  attachmentId: string | null
+  /** The stored content type the upload response reported; null until stored. */
+  storedContentType: string | null
+  /**
+   * Whether the visual assistant can read the stored bytes. Taken from the upload **response's**
+   * content type, never the declared one, and never a reason to block the upload.
+   */
+  analysable: boolean
+  sizeBytes: number
+  error?: string
+  /**
+   * Whether retrying this upload could plausibly succeed. False for a denial the server will not
+   * reconsider (403/404), true for a network, timeout or 5xx failure. The tray reads this rather
+   * than matching the error wording, so the two cannot drift apart.
+   */
+  retryable: boolean
+}
+
+/** Mints the idempotency key for a composed message; every retry of that message reuses it. */
+function mintClientMessageId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `cmsg-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+/** The HTTP status an axios-style upload failure carries, when it carries one. */
+function uploadFailureStatus(error: unknown): number | undefined {
+  return (error as { response?: { status?: number } } | null)?.response?.status
+}
+
+/**
+ * Whether the failure is a denial the server will not reconsider, so a retry would be pointless.
+ * The value travels on the chip so the tray never has to match the message text.
+ */
+function isPermanentUploadFailure(error: unknown): boolean {
+  const status = uploadFailureStatus(error)
+  return status === 403 || status === 404
+}
+
+/** A message for a failed upload, distinguishing a genuine denial from a transient failure. */
+function describeUploadFailure(error: unknown): string {
+  const status = uploadFailureStatus(error)
+  if (status === 403) return "You don't have access to this thread."
+  if (status === 404) return 'This thread is no longer available.'
+  return 'That file could not be uploaded. Check your connection and try again.'
+}
+
 interface ConversationsContextValue {
   /** The organization's Salons, newest first. */
   conversations: ConversationDto[]
@@ -96,8 +166,27 @@ interface ConversationsContextValue {
   openConversation: (conversationId: string) => Promise<void>
   /** Gets-or-creates the Salon for an optional customer and opens it. */
   openOrCreateSalon: (customerId?: string | null) => Promise<ConversationDto>
-  /** Sends a staff note (optimistic) and triggers the agent. */
-  send: (text: string) => Promise<void>
+  /**
+   * Sends a staff note (optimistic) and triggers the agent, binding the already-uploaded
+   * `attachmentIds`. The `clientMessageId` is minted once per composed message here and reused
+   * across retries, which is what makes a retried send idempotent.
+   */
+  send: (text: string, attachmentIds?: string[]) => Promise<void>
+  /**
+   * The pending attachment tray, keyed by conversation id. Empty for a conversation with none.
+   */
+  pendingAttachments: Record<string, PendingAttachment[]>
+  /**
+   * Picks files for a conversation: uploads each immediately and returns the refusals (over-cap,
+   * unsupported type, or a pick that would cross the five-per-message cap) without creating a chip.
+   */
+  attach: (conversationId: string, files: File[]) => Promise<AttachmentRefusal[]>
+  /** Retries a failed chip with the exact bytes it already holds. */
+  retryAttachment: (conversationId: string, attachmentId: string) => Promise<void>
+  /** Drops a chip. An already-stored upload is left to the 24 h sweep; the composed text is untouched. */
+  removeAttachment: (conversationId: string, attachmentId: string) => void
+  /** True when every held file is stored, so a send may bind them. */
+  attachmentsReady: (conversationId: string) => boolean
   /** Approves or rejects a SignOff message. */
   decide: (messageId: string, approved: boolean) => Promise<void>
   /**
@@ -119,7 +208,11 @@ interface ConversationsContextValue {
   avelineSending: boolean
   /** Opens the general, client-less Salon in the drawer's thread only. */
   openAveline: () => Promise<void>
-  sendToAveline: (text: string) => Promise<void>
+  /**
+   * Sends to the drawer's thread. `attachmentIds` are the stored chips the message binds, exactly as
+   * the Salon's `send` takes them; omitting them sends text alone.
+   */
+  sendToAveline: (text: string, attachmentIds?: string[]) => Promise<void>
   decideAveline: (messageId: string, approved: boolean) => Promise<void>
 }
 
@@ -181,6 +274,9 @@ export function ConversationsProvider({
   const [avelineSending, setAvelineSending] = useState(false)
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
+  const [pendingAttachments, setPendingAttachments] = useState<
+    Record<string, PendingAttachment[]>
+  >({})
   const [agentState, setAgentState] = useState<AvelineState>('idle')
   const [agentActivity, setAgentActivity] = useState<AgentActivity | null>(null)
   const [connectionState, setConnectionState] = useState<HubConnectionState>(
@@ -196,6 +292,10 @@ export function ConversationsProvider({
   messagesRef.current = messages
   const avelineMessagesRef = useRef<ChatMessage[]>([])
   avelineMessagesRef.current = avelineMessages
+  /** The key and optimistic row of the message currently being composed, for retry reuse. */
+  const composedRef = useRef<{ key: string; signature: string; optimisticId: string } | null>(
+    null,
+  )
   const agentActivityRef = useRef<AgentActivity | null>(null)
   agentActivityRef.current = agentActivity
   const transientTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -438,10 +538,11 @@ export function ConversationsProvider({
   }, [conversations, organizationId])
 
   const sendToAveline = useCallback(
-    async (text: string) => {
+    async (text: string, attachmentIds?: string[]) => {
       const conversationId = avelineIdRef.current
       if (!conversationId || !text.trim()) return
       const trimmed = text.trim()
+      const ids = attachmentIds ?? []
       const optimistic: ChatMessage = {
         id: `local-${Date.now()}`,
         conversationId,
@@ -460,16 +561,22 @@ export function ConversationsProvider({
       setAvelineSending(true)
       setAvelineMessages((prev) => [...prev, optimistic])
       try {
-        const message = await sendMessage(organizationId, conversationId, trimmed)
+        const message = await sendMessage(organizationId, conversationId, trimmed, ids)
         setAvelineMessages((prev) =>
           prev.map((m) => (m.id === optimistic.id ? { ...message } : m)),
         )
+        // The message is bound: clear the drawer's tray so a chip cannot linger pending after its
+        // row is attached. Only a confirmed send reaches here, exactly as the Salon's `send` does.
+        setPendingAttachments((prev) => ({ ...prev, [conversationId]: [] }))
         setAvelineAgentActivity({ startedAt: Date.now(), currentState: 'thinking' })
         applyAvelineAgentState('thinking')
-      } catch {
+      } catch (error) {
         setAvelineMessages((prev) =>
           prev.map((m) => (m.id === optimistic.id ? { ...m, pending: 'failed' } : m)),
         )
+        // Rethrow so the composer can tell a failed send from a confirmed one and keep the text and
+        // the tray, which only a confirmed send may clear.
+        throw error
       } finally {
         setAvelineSending(false)
       }
@@ -495,12 +602,151 @@ export function ConversationsProvider({
     [organizationId],
   )
 
+  /** Merges a functional update into one conversation's tray. */
+  const updatePending = useCallback(
+    (conversationId: string, update: (held: PendingAttachment[]) => PendingAttachment[]) => {
+      setPendingAttachments((prev) => ({
+        ...prev,
+        [conversationId]: update(prev[conversationId] ?? []),
+      }))
+    },
+    [],
+  )
+
+  /** Uploads one chip's retained bytes and records the stored type the response reported. */
+  const runUpload = useCallback(
+    async (conversationId: string, chip: PendingAttachment) => {
+      try {
+        const stored = await uploadConversationAttachment(
+          organizationId,
+          conversationId,
+          chip.payload,
+          chip.fileName,
+        )
+        updatePending(conversationId, (held) =>
+          held.map((a) =>
+            a.id === chip.id
+              ? {
+                  ...a,
+                  status: 'ready',
+                  attachmentId: stored.attachmentId,
+                  storedContentType: stored.contentType,
+                  analysable: isAnalysableContentType(stored.contentType),
+                  sizeBytes: stored.sizeBytes,
+                  error: undefined,
+                }
+              : a,
+          ),
+        )
+      } catch (error) {
+        updatePending(conversationId, (held) =>
+          held.map((a) =>
+            a.id === chip.id
+              ? {
+                  ...a,
+                  status: 'failed',
+                  error: describeUploadFailure(error),
+                  // A denial the server will not reconsider is not worth retrying; everything
+                  // else (network, timeout, 5xx) is.
+                  retryable: !isPermanentUploadFailure(error),
+                }
+              : a,
+          ),
+        )
+      }
+    },
+    [organizationId, updatePending],
+  )
+
+  const attach = useCallback(
+    async (conversationId: string, files: File[]): Promise<AttachmentRefusal[]> => {
+      const refusals: AttachmentRefusal[] = []
+      const heldCount = pendingAttachments[conversationId]?.length ?? 0
+      const prepared: PreparedAttachment[] = []
+
+      // Refusals are decided before any chip exists and before any byte leaves the browser: a
+      // sixth file, an unsupported type, and an over-cap payload all fail here.
+      for (const file of files) {
+        const cap = checkAttachmentCap(heldCount + prepared.length)
+        if (cap) {
+          refusals.push({ ...cap, fileName: file.name })
+          continue
+        }
+        const result = await prepareAttachment(file)
+        if (result.status === 'refused') {
+          refusals.push(result)
+          continue
+        }
+        prepared.push(result)
+      }
+
+      if (prepared.length === 0) return refusals
+
+      const chips: PendingAttachment[] = prepared.map((item) => ({
+        id: mintClientMessageId(),
+        fileName: item.fileName,
+        payload: item.file,
+        status: 'uploading',
+        attachmentId: null,
+        storedContentType: null,
+        analysable: false,
+        sizeBytes: item.byteLength,
+        // A fresh pick can always be retried: nothing has been denied yet.
+        retryable: true,
+      }))
+      updatePending(conversationId, (held) => [...held, ...chips])
+      await Promise.all(chips.map((chip) => runUpload(conversationId, chip)))
+      return refusals
+    },
+    [pendingAttachments, runUpload, updatePending],
+  )
+
+  const retryAttachment = useCallback(
+    async (conversationId: string, attachmentId: string) => {
+      const chip = (pendingAttachments[conversationId] ?? []).find((a) => a.id === attachmentId)
+      if (!chip) return
+      updatePending(conversationId, (held) =>
+        held.map((a) =>
+          a.id === attachmentId ? { ...a, status: 'uploading', error: undefined } : a,
+        ),
+      )
+      // The same `chip.payload` reference: a retry re-uploads the bytes already prepared.
+      await runUpload(conversationId, { ...chip, status: 'uploading', error: undefined })
+    },
+    [pendingAttachments, runUpload, updatePending],
+  )
+
+  const removeAttachment = useCallback(
+    (conversationId: string, attachmentId: string) => {
+      updatePending(conversationId, (held) => held.filter((a) => a.id !== attachmentId))
+    },
+    [updatePending],
+  )
+
+  const attachmentsReady = useCallback(
+    (conversationId: string) => {
+      const held = pendingAttachments[conversationId] ?? []
+      return held.every((a) => a.status === 'ready' && a.attachmentId !== null)
+    },
+    [pendingAttachments],
+  )
+
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, attachmentIds?: string[]) => {
       if (!activeConversationId || !text.trim()) return
       const trimmed = text.trim()
+      const ids = attachmentIds ?? []
+      // The same composed message (same text and same held files) keeps its idempotency key and
+      // its optimistic row across retries, so a retried send cannot write a second note.
+      const signature = `${trimmed}\u0000${ids.join('\u0000')}`
+      const prior = composedRef.current
+      const isRetry = prior !== null && prior.signature === signature
+      const clientMessageId = isRetry ? prior.key : mintClientMessageId()
+      const optimisticId = isRetry ? prior.optimisticId : `local-${Date.now()}`
+      composedRef.current = { key: clientMessageId, signature, optimisticId }
+
       const optimistic: ChatMessage = {
-        id: `local-${Date.now()}`,
+        id: optimisticId,
         conversationId: activeConversationId,
         authorKind: 'User',
         agentKey: null,
@@ -515,27 +761,45 @@ export function ConversationsProvider({
       }
 
       setSending(true)
-      // Optimistic: show the staff message immediately.
-      setMessages((prev) => [...prev, optimistic])
+      // Optimistic: show the staff message immediately (replacing its failed retry, if any).
+      setMessages((prev) =>
+        prev.some((m) => m.id === optimisticId)
+          ? prev.map((m) => (m.id === optimisticId ? optimistic : m))
+          : [...prev, optimistic],
+      )
 
       try {
-        const message = await sendMessage(organizationId, activeConversationId, trimmed)
+        const message = await sendMessage(
+          organizationId,
+          activeConversationId,
+          trimmed,
+          ids,
+          clientMessageId,
+        )
         // Replace the optimistic bubble with the confirmed message (real id + timestamp).
         setMessages((prev) =>
-          prev.map((m) => (m.id === optimistic.id ? { ...message } : m)),
+          prev.map((m) => (m.id === optimisticId ? { ...message } : m)),
         )
+        // The composed message is delivered: the next message mints a fresh key, and the tray
+        // clears so a chip can never linger pending after its row is bound.
+        composedRef.current = null
+        updatePending(activeConversationId, () => [])
         // Only once the user message is confirmed does Aveline's activity bubble appear.
         setAgentActivity({ startedAt: Date.now(), currentState: 'thinking' })
         applyAgentState('thinking')
-      } catch {
+      } catch (error) {
         setMessages((prev) =>
-          prev.map((m) => (m.id === optimistic.id ? { ...m, pending: 'failed' } : m)),
+          prev.map((m) => (m.id === optimisticId ? { ...m, pending: 'failed' } : m)),
         )
+        // Rethrow so the caller can tell a failed send from a confirmed one. The optimistic row
+        // above is the visual state; this rejection is the control-flow signal the Composer needs
+        // to keep the textarea and the tray, because only a confirmed send may clear them.
+        throw error
       } finally {
         setSending(false)
       }
     },
-    [activeConversationId, applyAgentState, organizationId],
+    [activeConversationId, applyAgentState, organizationId, updatePending],
   )
 
   const decide = useCallback(
@@ -596,6 +860,11 @@ export function ConversationsProvider({
         openConversation,
         openOrCreateSalon,
         send,
+        pendingAttachments,
+        attach,
+        retryAttachment,
+        removeAttachment,
+        attachmentsReady,
         decide,
         selectCustomer,
         avelineConversationId,

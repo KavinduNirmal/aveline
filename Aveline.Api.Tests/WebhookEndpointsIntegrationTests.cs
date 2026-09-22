@@ -8,6 +8,7 @@ using Aveline.Api.Infrastructure.RateLimiting;
 using Aveline.Api.Modules.Integrations.Models;
 using Aveline.Api.Modules.Integrations.Services;
 using Aveline.Api.Modules.Integrations.Services.Providers;
+using Aveline.Api.Modules.Media;
 using Aveline.Api.Modules.Conversations.DTOs;
 using Aveline.Api.Modules.Conversations.Services;
 using Aveline.Api.Modules.CustomerConcierge.Models;
@@ -180,15 +181,25 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
         """;
 
     /// <summary>A Meta inbound payload carrying an image or a document.</summary>
+    /// <param name="sha256">
+    /// The channel's own content hash. <c>null</c> means "the real hash of <see cref="TinyPng"/>",
+    /// which is the honest case: Meta hashes the bytes it serves. Set
+    /// <paramref name="sha256Present"/> to <c>false</c> to model a channel that supplies none.
+    /// </param>
     private static string MetaMediaPayload(
         string kind,
         string mediaId,
         string? caption,
         string mimeType,
         string messageId = "wamid.MEDIA1",
-        string from = "+94771112222")
+        string from = "+94771112222",
+        string? sha256 = null,
+        bool sha256Present = true)
     {
         var captionJson = caption is null ? string.Empty : $""", "caption": "{caption}" """;
+        var hashJson = sha256Present
+            ? $""", "sha256": "{sha256 ?? TinyPngSha256}" """
+            : string.Empty;
         return $$"""
         {
           "object": "whatsapp_business_account",
@@ -204,7 +215,7 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
                     "messages": [
                       { "from": "{{from}}", "id": "{{messageId}}", "timestamp": "1720000000",
                         "type": "{{kind}}",
-                        "{{kind}}": { "id": "{{mediaId}}", "mime_type": "{{mimeType}}", "sha256": "abc"{{captionJson}} } }
+                        "{{kind}}": { "id": "{{mediaId}}", "mime_type": "{{mimeType}}"{{hashJson}}{{captionJson}} } }
                     ]
                   },
                   "field": "messages"
@@ -215,6 +226,9 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
         }
         """;
     }
+
+    /// <summary>The lowercase-hex SHA-256 Meta would send for the bytes this fixture serves.</summary>
+    private static readonly string TinyPngSha256 = AttachmentContentHash.Compute(TinyPng);
 
     private async Task<HttpResponseMessage> PostAsync(Guid orgId, string body)
     {
@@ -328,6 +342,76 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
         Assert.NotNull(message);
         Assert.Contains("gone", message!.ContentBlocksJson);
         Assert.DoesNotContain("attachment", message.ContentBlocksJson);
+    }
+
+    [Fact]
+    public async Task Post_WithAnImage_PersistsTheChannelsSha256AsTheContentHash()
+    {
+        // U2.3: Meta's `sha256` used to be parsed and discarded (G7). It is the channel's own
+        // byte-level identity of what it served, and it must reach the column the Elle
+        // workstream reads as `ImageSha256` (strategy §9).
+        var orgId = await SeedOrgWithWhatsAppAsync("wh_owner_hash", "webhook-hash");
+        _whatsApp.Media = new WhatsAppMediaResult(
+            IsSuccess: true, Bytes: TinyPng, ContentType: "image/png", SizeBytes: TinyPng.LongLength);
+
+        var response = await PostAsync(orgId, MetaMediaPayload(
+            "image", "media-hash", "check this", "image/png",
+            messageId: "wamid.HASH1", from: "+94771110011"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var context = CreateContext();
+        var attachment = await context.MessageAttachments
+            .SingleAsync(a => a.OrganizationId == orgId);
+        Assert.Equal(TinyPngSha256, attachment.ContentHash);
+        Assert.Equal(AttachmentContentHash.Compute(TinyPng), attachment.ContentHash);
+    }
+
+    [Fact]
+    public async Task Post_WhenTheChannelsSha256DisagreesWithTheBytes_StoresNothingAndAnswers200()
+    {
+        // Our computed hash is of the bytes we downloaded; Meta's is of the bytes it served.
+        // They must agree, so a disagreement is a real integrity signal: the attachment is
+        // refused rather than stored under a hash that does not describe it. The webhook still
+        // answers 200, because a Meta retry would not change the answer.
+        var orgId = await SeedOrgWithWhatsAppAsync("wh_owner_hash_bad", "webhook-hash-bad");
+        _whatsApp.Media = new WhatsAppMediaResult(
+            IsSuccess: true, Bytes: TinyPng, ContentType: "image/png", SizeBytes: TinyPng.LongLength);
+
+        var response = await PostAsync(orgId, MetaMediaPayload(
+            "image", "media-hash-bad", "check this", "image/png",
+            messageId: "wamid.HASH2", from: "+94771110012", sha256: new string('a', 64)));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var context = CreateContext();
+        Assert.Empty(await context.MessageAttachments.Where(a => a.OrganizationId == orgId).ToListAsync());
+        // The customer's words are still recorded: the message is not lost with the file.
+        var conversation = await context.Conversations
+            .FirstOrDefaultAsync(c => c.OrganizationId == orgId && c.ExternalRef == "+94771110012");
+        Assert.NotNull(conversation);
+        var message = await context.Messages.SingleAsync(m => m.ConversationId == conversation!.Id);
+        Assert.Contains("check this", message.ContentBlocksJson);
+        Assert.DoesNotContain("attachment", message.ContentBlocksJson);
+    }
+
+    [Fact]
+    public async Task Post_WhenTheChannelSuppliesNoSha256_FallsBackToTheComputedHash()
+    {
+        var orgId = await SeedOrgWithWhatsAppAsync("wh_owner_hash_absent", "webhook-hash-absent");
+        _whatsApp.Media = new WhatsAppMediaResult(
+            IsSuccess: true, Bytes: TinyPng, ContentType: "image/png", SizeBytes: TinyPng.LongLength);
+
+        var response = await PostAsync(orgId, MetaMediaPayload(
+            "image", "media-hash-absent", null, "image/png",
+            messageId: "wamid.HASH3", from: "+94771110013", sha256Present: false));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var context = CreateContext();
+        var attachment = await context.MessageAttachments
+            .SingleAsync(a => a.OrganizationId == orgId);
+        Assert.Equal(TinyPngSha256, attachment.ContentHash);
     }
 
     private async Task<Guid> SeedOrgWithWhatsAppAsync(string clerkId, string slug)

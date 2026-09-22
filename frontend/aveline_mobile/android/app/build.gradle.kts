@@ -13,15 +13,6 @@ if (file("google-services.json").exists()) {
     apply(plugin = "com.google.gms.google-services")
 }
 
-// Generate the Firebase string resources (google_app_id, gcm_defaultSenderId, ...) only when a
-// config is present. google-services.json is gitignored and supplied from a CI secret, so a
-// checkout without it must still build: fork pull requests never receive secrets, and a local
-// release build should not require Firebase credentials. The app then starts without FCM, which
-// the NoopPushTokenSource fallback already handles.
-if (file("google-services.json").exists()) {
-    apply(plugin = "com.google.gms.google-services")
-}
-
 android {
     namespace = "com.example.aveline_mobile"
     compileSdk = flutter.compileSdkVersion

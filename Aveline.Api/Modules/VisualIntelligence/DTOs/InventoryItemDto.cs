@@ -14,6 +14,7 @@ public class InventoryItemDto
     public string ItemName { get; set; } = string.Empty;
     public string Category { get; set; } = string.Empty;
     public string Color { get; set; } = string.Empty;
+    public string? ColorHex { get; set; }
     public List<string> Sizes { get; set; } = new();
     public decimal Price { get; set; }
     public decimal Cost { get; set; }
@@ -38,6 +39,7 @@ public class InventoryItemDto
             ItemName = item.ItemName,
             Category = item.Category,
             Color = item.Color,
+            ColorHex = item.ColorHex,
             Sizes = item.Sizes?.ToList() ?? new List<string>(),
             Price = item.Price,
             Cost = item.Cost,

@@ -4503,6 +4503,206 @@ post-deploy runtime fact.
 - The plan file for this work is named `admin-dashboard-business-kpis-implementation.ignore.md`, so it
   is git-ignored by the repository's own convention and does not appear in any commit.
 
+## Session 2026-09-21 — Cloudinary media migration and the Salon image pipeline (session start)
+
+**Task:** Orchestrate a subagent swarm to implement
+`.agents/plans/cloudinary-media-and-salon-image-implementation-strategy.md` (revision 3) and its
+execution plan `.agents/plans/cloudinary-media-and-salon-image-implementation-plan.md` (revision 1).
+**Tool used:** DeepSeek Harness (deepseek-flash) as the orchestrating agent, delegating to subagents.
+**Branch:** `cloudinary-media-and-salon-image` (no branch creation or switching).
+
+### Intended Work (session start)
+
+- **Orchestrate, do not implement.** The agent reads both plans, defines the goal, delegates each
+  phase to subagents, and verifies their output against the plan's gates. Implementation is written
+  by subagents under strict lane-based file ownership (plan §2).
+- **TDD is mandatory** (`.agents/rules/Rules.md:211-224`): the test is written, run, and observed to
+  fail for the expected reason before the production file exists. A unit's tests are its own lane's
+  files (plan §1 invariant 6).
+- **One writer per file.** Every file has exactly one owning lane; a lane never edits a file it does
+  not own, even to fix a compile error. A lane that needs a file it does not own raises a change
+  request instead (plan §1, §3).
+- **Documentation** (general, API and OpenAPI) updated at the end of each delivered phase, with each
+  doc change landing behind the slice that makes it true (S9, continuous).
+- **GitHub issues per phase**, created before implementation (plan §4's waves).
+- **No migrations outside lane L7**, and no parallel migration ever (plan §1 invariant 3).
+
+### The plan, as read
+
+Nine lanes (L1 MEDIA, L2 CATALOG, L3 SALON, L4 VISIONAPI, L5 PYTHON, L6 CLIENT, L7 MIGRATIONS,
+L8 DOCS, L9 SALON-FETCH conditional), six waves with explicit barriers, and a unit-level DAG.
+Critical path: `U0.1 → U0.4/U0.5 → U0.7 → U1.1 → U2.1 → U2.3 → U3.1 → U4.1`. Maximum useful
+concurrency is six agents; beyond that the constraint is review, not lanes (plan §5).
+
+The strategy's frozen contract (§3) is not re-opened anywhere: the three layers and four classes
+(§3.1), the provider-neutral `MediaMetadata` carrier (§3.2), the storage-key encoding and tier map
+(§3.3), the configuration table (§3.4), the two-tier access model (§3.5), the storable-versus-
+analysable split (§3.6), the single-width delivery rule (§3.7), the cache position (§3.8) and the
+"no third-party CDN" decision (§3.9).
+
+### Phases/issues created before implementation
+
+| Issue | Phase | Slice(s) | Units |
+|---|---|---|---|
+| [#361](https://github.com/KavinduNirmal/aveline/issues/361) | Wave 0a — the contract head | S0 | U0.1, U0.2, U0.3 |
+| [#362](https://github.com/KavinduNirmal/aveline/issues/362) | Wave 0b — the row seams | S0 | U0.4, U0.5, U0.6 |
+| [#363](https://github.com/KavinduNirmal/aveline/issues/363) | Wave 0c — the seam closes, then the schema | S0 | U0.7, U0.8 |
+| [#364](https://github.com/KavinduNirmal/aveline/issues/364) | Wave 1 — both tiers write to Cloudinary | S1 ∥ S2 | U1.1–U1.4 |
+| [#365](https://github.com/KavinduNirmal/aveline/issues/365) | Wave 2 — protected access, then the bridge | S3 → S4 | U2.1–U2.4 |
+| [#366](https://github.com/KavinduNirmal/aveline/issues/366) | Wave 3 — the reference contract | S5 | U3.1, U3.2 |
+| [#367](https://github.com/KavinduNirmal/aveline/issues/367) | Wave 4 — retention, fetcher, client delivery | S6 ∥ S7 | U4.1–U4.3 |
+| [#368](https://github.com/KavinduNirmal/aveline/issues/368) | Waves 5–6 — housekeeping and docs | S8, S9 | U5.1–U6.x |
+
+### Baseline established before any delegation
+
+- `dotnet build Aveline.Api/Aveline.Api.sln` — **0 errors**, 63 pre-existing warnings.
+- Last recorded full-suite baseline from the previous session (`docs/ai-usage/kavindu.md`,
+  business-KPIs entry): **1857 passed, 0 failed** for `Aveline.Api.Tests`.
+- `gh` authenticated as `KavinduNirmal` with `repo` scope; branch `cloudinary-media-and-salon-image`
+  at `88f1a5e`.
+
+### Deliberately not done at session start
+
+- No branch was created or switched (explicit constraint).
+- No code was written by the orchestrating agent; all implementation is delegated.
+- Wave 5 (S8) is left open and deferred by design: it is gated on production proof and on the
+  database owner's confirmation, and it contains the only irreversible step in the workstream.
+
+## Session 2026-09-21/22 — Cloudinary media migration and the Salon image pipeline (session end)
+
+**Task:** the same workstream, closed out. Orchestration of a subagent swarm against
+`.agents/plans/cloudinary-media-and-salon-image-implementation-strategy.md` (rev 3) and
+`.agents/plans/cloudinary-media-and-salon-image-implementation-plan.md` (rev 1).
+**Tool used:** DeepSeek Harness (deepseek-flash) orchestrating; implementation delegated to subagents.
+**Branch:** `cloudinary-media-and-salon-image` — no branch was created or switched, and every commit
+was made by the orchestrator, never by a subagent.
+
+### Result
+
+Six waves delivered, five commits, **2559 .NET tests / 427 Python tests / 1011 Flutter tests**, all
+green; a live Cloudinary smoke suite run against the real account; and a recorded security review.
+
+| Commit | Wave | Slice | What it established |
+|---|---|---|---|
+| `1dbb789` | 0a–0c | S0 | the seam, the provider-neutral metadata carrier, the two row seams, both caps, the vision content-type subset, the magic-byte sniff, the tagger, fail-fast config, and the two migrations |
+| `8b9d129` | 1 | S1 ∥ S2 | both tiers writing to Cloudinary; the one-width delivery contract; dual-write owned by the row seams; the live suite and the §3.7/§R8 measurements |
+| `0f9cd27` | 2 | S3 → S4 | the HMAC token machinery with a frozen vector, the streaming proxy, both mints, per-row dispatch, the reference DTO, the `primary_color` casing fix, the three `org_context` sites, the tenant fix, and the central credential redaction |
+| `74ff7f1` | 3 | S5 | the Python reference contract, the typed denied-vs-failed outcome, the dead path deleted, the cache re-keyed, and the capturing payload gate |
+| `8324fac` | 4 | S6 ∥ S7 | the 7-day retention job, the fourteen-behaviour SSRF fetcher with a pinned connect, the S6 security review, and the Flutter `Accept`/decode fix |
+
+### What the swarm found that no plan predicted
+
+The value of the orchestration was not the throughput; it was the number of real defects each gate
+surfaced because a unit was forced to prove its claim rather than assert it.
+
+- **A live bearer-credential leak.** U2.1 found that the pre-existing auth-audit middleware logs
+  `Request.Path` on **every** 401/403 — and for `/api/v1/media/{token}` that path *is* the token, so
+  every refused request was writing a live credential to the log. The same value could reach an
+  exported trace, because OpenTelemetry's ASP.NET Core instrumentation creates the request activity
+  before any middleware runs. The fix was made central (one `RequestPathRedaction` rule consulted by
+  the audit middleware, the exception handler and an `ActivityProcessor`) rather than route-local,
+  and it is verified through the real instrumentation with a real exporter.
+- **A second casualty of the `primary_color` casing defect, still live.** U3.2's capturing contract
+  test — the strategy's §7 check 7 — failed on `secondary_colors`, which the Python reader reads and
+  the wire was sending as `secondaryColors`. The test then failed on four counts when
+  `primary_color` was reverted, which is what makes it a gate rather than a formality.
+- **A `noeviction` prerequisite that was already satisfied but unverified.** Checked on the running
+  instance rather than assumed, because an evicted single-use nonce silently weakens the guarantee —
+  a fail-open in the one place the design requires fail-closed.
+- **A time-of-day-dependent pre-existing flake.** A full-suite run went red on
+  `ApiStatsRollupJobTests`; the diagnostic showed the job deliberately also writes a **day** row when
+  the just-closed hour is 23:00 UTC, so an unfiltered `SingleAsync()` saw two rows for one hour of
+  every UTC day. Both files were byte-identical to the pre-work commit, so it was latent and not
+  ours; the assertion is now scoped and the coexistence is asserted as a property.
+- **A PDF sniff that was too broad.** The security review's F9: searching the first 1024 bytes for
+  `%PDF-` misclassified an image carrying that marker deep in its payload. Narrowed to a header check
+  within 32 bytes, requiring `major.minor` and an EOL terminator, and made fail-closed on both paths.
+- **A Flutter stretch trap.** The prescribed `Image.network(cacheWidth:, cacheHeight:)` shorthand
+  builds `ResizeImage` with `ResizeImagePolicy.exact`, which stretches a portrait photo into the
+  landscape grid tile. Measured, then avoided with `ResizeImagePolicy.fit`.
+
+### The gates, and what each one caught
+
+- **Wave 0:** the whole existing suite green with **no expectation edited** — the falsifier for D1's
+  placement. It also forced the four production-host factories to declare the new override, which
+  is a configuration value, not a changed assertion.
+- **Wave 1:** the live suite ran against the real account on day one (A7.1 was closed), and produced
+  the two numbers the strategy said only a live run could: delivered size and derivation count.
+  **Two derivations per asset**, confirming §3.7's arithmetic; and for that high-frequency source
+  WebP was *larger* than JPEG, which is exactly the per-image trade `q_auto` exists to make.
+- **Wave 2:** the full status matrix, the replay, the splice, the expiry boundary, and the decisive
+  test a redirect could not pass. Plus the redaction verification above.
+- **Wave 3:** zero field loss across the .NET→Python boundary, which is what found `secondary_colors`.
+- **Wave 4:** the retention semantics (pinned: window from the attachment's own creation, ceiling 500,
+  a live conversation is swept), the store-before-row ordering asserted against the real Cloudinary
+  adapter, the untagged-asset detector **with a falsifiability control**, and a security review that
+  found no high or medium issue and recommended shipping.
+
+### Deliberate deviations, each with a reason
+
+- **`DatabaseMediaStorage` is an in-process pass-through, not a durable table.** The provider seam
+  owns no row and §3.1 forbids it from touching one, so durability stays with the row seams — which
+  is precisely what keeps `Provider=database` a free rollback.
+- **Dual-write lives on the row seams**, not the provider, for the same reason. U1.1 identified it,
+  U1.2/U1.3 implemented it, and both directions are asserted.
+- **`secondary_colors` was added** by the unit that owned the DTO, after the payload gate proved it
+  was a live defect and grep proved no consumer read the camelCase spelling.
+- **`ResizeImagePolicy.fit` instead of the prescribed shorthand**, because the shorthand stretches.
+- **The retention ceiling was added as `Conversations:AttachmentRetentionMaxPerRun = 500`**, which
+  the strategy's §3.4 table does not list; it mirrors the `CustomerSalonBackfill` pattern.
+
+### What is NOT done, stated plainly
+
+- **Wave 5 (S8) is deferred by design**: the catalog delete path, the orphan reconciler,
+  `Media:DualWrite=false` and the `ImageData` drop. It is gated on production proof **and** the
+  database owner's confirmation, and it contains the only irreversible step in the workstream. It is
+  documented as deferred, not shipped.
+- **The Flutter device check is outstanding.** The widget half is done and green; only a real iOS and
+  Android run proves WebP renders, and the strategy requires both halves. The documented fallback
+  (an explicit `f_jpg`) is a decision, not a patch, because it costs a second derivation set.
+- **No live run was recorded for A7.2** (PDF delivery on the product environment). The SDK-level PDF
+  round trip was proven in the live smoke suite; the product-environment toggle is untested.
+- **The analysis cache is re-keyed but deliberately not wired**, so the vision path is still uncached.
+- **`externalUrl` stays permissive** (Q7 deferred) and the ≤1250-asset item cap is still unenforced
+  (no `MaxCatalogItems` exists), so no cost statement is guaranteed until it is.
+- **`docs/frontend/tenant-dashboard.md` needs an owner decision.** The strategy's C21 says its
+  "No Cloudinary" note must be corrected, but the file does not exist on this branch; it exists only
+  on `development`, where it describes the tenant-dashboard slices (T0a–T7) that are **not** on this
+  branch. The media statements were corrected in a ported copy, but the document as a whole would
+  import stale claims about permissions, deleted files and services that do not exist here. Left for
+  the owner rather than silently shipped or silently dropped.
+- **A pre-existing dangling `$ref`** to `#/components/schemas/ErrorEnvelope` (six sites) in
+  `openapi.yaml`; not invented and not fixed, since it predates this workstream.
+
+### Citations that did not resolve (so the next reader does not chase them)
+
+`openapi.yaml` holds **133** path keys before this work, not the strategy's 146 (156 after the
+additions); the `AttachmentDto.url` sentence is at `:6007-6009`, not `:6826-6829`/`:7133-7136`; the
+catalog DELETE route is `:176-195`, not `:171-191`; the `CatalogEndpoints.cs` bytea banner is at
+`:547`, and the two `.WithSummary` texts the strategy calls stale were already corrected in U1.2;
+`docs/security/` held three files, not "exactly two"; and `CatalogWriteAuthorizationTests.cs` does
+not exist at this HEAD (the F-7 guard lives in `CatalogEndpointsIntegrationTests.cs`).
+
+### Process notes
+
+- **The lane rule earned its keep.** U0.1 hit a compile error caused by a sibling's in-flight file
+  and **raised a change request instead of editing it** — the plan's escalation contract, working as
+  designed. Two further cross-lane gaps (a stale 404 translation, a missing PDF arm) were sequenced
+  to their owners rather than patched in place.
+- **Concurrent full-suite runs were the main process cost.** Running 2500+ tests in more than one
+  lane at once produced load-induced ~3-minute timeouts that looked like failures; each passed in
+  isolation, and the fix was to stop concurrent full runs and give the gate one serial pass.
+- **One `git reset --mixed` was needed** to keep phase history honest: a commit had swept in five
+  unrelated `docs/ai-usage/*` and `scripts/*` files from a different workstream. They were left
+  uncommitted, and the media files were re-committed alone.
+- **One environment workaround, declared:** the sandbox's NuGet cache is read-only, so
+  `NUGET_PACKAGES`/`NUGET_HTTP_CACHE_PATH` point at a workspace-local cache for every build and test.
+  Nothing about that workaround is committed — `obj/` and the cache are untracked, so no sandbox
+  path can leak into history.
+- The orchestrator wrote no production code: every `.cs`, `.py` and `.dart` change came from a
+  subagent, and the orchestrator's own writes were the AI-usage log, the GitHub issue bodies and the
+  commit messages.
+
 ## Session 2026-09-20 (c) — Tenant dashboard finalization: Flutter to backend (session start)
 
 **Task:** Implement the tenant dashboard finalization (the boutique dashboard at `/app/b/{slug}`) from
@@ -5723,3 +5923,267 @@ conformance and truthfulness gates stay green.
 - Tenant conformance and truthfulness gates: **15 passed**; `oxlint` 0 errors on the billing tree.
 - `dotnet build` of the API and the test project: 0 errors.
 - No branch switch and no commit: the tree stays on `feature/tenant-dashboard-v2`.
+
+## Session 2026-09-22 — Web media picker and Salon attachments (session start)
+
+**Task:** a new workstream, approved by the product owner and driven from a strategy document
+rather than a plan: build the **media picker and file-attachment UI for the web dashboard**, which
+the Cloudinary media workstream deliberately did not include (it shipped the backend and the agent
+bridge; only Flutter had a picker).
+**Tool used:** DeepSeek Harness (deepseek-flash) orchestrating; implementation delegated to subagents.
+**Branch:** `cloudinary-media-and-salon-image` — no branch created or switched; the orchestrator makes
+every commit.
+
+### Why this exists
+
+The completed workstream left a real gap: `frontend/web/src/components/conversation/Composer.tsx` is
+text-only while `blocks.tsx` already renders an `AttachmentBlock`, so a boutique on the web dashboard
+can *see* an attachment and cannot *create* one. A subagent was asked to design the strategy; the
+result is `.agents/plans/web-media-picker-and-attachments-implementation-strategy.md` (899 lines,
+git-ignored by convention).
+
+### The owner's decisions, applied
+
+| # | Question | Answer |
+|---|---|---|
+| Q1 | Per-org/per-thread attachment cap | **Deferred**, with the residual recorded (`24 h × upload rate × 5 MB` per member, bounded in steady state by the 24 h unbound sweep and the 7 d retention job) |
+| Q2 | PDFs in v1 | **Yes** (accept, Open/Download) |
+| Q3 | HEIC over the cap in Chrome | **Accept** with a clear message; no server-side transcode |
+| Q4 | Pasted-URL field in the composer | **Leave it out** — the SSRF kill switch defaults `false`, so a field would always `400` |
+| Q5 | Analysability note | **Per file**, driven by the response's sniffed `contentType` |
+| Q6 | Retention clock | **On upload** (so a photo sent 23 h later is deleted ~6 d after send — accepted and to be documented) |
+| Q7 | Flutter parity | **Now**, not as follow-ups — this added slice **W7** to the strategy's six |
+
+### Slices and issues (created before implementation)
+
+| Issue | Slice | Lane | What |
+|---|---|---|---|
+| [#380](https://github.com/KavinduNirmal/aveline/issues/380) | W5 | L3 | the idempotent-retry backend fix (replay check before attachment resolution) |
+| [#381](https://github.com/KavinduNirmal/aveline/issues/381) | W1 | L6 | the web API-client seam (upload helper + send parameters), inert |
+| [#382](https://github.com/KavinduNirmal/aveline/issues/382) | W2 | L6 | `attachment-preparation` + pending-tray context state |
+| [#383](https://github.com/KavinduNirmal/aveline/issues/383) | W3 | L6 | the Composer affordance and `AttachmentTray` |
+| [#384](https://github.com/KavinduNirmal/aveline/issues/384) | W4 | L6 | interactive rendering (authenticated blob fetch, viewer) |
+| [#385](https://github.com/KavinduNirmal/aveline/issues/385) | W7 | L10 | Flutter parity: client-side 5-cap and rendered failures |
+| [#386](https://github.com/KavinduNirmal/aveline/issues/386) | W6 | L8 | documentation |
+
+### A real defect found by the design, and verified by the orchestrator
+
+`ConversationService.SendStaffNoteAsync` resolves and validates attachments (`:227`) **before** the
+`clientMessageId` replay check (`:233-241`). A retry of one composed message that carries attachments
+therefore re-resolves already-bound ids, throws `AttachmentBindingException`, and answers
+`400 "…already attached"` instead of returning the stored message — which is precisely what an
+idempotency key is for.
+
+Two things make it worse and both were confirmed in the code rather than assumed:
+
+- the suite cannot catch it: every replay case uses `null` attachments and every binding case uses a
+  `null` key;
+- **the web client never sends `clientMessageId` at all** (`conversations-api.ts:88-97` posts
+  `{ text }`), while Flutter does (`api_thread_repository.dart:104`). So a web timeout-retry already
+  duplicates the note silently today, and would become a hard `400` the moment attachments are added.
+
+W5 fixes the ordering and W3 passes the key; the pair is what makes retry-with-attachments safe.
+
+### Baseline before delegation
+
+- `dotnet build Aveline.Api/Aveline.Api.sln` — 0 errors (the Cloudinary workstream's last full run was
+  **2591 passed / 0 failed**).
+- `bun` 1.3.14 present; `cd frontend/web && bun run test` is the web gate.
+- The strategy's own finding: the repo's only existing multipart helper (`uploadCatalogImage`) is
+  **dead code**, so the multipart header pattern has never met the real API. W3 therefore carries a
+  browser check through the Vite proxy, and if a browser cannot be run here that must be reported as
+  outstanding rather than claimed.
+
+### Session end — the web media picker and Salon attachments, delivered
+
+All seven slices landed, one commit each by the orchestrator, and the owner's seven decisions applied.
+
+| Commit | Slice | What |
+|---|---|---|
+| `3b3ec72` | W5 | the idempotent-retry backend fix |
+| `43cf12a` | W1 | the web attachment API seam (inert) |
+| `4b55f30` | W2 | attachment preparation and the pending tray |
+| `3aace35` | W3+W4 | the composer affordance, the tray, and interactive rendering |
+| `efa6b09` | W7 | Flutter parity: the client-side 5-cap and rendered failures |
+
+**Verification at the end of this workstream:** 2591 .NET tests green (the full suite, re-run because W5
+touched `ConversationService`); 992 web tests across 138 files with no unhandled rejections; 1017
+Flutter tests; `flutter analyze` clean; `bun run lint` unchanged at its pre-existing warning count;
+`bun run build` passing.
+
+#### The two defects this workstream found, not wrote
+
+**1. The replay check ran after attachment resolution (fixed in W5).** A retry of one composed message
+that carried attachments answered `400 "…already attached"` instead of returning the stored row,
+because `ResolveAttachmentsAsync` ran before the `clientMessageId` lookup. The suite could not catch
+it: every replay case used `null` attachments and every binding case used a `null` key. The new case
+combines them and was observed failing first with the real `AttachmentBindingException`. One intended
+behaviour change: the same key with different words now answers `409` even when attachments are
+present, which is the correct answer for that condition.
+
+**2. `send` swallowed its failure (fixed in `3aace35`).** It marked the optimistic row `failed` and
+still resolved, so no caller could distinguish a failed send from a confirmed one — which would have
+made the composer clear the textarea on failure, contradicting the slice's own requirement that only
+a confirmed send clears it. It now rethrows. Fixing it surfaced two silent unhandled rejections in test
+harnesses, which were corrected the same way the real composer handles it.
+
+#### Deliberate deviations, each with a reason
+
+- **W7 was not in the strategy.** The owner chose parity *now* rather than as follow-ups, so the two
+  Flutter gaps became a slice: the client-side 5-cap (mirroring the server's sentence) and rendering
+  the failure states that were previously only `debugPrint`ed or left unrendered.
+- **Upload progress is indeterminate, not a percentage.** The API helper measures nothing, so a bar
+  would have been fabricated. The tray test asserts that no `%` is rendered.
+- **Rendering fetches through the authenticated client, never a token URL.** A minted attachment token
+  is anonymous with a 900 s TTL; caching one in an `<img src>` would go stale silently mid-session.
+- **The `retryable` flag replaced prose matching.** The tray had inferred "do not offer retry" by
+  matching two error sentences; the chip now carries the classification set where the HTTP status is
+  known, so the control cannot drift when the wording changes.
+- **A Kotlin compiler cache was committed and then removed.** `git add frontend/aveline_mobile` swept
+  in `android/.kotlin/sessions/*.salive`. The commit was amended to drop it and `.gitignore` gained
+  `frontend/aveline_mobile/android/.kotlin/`, alongside the already-ignored `.gradle/`.
+- **The branch received a merge of `origin/development`** (the owner's action, author
+  `KavinduNirmal`, 18:32). It brought the tenant-dashboard slices and thereby resolved away the
+  branch-staleness banner added earlier in the previous workstream, leaving the F-7 delivery note
+  correct. No action was needed, but it is worth recording that the branch is no longer a
+  develop-free fork.
+
+#### What is outstanding, stated plainly
+
+- **The authenticated end-to-end browser walk.** A real headless browser disproved the multipart-header
+  risk (the browser supplies the boundary; the shared client's JSON default does not leak, on the
+  direct path and through the Vite proxy), but the signed-in walk — pick a JPEG, send, see the bubble —
+  needs a Clerk session this environment does not provide. The exact eight steps are recorded in
+  `docs/security/media-access.md` §10.7.
+- **The web attachment response was never fetched against a real provider here**; the rendering tests
+  mock the authenticated client.
+- **The web byte cache is process-lifetime and unbounded per session** (mirroring mobile's documented
+  residual); acceptable now because rows are immutable, a reload clears it, object URLs are revoked on
+  unmount, and 7-day retention bounds the fetchable population.
+- **No per-org or per-thread attachment cap** (owner decision Q1): the residual is
+  `24 h × upload rate × 5 MB` per member, bounded in steady state by the 24 h sweep and the 7-day job.
+- **`conversations-api.test.ts` asserts the multipart header on a mocked client only.** The header's
+  real behaviour was proven separately in a browser, which is why the browser check mattered.
+
+## Session 2026-09-22 (b) — The catalog media tier, the vision image target, and the colour nobody read (session start)
+
+**Task:** the owner uploaded catalog pieces and reported that they went to the **local database instead
+of Cloudinary**, that the vision agent then could not read the image (the only URL for it was a
+localhost/in-network route), and later that the **colour identification was wrong** — first the chip
+said "Emerald Green" for a fuchsia dress, then the colour *dot* reverted to a default.
+**Tool used:** DeepSeek Harness (deepseek-flash). The previous workstream's agents had been terminated;
+two of the three dispatched here were also cut off mid-flight (one before reporting, one after its first
+follow-up), so their work was verified from the tree rather than from a report, and the remainder was
+finished directly.
+**Branch:** `cloudinary-media-and-salon-image` — no branch created or switched; the orchestrator commits.
+
+### The four causes, each reproduced rather than inferred
+
+**RC-1 — the Cloudinary write tier had never been selected.** `Media:Provider` defaults to `database`
+(`MediaOptions.cs:13`), and `docker-compose.yml` passed **none** of the `Media__*` keys (the `api`
+service has no `env_file:`). The operator's documented `Media__Provider=cloudinary` opt-in in
+`.env.example` was therefore inert: `docker inspect aveline_api` showed `Media__SigningKey` and
+`Media__PublicBaseUrl` but no `Media__Provider`, and all eight `InventoryImages` rows carried
+`StorageProvider='database'`, an empty `StorageKey` and the bytes in `ImageData`. The credential was
+also incomplete (`CLOUDINARY_CLOUD_NAME` and `CLOUDINARY_URL` both empty), and
+`MediaOptionsValidator.ValidateOrThrow` refuses the boot on an incomplete credential, so the switch
+could not have booted even with the pass-through.
+
+**RC-2 — a *relative* URL reached the vision provider.** `AddProductModal.handleProcessFile` uploads the
+compressed image and then does `setImageUrl(uploadRes.url)`; that `url` is the relative Aveline route
+`/api/v1/orgs/{orgId}/catalog/images/{id}` (the literal value stored in `InventoryImages.ImageUrl`). A
+later "Analyze" click posted that relative path, `VisionService` forwarded it verbatim into
+`image_url.url`, and the provider answered
+`400 {"error":{"message":".messages[0]: Unsupported image_url format"}}`. `VisionService` then logged
+and silently returned `GenerateDeterministicAnalysis(...)` — a filename-derived colour with
+`IsFallback=true` and a primed `ConfidenceScore=0.95`. The API log timestamp `16:08:30` matches the row
+created at `16:08:25`. Reproduced directly against the configured endpoint: a relative path gives that
+exact error, `http://localhost:5091/…` and `http://api:8080/…` give "Failed to download image", and a
+`data:` URL gives **200**.
+
+**RC-3 — the agent's `HTTP 500`.** `aveline_agent` logged `Image analysis failed: vision backend error
+(HTTP 500)` twice: the reference arm minted a media token and threw
+`Media:SigningKey must be configured`. Compose now passes `MEDIA_SIGNING_KEY`, and the reference arm no
+longer mints at all.
+
+**RC-4 — the colour was computed, sent, and dropped twice over.** Two independent faults, both found by
+following the owner's screenshot rather than by reading the tests:
+- the **wire name**: `ImageAnalysisResultDto.PrimaryColor` is pinned to snake_case `primary_color` (for
+  the Python consumer) while the web read `raw.primaryColor`, so the colour was always `undefined` and
+  the literal `|| 'Emerald Green'` in `normalizeVisionAnalysis` won. That is the Elle plan's G5, fixed on
+  the .NET→Python boundary and left broken on the .NET→web one. An existing test appeared to cover it,
+  but its sample value *was* the default literal, so it passed for the wrong reason.
+- the **hex had nowhere to live**: the model's real `colorHex` (`#D5006D` for the dress) reached
+  `AddProductModal`, was put on the item, and was then omitted from the API payload;
+  `InventoryItems` has no `ColorHex` column and `InventoryItemDto` has no such field, so
+  `normalizeInventoryItem`'s `raw.colorHex || '#4B5563'` — a hardcoded gray — became the dot.
+
+### A fifth defect, found while proving the fix portable
+
+`thinking = new { type = "disabled" }` was sent on every request because DeepSeek's reasoning tokens
+otherwise consume the whole output budget (measured: 2049 reasoning tokens and no JSON at 2048). The
+comment claimed "Providers that do not know the field ignore it". **That is false**: Gemini's
+OpenAI-compatible endpoint answers `400 Invalid JSON payload received. Unknown name "thinking": Cannot
+find field.` Together with `.env.example` recommending a Gemini key and a **retired** model id
+(`gemini-2.0-flash` now answers `404`), a deployment following the documentation would have 400'd on
+every analysis and silently shown the filename-derived fallback — the same failure class as RC-2, masked
+locally because `.env` overrides all three `VISION_*` values to DeepSeek.
+
+### Fixes, in order
+
+| Cause | Fix |
+|---|---|
+| RC-1 | `docker-compose.yml` now passes **every** documented `Media__*` key through (17 names), not only the three rollout flags: the same inert-switch class applied to the image-URL kill switch and the Production escape hatch. `.env` set to `cloudinary` / `true` / `false`; docs corrected |
+| RC-2 server | `VisionService` classifies the target before spending a call and **refuses** an unusable one with `ArgumentException`; both analyze-image endpoints map it to `400`, which also fixed a blank target being a `500` |
+| RC-2 client | the drawer remembers the uploaded row id and re-analyses by `imageRefKind=inventoryImage`, so the provider is handed the stored bytes inline; a relative path is never posted (the modal skips the backend entirely when it has no usable target) |
+| RC-4a | the web reads `primary_color`, and `normalizeVisionAnalysis` no longer invents `'Emerald Green'`, `'Pure Mulberry Silk'`, `'Gold Zari Brocade'`, `'Contemporary Luxe'` or a synthesized couture description |
+| RC-4b | `ColorHex` persisted on `InventoryItems` (model, DTOs, service, migration) and carried in the web payload; the client stops defaulting an unknown hex to gray |
+| RC-5 | `thinking` is sent only when the resolved provider is DeepSeek; the provider guidance and the compose/appsettings defaults were made coherent |
+| hygiene | `VisualService` no longer injects the mint service it stopped using, and its XML doc no longer claims it mints a tokenised URL |
+
+### Baseline, and what the gates said
+
+- Full .NET suite **2930 passed / 0 failed** (25 m 34 s), up from 2910, after the vision-target slice.
+- Web full suite 1013 passed with **one** failure, `tenant-conformance.test.ts` rule 2. That rule greps
+  the **raw source text**, and two new *comments* in `AddProductModal.tsx` contained the literal
+  `<input`; rewording them fixed it. Not a component regression, and worth recording because the rule
+  reads comments as code.
+- Python 427 passed / 2 skipped **only** with the session's leaked `.env` variables unset:
+  `test_config.py::test_defaults_are_sane` asserts library defaults and the ambient `LLM_MODEL` etc.
+  override them. Proven by running the file under `env -i` (9/9 green), so the failure was environment
+  contamination, not a regression.
+- `flutter analyze` could not be re-run in this session: the Flutter SDK's `bin/cache` is read-only
+  under the current sandbox policy and `update_engine_version.sh` fails there. This change set contains
+  **no Dart changes** (`git status` shows only the unrelated `android/app/build.gradle.kts` and
+  `android/gradle.properties`, which belong to another workstream and were deliberately left
+  uncommitted), so the Flutter gate is untouched; the previously verified 1017 tests / clean analyze
+  stand.
+
+### Live end-to-end proof against the running stack
+
+- `GET /api/v1/orgs/{org}/catalog/images/{id}` for a Cloudinary row answers **302** to
+  `https://res.cloudinary.com/dj4k3qu2n/image/upload/w_800,f_auto,q_auto/v…/aveline/{org}/catalog/{id}.jpg`.
+- `POST /internal/visual/analyze-image` with `imageRefKind=inventoryImage` returns **200** with
+  `isFallback: false`, `primary_color: "Fuchsia Pink"`, `colorHex: "#D5006D"` — read back from
+  Cloudinary with `DualWrite=false`, which is the new code path that matters.
+- The same row addressed by its relative URL returns **400** with the new refusal message; a blank
+  target returns **400** instead of the old 500.
+- A fresh write through `/internal/visual/inventory` stored `StorageProvider='cloudinary'` with a real
+  `StorageKey` and **no** `ImageData`, and the CDN asset resolved (verified, then destroyed and the test
+  item deleted).
+- Before the composer change, the inlined-bytes approach was proven safe at the ceiling: DeepSeek
+  accepts a **3.24 M-character** `data:` URL (a 2.43 MB PNG, above the 2 MB catalog cap) with HTTP 200
+  in ~10.5 s, so the documented 8192-character limit applies to external URLs, not base64.
+
+### Outstanding, stated plainly
+
+- **The four pre-existing items keep their fabricated colour.** Their `Color` was written as
+  "Emerald Green" before the fix and no re-analysis is triggered by editing an item; correcting them
+  means re-running the analysis per item and updating the row, which needs the owner's go-ahead.
+- The authenticated browser walk for the drawer still needs a Clerk session; the live proof above used
+  the internal agent routes, which exercise the same row seams.
+- `Media:VisionUsePrivateDownload` remains declared and unread; `Vision:TimeoutSeconds`/`MaxRetries`
+  from the Elle plan are still unimplemented; `detail: "original"` is still not sent.
+- `AddProductModal` still invents a few save-time fallbacks (`'Multicolor'`, `'Silk Blend'`,
+  `'Classic Luxury'`, `confidenceScore ?? 0.92`). They were left because the reported defect was the
+  colour, but they are the same class as the ones removed and are recorded here rather than forgotten.

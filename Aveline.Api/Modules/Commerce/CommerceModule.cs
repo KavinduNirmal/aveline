@@ -34,6 +34,11 @@ public static class CommerceModule
         services.AddScoped<IBoutiqueIncomeReadService, BoutiqueIncomeReadService>();
         services.AddScoped<ITenantDashboardService, TenantDashboardService>();
 
+        // The counter sale of a catalog piece: one call that decrements stock and appends the money.
+        // It lives in Commerce because it writes the takings journal; it reads the catalog row
+        // through the shared `AppDbContext` rather than through a second visual-intelligence seam.
+        services.AddScoped<ICatalogSaleService, CatalogSaleService>();
+
         // The ledger's repair pass. A payment confirmation that succeeded but whose ledger write did
         // not would otherwise leave the register silently understating the shop's takings.
         services.AddHostedService<Jobs.IncomeLedgerReconciliationJob>();

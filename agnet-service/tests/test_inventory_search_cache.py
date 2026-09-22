@@ -1,6 +1,7 @@
 """Unit tests for InventorySearchCache verifying multi-tenant organization isolation, caching, and invalidation lifecycle."""
 
 from unittest.mock import AsyncMock
+
 import fakeredis.aioredis
 import pytest
 

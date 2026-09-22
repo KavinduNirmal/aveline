@@ -202,6 +202,8 @@ build/
 
 # Android
 frontend/aveline_mobile/android/.gradle/
+# Kotlin compiler session/cache dir, written by Gradle builds like .gradle/ above.
+frontend/aveline_mobile/android/.kotlin/
 frontend/aveline_mobile/android/captures/
 frontend/aveline_mobile/android/local.properties
 frontend/aveline_mobile/android/key.properties

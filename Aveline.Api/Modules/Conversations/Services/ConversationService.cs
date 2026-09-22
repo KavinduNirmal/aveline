@@ -6,6 +6,7 @@ using Aveline.Api.Modules.Conversations.Attachments;
 using Aveline.Api.Modules.Conversations.DTOs;
 using Aveline.Api.Modules.Conversations.Models;
 using Aveline.Api.Modules.Conversations.Repositories;
+using Aveline.Api.Modules.Media;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -21,7 +22,14 @@ public class ConversationService : IConversationService
     private readonly IAttachmentStore _attachmentStore;
     private readonly IAgentServiceClient _agentClient;
     private readonly ILogger<ConversationService> _logger;
+    private readonly MediaTokenMintService? _mediaTokens;
 
+    /// <summary>
+    /// <paramref name="mediaTokens"/> mints the bridge's absolute <c>image_url</c>. It is optional
+    /// only so a fixture that constructs this service directly keeps its existing arity; the
+    /// container always supplies it (<c>MediaModule</c> registers it, and <c>Program.cs</c>
+    /// registers the media module before this one).
+    /// </summary>
     public ConversationService(
         IConversationRepository conversations,
         IMessageRepository messages,
@@ -30,7 +38,8 @@ public class ConversationService : IConversationService
         IMessageAttachmentRepository attachments,
         IAttachmentStore attachmentStore,
         IAgentServiceClient agentClient,
-        ILogger<ConversationService> logger)
+        ILogger<ConversationService> logger,
+        MediaTokenMintService? mediaTokens = null)
     {
         _conversations = conversations;
         _messages = messages;
@@ -40,6 +49,7 @@ public class ConversationService : IConversationService
         _attachmentStore = attachmentStore;
         _agentClient = agentClient;
         _logger = logger;
+        _mediaTokens = mediaTokens;
     }
 
     public async Task<ConversationDto> GetOrCreateSalonAsync(
@@ -147,9 +157,11 @@ public class ConversationService : IConversationService
 
         // Re-run the original question (or a fallback) with the resolved customer in context so
         // Ava retrieves their profile/events. Best-effort like the other agent triggers.
-        await TriggerAgentAsync(conversation, string.IsNullOrWhiteSpace(query)
-            ? "Summarise recent activity for this customer."
-            : query, customerId, cancellationToken);
+        await TriggerAgentAsync(
+            conversation,
+            string.IsNullOrWhiteSpace(query) ? "Summarise recent activity for this customer." : query,
+            customerId,
+            cancellationToken: cancellationToken);
 
         return ConversationDto.From(conversation);
     }
@@ -210,14 +222,12 @@ public class ConversationService : IConversationService
         var conversation = await _conversations.GetVisibleToUserAsync(orgId, conversationId, userId, cancellationToken)
             ?? throw new InvalidOperationException("Conversation not found in this organization.");
 
-        // Resolved and validated **before** the message is written, so a bad id leaves the
-        // uploads unbound and sweepable rather than half-binding them to a stored message.
-        var attachments = await ResolveAttachmentsAsync(orgId, conversationId, attachmentIds, cancellationToken);
-        var contentBlocksJson = SerializeNoteBlocks(text, attachments);
-
         // A retry of one composed message must land on the row the first attempt stored. The
         // same key with the same words is a replay (200 with that row, no second agent brief);
         // the same key with different words is refused rather than silently written twice.
+        // This lookup runs before the attachments are resolved: the stored row already carries
+        // its blocks, so a retry naming the ids the first attempt bound must return that row
+        // rather than re-resolve (and refuse) ids that are, correctly, already attached.
         if (clientMessageId is not null)
         {
             var existing = await _messages.GetByClientMessageIdAsync(
@@ -227,6 +237,12 @@ public class ConversationService : IConversationService
                 return ResolveReplay(existing, text, conversationId, clientMessageId.Value);
             }
         }
+
+        // A fresh write resolves and validates its attachments **before** the message is
+        // written, so a bad id leaves the uploads unbound and sweepable rather than
+        // half-binding them to a stored message.
+        var attachments = await ResolveAttachmentsAsync(orgId, conversationId, attachmentIds, cancellationToken);
+        var contentBlocksJson = SerializeNoteBlocks(text, attachments);
 
         var message = new Message
         {
@@ -268,7 +284,10 @@ public class ConversationService : IConversationService
         conversation.LastMessageAt = DateTime.UtcNow;
         await _conversations.SaveAsync(conversation, cancellationToken);
 
-        await TriggerAgentAsync(conversation, text, cancellationToken: cancellationToken);
+        // The note's own attachments are described to the agent: the bridge carries their
+        // identity and an absolute tokenised URL, never their bytes (salon plan §9.3 site 2).
+        await TriggerAgentAsync(
+            conversation, text, attachments: attachments, cancellationToken: cancellationToken);
 
         return MessageDto.From(message);
     }
@@ -385,7 +404,13 @@ public class ConversationService : IConversationService
         }
 
         return await _attachmentStore.StoreAsync(
-            new AttachmentStoreRequest(orgId, conversationId, userId, bytes, contentType, fileName, width, height),
+            new AttachmentStoreRequest(
+                orgId, conversationId, userId, bytes, contentType, fileName, width, height,
+                // A staff device uploaded this through the Salon, so the provenance is `web`; the
+                // media concerns the conversation's customer when the thread is bound to one.
+                MediaSource.Web,
+                conversation.CustomerId,
+                AttachmentContentHash.Compute(bytes)),
             cancellationToken);
     }
 
@@ -716,7 +741,13 @@ public class ConversationService : IConversationService
 
         // No uploader: the bytes came from the customer's channel, not from a staff device.
         return await _attachmentStore.StoreAsync(
-            new AttachmentStoreRequest(orgId, conversation.Id, null, bytes, contentType, fileName, null, null),
+            new AttachmentStoreRequest(
+                orgId, conversation.Id, null, bytes, contentType, fileName, null, null,
+                // Fetched server-side from the provider's media id, so the provenance is the
+                // channel, not the Salon; the customer is the caller's resolution of the phone.
+                MediaSource.WhatsApp,
+                customerId,
+                AttachmentContentHash.Compute(bytes)),
             cancellationToken);
     }
 
@@ -783,8 +814,9 @@ public class ConversationService : IConversationService
         // Best-effort: ask the agent to draft a response to this inbound client message into
         // the Salon (ADR-016). The client's phone is forwarded so the memory agent can attempt
         // to identify the customer and personalize the draft. Replies arrive later as
-        // message.created events.
-        await TriggerInboundDraftAsync(conversation, from, text, cancellationToken);
+        // message.created events. The file the customer sent travels too: the agent is told
+        // what it is and where to fetch it, never handed its bytes (salon plan §9.3 site 3).
+        await TriggerInboundDraftAsync(conversation, from, text, attachment, cancellationToken);
 
         return MessageDto.From(message);
     }
@@ -793,10 +825,15 @@ public class ConversationService : IConversationService
         Conversation conversation,
         string from,
         string text,
+        MessageAttachment? attachment,
         CancellationToken cancellationToken)
     {
         try
         {
+            var (attachments, imageUrl) = DescribeAttachments(
+                conversation.OrganizationId,
+                attachment is null ? Array.Empty<MessageAttachment>() : new[] { attachment });
+
             var payload = new
             {
                 query = text,
@@ -807,6 +844,8 @@ public class ConversationService : IConversationService
                     phone_number = from,
                     channel = "whatsapp",
                     direction = "inbound",
+                    attachments,
+                    image_url = imageUrl,
                 },
             };
             using var content = JsonContent.Create(payload);
@@ -827,19 +866,35 @@ public class ConversationService : IConversationService
         }
     }
 
-    private async Task TriggerAgentAsync(
+    /// <summary>
+    /// The agent brief. <paramref name="attachments"/> is what the caller must describe; the
+    /// payload always carries an <c>attachments</c> array and, when one of them is an image the
+    /// vision provider can read, an absolute <c>image_url</c> minted for that fetch
+    /// (salon plan §9.1-§9.3, strategy §7 check 5).
+    /// </summary>
+    internal async Task TriggerAgentAsync(
         Conversation conversation,
         string query,
         Guid? customerId = null,
+        IReadOnlyList<MessageAttachment>? attachments = null,
         CancellationToken cancellationToken = default)
     {
         try
         {
+            var (described, imageUrl) = DescribeAttachments(
+                conversation.OrganizationId, attachments ?? Array.Empty<MessageAttachment>());
+
             var payload = new
             {
                 query,
                 thread_id = conversation.ThreadId,
-                org_context = new { organization_id = conversation.OrganizationId, customer_id = customerId },
+                org_context = new
+                {
+                    organization_id = conversation.OrganizationId,
+                    customer_id = customerId,
+                    attachments = described,
+                    image_url = imageUrl,
+                },
             };
             using var content = JsonContent.Create(payload);
             // Best-effort: a failure to reach the agent must not fail the staff note. The
@@ -856,6 +911,82 @@ public class ConversationService : IConversationService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to trigger agent for conversation {ConversationId}.", conversation.Id);
+        }
+    }
+
+    /// <summary>
+    /// The bridge's two halves: the authoritative identity list, and the compatibility
+    /// <c>image_url</c> for the reader that already exists (<c>concierge_workflow.py:187</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>attachments</c> is the contract; <c>image_url</c> is a bridge, removed when the Python
+    /// side sends references and no longer reads it (salon plan §9.1). The URL is absolute and
+    /// Aveline-minted with the <c>vision.analyze</c> scope, so the external provider can fetch it
+    /// and a leaked value is worth one image for ten minutes. It is never returned to an HTTP
+    /// caller: it travels only in this service-to-service payload.
+    /// </para>
+    /// <para>
+    /// A token is minted only for a type <see cref="VisionContentTypes"/> admits: a HEIC or a PDF
+    /// is listed and not tokenised (strategy §3.6). Minting is best-effort, like the trigger
+    /// itself, so a host with no signing key still sends the identity — the half of the contract
+    /// that is not a credential.
+    /// </para>
+    /// </remarks>
+    private (IReadOnlyList<object> Attachments, string? ImageUrl) DescribeAttachments(
+        Guid organizationId,
+        IReadOnlyList<MessageAttachment> attachments)
+    {
+        if (attachments.Count == 0)
+        {
+            return (Array.Empty<object>(), null);
+        }
+
+        return (
+            attachments.Select(DescribeAttachment).ToList(),
+            MintImageUrl(organizationId, attachments));
+    }
+
+    private static object DescribeAttachment(MessageAttachment attachment) => new
+    {
+        attachmentId = attachment.Id,
+        contentType = attachment.ContentType,
+        fileName = attachment.FileName,
+        // The provenance is the uploader: inbound channel media has none, and a staff device
+        // always does. The row does not persist the source; the Cloudinary tags do.
+        source = attachment.UploadedByUserId is null ? MediaSource.WhatsApp.Value : MediaSource.Web.Value,
+        publicId = MediaStorageKey.PublicId(MediaStorageKey.AssetKey(attachment.StorageKey, attachment.Id)),
+        reference = new { kind = MediaReferenceKinds.Attachment, id = attachment.Id },
+    };
+
+    private string? MintImageUrl(Guid organizationId, IReadOnlyList<MessageAttachment> attachments)
+    {
+        if (_mediaTokens is null)
+        {
+            return null;
+        }
+
+        var analysable = attachments.FirstOrDefault(a => VisionContentTypes.IsAnalysable(a.ContentType));
+        if (analysable is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var minted = _mediaTokens.Mint(
+                organizationId,
+                MediaStorageKey.AssetKey(analysable.StorageKey, analysable.Id),
+                MediaScope.VisionAnalyze);
+
+            return minted.IsSuccess ? minted.Url : null;
+        }
+        catch (Exception ex)
+        {
+            // Best-effort, like every other step on this path: the identity still travels.
+            _logger.LogWarning(
+                ex, "Failed to mint an image URL for attachment {AttachmentId}.", analysable.Id);
+            return null;
         }
     }
 }

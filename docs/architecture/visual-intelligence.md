@@ -34,7 +34,7 @@ All agent tooling communicates over authenticated internal Minimal APIs guarded 
 - `PUT /internal/visual/inventory/{itemId}` — Update inventory details
 - `PATCH /internal/visual/inventory/{itemId}/status` — Status transition (available / reserved / archived)
 - `GET /internal/visual/inventory/low-stock` — Threshold-based low-stock query
-- `POST /internal/visual/analyze-image` — Extract visual features from reference image URLs
+- `POST /internal/visual/analyze-image` — Extract visual features from a named reference (`imageRefKind`/`imageRefId`) or a compatibility `imageUrl`
 - `GET /internal/visual/customer-matches/{itemId}` — Query matched customers
 - `POST /internal/visual/customer-matches/{itemId}/generate` — Compute and persist new customer matches
 - `POST /internal/visual/outfits/compose` — Generate and persist styled outfit compositions
@@ -74,7 +74,7 @@ The Visual Insight Agent is structured as a deterministic LangGraph sub-graph:
 
 ### Multi-Tenant Caching Lifecycles:
 1. **`InventorySearchCache`**: Hashes `organizationId` into cache keys to prevent cross-tenant leakage. Automatically invalidated on item create, update, stock change, status change, and soft delete.
-2. **`ProductAnalysisCache`**: 1-hour TTL (3600s) on image feature extraction results.
+2. **`ProductAnalysisCache`**: **re-keyed to `{orgId}:{publicId}`** — never the image URL, because the API hands the agent an absolute, single-use, rotating media token and a URL key would be a different string on every mint — and **deliberately not wired into the analysis path**. Re-keying is paired with *wiring* in the plan, and wiring it now would put a Redis round trip in front of every analysis before the strategy's measurement asks for one. The key is corrected so a future wiring cannot silently guarantee 0% hits. TTL: 1 hour (3600 s) when it is wired.
 
 ---
 

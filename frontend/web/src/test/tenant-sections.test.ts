@@ -36,13 +36,24 @@ describe('tenant dashboard section routing (Q6)', () => {
     expect(app).toMatch(
       /path="\/app\/b\/:slug"[\s\S]{0,120}<Navigate to="overview" replace \/>/,
     )
+    // One catalogue piece is a section of its own, so its information page is linkable (Q6's rule
+    // applied one level deeper).
+    expect(app).toMatch(/path="\/app\/b\/:slug\/catalog\/:itemId"/)
   })
 
   it('routes every nav section through the URL rather than local state', () => {
     // The shell must not keep a `useState<SectionId>` for the section any more.
     expect(shell).not.toMatch(/useState<SectionId>/)
-    expect(shell).toMatch(/useParams<\{ section\?: string \}>/)
+    // The section, plus the optional piece id the catalog's information route carries.
+    expect(shell).toMatch(/useParams<\{\s*section\?: string\s+itemId\?: string\s*\}>/)
     expect(shell).toMatch(/navigate\(`\/app\/b\/\$\{organization\.slug\}\/\$\{next\}`\)/)
+  })
+
+  it('reads a piece URL as the catalog section, because the literal is not a route param', () => {
+    // `/app/b/:slug/catalog/:itemId` spells `catalog` literally, so `useParams` returns an
+    // `itemId` and **no** `section`. Keying the section only on `sectionParam` therefore resolved
+    // a piece URL to `overview`, which is what the shell actually rendered.
+    expect(shell).toMatch(/catalogItemId\s*\?\s*'catalog'/)
   })
 
   it('declares a unique, non-empty section id for every nav entry', () => {

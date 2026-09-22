@@ -27,4 +27,11 @@ public interface IInventoryRepository
 
     Task<InventoryImage?> GetImageByIdAsync(Guid imageId, Guid orgId, CancellationToken cancellationToken = default);
     Task AddImageAsync(InventoryImage image, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Removes the image row. The caller tells the image store first, so a provider that keeps
+    /// bytes elsewhere releases them before the row that names them disappears
+    /// (<c>AttachmentSweepJob.cs:74-78</c>). This does not touch the item.
+    /// </summary>
+    Task DeleteImageAsync(Guid imageId, Guid orgId, CancellationToken cancellationToken = default);
 }

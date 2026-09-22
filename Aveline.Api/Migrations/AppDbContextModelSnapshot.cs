@@ -1686,6 +1686,10 @@ namespace Aveline.Api.Migrations
                     b.Property<DateTime?>("BoundAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("ContentHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<string>("ContentType")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -1745,6 +1749,8 @@ namespace Aveline.Api.Migrations
 
                     b.HasIndex("MessageId", "CreatedAtUtc")
                         .HasFilter("\"MessageId\" IS NULL");
+
+                    b.HasIndex("OrganizationId", "ContentHash");
 
                     b.HasIndex("OrganizationId", "ConversationId");
 
@@ -3820,6 +3826,17 @@ namespace Aveline.Api.Migrations
                     b.Property<Guid>("OrgId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("StorageKey")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("StorageProvider")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("database");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ItemId")
@@ -3848,6 +3865,10 @@ namespace Aveline.Api.Migrations
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
+
+                    b.Property<string>("ColorHex")
+                        .HasMaxLength(9)
+                        .HasColumnType("character varying(9)");
 
                     b.Property<decimal>("Cost")
                         .HasPrecision(12, 2)

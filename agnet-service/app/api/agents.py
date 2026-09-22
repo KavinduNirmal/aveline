@@ -2,7 +2,7 @@ import json
 import logging
 import time
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Body, Depends, Request
@@ -95,12 +95,21 @@ async def agents_query(payload: AgentQueryRequest, request: Request) -> AgentQue
     org_id = _resolve_org_id(payload)
     # Correlation id tracing this workflow invocation (stored on the usage record, ADR-010).
     request_id = str(uuid4())
+    # The run id must be unique per invocation. It used to be `payload.thread_id`, which is stable
+    # for the whole conversation - so the FIRST run was ingested and marked terminal, and every
+    # later message in that thread posted the same id and was rejected with 409 "already terminal".
+    # Run telemetry therefore recorded one run per conversation and silently dropped the rest,
+    # which also hid any HITL pause after the first message.
+    run_workflow_id = str(uuid4())
+    org_context = payload.org_context or {}
     # The run collector is the step-record producer: every graph node writes a row through it
     # and Slice 4a's instruments observe the same run without a second mechanism.
     collector = TelemetryCollector(
-        workflow_id=payload.thread_id or request_id,
+        workflow_id=run_workflow_id,
         organization_id=str(org_id) if org_id is not None else None,
         request_id=request_id,
+        conversation_id=_optional_id(org_context.get("conversation_id")),
+        customer_id=_optional_id(org_context.get("customer_id")),
     )
     run_started = time.perf_counter()
     run_status = "Succeeded"
@@ -143,7 +152,7 @@ async def agents_query(payload: AgentQueryRequest, request: Request) -> AgentQue
         await _report_usage_best_effort(
             result,
             organization_id=str(org_id),
-            workflow_id=payload.thread_id or request_id,
+            workflow_id=run_workflow_id,
             request_id=request_id,
             collector=collector,
             run_status=run_status,
@@ -158,6 +167,18 @@ async def agents_query(payload: AgentQueryRequest, request: Request) -> AgentQue
         result=result,
         thread_id=payload.thread_id,
     )
+
+
+def _optional_id(value: Any) -> str | None:
+    """A stringified id for the telemetry payload, or ``None`` when absent/blank.
+
+    Org context arrives as loose JSON, so an id may be a UUID, a string, or missing entirely.
+    The API's ingest stores these as plain columns, so a string is the right shape either way.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _resolve_org_id(payload: AgentQueryRequest) -> UUID | None:

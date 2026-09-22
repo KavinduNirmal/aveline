@@ -10,6 +10,8 @@ The serialized step keys are asserted against the .NET ``AgentStepReportRequest`
 truth and the Python payload must match it exactly.
 """
 
+from contextlib import asynccontextmanager
+
 import pytest
 from fastapi.testclient import TestClient
 from opentelemetry.sdk.metrics import MeterProvider
@@ -204,3 +206,93 @@ def test_finalize_closes_a_step_left_running():
     assert step.status in AGENT_STEP_STATUSES
     assert step.status == "Skipped"
     assert step.completed_at is not None
+
+
+# ---------------------------------------------------------------------------
+# Run identity and thread linkage (the run-telemetry regression)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _noop_checkpointer(monkeypatch):
+    """A thread_id enables Postgres checkpointing; stub it so these tests need no database."""
+
+    @asynccontextmanager
+    async def fake_checkpointer(*args, **kwargs):
+        yield object()
+
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.create_checkpointer", fake_checkpointer
+    )
+
+
+def _query_on_thread(thread_id: str, conversation_id: str) -> None:
+    """Query with a thread and conversation, but no customer.
+
+    Deliberately no customer_id: supplying one makes the memory agent call the customer book,
+    which is not running here. The conversation linkage is what these tests are about.
+    """
+    response = TestClient(app).post(
+        "/agents/query",
+        headers={"X-Internal-Token": TEST_INTERNAL_TOKEN},
+        json={
+            "query": "Hello, just checking in.",
+            "thread_id": thread_id,
+            "org_context": {
+                "organization_id": ORG_ID,
+                "conversation_id": conversation_id,
+            },
+        },
+    )
+    assert response.status_code == 200
+
+
+def test_each_message_in_one_conversation_records_its_own_run(captured, _noop_checkpointer):
+    """The run id must be unique per invocation, not the conversation's thread id.
+
+    It used to be the thread id, which is stable for the whole conversation. The API keys run
+    ingest on `(OrganizationId, WorkflowId)` and rejects a repeat of a terminal run, so the first
+    message was recorded and every later message 409'd - telemetry for the rest of the thread was
+    silently dropped, and with it any HITL pause after the first message.
+    """
+    thread = "thread-one-conversation"
+    _query_on_thread(thread, "conv-1")
+    _query_on_thread(thread, "conv-1")
+
+    assert len(captured) == 2, "both messages must report a run"
+    first, second = captured[0]["workflowId"], captured[1]["workflowId"]
+
+    assert first != second, "two runs must not share a workflow id"
+    assert first != thread and second != thread, "the thread id must not be the run id"
+
+
+def test_run_payload_links_back_to_its_conversation(captured, _noop_checkpointer):
+    """A run has to say which conversation it served, or nothing can render it in context."""
+    _query_on_thread("thread-with-conversation", "conv-abc")
+
+    assert captured[0]["conversationId"] == "conv-abc"
+
+
+def test_run_payload_omits_linkage_when_the_caller_supplies_none(captured):
+    # A staff query with no bound conversation must not invent one.
+    _query()
+
+    payload = captured[0]
+    assert payload["conversationId"] is None
+    assert payload["customerId"] is None
+
+
+def test_collector_carries_both_ids_onto_the_run_report():
+    """The collector is what threads org_context ids onto the run row."""
+    collector = TelemetryCollector(
+        workflow_id="run-1",
+        organization_id="11111111-1111-1111-1111-111111111111",
+        request_id="req-1",
+        conversation_id="conv-9",
+        customer_id="cust-9",
+    )
+
+    report = collector.finalize()
+
+    assert report.conversation_id == "conv-9"
+    assert report.customer_id == "cust-9"

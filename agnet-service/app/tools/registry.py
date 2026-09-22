@@ -191,6 +191,35 @@ class ToolRegistry:
             "GET", f"/internal/customers/{customer_id}/consent?organizationId={org_id}"
         )
 
+    # ============================== CONVERSATION ==============================
+
+    async def get_conversation_history(
+        self,
+        org_id: str,
+        conversation_id: str,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """Read a bounded, oldest-first window of a conversation's transcript (ADR-023).
+
+        The concierge workflow receives only the newest message, so nothing referential
+        ("yes, that one", "is it still available?") can be resolved without this. The window is
+        deliberately bounded by the caller: the transcript is a context budget, not an archive.
+
+        Args:
+            org_id: The owning organization (tenant scope).
+            conversation_id: The conversation to read.
+            limit: Maximum turns to return, newest-last. Clamped by the backend.
+
+        Returns:
+            The backend ``{conversationId, organizationId, items}`` envelope, where each item is
+            ``{id, authorKind, agentKey, kind, text, createdAt}``.
+        """
+        return await self._client.request(
+            "GET",
+            f"/internal/conversations/{conversation_id}/messages",
+            params={"organizationId": org_id, "limit": limit},
+        )
+
     # ============================== VISUAL AGENT ==============================
 
     async def search_inventory(self, criteria: dict[str, Any]) -> dict[str, Any]:

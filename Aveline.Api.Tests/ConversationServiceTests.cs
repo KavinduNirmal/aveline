@@ -177,6 +177,18 @@ public class ConversationServiceTests
             return Task.FromResult<(IReadOnlyList<Message>, int, int)>((scoped, scoped.Count, 1));
         }
 
+        public Task<IReadOnlyList<Message>> ListLatestAsync(Guid conversationId, int take, CancellationToken ct)
+        {
+            // Mirrors the real repository's contract: the newest `take` rows, returned oldest first.
+            var scoped = _messages
+                .Where(m => m.ConversationId == conversationId)
+                .OrderByDescending(m => m.CreatedAt)
+                .Take(take)
+                .OrderBy(m => m.CreatedAt)
+                .ToList();
+            return Task.FromResult<IReadOnlyList<Message>>(scoped);
+        }
+
         public Task SaveAsync(Message message, CancellationToken ct)
         {
             SaveCount++;

@@ -66,6 +66,10 @@ public class ConversationEventSubscriberTests
         public Task<(IReadOnlyList<ConversationDto> Items, int Total)> ListAsync(Guid orgId, Guid userId, int page, int pageSize, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
+        // The subscriber under test never reads transcripts; this exists only to satisfy the seam.
+        public Task<ConversationHistoryDto?> GetHistoryAsync(Guid orgId, Guid conversationId, int limit, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
         public List<Guid> TilesRequested { get; } = [];
 
         public Task<ConversationTile?> GetTileAsync(Guid conversationId, CancellationToken cancellationToken = default)

@@ -210,6 +210,8 @@ v1.MapCustomerTenantEndpoints();
 
 app.MapBillingEndpoints();
 app.MapCustomerConciergeEndpoints();
+// Internal (service-to-service) conversation transcript read for the agent service (ADR-023, W1.1).
+app.MapInternalConversationEndpoints();
 app.MapVisualEndpoints();
 app.MapStatisticsInternalEndpoints();
 // The protected media tier (unit U2.1): the token proxy at /api/v1/media/{token} and the two

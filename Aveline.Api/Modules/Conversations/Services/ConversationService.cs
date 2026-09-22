@@ -210,6 +210,41 @@ public class ConversationService : IConversationService
         return (items.Select(MessageDto.From).ToList(), total, effectivePage);
     }
 
+    public async Task<ConversationHistoryDto?> GetHistoryAsync(
+        Guid orgId,
+        Guid conversationId,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        // Organization-scoped, not user-scoped: the agent service is a trusted internal caller and
+        // has no staff user id (see IConversationService.GetHistoryAsync).
+        var conversation = await _conversations.GetAsync(orgId, conversationId, cancellationToken);
+        if (conversation is null)
+        {
+            return null;
+        }
+
+        // Clamp rather than reject: the window is a context-budget decision made by the caller
+        // (ADR-023), and a nonsensical value should degrade to something bounded, not 400.
+        var take = Math.Clamp(limit, 1, MaxHistoryTurns);
+        var messages = await _messages.ListLatestAsync(conversationId, take, cancellationToken);
+
+        var items = messages
+            .Select(message => new ConversationHistoryTurnDto(
+                message.Id,
+                message.AuthorKind.ToString(),
+                message.AuthorAgentKey,
+                message.Kind.ToString(),
+                ConversationBlockText.Flatten(message.ContentBlocksJson),
+                message.CreatedAt))
+            .ToList();
+
+        return new ConversationHistoryDto(conversationId, orgId, items);
+    }
+
+    /// <summary>The hard ceiling on a history window, so a caller cannot ask for an unbounded read.</summary>
+    private const int MaxHistoryTurns = 200;
+
     public async Task<MessageDto> SendStaffNoteAsync(
         Guid orgId,
         Guid userId,
@@ -841,6 +876,9 @@ public class ConversationService : IConversationService
                 org_context = new
                 {
                     organization_id = conversation.OrganizationId,
+                    // The agent reads its transcript window from this id (ADR-023, W1.3). Without
+                    // it the workflow sees only the newest message and cannot resolve references.
+                    conversation_id = conversation.Id,
                     phone_number = from,
                     channel = "whatsapp",
                     direction = "inbound",
@@ -891,6 +929,8 @@ public class ConversationService : IConversationService
                 org_context = new
                 {
                     organization_id = conversation.OrganizationId,
+                    // See TriggerInboundDraftAsync: the transcript window is keyed by this id.
+                    conversation_id = conversation.Id,
                     customer_id = customerId,
                     attachments = described,
                     image_url = imageUrl,

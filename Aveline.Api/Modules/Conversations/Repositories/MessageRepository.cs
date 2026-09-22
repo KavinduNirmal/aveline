@@ -72,6 +72,29 @@ public class MessageRepository : IMessageRepository
         return (items, total, effectivePage);
     }
 
+    public async Task<IReadOnlyList<Message>> ListLatestAsync(
+        Guid conversationId,
+        int take,
+        CancellationToken cancellationToken = default)
+    {
+        if (take <= 0)
+        {
+            return [];
+        }
+
+        // Newest-first for the bounded read (so Take() keeps the recent rows rather than the
+        // oldest), then reversed in memory so the caller receives a readable transcript.
+        var newestFirst = await _context.Messages
+            .Where(m => m.ConversationId == conversationId)
+            .OrderByDescending(m => m.CreatedAt)
+            .ThenByDescending(m => m.Id)
+            .Take(take)
+            .ToListAsync(cancellationToken);
+
+        newestFirst.Reverse();
+        return newestFirst;
+    }
+
     public async Task SaveAsync(Message message, CancellationToken cancellationToken = default)
     {
         if (message.Id == default)

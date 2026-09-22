@@ -27,11 +27,17 @@ from app.agents.commerce.graph import build_commerce_graph
 from app.agents.customer_memory.graph import build_memory_graph
 from app.agents.customer_memory.parsing import parse_message
 from app.agents.visual_insight.graph import build_visual_graph
+from app.agents.visual_insight.routing import route_after_visual
 from app.context import compact
 from app.core.config import get_settings
 from app.customer_resolution import resolve_customer
-from app.gate import classify_by_rules
-from app.llm.runtime import memory_llm_or_none, visual_llm_or_none, workflow_llm_or_none
+from app.gate import classify_by_rules, supervise
+from app.llm.runtime import (
+    memory_llm_or_none,
+    supervisor_llm_or_none,
+    visual_llm_or_none,
+    workflow_llm_or_none,
+)
 from app.observability.metrics import get_agent_metrics
 from app.observability.tracing import chain_of_thought_span
 from app.schemas.response import AgentMetadata, AgentResponse, AgentStatus
@@ -132,15 +138,39 @@ async def run_load_context(state: ConciergeState) -> dict[str, Any]:
     }
 
 
-def run_intent_gate(state: ConciergeState) -> dict[str, Any]:
-    """Classify the message and decide routing.
+async def run_supervisor(state: ConciergeState) -> dict[str, Any]:
+    """Decide how the message is handled, as the routing authority (ADR-023, Decision 3).
 
-    The intent is stored as a plain dict so the state stays JSON-serializable
-    for checkpointing (ADR-002).
+    Runs after ``load_context`` so it can see the transcript, and before ``resolve_customer`` so it
+    can decide whether resolving a customer is even relevant to the request.
+
+    Deterministic rules run first as a cheap pre-filter; the LLM supervisor is consulted only for
+    input the rules cannot classify. With no LLM configured this node is exactly the old intent
+    gate, which is what keeps the offline path deterministic.
+
+    The plan is stored as a plain dict so the state stays JSON-serializable for checkpointing.
     """
-    intent = classify_by_rules(state["message"])
-    logger.debug("Intent gate classified message as %s.", intent.intent_type)
-    return {"intent": intent.model_dump()}
+    settings = get_settings()
+    rule_intent = classify_by_rules(state["message"])
+    consultable = rule_intent.intent_type == "general_inquiry"
+
+    plan = await supervise(
+        state["message"],
+        # Only hand the model a call it can act on: the rules already resolved everything else.
+        # Temperature 0: routing is a decision, not a composition (ADR-023).
+        llm=supervisor_llm_or_none(settings) if consultable else None,
+        org_context=state.get("org_context"),
+        history=state.get("history"),
+        thread_summary=state.get("thread_summary"),
+        pinned_slots=state.get("pinned_slots"),
+    )
+    logger.debug(
+        "Supervisor decided %s -> agents=%s clarification=%s",
+        plan.intent_type,
+        plan.suggested_agents,
+        bool(plan.clarification),
+    )
+    return {"intent": plan.model_dump()}
 
 
 async def run_resolve_customer(state: ConciergeState) -> dict[str, Any]:
@@ -378,13 +408,14 @@ def formulate_response(state: ConciergeState) -> dict[str, Any]:
             metadata=metadata,
         )
     else:
-        resolution = state.get("resolution") or {}
+        clarification = _clarification_for(state)
         output: dict[str, Any] = {
             "intent": intent.get("intent_type", "general_inquiry"),
         }
-        if resolution.get("kind") in ("ambiguous", "not_found"):
-            # No specialist produced content; the clarification is rendered by Aveline.
-            output["clarification"] = resolution
+        if clarification is not None:
+            # The run asked instead of acting, so there is no specialist content to attach. This is
+            # a first-class outcome now (ADR-023, Decision 4), not a side effect of a veto.
+            output["clarification"] = clarification
         else:
             output.update(
                 memory=state.get("memory_output"),
@@ -435,11 +466,62 @@ def _route_after_intent(state: ConciergeState) -> str:
 
 
 def _route_after_resolve(state: ConciergeState) -> str:
-    # Ambiguous/not-found resolution short-circuits to a clarification before any specialist.
-    resolution = state.get("resolution") or {}
-    if resolution.get("kind") in ("ambiguous", "not_found"):
+    """Send a run to the right next node after customer resolution.
+
+    Customer resolution no longer vetoes the run (ADR-023, Decision 4). A resolution miss is a
+    *fact*: it means the customer is not on file, which is the normal state for every first-time
+    contact. It only stops the run when asking is genuinely the right move - an ambiguous match
+    the person can disambiguate, or an explicit staff ``@mention`` that matched nothing.
+    """
+    if _clarification_for(state) is not None:
         return "formulate_response"
+
+    # A resolved-or-not miss is not a veto. Only skip the memory agent when the supervisor
+    # explicitly said customer resolution is a precondition and it is genuinely out of reach
+    # (no customer id and no phone to look up).
+    intent = state.get("intent") or {}
+    if intent.get("needs_customer_resolution"):
+        resolution = state.get("resolution") or {}
+        org_context = state.get("org_context") or {}
+        has_customer = bool(
+            (resolution.get("kind") == "resolved" and resolution.get("customer_id"))
+            or org_context.get("customer_id")
+            or org_context.get("phone_number")
+        )
+        if resolution.get("kind") == "not_found" and not has_customer:
+            return "formulate_response"
+
+    # The specialists always start at memory; its conditional edges walk the plan's ordered set.
     return "memory_agent"
+
+
+def _clarification_for(state: ConciergeState) -> dict[str, Any] | None:
+    """The clarification a run should produce instead of specialist work, if any.
+
+    Two sources, in precedence order:
+
+    1. **The supervisor asked a question.** It saw the transcript and decided it cannot proceed,
+       so its wording is used verbatim.
+    2. **Customer resolution needs a human answer.** An ``ambiguous`` match is always worth asking
+       about. A ``not_found`` is only worth asking about when the lookup came from an explicit
+       staff mention: for an inbound sender the number is already known (it is the sender's own
+       identity), so asking for it is incoherent, and the run must continue instead.
+    """
+    intent = state.get("intent") or {}
+    asked = intent.get("clarification")
+    if isinstance(asked, str) and asked.strip():
+        return {"kind": "asked", "question": asked.strip()}
+
+    resolution = state.get("resolution") or {}
+    kind = resolution.get("kind")
+
+    if kind == "ambiguous":
+        return resolution
+
+    if kind == "not_found" and resolution.get("explicit_mention"):
+        return resolution
+
+    return None
 
 
 def _route_after_memory(state: ConciergeState) -> str:
@@ -451,19 +533,6 @@ def _route_after_memory(state: ConciergeState) -> str:
     if "commerce" in agents:
         return "commerce_agent"
     return "formulate_response"
-
-
-
-def route_after_visual(state: dict[str, Any]) -> str:
-    """Route to commerce if visual output requires commerce actions; otherwise formulate."""
-    if state.get("requires_commerce"):
-        return "commerce"
-
-    visual_output = state.get("visual_output")
-    if isinstance(visual_output, dict) and visual_output.get("requires_commerce"):
-        return "commerce"
-
-    return "formulate"
 
 
 def _route_after_visual(state: ConciergeState) -> str:
@@ -577,7 +646,7 @@ def build_concierge_graph(collector: TelemetryCollector | None = None):
         return _instrumented_node(name, node_fn, collector)
 
     graph.add_node("load_context", node("load_context", run_load_context))
-    graph.add_node("intent_gate", node("intent_gate", run_intent_gate))
+    graph.add_node("supervisor", node("supervisor", run_supervisor))
     graph.add_node("resolve_customer", node("resolve_customer", run_resolve_customer))
     graph.add_node("memory_agent", node("memory_agent", run_memory_agent))
     graph.add_node("visual_agent", node("visual_agent", run_visual_agent))
@@ -585,8 +654,8 @@ def build_concierge_graph(collector: TelemetryCollector | None = None):
     graph.add_node("formulate_response", node("formulate_response", formulate_response))
 
     graph.add_edge(START, "load_context")
-    graph.add_edge("load_context", "intent_gate")
-    graph.add_conditional_edges("intent_gate", _route_after_intent)
+    graph.add_edge("load_context", "supervisor")
+    graph.add_conditional_edges("supervisor", _route_after_intent)
     graph.add_conditional_edges("resolve_customer", _route_after_resolve)
     graph.add_conditional_edges("memory_agent", _route_after_memory)
     graph.add_conditional_edges("visual_agent", _route_after_visual)

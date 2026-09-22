@@ -21,8 +21,10 @@ from typing import Any
 from app.schemas.state import AgentState
 
 #: Concierge node name -> the state to broadcast when the node starts.
+#: ``load_context`` is deliberately unmapped: reading the transcript window is internal
+#: bookkeeping, not a state a customer should see the blossom animate through.
 NODE_STATES: dict[str, AgentState] = {
-    "intent_gate": AgentState.thinking,
+    "supervisor": AgentState.thinking,
     "memory_agent": AgentState.searching,
     "visual_agent": AgentState.searching,
     "commerce_agent": AgentState.tool_call,

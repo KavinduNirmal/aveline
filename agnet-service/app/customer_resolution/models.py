@@ -35,6 +35,15 @@ class CustomerResolution(BaseModel):
         default_factory=list, description="Set when ``kind == ambiguous``."
     )
     message: str = Field(default="", description="The inbound message that drove resolution.")
+    explicit_mention: bool = Field(
+        default=False,
+        description=(
+            "True when resolution was driven by an explicit mention typed in the message "
+            "(@name or #phone, ADR-019) rather than by supplied context. This is what lets a "
+            "caller tell a staff lookup apart from an inbound sender: an inbound sender's own "
+            "number arrives as context, and asking them for it would be incoherent."
+        ),
+    )
 
     @property
     def is_resolved(self) -> bool:

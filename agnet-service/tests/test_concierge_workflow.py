@@ -356,7 +356,29 @@ async def test_ambiguous_resolution_short_circuits_to_clarification(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_not_found_resolution_asks_for_phone(monkeypatch):
+async def test_explicit_mention_miss_still_asks_for_a_phone_number(monkeypatch):
+    """A staff `@mention` that matches nothing is worth asking about (ADR-019)."""
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.resolve_customer",
+        _make_resolver(kind="not_found", explicit_mention=True),
+    )
+
+    result = await _invoke("Any events for @Zara Nobody?", {"organization_id": "org-1"})
+
+    assert result["resolution"]["kind"] == "not_found"
+    # Asking instead of working: no specialist content, and the clarification is rendered.
+    assert result["memory_output"] is None
+    assert result["response"]["output"]["clarification"]["kind"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_resolution_miss_outside_a_mention_does_not_ask_and_does_not_stop(monkeypatch):
+    """The I1/I2 fix: an unresolved customer must not veto the run (ADR-023, Decision 4).
+
+    A plain staff note, or an inbound sender whose number is simply not on file, is not a lookup
+    request. The run continues and specialists produce work rather than the whole exchange being
+    replaced by a request for a phone number.
+    """
     monkeypatch.setattr(
         "app.workflows.concierge_workflow.resolve_customer",
         _make_resolver(kind="not_found"),
@@ -365,8 +387,8 @@ async def test_not_found_resolution_asks_for_phone(monkeypatch):
     result = await _invoke("Any events for Zara Nobody?", {"organization_id": "org-1"})
 
     assert result["resolution"]["kind"] == "not_found"
-    assert result["memory_output"] is None
-    assert result["response"]["output"]["clarification"]["kind"] == "not_found"
+    assert "clarification" not in result["response"]["output"]
+    assert result["memory_output"] is not None
 
 
 @pytest.mark.asyncio

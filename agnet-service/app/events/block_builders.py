@@ -206,15 +206,27 @@ def build_aveline_blocks(output: Any) -> list[dict[str, Any]]:
 
 
 def build_clarification_blocks(clarification: Any) -> list[dict[str, Any]]:
-    """Render a customer-resolution clarification (Issue #161) as content blocks.
+    """Render a clarification as content blocks.
+
+    Three shapes (ADR-023):
 
     - ``ambiguous`` -> a ``choice`` block listing candidate customers to tap.
-    - ``not_found`` -> a ``text`` block asking the staff for a phone number.
+    - ``not_found`` -> a ``text`` block asking the staff for a phone number. Reached only when the
+      lookup came from an explicit staff ``@mention``; an inbound sender's own number is already
+      known, so that path never asks.
+    - ``asked`` -> a ``text`` block carrying the supervisor's own question, used when it saw the
+      transcript and decided it could not proceed.
 
     Returns an empty list when the clarification carries no renderable content.
     """
     out = _as_dict(clarification)
     kind = out.get("kind")
+
+    if kind == "asked":
+        question = out.get("question")
+        if isinstance(question, str) and question.strip():
+            return [{"type": "text", "text": question.strip()}]
+        return []
 
     if kind == "ambiguous":
         options: list[dict[str, Any]] = []

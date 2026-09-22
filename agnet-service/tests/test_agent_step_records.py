@@ -34,7 +34,7 @@ REGISTERED_AGENT_KEYS = {"customer_memory", "visual_insight", "commerce", "orche
 #: The concierge graph's top-level nodes (bounded label values).
 CONCIERGE_NODE_NAMES = {
     "load_context",
-    "intent_gate",
+    "supervisor",
     "resolve_customer",
     "memory_agent",
     "visual_agent",
@@ -168,7 +168,8 @@ def test_chain_of_thought_span_has_a_real_caller_on_the_query_path(captured, mon
     monkeypatch.setattr(concierge_workflow, "chain_of_thought_span", spy)
     _query()
 
-    assert "agent.node.intent_gate" in span_names
+    # The routing node is the supervisor now (ADR-023); it replaced the rule-only intent gate.
+    assert "agent.node.supervisor" in span_names
     assert "agent.node.formulate_response" in span_names
 
 

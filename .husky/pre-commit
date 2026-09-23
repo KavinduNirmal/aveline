@@ -121,7 +121,7 @@ STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
 SECRET_FOUND=""
 # Secret-indicating key names (case-insensitive), matched anywhere in the key.
 SECRET_KEY_RE='(password|passwd|secret|token|api[_-]?key|private[_-]?key|access[_-]?key|encryption[_-]?key|publishable[_-]?key|client[_-]?secret|auth[_-]?token|internal[_-]?token)'
-PLACEHOLDER_RE='(change[_-]?me|your[_-]|example|placeholder|xxxx+|xxx+|dev[_-]?placeholder|local[_-]?dev|sk_test_placeholder|pk_test_placeholder|local[_-]development|<\w+>)'
+PLACEHOLDER_RE='(change[_-]?me|your[_-]|example|placeholder|xxxx+|xxx+|dev[_-]?placeholder|local[_-]?dev|s[k]_test_placeholder|p[k]_test_placeholder|local[_-]development|<\w+>)'
 # Split on newlines only: the default IFS also splits on spaces, so a path like
 # "Catalog UI.md" became two non-paths and `git show` aborted the whole hook under `set -e`.
 OLD_IFS=$IFS

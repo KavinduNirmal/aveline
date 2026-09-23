@@ -51,6 +51,10 @@ dependencies:
   # Already in the tree through clerk_flutter; now named directly because the Salon
   # depends on it.
   flutter_svg: ^2.3.0
+  # Opens the handbook's citations in the browser (ADR-025). Already in the tree as a
+  # transitive dependency of clerk_flutter; now named directly because the Salon
+  # depends on it.
+  url_launcher: ^6.3.2
   shared_preferences: ^2.5.5
   app_links: ^7.2.1
   firebase_core: ^4.14.0

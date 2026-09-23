@@ -36,6 +36,14 @@ export interface ChoiceOption {
   lastVisitAt?: string | null
 }
 
+/** One citation in a `sources` block: the page an answer was grounded in (ADR-025). */
+export interface SourceItem {
+  title: string
+  /** The page to open. Absent when the answer was grounded in something unaddressable. */
+  url?: string
+  heading?: string
+}
+
 /** A single typed content block from a message's `contentBlocks` array. */
 export interface ContentBlock {
   type: string
@@ -56,6 +64,8 @@ export interface ContentBlock {
   status?: string
   prompt?: string
   options?: ChoiceOption[]
+  /** A `sources` block's citations. */
+  items?: SourceItem[]
   /** The thread's own `attachment` block (D8). */
   attachmentId?: string
   url?: string
@@ -155,6 +165,8 @@ export function BlockRenderer({
       )
     case 'choice':
       return <ChoiceBlock block={block} onSelectCustomer={onSelectCustomer} />
+    case 'sources':
+      return <SourcesBlock block={block} />
     case 'attachment':
       return (
         <AttachmentBlock
@@ -167,6 +179,45 @@ export function BlockRenderer({
     default:
       return null
   }
+}
+
+/**
+ * The citations behind a handbook-grounded answer (ADR-025).
+ *
+ * Rendered as links rather than prose, which is exactly why the agent emits a structured `sources`
+ * block: a frontend cannot reliably find a link inside model-written text. A plain anchor rather
+ * than a router link, because the documentation is its own public layout and opening it in a new
+ * tab leaves the Salon exactly where it was.
+ */
+function SourcesBlock({ block }: { block: ContentBlock }) {
+  const items = (block.items ?? []).filter((item) => item?.title)
+  if (items.length === 0) {
+    return null
+  }
+
+  return (
+    <div
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground"
+      data-testid="sources-block"
+    >
+      <span className="text-[10px] font-medium uppercase tracking-wide">Sources</span>
+      {items.map((item, index) =>
+        item.url ? (
+          <a
+            key={`${item.title}-${index}`}
+            href={item.url}
+            target="_blank"
+            rel="noreferrer"
+            className="underline underline-offset-2 hover:text-foreground"
+          >
+            {item.title}
+          </a>
+        ) : (
+          <span key={`${item.title}-${index}`}>{item.title}</span>
+        ),
+      )}
+    </div>
+  )
 }
 
 /** A customer-resolution choice: pick which customer you meant (Issue #161). */

@@ -6354,3 +6354,74 @@ intro is its own chunk and the heading trail reaches the lexical index through t
   shared environment has been seeded, and re-seeding stays a release step documented in
   `handbook/README.md`. The plan file is untracked by design (`.agents/plans/*` is gitignored).
 
+---
+
+## Session 2026-09-24 — Aveline's voice, and citations you can click
+
+Two reports from a live screenshot of a handbook answer: she reads like a normal chatbot rather than
+Aveline, and the `Sources:` line is dead text.
+
+### The voice was nobody's job
+
+The universal prompt already asked for "quiet luxury", and the supervisor's own layer had **no tone
+section at all** - it was pure routing instructions, and the supervisor is the one who writes
+Aveline's `reply`. So the strongest voice guidance in the system sat several layers away from the
+prompt that actually produces her sentences, and the handbook instruction ("the only source you may
+answer from", "say plainly that the handbook does not cover it") pushed the model toward a clipped,
+manual-like register. The screenshot is what those three things produce together: a comma-separated
+recital of four plans, then a pointer to the entitlements table.
+
+Three changes, in the places that actually reach the model:
+
+- `agent_prompts.py` gains a **voice** section on the supervisor: first person, meet the question
+  before answering it, lead with the answer, never read the page aloud, never sound like software.
+  "Feminine, not fragile" is stated as poise rather than as decoration - she offers and takes care of
+  things, she does not apologise for existing.
+- `_SUPERVISOR_INSTRUCTION` now says to answer *as Aveline, in her own words*, never to recite an
+  excerpt or a table, and not to list sources in the text at all.
+- `SYSTEM_PROMPT.md` rule 9 (Tone) names her voice and forbids the software phrasings ("As an AI",
+  "I am unable to", "Please be advised"), so the specialists inherit it too.
+
+The two deterministic fallbacks were rewritten in the same voice, because they are the sentences
+users see when the model is unavailable: the greeting is now "Hello, I'm Aveline, the boutique's
+concierge..." and the miss is "That one isn't in my handbook, I'm afraid, and I'd rather not guess."
+
+### The citation had to become a block
+
+A link cannot be added to the existing line by finding it in the text: the reply is model-written
+prose, and the web renders a `text` block through `MentionText`, which is plain text with entity
+pills - no markdown, no link parsing. Options were to teach both frontends a markdown subset (and
+hope the model never rewrites a link), or to emit the citation as data.
+
+**A new `sources` block.** The agent already had the structured `handbook_sources` on the response
+and was flattening it into a string; it now emits `[text, sources]` with `{ title, url, heading }` per
+page. Checked before committing to it: `.NET` stores content blocks as JSON with **no type
+whitelist** (`ConversationBlockText` and `ConversationTileMapper` switch on a few types and ignore the
+rest), so a new type is additive and a build that has not learned it degrades to its one-line summary
+rather than a blank message - which is exactly the invariant `message_blocks.dart` already documents.
+
+- **Web**: a `SourcesBlock` renders each citation as an anchor, opening the docs in a new tab so
+  reading a reference does not lose the Salon. A plain anchor, not a router `Link`: the documentation
+  is its own public layout and the block renderer stays router-free. A citation with no URL renders as
+  plain text rather than a dead link.
+- **Flutter**: `ThreadBlock.sources` parses the items and `_SourcesBlock` draws them as tappable
+  entries, taking their ink from the bubble's own tone so the same block reads inside the associate's
+  filled bubble and the neutral agent bubble. `url_launcher` was promoted from a transitive
+  dependency of `clerk_flutter` to a named one, following the precedent the pubspec already sets for
+  `flutter_svg`.
+
+The mobile app had no web origin to resolve `/docs/team` against, and inventing one would send staff
+to a host nobody confirmed. `AVELINE_WEB_BASE_URL` is a new `--dart-define`, empty by default: with it
+set, tapping opens the page; without it, tapping shows the path instead.
+
+### Verification
+
+- Python: **745 passed, 2 skipped, 2 xfailed**; `ruff check app/ tests/ scripts/` clean.
+- Web: `tsc` clean, **199** conversation tests pass (4 new for the sources block), `oxlint` 0 errors.
+- Flutter: `dart analyze lib test` reports **no issues**.
+- **`flutter test` could not be run here** - the SDK's `bin/cache` is read-only under this sandbox, so
+  `flutter` and `dart test` both fail at the engine-version check. The new widget test is written and
+  analyzes clean, but it has not been executed; running `flutter test test/features/conversations`
+  locally is the outstanding check.
+
+

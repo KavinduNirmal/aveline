@@ -193,34 +193,49 @@ def build_aveline_blocks(
 
     reply = out.get("reply")
     if isinstance(reply, str) and reply.strip():
-        text = reply.strip()
-        sources = _render_handbook_sources(out.get("handbook_sources"))
+        blocks: list[dict[str, Any]] = [{"type": "text", "text": reply.strip()}]
+        # The citation is a block of its own, not a line appended to the prose: a frontend can make
+        # a block into links, and cannot reliably find links inside model-written text (ADR-025).
+        sources = _handbook_sources(out.get("handbook_sources"))
         if sources:
-            text = f"{text}\n\n{sources}"
-        return [{"type": "text", "text": text}]
+            blocks.append({"type": "sources", "items": sources})
+        return blocks
 
     return []
 
 
-def _render_handbook_sources(sources: Any) -> str:
-    """A one-line citation for a handbook-grounded answer (ADR-025).
+def _handbook_sources(sources: Any) -> list[dict[str, str]]:
+    """A handbook-grounded answer's citations, as structured items (ADR-025).
 
     Built from the chunks that were actually retrieved, never from the model's text: a model asked
     to cite will sometimes cite something it did not use, and a fabricated source is worse than no
     source. One entry per page, because five chunks from one page are one source.
     """
     if not isinstance(sources, list):
-        return ""
+        return []
 
-    titles: list[str] = []
+    items: list[dict[str, str]] = []
+    seen: set[str] = set()
+
     for source in sources:
         if not isinstance(source, dict):
             continue
-        title = str(source.get("title") or "").strip()
-        if title and title not in titles:
-            titles.append(title)
 
-    return f"Sources: {', '.join(titles)}" if titles else ""
+        title = str(source.get("title") or "").strip()
+        if not title or title in seen:
+            continue
+        seen.add(title)
+
+        item: dict[str, str] = {"title": title}
+        url = str(source.get("url") or "").strip()
+        if url:
+            item["url"] = url
+        heading = str(source.get("heading") or "").strip()
+        if heading:
+            item["heading"] = heading
+        items.append(item)
+
+    return items
 
 
 def build_clarification_blocks(clarification: Any) -> list[dict[str, Any]]:

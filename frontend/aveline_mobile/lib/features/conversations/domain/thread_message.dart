@@ -118,6 +118,21 @@ enum MessageDeliveryStatus { sending, failed }
 /// Fields are read through typed getters that tolerate an absent or badly-typed
 /// value, because a payload this build has not been taught must render as a
 /// one-line summary rather than throw.
+/// One citation from a `sources` block: a handbook page an answer was grounded in (ADR-025).
+class ThreadSource {
+  const ThreadSource({required this.title, this.url, this.heading});
+
+  /// The page title, as the handbook knows it.
+  final String title;
+
+  /// The page path (`/docs/team`), or absent when the answer was grounded in something
+  /// unaddressable.
+  final String? url;
+
+  /// The heading trail inside the page, when the chunk carried one.
+  final String? heading;
+}
+
 class ThreadBlock {
   const ThreadBlock(this.type, this.data);
 
@@ -165,6 +180,36 @@ class ThreadBlock {
 
   /// A `piece` tile's stock count.
   int? get stock => _number('stock')?.toInt();
+
+  /// A `sources` block's citations (ADR-025): the pages an answer was grounded in.
+  ///
+  /// Emitted as a block of its own rather than as a line of prose, so the app can make each one
+  /// tappable. An entry with no title is dropped rather than drawn as an empty link.
+  List<ThreadSource> get sources {
+    final raw = data['items'];
+    if (raw is! List) {
+      return const [];
+    }
+
+    final citations = <ThreadSource>[];
+    for (final item in raw) {
+      if (item is! Map) {
+        continue;
+      }
+      final title = _string(item['title']);
+      if (title == null || title.isEmpty) {
+        continue;
+      }
+      citations.add(
+        ThreadSource(
+          title: title,
+          url: _string(item['url']),
+          heading: _string(item['heading']),
+        ),
+      );
+    }
+    return citations;
+  }
 
   /// A copy of this block with its photograph dropped.
   ///

@@ -117,6 +117,14 @@ specialist, and `_route_after_resolve` sends it straight to `formulate_response`
 built from the chunks that were actually retrieved, never from the model's text, so a fabricated
 source cannot reach a thread.
 
+The citation is carried as a **`sources` block** (`{ title, url, heading }` per page) rather than as a
+line appended to the answer, because both frontends have to make it navigable and neither can
+reliably find a link inside model-written prose. The block is additive: `.NET` stores content blocks
+as JSON with no type whitelist and its transcript and preview readers ignore a type they do not know,
+so a build that has not learned `sources` degrades to its one-line summary rather than a blank
+message. The prompt in turn tells the model not to list sources in its text, since they are drawn
+beside the reply already.
+
 ### 5. Ingestion reads the documentation in place
 The seeder reads `frontend/web/src/docs/*.md` **in place**, so the index cannot drift from the
 documentation it describes, and takes titles from each page's own `H1`. Company knowledge is authored

@@ -189,9 +189,9 @@ the orchestrator node; LangGraph drops undeclared state keys silently. See
 `load_handbook` runs between `load_context` and the supervisor and retrieves handbook excerpts for
 the two intents the supervisor is consulted for (`general_inquiry`, `aveline_help`). The supervisor
 answers a platform question herself from those excerpts; the specialist sub-graphs do not run, and the
-`Sources:` line is built from the chunks that were actually retrieved rather than from the model's
-text. With `HANDBOOK_ENABLED=false`, or with no LLM configured, the node makes no call at all and the
-run is unchanged.
+`sources` block is built from the chunks that were actually retrieved rather than from the model's
+text, so both frontends can link each citation back to its page. With `HANDBOOK_ENABLED=false`, or
+with no LLM configured, the node makes no call at all and the run is unchanged.
 
 The index is seeded from a repository checkout, not at runtime:
 

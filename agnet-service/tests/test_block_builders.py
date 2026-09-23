@@ -365,47 +365,65 @@ def test_lina_blocks_do_not_emit_sign_off_from_the_generic_builder():
 # ------------------------------------------------------- Aveline (handbook citation, ADR-025)
 
 
-def test_aveline_appends_a_deterministic_sources_line():
+def test_aveline_emits_the_reply_and_a_sources_block():
     output = {
         "intent": "aveline_help",
-        "reply": "Invite them from the Team section.",
-        "handbook_sources": [{"sourceKey": "web-docs/team", "title": "Team", "url": "/docs/team"}],
+        "reply": "Of course - invite them from Team.",
+        "handbook_sources": [
+            {
+                "sourceKey": "web-docs/team",
+                "title": "Team",
+                "url": "/docs/team",
+                "heading": "Invitations",
+            }
+        ],
     }
 
     blocks = build_aveline_blocks(output)
 
-    assert blocks[0]["text"] == "Invite them from the Team section.\n\nSources: Team"
+    assert blocks[0] == {"type": "text", "text": "Of course - invite them from Team."}
+    # The citation is structured, so a frontend can turn it into links. It is deliberately not
+    # appended to the prose: a frontend cannot reliably find a link inside model-written text.
+    assert blocks[1] == {
+        "type": "sources",
+        "items": [{"title": "Team", "url": "/docs/team", "heading": "Invitations"}],
+    }
 
 
-def test_aveline_omits_the_sources_line_without_sources():
-    output = {"intent": "general_inquiry", "reply": "Hello!"}
+def test_aveline_omits_the_sources_block_without_sources():
+    output = {"intent": "general_inquiry", "reply": "Hello, I'm Aveline."}
 
-    assert build_aveline_blocks(output)[0]["text"] == "Hello!"
+    assert build_aveline_blocks(output) == [{"type": "text", "text": "Hello, I'm Aveline."}]
 
 
-def test_the_sources_line_comes_from_the_chunks_not_the_reply():
+def test_the_sources_block_comes_from_the_chunks_not_the_reply():
     # The citation is built from what was actually retrieved, so a model that names a page it did
     # not use cannot put that page in the thread.
     output = {
         "intent": "aveline_help",
         "reply": "See the Billing page for that.",
-        "handbook_sources": [{"title": "Team"}],
+        "handbook_sources": [{"title": "Team", "url": "/docs/team"}],
     }
 
-    text = build_aveline_blocks(output)[0]["text"]
+    blocks = build_aveline_blocks(output)
 
-    assert "Sources: Team" in text
-    assert text.startswith("See the Billing page for that.")
+    assert blocks[1]["items"] == [{"title": "Team", "url": "/docs/team"}]
+    assert "Sources" not in blocks[0]["text"]
 
 
-def test_the_sources_line_names_each_page_once():
+def test_the_sources_block_names_each_page_once():
     output = {
         "intent": "aveline_help",
         "reply": "x",
         "handbook_sources": [{"title": "Team"}, {"title": "Team"}, {"title": "Salon"}],
     }
 
-    text = build_aveline_blocks(output)[0]["text"]
+    items = build_aveline_blocks(output)[1]["items"]
 
-    assert text.count("Team") == 1
-    assert "Sources: Team, Salon" in text
+    assert [item["title"] for item in items] == ["Team", "Salon"]
+
+
+def test_a_source_without_a_url_still_renders_as_a_citation():
+    output = {"intent": "aveline_help", "reply": "x", "handbook_sources": [{"title": "Team"}]}
+
+    assert build_aveline_blocks(output)[1]["items"] == [{"title": "Team"}]

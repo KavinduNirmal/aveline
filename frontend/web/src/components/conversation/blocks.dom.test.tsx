@@ -643,3 +643,55 @@ describe('product tiles', () => {
     expect(grids[0].className).not.toContain('max-w-64')
   })
 })
+
+/**
+ * The citations behind a handbook-grounded answer (ADR-025).
+ *
+ * The agent emits a structured `sources` block rather than a line of prose, and this is the reason:
+ * a frontend can make a block into links, and cannot reliably find a link inside model-written text.
+ */
+describe('sources block', () => {
+  it('renders each citation as a link to its page', () => {
+    render(
+      <BlockRenderer
+        block={{
+          type: 'sources',
+          items: [
+            { title: 'Team', url: '/docs/team', heading: 'Invitations' },
+            { title: 'Blossoms', url: '/docs/usage' },
+          ],
+        }}
+      />,
+    )
+
+    expect(screen.getByRole('link', { name: 'Team' })).toHaveAttribute('href', '/docs/team')
+    expect(screen.getByRole('link', { name: 'Blossoms' })).toHaveAttribute('href', '/docs/usage')
+    // A new tab, so reading the reference does not lose the Salon.
+    expect(screen.getByRole('link', { name: 'Team' })).toHaveAttribute('target', '_blank')
+    expect(screen.getByTestId('sources-block')).toHaveTextContent('Sources')
+  })
+
+  it('renders a citation with no page as plain text, not a dead link', () => {
+    render(<BlockRenderer block={{ type: 'sources', items: [{ title: 'Team' }] }} />)
+
+    expect(screen.getByText('Team')).toBeInTheDocument()
+    expect(screen.queryByRole('link')).toBeNull()
+  })
+
+  it('renders nothing when there are no citations', () => {
+    const { container } = render(<BlockRenderer block={{ type: 'sources', items: [] }} />)
+
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it('drops an entry with no title rather than drawing an empty link', () => {
+    const { container } = render(
+      <BlockRenderer
+        block={{ type: 'sources', items: [{ title: '', url: '/docs/team' }, { title: 'Salon' }] }}
+      />,
+    )
+
+    expect(container.querySelectorAll('a')).toHaveLength(0)
+    expect(screen.getByText('Salon')).toBeInTheDocument()
+  })
+})

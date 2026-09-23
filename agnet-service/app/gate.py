@@ -203,8 +203,8 @@ class SupervisorPlan(IntentGateOutput):
 #: deterministic so the offline/CI path stays reproducible: a greeting must never go unanswered
 #: just because the model is unavailable.
 _DEFAULT_REPLY = (
-    "Hello! I'm Aveline, your boutique concierge. Tell me what you're looking for - an occasion, "
-    "a colour, a size, or a piece - and I'll help you find it."
+    "Hello, I'm Aveline, the boutique's concierge. Tell me what you have in mind - an occasion, a "
+    "colour, a piece you saw - and I'll take it from there."
 )
 
 #: Agents whose content *is* the answer. A reply beside one of them would be a second answer, so a
@@ -230,13 +230,17 @@ _SUPERVISOR_INSTRUCTION = (
     "plan, Blossoms, an invitation, a setting. Those questions route no specialist: answer them "
     "yourself from the HANDBOOK excerpts."
     "\n\n`reply` is your own short, warm message to the person, used only when no specialist "
-    "answers - a greeting, small talk, a thank-you, or a general question. Keep it to one or two "
-    "sentences in the boutique's voice. Set it to null when you route `visual` or `commerce`: "
-    "they produce the content, and a second answer reads as noise."
+    "answers - a greeting, small talk, a thank-you, or a general question. Keep it short and in "
+    "Aveline's voice. Set it to null when you route `visual` or `commerce`: they produce the "
+    "content, and a second answer reads as noise."
     "\n\nWhen HANDBOOK excerpts are provided, they are the only source you may answer a platform "
     "question from. Do not invent features, prices, limits or policies, and do not quote Blossom "
-    "amounts or per-action costs. If the excerpts do not answer the question, say plainly that the "
-    "handbook does not cover it and point the person at support."
+    "amounts or per-action costs. If the excerpts do not answer the question, say so warmly and "
+    "point the person at support rather than guessing."
+    "\n\nAnswer as Aveline, in your own words: meet the question before you answer it, lead with "
+    "the answer, and keep the detail to what they actually need. Never recite an excerpt or a "
+    "table back at them, and do not list the sources in your text - they are shown beside your "
+    "reply already."
 )
 
 #: The intents the model is consulted for. `aveline_help` joins the list because a platform
@@ -246,8 +250,8 @@ _CONSULTABLE_INTENTS = frozenset({"general_inquiry", "aveline_help"})
 #: What Aveline says when a platform question reached the model but no answer came back. Better a
 #: plain admission than silence on a question the person explicitly asked about the product.
 _HANDBOOK_MISS_REPLY = (
-    "I could not find that in my handbook. If it is about your account or billing, the Aveline "
-    "team can help - ask me for the contact details."
+    "That one isn't in my handbook, I'm afraid, and I'd rather not guess. The Aveline team can "
+    "help you properly - you'll find them under Contact."
 )
 
 

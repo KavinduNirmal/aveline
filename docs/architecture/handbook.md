@@ -137,9 +137,11 @@ flowchart LR
   `app.context.render_handbook_block`: numbered excerpts, each labelled with its page and heading.
 - `aveline_help` routes **no specialist** — a platform question has no customer to brief on — so the
   run goes straight to `formulate_response`.
-- The citation is a `Sources:` line built from the chunks that were actually retrieved, never from the
-  model's text. A model that names a page it did not use cannot put that citation in a thread. The
-  structured `handbook_sources` also rides on the response for a future link-aware block.
+- The citation is a **`sources` block** built from the chunks that were actually retrieved, never
+  from the model's text: a model that names a page it did not use cannot put that citation in a
+  thread. It is a block of its own rather than a line appended to the prose, so both frontends can
+  render each citation as a link; see `docs/architecture/inbox.md` §5.1. The prompt tells the model
+  not to list sources in its text, because they are drawn beside the reply already.
 
 ---
 

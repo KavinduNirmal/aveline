@@ -1,7 +1,9 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../../../../core/config/app_config.dart';
 import '../../../../shared/persona.dart';
 import '../../../../shared/utils/currency_formatter.dart';
 import '../../domain/block_actions.dart';
@@ -227,6 +229,9 @@ class MessageBlockList extends StatelessWidget {
         block: block,
         onSelectCustomer: onSelectCustomer,
       );
+    }
+    if (block.type == 'sources') {
+      return _SourcesBlock(block: block, tone: tone);
     }
     if (block.type == 'attachment') {
       return ThreadAttachmentCard(
@@ -1308,6 +1313,88 @@ class _ChoiceOption extends StatelessWidget {
 ///
 /// A block-only message must never draw an empty bubble, so an unknown type says
 /// what it is rather than disappearing.
+/// The citations behind a handbook-grounded answer (ADR-025).
+///
+/// The agent emits a structured `sources` block rather than a line of prose, and this is why: the
+/// app can make a block tappable, and cannot reliably find a link inside model-written text.
+///
+/// The ink comes from the bubble's own tone rather than a fixed accent, because the same block
+/// renders inside the associate's filled bubble and inside the neutral agent bubble.
+class _SourcesBlock extends StatelessWidget {
+  const _SourcesBlock({required this.block, required this.tone});
+
+  final ThreadBlock block;
+  final BubbleTone tone;
+
+  @override
+  Widget build(BuildContext context) {
+    final sources = block.sources;
+    if (sources.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final scheme = Theme.of(context).colorScheme;
+    final ink = _inkFor(scheme, tone);
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Wrap(
+        spacing: 14,
+        runSpacing: 6,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          Text(
+            'SOURCES',
+            style: _sans(
+              context,
+              size: 10,
+              weight: FontWeight.w600,
+              color: ink.withValues(alpha: 0.6),
+              letterSpacing: 0.8,
+            ),
+          ),
+          for (final source in sources)
+            GestureDetector(
+              key: ValueKey('message_block_source_${source.title}'),
+              onTap: source.url == null
+                  ? null
+                  : () => _openHandbookSource(context, source.url!),
+              child: Text(
+                source.title,
+                style: _sans(context, size: 12, color: ink).copyWith(
+                  decoration: source.url == null
+                      ? TextDecoration.none
+                      : TextDecoration.underline,
+                  decorationColor: ink.withValues(alpha: 0.5),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Opens a handbook citation, or says where it lives when no web origin is configured.
+///
+/// The citations are page paths (`/docs/team`), and the documentation is a web surface. With
+/// `AVELINE_WEB_BASE_URL` set the app opens the page in the browser; without it the app shows the
+/// path rather than opening a guessed host.
+Future<void> _openHandbookSource(BuildContext context, String url) async {
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  final target = url.startsWith('http') ? url : '${AppConfig.webBaseUrl}$url';
+  final uri = Uri.tryParse(target);
+
+  if (uri == null || !uri.hasScheme) {
+    messenger?.showSnackBar(SnackBar(content: Text(url)));
+    return;
+  }
+
+  if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+    messenger?.showSnackBar(SnackBar(content: Text(target)));
+  }
+}
+
 class _SummaryChip extends StatelessWidget {
   const _SummaryChip({required this.block});
 

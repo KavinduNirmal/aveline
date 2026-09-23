@@ -670,4 +670,60 @@ void main() {
       );
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Handbook citations (ADR-025)
+  //
+  // The agent emits a structured `sources` block rather than a line of prose, so the app can make
+  // each citation tappable. These pin that contract at the renderer.
+  // ---------------------------------------------------------------------------
+  group('handbook sources', () {
+    ThreadBlock sources(List<Map<String, Object?>> items) =>
+        ThreadBlock('sources', {'items': items});
+
+    testWidgets('each citation is drawn as a linked entry', (tester) async {
+      await tester.pumpWidget(wrap(MessageBlockList(
+        messageId: 'm1',
+        blocks: [
+          text('Of course - invite them from Team.'),
+          sources([
+            {'title': 'Team', 'url': '/docs/team', 'heading': 'Invitations'},
+            {'title': 'Blossoms', 'url': '/docs/usage'},
+          ]),
+        ],
+      )));
+
+      expect(find.text('SOURCES'), findsOneWidget);
+      expect(find.byKey(const ValueKey('message_block_source_Team')), findsOneWidget);
+      expect(find.byKey(const ValueKey('message_block_source_Blossoms')), findsOneWidget);
+      expect(find.text('Team'), findsOneWidget);
+      expect(find.text('Blossoms'), findsOneWidget);
+    });
+
+    testWidgets('a citation with no page is shown but carries no tap', (tester) async {
+      await tester.pumpWidget(wrap(MessageBlockList(
+        messageId: 'm1',
+        blocks: [
+          sources([
+            {'title': 'Team'},
+          ]),
+        ],
+      )));
+
+      final entry = tester.widget<GestureDetector>(
+        find.byKey(const ValueKey('message_block_source_Team')),
+      );
+      expect(entry.onTap, isNull);
+    });
+
+    testWidgets('an empty sources block draws nothing rather than an empty label',
+        (tester) async {
+      await tester.pumpWidget(wrap(MessageBlockList(
+        messageId: 'm1',
+        blocks: [sources(const [])],
+      )));
+
+      expect(find.text('SOURCES'), findsNothing);
+    });
+  });
 }

@@ -124,7 +124,7 @@ fields. A message may carry a single block or a composite (e.g. a `Note` plus se
 ```
 
 Block types: `text`, `piece`, `look`, `at_a_glance`, `sign_off`, `payment`, `courier`,
-`suggestion`, `client_message`, `attachment`, `choice`.
+`suggestion`, `client_message`, `attachment`, `choice`, `sources`.
 
 ### 5.1 Emitted blocks from real agent output
 
@@ -140,6 +140,12 @@ produces real content (no placeholder text).
   **clarification** (`build_clarification_blocks`): an ambiguous lookup becomes a `choice`
   block listing candidate customers to tap; a not-found lookup becomes a `text` block asking
   for a phone number (Issue #161).
+- **Aveline citations** (`sources`): when a platform answer was grounded in the handbook
+  (ADR-025), a `sources` block follows the reply with one `{ title, url, heading }` per page the
+  answer came from. It is a block rather than a line appended to the prose because a frontend can
+  make a block into links and cannot reliably find a link inside model-written text; the items are
+  built from the chunks that were actually retrieved, so a citation cannot be invented. Both
+  frontends render it as links, opening the documentation in a new tab.
 - **Ava / memory** (`build_ava_blocks`), in order:
   1. `text` - the `interaction_brief`.
   2. `at_a_glance` - one `Category`/`Content` row per `extracted_memories` entry.

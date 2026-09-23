@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 
 import pytest
 from fastapi.testclient import TestClient
+from langgraph.checkpoint.memory import InMemorySaver
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
@@ -215,11 +216,16 @@ def test_finalize_closes_a_step_left_running():
 
 @pytest.fixture
 def _noop_checkpointer(monkeypatch):
-    """A thread_id enables Postgres checkpointing; stub it so these tests need no database."""
+    """A thread_id enables checkpointing; swap the Postgres saver for an in-memory one.
+
+    These tests are about run telemetry, not persistence, and they must not need a database. The
+    stub is a real ``InMemorySaver`` rather than an opaque object because the checkpointer is now
+    compiled into the graph (ADR-024) and its ``aget_state`` is how a paused run is discovered.
+    """
 
     @asynccontextmanager
     async def fake_checkpointer(*args, **kwargs):
-        yield object()
+        yield InMemorySaver()
 
     monkeypatch.setattr(
         "app.workflows.concierge_workflow.create_checkpointer", fake_checkpointer

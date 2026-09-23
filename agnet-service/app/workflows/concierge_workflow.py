@@ -21,7 +21,9 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any, TypedDict
 
+from langgraph.errors import GraphInterrupt
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Command, interrupt
 
 from app.agents.commerce.graph import build_commerce_graph
 from app.agents.customer_memory.graph import build_memory_graph
@@ -40,6 +42,7 @@ from app.llm.runtime import (
 )
 from app.observability.metrics import get_agent_metrics
 from app.observability.tracing import chain_of_thought_span
+from app.schemas.approvals import normalize_decision
 from app.schemas.response import AgentMetadata, AgentResponse, AgentStatus
 from app.schemas.state import AgentState
 from app.telemetry.agent_telemetry import (
@@ -69,6 +72,11 @@ class ConciergeState(TypedDict, total=False):
     thread_summary: str | None
     pinned_slots: dict[str, str]
     intent: dict[str, Any] | None
+    # True when the run is backed by a checkpoint thread. A real pause needs one: `interrupt()`
+    # writes the pause into the checkpoint, and without a thread there is nothing to resume.
+    # Set by `run_concierge` from the presence of `thread_id`, so an un-checkpointed run keeps
+    # the pre-ADR-024 behaviour exactly (ADR-024, Decision 3).
+    checkpointing: bool
     # Shared customer resolution (Issue #161): a serialized CustomerResolution.
     resolution: dict[str, Any] | None
     memory_output: dict[str, Any] | None
@@ -389,6 +397,136 @@ async def run_commerce_agent(state: ConciergeState) -> dict[str, Any]:
     return {"commerce_output": output}
 
 
+async def run_commerce_approval(state: ConciergeState) -> dict[str, Any]:
+    """Pause the run for human approval, and settle it when the decision arrives (ADR-024).
+
+    This is a node of its own on purpose. ``interrupt()`` re-executes the node it is called in when
+    the graph resumes, so putting the pause inside ``run_commerce_agent`` would re-evaluate the deal
+    - and its tool calls - on every decision. Here the pause is the whole node: the evaluation before
+    it is checkpointed and never re-run.
+
+    The decision arrives as the return value of ``interrupt()`` and is fed back into the commerce
+    sub-graph as ``approval_decision``, which is what routes it to settlement or to rejection. The
+    supervisor is deliberately not consulted: its plan was made for the *original* message, and a
+    decision is not a new question (ADR-024, invariant A3).
+    """
+    commerce = state.get("commerce_output") or {}
+    resume_value = interrupt(_approval_pause_payload(commerce))
+
+    decision = _decision_from_resume(resume_value)
+    if decision is None:
+        # A resume carrying an unrecognised decision settles nothing. The API refuses to send one
+        # (`ApprovalDecisions.ToAgentDecision`), so reaching here means a caller bypassed it; the
+        # pause is left un-settled rather than guessed at (ADR-024, invariant A4).
+        logger.error("Unrecognised approval resume value: %r", resume_value)
+        return {
+            "commerce_output": {
+                "agent": "commerce",
+                "ran": True,
+                "status": "error",
+                "reason": "unrecognised approval decision",
+            }
+        }
+
+    org_context = state.get("org_context") or {}
+    comments = resume_value.get("comment") if isinstance(resume_value, dict) else None
+    revised_discount = (
+        resume_value.get("revised_discount") if isinstance(resume_value, dict) else None
+    )
+    # The decision payload wins over the original call's context: by the time a human decides, the
+    # API has written the order and knows the values the settlement must quote. The checkpoint's
+    # `org_context` is the fallback, for a caller that resumes with only a decision.
+    order_id = _from_resume(resume_value, "order_id") or org_context.get("order_id")
+    customer_name = _from_resume(resume_value, "customer_name") or org_context.get("customer_name")
+
+    commerce_state = {
+        "org_id": str(org_context.get("organization_id") or org_context.get("org_id") or ""),
+        "order_id": order_id,
+        "customer_id": str(org_context.get("customer_id") or "") or None,
+        "customer_name": customer_name,
+        "items": org_context.get("items") or [],
+        "proposed_discount": _discount_rate(
+            revised_discount if revised_discount is not None else org_context.get("proposed_discount")
+        ),
+        "delivery_address": org_context.get("delivery_address"),
+        "channel": org_context.get("channel") or "whatsapp",
+        "message": state.get("message", ""),
+        "approval_decision": decision,
+        "approval_comment": comments,
+    }
+
+    graph = build_commerce_graph(ToolRegistry(), org_context=org_context)
+    result = await graph.ainvoke(commerce_state)
+    logger.info("Commerce resumed from approval: decision=%s", decision)
+
+    output = result.get("output") or {
+        "agent": "commerce",
+        "ran": True,
+        "status": result.get("status") or "error",
+    }
+    return {"commerce_output": output}
+
+
+def _approval_pause_payload(commerce: dict[str, Any]) -> dict[str, Any]:
+    """What the owner needs to decide, and nothing else.
+
+    It is published to the caller (and therefore into the API's response body) as the interrupt
+    value, so it must stay JSON-serializable and free of anything the API should not persist.
+    """
+    deal = commerce.get("deal") or {}
+    return {
+        "kind": "approval_required",
+        "approval_type": commerce.get("approval_type"),
+        "approval_reason": commerce.get("approval_reason"),
+        "summary": commerce.get("summary"),
+        "requires_approval": bool(commerce.get("needs_approval", True)),
+        "total": deal.get("total"),
+        "margin": deal.get("margin"),
+        "triggered_rules": deal.get("triggered_rules") or [],
+        "action_required": commerce.get("action_required"),
+    }
+
+
+def _decision_from_resume(resume_value: Any) -> str | None:
+    """Pull a canonical decision out of whatever the resume carried."""
+    if isinstance(resume_value, dict):
+        return normalize_decision(resume_value.get("decision"))
+    return normalize_decision(resume_value)
+
+
+def _from_resume(resume_value: Any, key: str) -> Any:
+    """A non-blank value from the resume payload, or ``None``."""
+    if not isinstance(resume_value, dict):
+        return None
+    value = resume_value.get(key)
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    return value
+
+
+def _as_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _discount_rate(value: Any) -> float:
+    """Read a *rate* (0.0-1.0) out of a resume payload, defaulting to no discount.
+
+    The API's approval verbs speak in absolute money (it rewrites ``Order.Discount``), while the
+    commerce tools speak in rates. Sending an amount here would be read as a rate and, at best,
+    clamped to 100% off - so an out-of-range value is discarded with a warning rather than trusted.
+    The API converts before sending; this is the guard for a caller that does not.
+    """
+    rate = _as_float(value)
+    if 0.0 <= rate <= 1.0:
+        return rate
+
+    logger.warning("Ignoring out-of-range discount rate %r on resume; treating it as no discount.", value)
+    return 0.0
+
+
 def formulate_response(state: ConciergeState) -> dict[str, Any]:
     """Build the final ``AgentResponse`` envelope from the collected outputs.
 
@@ -401,10 +539,26 @@ def formulate_response(state: ConciergeState) -> dict[str, Any]:
     """
     metadata = _build_usage_metadata(state.get("usage"))
     intent = state.get("intent") or {}
+    commerce = state.get("commerce_output") or {}
     if intent.get("intent_type") == "out_of_scope":
         response = AgentResponse(
             status=AgentStatus.out_of_scope,
             output={"reason": "Request is outside the boutique domain."},
+            metadata=metadata,
+        )
+    elif commerce.get("status") == "pending_approval":
+        # The run stopped for sign-off. Reported as its own terminal status, not as `success` with a
+        # nested flag, because the API decides whether to create an order from this field alone
+        # (ADR-024, Decision 2) and the run telemetry maps it to `PausedForApproval`.
+        response = AgentResponse(
+            status=AgentStatus.pending_approval,
+            output={
+                "intent": intent.get("intent_type", "general_inquiry"),
+                "memory": state.get("memory_output"),
+                "visual": state.get("visual_output"),
+                "commerce": commerce,
+                "approval": _approval_pause_payload(commerce),
+            },
             metadata=metadata,
         )
     else:
@@ -543,6 +697,22 @@ def _route_after_visual(state: ConciergeState) -> str:
     return "formulate_response"
 
 
+def _route_after_commerce(state: ConciergeState) -> str:
+    """Pause for approval when commerce says so and the run can actually be paused.
+
+    Without a checkpointer there is nowhere to record the pause, so the run finishes and reports
+    ``pending_approval`` in its response envelope instead. That is the pre-ADR-024 shape, and it keeps
+    a run with no thread id completely unchanged (ADR-024, Decision 3).
+    """
+    if not state.get("checkpointing"):
+        return "formulate_response"
+
+    commerce = state.get("commerce_output") or {}
+    if commerce.get("status") == "pending_approval":
+        return "commerce_approval"
+    return "formulate_response"
+
+
 
 # ---------------------------------------------------------------------------
 # Graph construction
@@ -608,6 +778,12 @@ def _instrumented_node(
             try:
                 with chain_of_thought_span(f"agent.node.{name}"):
                     result = await node_fn(state)
+            except GraphInterrupt:
+                # A pause is the node doing its job, not failing at it. Closing the step as
+                # `Succeeded` keeps a paused run out of the failure counters, while the run's own
+                # status (`PausedForApproval`) is what says the workflow stopped short.
+                _complete_node(name, collector, started)
+                raise
             except Exception as exc:  # noqa: BLE001 - record then re-raise unchanged
                 _complete_node(name, collector, started, error=exc)
                 raise
@@ -624,6 +800,9 @@ def _instrumented_node(
         try:
             with chain_of_thought_span(f"agent.node.{name}"):
                 result = node_fn(state)
+        except GraphInterrupt:
+            _complete_node(name, collector, started)
+            raise
         except Exception as exc:  # noqa: BLE001 - record then re-raise unchanged
             _complete_node(name, collector, started, error=exc)
             raise
@@ -633,12 +812,18 @@ def _instrumented_node(
     return sync_node
 
 
-def build_concierge_graph(collector: TelemetryCollector | None = None):
-    """Build and compile the concierge workflow graph (no checkpointer).
+def build_concierge_graph(
+    collector: TelemetryCollector | None = None,
+    checkpointer: Any | None = None,
+):
+    """Build and compile the concierge workflow graph.
 
     Args:
         collector: Optional run collector. When supplied, every node produces a step row and
             node-level metrics; when omitted the graph behaves exactly as before.
+        checkpointer: Optional LangGraph checkpointer. It must be compiled **into** the graph, not
+            handed to each call: ``aget_state`` - how a paused run is discovered - reads the
+            checkpointer off the compiled graph and does not accept one as an argument.
     """
     graph = StateGraph(ConciergeState)
 
@@ -651,6 +836,7 @@ def build_concierge_graph(collector: TelemetryCollector | None = None):
     graph.add_node("memory_agent", node("memory_agent", run_memory_agent))
     graph.add_node("visual_agent", node("visual_agent", run_visual_agent))
     graph.add_node("commerce_agent", node("commerce_agent", run_commerce_agent))
+    graph.add_node("commerce_approval", node("commerce_approval", run_commerce_approval))
     graph.add_node("formulate_response", node("formulate_response", formulate_response))
 
     graph.add_edge(START, "load_context")
@@ -659,10 +845,18 @@ def build_concierge_graph(collector: TelemetryCollector | None = None):
     graph.add_conditional_edges("resolve_customer", _route_after_resolve)
     graph.add_conditional_edges("memory_agent", _route_after_memory)
     graph.add_conditional_edges("visual_agent", _route_after_visual)
-    graph.add_edge("commerce_agent", "formulate_response")
+    graph.add_conditional_edges(
+        "commerce_agent",
+        _route_after_commerce,
+        {
+            "commerce_approval": "commerce_approval",
+            "formulate_response": "formulate_response",
+        },
+    )
+    graph.add_edge("commerce_approval", "formulate_response")
     graph.add_edge("formulate_response", END)
 
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
 
 
 async def run_concierge(
@@ -686,7 +880,9 @@ async def run_concierge(
             node metrics, and tool calls attach ToolCall rows to the same run.
 
     Returns:
-        The final ``AgentResponse`` envelope.
+        The final ``AgentResponse`` envelope. When the run paused for human approval the envelope
+        carries ``status = pending_approval`` and the approval payload under ``output.approval``
+        (ADR-024, Decision 3); resuming it is :func:`resume_concierge`.
     """
     graph = build_concierge_graph(collector=collector)
     initial: dict[str, Any] = {
@@ -696,6 +892,7 @@ async def run_concierge(
         "thread_summary": None,
         "pinned_slots": {},
         "intent": None,
+        "checkpointing": thread_id is not None,
         "resolution": None,
         "memory_output": None,
         "visual_output": None,
@@ -704,37 +901,139 @@ async def run_concierge(
         "response": None,
     }
 
+    pause: dict[str, Any] | None = None
     with use_telemetry_collector(collector):
-        if on_state is not None:
-            # Stream node boundaries so the caller can publish lifecycle states.
-            config = {"configurable": {"thread_id": thread_id}} if thread_id is not None else None
+        if thread_id is not None:
+            config = {"configurable": {"thread_id": thread_id}}
             state_delay_ms = get_settings().agent_state_delay_ms
-            if thread_id is not None:
-                async with create_checkpointer() as checkpointer:
+            async with create_checkpointer() as checkpointer:
+                # Compiled with the checkpointer, not handed one per call: `aget_state` reads it off
+                # the compiled graph, and that is how a paused run is discovered.
+                graph = build_concierge_graph(collector=collector, checkpointer=checkpointer)
+                if on_state is not None:
                     result = await run_graph_with_states(
                         graph,
                         initial,
                         config,
                         on_state,
-                        checkpointer=checkpointer,
                         state_delay_ms=state_delay_ms,
                     )
-            else:
-                result = await run_graph_with_states(
-                    graph,
-                    initial,
-                    config,
-                    on_state,
-                    state_delay_ms=state_delay_ms,
-                )
-        elif thread_id is not None:
-            async with create_checkpointer() as checkpointer:
-                result = await graph.ainvoke(
-                    initial,
-                    config={"configurable": {"thread_id": thread_id}},
-                    checkpointer=checkpointer,
-                )
+                else:
+                    result = await graph.ainvoke(initial, config=config)
+                pause = await _pending_pause(graph, config)
+        elif on_state is not None:
+            result = await run_graph_with_states(
+                graph,
+                initial,
+                None,
+                on_state,
+                state_delay_ms=get_settings().agent_state_delay_ms,
+            )
         else:
             result = await graph.ainvoke(initial)
 
+    if pause is not None:
+        return _paused_response(result, pause)
+
     return AgentResponse.model_validate(result["response"])
+
+
+async def resume_concierge(
+    thread_id: str,
+    resume_value: dict[str, Any],
+    on_state: Callable[[AgentState], Awaitable[None]] | None = None,
+    collector: TelemetryCollector | None = None,
+) -> AgentResponse:
+    """Settle a paused run through its checkpoint (ADR-024, Decision 3).
+
+    This is a **resume**, not a re-run. LangGraph re-executes only the node that interrupted - the
+    ``commerce_approval`` node - so the supervisor is never consulted and the deal evaluation already
+    in the checkpoint is never repeated. Replaying the original request instead would re-run every
+    specialist and every tool call before the pause, which is what the previous re-query resume did.
+
+    Args:
+        thread_id: The paused conversation's checkpoint thread.
+        resume_value: ``{"decision": "approved"|"rejected"|"revised", "comment": ..., ...}``.
+        on_state: Optional lifecycle-state callback, as in :func:`run_concierge`.
+        collector: Optional run collector; the resumed leg is its own run.
+
+    Returns:
+        The settled ``AgentResponse``. If the graph pauses again the envelope is
+        ``pending_approval`` once more.
+
+    Raises:
+        NoPausedRunError: The thread has no checkpoint awaiting a decision.
+    """
+    graph = build_concierge_graph(collector=collector)
+    config = {"configurable": {"thread_id": thread_id}}
+    pause: dict[str, Any] | None = None
+
+    with use_telemetry_collector(collector):
+        async with create_checkpointer() as checkpointer:
+            graph = build_concierge_graph(collector=collector, checkpointer=checkpointer)
+            snapshot = await graph.aget_state(config)
+            if snapshot is None or not snapshot.next:
+                # Nothing is waiting on this thread. Resuming anyway would start a fresh run with a
+                # decision as its input, which is exactly the re-query behaviour being replaced.
+                raise NoPausedRunError(thread_id)
+
+            if on_state is not None:
+                result = await run_graph_with_states(
+                    graph,
+                    Command(resume=resume_value),
+                    config,
+                    on_state,
+                    state_delay_ms=get_settings().agent_state_delay_ms,
+                )
+            else:
+                result = await graph.ainvoke(Command(resume=resume_value), config=config)
+            pause = await _pending_pause(graph, config)
+
+    if pause is not None:
+        return _paused_response(result, pause)
+
+    return AgentResponse.model_validate(result["response"])
+
+
+class NoPausedRunError(LookupError):
+    """The thread has no checkpoint waiting for an approval decision."""
+
+    def __init__(self, thread_id: str) -> None:
+        super().__init__(f"Thread '{thread_id}' has no paused run awaiting a decision.")
+        self.thread_id = thread_id
+
+
+async def _pending_pause(graph: Any, config: dict[str, Any]) -> dict[str, Any] | None:
+    """The interrupt the graph is currently waiting on, or ``None`` when it ran to completion.
+
+    Asked of the **checkpoint** rather than inferred from the stream: a paused run's event stream ends
+    with a partial state and no error, so the checkpoint's ``next`` is the only honest signal that the
+    workflow stopped short of an answer. The graph must have been compiled with its checkpointer,
+    because this reads it from the graph itself.
+    """
+    snapshot = await graph.aget_state(config)
+    if snapshot is None or not snapshot.next:
+        return None
+
+    for task in snapshot.tasks or ():
+        for interrupt_ in getattr(task, "interrupts", ()) or ():
+            value = getattr(interrupt_, "value", None)
+            return value if isinstance(value, dict) else {"value": value}
+
+    return {}
+
+
+def _paused_response(result: dict[str, Any], pause: dict[str, Any]) -> AgentResponse:
+    """Build the ``pending_approval`` envelope for a run that stopped for sign-off."""
+    intent = result.get("intent") or {}
+    return AgentResponse(
+        status=AgentStatus.pending_approval,
+        output={
+            "intent": intent.get("intent_type", "general_inquiry"),
+            "memory": result.get("memory_output"),
+            "visual": result.get("visual_output"),
+            "commerce": result.get("commerce_output"),
+            "approval": pause,
+        },
+        metadata=_build_usage_metadata(result.get("usage")),
+    )

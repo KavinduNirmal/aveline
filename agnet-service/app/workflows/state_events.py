@@ -28,6 +28,9 @@ NODE_STATES: dict[str, AgentState] = {
     "memory_agent": AgentState.searching,
     "visual_agent": AgentState.searching,
     "commerce_agent": AgentState.tool_call,
+    # The pause node. `waiting` is the client's own state for "Aveline is waiting on something",
+    # which is exactly what a pending owner decision is (ADR-024).
+    "commerce_approval": AgentState.waiting,
     "formulate_response": AgentState.processing,
 }
 
@@ -40,28 +43,28 @@ async def run_graph_with_states(
     initial: dict[str, Any],
     config: dict[str, Any] | None,
     on_state: StateEmitter,
-    checkpointer: Any | None = None,
     state_delay_ms: int = 0,
 ) -> dict[str, Any]:
     """Run ``graph`` via ``astream_events``, emitting a state per node start.
 
     Args:
-        graph: The compiled LangGraph workflow.
-        initial: The initial workflow state.
+        graph: The compiled LangGraph workflow. Any checkpointer it needs must already be compiled
+            into it: LangGraph validates the saver, and ``aget_state`` - how a paused run is found -
+            reads it from the graph rather than from a per-call argument (ADR-024).
+        initial: The initial workflow state, or a ``Command`` when resuming a paused run.
         config: Optional run configuration (e.g. ``{"configurable": {"thread_id": ...}}``).
         on_state: Async callback invoked with each mapped state as a node starts.
-        checkpointer: Optional checkpointer to pass through to ``astream_events``.
         state_delay_ms: Optional artificial delay (ms) inserted between emitted states so
             clients can visibly animate each lifecycle state during integration testing.
             0 disables the delay.
 
     Returns:
-        The final aggregated workflow state (from the top-level ``on_chain_end``).
+        The final aggregated workflow state (from the top-level ``on_chain_end``). A run that pauses
+        returns the partial state instead: the event stream ends normally, and the pause is detected
+        from the checkpoint.
     """
     final: dict[str, Any] | None = None
     kwargs: dict[str, Any] = {"config": config, "version": "v2"}
-    if checkpointer is not None:
-        kwargs["checkpointer"] = checkpointer
     async for event in graph.astream_events(initial, **kwargs):
         kind = event.get("event")
         if kind == "on_chain_start":

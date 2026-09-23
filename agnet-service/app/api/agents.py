@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Body, Depends, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 from app.core.config import get_settings
@@ -13,12 +13,19 @@ from app.core.security import require_internal_token
 from app.events.message_publisher import publish_agent_messages
 from app.events.state_publisher import publish_agent_state
 from app.observability.metrics import get_agent_metrics
-from app.schemas.query import AgentQueryRequest, AgentQueryResponse
+from app.schemas.approvals import AGENT_APPROVAL_DECISIONS, normalize_decision
+from app.schemas.query import AgentQueryRequest, AgentQueryResponse, AgentResumeRequest
 from app.schemas.response import AgentResponse
 from app.schemas.state import AgentState
 from app.services.usage_reporter import report_agent_run, report_usage
 from app.telemetry.agent_telemetry import NODE_STEP_KIND, TelemetryCollector
-from app.workflows.concierge_workflow import WORKFLOW_NAME, build_concierge_graph, run_concierge
+from app.workflows.concierge_workflow import (
+    WORKFLOW_NAME,
+    NoPausedRunError,
+    build_concierge_graph,
+    resume_concierge,
+    run_concierge,
+)
 
 logger = logging.getLogger("aveline.agent.api")
 
@@ -137,6 +144,11 @@ async def agents_query(payload: AgentQueryRequest, request: Request) -> AgentQue
         if event_bus is not None and org_id is not None:
             await publish_agent_state(event_bus, org_id, payload.thread_id, AgentState.error)
         raise
+    else:
+        # A run that stopped for owner sign-off is not a success: the workflow has not finished, and
+        # the owner's decision is what completes it. Reporting `Succeeded` here is what used to hide
+        # every pause from the focus feed (ADR-024).
+        run_status = _run_status_from_response(result)
     finally:
         _record_run_outcome(
             status=run_status,
@@ -160,7 +172,12 @@ async def agents_query(payload: AgentQueryRequest, request: Request) -> AgentQue
 
     # The workflow completed successfully; broadcast the terminal bloom state.
     if event_bus is not None and org_id is not None:
-        await publish_agent_state(event_bus, org_id, payload.thread_id, AgentState.success)
+        terminal = (
+            AgentState.waiting
+            if run_status == "PausedForApproval"
+            else AgentState.success
+        )
+        await publish_agent_state(event_bus, org_id, payload.thread_id, terminal)
 
     return AgentQueryResponse(
         status="ok",
@@ -181,10 +198,127 @@ def _optional_id(value: Any) -> str | None:
     return text or None
 
 
+@router.post("/resume", response_model=AgentQueryResponse)
+async def agents_resume(payload: AgentResumeRequest, request: Request) -> AgentQueryResponse:
+    """Settle a paused workflow through its checkpoint (ADR-024, Decision 3).
+
+    This is the *only* way an owner's decision reaches the graph. It resumes the run at the node that
+    interrupted, so nothing before the pause re-executes; the previous implementation posted the
+    decision back to ``/agents/query`` as a new question, which re-ran the whole pipeline and left the
+    decision unread.
+
+    A thread with no paused run is a 404, and a decision outside the published vocabulary is a 400:
+    neither is guessed at, because guessing would settle an approval nobody made.
+    """
+    decision = normalize_decision(payload.decision)
+    if decision is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Unsupported decision '{payload.decision}'. "
+                f"Expected one of: {', '.join(sorted(AGENT_APPROVAL_DECISIONS))}."
+            ),
+        )
+
+    logger.info(
+        "Agent resume received: thread_id=%s decision=%s",
+        payload.thread_id,
+        decision,
+        extra={"action": "agent_resume", "thread_id": payload.thread_id, "decision": decision},
+    )
+
+    event_bus = getattr(request.app.state, "event_bus", None)
+    org_id = _org_id_or_none(payload.organization_id)
+    request_id = str(uuid4())
+    run_workflow_id = str(uuid4())
+    collector = TelemetryCollector(
+        workflow_id=run_workflow_id,
+        organization_id=str(org_id) if org_id is not None else None,
+        request_id=request_id,
+        conversation_id=_optional_id(payload.conversation_id),
+        customer_id=_optional_id(payload.customer_id),
+    )
+
+    resume_value: dict[str, Any] = {"decision": decision}
+    if payload.comment is not None:
+        resume_value["comment"] = payload.comment
+    if payload.revised_discount is not None:
+        resume_value["revised_discount"] = payload.revised_discount
+    if payload.order_id is not None:
+        resume_value["order_id"] = payload.order_id
+    if payload.customer_name is not None:
+        resume_value["customer_name"] = payload.customer_name
+
+    async def on_state(state: AgentState) -> None:
+        if event_bus is not None and org_id is not None:
+            await publish_agent_state(event_bus, org_id, payload.thread_id, state, trace_id=None)
+
+    run_started = time.perf_counter()
+    run_status = "Succeeded"
+
+    try:
+        result = await resume_concierge(
+            payload.thread_id,
+            resume_value,
+            on_state=on_state,
+            collector=collector,
+        )
+    except NoPausedRunError:
+        # Nothing to resume. Reported as "not found" rather than silently starting a new run: a
+        # resume that quietly becomes a fresh query is the defect this endpoint exists to remove.
+        run_status = "Failed"
+        _record_run_outcome(
+            status=run_status,
+            duration_s=time.perf_counter() - run_started,
+            org_id=org_id,
+            collector=collector,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Thread '{payload.thread_id}' has no paused run awaiting a decision.",
+        ) from None
+    except Exception:
+        run_status = "Failed"
+        if event_bus is not None and org_id is not None:
+            await publish_agent_state(event_bus, org_id, payload.thread_id, AgentState.error)
+        raise
+    else:
+        run_status = _run_status_from_response(result)
+
+    _record_run_outcome(
+        status=run_status,
+        duration_s=time.perf_counter() - run_started,
+        org_id=org_id,
+        collector=collector,
+    )
+
+    # Publishing uses the same persona-attributed path as a fresh query, so a settlement reaches the
+    # Salon exactly like any other Aveline message.
+    await _publish_result_for_thread(request, org_id, payload.thread_id, result)
+
+    if org_id is not None:
+        await _report_usage_best_effort(
+            result,
+            organization_id=str(org_id),
+            workflow_id=run_workflow_id,
+            request_id=request_id,
+            collector=collector,
+            run_status=run_status,
+        )
+
+    if event_bus is not None and org_id is not None:
+        await publish_agent_state(event_bus, org_id, payload.thread_id, AgentState.success)
+
+    return AgentQueryResponse(status="ok", result=result, thread_id=payload.thread_id)
+
+
 def _resolve_org_id(payload: AgentQueryRequest) -> UUID | None:
     """Resolve the organization id from ``org_context``, or ``None`` when absent."""
-    org_context = payload.org_context or {}
-    org_id_value = org_context.get("organization_id") or org_context.get("org_id")
+    return _org_id_or_none((payload.org_context or {}).get("organization_id") or (payload.org_context or {}).get("org_id"))
+
+
+def _org_id_or_none(org_id_value: Any) -> UUID | None:
+    """Coerce a loose organization id into a ``UUID``, or ``None`` when it is not one."""
     if org_id_value is None:
         return None
     try:
@@ -377,23 +511,24 @@ async def _publish_result(request: Request, payload: AgentQueryRequest, result) 
     Publishing is best-effort: if no event bus is configured, or the org id is
     missing, the query still succeeds (the API may poll or the client may refresh).
     """
-    event_bus = getattr(request.app.state, "event_bus", None)
-    if event_bus is None:
-        return
-
     org_id = _resolve_org_id(payload)
-    if org_id is None:
+    await _publish_result_for_thread(request, org_id, payload.thread_id, result)
+
+
+async def _publish_result_for_thread(request: Request, org_id: UUID | None, thread_id: str | None, result) -> None:
+    """Publish a workflow result into the Salon, best-effort.
+
+    Shared by the query and resume paths so a settlement reaches the thread through exactly the same
+    persona-attributed path as a fresh answer (ADR-024).
+    """
+    event_bus = getattr(request.app.state, "event_bus", None)
+    if event_bus is None or org_id is None:
         return
 
     try:
-        await publish_agent_messages(
-            event_bus,
-            org_id,
-            payload.thread_id,
-            result,
-        )
+        await publish_agent_messages(event_bus, org_id, thread_id, result)
     except Exception:  # noqa: BLE001 - publishing must never fail the query
-        logger.exception("Failed to publish agent messages for thread %s.", payload.thread_id)
+        logger.exception("Failed to publish agent messages for thread %s.", thread_id)
 
 
 @router.post("/query/stream")

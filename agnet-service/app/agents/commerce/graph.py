@@ -65,7 +65,15 @@ def build_commerce_graph(
 
 
 def _route_after_deal_evaluation(state: CommerceAgentState) -> str:
-    """Route workflow based on rules evaluation or human approval decision."""
+    """Route workflow based on rules evaluation or human approval decision.
+
+    A decision is checked **before** the rules, because a decision is the answer to them. Re-evaluating
+    after a revision can still report ``requires_approval`` - the revised terms may breach the same
+    rules - and routing on that would re-pause a deal the owner has already ruled on.
+
+    ``revised`` settles for the same reason ``approved`` does: the owner changed the terms and
+    accepted the result, which is an approval of the revised deal, not a request for another one.
+    """
     if state.get("status") == "skipped":
         return "end"
 
@@ -73,7 +81,7 @@ def _route_after_deal_evaluation(state: CommerceAgentState) -> str:
     decision = state.get("approval_decision")
     if decision == "rejected":
         return "rejected"
-    if decision == "approved":
+    if decision in ("approved", "revised"):
         return "settle"
 
     # Initial evaluation requiring Human-in-the-Loop approval

@@ -13,6 +13,7 @@ import {
   Shirt,
   Sparkles,
   Store,
+  Shield,
   Users,
   UserPlus,
   Coins,
@@ -20,6 +21,8 @@ import {
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { toast } from 'sonner'
+import { useUserContext } from '@/contexts/UserContext'
+import { hasConsoleRole } from '@/lib/admin-signup'
 
 import { Blossom } from '@/components/auth/Blossom'
 import { AvelineChatDrawer } from '@/components/conversation/AvelineChatDrawer'
@@ -137,6 +140,7 @@ function initialsOf(...parts: Array<string | null | undefined>): string {
 export function DashboardShell({ organization, usage, role }: DashboardShellProps) {
   const navigate = useNavigate()
   const { user } = useUser()
+  const { user: appUser } = useUserContext()
   const { signOut } = useClerk()
   // The section is part of the URL (`/app/b/:slug/:section`), not component state, so a section
   // is linkable and survives a refresh. The bare slug route redirects here with `overview`.
@@ -329,6 +333,13 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
                 <CreditCard className="size-4" aria-hidden />
                 Billing &amp; plan
               </DropdownMenuItem>
+
+              {hasConsoleRole(appUser?.userRole ? [appUser.userRole] : []) && (
+                <DropdownMenuItem onClick={() => navigate('/admin')}>
+                  <Shield className="size-4" aria-hidden />
+                  Platform Admin Console
+                </DropdownMenuItem>
+              )}
 
               <DropdownMenuSeparator />
 

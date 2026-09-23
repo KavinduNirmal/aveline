@@ -76,6 +76,21 @@ public class OnboardingMiddleware
         // Attach user info to HttpContext items for downstream use
         context.Items["CurrentUser"] = userStatus;
 
+        if (context.User.Identity is ClaimsIdentity identity)
+        {
+            if (!string.IsNullOrWhiteSpace(userStatus.UserRole)
+                && !context.User.HasClaim(ClaimTypes.Role, userStatus.UserRole.ToLowerInvariant()))
+            {
+                identity.AddClaim(new Claim(ClaimTypes.Role, userStatus.UserRole.ToLowerInvariant()));
+            }
+
+            if (!string.IsNullOrWhiteSpace(userStatus.OrganizationRole)
+                && !context.User.HasClaim(ClaimTypes.Role, userStatus.OrganizationRole.ToLowerInvariant()))
+            {
+                identity.AddClaim(new Claim(ClaimTypes.Role, userStatus.OrganizationRole.ToLowerInvariant()));
+            }
+        }
+
         context.Response.OnStarting(() =>
         {
             context.Response.Headers["X-Completed-Onboarding"] = userStatus.HasCompletedOnboarding ? "true" : "false";

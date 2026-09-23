@@ -23,12 +23,15 @@ export function DashboardRedirect() {
   const navigate = useNavigate()
   const { user, isLoading } = useUserContext()
   const [state, setState] = useState<RedirectState>('loading')
-
-  const isOperator = hasConsoleRole(user !== null ? [user.userRole] : [])
+  const isBoutiqueMember = Boolean(
+    user?.organizationRole?.startsWith('org:boutique_') || user?.organizationId,
+  )
+  const isOperator =
+    hasConsoleRole(user !== null ? [user.userRole] : []) && !isBoutiqueMember
 
   useEffect(() => {
     if (isLoading || user === null) return
-    // The console is this user's dashboard; there is nothing to resolve.
+    // The console is this user's dashboard only when they have no boutique tenant role.
     if (isOperator) return
 
     let cancelled = false

@@ -24,6 +24,16 @@ public static class AuthEndpoints
             // Set by OnboardingMiddleware from the synchronized read model (DB + caches).
             var currentUser = httpContext.Items["CurrentUser"] as UserOnboardingCacheItem;
 
+            var roles = new HashSet<string>(user.FindAll(ClaimTypes.Role).Select(c => c.Value), StringComparer.OrdinalIgnoreCase);
+            if (!string.IsNullOrWhiteSpace(currentUser?.UserRole))
+            {
+                roles.Add(currentUser.UserRole);
+            }
+            if (!string.IsNullOrWhiteSpace(currentUser?.OrganizationRole))
+            {
+                roles.Add(currentUser.OrganizationRole);
+            }
+
             return Results.Ok(new
             {
                 UserId = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? user.FindFirstValue("sub"),
@@ -32,7 +42,7 @@ public static class AuthEndpoints
                 // "email" name alone returns null for every real bearer token. Try the
                 // mapped type first and fall back to the raw name when mapping is disabled.
                 Email = user.FindFirstValue(ClaimTypes.Email) ?? user.FindFirstValue("email"),
-                Roles = user.FindAll(ClaimTypes.Role).Select(c => c.Value).ToArray(),
+                Roles = roles.ToArray(),
                 Claims = rawClaims,
                 Account = new
                 {

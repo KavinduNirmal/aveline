@@ -16,6 +16,8 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
 
+import { Store } from "lucide-react"
+
 import { AdminScopeChip } from "./AdminScopeChip"
 
 const DOMAIN_LABEL: Record<AdminDomain, string> = {
@@ -96,8 +98,18 @@ export function AdminSidePanel() {
         })}
       </SidebarContent>
 
-      <SidebarFooter className="text-[11px] text-muted-foreground">
-        <span className="font-mono text-[10px]">Aveline Admin</span>
+      <SidebarFooter className="flex flex-col gap-2 p-3 text-[11px] text-muted-foreground border-t border-sidebar-border">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild>
+              <NavLink to="/app" className="flex items-center gap-2 text-xs font-medium text-sidebar-foreground hover:text-primary">
+                <Store className="size-4 shrink-0" />
+                <span>Boutique Dashboard</span>
+              </NavLink>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+        <span className="font-mono text-[10px] px-2">Aveline Admin</span>
       </SidebarFooter>
     </Sidebar>
   )

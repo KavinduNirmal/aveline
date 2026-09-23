@@ -159,13 +159,20 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "START_FETCH" })
     try {
       const claims = await fetchAuthClaims()
+      const effectiveRoles = Array.from(
+        new Set([
+          ...claims.roles,
+          ...(claims.account.userRole ? [claims.account.userRole] : []),
+          ...(claims.account.organizationRole ? [claims.account.organizationRole] : []),
+        ]),
+      )
       dispatch({
         type: "FETCH_SUCCESS",
         payload: {
           userId: claims.userId,
           clerkUserId: claims.claims?.sub?.[0] ?? null,
           email: claims.email,
-          roles: claims.roles,
+          roles: effectiveRoles,
           accountState: claims.account.accountState,
           hasCompletedOnboarding: claims.account.hasCompletedOnboarding,
         },

@@ -36,7 +36,7 @@
         <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.18.0" />
         <!-- Explicit reference so the event bus can use IConnectionMultiplexer/ISubscriber directly
              (already a transitive dependency of Microsoft.Extensions.Caching.StackExchangeRedis). -->
-        <PackageReference Include="StackExchange.Redis" Version="2.7.27" />
+        <PackageReference Include="StackExchange.Redis" Version="3.3.0" />
         <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
         <PackageReference Include="QRCoder" Version="1.6.0" />
         <PackageReference Include="ZXing.Net" Version="0.16.10" />

@@ -269,3 +269,377 @@ describe('AttachmentBlock rendering and access', () => {
     expect(plate.className).toContain('text-primary-foreground')
   })
 })
+
+/**
+ * The customer's own words, relayed from WhatsApp.
+ *
+ * The associate has to read this as the customer talking and not as an agent's summary, so the
+ * block names the channel, spaces the handle it arrived with, and keeps its own surface.
+ */
+describe('client message block', () => {
+  const client = (overrides: Partial<ContentBlock> = {}): ContentBlock => ({
+    type: 'client_message',
+    from: '94763475058',
+    text: 'Do you still have the emerald green saree?',
+    ...overrides,
+  })
+
+  it('names the customer and the channel the message arrived on', () => {
+    const { container } = render(<BlockRenderer block={client()} />)
+
+    expect(screen.getByText('Customer')).toBeInTheDocument()
+    // Queried by slot: the official glyph carries its own <title>WhatsApp</title>, so the channel's
+    // name is not the only node in the block holding that word.
+    const channel = container.querySelector('[data-slot="client-channel"]') as HTMLElement
+    expect(channel).toHaveTextContent('WhatsApp')
+    expect(screen.getByText('Do you still have the emerald green saree?')).toBeInTheDocument()
+  })
+
+  it('spaces the raw WhatsApp handle the way the rest of the dashboard spaces numbers', () => {
+    render(<BlockRenderer block={client({ from: '94763475058' })} />)
+
+    // The channel hands over `94763475058`; a wall of eleven digits is unreadable in a thread.
+    expect(screen.getByText('+94 76 34 75 058')).toBeInTheDocument()
+  })
+
+  it('leaves a handle that is not Sri Lankan exactly as the channel gave it', () => {
+    render(<BlockRenderer block={client({ from: '+15551234567' })} />)
+
+    // Forcing the local country code onto it would invent an address the customer does not have.
+    expect(screen.getByText('+15551234567')).toBeInTheDocument()
+  })
+
+  it('renders without a handle rather than naming the customer "WhatsApp"', () => {
+    render(<BlockRenderer block={client({ from: undefined })} />)
+
+    expect(screen.getByText('Customer')).toBeInTheDocument()
+    expect(screen.getByText('Do you still have the emerald green saree?')).toBeInTheDocument()
+  })
+
+  it('shows the channel mark beside the channel name, not in place of it', () => {
+    const { container } = render(<BlockRenderer block={client()} />)
+
+    // The mark is the official WhatsApp glyph, drawn inside the brand-green badge.
+    const mark = container.querySelector('svg path')
+    expect(mark).not.toBeNull()
+    expect(container.querySelector('.bg-whatsapp')).not.toBeNull()
+  })
+
+  it('keeps the customer\'s words readable on the staff bubble', () => {
+    const { container } = render(<BlockRenderer block={client()} tone="own" />)
+
+    // The staff bubble fills with `primary` and sets `text-primary-foreground`. A card that
+    // inherited that ink would paint white words on its own white surface and say nothing at all,
+    // so the card states the colour its surface carries.
+    const card = container.querySelector('figure') as HTMLElement
+    expect(card.className).toContain('text-card-foreground')
+  })
+
+  it('keeps the customer\'s line breaks, which are part of what they said', () => {
+    const { container } = render(
+      <BlockRenderer block={client({ text: 'Hello,\nDo you have it in green?' })} />,
+    )
+
+    const words = container.querySelector('figure p') as HTMLElement
+    expect(words.textContent).toBe('Hello,\nDo you have it in green?')
+    expect(words.className).toContain('whitespace-pre-wrap')
+  })
+})
+
+/**
+ * Entity mentions as pills (ADR-019).
+ *
+ * A mention is how staff point the resolver at an exact customer. Drawn as plain text it reads as
+ * stray punctuation, so the block lifts it into a pill — and the pill has to be readable on both
+ * bubble surfaces, because a staff note is typed into the `primary`-filled bubble.
+ */
+describe('entity mentions', () => {
+  function pills(container: HTMLElement): HTMLElement[] {
+    return Array.from(container.querySelectorAll<HTMLElement>('[data-slot="mention"]'))
+  }
+
+  it('lifts a customer mention out of the prose', () => {
+    const { container } = render(
+      <BlockRenderer block={{ type: 'text', text: '@Samantha Arias — any events?' }} />,
+    )
+
+    const [pill] = pills(container)
+    expect(pill).toHaveTextContent('@Samantha Arias')
+    expect(pill).toHaveAttribute('title', 'Customer mention: Samantha Arias')
+    // The prose around the pill is untouched.
+    expect(container.textContent).toBe('@Samantha Arias — any events?')
+  })
+
+  it('stops the pill where the resolver stopped, leaving the prose behind it alone', () => {
+    const { container } = render(
+      <BlockRenderer block={{ type: 'text', text: '@jason smith, dropped by to browse' }} />,
+    )
+
+    const [pill] = pills(container)
+    expect(pill).toHaveTextContent('@jason smith')
+    // The comma ends the name; everything after it stays the sentence it was.
+    expect(container.textContent).toBe('@jason smith, dropped by to browse')
+  })
+
+  it('trims the prose a greedy capture swallowed, exactly as the resolver trims it', () => {
+    const { container } = render(
+      <BlockRenderer block={{ type: 'text', text: '@jason smith dropped by' }} />,
+    )
+
+    // No delimiter, so the tail is trimmed only because "by" and "dropped" are stop words.
+    expect(pills(container)[0]).toHaveTextContent('@jason smith')
+  })
+
+  it('lifts a phone mention and sets it in figures that line up', () => {
+    const { container } = render(
+      <BlockRenderer block={{ type: 'text', text: 'reach her on #0771234567 please' }} />,
+    )
+
+    const [pill] = pills(container)
+    expect(pill).toHaveTextContent('#0771234567')
+    expect(pill).toHaveAttribute('data-mention-kind', 'phone')
+    expect(pill.className).toContain('tabular-nums')
+  })
+
+  it('tints the pill for the bubble it sits in, rather than vanishing into it', () => {
+    const block: ContentBlock = { type: 'text', text: '@Samantha Arias' }
+
+    const { container: onCard } = render(<BlockList blocks={[block]} />)
+    const { container: onStaff } = render(<BlockList blocks={[block]} tone="own" />)
+
+    expect(pills(onCard)[0].className).toContain('text-primary')
+    expect(pills(onStaff)[0].className).toContain('text-primary-foreground')
+  })
+
+  it('lifts mentions inside a suggestion, which is drafted text too', () => {
+    const { container } = render(
+      <BlockRenderer
+        block={{ type: 'suggestion', text: 'Tell @Samantha Arias the saree is back.' }}
+      />,
+    )
+
+    expect(pills(container)).toHaveLength(1)
+    expect(pills(container)[0]).toHaveTextContent('@Samantha Arias')
+  })
+
+  it('leaves an escaped token as the text it was typed as', () => {
+    const { container } = render(
+      <BlockRenderer block={{ type: 'text', text: 'type \\@ to mention someone' }} />,
+    )
+
+    expect(pills(container)).toHaveLength(0)
+    expect(container.textContent).toBe('type \\@ to mention someone')
+  })
+
+  it("leaves the customer's own words alone, because a mention is the staff's affordance", () => {
+    const { container } = render(
+      <BlockRenderer
+        block={{ type: 'client_message', from: '94763475058', text: 'Is @silksbyamelia yours?' }}
+      />,
+    )
+
+    // A customer's at-sign is a handle they typed, not an entity any lookup read.
+    expect(pills(container)).toHaveLength(0)
+    expect(container).toHaveTextContent('Is @silksbyamelia yours?')
+  })
+})
+
+/**
+ * A recommendation set is a row, not a column.
+ *
+ * Elle emits its `piece` blocks back to back and its `look` blocks after them, so the old
+ * one-block-per-line list stacked a curated set into a single visible card. These tests pin the
+ * grouping, the row's `auto-fit` sizing, and the definite bubble width the sizing depends on: with
+ * a shrink-to-fit bubble, a grid resolves to a single track and the pieces stack again.
+ */
+describe('product tiles', () => {
+  const piece = (name: string): ContentBlock => ({
+    type: 'piece',
+    name,
+    price: 1000,
+    size: 'M',
+    stock: 2,
+  })
+
+  function tileGrids(container: HTMLElement): HTMLElement[] {
+    return Array.from(container.querySelectorAll<HTMLElement>('[data-slot="tile-grid"]'))
+  }
+
+  /** An Elle message, so the bubble renders through the same path the Salon and drawer use. */
+  function agentMessage(blocks: ContentBlock[]): ChatMessage {
+    return {
+      id: 'm-tiles',
+      conversationId: 'c1',
+      authorKind: 'Agent',
+      agentKey: 'elle',
+      authorUserId: null,
+      kind: 'Note',
+      contentBlocks: blocks,
+      contentHash: null,
+      replyToMessageId: null,
+      status: 'Published',
+      createdAt: '2026-09-23T09:00:00.000Z',
+    } as unknown as ChatMessage
+  }
+
+  it('lays consecutive pieces out in one row instead of stacking them', () => {
+    const { container } = render(
+      <BlockList blocks={[piece('One'), piece('Two'), piece('Three')]} />,
+    )
+
+    const grids = tileGrids(container)
+    expect(grids).toHaveLength(1)
+    expect(within(grids[0]).getByText('One')).toBeInTheDocument()
+    expect(within(grids[0]).getByText('Two')).toBeInTheDocument()
+    expect(within(grids[0]).getByText('Three')).toBeInTheDocument()
+    // `auto-fit` counts columns against the width the bubble hands the grid.
+    expect(grids[0].className).toContain(
+      'grid-cols-[repeat(auto-fit,minmax(min(100%,11rem),1fr))]',
+    )
+  })
+
+  it('keeps a run of many tiles in one grid, so a long set wraps rather than breaks the row', () => {
+    const { container } = render(
+      <BlockList
+        blocks={[piece('One'), piece('Two'), piece('Three'), piece('Four'), piece('Five')]}
+      />,
+    )
+
+    const grids = tileGrids(container)
+    expect(grids).toHaveLength(1)
+    expect(within(grids[0]).getByText('Five')).toBeInTheDocument()
+  })
+
+  it('puts a look with its own photograph in the same row as the pieces', () => {
+    const { container } = render(
+      <BlockList
+        blocks={[
+          { ...piece('Emerald Green Georgette Saree'), imageUrl: 'https://cdn/saree.jpg' },
+          {
+            type: 'look',
+            name: 'Galle Sunset Soiree',
+            imageUrl: 'https://cdn/look.jpg',
+            text: 'Balance the green with tonal gold.',
+          },
+        ]}
+      />,
+    )
+
+    const grids = tileGrids(container)
+    expect(grids).toHaveLength(1)
+    expect(within(grids[0]).getByText('Emerald Green Georgette Saree')).toBeInTheDocument()
+    expect(within(grids[0]).getByText('Balance the green with tonal gold.')).toBeInTheDocument()
+  })
+
+  it('drops a look\'s plate when the photograph is one of the pieces\' own', () => {
+    const { container } = render(
+      <BlockList
+        blocks={[
+          { ...piece('Emerald Green Georgette Saree'), imageUrl: 'https://cdn/saree.jpg' },
+          {
+            type: 'look',
+            name: 'Look: Boutique Collection',
+            // Elle's composer borrowed the first matched piece's photo as the look's own, so the
+            // Salon showed one saree twice: once as the piece, once as the look.
+            imageUrl: 'https://cdn/saree.jpg',
+            text: 'Keep the silhouette clean and let the fabric do the talking.',
+          },
+        ]}
+      />,
+    )
+
+    // One photograph, on the piece: the look keeps its words and loses the copy.
+    expect(container.querySelectorAll('img')).toHaveLength(1)
+    expect(screen.getByText('Keep the silhouette clean and let the fabric do the talking.')).toBeInTheDocument()
+    expect(screen.getByText('Look: Boutique Collection')).toBeInTheDocument()
+  })
+
+  it('reads a look without a photograph as its styling note, never as a blank plate', () => {
+    const { container } = render(
+      <BlockList
+        blocks={[
+          {
+            type: 'look',
+            name: 'Look: Boutique Collection',
+            text: 'Anchor it with a muted gold blouse in a matte finish.',
+          },
+        ]}
+      />,
+    )
+
+    // No plate to fill: the note is the block, and it carries the look's name at the row's width.
+    expect(container.querySelector('img')).toBeNull()
+    expect(tileGrids(container)).toHaveLength(0)
+    expect(screen.getByText('Look: Boutique Collection')).toBeInTheDocument()
+    expect(screen.getByText('Anchor it with a muted gold blouse in a matte finish.')).toBeInTheDocument()
+  })
+
+  it('does not widen the bubble for a look whose photograph was borrowed', () => {
+    const message = agentMessage([
+      { ...piece('One'), imageUrl: 'https://cdn/one.jpg' },
+      { type: 'look', name: 'Look', imageUrl: 'https://cdn/one.jpg', text: 'Wear it with gold.' },
+    ])
+
+    const { container } = render(<MessageBubble message={message} isOwn={false} />)
+
+    // The look is a note after normalisation, so there is no row for the bubble to size against.
+    const bubble = container.querySelector('[data-slot="message-bubble"]') as HTMLElement
+    expect(bubble.className).not.toContain('w-full')
+  })
+
+  it('starts a new row when prose separates two pieces, so a caption stays with its tile', () => {
+    const { container } = render(
+      <BlockList
+        blocks={[piece('One'), { type: 'text', text: 'It comes in three sizes.' }, piece('Two')]}
+      />,
+    )
+
+    const grids = tileGrids(container)
+    expect(grids).toHaveLength(2)
+    expect(within(grids[0]).getByText('One')).toBeInTheDocument()
+    expect(within(grids[0]).queryByText('Two')).not.toBeInTheDocument()
+    expect(within(grids[1]).getByText('Two')).toBeInTheDocument()
+  })
+
+  it('gives a message that carries a tile row the bubble\'s full width, which the row sizes against', () => {
+    const { container } = render(<MessageBubble message={agentMessage([piece('One'), piece('Two')])} isOwn={false} />)
+
+    const bubble = container.querySelector('[data-slot="message-bubble"]') as HTMLElement
+    expect(bubble.className).toContain('w-full')
+    // The photograph is what the paper-thin case lacks: two pieces with no image at all still get
+    // a row, because the bubble's own width is what the grid counts its columns against.
+    expect(tileGrids(container)).toHaveLength(1)
+  })
+
+  it('leaves a lone tile shrink-to-fit, so the card is capped rather than the bubble', () => {
+    const { container } = render(<MessageBubble message={agentMessage([piece('Only')])} isOwn={false} />)
+
+    const bubble = container.querySelector('[data-slot="message-bubble"]') as HTMLElement
+    expect(bubble.className).not.toContain('w-full')
+    expect(tileGrids(container)[0].className).toContain('max-w-64')
+  })
+
+  it('leaves a text-only bubble shrink-to-fit', () => {
+    const { container } = render(
+      <MessageBubble message={agentMessage([{ type: 'text', text: 'Three pieces match.' }])} isOwn={false} />,
+    )
+
+    const bubble = container.querySelector('[data-slot="message-bubble"]') as HTMLElement
+    expect(bubble.className).not.toContain('w-full')
+  })
+
+  it('renders a piece without a photograph as a stated absence, not a broken image', () => {
+    render(<BlockRenderer block={piece('Ivory Organza')} />)
+
+    expect(screen.getByText('No photograph')).toBeInTheDocument()
+    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+  })
+
+  it('does not cap the row when tiles share it, so two cards fill the width between them', () => {
+    const { container } = render(<BlockList blocks={[piece('One'), piece('Two')]} />)
+
+    const grids = tileGrids(container)
+    expect(grids).toHaveLength(1)
+    expect(grids[0].className).not.toContain('max-w-64')
+  })
+})

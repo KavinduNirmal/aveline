@@ -289,17 +289,30 @@ class ThreadMessage {
   /// The client's own message.
   bool get isFromClient => author == MessageAuthor.client;
 
-  /// The boutique's side of the conversation, which is drawn on the right.
+  /// The associate's own message, which is the side the thread draws on the right.
+  ///
+  /// This, not [isFromClient], is the side test. The wire's `AuthorKind` has no
+  /// `Client` member — a client's forwarded content arrives authored by `System` —
+  /// so `!isFromClient` is true of every agent reply too, and testing it puts the
+  /// associate and every persona on the same side of the thread.
+  bool get isFromStaff => author == MessageAuthor.staff;
+
+  /// Whether an agent persona wrote this, which is what credits the bubble to a
+  /// persona name rather than to the shop.
+  bool get isFromAgent => author == MessageAuthor.agent;
+
+  /// The boutique's side of the conversation.
   bool get isFromBoutique => author != MessageAuthor.client && author != MessageAuthor.system;
 
-  /// A message the client never saw.
+  /// A note the associate wrote into the record that reached no customer channel.
   ///
   /// The backend marks an internal note `Published`: it is visible in the
   /// conversation and went nowhere. A client's forwarded message is published too,
   /// and so is an approved `SignOff` — which is a decision that was made, not a
-  /// note — so both are excluded.
+  /// note — so both are excluded. An agent's published reply is not a note either:
+  /// the thread draws it as the reply it is, credited to its persona.
   bool get isInternalNote =>
-      !isFromClient && kind != MessageKind.signOff && status == MessageStatus.published;
+      isFromStaff && kind != MessageKind.signOff && status == MessageStatus.published;
 
   /// A reply staged by an agent and waiting on the associate to release it.
   bool get needsSignOff => status == MessageStatus.awaitingSignOff;

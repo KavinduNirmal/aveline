@@ -59,6 +59,44 @@ void main() {
               return;
             }
 
+            if (options.path.endsWith('/catalog/items/prod-1/status')) {
+              final body = options.data as Map<String, dynamic>;
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  statusCode: 200,
+                  // The route answers with the row it now holds, so the status in the reply
+                  // is the one that was asked for rather than the seeded one.
+                  data: {
+                    'id': 'prod-1',
+                    'orgId': 'org-123',
+                    'itemName': 'Banarasi Silk Saree',
+                    'category': 'Sarees',
+                    'color': 'Crimson',
+                    'sizes': ['36', '38'],
+                    'price': 45000.0,
+                    'cost': 20000.0,
+                    'quantity': 5,
+                    'status': body['status'],
+                    'isAvailable': body['status'] == 'available',
+                    'createdAtUtc': '2026-09-01T00:00:00Z',
+                    'fabric': 'Raw silk',
+                  },
+                ),
+              );
+              return;
+            }
+
+            if (options.path.endsWith('/catalog/sourcing')) {
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  statusCode: 201,
+                  data: {'id': 'src-9', 'category': 'Sarees'},
+                ),
+              );
+              return;
+            }
             if (options.path.contains('/catalog/items/prod-1')) {
               handler.resolve(
                 Response(
@@ -180,6 +218,64 @@ void main() {
       expect(product!.id, 'prod-1');
       expect(product.name, 'Banarasi Silk Saree');
       expect(product.status, CatalogItemStatus.available);
+    });
+    test('updateStatus patches the status route and returns the server row', () async {
+      final repo = ApiCatalogProductRepository(
+        dio,
+        organizationId: () => 'org-123',
+      );
+
+      final updated = await repo.updateStatus(
+        'prod-1',
+        CatalogItemStatus.soldOut,
+      );
+
+      expect(recordedRequests, hasLength(1));
+      final req = recordedRequests.single;
+      expect(req['path'], '/api/v1/orgs/org-123/catalog/items/prod-1/status');
+      expect(req['method'], 'PATCH');
+      expect((req['data'] as Map)['status'], 'sold_out');
+      // The row drawn is the server's, so the status and the `isAvailable` derived from it
+      // are the API's rather than the client's guess.
+      expect(updated.status, CatalogItemStatus.soldOut);
+      expect(updated.isAvailable, isFalse);
+    });
+
+    test('requestSupply posts the piece as a sourcing ticket', () async {
+      final repo = ApiCatalogProductRepository(
+        dio,
+        organizationId: () => 'org-123',
+      );
+
+      final piece = (await repo.fetchProduct('prod-1'))!;
+      recordedRequests.clear();
+
+      final id = await repo.requestSupply(piece: piece);
+
+      expect(id, 'src-9');
+      expect(recordedRequests, hasLength(1));
+      final req = recordedRequests.single;
+      expect(req['path'], '/api/v1/orgs/org-123/catalog/sourcing');
+      expect(req['method'], 'POST');
+
+      final data = req['data'] as Map;
+      expect(data['category'], 'Sarees');
+      expect(data['color'], 'Crimson');
+      expect(data['targetPrice'], 45000.0);
+      expect(data['quantityNeeded'], 1);
+      expect(data['urgency'], 'medium');
+    });
+
+    test('a mutation with no organization is refused rather than toasted', () async {
+      final repo = ApiCatalogProductRepository(dio, organizationId: () => null);
+
+      // A read can answer with an empty page, but a mutation has nowhere to go: it must
+      // fail loudly instead of letting the screen claim the floor was changed.
+      await expectLater(
+        repo.updateStatus('prod-1', CatalogItemStatus.onHold),
+        throwsA(isA<StateError>()),
+      );
+      expect(recordedRequests, isEmpty);
     });
   });
 }

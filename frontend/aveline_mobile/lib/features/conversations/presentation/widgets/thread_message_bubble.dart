@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../shared/utils/date_formatter.dart';
 import '../../domain/thread_message.dart';
+import 'conversation_avatar.dart';
 import 'thread_blocks.dart';
 
 /// One message in a thread with a client.
@@ -82,8 +83,8 @@ class ThreadMessageBubble extends StatelessWidget {
     final radius = BorderRadius.only(
       topLeft: const Radius.circular(16),
       topRight: const Radius.circular(16),
-      bottomLeft: Radius.circular(message.isFromClient ? 6 : 16),
-      bottomRight: Radius.circular(message.isFromClient ? 16 : 6),
+      bottomLeft: Radius.circular(message.isFromStaff ? 16 : 6),
+      bottomRight: Radius.circular(message.isFromStaff ? 6 : 16),
     );
 
     final overline = _overline(staged: staged, approved: approved, dismissed: dismissed, note: note);
@@ -99,15 +100,19 @@ class ThreadMessageBubble extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Column(
-        crossAxisAlignment: message.isFromClient
-            ? CrossAxisAlignment.start
-            : CrossAxisAlignment.end,
+        crossAxisAlignment: message.isFromStaff
+            ? CrossAxisAlignment.end
+            : CrossAxisAlignment.start,
         children: [
           if (quotedParent != null) ...[
             _QuoteLine(
               key: ValueKey('thread_quote_${message.id}'),
               parent: quotedParent!,
             ),
+            const SizedBox(height: 3),
+          ],
+          if (message.isFromAgent) ...[
+            _AgentName(agentKey: message.agentKey),
             const SizedBox(height: 3),
           ],
           if (overline != null) ...[
@@ -119,10 +124,15 @@ class ThreadMessageBubble extends StatelessWidget {
             const SizedBox(height: 3),
           ],
           Row(
-            mainAxisAlignment: message.isFromClient
-                ? MainAxisAlignment.start
-                : MainAxisAlignment.end,
+            mainAxisAlignment: message.isFromStaff
+                ? MainAxisAlignment.end
+                : MainAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
+              if (message.isFromAgent) ...[
+                const ConversationAvatar.aveline(size: 28),
+                const SizedBox(width: 8),
+              ],
               Flexible(
                 child: Container(
                   key: ValueKey('thread_message_${message.id}'),
@@ -136,7 +146,7 @@ class ThreadMessageBubble extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: _fill(scheme, note: note, dismissed: dismissed),
                     borderRadius: radius,
-                    border: message.isFromClient || note || dismissed
+                    border: !message.isFromStaff || note || dismissed
                         ? Border.all(
                             color: note
                                 ? _noteInk(scheme).withValues(alpha: 0.35)
@@ -163,11 +173,11 @@ class ThreadMessageBubble extends StatelessWidget {
                         Text(
                           body.isEmpty ? 'Update' : body,
                           style: theme.textTheme.bodyMedium?.copyWith(
-                            color: message.isFromClient
-                                ? scheme.onSurface
-                                : note || dismissed
-                                ? scheme.onSurfaceVariant
-                                : scheme.onPrimary,
+                            color: message.isFromStaff
+                                ? (note || dismissed
+                                      ? scheme.onSurfaceVariant
+                                      : scheme.onPrimary)
+                                : scheme.onSurface,
                           ),
                         ),
                       ThreadMessageBlocks(
@@ -236,20 +246,64 @@ class ThreadMessageBubble extends StatelessWidget {
     return null;
   }
 
-  /// The bubble's fill: the client's is paper, the boutique's is the brand, and a
-  /// message the client never saw is neither.
+  /// The bubble's fill: the associate's own is the brand, the counterparty's is
+  /// paper, and a note that reached no customer channel is neither.
   Color _fill(ColorScheme scheme, {required bool note, required bool dismissed}) {
-    if (message.isFromClient) {
-      return scheme.surfaceContainerLowest;
-    }
     if (note || dismissed) {
       return scheme.surfaceContainerHigh;
     }
-    return scheme.primary;
+    if (message.isFromStaff) {
+      return scheme.primary;
+    }
+    // The counterparty's paper: the client's forwarded words and an agent's reply
+    // share the card surface the web gives both.
+    return scheme.surfaceContainerLowest;
   }
 
   /// The ink a note wears, so "not sent" reads before the label is read.
   static Color _noteInk(ColorScheme scheme) => const Color(0xFF9A6B2F);
+}
+
+/// The persona names an agent's words can wear.
+const Map<String, String> _agentPersonaNames = {
+  'aveline': 'Aveline',
+  'ava': 'Ava',
+  'elle': 'Elle',
+  'lina': 'Lina',
+};
+
+/// The name to credit an agent's words to, falling back to the umbrella brand.
+String agentPersonaName(String? agentKey) {
+  if (agentKey == null || agentKey.isEmpty) {
+    return 'Aveline';
+  }
+  return _agentPersonaNames[agentKey.toLowerCase()] ?? 'Aveline';
+}
+
+/// The persona a reply is credited to, above its bubble.
+///
+/// The thread is the shop's record of who said what, and an agent's words read as
+/// the umbrella brand's unless the bubble names the persona that wrote them.
+class _AgentName extends StatelessWidget {
+  const _AgentName({required this.agentKey});
+
+  final String? agentKey;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      child: Text(
+        agentPersonaName(agentKey),
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: theme.colorScheme.primary,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
 }
 
 /// The small uppercase label above a bubble that needs one.

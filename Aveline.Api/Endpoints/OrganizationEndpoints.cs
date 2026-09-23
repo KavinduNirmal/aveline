@@ -499,27 +499,11 @@ public static class OrganizationEndpoints
                     value.EffectiveFrom,
                 });
 
-            var profile = new OrganizationProfileDto(
-                organization.Id,
-                organization.Name,
-                organization.Slug,
-                organization.ClerkOrgId,
-                organization.OwnerUserId,
-                organization.Address,
-                organization.PhoneNumber,
-                organization.Description,
-                organization.LogoUrl,
-                organization.PlanTier,
-                organization.HasCompletedOnboarding,
-                organization.CreatedAt);
-
-            return Results.Ok(new OrganizationSettingsResponse(
-                profile,
-                organization.BrandVoice,
-                organization.BusinessRules,
-                organization.PreferredColorsFabrics,
-                organization.CustomerPreferences,
-                entitlementList));
+            return Results.Ok(new
+            {
+                settings = OrganizationSettingsDto.From(organization),
+                entitlements = entitlementList,
+            });
         }).RequireAuthorization(AuthorizationConfiguration.BoutiqueMembershipManagePolicy);
 
         orgGroup.MapGet("/{organizationId:guid}/members", async (

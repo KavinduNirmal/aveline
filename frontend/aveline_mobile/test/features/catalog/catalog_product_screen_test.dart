@@ -41,9 +41,22 @@ CatalogProduct _piece({
 
 /// Resolves pieces from a fixed pool, standing in for the inventory API.
 class _StubRepository implements CatalogProductRepository {
-  _StubRepository(this.pool);
+  _StubRepository(this.pool, {this.failStatus = false, this.failSupply = false});
 
   final List<CatalogProduct> pool;
+
+  /// Refuses a status change the way the API refuses one, so the screen's failure path is
+  /// assertable without a network.
+  final bool failStatus;
+
+  /// Refuses a supply ticket, for the same reason.
+  final bool failSupply;
+
+  /// The statuses the screen asked the API for, in the order it asked.
+  final List<CatalogItemStatus> requestedStatuses = [];
+
+  /// The pieces a supply ticket was requested for.
+  final List<String> requestedSupplies = [];
 
   @override
   Future<CatalogProduct?> fetchProduct(String id) async {
@@ -66,6 +79,45 @@ class _StubRepository implements CatalogProductRepository {
       hasMore: false,
     );
   }
+
+  @override
+  Future<CatalogProduct> updateStatus(
+    String id,
+    CatalogItemStatus status,
+  ) async {
+    if (failStatus) {
+      throw StateError('the catalog refused the change');
+    }
+
+    requestedStatuses.add(status);
+    final index = pool.indexWhere((piece) => piece.id == id);
+    if (index < 0) {
+      throw StateError('no piece $id');
+    }
+
+    // The server's row comes back, so the screen draws what the API now holds rather than
+    // what it hoped to hold.
+    final updated = pool[index].copyWith(
+      status: status,
+      isAvailable: status == CatalogItemStatus.available,
+    );
+    pool[index] = updated;
+    return updated;
+  }
+
+  @override
+  Future<String> requestSupply({
+    required CatalogProduct piece,
+    int quantityNeeded = 1,
+    String urgency = 'medium',
+  }) async {
+    if (failSupply) {
+      throw StateError('the sourcing route refused the ticket');
+    }
+
+    requestedSupplies.add(piece.id);
+    return 'src-1';
+  }
 }
 
 /// A tall phone viewport, so the whole stack of cards is laid out and every
@@ -86,7 +138,11 @@ void _useReducedMotion(WidgetTester tester) {
 }
 
 /// Reduced motion is on, matching the rest of the suite.
-Widget _wrap({CatalogProduct? product, String productId = 'piece-001'}) {
+Widget _wrap({
+  CatalogProduct? product,
+  String productId = 'piece-001',
+  CatalogProductRepository? repository,
+}) {
   return MaterialApp(
     theme: AppTheme.light,
     home: Builder(
@@ -95,7 +151,7 @@ Widget _wrap({CatalogProduct? product, String productId = 'piece-001'}) {
         child: CatalogProductScreen(
           product: product,
           productId: productId,
-          repository: _StubRepository([_piece()]),
+          repository: repository ?? _StubRepository([_piece()]),
         ),
       ),
     ),
@@ -215,6 +271,67 @@ void main() {
       await tester.pump(const Duration(seconds: 4));
     });
 
+    testWidgets('sends the status change to the API and draws the row it answers with', (
+      tester,
+    ) async {
+      _useTallSurface(tester);
+      final repository = _StubRepository([_piece()]);
+      await tester.pumpWidget(_wrap(product: _piece(), repository: repository));
+
+      await tester.tap(find.byKey(const Key('catalog_action_hold')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 750));
+
+      // The button is not the record: the API was asked, and the screen drew what came
+      // back rather than the status it hoped for.
+      expect(repository.requestedStatuses, [CatalogItemStatus.onHold]);
+      expect(find.text('On hold'), findsWidgets);
+
+      await tester.pump(const Duration(seconds: 4));
+    });
+
+    testWidgets('says the piece is unchanged when the API refuses the status', (
+      tester,
+    ) async {
+      _useTallSurface(tester);
+      final repository = _StubRepository([_piece()], failStatus: true);
+      await tester.pumpWidget(_wrap(product: _piece(), repository: repository));
+
+      await tester.tap(find.byKey(const Key('catalog_action_sold_out')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 750));
+
+      expect(
+        find.text('Could not update Handloom Silk Saree. Nothing was changed.'),
+        findsOneWidget,
+      );
+      // The status is the server's, so a refusal leaves the piece available and its
+      // actions live rather than drawing a change that never happened.
+      expect(find.text('Sold out'), findsNothing);
+      expect(_actionEnabled(tester, const Key('catalog_action_hold')), isTrue);
+
+      await tester.pump(const Duration(seconds: 4));
+    });
+
+    testWidgets('does not claim a supply ticket the API refused', (tester) async {
+      _useTallSurface(tester);
+      final repository = _StubRepository([_piece()], failSupply: true);
+      await tester.pumpWidget(_wrap(product: _piece(), repository: repository));
+
+      await tester.tap(find.byKey(const Key('catalog_action_supply')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 750));
+
+      expect(
+        find.text('Could not log a supply request for Handloom Silk Saree.'),
+        findsOneWidget,
+      );
+      // The action stays live for another try rather than reading as done.
+      expect(_actionEnabled(tester, const Key('catalog_action_supply')), isTrue);
+
+      await tester.pump(const Duration(seconds: 4));
+    });
+
     testWidgets('marks the piece sold out and closes the other actions', (
       tester,
     ) async {
@@ -265,7 +382,7 @@ void main() {
       await tester.pump(const Duration(seconds: 4));
     });
 
-    testWidgets('mentions the piece to Aveline and marks it done', (
+    testWidgets('does not claim Aveline was told when nothing was sent', (
       tester,
     ) async {
       _useTallSurface(tester);
@@ -280,14 +397,16 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 750));
 
+      // Nothing reaches the Salon yet, so the screen says so rather than reporting a
+      // hand-off that never happened, and the action stays live for when it ships.
       expect(
-        find.text('Aveline will take a look at Handloom Silk Saree.'),
+        find.text('Mentioning a piece to Aveline is not available yet.'),
         findsOneWidget,
       );
-      expect(find.text('Mentioned to Aveline'), findsOneWidget);
+      expect(find.text('Mentioned to Aveline'), findsNothing);
       expect(
         _actionEnabled(tester, const Key('catalog_action_mention')),
-        isFalse,
+        isTrue,
       );
 
       await tester.pump(const Duration(seconds: 4));
@@ -306,13 +425,13 @@ void main() {
 
       expect(washInTile(), findsOneWidget);
 
-      // Once asked, the action is spent, so it drops back to a quiet inert
-      // pill rather than keeping the atmosphere on a dead control.
+      // The action is not spent by asking: nothing was sent, so it keeps its atmosphere
+      // and stays live rather than going inert on a hand-off that did not happen.
       await tester.tap(find.byKey(const Key('catalog_action_mention')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 750));
 
-      expect(washInTile(), findsNothing);
+      expect(washInTile(), findsOneWidget);
 
       await tester.pump(const Duration(seconds: 4));
     });

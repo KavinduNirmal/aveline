@@ -211,9 +211,11 @@ public class OrganizationSettingsTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = await BodyAsync(response);
-        Assert.True(body.TryGetProperty("organization", out var organization));
-        Assert.True(organization.TryGetProperty("id", out _));
-        Assert.True(body.TryGetProperty("brandVoice", out _));
+        // The response stays `{ settings, entitlements }`: the web's `settings-api.ts` reads
+        // `response.settings`, so the branch's flattened `organization` shape would leave the
+        // tenant Settings page reading undefined.
+        Assert.True(body.TryGetProperty("settings", out var settings));
+        Assert.True(settings.TryGetProperty("brandVoice", out _));
         Assert.True(body.TryGetProperty("entitlements", out var entitlements));
         Assert.True(entitlements.GetArrayLength() > 0);
     }

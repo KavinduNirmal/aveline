@@ -13,6 +13,7 @@ from app.schemas.response import AgentStatus
 from app.workflows.concierge_workflow import (
     build_concierge_graph,
     run_concierge,
+    run_load_context,
     run_resolve_customer,
 )
 
@@ -22,6 +23,11 @@ async def _invoke(message: str, org_context: dict | None = None) -> dict:
     initial = {
         "message": message,
         "org_context": org_context or {},
+        # Context layers (ADR-023). Empty here: these fixtures carry no conversation id, so the
+        # load_context node short-circuits and makes no backend call.
+        "history": [],
+        "thread_summary": None,
+        "pinned_slots": {},
         "intent": None,
         "memory_output": None,
         "visual_output": None,
@@ -350,7 +356,29 @@ async def test_ambiguous_resolution_short_circuits_to_clarification(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_not_found_resolution_asks_for_phone(monkeypatch):
+async def test_explicit_mention_miss_still_asks_for_a_phone_number(monkeypatch):
+    """A staff `@mention` that matches nothing is worth asking about (ADR-019)."""
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.resolve_customer",
+        _make_resolver(kind="not_found", explicit_mention=True),
+    )
+
+    result = await _invoke("Any events for @Zara Nobody?", {"organization_id": "org-1"})
+
+    assert result["resolution"]["kind"] == "not_found"
+    # Asking instead of working: no specialist content, and the clarification is rendered.
+    assert result["memory_output"] is None
+    assert result["response"]["output"]["clarification"]["kind"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_resolution_miss_outside_a_mention_does_not_ask_and_does_not_stop(monkeypatch):
+    """The I1/I2 fix: an unresolved customer must not veto the run (ADR-023, Decision 4).
+
+    A plain staff note, or an inbound sender whose number is simply not on file, is not a lookup
+    request. The run continues and specialists produce work rather than the whole exchange being
+    replaced by a request for a phone number.
+    """
     monkeypatch.setattr(
         "app.workflows.concierge_workflow.resolve_customer",
         _make_resolver(kind="not_found"),
@@ -359,8 +387,8 @@ async def test_not_found_resolution_asks_for_phone(monkeypatch):
     result = await _invoke("Any events for Zara Nobody?", {"organization_id": "org-1"})
 
     assert result["resolution"]["kind"] == "not_found"
-    assert result["memory_output"] is None
-    assert result["response"]["output"]["clarification"]["kind"] == "not_found"
+    assert "clarification" not in result["response"]["output"]
+    assert result["memory_output"] is not None
 
 
 @pytest.mark.asyncio
@@ -460,3 +488,115 @@ async def test_run_visual_agent_keeps_the_legacy_arm_when_no_reference_is_presen
     assert captured["image_ref_kind"] is None
     assert captured["image_ref_id"] is None
     assert captured["image_url"] == "https://example.com/legacy.jpg"
+
+
+# ---------------------------------------------------------------------------
+# Context loading (ADR-023, W1.4-W1.7)
+# ---------------------------------------------------------------------------
+
+
+class _StubRegistry:
+    """Registry double whose history read is scripted per test."""
+
+    def __init__(self, *, payload=None, raises: Exception | None = None) -> None:
+        self._payload = payload
+        self._raises = raises
+        self.calls: list[tuple] = []
+
+    async def get_conversation_history(self, org_id, conversation_id, limit=20):
+        self.calls.append((org_id, conversation_id, limit))
+        if self._raises is not None:
+            raise self._raises
+        return self._payload
+
+
+def _patch_registry(monkeypatch, registry):
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.ToolRegistry", lambda *a, **k: registry
+    )
+    return registry
+
+
+def _context_state(org_context: dict) -> dict:
+    return {
+        "message": "hello",
+        "org_context": org_context,
+        "history": [],
+        "thread_summary": None,
+        "pinned_slots": {},
+    }
+
+
+@pytest.mark.asyncio
+async def test_load_context_populates_the_window_from_the_backend(monkeypatch):
+    registry = _patch_registry(
+        monkeypatch,
+        _StubRegistry(
+            payload={
+                "items": [
+                    {"id": "m1", "authorKind": "System", "text": "Any pinkish gowns?"},
+                    {"id": "m2", "authorKind": "Agent", "text": "We have three."},
+                ]
+            }
+        ),
+    )
+
+    result = await run_load_context(
+        _context_state({"organization_id": "org-1", "conversation_id": "conv-1"})
+    )
+
+    assert [t["id"] for t in result["history"]] == ["m1", "m2"]
+    assert registry.calls == [("org-1", "conv-1", get_settings().context_window_turns)]
+
+
+@pytest.mark.asyncio
+async def test_load_context_skips_the_backend_when_no_conversation_is_bound(monkeypatch):
+    # A staff query with no bound conversation: no id, so no call and no window.
+    registry = _patch_registry(monkeypatch, _StubRegistry(payload={"items": []}))
+
+    result = await run_load_context(_context_state({"organization_id": "org-1"}))
+
+    assert result == {"history": [], "thread_summary": None, "pinned_slots": {}}
+    assert registry.calls == []
+
+
+@pytest.mark.asyncio
+async def test_load_context_survives_a_backend_failure(monkeypatch):
+    # Losing history degrades an answer; it must never prevent one.
+    _patch_registry(
+        monkeypatch, _StubRegistry(raises=RuntimeError("backend down"))
+    )
+
+    result = await run_load_context(
+        _context_state({"organization_id": "org-1", "conversation_id": "conv-1"})
+    )
+
+    assert result == {"history": [], "thread_summary": None, "pinned_slots": {}}
+
+
+@pytest.mark.asyncio
+async def test_load_context_tolerates_a_malformed_payload(monkeypatch):
+    _patch_registry(monkeypatch, _StubRegistry(payload={"items": "not-a-list"}))
+
+    result = await run_load_context(
+        _context_state({"organization_id": "org-1", "conversation_id": "conv-1"})
+    )
+
+    assert result["history"] == []
+
+
+@pytest.mark.asyncio
+async def test_load_context_bounds_a_long_transcript(monkeypatch):
+    # The window is a budget: a long conversation must not put every turn into state.
+    items = [
+        {"id": f"m{i}", "authorKind": "System", "text": "x" * 400} for i in range(60)
+    ]
+    _patch_registry(monkeypatch, _StubRegistry(payload={"items": items}))
+
+    result = await run_load_context(
+        _context_state({"organization_id": "org-1", "conversation_id": "conv-1"})
+    )
+
+    assert 0 < len(result["history"]) < len(items)
+    # The newest turn is always kept: a window without the message just received is useless.
+    assert result["history"][-1]["id"] == "m59"

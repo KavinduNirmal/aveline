@@ -4,6 +4,12 @@ import {
   Building2,
   X,
   Check,
+  Archive,
+  ChevronDown,
+  ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  RotateCcw,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -21,6 +27,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { formatMoney } from '@/lib/format-money'
+import { cn } from '@/lib/utils'
 import type { SourcingRequestMock, SupplierMock } from './mockData'
 
 interface SourcingTabProps {
@@ -59,6 +66,46 @@ export function SourcingTab({
   const [referenceImageUrl] = useState(
     'https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?auto=format&fit=crop&w=800&q=80',
   )
+
+  /**
+   * A board of heavy cards grows past the screen fast, so each one folds.
+   *
+   * Absent means open: a ticket is whole until someone folds it, and a column folds all of its own
+   * with one control, which is the difference between a readable board and a scrolling minigame.
+   */
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [showArchived, setShowArchived] = useState(false)
+
+  const archiveTicket = (ticket: SourcingRequestMock) => {
+    onUpdateStatus(ticket.id, 'archived')
+    // Undo is the confirmation: it restores the stage the ticket actually came from, which the
+    // board would otherwise have no way to know.
+    toast.success(`Archived the ${ticket.category} ticket for ${ticket.clientName}`, {
+      description: 'It is off the pipeline, waiting under Archived.',
+      action: { label: 'Undo', onClick: () => onUpdateStatus(ticket.id, ticket.status) },
+    })
+  }
+
+  const restoreTicket = (ticket: SourcingRequestMock) => {
+    // The old stage is not recorded, so a restore re-enters at the top of the pipeline rather than
+    // guessing one. The Undo on archive is the path that keeps the exact stage.
+    onUpdateStatus(ticket.id, 'pending')
+    toast.success(`Restored the ${ticket.category} ticket for ${ticket.clientName}`, {
+      description: 'Back on the board at Pending Quote.',
+    })
+  }
+
+  const setCollapsedFor = (ids: string[], value: boolean) => {
+    setCollapsed((prev) => {
+      const next = { ...prev }
+      for (const id of ids) next[id] = value
+      return next
+    })
+  }
+
+  // An archived ticket is off the pipeline: it keeps its record without holding a column open.
+  const activeTickets = sourcingRequests.filter((ticket) => ticket.status !== 'archived')
+  const archivedTickets = sourcingRequests.filter((ticket) => ticket.status === 'archived')
 
   const handleCreateTicket = (e: React.FormEvent) => {
     e.preventDefault()
@@ -111,35 +158,80 @@ export function SourcingTab({
           </p>
         </div>
 
-        <Button
-          size="sm"
-          onClick={() => setModalOpen(true)}
-          className="gap-1.5 rounded-xl text-xs h-9 px-4 shadow-sm"
-        >
-          <Plus className="size-4" />
-          <span>New Sourcing Ticket</span>
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => setShowArchived((shown) => !shown)}
+            aria-pressed={showArchived}
+            aria-controls="archived-tickets"
+            className="gap-1.5 rounded-xl text-xs h-9 px-3 aria-pressed:bg-accent aria-pressed:text-accent-foreground"
+          >
+            <Archive className="size-4" />
+            <span>Archived ({archivedTickets.length})</span>
+          </Button>
+
+          <Button
+            size="sm"
+            onClick={() => setModalOpen(true)}
+            className="gap-1.5 rounded-xl text-xs h-9 px-4 shadow-sm"
+          >
+            <Plus className="size-4" />
+            <span>New Sourcing Ticket</span>
+          </Button>
+        </div>
       </div>
 
-      {/* Kanban Stages Grid */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-5">
+      {/* Kanban Stages Grid. Columns take their own height, so folding a column actually shortens
+          the board instead of leaving an equally tall empty track behind it. */}
+      <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-2 lg:grid-cols-5">
         {STAGES.map((stage) => {
-          const stageTickets = sourcingRequests.filter((t) => t.status === stage.id)
+          const stageTickets = activeTickets.filter((t) => t.status === stage.id)
+          const allFolded =
+            stageTickets.length > 0 && stageTickets.every((ticket) => collapsed[ticket.id])
 
           return (
             <div key={stage.id} className="flex flex-col rounded-xl border border-border/80 bg-muted/20 p-3">
               {/* Stage Header */}
-              <div className="flex items-center justify-between mb-3 px-1">
+              <div className="flex items-center justify-between gap-1 mb-3 px-1">
                 <Badge variant="outline" className={`text-[11px] font-medium ${stage.color}`}>
                   {stage.label}
                 </Badge>
-                <span className="text-xs font-semibold text-muted-foreground font-mono">
-                  {stageTickets.length}
+                <span className="flex shrink-0 items-center gap-0.5">
+                  <span className="text-xs font-semibold text-muted-foreground font-mono">
+                    {stageTickets.length}
+                  </span>
+                  {stageTickets.length > 0 && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      onClick={() =>
+                        setCollapsedFor(
+                          stageTickets.map((ticket) => ticket.id),
+                          !allFolded,
+                        )
+                      }
+                      aria-label={
+                        allFolded
+                          ? `Expand every ticket in ${stage.label}`
+                          : `Fold every ticket in ${stage.label}`
+                      }
+                      title={allFolded ? 'Expand all' : 'Fold all'}
+                    >
+                      {allFolded ? (
+                        <ChevronsUpDown className="size-3" />
+                      ) : (
+                        <ChevronsDownUp className="size-3" />
+                      )}
+                    </Button>
+                  )}
                 </span>
               </div>
 
               {/* Tickets Column */}
-              <div className="flex-1 gap-3 min-h-[300px]">
+              <div className="flex flex-1 flex-col gap-3 min-h-[300px]">
                 {stageTickets.length === 0 ? (
                   <div className="flex h-32 items-center justify-center rounded-lg border border-dashed border-border/60 text-center p-3 text-[11px] text-muted-foreground">
                     No tickets in this stage
@@ -152,6 +244,7 @@ export function SourcingTab({
                             ((ticket.targetPrice - ticket.estimatedCost) / ticket.estimatedCost) * 100,
                           )
                         : 0
+                    const open = !collapsed[ticket.id]
 
                     return (
                       <Card
@@ -159,7 +252,7 @@ export function SourcingTab({
                         className="flex flex-col overflow-hidden border-border/80 bg-card p-3.5 shadow-2xs transition-all hover:border-border hover:shadow-xs"
                       >
                         {/* Reference Image */}
-                        {ticket.referenceImageUrl && (
+                        {open && ticket.referenceImageUrl && (
                           <img
                             src={ticket.referenceImageUrl}
                             alt={ticket.category}
@@ -167,62 +260,115 @@ export function SourcingTab({
                           />
                         )}
 
-                        <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
-                          <span className="font-semibold text-foreground">{ticket.clientName}</span>
-                          <span className="font-mono">{ticket.category}</span>
+                        {/* Identity, and the two controls that keep the board readable */}
+                        <div className="flex items-start justify-between gap-1.5">
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-[10px] font-semibold text-foreground">
+                              {ticket.clientName}
+                            </span>
+                            <span className="block truncate font-mono text-[10px] text-muted-foreground">
+                              {ticket.category}
+                            </span>
+                          </span>
+                          <span className="flex shrink-0 items-center gap-0.5">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              onClick={() => archiveTicket(ticket)}
+                              aria-label={`Archive the ${ticket.category} ticket for ${ticket.clientName}`}
+                              title="Archive ticket"
+                            >
+                              <Archive className="size-3" />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              onClick={() =>
+                                setCollapsed((prev) => ({ ...prev, [ticket.id]: open }))
+                              }
+                              aria-expanded={open}
+                              aria-label={`${open ? 'Fold' : 'Open'} the ${ticket.category} ticket for ${ticket.clientName}`}
+                              title={open ? 'Fold' : 'Open'}
+                            >
+                              {open ? (
+                                <ChevronDown className="size-3.5" />
+                              ) : (
+                                <ChevronRight className="size-3.5" />
+                              )}
+                            </Button>
+                          </span>
                         </div>
 
-                        <p className="line-clamp-2 text-xs text-muted-foreground leading-snug mb-2.5">
+                        <p
+                          className={cn(
+                            'text-xs text-muted-foreground leading-snug mt-1.5 mb-2.5',
+                            open ? 'line-clamp-2' : 'line-clamp-1',
+                          )}
+                        >
                           {ticket.itemDescription}
                         </p>
 
-                        {/* Financials & Markup */}
-                        <div className="flex flex-col rounded-lg bg-muted/40 p-2 text-[11px] gap-1 mb-3">
-                          <div className="flex justify-between">
-                            <span className="text-muted-foreground">Target Retail:</span>
+                        {open ? (
+                          <>
+                            {/* Financials & Markup */}
+                            <div className="flex flex-col rounded-lg bg-muted/40 p-2 text-[11px] gap-1 mb-3">
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">Target Retail:</span>
+                                <span className="font-semibold text-primary">
+                                  {formatMoney(ticket.targetPrice)}
+                                </span>
+                              </div>
+                              <div className="flex justify-between text-muted-foreground">
+                                <span>Atelier Cost:</span>
+                                <span>{formatMoney(ticket.estimatedCost)}</span>
+                              </div>
+                              <div className="flex justify-between font-medium text-success dark:text-success pt-1 border-t border-border/50">
+                                <span>Margin:</span>
+                                <span>+{marginPct}%</span>
+                              </div>
+                            </div>
+
+                            {/* Partner Supplier */}
+                            <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mb-3">
+                              <Building2 className="size-3 text-primary shrink-0" />
+                              <span className="truncate">{ticket.supplierName}</span>
+                            </div>
+
+                            {/* Stage transition buttons */}
+                            <div className="pt-2 border-t border-border/60">
+                              <Select
+                                value={ticket.status}
+                                onValueChange={(value) =>
+                                  onUpdateStatus(ticket.id, value as SourcingRequestMock['status'])
+                                }
+                              >
+                                <SelectTrigger
+                                  aria-label={`Stage for ${ticket.itemDescription}`}
+                                  className="h-8 w-full text-[10px]"
+                                >
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="pending">Stage: Pending Quote</SelectItem>
+                                  <SelectItem value="quoted">Stage: Quoted</SelectItem>
+                                  <SelectItem value="approved">Stage: Approved</SelectItem>
+                                  <SelectItem value="ordered">Stage: Ordered</SelectItem>
+                                  <SelectItem value="fulfilled">Stage: Fulfilled</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </>
+                        ) : (
+                          // Folded: the two figures that decide whether the ticket is worth opening.
+                          <div className="flex items-center justify-between text-[10px]">
                             <span className="font-semibold text-primary">
                               {formatMoney(ticket.targetPrice)}
                             </span>
+                            <span className="font-medium text-success">+{marginPct}% margin</span>
                           </div>
-                          <div className="flex justify-between text-muted-foreground">
-                            <span>Atelier Cost:</span>
-                            <span>{formatMoney(ticket.estimatedCost)}</span>
-                          </div>
-                          <div className="flex justify-between font-medium text-success dark:text-success pt-1 border-t border-border/50">
-                            <span>Margin:</span>
-                            <span>+{marginPct}%</span>
-                          </div>
-                        </div>
-
-                        {/* Partner Supplier */}
-                        <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mb-3">
-                          <Building2 className="size-3 text-primary shrink-0" />
-                          <span className="truncate">{ticket.supplierName}</span>
-                        </div>
-
-                        {/* Stage transition buttons */}
-                        <div className="pt-2 border-t border-border/60">
-                          <Select
-                            value={ticket.status}
-                            onValueChange={(value) =>
-                              onUpdateStatus(ticket.id, value as SourcingRequestMock['status'])
-                            }
-                          >
-                            <SelectTrigger
-                              aria-label={`Stage for ${ticket.itemDescription}`}
-                              className="h-8 w-full text-[10px]"
-                            >
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="pending">Stage: Pending Quote</SelectItem>
-                              <SelectItem value="quoted">Stage: Quoted</SelectItem>
-                              <SelectItem value="approved">Stage: Approved</SelectItem>
-                              <SelectItem value="ordered">Stage: Ordered</SelectItem>
-                              <SelectItem value="fulfilled">Stage: Fulfilled</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
+                        )}
                       </Card>
                     )
                   })
@@ -232,6 +378,55 @@ export function SourcingTab({
           )
         })}
       </div>
+
+      {/* Archived tickets: off the pipeline, still on record */}
+      {showArchived && (
+        <Card
+          id="archived-tickets"
+          className="flex flex-col gap-3 border-border/80 bg-muted/20 p-4 shadow-none"
+        >
+          <div className="flex items-center justify-between">
+            <h4 className="font-serif text-sm font-medium">Archived tickets</h4>
+            <span className="text-[11px] text-muted-foreground">
+              {archivedTickets.length === 0
+                ? 'Nothing archived'
+                : `${archivedTickets.length} off the pipeline`}
+            </span>
+          </div>
+
+          {archivedTickets.length === 0 ? (
+            <p className="text-[11px] text-muted-foreground">
+              A ticket you archive leaves the board and waits here, out of the way of the work in
+              progress.
+            </p>
+          ) : (
+            <ul className="flex flex-col divide-y divide-border/60">
+              {archivedTickets.map((ticket) => (
+                <li key={ticket.id} className="flex items-center justify-between gap-3 py-2">
+                  <span className="min-w-0">
+                    <span className="block truncate text-xs font-semibold">
+                      {ticket.clientName}
+                    </span>
+                    <span className="block truncate text-[10px] text-muted-foreground">
+                      {ticket.category} · {formatMoney(ticket.targetPrice)} · {ticket.supplierName}
+                    </span>
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="xs"
+                    onClick={() => restoreTicket(ticket)}
+                    className="shrink-0"
+                  >
+                    <RotateCcw className="size-3" />
+                    <span>Restore</span>
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      )}
 
       {/* New Sourcing Ticket Modal */}
       {modalOpen && (

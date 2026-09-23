@@ -21,9 +21,13 @@ class ParsedIntent(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    # Must stay in step with `app.gate.IntentType`: the memory agent echoes the intent the gate
+    # decided, so a value the gate can produce but this Literal rejects makes the agent's own output
+    # fail validation. That is exactly what happened with `order_placement` - every purchase-intent
+    # message ("...available for purchase?") made Ava emit an error and say nothing at all.
     intent_type: Literal[
-        "item_search", "pricing_query", "customer_preference",
-        "event_query", "general_inquiry",
+        "order_placement", "item_search", "pricing_query", "customer_preference",
+        "event_query", "out_of_scope", "general_inquiry",
     ]
     occasion: str | None = None
     color: str | None = None

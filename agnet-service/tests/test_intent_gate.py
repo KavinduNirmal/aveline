@@ -68,6 +68,51 @@ def test_classify_by_rules_safety_flags_default_empty():
 
 
 # ---------------------------------------------------------------------------
+# Known keyword gaps (pinned, not yet fixed)
+# ---------------------------------------------------------------------------
+#
+# ``item_search`` recognises a hand-written vocabulary: dress, saree, blouse, outfit, party,
+# bluish, size, stock, inventory, item, photo, image, picture, matching. Fashion vocabulary
+# outside that list falls through to ``general_inquiry``, whose routing is ``["memory"]`` — so
+# the Visual agent never runs for a genuine product-search question.
+#
+# Note the inconsistency that makes the gap obvious: ``bluish`` is present while ``pinkish``
+# is not. Colours were added one at a time rather than as a class.
+#
+# Pinned with ``xfail(strict=True)`` so that when the vocabulary is generalised (or the
+# supervisor takes over routing) these turn into XPASS and force a deliberate update here.
+# See ADR-023 (Decision 3) and the implementation plan (W0.4).
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="Keyword gap: 'gowns' is not in the item_search vocabulary (ADR-023, W0.4).",
+)
+def test_gown_is_recognised_as_item_search():
+    result = classify_by_rules("Hello there. Are there any pinkish gowns in your collection?")
+    assert result.intent_type == "item_search"
+    assert "visual" in result.suggested_agents
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="Keyword gap: 'pinkish' is absent from the item_search vocabulary (ADR-023, W0.4).",
+)
+def test_pinkish_is_recognised_as_item_search():
+    assert classify_by_rules("Do you have anything pinkish?").intent_type == "item_search"
+
+
+def test_bluish_is_already_recognised_documenting_the_asymmetry():
+    """The asymmetry that proves the vocabulary was grown one word at a time.
+
+    ``bluish`` is in ``_RULE_KEYWORDS``; ``pinkish`` is not. This test passes today, and exists
+    so the inconsistency between it and the failing case above is visible in one place rather
+    than inferred.
+    """
+    assert classify_by_rules("Do you have anything bluish?").intent_type == "item_search"
+
+
+# ---------------------------------------------------------------------------
 # infer_intent (async, hybrid)
 # ---------------------------------------------------------------------------
 

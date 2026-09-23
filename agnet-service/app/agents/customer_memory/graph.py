@@ -46,6 +46,7 @@ def build_memory_graph(
     graph = StateGraph(MemoryAgentState)
 
     graph.add_node("resolve_customer", agent.resolve_customer)
+    graph.add_node("apply_staff_update", agent.apply_staff_update)
     graph.add_node("check_consent", agent.check_consent)
     graph.add_node("parse", agent.parse)
     graph.add_node("retrieve", agent.retrieve)
@@ -54,11 +55,19 @@ def build_memory_graph(
 
     graph.add_edge(START, "resolve_customer")
 
-    # resolve_customer -> end when skipped (no customer context), else check_consent.
+    # resolve_customer -> end when skipped (no customer context), else try a staff update.
     graph.add_conditional_edges(
         "resolve_customer",
         _route_skipped,
-        {"continue": "check_consent", "skip": END},
+        {"continue": "apply_staff_update", "skip": END},
+    )
+
+    # An applied (or refused) update answers the instruction directly: the rest of the run would
+    # only add a brief and a customer draft that the staff member did not ask for.
+    graph.add_conditional_edges(
+        "apply_staff_update",
+        _route_after_staff_update,
+        {"answered": "compose_output", "continue": "check_consent"},
     )
     graph.add_conditional_edges(
         "check_consent",
@@ -81,6 +90,13 @@ def build_memory_graph(
 
 def _route_skipped(state: MemoryAgentState) -> str:
     return "skip" if state.get("status") in ("skipped", "out_of_scope") else "continue"
+
+
+def _route_after_staff_update(state: MemoryAgentState) -> str:
+    """Short-circuit when a staff update instruction was handled (applied or refused)."""
+    if state.get("applied_customer_update") or state.get("customer_update_error"):
+        return "answered"
+    return "continue"
 
 
 def _route_can_personalize(state: MemoryAgentState) -> str:

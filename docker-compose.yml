@@ -7,6 +7,14 @@
 # to `[]`) so PostgreSQL/Redis are reachable only inside the compose network, and
 # front the API with a reverse proxy. The agent service is intentionally never
 # exposed to the host (it is reached only via http://agent:8000 internally).
+#
+# CONFIGURATION: every environment-specific value below (service endpoints, runtime
+# flags and published host ports) is interpolated from `.env`, and each key carries a
+# default that preserves the previous literal, so an unset `.env` still runs the stack
+# unchanged. `.env.example` documents the whole surface. In-network host/port keys must
+# match the port the target service actually listens on: the API and agent bind the port
+# named by `API_INTERNAL_PORT` / `AGENT_INTERNAL_PORT`, while PostgreSQL, Redis and the
+# collector listen on their image/config port (5432 / 6379 / 4318).
 # =============================================================================
 services:
   # ---------------------------------------------------------------------------
@@ -49,7 +57,7 @@ services:
     restart: unless-stopped
     environment:
       # URI + PASS_FILE rather than one connection URL with the password inline.
-      DATA_SOURCE_URI: postgres:5432/${POSTGRES_DB:-aveline}?sslmode=disable
+      DATA_SOURCE_URI: ${POSTGRES_HOST:-postgres}:${POSTGRES_INTERNAL_PORT:-5432}/${POSTGRES_DB:-aveline}?sslmode=${POSTGRES_SSLMODE:-disable}
       DATA_SOURCE_USER: ${POSTGRES_EXPORTER_USER:-postgres_exporter}
       DATA_SOURCE_PASS_FILE: /run/secrets/postgres_exporter_password
       # NEVER set --metric-prefix (silently ignored by the standalone collectors since
@@ -90,16 +98,16 @@ services:
     # Host port 5091 matches the web client default (VITE_API_BASE_URL=http://localhost:5091)
     # and the local `dotnet run` port, so the frontend reaches the backend in either mode.
     ports:
-      - "${API_PORT:-5091}:8080"
+      - "${API_PORT:-5091}:${API_INTERNAL_PORT:-8080}"
     environment:
-      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_ENVIRONMENT: ${API_ENVIRONMENT:-Development}
       # Bind to 0.0.0.0:8080 inside the container so the published API is reachable on the
       # port the container EXPOSEs / that compose forwards to.
-      ASPNETCORE_URLS: http://+:8080
+      ASPNETCORE_URLS: http://+:${API_INTERNAL_PORT:-8080}
       ConnectionStrings__DefaultConnection: >-
-        Host=postgres;Port=5432;Database=${POSTGRES_DB:-aveline};
+        Host=${POSTGRES_HOST:-postgres};Port=${POSTGRES_INTERNAL_PORT:-5432};Database=${POSTGRES_DB:-aveline};
         Username=${POSTGRES_USER:-aveline};Password=${POSTGRES_PASSWORD}
-      Redis__ConnectionString: redis:6379
+      Redis__ConnectionString: ${REDIS_HOST:-redis}:${REDIS_INTERNAL_PORT:-6379}
       # Event types the API consumes from the agent service. The `:-` defaults keep the API
       # subscribed to the real event types even when the env vars are unset; an empty-string
       # override would silently disable the subscription and drop Salon messages/states.
@@ -107,7 +115,7 @@ services:
       Eventing__SubscribeEventTypes__1: ${EVENTING_SUBSCRIBE_EVENT_TYPES_1:-message.updated}
       Eventing__SubscribeEventTypes__2: ${EVENTING_SUBSCRIBE_EVENT_TYPES_2:-conversation.created}
       Eventing__SubscribeEventTypes__3: ${EVENTING_SUBSCRIBE_EVENT_TYPES_3:-agent.status}
-      AgentService__BaseUrl: http://agent:8000
+      AgentService__BaseUrl: http://${AGENT_HOST:-agent}:${AGENT_INTERNAL_PORT:-8000}
       AgentService__InternalToken: ${INTERNAL_API_TOKEN:-aveline-local-development-secret-token-2026}
       # Salt for the hashed client IP and user-agent telemetry dimensions. Required in
       # Production: the API refuses to boot without it (M-1). The local default keeps the
@@ -220,19 +228,22 @@ services:
     restart: unless-stopped
     # NOTE: intentionally NOT exposed to the host — the agent is only reachable
     # within the compose network via http://agent:8000 (service-to-service auth).
+    # The listen port is overridden here (same value as the image default) so
+    # AGENT_INTERNAL_PORT genuinely drives both the bind and the API's base URL.
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "${AGENT_INTERNAL_PORT:-8000}"]
     expose:
-      - "8000"
+      - "${AGENT_INTERNAL_PORT:-8000}"
     environment:
       DATABASE_URL: >-
-        postgresql+asyncpg://${POSTGRES_USER:-aveline}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aveline}
+        postgresql+asyncpg://${POSTGRES_USER:-aveline}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:-postgres}:${POSTGRES_INTERNAL_PORT:-5432}/${POSTGRES_DB:-aveline}
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-aveline-local-development-secret-token-2026}
       # ASP.NET Core internal endpoints the agent calls (ADR-009). The API service listens on
       # 8080 inside the compose network (ASPNETCORE_URLS=http://+:8080) — NOT localhost.
       # Base URL of the ASP.NET Core API so agent tool calls hit the internal endpoints
       # (identify customer, memories, consent) used by the Customer Memory agent.
-      API_BASE_URL: http://api:8080
+      API_BASE_URL: http://${API_HOST:-api}:${API_INTERNAL_PORT:-8080}
       # Redis Pub/Sub event bus (ADR-014). The agent subscribes to aveline:*:<event_type>.
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://${REDIS_HOST:-redis}:${REDIS_INTERNAL_PORT:-6379}/0
       # Event types this service consumes from the API (empty until a consumer lands).
       SUBSCRIBE_EVENT_TYPES: ${SUBSCRIBE_EVENT_TYPES:-}
       # LLM provider (openai | deepseek), switched at runtime.
@@ -247,8 +258,10 @@ services:
       # Artificial delay (ms) between emitted agent states for integration testing.
       AGENT_STATE_DELAY_MS: ${AGENT_STATE_DELAY_MS:-0}
       # Observability (OpenTelemetry) — export traces to the otel-collector.
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
-      OTEL_SERVICE_NAME: aveline-agent-service
+      # The collector's in-network port is fixed by otel-collector-config.yaml; keep
+      # OTEL_COLLECTOR_PORT in step with that receiver endpoint if you change it.
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://${OTEL_COLLECTOR_HOST:-otel-collector}:${OTEL_COLLECTOR_PORT:-4318}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-aveline-agent-service}
       # Set to "false" in production to strip prompt/completion content from spans.
       OTEL_TRACE_CONTENT: ${OTEL_TRACE_CONTENT:-true}
     depends_on:
@@ -273,7 +286,7 @@ services:
     volumes:
       - ./otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
     ports:
-      - "4318:4318" # OTLP HTTP receiver
+      - "${OTEL_HTTP_PORT:-4318}:4318" # OTLP HTTP receiver (container port is fixed by the config file)
     expose:
       - "8889" # Prometheus exporter for agent metrics (compose network only)
     depends_on:
@@ -317,10 +330,10 @@ services:
     restart: unless-stopped
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}
-      GF_AUTH_ANONYMOUS_ENABLED: "false"
-      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "${GRAFANA_ANONYMOUS_ENABLED:-false}"
+      GF_USERS_ALLOW_SIGN_UP: "${GRAFANA_ALLOW_SIGN_UP:-false}"
       # The console is out of scope and does not embed Grafana (D3), so embedding stays off.
-      GF_SECURITY_ALLOW_EMBEDDING: "false"
+      GF_SECURITY_ALLOW_EMBEDDING: "${GRAFANA_ALLOW_EMBEDDING:-false}"
     volumes:
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
@@ -338,8 +351,8 @@ services:
     container_name: aveline_jaeger
     restart: unless-stopped
     ports:
-      - "16686:16686" # Jaeger UI
-      - "4317:4317" # OTLP gRPC receiver (collector forwards here)
+      - "${JAEGER_UI_PORT:-16686}:16686" # Jaeger UI
+      - "${JAEGER_OTLP_GRPC_PORT:-4317}:4317" # OTLP gRPC receiver (collector forwards here)
 
 volumes:
   postgres_data:

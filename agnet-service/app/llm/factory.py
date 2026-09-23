@@ -19,12 +19,14 @@ _PROVIDER_OPENAI = "openai"
 _PROVIDER_DEEPSEEK = "deepseek"
 
 
-def create_chat_model(settings: Settings) -> BaseChatModel:
+def create_chat_model(settings: Settings, temperature: float | None = None) -> BaseChatModel:
     """Return a configured chat model for the configured LLM provider.
 
     Args:
         settings: Application settings carrying ``llm_provider``, ``llm_api_key``,
             ``llm_base_url`` and ``llm_model``.
+        temperature: Optional sampling temperature. Omitted means the provider's own default,
+            which is what drafting wants; the supervisor passes 0 for a deterministic decision.
 
     Returns:
         A ``ChatOpenAI`` or ``ChatDeepSeek`` instance.
@@ -39,6 +41,8 @@ def create_chat_model(settings: Settings) -> BaseChatModel:
     }
     if settings.llm_base_url:
         kwargs["base_url"] = settings.llm_base_url
+    if temperature is not None:
+        kwargs["temperature"] = temperature
 
     if provider == _PROVIDER_OPENAI:
         logger.info("Creating OpenAI chat model (model=%s).", settings.llm_model)

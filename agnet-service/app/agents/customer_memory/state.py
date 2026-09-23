@@ -27,6 +27,12 @@ class MemoryAgentState(TypedDict, total=False):
     # Working results
     consent_status: str | None
     profile: dict[str, Any] | None
+    #: Set when an explicit staff instruction changed the customer's details. Its presence routes
+    #: the run straight to a confirmation instead of a brief and draft.
+    applied_customer_update: dict[str, Any] | None
+    #: Set when such an instruction could not be applied (duplicate phone, customer not found), so
+    #: the run explains the failure rather than silently doing nothing.
+    customer_update_error: str | None
     semantic_context: list[dict[str, Any]]
     parsed_intent: dict[str, Any] | None
     extracted_memories: list[dict[str, Any]]

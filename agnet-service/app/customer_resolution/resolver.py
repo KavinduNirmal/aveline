@@ -44,17 +44,21 @@ async def resolve_customer(
     # such customer, the note is declaring a brand-new customer (often with an @name) -> onboard
     # them via identify (create) rather than asking for a number they already gave.
     if mentions.phone:
-        lookup = _from_lookup(await registry.lookup_customers(org_id, phone=mentions.phone), message)
+        lookup = _from_lookup(
+            await registry.lookup_customers(org_id, phone=mentions.phone), message, explicit=True)
         if lookup.kind != "not_found":
             return lookup
         return await _identify_resolution(
             registry, org_id, message, phone=mentions.phone, name=mentions.customer)
 
     if mentions.customer:
-        return _from_lookup(await registry.lookup_customers(org_id, name=mentions.customer), message)
+        return _from_lookup(
+            await registry.lookup_customers(org_id, name=mentions.customer), message, explicit=True)
 
     search_phone = phone or extract_phone(message)
     if search_phone:
+        # The supplied context phone is the caller's own identity (an inbound sender), not a
+        # mention typed in the message, so this is not an explicit mention.
         return _from_lookup(await registry.lookup_customers(org_id, phone=search_phone), message)
 
     name = extract_customer_name(message)
@@ -75,11 +79,27 @@ async def _identify_resolution(
     """Create-or-fetch a customer by phone (with an optional display name) and resolve to it."""
     profile = await registry.identify_customer(org_id, phone, name)
     customer_id = str(profile.get("customerId") or profile.get("id") or "")
-    return CustomerResolution(kind="resolved", customer_id=customer_id, profile=profile, message=message)
+    return CustomerResolution(
+        kind="resolved",
+        customer_id=customer_id,
+        profile=profile,
+        message=message,
+        # Reached only through an explicit #phone mention.
+        explicit_mention=True,
+    )
 
 
-def _from_lookup(payload: dict[str, Any] | None, message: str) -> CustomerResolution:
-    """Map a backend lookup response onto a ``CustomerResolution``."""
+def _from_lookup(
+    payload: dict[str, Any] | None,
+    message: str,
+    *,
+    explicit: bool = False,
+) -> CustomerResolution:
+    """Map a backend lookup response onto a ``CustomerResolution``.
+
+    ``explicit`` records that an ``@name``/``#phone`` mention drove the lookup, which callers use
+    to decide whether a miss should be asked about.
+    """
     matches = (payload or {}).get("matches") or []
 
     if len(matches) == 1:
@@ -89,6 +109,7 @@ def _from_lookup(payload: dict[str, Any] | None, message: str) -> CustomerResolu
             customer_id=str(match["customerId"]),
             profile=match,
             message=message,
+            explicit_mention=explicit,
         )
 
     if len(matches) > 1:
@@ -96,9 +117,10 @@ def _from_lookup(payload: dict[str, Any] | None, message: str) -> CustomerResolu
             kind="ambiguous",
             candidates=[_candidate(m) for m in matches],
             message=message,
+            explicit_mention=explicit,
         )
 
-    return CustomerResolution(kind="not_found", message=message)
+    return CustomerResolution(kind="not_found", message=message, explicit_mention=explicit)
 
 
 def _candidate(match: dict[str, Any]) -> CustomerCandidate:

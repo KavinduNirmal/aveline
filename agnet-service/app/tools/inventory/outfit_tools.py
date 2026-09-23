@@ -28,11 +28,14 @@ def compose_outfit(
         "crafted in signature textures and silhouette."
     )
 
-    first_image = next((item.imageUrl for item in items if item.imageUrl), None)
-
     return LookDto(
         name=f"Look: {occasion_label}",
         text=commentary,
-        imageUrl=first_image,
+        # Deliberately no `imageUrl`. A look is a pairing and a rationale, not a photograph: the
+        # boutique holds one picture per piece, so there is no picture *of the look*. Handing it the
+        # first matched piece's photo made the Salon render that photograph twice — once on the
+        # piece, once on the look — which read as a duplicated result. A look with no image renders
+        # as its styling note, which is what it has to say.
+        imageUrl=None,
         items=items,
     )

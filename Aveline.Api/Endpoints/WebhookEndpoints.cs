@@ -213,6 +213,13 @@ public static class WebhookEndpoints
                     {
                         await broadcaster.BroadcastConversationChangedAsync(tile, ct);
                     }
+
+                    // The message itself is broadcast here too. The tile only refreshes the inbox
+                    // list; without this frame an open thread learns nothing until it is refetched,
+                    // which is why an inbound customer message needed a manual browser refresh
+                    // while agent and staff messages appeared live (those arrive via
+                    // `message.created`, this path writes the row directly).
+                    await broadcaster.BroadcastMessageAsync(recorded, ct);
                 }
                 catch (Exception ex)
                 {

@@ -10,8 +10,16 @@ def _clear_settings_cache():
     get_settings.cache_clear()
 
 
-def test_defaults_are_sane():
-    settings = Settings()
+def test_defaults_are_sane(monkeypatch):
+    # Assert the *built-in* defaults, isolated from the developer's machine. Two separate things
+    # leak in otherwise: `.env` (hence `_env_file=None`) and exported environment variables, which
+    # outrank both the file and the default. Several really are exported here (`LLM_MODEL`,
+    # `AGENT_STATE_DELAY_MS`, ...), which is what made this test report one machine's setup as a
+    # code defect. The list is derived from the model so a new setting cannot reintroduce the leak.
+    for name in Settings.model_fields:
+        monkeypatch.delenv(name.upper(), raising=False)
+
+    settings = Settings(_env_file=None)
     assert settings.app_name == "Aveline Agent Service"
     assert settings.llm_provider == "deepseek"
     assert settings.llm_api_key == ""
@@ -23,6 +31,9 @@ def test_defaults_are_sane():
     assert settings.database_url == ""
     assert settings.otel_service_name == "aveline-agent-service"
     assert settings.otel_trace_content is True
+    # Context window defaults (ADR-023).
+    assert settings.context_window_turns == 20
+    assert settings.context_window_tokens == 2000
 
 
 def test_env_vars_map_to_settings(monkeypatch):

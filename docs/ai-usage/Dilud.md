@@ -3187,9 +3187,10 @@
 2. Ran `ruff check --fix app/` in `agnet-service` to fix trailing whitespace in `nodes.py`.
 3. Reverted `StackExchange.Redis` in `Aveline.Api/Aveline.Api.csproj` to `2.7.27`.
 4. Moved color filtering in `Aveline.Api/Modules/VisualIntelligence/Repositories/InventoryRepository.cs` to in-memory post-query processing (matching `Sizes` evaluation) so complex substring/boundary matching works across EF Core database providers without LINQ translation errors.
-5. Fixed `TenantDashboardDocumentationTests.cs` to normalize `\r\n` line endings when reading OpenAPI spec files.
+6. Removed redundant `sk_test_placeholder` pattern from `.husky/pre-commit` to prevent Trivy from triggering false-positive CRITICAL Stripe secret key alerts.
 
 ### Files Created or Modified
+- `.husky/pre-commit`
 - `.gitignore`
 - `.github/workflows/apisec-scan.yml`
 - `Aveline.Api/Aveline.Api.csproj`

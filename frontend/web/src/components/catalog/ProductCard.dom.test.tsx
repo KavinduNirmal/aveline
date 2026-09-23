@@ -67,6 +67,26 @@ describe('ProductCard', () => {
     expect(screen.getByText(/low stock/i)).toBeInTheDocument()
   })
 
+  it('paints the swatch with the colour the analysis measured', () => {
+    const { container } = renderCard({ colorHex: '#D5006D' })
+
+    // `VisualAttributesBadge` renders the dot only when a hex is present; the inline style is the
+    // dot and nothing else on the card carries an inline colour.
+    const swatch = container.querySelector('span[aria-hidden][style]')
+    expect(swatch).not.toBeNull()
+    expect(swatch).toHaveStyle({ backgroundColor: '#D5006D' })
+  })
+
+  it('renders no swatch when the item carries no measured hex, never a grey default', () => {
+    const { container } = renderCard({ colorHex: undefined })
+
+    // The colour name is still observed and shown; only the unmeasured dot is withheld.
+    expect(screen.getByText('Emerald Green')).toBeInTheDocument()
+    expect(container.querySelector('span[aria-hidden][style]')).toBeNull()
+    // #4B5563 is Tailwind gray-600, the placeholder the normaliser used to invent.
+    expect(container.querySelector('[style*="75, 85, 99"]')).toBeNull()
+  })
+
   it('collects the piece actions into one menu and offers only the ones it was given', async () => {
     const onEditItem = vi.fn()
     render(
@@ -88,5 +108,52 @@ describe('ProductCard', () => {
     // No QR and no delete handler were passed, so neither is offered.
     expect(screen.queryByRole('menuitem', { name: /qr/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('menuitem', { name: /delete/i })).not.toBeInTheDocument()
+  })
+
+  it('offers the stock adjustments it was given, and not the ones it was not', async () => {
+    render(
+      <ProductCard
+        item={item()}
+        onViewMatches={noop}
+        onComposeOutfit={noop}
+        onReduceStock={vi.fn()}
+        onMarkOutOfStock={vi.fn()}
+      />,
+    )
+
+    // Radix opens its menu from the trigger's key handler; a synthesized pointer click can be
+    // swallowed once an earlier DOM test has run in the same file.
+    screen.getByRole('button', { name: /actions for/i }).focus()
+    await userEvent.keyboard('{ArrowDown}')
+
+    expect(await screen.findByRole('menuitem', { name: /reduce stock/i })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /mark out of stock/i })).toBeInTheDocument()
+  })
+
+  it('opens the piece from its image and from its name when a handler is given', async () => {
+    const onOpen = vi.fn()
+    render(
+      <ProductCard
+        item={item()}
+        onViewMatches={noop}
+        onComposeOutfit={noop}
+        onOpen={onOpen}
+      />,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /view details for royal emerald silk saree/i }))
+    expect(onOpen).toHaveBeenCalledTimes(1)
+
+    // The name is the second affordance, so a reader who aims at the text still opens the piece.
+    await userEvent.click(screen.getByRole('button', { name: 'Royal Emerald Silk Saree' }))
+    expect(onOpen).toHaveBeenCalledTimes(2)
+  })
+
+  it('stays a plain tile with no dead open controls when no handler is given', () => {
+    renderCard()
+
+    expect(screen.queryByRole('button', { name: /view details for/i })).not.toBeInTheDocument()
+    // The name is still a heading, not a button, so nothing invites a click that does nothing.
+    expect(screen.getByRole('heading', { name: 'Royal Emerald Silk Saree' })).toBeInTheDocument()
   })
 })

@@ -5,8 +5,10 @@ using Aveline.Api.Common.Media;
 using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Infrastructure.Eventing;
 using Aveline.Api.Infrastructure.RateLimiting;
+using Aveline.Api.Modules.Conversations.Attachments;
 using Aveline.Api.Modules.Integrations.Models;
 using Aveline.Api.Modules.Integrations.Services;
+using Aveline.Api.Modules.Media;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -328,13 +330,32 @@ public static class WebhookEndpoints
             }
 
             var fileName = InboundMediaFileName(message.Id, fetched.ContentType ?? media.MimeType);
-            var contentType = MediaContentTypes.Resolve(fetched.ContentType ?? media.MimeType, fileName);
+
+            // Meta's `sha256` was parsed and discarded (G7). It is the channel's own byte-level
+            // identity of what it served, and our computed hash is of the bytes we actually
+            // downloaded; the two are the same identity, so they must agree. A disagreement is a
+            // real integrity signal and the row is refused, because a hash that does not describe
+            // the stored bytes would poison the dedup key the Elle workstream reads as
+            // `ImageSha256` (strategy §9). The stored value is the canonical lowercase-hex hash,
+            // which a verified channel hash equals; a channel that supplies none still gets one.
+            var contentHash = AttachmentContentHash.Compute(fetched.Bytes);
+            if (!string.IsNullOrWhiteSpace(media.Sha256)
+                && !string.Equals(media.Sha256.Trim(), contentHash, StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogWarning(
+                    "Inbound WhatsApp media refused: the channel's sha256 does not match the downloaded bytes. organizationId={OrganizationId} mediaId={MediaId}",
+                    organizationId, media.Id);
+                return null;
+            }
+
+            var contentType = AttachmentContentPolicy.ResolveForStorage(
+                fetched.ContentType ?? media.MimeType, fileName, fetched.Bytes);
             if (contentType is null)
             {
-                // Audio, video or anything else off the allow-list: recorded as skipped rather
-                // than stored.
+                // Audio, video, anything else off the allow-list, or an image claim the bytes do
+                // not support: recorded as skipped rather than stored.
                 logger.LogInformation(
-                    "Inbound WhatsApp media skipped: unsupported type. organizationId={OrganizationId} type={Type}",
+                    "Inbound WhatsApp media skipped: unsupported or mislabelled type. organizationId={OrganizationId} type={Type}",
                     organizationId, fetched.ContentType ?? media.MimeType);
                 return null;
             }

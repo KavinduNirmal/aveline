@@ -13,6 +13,8 @@ interface MessageBubbleProps {
   onSignOff?: (approved: boolean) => void
   /** Called when the staff picks a customer from a resolution `choice` block. */
   onSelectCustomer?: (customerId: string) => void
+  /** Called with the attachment id when a thread attachment is opened for viewing. */
+  onOpenAttachment?: (attachmentId: string) => void
   /** Called as a streamed message types out, so the thread can keep the tail in view. */
   onStreamProgress?: () => void
 }
@@ -92,6 +94,7 @@ export function MessageBubble({
   isOwn,
   onSignOff,
   onSelectCustomer,
+  onOpenAttachment,
   onStreamProgress,
 }: MessageBubbleProps) {
   const persona = personaForAuthor(message.authorKind, message.agentKey)
@@ -128,7 +131,11 @@ export function MessageBubble({
               blocks={message.contentBlocks}
               onSignOff={onSignOff}
               onSelectCustomer={onSelectCustomer}
+              onOpenAttachment={onOpenAttachment}
               persona={persona}
+              // The staff bubble is filled with `primary`; the attachment surface has to know so it
+              // tints with the bubble's ink instead of punching a background-coloured hole in it.
+              tone={isOwn ? 'own' : 'other'}
             />
           )}
         </div>

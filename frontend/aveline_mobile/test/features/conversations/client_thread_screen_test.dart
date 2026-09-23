@@ -79,6 +79,9 @@ class _SeedThread implements ThreadRepository {
   /// The attachments this fake stored, in order.
   final List<String> uploaded = [];
 
+  /// Whether `uploadAttachment` refuses, so a test can drive the tray's failure state.
+  bool failUpload = false;
+
   /// The bytes `fetchAttachmentBytes` serves.
   final List<int> _attachmentBytes = _tinyPng;
 
@@ -183,6 +186,9 @@ class _SeedThread implements ThreadRepository {
     int? width,
     int? height,
   }) async {
+    if (failUpload) {
+      throw Exception('The file could not be uploaded.');
+    }
     final id = 'att_${++_attachmentCount}';
     uploaded.add(id);
     return ThreadAttachment(
@@ -1626,6 +1632,102 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(thread.sentAttachments.single, isEmpty);
+    });
+
+    testWidgets('a picker that fails says so on screen, not only in the log', (
+      tester,
+    ) async {
+      await _open(
+        tester,
+        repository: _SeedThread(seed: {_nadeesha.id: []}),
+        attachmentPicker: (source) async =>
+            throw StateError('the photo library refused'),
+      );
+
+      await tester.tap(find.byKey(const Key('thread_attach')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('thread_attach_gallery')));
+      await tester.pumpAndSettle();
+
+      // The exception used to reach `debugPrint` alone; the associate now sees an outcome.
+      expect(find.text('That file could not be attached.'), findsOneWidget);
+    });
+
+    testWidgets('a sixth file is refused in the API\u2019s words and never uploaded', (
+      tester,
+    ) async {
+      final thread = _SeedThread(seed: {_nadeesha.id: []});
+      var picks = 0;
+
+      List<PickedAttachment> batch(int count) => [
+        for (var n = 1; n <= count; n++)
+          PickedAttachment(
+            bytes: Uint8List.fromList(_tinyPng),
+            contentType: 'image/png',
+            fileName: 'photo_$n.png',
+          ),
+      ];
+
+      await _open(
+        tester,
+        repository: thread,
+        attachmentPicker: (source) async => batch(++picks == 1 ? 5 : 1),
+      );
+
+      Future<void> pickAgain() async {
+        await tester.tap(find.byKey(const Key('thread_attach')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('thread_attach_gallery')));
+        await tester.pumpAndSettle();
+      }
+
+      // Five fit under the cap and are stored.
+      await pickAgain();
+      expect(thread.uploaded, hasLength(5));
+
+      // The sixth is refused before a byte is uploaded, with the server's own wording.
+      await pickAgain();
+      expect(thread.uploaded, hasLength(5));
+      expect(
+        find.text('A message may carry at most 5 attachments.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('a failed upload is readable in the tray and can be retried', (
+      tester,
+    ) async {
+      final thread = _SeedThread(seed: {_nadeesha.id: []})..failUpload = true;
+
+      await _open(
+        tester,
+        repository: thread,
+        attachmentPicker: (source) async => [
+          PickedAttachment(
+            bytes: Uint8List.fromList(_tinyPng),
+            contentType: 'image/png',
+            fileName: 'photo.png',
+          ),
+        ],
+      );
+
+      await tester.tap(find.byKey(const Key('thread_attach')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('thread_attach_gallery')));
+      await tester.pumpAndSettle();
+
+      // The red border and retry icon stay; the reason is now readable too.
+      expect(find.byKey(const Key('thread_attachment_error')), findsOneWidget);
+      expect(find.text('Could not upload photo.png.'), findsOneWidget);
+
+      thread.failUpload = false;
+      await tester.tap(
+        find.byKey(const Key('thread_retry_upload_local_att_1')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(thread.uploaded, ['att_1']);
+      expect(find.byKey(const Key('thread_attachment_error')), findsNothing);
     });
   });
 

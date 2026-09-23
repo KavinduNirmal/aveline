@@ -4,6 +4,8 @@ using Aveline.Api.Modules.Conversations.Attachments;
 using Aveline.Api.Modules.Conversations.Models;
 using Aveline.Api.Modules.Conversations.Repositories;
 using Aveline.Api.Modules.Conversations.Services;
+using Aveline.Api.Modules.Media;
+using CloudinaryDotNet.Actions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -40,7 +42,8 @@ public class ConversationAttachmentTests
 
     private Task<MessageAttachment> UploadAsync(string contentType = "image/jpeg", string fileName = "photo.jpg")
         => _store.StoreAsync(new AttachmentStoreRequest(
-            _orgId, _conversationId, Guid.NewGuid(), Bytes, contentType, fileName, null, null));
+            _orgId, _conversationId, Guid.NewGuid(), Bytes, contentType, fileName, null, null,
+            MediaSource.Web, null, AttachmentContentHash.Compute(Bytes)));
 
     [Fact]
     public async Task StoreAsync_WritesTheRowWithTheDatabaseProviderAndAnAuthenticatedUrl()
@@ -75,7 +78,8 @@ public class ConversationAttachmentTests
             .GetOrCreateSalonAsync(_orgId, Guid.NewGuid(), Guid.NewGuid(), "thread-attach-other")
             .GetAwaiter().GetResult().Conversation.Id;
         var foreign = await _store.StoreAsync(new AttachmentStoreRequest(
-            _orgId, other, Guid.NewGuid(), Bytes, "image/png", "other.png", null, null));
+            _orgId, other, Guid.NewGuid(), Bytes, "image/png", "other.png", null, null,
+            MediaSource.Web, null, AttachmentContentHash.Compute(Bytes)));
         var bound = await UploadAsync();
         bound.MessageId = Guid.NewGuid();
         await _attachments.SaveAsync(bound);
@@ -108,6 +112,92 @@ public class ConversationAttachmentTests
     }
 
     [Fact]
+    public async Task CloudinaryStore_UploadsThroughTheProviderSeamsBoundedRetry()
+    {
+        // U2.3: the row seam adds no retry of its own. It hands the bytes to `IMediaStorage`,
+        // whose Cloudinary implementation owns the bounded `420`/5xx policy (risk R22), so a
+        // rate-limited upload succeeds on the second attempt without a second retry loop here.
+        var gateway = new RecordingCloudinaryGateway(failFirstWith: 420);
+        var storage = CloudinaryStorage(gateway);
+        var store = new CloudinaryAttachmentStore(
+            _context,
+            storage,
+            Microsoft.Extensions.Options.Options.Create(new MediaOptions()),
+            TimeProvider.System);
+
+        var attachment = await store.StoreAsync(new AttachmentStoreRequest(
+            _orgId, _conversationId, Guid.NewGuid(), Bytes, "image/jpeg", "photo.jpg", null, null,
+            MediaSource.Web, null, AttachmentContentHash.Compute(Bytes)));
+
+        Assert.Equal(2, gateway.UploadAttempts);
+        Assert.Equal("cloudinary", attachment.StorageProvider);
+        Assert.Contains(attachment.Id.ToString(), attachment.StorageKey);
+        Assert.Equal(1, await _context.MessageAttachments.CountAsync(a => a.Id == attachment.Id));
+    }
+
+    private static CloudinaryMediaStorage CloudinaryStorage(ICloudinaryGateway gateway)
+    {
+        var options = new Aveline.Api.Modules.Media.CloudinaryOptions
+        {
+            CloudName = "a-cloud",
+            ApiKey = "test-key",
+            ApiSecret = "test-secret",
+            UploadRetryAttempts = 3,
+        };
+
+        return new CloudinaryMediaStorage(
+            gateway,
+            Microsoft.Extensions.Options.Options.Create(options),
+            new CloudinaryRetryPolicy(options, NullLogger.Instance, new NoOpRetryDelay()),
+            NullLogger<CloudinaryMediaStorage>.Instance);
+    }
+
+    /// <summary>Fails the first upload with a retryable status, then accepts.</summary>
+    private sealed class RecordingCloudinaryGateway(int failFirstWith) : ICloudinaryGateway
+    {
+        public int UploadAttempts { get; private set; }
+
+        public bool Secure => true;
+
+        public Task<CloudinaryAttemptResult> UploadImageAsync(ImageUploadParams parameters, CancellationToken ct)
+        {
+            UploadAttempts++;
+            return Task.FromResult(UploadAttempts == 1
+                ? new CloudinaryAttemptResult(failFirstWith, "rate limited", null, null, null, 0, false)
+                : new CloudinaryAttemptResult(
+                    200, null, parameters.PublicId,
+                    "https://res.cloudinary.com/a-cloud/image/authenticated/v1/" + parameters.PublicId,
+                    null, Bytes.LongLength, false));
+        }
+
+        public Task<CloudinaryAttemptResult> UploadRawAsync(RawUploadParams parameters, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task<CloudinaryAttemptResult> DestroyAsync(DeletionParams parameters, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task<CloudinaryResourceInfo?> GetResourceAsync(
+            string publicId, string resourceType, string deliveryType, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public string BuildDeliveryUrl(string publicId, string resourceType, string deliveryType, bool signed)
+            => $"https://res.cloudinary.com/a-cloud/{resourceType}/{deliveryType}/{publicId}";
+
+        public string BuildPrivateDownloadUrl(
+            string publicId, string resourceType, string deliveryType, DateTimeOffset expiresAtUtc)
+            => $"https://api.cloudinary.com/v1_1/a-cloud/{resourceType}/download?public_id={publicId}";
+
+        public Task<Stream> FetchAsync(string url, CancellationToken ct)
+            => throw new NotSupportedException();
+    }
+
+    /// <summary>The backoff without its wall-clock cost; the retry count is what is asserted.</summary>
+    private sealed class NoOpRetryDelay : IMediaRetryDelay
+    {
+        public Task DelayAsync(TimeSpan delay, CancellationToken ct) => Task.CompletedTask;
+    }
+
+    [Fact]
     public async Task SweepAsync_DeletesAnOrphanAndKeepsABoundRow()
     {
         // The name is hoisted: evaluated inside the options lambda it would mint a fresh
@@ -133,10 +223,12 @@ public class ConversationAttachmentTests
             var orgId = Guid.NewGuid();
 
             var orphan = await store.StoreAsync(new AttachmentStoreRequest(
-                orgId, conversationId, null, Bytes, "image/jpeg", "orphan.jpg", null, null));
+                orgId, conversationId, null, Bytes, "image/jpeg", "orphan.jpg", null, null,
+                MediaSource.Web, null, AttachmentContentHash.Compute(Bytes)));
             orphan.CreatedAtUtc = DateTime.UtcNow - AttachmentSweepJob.Ttl - TimeSpan.FromHours(1);
             var bound = await store.StoreAsync(new AttachmentStoreRequest(
-                orgId, conversationId, null, Bytes, "image/jpeg", "bound.jpg", null, null));
+                orgId, conversationId, null, Bytes, "image/jpeg", "bound.jpg", null, null,
+                MediaSource.Web, null, AttachmentContentHash.Compute(Bytes)));
             bound.MessageId = Guid.NewGuid();
             await context.SaveChangesAsync();
             await repository.SaveAsync(bound);

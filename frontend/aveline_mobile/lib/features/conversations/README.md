@@ -308,6 +308,22 @@ document's chip opens through the OS viewer once its bytes arrive, and the whole
 injectable (`attachmentPicker`, `attachmentOpener`) so a widget test never touches a
 plugin.
 
+**The two attachment gaps the web picker surfaced are now closed.** They were recorded as
+small Flutter follow-ups when the web picker design was written; this slice closed them
+rather than leaving the two clients to drift on how many files are allowed or on how a
+failure is shown.
+
+- **The 5-per-message cap is enforced on the pick path.** `ClientThreadController.attach`
+  refuses a sixth file before a byte is uploaded, with the server's own sentence
+  (`A message may carry at most 5 attachments.`) built from a mirrored constant, so the
+  client cannot drift from the API on either the rule or the wording. Previously the sixth
+  file was uploaded and the send answered `400`, surfacing only the generic
+  "That message could not be sent." toast.
+- **Upload failures are rendered, not only logged.** A picker exception now raises a toast
+  instead of reaching only `debugPrint`, and the tray renders the controller's failure
+  beside the retry control, naming the file it could not upload. The text is preserved and
+  the existing tray, progress and retry behaviour is unchanged.
+
 - **The thread marks itself read; the inbox still draws no badge.** The thread owns a
   `ConversationReadState` row per `(organization, user, conversation)`, written through
   `PATCH …/read` with a marker that never moves backwards. Nothing on the inbox shows a

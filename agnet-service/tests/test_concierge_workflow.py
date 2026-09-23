@@ -250,6 +250,7 @@ async def test_workflow_reference_image_path():
 async def test_run_visual_agent_wires_llm_when_configured(monkeypatch):
     """Verify run_visual_agent queries visual_llm_or_none and executes with LLM commentary."""
     from unittest.mock import AsyncMock, MagicMock
+
     from app.workflows.concierge_workflow import run_visual_agent
 
     mock_llm_res = MagicMock()
@@ -378,3 +379,84 @@ async def test_resolve_node_records_explicit_customer(monkeypatch):
 
     assert out["resolution"]["kind"] == "resolved"
     assert calls == [("org-1", "c1", None)]
+
+
+# ---------------------------------------------------------------------------
+# The org_context -> visual state bridge (U3.1)
+# ---------------------------------------------------------------------------
+
+REAL_ORG = "11111111-2222-3333-4444-555555555555"
+REAL_ATTACHMENT = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+
+class _CapturingGraph:
+    """A stand-in visual sub-graph that records the state it is invoked with."""
+
+    def __init__(self, sink: dict) -> None:
+        self._sink = sink
+
+    async def ainvoke(self, state: dict) -> dict:
+        self._sink.update(state)
+        return {"output": {"status": "success", "agent": "visual", "ran": True, "items": [], "looks": []}}
+
+
+def _patch_visual_subgraph(monkeypatch, sink: dict) -> None:
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.build_visual_graph",
+        lambda registry, llm=None: _CapturingGraph(sink),
+    )
+    monkeypatch.setattr("app.workflows.concierge_workflow.ToolRegistry", lambda: None)
+    monkeypatch.setattr("app.workflows.concierge_workflow.visual_llm_or_none", lambda settings: None)
+
+
+@pytest.mark.asyncio
+async def test_run_visual_agent_maps_the_attachment_reference_into_the_subgraph(monkeypatch):
+    """The contract's `attachments[].reference` becomes the state's reference fields."""
+    from app.workflows.concierge_workflow import run_visual_agent
+
+    captured: dict = {}
+    _patch_visual_subgraph(monkeypatch, captured)
+
+    await run_visual_agent({
+        "message": "match this photo",
+        "org_context": {
+            "organization_id": REAL_ORG,
+            "image_url": "https://bridge.example/api/v1/media/rotating-token",
+            "attachments": [
+                {
+                    "attachmentId": REAL_ATTACHMENT,
+                    "publicId": f"aveline/{REAL_ORG}/conversations/{REAL_ATTACHMENT}",
+                    "reference": {"kind": "attachment", "id": REAL_ATTACHMENT},
+                }
+            ],
+        },
+        "intent": {"intent_type": "item_search"},
+    })
+
+    assert captured["org_id"] == REAL_ORG
+    assert captured["image_ref_kind"] == "attachment"
+    assert captured["image_ref_id"] == REAL_ATTACHMENT
+    assert captured["image_url"] == "https://bridge.example/api/v1/media/rotating-token"
+
+
+@pytest.mark.asyncio
+async def test_run_visual_agent_keeps_the_legacy_arm_when_no_reference_is_present(monkeypatch):
+    """No attachments -> no reference, and the legacy absolute URL still reaches the sub-graph."""
+    from app.workflows.concierge_workflow import run_visual_agent
+
+    captured: dict = {}
+    _patch_visual_subgraph(monkeypatch, captured)
+
+    await run_visual_agent({
+        "message": "match this photo",
+        "org_context": {
+            "organization_id": REAL_ORG,
+            "image_url": "https://example.com/legacy.jpg",
+        },
+        "intent": {"intent_type": "item_search"},
+    })
+
+    assert captured["org_id"] == REAL_ORG
+    assert captured["image_ref_kind"] is None
+    assert captured["image_ref_id"] is None
+    assert captured["image_url"] == "https://example.com/legacy.jpg"

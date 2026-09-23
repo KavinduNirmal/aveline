@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ConversationDto } from '@/types/conversation'
@@ -10,10 +11,42 @@ vi.mock('@/contexts/ConversationsContext', () => ({
 }))
 
 // The neighbouring components are mocked so this test is about *whose* thread the drawer reads,
-// not about how a message bubble renders. The mocks echo the props they are given.
+// not about how a message bubble renders. The Composer mock echoes the attachment wiring it is
+// given, because the drawer's paperclip is exactly what was missing.
 vi.mock('@/components/conversation/Composer', () => ({
-  Composer: ({ disabled, placeholder }: { disabled?: boolean; placeholder?: string }) => (
-    <input aria-label="composer" disabled={disabled} placeholder={placeholder} />
+  Composer: ({
+    disabled,
+    placeholder,
+    onAttach,
+    onSend,
+    pendingAttachments,
+  }: {
+    disabled?: boolean
+    placeholder?: string
+    onAttach?: (files: File[]) => Promise<unknown>
+    onSend?: (text: string, attachmentIds?: string[]) => unknown
+    pendingAttachments?: unknown[]
+  }) => (
+    <div>
+      <input
+        aria-label="composer"
+        disabled={disabled}
+        placeholder={placeholder}
+        data-has-attach={onAttach ? 'true' : 'false'}
+        data-pending={pendingAttachments?.length ?? 0}
+      />
+      {onAttach ? (
+        <button
+          type="button"
+          onClick={() => void onAttach([new File(['x'], 'a.png', { type: 'image/png' })])}
+        >
+          mock-attach
+        </button>
+      ) : null}
+      <button type="button" onClick={() => void onSend?.('hello', ['att-1'])}>
+        mock-send
+      </button>
+    </div>
   ),
 }))
 vi.mock('@/components/conversation/MessageThread', () => ({
@@ -74,6 +107,11 @@ function contextValue(overrides: Record<string, unknown> = {}) {
     openAveline: vi.fn(),
     sendToAveline: vi.fn(),
     decideAveline: vi.fn(),
+    // The shared attachment tray, keyed by conversation id.
+    pendingAttachments: {},
+    attach: vi.fn(async () => []),
+    retryAttachment: vi.fn(),
+    removeAttachment: vi.fn(),
     ...overrides,
   }
 }
@@ -191,5 +229,50 @@ describe('AvelineChatDrawer', () => {
     render(<AvelineChatDrawer open onClose={() => {}} />)
 
     expect(screen.getByText('Aveline')).toBeInTheDocument()
+  })
+
+  it('offers the attach control the drawer composer never had', () => {
+    useConversations.mockReturnValue(contextValue())
+
+    render(<AvelineChatDrawer open onClose={() => {}} />)
+
+    expect(screen.getByLabelText('composer')).toHaveAttribute('data-has-attach', 'true')
+  })
+
+  it('uploads picked files into the drawer thread, not the section thread', async () => {
+    const attach = vi.fn(async (_conversationId: string, _files: File[]) => [])
+    useConversations.mockReturnValue(contextValue({ attach }))
+
+    render(<AvelineChatDrawer open onClose={() => {}} />)
+    await userEvent.click(screen.getByRole('button', { name: 'mock-attach' }))
+
+    expect(attach).toHaveBeenCalledTimes(1)
+    expect(attach.mock.calls[0][0]).toBe('conv-g')
+    expect((attach.mock.calls[0][1] as File[])[0].name).toBe('a.png')
+  })
+
+  it('shows the drawer thread\'s own pending chips, not another thread\'s', () => {
+    useConversations.mockReturnValue(
+      contextValue({
+        pendingAttachments: {
+          'conv-g': [{ id: 'a1', status: 'ready' }],
+          'conv-other': [{ id: 'b1', status: 'ready' }, { id: 'b2', status: 'ready' }],
+        },
+      }),
+    )
+
+    render(<AvelineChatDrawer open onClose={() => {}} />)
+
+    expect(screen.getByLabelText('composer')).toHaveAttribute('data-pending', '1')
+  })
+
+  it('sends the stored attachment ids with the drawer message', async () => {
+    const sendToAveline = vi.fn()
+    useConversations.mockReturnValue(contextValue({ sendToAveline }))
+
+    render(<AvelineChatDrawer open onClose={() => {}} />)
+    await userEvent.click(screen.getByRole('button', { name: 'mock-send' }))
+
+    expect(sendToAveline).toHaveBeenCalledWith('hello', ['att-1'])
   })
 })

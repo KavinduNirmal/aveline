@@ -17,6 +17,7 @@ import {
   fetchMessages,
   getOrCreateConversation,
   sendMessage,
+  uploadConversationAttachment,
 } from './conversations-api'
 
 const ORG = 'org-1'
@@ -89,6 +90,111 @@ describe('conversations API client', () => {
     expect(postMock).toHaveBeenCalledWith(`/api/v1/orgs/${ORG}/conversations/${CONV}/messages`, {
       text: 'Does anything match Michael?',
     })
+  })
+
+  it('sendMessage keeps the text-only body exactly as before when neither optional field is supplied', async () => {
+    postMock.mockResolvedValue({ data: { id: 'msg-1' } })
+
+    await sendMessage(ORG, CONV, 'Hello')
+
+    const body = postMock.mock.calls[0][1] as Record<string, unknown>
+    expect(body).toEqual({ text: 'Hello' })
+    expect(Object.keys(body)).toEqual(['text'])
+    expect('attachmentIds' in body).toBe(false)
+    expect('clientMessageId' in body).toBe(false)
+  })
+
+  it('sendMessage includes attachmentIds when the list is non-empty', async () => {
+    postMock.mockResolvedValue({ data: { id: 'msg-1' } })
+
+    await sendMessage(ORG, CONV, 'Here it is', ['att-1', 'att-2'])
+
+    expect(postMock).toHaveBeenCalledWith(`/api/v1/orgs/${ORG}/conversations/${CONV}/messages`, {
+      text: 'Here it is',
+      attachmentIds: ['att-1', 'att-2'],
+    })
+  })
+
+  it('sendMessage omits attachmentIds and clientMessageId when the list is empty', async () => {
+    postMock.mockResolvedValue({ data: { id: 'msg-1' } })
+
+    await sendMessage(ORG, CONV, 'Hello', [])
+
+    const body = postMock.mock.calls[0][1] as Record<string, unknown>
+    expect(body).toEqual({ text: 'Hello' })
+    expect('attachmentIds' in body).toBe(false)
+  })
+
+  it('sendMessage includes clientMessageId when given', async () => {
+    postMock.mockResolvedValue({ data: { id: 'msg-1' } })
+
+    await sendMessage(ORG, CONV, 'Hello', undefined, 'client-1')
+
+    expect(postMock).toHaveBeenCalledWith(`/api/v1/orgs/${ORG}/conversations/${CONV}/messages`, {
+      text: 'Hello',
+      clientMessageId: 'client-1',
+    })
+  })
+
+  it('sendMessage includes both optional fields when both are given', async () => {
+    postMock.mockResolvedValue({ data: { id: 'msg-1' } })
+
+    await sendMessage(ORG, CONV, 'Hello', ['att-1'], 'client-1')
+
+    expect(postMock).toHaveBeenCalledWith(`/api/v1/orgs/${ORG}/conversations/${CONV}/messages`, {
+      text: 'Hello',
+      attachmentIds: ['att-1'],
+      clientMessageId: 'client-1',
+    })
+  })
+
+  it('uploadConversationAttachment posts the file as multipart form data to the attachments endpoint', async () => {
+    postMock.mockResolvedValue({ data: { attachmentId: 'att-1' } })
+
+    const file = new File(['fake image bytes'], 'saree.jpg', { type: 'image/jpeg' })
+    const result = await uploadConversationAttachment(ORG, CONV, file)
+
+    expect(postMock).toHaveBeenCalledWith(
+      `/api/v1/orgs/${ORG}/conversations/${CONV}/attachments`,
+      expect.any(FormData),
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    )
+    expect(result.attachmentId).toBe('att-1')
+  })
+
+  it('uploadConversationAttachment sends the file under the "file" field name and sets the multipart content type', async () => {
+    postMock.mockResolvedValue({ data: { attachmentId: 'att-1' } })
+
+    const file = new File(['fake image bytes'], 'saree.jpg', { type: 'image/jpeg' })
+    await uploadConversationAttachment(ORG, CONV, file)
+
+    const [url, body, config] = postMock.mock.calls[0] as [
+      string,
+      FormData,
+      { headers: Record<string, string> },
+    ]
+
+    expect(url).toBe(`/api/v1/orgs/${ORG}/conversations/${CONV}/attachments`)
+    expect(body).toBeInstanceOf(FormData)
+    // The server reads `form.Files.GetFile("file")`; an unset override would leave the
+    // shared client's default `application/json` header and no multipart boundary.
+    expect(config.headers['Content-Type']).toBe('multipart/form-data')
+
+    const uploaded = body.get('file')
+    expect(uploaded).toBeInstanceOf(File)
+    expect((uploaded as File).name).toBe('saree.jpg')
+    expect(await (uploaded as File).text()).toBe('fake image bytes')
+  })
+
+  it('uploadConversationAttachment uses the supplied name for a Blob upload', async () => {
+    postMock.mockResolvedValue({ data: { attachmentId: 'att-2' } })
+
+    const blob = new Blob(['pdf bytes'], { type: 'application/pdf' })
+    await uploadConversationAttachment(ORG, CONV, blob, 'invoice.pdf')
+
+    const body = postMock.mock.calls[0][1] as FormData
+    expect(body.has('file')).toBe(true)
+    expect((body.get('file') as File).name).toBe('invoice.pdf')
   })
 
   it('decideSignOff posts the approval decision with the content hash', async () => {

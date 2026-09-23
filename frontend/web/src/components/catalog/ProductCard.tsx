@@ -1,4 +1,4 @@
-import { Users, Layers, MoreHorizontal, Pencil, QrCode, Trash2 } from 'lucide-react'
+import { Users, Layers, MoreHorizontal, Pencil, QrCode, Trash2, Eye, SlidersHorizontal, PackageX } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -17,11 +17,17 @@ import type { InventoryItemMock } from './mockData'
 interface ProductCardProps {
   item: InventoryItemMock
   matchCount?: number
+  /** Opens the piece's information page. Absent means the card is a plain, non-navigating tile. */
+  onOpen?: (item: InventoryItemMock) => void
   onViewMatches: (item: InventoryItemMock) => void
   onComposeOutfit: (item: InventoryItemMock) => void
   onEditItem?: (item: InventoryItemMock) => void
   onViewQr?: (item: InventoryItemMock) => void
   onDeleteItem?: (item: InventoryItemMock) => void
+  /** Opens the reduce-stock dialog. Absent means the action is not offered. */
+  onReduceStock?: (item: InventoryItemMock) => void
+  /** Opens the mark-out-of-stock confirmation. Absent means the action is not offered. */
+  onMarkOutOfStock?: (item: InventoryItemMock) => void
 }
 
 /** The stock state as a word and a tone. A measured zero is its own state, not "low". */
@@ -54,29 +60,51 @@ function stockState(item: InventoryItemMock): { label: string; tone: string } {
 export function ProductCard({
   item,
   matchCount = 0,
+  onOpen,
   onViewMatches,
   onComposeOutfit,
   onEditItem,
   onViewQr,
   onDeleteItem,
+  onReduceStock,
+  onMarkOutOfStock,
 }: ProductCardProps) {
   const state = stockState(item)
-  const hasRowActions = Boolean(onEditItem || onViewQr || onDeleteItem)
+  const hasRowActions = Boolean(
+    onEditItem || onViewQr || onDeleteItem || onReduceStock || onMarkOutOfStock,
+  )
+
+  // The garment itself is the affordance for opening the piece, so the image is one control and
+  // the title is another. They are buttons rather than a click handler on the whole card because
+  // the card also carries its own buttons, and nesting them would be invalid markup.
+  const garment = item.imageUrl ? (
+    <img
+      src={item.imageUrl}
+      alt={item.name}
+      className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+    />
+  ) : (
+    // An absent photograph is a state, not a broken image.
+    <div className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">
+      No photograph
+    </div>
+  )
 
   return (
     <Card className="group flex flex-col gap-0 overflow-hidden border-border/80 bg-card p-0 transition-shadow duration-200 hover:shadow-md">
       <div className="relative aspect-4/3 w-full overflow-hidden bg-muted">
-        {item.imageUrl ? (
-          <img
-            src={item.imageUrl}
-            alt={item.name}
-            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
-          />
+        {onOpen ? (
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => onOpen(item)}
+            aria-label={`View details for ${item.name}`}
+            className="h-full w-full cursor-pointer rounded-none p-0 hover:bg-transparent focus-visible:ring-inset"
+          >
+            {garment}
+          </Button>
         ) : (
-          // An absent photograph is a state, not a broken image.
-          <div className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">
-            No photograph
-          </div>
+          garment
         )}
 
         <div className="absolute left-2.5 top-2.5 flex flex-wrap gap-1.5">
@@ -100,9 +128,30 @@ export function ProductCard({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                {onOpen ? (
+                  <DropdownMenuItem onSelect={() => onOpen(item)}>
+                    <Eye className="size-3.5" aria-hidden /> View details
+                  </DropdownMenuItem>
+                ) : null}
                 {onEditItem ? (
                   <DropdownMenuItem onSelect={() => onEditItem(item)}>
                     <Pencil className="size-3.5" aria-hidden /> Edit piece
+                  </DropdownMenuItem>
+                ) : null}
+                {onReduceStock ? (
+                  <DropdownMenuItem
+                    onSelect={() => onReduceStock(item)}
+                    disabled={item.status === 'archived' || item.stockQuantity <= 0}
+                  >
+                    <SlidersHorizontal className="size-3.5" aria-hidden /> Reduce stock
+                  </DropdownMenuItem>
+                ) : null}
+                {onMarkOutOfStock ? (
+                  <DropdownMenuItem
+                    onSelect={() => onMarkOutOfStock(item)}
+                    disabled={item.status === 'archived' || item.stockQuantity <= 0}
+                  >
+                    <PackageX className="size-3.5" aria-hidden /> Mark out of stock
                   </DropdownMenuItem>
                 ) : null}
                 {onViewQr ? (
@@ -125,7 +174,18 @@ export function ProductCard({
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h3 className="truncate font-serif text-[15px] font-medium leading-snug">
-              {item.name}
+              {onOpen ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => onOpen(item)}
+                  className="h-auto w-full justify-start whitespace-normal p-0 text-left font-serif text-[15px] font-medium leading-snug hover:bg-transparent hover:text-primary"
+                >
+                  {item.name}
+                </Button>
+              ) : (
+                item.name
+              )}
             </h3>
             <p className="mt-0.5 font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
               {item.sku || 'No SKU'} · {item.category}

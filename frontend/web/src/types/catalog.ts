@@ -113,14 +113,16 @@ export interface Supplier {
 
 export interface VisionAnalysisResult {
   category: string
-  detectedColor: string
-  colorHex: string
-  fabric: string
-  style: string
+  // The vision provider may not identify a colour, fabric or style at all. Those fields are then
+  // absent rather than replaced by a fabricated default, so every consumer must handle `undefined`.
+  detectedColor?: string
+  colorHex?: string
+  fabric?: string
+  style?: string
   pattern?: string
   garmentType?: string
   suggestedItemName?: string
-  confidenceScore: number
+  confidenceScore?: number
   isFallback?: boolean
   visualAttributes: string[]
   summary: string
@@ -143,6 +145,7 @@ export interface CreateInventoryItemPayload {
   itemName: string
   category: string
   color: string
+  colorHex?: string
   fabric?: string
   style?: string
   sizes: string[]
@@ -159,12 +162,15 @@ export interface UpdateInventoryItemPayload {
   itemName?: string
   category?: string
   color?: string
+  colorHex?: string
   fabric?: string
   style?: string
   sizes?: string[]
   price?: number
   cost?: number
   quantity?: number
+  /** The stock-derived status. Sent alongside a manual stock adjustment. */
+  status?: string
   imageUrl?: string
   sku?: string
   description?: string
@@ -185,4 +191,39 @@ export interface ComposeOutfitPayload {
   primaryItemId: string
   customerProfileId?: string
   notes?: string
+}
+
+/**
+ * The editable metadata of a composed lookbook. Every field is optional: an omitted field keeps the
+ * value the server already stores, and `styleNotes` set to an empty string is how a note is cleared.
+ */
+export interface UpdateLookbookPayload {
+  name?: string
+  occasion?: string
+  styleNotes?: string
+}
+
+export interface RecordCatalogSalePayload {
+  quantity: number
+  /** Omitted means "the catalog price"; supplied means the counter agreed a different one. */
+  unitPrice?: number
+  customerId?: string
+  note?: string
+}
+
+/**
+ * What the counter gets back after a sale. `remainingStock` is a real measurement, including a
+ * measured zero, and `ledgerEntryId` names the takings-journal row the register will show.
+ */
+export interface CatalogSaleReceipt {
+  itemId: string
+  itemName: string
+  sku?: string | null
+  quantitySold: number
+  unitPrice: number
+  totalAmount: number
+  remainingStock: number
+  status: string
+  ledgerEntryId: string
+  recordedAtUtc: string
 }

@@ -13,6 +13,8 @@ interface MessageThreadProps {
   agentActivity?: AgentActivity | null
   onSignOff?: (messageId: string, approved: boolean) => void
   onSelectCustomer?: (customerId: string) => void
+  /** Called with the attachment id when a thread attachment is opened for viewing. */
+  onOpenAttachment?: (attachmentId: string) => void
 }
 
 /**
@@ -27,6 +29,7 @@ export function MessageThread({
   agentActivity,
   onSignOff,
   onSelectCustomer,
+  onOpenAttachment,
 }: MessageThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -77,6 +80,7 @@ export function MessageThread({
             isOwn={message.authorKind === 'User'}
             onStreamProgress={handleStreamProgress}
             onSelectCustomer={onSelectCustomer}
+            onOpenAttachment={onOpenAttachment}
             onSignOff={
               message.kind === 'SignOff' && message.status === 'AwaitingSignOff'
                 ? (approved) => onSignOff?.(message.id, approved)

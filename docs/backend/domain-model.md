@@ -1079,14 +1079,17 @@ idempotent insert that creates the message.
 | `OrganizationId`, `ConversationId` | the tenant and the thread |
 | `MessageId Guid?` | null until the send binds it |
 | `UploadedByUserId Guid?` | who picked it |
-| `StorageProvider` / `StorageKey` | `database` and the row id today; a CDN provider later |
-| `ImageData bytea NULL` | the catalog's `bytea` precedent; a CDN provider leaves it null |
+| `StorageProvider` / `StorageKey` | `database` (the row's `bytea`) or `cloudinary`; the provider's own key when one exists. `varchar(32)` / `varchar(200)`, and the provider appends a raw file's extension to the key, so the persisted value is what the provider returned rather than a re-derivation |
+| `ImageData bytea NULL` | the catalog's `bytea` precedent; the Cloudinary adapter leaves it null unless `Media:DualWrite=true` |
+| `ContentHash` | `varchar(64)`, nullable. The byte-level lowercase-hex SHA-256 of the stored bytes, written at upload by `AttachmentContentHash.Compute`. Its purpose is observability and the shared image identity the Elle workstream consumes — it is **not** a migration artifact |
 | `ContentType`, `FileName`, `SizeBytes` | metadata |
 | `Width`, `Height` | optional, for a thumbnail's aspect |
-| `Url` | what every reader uses, so the provider swap changes no read path |
+| `Url` | what every reader uses, so the provider swap changes no read path. It stays the authenticated Aveline route even when Cloudinary stores the bytes |
 | `CreatedAtUtc`, `BoundAtUtc` | the sweep's clock, and when the send bound the row |
 
-- **Indexes:** `(OrganizationId, ConversationId)`; `(MessageId)`; and a filtered
+- **Indexes:** `(OrganizationId, ConversationId)`; `(OrganizationId, ContentHash)` for the
+  per-tenant dedup lookup — **never an authorisation input, only a duplicate detector**;
+  `(MessageId)`; and a filtered
   `(MessageId, CreatedAtUtc) WHERE MessageId IS NULL` for the sweep.
 - **Content policy:** `Common/Media/MediaContentTypes` (the catalog's
   `ImageContentTypes` promoted and extended with `application/pdf`). Images and PDF
@@ -1129,6 +1132,35 @@ no column**.
 - **`UnreadCount` on the realtime payload** is the recipient's count after their row was
   written; the field is named forward-compatibly so the fan-out producer can redefine it
   to "work items not acted upon" without a rename.
+
+---
+
+### 8.14 `InventoryImage` → `InventoryImages` (provider columns, media migration)
+
+The catalog's image row gained the same provider pair `MessageAttachments` already carried, so a
+catalog image can name a CDN asset instead of holding its bytes. Migration
+`AddMediaProviderColumnsToInventoryImages`.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `StorageProvider` | `varchar(32)` NOT NULL, default `database` | `database` or `cloudinary`. The default makes every pre-existing row unambiguously database-backed |
+| `StorageKey` | `varchar(200)` NULL | The provider's own key (`{resourceType}/{deliveryType}:{publicId}` for the Cloudinary tier). Null for a database row, whose key is implicit |
+| `ImageData` | `bytea` NULL | Still the row's bytes on the database tier, and the dual-write second copy when `Media:DualWrite=true`. The Cloudinary tier leaves it null. **The column drop is deferred (S8 / Wave 5) and is not performed** |
+| `ImageUrl` | `varchar(1000)` NOT NULL | The absolute Cloudinary delivery URL on the Cloudinary tier, the relative Aveline catalog route on the database tier. It is `NOT NULL` and was already widened once, so the rendered provider URL length is asserted in a test seeded with a maximum-length organisation id |
+
+- **Serving is per-row dispatch** (strategy §3.3): `GET …/catalog/images/{imageId}` answers `302`
+  to the absolute delivery URL for a Cloudinary row and streams `ImageData` for a database row.
+- **The delivery URL carries exactly one width.** `CatalogDeliveryUrl` renders
+  `w_{Media:CatalogDisplayWidth},f_auto,q_auto` from one scalar width, so no code path can append
+  a second `w_`; adding one multiplies `f_auto`'s derivations and is the fastest way to lose the
+  Free plan.
+- **Metadata is on the provider, not the row.** The catalog write passes
+  `MediaTagger.ForCatalogImage` through `IMediaStorage`; the labels are
+  `catalog-image`, `kind:image`, `organizationId:{orgId}`, `date:{date}` and the context is
+  `o`/`d`/`s=catalog`. See [ADR-022](../ADR/ADR-022-media-storage-and-access.md) and
+  [media-rollout-flags.md](../architecture/media-rollout-flags.md).
+- **The catalog has no `ContentHash`**: dedup is a conversation-tier property. The catalog image
+  delete path is also deferred (S8), so a soft-deleted item leaves its Cloudinary asset in place.
 
 ---
 

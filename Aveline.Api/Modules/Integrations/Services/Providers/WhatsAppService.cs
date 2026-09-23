@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using Aveline.Api.Common.Media;
 using Microsoft.Extensions.Logging;
 
 namespace Aveline.Api.Modules.Integrations.Services.Providers;
@@ -66,10 +67,13 @@ public sealed class WhatsAppService : IWhatsAppService
 
         try
         {
-            // Step 1: the media id resolves to a short-lived URL on Meta's CDN.
+            // Step 1: the media id resolves to a short-lived URL on Meta's CDN. Headers only:
+            // the body of neither hop should be buffered by `HttpClient`, or the cap below
+            // would be applied after the whole object was already in memory.
             using var resolve = new HttpRequestMessage(HttpMethod.Get, mediaId);
             resolve.Headers.Authorization = new("Bearer", accessToken);
-            using var resolved = await _http.SendAsync(resolve, cancellationToken);
+            using var resolved = await _http.SendAsync(
+                resolve, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             if (!resolved.IsSuccessStatusCode)
             {
                 var resolveError = await ReadErrorAsync(resolved, cancellationToken);
@@ -86,10 +90,13 @@ public sealed class WhatsAppService : IWhatsAppService
                 return new WhatsAppMediaResult(IsSuccess: false, Error: "Meta returned no media URL.");
             }
 
-            // Step 2: the URL still needs the bearer; it is not public.
+            // Step 2: the URL still needs the bearer; it is not public. `ResponseHeadersRead`
+            // keeps the body unbuffered, which is what makes the capped streaming read below a
+            // real bound rather than a check applied to an already-materialised array.
             using var download = new HttpRequestMessage(HttpMethod.Get, metadata.Url);
             download.Headers.Authorization = new("Bearer", accessToken);
-            using var media = await _http.SendAsync(download, cancellationToken);
+            using var media = await _http.SendAsync(
+                download, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             if (!media.IsSuccessStatusCode)
             {
                 var downloadError = await ReadErrorAsync(media, cancellationToken);
@@ -99,10 +106,35 @@ public sealed class WhatsAppService : IWhatsAppService
                 return new WhatsAppMediaResult(IsSuccess: false, Error: downloadError);
             }
 
-            var bytes = await media.Content.ReadAsByteArrayAsync(cancellationToken);
             var contentType = media.Content.Headers.ContentType?.MediaType
                               ?? metadata.MimeType
                               ?? "application/octet-stream";
+
+            // The cap is the attachment tier's own bound, so the fetch and the store agree on
+            // "too big" (strategy §5.1 S4; salon §7.4). A declared over-cap length is refused
+            // before a byte is read; the header is the sender's, though, so the body is then
+            // streamed through a bounded reader rather than trusted to it.
+            if (media.Content.Headers.ContentLength is { } declaredLength
+                && declaredLength > MediaContentTypes.MaxFileBytes)
+            {
+                _logger.LogWarning(
+                    "WhatsApp media refused: the declared size exceeds the cap. mediaId={MediaId} declared={DeclaredBytes} cap={CapBytes}",
+                    mediaId, declaredLength, MediaContentTypes.MaxFileBytes);
+                return new WhatsAppMediaResult(IsSuccess: false, ContentType: contentType, Error: OverCapError);
+            }
+
+            var bytes = await ReadCappedAsync(
+                media.Content, MediaContentTypes.MaxFileBytes, cancellationToken);
+            if (bytes is null)
+            {
+                // A clean refusal, never a truncation: half an image stored silently is worse
+                // than a recorded skip.
+                _logger.LogWarning(
+                    "WhatsApp media refused: the body exceeds the cap. mediaId={MediaId} cap={CapBytes}",
+                    mediaId, MediaContentTypes.MaxFileBytes);
+                return new WhatsAppMediaResult(IsSuccess: false, ContentType: contentType, Error: OverCapError);
+            }
+
             _logger.LogInformation(
                 "WhatsApp media fetched. mediaId={MediaId} bytes={Bytes} contentType={ContentType}",
                 mediaId, bytes.Length, contentType);
@@ -118,6 +150,40 @@ public sealed class WhatsAppService : IWhatsAppService
             // A media fetch must never take the webhook down: the caller records what it can.
             _logger.LogError(ex, "WhatsApp media fetch threw. mediaId={MediaId}", mediaId);
             return new WhatsAppMediaResult(IsSuccess: false, Error: ex.Message);
+        }
+    }
+
+    /// <summary>The refusal text, so the cap is named rather than implied.</summary>
+    private static string OverCapError =>
+        $"The media object exceeds the {MediaContentTypes.MaxFileBytes}-byte attachment limit.";
+
+    /// <summary>
+    /// Reads a response body into memory without ever holding more than
+    /// <paramref name="cap"/> bytes plus one buffer, and returns <c>null</c> the moment the cap
+    /// is crossed. A response that declares no length is bounded here too, which is the whole
+    /// point: <c>ReadAsByteArrayAsync</c> had no bound at all.
+    /// </summary>
+    private static async Task<byte[]?> ReadCappedAsync(
+        HttpContent content, long cap, CancellationToken cancellationToken)
+    {
+        await using var source = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var buffer = new MemoryStream();
+        var chunk = new byte[64 * 1024];
+
+        while (true)
+        {
+            var read = await source.ReadAsync(chunk.AsMemory(), cancellationToken).ConfigureAwait(false);
+            if (read == 0)
+            {
+                return buffer.ToArray();
+            }
+
+            if (buffer.Length + read > cap)
+            {
+                return null;
+            }
+
+            buffer.Write(chunk, 0, read);
         }
     }
 

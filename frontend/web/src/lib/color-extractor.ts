@@ -16,14 +16,20 @@ export interface VisualAttributesExtractionResult {
   category: 'Sarees' | 'Lehengas' | 'Gowns' | 'Kurtas & Tunics' | 'Outerwear' | 'Drapes & Shawls' | 'Jewelry & Accessories'
   garmentType: string
   suggestedItemName: string
-  colorName: string
-  hex: string
+  /**
+   * The measured colour, or absent when no pixels were read. A colour *name* is never invented: the
+   * previous version fell back to `'Crimson Red'` / `'#DC2626'`, so an image the browser could not
+   * read still produced a confident-looking red.
+   */
+  colorName?: string
+  hex?: string
   fabric: string
   pattern: string
   style: string
   description: string
   stylingNotes: string
-  confidenceScore: number
+  /** Absent when no pixels were read, because a confidence nothing measured is not a confidence. */
+  confidenceScore?: number
   visualAttributes: string[]
 }
 
@@ -83,31 +89,98 @@ export const COLOR_PALETTE: { name: string; r: number; g: number; b: number; hex
   { name: 'Midnight Black', r: 18, g: 18, b: 18, hex: '#121212' },
 ]
 
+/** Hue in degrees (0-360), or -1 for a fully achromatic pixel. */
+function hueDegrees(r: number, g: number, b: number): number {
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const delta = max - min
+  if (delta === 0) return -1
+
+  let hue: number
+  if (max === r) hue = ((g - b) / delta) % 6
+  else if (max === g) hue = (b - r) / delta + 2
+  else hue = (r - g) / delta + 4
+
+  hue *= 60
+  return hue < 0 ? hue + 360 : hue
+}
+
+/** HSL lightness (0-1) and saturation (0-1). */
+function lightnessOf(r: number, g: number, b: number): number {
+  return (Math.max(r, g, b) + Math.min(r, g, b)) / 510
+}
+
+function saturationOf(r: number, g: number, b: number): number {
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  return max === 0 ? 0 : (max - min) / max
+}
+
 /**
- * Calculates weighted perceptual color distance to find the nearest human-readable color name.
+ * How much a hue difference of this many degrees is allowed to weigh against a lightness
+ * difference. Hue dominates for saturated fabric; the term is skipped entirely for greys.
+ */
+const HUE_WEIGHT = 1.3
+
+/**
+ * Finds the nearest human-readable colour name.
+ *
+ * Hue is compared before lightness, which is what makes a deep emerald resolve to a green
+ * rather than to black. The previous formulation compared raw RGB with a 4x weight on the green
+ * channel, so a shadowed bottle-green pixel `rgb(7,29,17)` sat closer to `Midnight Black`
+ * `rgb(18,18,18)` than to any green swatch: the difference is `(11,11,1)`, giving the black
+ * swatch almost no penalty while the green channel's 11-point gap cost 4x. Dark, saturated
+ * garments are exactly the case a boutique catalogs most, so the metric now treats hue as the
+ * primary signal and only falls back to lightness for achromatic pixels.
  */
 export function getClosestColorName(r: number, g: number, b: number): string {
+  const saturation = saturationOf(r, g, b)
+  const lightness = lightnessOf(r, g, b)
+  const hue = hueDegrees(r, g, b)
+
   let closest = COLOR_PALETTE[0].name
   let minDistance = Infinity
+  let closestAchromatic = COLOR_PALETTE[0].name
+  let minAchromaticDistance = Infinity
 
   for (const item of COLOR_PALETTE) {
-    const rMean = (r + item.r) / 2
-    const deltaR = r - item.r
-    const deltaG = g - item.g
-    const deltaB = b - item.b
-    const dist = Math.sqrt(
-      (2 + rMean / 256) * deltaR * deltaR +
-      4 * deltaG * deltaG +
-      (2 + (255 - rMean) / 256) * deltaB * deltaB
-    )
+    const itemLightness = lightnessOf(item.r, item.g, item.b)
+    const itemSaturation = saturationOf(item.r, item.g, item.b)
 
-    if (dist < minDistance) {
-      minDistance = dist
+    // A grey pixel cannot carry hue information, so track the best grey-only match as well. Only
+    // genuinely grey swatches compete: without the saturation guard a near-black pixel took
+    // `Navy Blue` on lightness alone, because a navy swatch is darker than black is light.
+    const achromaticSwatch = itemSaturation < 0.15
+    const achromaticDistance = Math.abs(lightness - itemLightness) * 2
+    if (achromaticSwatch && achromaticDistance < minAchromaticDistance) {
+      minAchromaticDistance = achromaticDistance
+      closestAchromatic = item.name
+    }
+
+    // When either side is effectively grey, hue comparison is meaningless: only greys compete.
+    // The floor is 0.15, matching the swatch guard above, because severe dark-end quantisation
+    // leaves `rgb(12,12,14)` at saturation 0.14 - enough to look "chromatic" to a 0.08 gate and
+    // take Navy Blue on a hue that is an artefact of two levels of blue.
+    if (saturation < 0.15 || itemSaturation < 0.15) {
+      if (saturation < 0.15 && achromaticSwatch && achromaticDistance < minDistance) {
+        minDistance = achromaticDistance
+        closest = item.name
+      }
+      continue
+    }
+
+    let deltaHue = Math.abs(hue - hueDegrees(item.r, item.g, item.b))
+    if (deltaHue > 180) deltaHue = 360 - deltaHue
+
+    const distance = (deltaHue / 180) * HUE_WEIGHT + Math.abs(lightness - itemLightness)
+    if (distance < minDistance) {
+      minDistance = distance
       closest = item.name
     }
   }
 
-  return closest
+  // Every swatch was chromatic and the pixel was grey: fall back to the closest grey swatch.
+  return minDistance === Infinity ? closestAchromatic : closest
 }
 
 export interface CanvasAnalysisMetrics {
@@ -121,20 +194,423 @@ export interface CanvasAnalysisMetrics {
   specularPoints: number
   isWarmEthnicTone: boolean
   isRoyalJewelTone: boolean
+  /** Pixels in the isolated garment segment; 0 when the achromatic fallback was used. */
+  garmentPixelCount?: number
+  /** True when no chromatic garment segment was found (black or ivory pieces). */
+  garmentAchromatic?: boolean
+}
+
+/** Formats channels as a lowercase `#rrggbb`, the casing `<input type="color">` accepts. */
+function toHex(r: number, g: number, b: number): string {
+  return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toLowerCase()}`
+}
+
+/** The isolated garment colour plus the evidence behind it. */
+export interface IsolatedGarmentColor {
+  r: number
+  g: number
+  b: number
+  hex: string
+  colorName: string
+  /** Pixels retained in the winning segment. */
+  pixelCount: number
+  /** Hue family of the segment in degrees, or -1 when achromatic. */
+  familyHue: number
+  achromatic: boolean
+}
+
+function isBackdropPixel(r: number, g: number, b: number): boolean {
+  const saturation = saturationOf(r, g, b)
+  const luminance = 0.299 * r + 0.587 * g + 0.114 * b
+  // Neutral studio backdrops (white, light grey, textured walls, studio floors) and ambient
+  // shadows/glare. Everything else stays in the running.
+  return (
+    (saturation < 0.12 && luminance > 200) ||
+    luminance > 245 ||
+    luminance < 14 ||
+    (saturation < 0.06 && luminance > 60 && luminance < 195)
+  )
+}
+
+/**
+ * A centre-weighted prior over where a worn garment sits in a catalogue photo.
+ *
+ * This is what stops a full-bleed mirror selfie from being classified by its room. The failing
+ * case that motivated it: a green saree shot in a bedroom where the cream wall and warm wood
+ * console are more saturated than the `0.16` gate the old sampler used and occupy far more of
+ * the frame than the fabric does. The old code binned the entire frame with a mild centre
+ * weight, so the wall won on pixel count and the saree was reported as taupe.
+ *
+ * Bounded so that a garment filling the frame is unaffected, and wide enough that a garment
+ * hanging off-centre still qualifies.
+ */
+function passesRegionPrior(x: number, y: number, width: number, height: number): boolean {
+  const nx = (x / width - 0.5) / 0.3
+  const ny = (y / height - 0.52) / 0.38
+  return nx * nx + ny * ny <= 1.6
+}
+
+/**
+ * Segments the garment out of the frame and returns its colour.
+ *
+ * Each stage addresses a distinct way a whole-frame histogram went wrong:
+ *
+ * 1. A **relative** saturation floor. An absolute gate cannot separate a cream garment from a
+ *    cream wall, but a garment is reliably more saturated than its surroundings, so the gate
+ *    scales with the most saturated pixels present.
+ * 2. **Connected-component** selection scored by size, centre prior, and how *solid* the segment
+ *    is at the centre of the frame. Solidity is what stops a wall or console that merely rings
+ *    the subject from winning on pixel count.
+ * 3. **Hue-family modal colour at a brightness percentile** inside the winning segment. A plain
+ *    mean of the segment is dragged toward shadow by folds and mirror shading; the modal hue
+ *    family's percentile reports the fabric's actual colour.
+ *
+ * The frame is segmented twice, once for chromatic fabric and once for neutral fabric, and the
+ * better-scoring segment wins. Scored on solidity, the two do not compete wrongly: the neutral
+ * mask of the failing mirror selfie collects only scattered grey, while its chromatic mask finds
+ * the saree. A black or ivory piece is the reverse.
+ *
+ * Returns `null` only when the frame yields no usable pixels at all.
+ */
+export function isolateGarmentColor(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+): IsolatedGarmentColor | null {
+  const total = width * height
+  if (total === 0 || data.length < total * 4) return null
+
+  // Stage 1: the relative saturation floor, from the most saturated pixels present.
+  let maxSaturation = 0
+  for (let p = 0; p < total; p++) {
+    const i = p * 4
+    if (data[i + 3] < 128) continue
+    const saturation = saturationOf(data[i], data[i + 1], data[i + 2])
+    if (saturation > maxSaturation) maxSaturation = saturation
+  }
+  const saturationFloor = Math.max(0.14, Math.min(0.55, maxSaturation * 0.72))
+
+  const chromaticMask = new Uint8Array(total)
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const p = y * width + x
+      const i = p * 4
+      if (data[i + 3] < 128) continue
+      const r = data[i]
+      const g = data[i + 1]
+      const b = data[i + 2]
+      if (isBackdropPixel(r, g, b)) continue
+      if (!passesRegionPrior(x, y, width, height)) continue
+      if (saturationOf(r, g, b) >= saturationFloor) chromaticMask[p] = 1
+    }
+  }
+
+  const chromatic = strongestSegment(data, chromaticMask, width, height, total)
+
+  // The neutral pass is for neutral fabric, so it must not simply collect everything the
+  // chromatic gate rejected: in the failing mirror selfie that is the *entire room*, and the wood
+  // console alone then beats the saree on pixel count. Pixels close to the chromatic winner's
+  // colour are that garment's shadowed side, not a second subject, so they are excluded too.
+  const chromaticMean: [number, number, number] | null = chromatic
+    ? [chromatic.color.r, chromatic.color.g, chromatic.color.b]
+    : null
+
+  const neutralMask = new Uint8Array(total)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const p = y * width + x
+      const i = p * 4
+      if (data[i + 3] < 128) continue
+      const r = data[i]
+      const g = data[i + 1]
+      const b = data[i + 2]
+      if (isBackdropPixel(r, g, b)) continue
+      if (!passesRegionPrior(x, y, width, height)) continue
+      if (saturationOf(r, g, b) >= saturationFloor) continue
+      if (chromaticMean !== null) {
+        const dr = r - chromaticMean[0]
+        const dg = g - chromaticMean[1]
+        const db = b - chromaticMean[2]
+        // Same hue family as the chromatic winner: part of that garment's shading, not a subject.
+        if (dr * dr + dg * dg + db * db < 140 * 140) continue
+      }
+      neutralMask[p] = 1
+    }
+  }
+  const neutral = strongestSegment(data, neutralMask, width, height, total)
+
+  // Prefer the solidly-centred segment; fall back only when one side found nothing at all.
+  let best: IsolatedGarmentColor | null
+  if (chromatic !== null && neutral !== null) {
+    best = neutral.score > chromatic.score ? neutral.color : chromatic.color
+  } else {
+    best = chromatic?.color ?? neutral?.color ?? null
+  }
+
+  // Nothing segmented: a near-greyscale frame. Decide by whether the centre is darker or lighter
+  // than its surroundings, which is the only signal left.
+  return best ?? isolateAchromaticColor(data, width, height)
+}
+
+/**
+ * Flood-fills every colour-tolerant component in a mask and returns the colour of the
+ * best-scoring one, or `null` when the mask is empty.
+ */
+function strongestSegment(
+  data: Uint8ClampedArray,
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  total: number,
+): { color: IsolatedGarmentColor; score: number } | null {
+  const labels = new Int32Array(total).fill(-1)
+  const components: {
+    id: number
+    count: number
+    cx: number
+    cy: number
+    centreRatio: number
+    fillRatio: number
+  }[] = []
+  const stack: number[] = []
+
+  for (let seedY = 0; seedY < height; seedY++) {
+    for (let seedX = 0; seedX < width; seedX++) {
+      const seed = seedY * width + seedX
+      if (!mask[seed] || labels[seed] !== -1) continue
+
+      const id = components.length
+      let count = 0
+      let sumX = 0
+      let sumY = 0
+      let minX = width
+      let maxX = -1
+      let minY = height
+      let maxY = -1
+      stack.length = 0
+      stack.push(seed)
+      labels[seed] = id
+
+      while (stack.length > 0) {
+        const p = stack.pop() as number
+        const py = (p / width) | 0
+        const px = p % width
+        const pi = p * 4
+        count++
+        sumX += px
+        sumY += py
+        if (px < minX) minX = px
+        if (px > maxX) maxX = px
+        if (py < minY) minY = py
+        if (py > maxY) maxY = py
+
+        for (let k = 0; k < 4; k++) {
+          const nx = px + (k === 0 ? 1 : k === 1 ? -1 : 0)
+          const ny = py + (k === 2 ? 1 : k === 3 ? -1 : 0)
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+          const q = ny * width + nx
+          if (!mask[q] || labels[q] !== -1) continue
+          const qi = q * 4
+          const dr = data[qi] - data[pi]
+          const dg = data[qi + 1] - data[pi + 1]
+          const db = data[qi + 2] - data[pi + 2]
+          // Grow across folds and shading, but not across a colour boundary.
+          if (dr * dr + dg * dg + db * db > 110 * 110) continue
+          labels[q] = id
+          stack.push(q)
+        }
+      }
+
+      // Two shape tests, because a pixel count alone cannot tell a garment from a room.
+      // `centreRatio`: a garment fills the middle of the frame; a wall that merely *surrounds* the
+      // garment is a ring. `fillRatio`: a garment fills its own bounding box; the ring does not.
+      let withinCentre = 0
+      for (let y = minY; y <= maxY; y++) {
+        for (let x = minX; x <= maxX; x++) {
+          const p = y * width + x
+          if (labels[p] !== id) continue
+          const dx = (x / width - 0.5) / 0.2
+          const dy = (y / height - 0.55) / 0.25
+          if (dx * dx + dy * dy <= 1) withinCentre++
+        }
+      }
+      const boundingBoxArea = (maxX - minX + 1) * (maxY - minY + 1)
+
+      components.push({
+        id,
+        count,
+        cx: sumX / count / width,
+        cy: sumY / count / height,
+        centreRatio: withinCentre / count,
+        fillRatio: count / boundingBoxArea,
+      })
+    }
+  }
+
+  if (components.length === 0) return null
+
+  const segmentScore = (c: {
+    count: number
+    cx: number
+    cy: number
+    centreRatio: number
+    fillRatio: number
+  }): number => {
+    const dx = (c.cx - 0.5) / 0.42
+    const dy = (c.cy - 0.62) / 0.45
+    return c.count * Math.exp(-(dx * dx + dy * dy)) * (0.35 + c.centreRatio) * (0.3 + c.fillRatio)
+  }
+
+  let best = components[0]
+  let bestScore = segmentScore(best)
+  for (const component of components) {
+    const score = segmentScore(component)
+    if (score > bestScore) {
+      bestScore = score
+      best = component
+    }
+  }
+
+  // Stage 3: the winning segment's hue family, reported at a brightness percentile.
+  const color = modalColorOfMask(data, labels, best.id, total)
+  if (color === null) return null
+  return { color: { ...color, pixelCount: best.count }, score: bestScore }
+}
+
+/**
+ * The garment's hue family: the modal saturated colour inside the mask, then the pixels sharing
+ * that hue, reported at a brightness percentile. A plain mean of the segment is dragged toward
+ * shadow by folds and mirror shading; the modal family's percentile reports the readable fabric
+ * colour instead.
+ */
+function modalColorOfMask(
+  data: Uint8ClampedArray,
+  mask: Uint8Array | Int32Array,
+  expectedIndex: number,
+  total: number,
+): IsolatedGarmentColor | null {
+  const familyBins = new Map<string, { count: number; r: number; g: number; b: number }>()
+  const members: [number, number, number][] = []
+
+  for (let p = 0; p < total; p++) {
+    if (mask[p] !== expectedIndex) continue
+    const i = p * 4
+    const r = data[i]
+    const g = data[i + 1]
+    const b = data[i + 2]
+    members.push([r, g, b])
+    const key = `${(r / 32) | 0}_${(g / 32) | 0}_${(b / 32) | 0}`
+    const bin = familyBins.get(key) ?? { count: 0, r: 0, g: 0, b: 0 }
+    bin.count++
+    bin.r += r
+    bin.g += g
+    bin.b += b
+    familyBins.set(key, bin)
+  }
+
+  if (members.length === 0) return null
+
+  let peak: { count: number; r: number; g: number; b: number } | null = null
+  for (const bin of familyBins.values()) {
+    if (peak === null || bin.count > peak.count) peak = bin
+  }
+  const peakBin = peak as { count: number; r: number; g: number; b: number }
+  const familyHue = hueDegrees(
+    peakBin.r / peakBin.count,
+    peakBin.g / peakBin.count,
+    peakBin.b / peakBin.count,
+  )
+
+  // Keep only pixels sharing the dominant hue, so a stray highlight or shadow cluster cannot
+  // shift the reported colour.
+  let family = members.filter(([r, g, b]) => {
+    const hue = hueDegrees(r, g, b)
+    if (hue < 0 || familyHue < 0) return false
+    let delta = Math.abs(hue - familyHue)
+    if (delta > 180) delta = 360 - delta
+    return delta <= 22
+  })
+  if (family.length < 8) family = members
+
+  family.sort(
+    (a, b) =>
+      a[0] * 0.299 + a[1] * 0.587 + a[2] * 0.114 - (b[0] * 0.299 + b[1] * 0.587 + b[2] * 0.114),
+  )
+  // A percentile rather than a mean: folds and mirror shading push the mean toward shadow, while
+  // the fabric's readable colour sits above it.
+  const [r, g, b] = family[Math.min(family.length - 1, Math.floor(0.72 * (family.length - 1)))]
+
+  return {
+    r,
+    g,
+    b,
+    hex: toHex(r, g, b),
+    colorName: getClosestColorName(r, g, b),
+    pixelCount: members.length,
+    familyHue,
+    achromatic: false,
+  }
+}
+
+/** Fallback for black/ivory garments: darker-or-lighter than surroundings, by percentile. */
+function isolateAchromaticColor(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+): IsolatedGarmentColor | null {
+  const centre: [number, number, number][] = []
+  const surround: [number, number, number][] = []
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4
+      if (data[i + 3] < 128) continue
+      const r = data[i]
+      const g = data[i + 1]
+      const b = data[i + 2]
+      if (0.299 * r + 0.587 * g + 0.114 * b < 14) continue
+      const nx = (x / width - 0.5) / 0.28
+      const ny = (y / height - 0.55) / 0.35
+      if (nx * nx + ny * ny <= 1) centre.push([r, g, b])
+      else surround.push([r, g, b])
+    }
+  }
+
+  if (centre.length === 0 || surround.length === 0) return null
+
+  const meanLuminance = (pixels: [number, number, number][]): number =>
+    pixels.reduce((sum, [r, g, b]) => sum + 0.299 * r + 0.587 * g + 0.114 * b, 0) / pixels.length
+
+  const centreIsSubject = meanLuminance(centre) < meanLuminance(surround)
+  const pool = centreIsSubject ? centre : surround
+  pool.sort((a, b) => a[0] * 0.299 + a[1] * 0.587 + a[2] * 0.114 - (b[0] * 0.299 + b[1] * 0.587 + b[2] * 0.114))
+
+  // Nearest quartile to the subject's own tone, to shed antialiased edge pixels either way.
+  const chosen = centreIsSubject
+    ? pool[Math.floor(pool.length * 0.25)]
+    : pool[Math.floor(pool.length * 0.75)]
+  const [r, g, b] = chosen
+
+  return {
+    r,
+    g,
+    b,
+    hex: toHex(r, g, b),
+    colorName: getClosestColorName(r, g, b),
+    pixelCount: pool.length,
+    familyHue: -1,
+    achromatic: true,
+  }
 }
 
 export function analyzeCanvasMetrics(ctx: CanvasRenderingContext2D, width: number, height: number): CanvasAnalysisMetrics | null {
   try {
     const imageData = ctx.getImageData(0, 0, width, height)
     const data = imageData.data
+    if (width === 0 || height === 0 || data.length < width * height * 4) return null
 
-    const binSize = 24
-    const saturatedBins = new Map<string, { count: number; sumR: number; sumG: number; sumB: number }>()
-    const allBins = new Map<string, { count: number; sumR: number; sumG: number; sumB: number }>()
-
-    const halfW = width / 2
-    const halfH = height / 2
-
+    // Silhouette geometry is measured over every non-backdrop pixel, including the garment.
     let topMass = 0
     let midMass = 0
     let bottomMass = 0
@@ -150,96 +626,64 @@ export function analyzeCanvasMetrics(ctx: CanvasRenderingContext2D, width: numbe
         const r = data[i]
         const g = data[i + 1]
         const b = data[i + 2]
-        const a = data[i + 3]
+        if (data[i + 3] < 128) continue
 
-        if (a < 128) continue
-
-        const max = Math.max(r, g, b)
-        const min = Math.min(r, g, b)
-        const saturation = max === 0 ? 0 : (max - min) / max
+        const saturation = saturationOf(r, g, b)
         const luminance = 0.299 * r + 0.587 * g + 0.114 * b
 
-        // Discard studio background (white/light grey/shadows)
-        const isStudioBackdrop = (saturation < 0.12 && luminance > 200) || luminance > 245 || luminance < 14 || (saturation < 0.06 && luminance > 60 && luminance < 195)
+        if (luminance > 210 && (r > 185 || g > 165) && saturation > 0.18) specularHighlights++
 
-        // Check for metallic specular reflections (jewelry/zari)
-        if (luminance > 210 && (r > 185 || g > 165) && saturation > 0.18) {
-          specularHighlights++
-        }
+        if (isBackdropPixel(r, g, b)) continue
 
-        // Horizontal mass contour profiling for non-backdrop fabric pixels
-        if (!isStudioBackdrop) {
-          if (y < topBound) topMass++
-          else if (y < midBound) midMass++
-          else bottomMass++
+        if (y < topBound) topMass++
+        else if (y < midBound) midMass++
+        else bottomMass++
 
-          // Local edge variation sampling
-          if (x > 0 && y > 0) {
-            const prevIdx = ((y - 1) * width + (x - 1)) * 4
-            const prevLum = 0.299 * data[prevIdx] + 0.587 * data[prevIdx + 1] + 0.114 * data[prevIdx + 2]
-            if (Math.abs(luminance - prevLum) > 30) {
-              highFreqEdges++
-            }
-          }
-
-          // Center distance weighting for authentic color clustering
-          const distFromCenter = Math.hypot(x - halfW, y - halfH) / (halfW * 1.414)
-          const centerWeight = Math.max(0.5, 2.2 - distFromCenter * 2.0)
-
-          const binKey = `${Math.floor(r / binSize)}_${Math.floor(g / binSize)}_${Math.floor(b / binSize)}`
-          
-          if (saturation > 0.16) {
-            const bin = saturatedBins.get(binKey) || { count: 0, sumR: 0, sumG: 0, sumB: 0 }
-            bin.count += centerWeight
-            bin.sumR += r * centerWeight
-            bin.sumG += g * centerWeight
-            bin.sumB += b * centerWeight
-            saturatedBins.set(binKey, bin)
-          }
-
-          const genBin = allBins.get(binKey) || { count: 0, sumR: 0, sumG: 0, sumB: 0 }
-          genBin.count += centerWeight
-          genBin.sumR += r * centerWeight
-          genBin.sumG += g * centerWeight
-          genBin.sumB += b * centerWeight
-          allBins.set(binKey, genBin)
+        if (x > 0 && y > 0) {
+          const prevIndex = ((y - 1) * width + (x - 1)) * 4
+          const prevLuminance =
+            0.299 * data[prevIndex] + 0.587 * data[prevIndex + 1] + 0.114 * data[prevIndex + 2]
+          if (Math.abs(luminance - prevLuminance) > 30) highFreqEdges++
         }
       }
     }
 
-    const targetBins = saturatedBins.size > 0 ? saturatedBins : allBins
-    if (targetBins.size === 0) return null
+    // Colour comes from the isolated garment, never from the frame as a whole.
+    const garment = isolateGarmentColor(data, width, height)
+    if (garment === null) return null
 
-    let maxCount = 0
-    let bestBin = { count: 0, sumR: 0, sumG: 0, sumB: 0 }
-    for (const bin of targetBins.values()) {
-      if (bin.count > maxCount) {
-        maxCount = bin.count
-        bestBin = bin
-      }
-    }
-
-    const avgR = Math.round(bestBin.sumR / Math.max(1, bestBin.count))
-    const avgG = Math.round(bestBin.sumG / Math.max(1, bestBin.count))
-    const avgB = Math.round(bestBin.sumB / Math.max(1, bestBin.count))
-    const hex = `#${((1 << 24) + (avgR << 16) + (avgG << 8) + avgB).toString(16).slice(1).toUpperCase()}`
-    const colorName = getClosestColorName(avgR, avgG, avgB)
-
+    const { r, g, b } = garment
     const flareRatio = midMass > 0 ? bottomMass / midMass : 1.0
 
-    const isRedOrMaroon = avgR > avgG + 20 && avgR > avgB + 20
-    const isGoldOrMustard = avgR > 150 && avgG > 120 && avgB < 110
-    const isPinkOrRose = avgR > 170 && avgB > 110 && avgG < avgR - 20
-    const isWarmEthnicTone = isRedOrMaroon || isGoldOrMustard || isPinkOrRose ||
-      colorName.includes('Red') || colorName.includes('Crimson') || colorName.includes('Maroon') ||
-      colorName.includes('Burgundy') || colorName.includes('Gold') || colorName.includes('Rose') ||
-      colorName.includes('Pink') || colorName.includes('Rust') || colorName.includes('Coral')
+    const isRedOrMaroon = r > g + 20 && r > b + 20
+    const isGoldOrMustard = r > 150 && g > 120 && b < 110
+    const isPinkOrRose = r > 170 && b > 110 && g < r - 20
+    const isWarmEthnicTone =
+      isRedOrMaroon ||
+      isGoldOrMustard ||
+      isPinkOrRose ||
+      garment.colorName.includes('Red') ||
+      garment.colorName.includes('Crimson') ||
+      garment.colorName.includes('Maroon') ||
+      garment.colorName.includes('Burgundy') ||
+      garment.colorName.includes('Gold') ||
+      garment.colorName.includes('Rose') ||
+      garment.colorName.includes('Pink') ||
+      garment.colorName.includes('Rust') ||
+      garment.colorName.includes('Coral')
 
-    const isRoyalJewelTone = (avgB > avgR + 25 && avgB > avgG + 15) || (avgG > avgR + 20 && avgG > avgB + 15) ||
-      colorName.includes('Sapphire') || colorName.includes('Navy') || colorName.includes('Emerald') || colorName.includes('Teal')
+    const isRoyalJewelTone =
+      (b > r + 25 && b > g + 15) ||
+      (g > r + 20 && g > b + 15) ||
+      garment.colorName.includes('Sapphire') ||
+      garment.colorName.includes('Navy') ||
+      garment.colorName.includes('Emerald') ||
+      garment.colorName.includes('Bottle') ||
+      garment.colorName.includes('Forest') ||
+      garment.colorName.includes('Teal')
 
     return {
-      color: { hex, colorName, r: avgR, g: avgG, b: avgB },
+      color: { hex: garment.hex, colorName: garment.colorName, r, g, b },
       aspectRatio: height / Math.max(1, width),
       topMassWidth: topMass,
       midMassWidth: midMass,
@@ -249,6 +693,8 @@ export function analyzeCanvasMetrics(ctx: CanvasRenderingContext2D, width: numbe
       specularPoints: specularHighlights,
       isWarmEthnicTone,
       isRoyalJewelTone,
+      garmentPixelCount: garment.pixelCount,
+      garmentAchromatic: garment.achromatic,
     }
   } catch {
     return null
@@ -256,18 +702,63 @@ export function analyzeCanvasMetrics(ctx: CanvasRenderingContext2D, width: numbe
 }
 
 /**
+ * Internal sampling resolution. The segmenter needs enough spatial resolution for connected
+ * components to separate a garment from furniture and wall: at the previous 128px a saree's
+ * drape and the console behind it merged into one blob.
+ */
+const SAMPLE_SIZE = 256
+
+/** Loads a URL onto a canvas and runs the analysis; resolves null on any load or CORS failure. */
+function loadAndAnalyze(imageUrl: string, useCrossOrigin: boolean): Promise<CanvasAnalysisMetrics | null> {
+  return new Promise<CanvasAnalysisMetrics | null>((resolve) => {
+    const img = new Image()
+    if (useCrossOrigin) img.crossOrigin = 'anonymous'
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas')
+        canvas.width = SAMPLE_SIZE
+        canvas.height = SAMPLE_SIZE
+        const ctx = canvas.getContext('2d', { willReadFrequently: true })
+        if (!ctx) return resolve(null)
+        ctx.drawImage(img, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE)
+        resolve(analyzeCanvasMetrics(ctx, SAMPLE_SIZE, SAMPLE_SIZE))
+      } catch {
+        resolve(null)
+      }
+    }
+    img.onerror = () => resolve(null)
+    img.src = imageUrl
+  })
+}
+
+/**
  * Samples pixels from an image element or URL to extract authentic dominant fabric color.
  */
-export async function extractDominantColor(imageUrl: string): Promise<ExtractedColorResult | null> {
+export async function extractDominantColor(imageUrl: string): Promise<IsolatedGarmentColor | null> {
   const fullResult = await extractVisualAttributesAndColor(imageUrl)
-  if (!fullResult) return null
+  // No pixels were read, so there is no colour to report. Returning the extractor's fabricated
+  // default here is what made an unreadable image look like a confidently-measured crimson one.
+  if (!fullResult?.hex || !fullResult.colorName) return null
   return {
     hex: fullResult.hex,
     colorName: fullResult.colorName,
-    r: 15,
-    g: 81,
-    b: 50,
+    // Read the actual channels back off the resolved hex. These were previously hardcoded to the
+    // emerald swatch, so every caller received `rgb(15,81,50)` no matter what the image showed.
+    ...hexToRgb(fullResult.hex),
+    pixelCount: 0,
+    familyHue: -1,
+    achromatic: false,
   }
+}
+
+/** Parses `#RRGGBB` back into channels, so callers never desynchronise from the hex. */
+export function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const normalized = hex.replace('#', '')
+  const value = Number.parseInt(normalized.length === 3
+    ? normalized.split('').map((c) => c + c).join('')
+    : normalized, 16)
+  if (Number.isNaN(value)) return { r: 0, g: 0, b: 0 }
+  return { r: (value >> 16) & 255, g: (value >> 8) & 255, b: value & 255 }
 }
 
 /**
@@ -286,50 +777,9 @@ export async function extractVisualAttributesAndColor(
 
   if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     try {
-      metrics = await new Promise<CanvasAnalysisMetrics | null>((resolve) => {
-        const img = new Image()
-        // Only set crossOrigin for remote HTTP URLs to prevent tainted canvas on data URLs
-        if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
-          img.crossOrigin = 'anonymous'
-        }
-
-        img.onload = () => {
-          try {
-            const canvas = document.createElement('canvas')
-            const size = 128
-            canvas.width = size
-            canvas.height = size
-            const ctx = canvas.getContext('2d', { willReadFrequently: true })
-            if (!ctx) return resolve(null)
-            ctx.drawImage(img, 0, 0, size, size)
-            resolve(analyzeCanvasMetrics(ctx, size, size))
-          } catch {
-            resolve(null)
-          }
-        }
-
-        img.onerror = () => {
-          const fallback = new Image()
-          fallback.onload = () => {
-            try {
-              const canvas = document.createElement('canvas')
-              const size = 128
-              canvas.width = size
-              canvas.height = size
-              const ctx = canvas.getContext('2d', { willReadFrequently: true })
-              if (!ctx) return resolve(null)
-              ctx.drawImage(fallback, 0, 0, size, size)
-              resolve(analyzeCanvasMetrics(ctx, size, size))
-            } catch {
-              resolve(null)
-            }
-          }
-          fallback.onerror = () => resolve(null)
-          fallback.src = imageUrl
-        }
-
-        img.src = imageUrl
-      })
+      // Only set crossOrigin for remote HTTP URLs to prevent a tainted canvas on data URLs.
+      const isRemote = imageUrl.startsWith('http://') || imageUrl.startsWith('https://')
+      metrics = await loadAndAnalyze(imageUrl, isRemote)
     } catch {
       // Continue with metadata parsing
     }
@@ -347,7 +797,7 @@ export function inferGarmentFromMetricsAndMetadata(
   imageUrl: string,
   fileName?: string,
   contextHint?: string,
-): VisualAttributesExtractionResult {
+): VisualAttributesExtractionResult | null {
   // Synthesize semantic metadata cues from filename & URL
   const rawLower = imageUrl.startsWith('data:') ? '' : imageUrl.toLowerCase()
   const combined = `${rawLower} ${fileName || ''} ${contextHint || ''}`.toLowerCase()
@@ -527,15 +977,23 @@ export function inferGarmentFromMetricsAndMetadata(
         detectedStyle = 'Traditional Heirloom'
       }
     }
+  } else {
+    // Neither pixel geometry nor a filename/metadata keyword: there is nothing to infer. Returning
+    // the seeded defaults here produced a complete, confident-looking analysis ("Crimson Red Pure
+    // Mulberry Silk") of an image the browser never read — a tainted canvas, a CORS-blocked URL, a
+    // decode failure or SSR. Absence of evidence is reported as absence.
+    return null
   }
 
-  // Authentic Color Resolution
-  const resolvedColorName = metrics?.color?.colorName || 'Crimson Red'
-  const resolvedHex = metrics?.color?.hex || '#DC2626'
+  // Authentic Color Resolution: the pixels, or nothing. The previous `|| 'Crimson Red'` /
+  // `|| '#DC2626'` pair invented a colour for every unreadable image.
+  const resolvedColorName = metrics?.color?.colorName
+  const resolvedHex = metrics?.color?.hex
 
-  const suggestedItemName = `${resolvedColorName} ${detectedFabric} ${detectedGarment}`.replace(/\s+/g, ' ').trim()
+  const colourPrefix = resolvedColorName ? `${resolvedColorName} ` : ''
+  const suggestedItemName = `${colourPrefix}${detectedFabric} ${detectedGarment}`.replace(/\s+/g, ' ').trim()
 
-  const description = `Exquisite ${resolvedColorName.toLowerCase()} ${detectedGarment.toLowerCase()} crafted from premium ${detectedFabric.toLowerCase()} featuring a refined ${detectedPattern.toLowerCase()} aesthetic with fluid drape. Designed with timeless boutique elegance, ideal for celebratory soirees.`
+  const description = `Exquisite ${resolvedColorName ? `${resolvedColorName.toLowerCase()} ` : ''}${detectedGarment.toLowerCase()} crafted from premium ${detectedFabric.toLowerCase()} featuring a refined ${detectedPattern.toLowerCase()} aesthetic with fluid drape. Designed with timeless boutique elegance, ideal for celebratory soirees.`
   const stylingNotes = detectedCategory === 'Jewelry & Accessories'
     ? 'Pair with classic silk sarees or deep neckline evening gowns for maximum brilliance.'
     : 'Pair with fine artisan jewelry, tonal evening accessories, and structured footwear for a polished boutique statement.'
@@ -551,7 +1009,15 @@ export function inferGarmentFromMetricsAndMetadata(
     style: detectedStyle,
     description: `${description} Styling: ${stylingNotes}`,
     stylingNotes,
-    confidenceScore: 0.95,
-    visualAttributes: [detectedCategory, detectedGarment, resolvedColorName, detectedFabric, detectedPattern],
+    // Only when pixels were actually read. The previous unconditional `0.95` let a classification
+    // made purely from a filename claim 95% confidence, which the attribute badge then displayed.
+    confidenceScore: metrics ? 0.95 : undefined,
+    visualAttributes: [
+      detectedCategory,
+      detectedGarment,
+      ...(resolvedColorName ? [resolvedColorName] : []),
+      detectedFabric,
+      detectedPattern,
+    ],
   }
 }

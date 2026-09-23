@@ -118,7 +118,9 @@ public class QrCodeService : IQrCodeService
             OrgId = orgId,
             ItemId = itemId,
             Sku = item.Sku,
-            Url = $"/catalog/items/{itemId}",
+            // The organisation is carried in the payload and in the URL: a code that names only a
+            // piece id cannot say which boutique's catalog it belongs to.
+            Url = $"/catalog/items/{itemId}?org={orgId}",
             Version = 1
         };
 
@@ -151,7 +153,9 @@ public class QrCodeService : IQrCodeService
             OrgId = orgId,
             ItemId = itemId,
             Sku = item.Sku,
-            Url = $"/catalog/items/{itemId}",
+            // The organisation is carried in the payload and in the URL: a code that names only a
+            // piece id cannot say which boutique's catalog it belongs to.
+            Url = $"/catalog/items/{itemId}?org={orgId}",
             Version = 1
         };
 

@@ -1,3 +1,6 @@
+import { useEffect, useState } from 'react'
+import { Maximize2 } from 'lucide-react'
+
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -7,7 +10,16 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Separator } from '@/components/ui/separator'
+import { Spinner } from '@/components/ui/spinner'
+import { apiClient } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 /** An option in a customer-resolution `choice` block. */
@@ -51,11 +63,20 @@ export interface ContentBlock {
 
 import type { Persona } from './persona'
 
+/**
+ * Which bubble an attachment sits in. The surface has to flip with it: a card painted for the
+ * neutral agent bubble reads as a white patch on the staff bubble's primary fill.
+ */
+type AttachmentTone = 'own' | 'other'
+
 interface BlockRendererProps {
   block: ContentBlock
   onSignOff?: (approved: boolean) => void
   onSelectCustomer?: (customerId: string) => void
+  /** Called with the attachment id when a thread attachment is opened for viewing. */
+  onOpenAttachment?: (attachmentId: string) => void
   persona?: Persona | null
+  tone?: AttachmentTone
 }
 
 /** Renders a single content block by type. */
@@ -63,7 +84,9 @@ export function BlockRenderer({
   block,
   onSignOff,
   onSelectCustomer,
+  onOpenAttachment,
   persona,
+  tone = 'other',
 }: BlockRendererProps) {
   switch (block.type) {
     case 'text':
@@ -87,7 +110,14 @@ export function BlockRenderer({
     case 'choice':
       return <ChoiceBlock block={block} onSelectCustomer={onSelectCustomer} />
     case 'attachment':
-      return <AttachmentBlock block={block} />
+      return (
+        <AttachmentBlock
+          key={block.attachmentId}
+          block={block}
+          onOpenAttachment={onOpenAttachment}
+          tone={tone}
+        />
+      )
     default:
       return null
   }
@@ -313,12 +343,16 @@ export function BlockList({
   blocks,
   onSignOff,
   onSelectCustomer,
+  onOpenAttachment,
   persona,
+  tone = 'other',
 }: {
   blocks: unknown[]
   onSignOff?: (approved: boolean) => void
   onSelectCustomer?: (customerId: string) => void
+  onOpenAttachment?: (attachmentId: string) => void
   persona?: Persona | null
+  tone?: AttachmentTone
 }) {
   const parsed = (blocks ?? []) as ContentBlock[]
   if (parsed.length === 0) return null
@@ -331,7 +365,9 @@ export function BlockList({
             block={block}
             onSignOff={onSignOff}
             onSelectCustomer={onSelectCustomer}
+            onOpenAttachment={onOpenAttachment}
             persona={persona}
+            tone={tone}
           />
         </div>
       ))}
@@ -340,23 +376,406 @@ export function BlockList({
 }
 
 
-/** A thread attachment: the file's name and size.
- *
- * The stored `url` is authenticated (the catalog's anonymous image GET is deliberately not
- * copied for a customer's file), so an `<img src>` would be refused. The dashboard names the
- * file rather than showing a broken image.
+/** Bytes fetched for one attachment, with the type the server actually served them as. */
+interface AttachmentBytes {
+  bytes: ArrayBuffer
+  /** The response's own `Content-Type`, never a client-declared one (risk R7). */
+  contentType: string
+}
+
+/**
+ * A process-lifetime cache keyed by attachment id, mirroring mobile's repository-level
+ * `_attachmentCache` (`api_thread_repository.dart:87-91`): an attachment row is immutable once
+ * written, so scrolling the Salon must not refetch its bytes. A rejected request is evicted so a
+ * later mount can retry rather than caching the failure forever.
  */
-function AttachmentBlock({ block }: BlockRendererProps) {
+const attachmentByteCache = new Map<string, Promise<AttachmentBytes>>()
+
+/**
+ * Fetches an attachment's bytes through the shared authenticated axios client, which attaches the
+ * Clerk bearer token (`api.ts:59-68`). The stored `url` is the authenticated Aveline serve route
+ * (`ConversationEndpoints.cs:574-608`), so it is used as the *request* path — never as an `<img>`
+ * source, which cannot carry an `Authorization` header.
+ *
+ * This is deliberately not the `attachment.view` token route: that route is anonymous because the
+ * token is the credential, and its 900 s TTL would make a cached image go stale mid-session
+ * (strategy §3.8).
+ */
+function fetchAttachmentBytes(attachmentId: string, url: string): Promise<AttachmentBytes> {
+  const cached = attachmentByteCache.get(attachmentId)
+  if (cached) return cached
+
+  const request = apiClient
+    .get<ArrayBuffer>(url, { responseType: 'arraybuffer' })
+    .then((response) => {
+      const header = (response.headers as Record<string, unknown> | undefined)?.[
+        'content-type'
+      ]
+      return {
+        bytes: response.data,
+        contentType: typeof header === 'string' ? header : '',
+      }
+    })
+    .catch((error: unknown) => {
+      attachmentByteCache.delete(attachmentId)
+      throw error
+    })
+
+  attachmentByteCache.set(attachmentId, request)
+  return request
+}
+
+/** The one-word label a chip leads with. */
+function attachmentKindLabel(contentType: string): string {
+  if (contentType === 'application/pdf') return 'PDF'
+  if (contentType.startsWith('image/')) return 'Image'
+  return 'File'
+}
+
+/**
+ * The quiet caption under a photo. An uploaded photograph is frequently named by its digest
+ * (`8b420c6fbc31eea2d64a5e2…`), and a wall of hex in a 256 px bubble is noise, not identity: an
+ * opaque name is captioned "Photo" while the real name stays on the tooltip and in the viewer,
+ * where there is room for it. A human name (`dress.png`) is shown as it is.
+ */
+function attachmentDisplayName(fileName: string): string {
+  const base = fileName.replace(/\.[a-z0-9]+$/i, '')
+  const looksOpaque = /^[0-9a-f]{16,}$/i.test(base) || /^\d{10,}$/.test(base)
+  return looksOpaque ? 'Photo' : fileName
+}
+
+/**
+ * The surface an attachment sits on, keyed to the bubble that holds it.
+ *
+ * The staff bubble is filled with `primary`, so a `bg-background` card on it reads as a hole punched
+ * in the message. On that bubble the plate is a translucent tint of the bubble's own ink; on the
+ * neutral agent/guest bubble it is the app's standard muted card. The hover fill matches each so the
+ * button never flashes the ghost variant's accent colour.
+ */
+const ATTACHMENT_SURFACE: Record<AttachmentTone, string> = {
+  own: 'border-primary-foreground/25 bg-primary-foreground/10 text-primary-foreground hover:bg-primary-foreground/15 hover:text-primary-foreground',
+  other: 'border-border bg-muted/40 text-foreground hover:bg-muted/60 hover:text-foreground',
+}
+
+/** The secondary ink for a size, a kind label, or a placeholder on each surface. */
+const ATTACHMENT_MUTED: Record<AttachmentTone, string> = {
+  own: 'text-primary-foreground/70',
+  other: 'text-muted-foreground',
+}
+
+/** A thread attachment in a state that has no picture to show: its name and size. */
+function AttachmentChip({
+  label,
+  fileName,
+  sizeLabel,
+  state,
+  tone = 'other',
+}: {
+  label: string
+  fileName: string
+  sizeLabel: string | null
+  state: 'loading' | 'unavailable' | 'static'
+  tone?: AttachmentTone
+}) {
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
-      <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        {block.contentType === 'application/pdf' ? 'PDF' : 'Image'}
+    <div
+      data-state={state}
+      aria-busy={state === 'loading' || undefined}
+      className={cn(
+        'flex w-fit max-w-full items-center gap-2 rounded-lg border px-3 py-2',
+        ATTACHMENT_SURFACE[tone],
+      )}
+    >
+      <span
+        className={cn(
+          'shrink-0 text-xs font-medium uppercase tracking-wide',
+          ATTACHMENT_MUTED[tone],
+        )}
+      >
+        {label}
       </span>
-      <span className="truncate text-sm">{block.fileName ?? 'Attachment'}</span>
-      {typeof block.sizeBytes === 'number' && (
-        <span className="text-xs text-muted-foreground">{formatBytes(block.sizeBytes)}</span>
+      <span className="min-w-0 truncate text-sm">{fileName}</span>
+      {sizeLabel && (
+        <span className={cn('shrink-0 text-xs', ATTACHMENT_MUTED[tone])}>{sizeLabel}</span>
       )}
     </div>
+  )
+}
+
+/** The shadcn dialog that shows a fetched image at full size, or a best-effort PDF embed. */
+function AttachmentViewer({
+  open,
+  onOpenChange,
+  fileName,
+  label,
+  sizeLabel,
+  contentType,
+  objectUrl,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  fileName: string
+  label: string
+  sizeLabel: string | null
+  contentType: string
+  objectUrl: string
+}) {
+  const isPdf = contentType === 'application/pdf'
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle className="truncate pr-6 text-sm">{fileName}</DialogTitle>
+          <DialogDescription className="flex items-center gap-2">
+            <span>{label}</span>
+            {sizeLabel && <span>{sizeLabel}</span>}
+          </DialogDescription>
+        </DialogHeader>
+        {isPdf ? (
+          <embed
+            src={objectUrl}
+            type="application/pdf"
+            title={fileName}
+            className="h-[70vh] w-full rounded-md border"
+          />
+        ) : (
+          <div className="max-h-[70vh] overflow-auto">
+            <img src={objectUrl} alt={fileName} className="mx-auto max-w-full" />
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/**
+ * A message attachment. The bytes are fetched through the authenticated client and shown from an
+ * object URL; a failed fetch degrades to the name-and-size chip rather than to a broken image,
+ * exactly as mobile falls back (`thread_blocks.dart:436-472`). An `<img src={block.url}>` cannot
+ * work, because an image element cannot carry the bearer token (strategy §3.8).
+ */
+function AttachmentBlock({
+  block,
+  onOpenAttachment,
+  tone = 'other',
+}: BlockRendererProps) {
+  const attachmentId = block.attachmentId
+  const route = block.url
+  const contentType = block.contentType ?? ''
+  const fileName = block.fileName ?? 'Attachment'
+  const displayName = attachmentDisplayName(fileName)
+  const sizeLabel = typeof block.sizeBytes === 'number' ? formatBytes(block.sizeBytes) : null
+  const label = attachmentKindLabel(contentType)
+  const isImage = contentType.startsWith('image/')
+  const isPdf = contentType === 'application/pdf'
+  // Bytes are only worth fetching for something the block can actually show or hand over.
+  const canFetch = Boolean(attachmentId && route) && (isImage || isPdf)
+
+  const [objectUrl, setObjectUrl] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+  const [viewerOpen, setViewerOpen] = useState(false)
+
+  useEffect(() => {
+    if (!canFetch || !attachmentId || !route) return
+
+    let cancelled = false
+    let created: string | null = null
+
+    fetchAttachmentBytes(attachmentId, route)
+      .then(({ bytes, contentType: servedType }) => {
+        if (cancelled) return
+        // The blob type is the server's served type (falling back to the stored one), so a
+        // mislabelled payload is not rendered from a client-declared type.
+        created = URL.createObjectURL(
+          new Blob([bytes], { type: servedType || contentType }),
+        )
+        setObjectUrl(created)
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true)
+      })
+
+    return () => {
+      cancelled = true
+      // The object URL is per mounted block, so revoking it cannot strand another block showing
+      // the same (cached) attachment.
+      if (created) URL.revokeObjectURL(created)
+    }
+  }, [attachmentId, route, canFetch, contentType])
+
+  const handleOpen = () => {
+    if (attachmentId) onOpenAttachment?.(attachmentId)
+    setViewerOpen(true)
+  }
+
+  if (failed) {
+    return (
+      <AttachmentChip
+        label={label}
+        fileName={fileName}
+        sizeLabel={sizeLabel}
+        state="unavailable"
+        tone={tone}
+      />
+    )
+  }
+
+  // A photo waits in the shape it will arrive in, so the bubble does not jump from a text row to a
+  // plate when the bytes land.
+  if (canFetch && isImage && objectUrl === null) {
+    return (
+      <div
+        data-state="loading"
+        aria-busy="true"
+        className={cn(
+          'w-64 max-w-full overflow-hidden rounded-xl border',
+          ATTACHMENT_SURFACE[tone],
+        )}
+      >
+        <div className="flex aspect-4/3 w-full items-center justify-center border-b border-border/40">
+          <Spinner className="size-4" aria-label={`Loading ${fileName}`} />
+        </div>
+        <div className="flex w-full min-w-0 items-center gap-2 px-2.5 py-2">
+          <span
+            className={cn(
+              'shrink-0 text-[10px] font-semibold uppercase tracking-[0.14em]',
+              ATTACHMENT_MUTED[tone],
+            )}
+          >
+            {label}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-xs font-medium">{displayName}</span>
+          {sizeLabel && (
+            <span className={cn('shrink-0 text-[10px] tabular-nums', ATTACHMENT_MUTED[tone])}>
+              {sizeLabel}
+            </span>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  if (canFetch && objectUrl === null) {
+    return (
+      <AttachmentChip
+        label={label}
+        fileName={fileName}
+        sizeLabel={sizeLabel}
+        state="loading"
+        tone={tone}
+      />
+    )
+  }
+
+  if (objectUrl === null) {
+    return (
+      <AttachmentChip
+        label={label}
+        fileName={fileName}
+        sizeLabel={sizeLabel}
+        state="static"
+        tone={tone}
+      />
+    )
+  }
+
+  if (isPdf) {
+    return (
+      <>
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
+          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {label}
+          </span>
+          <span className="truncate text-sm">{fileName}</span>
+          {sizeLabel && <span className="text-xs text-muted-foreground">{sizeLabel}</span>}
+          <span className="ml-auto flex items-center gap-1.5">
+            <Button type="button" size="xs" variant="outline" onClick={handleOpen}>
+              Open
+            </Button>
+            {/* A download link is the guaranteed path; the embed is best-effort. */}
+            <Button asChild size="xs" variant="ghost">
+              <a href={objectUrl} download={fileName}>
+                Download
+              </a>
+            </Button>
+          </span>
+        </div>
+        <AttachmentViewer
+          open={viewerOpen}
+          onOpenChange={setViewerOpen}
+          fileName={fileName}
+          label={label}
+          sizeLabel={sizeLabel}
+          contentType={contentType}
+          objectUrl={objectUrl}
+        />
+      </>
+    )
+  }
+
+  return (
+    <>
+      {/*
+        The photo is the block. It is framed as a labelled plate — the image on top, a quiet caption
+        rail beneath — rather than a thumbnail with the file beside it, because a side-by-side row
+        let a long generated name push past the bubble's edge. The rail truncates instead, and the
+        expand glyph only appears on hover or keyboard focus, so the photograph is never competing
+        with chrome.
+      */}
+      <Button
+        type="button"
+        variant="ghost"
+        onClick={handleOpen}
+        aria-label={`Open ${fileName}`}
+        title={fileName}
+        className={cn(
+          'group flex h-auto w-64 max-w-full flex-col items-stretch gap-0 overflow-hidden rounded-xl border p-0 text-left shadow-none',
+          ATTACHMENT_SURFACE[tone],
+        )}
+      >
+        <span className="relative block aspect-4/3 w-full overflow-hidden bg-muted/30">
+          <img
+            src={objectUrl}
+            alt={fileName}
+            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
+            // Mirrors mobile's `errorBuilder`: bytes that arrive but will not decode fall back to
+            // the chip rather than to a broken-image glyph.
+            onError={() => setFailed(true)}
+          />
+          <span
+            aria-hidden
+            className="pointer-events-none absolute right-2 top-2 flex size-6 items-center justify-center rounded-full bg-background/80 text-foreground opacity-0 shadow-2xs backdrop-blur-xs transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+          >
+            <Maximize2 className="size-3" />
+          </span>
+        </span>
+        <span className="flex w-full min-w-0 items-center gap-2 px-2.5 py-2">
+          <span
+            className={cn(
+              'shrink-0 text-[10px] font-semibold uppercase tracking-[0.14em]',
+              ATTACHMENT_MUTED[tone],
+            )}
+          >
+            {label}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-xs font-medium">{displayName}</span>
+          {sizeLabel && (
+            <span className={cn('shrink-0 text-[10px] tabular-nums', ATTACHMENT_MUTED[tone])}>
+              {sizeLabel}
+            </span>
+          )}
+        </span>
+      </Button>
+      <AttachmentViewer
+        open={viewerOpen}
+        onOpenChange={setViewerOpen}
+        fileName={fileName}
+        label={label}
+        sizeLabel={sizeLabel}
+        contentType={contentType}
+        objectUrl={objectUrl}
+      />
+    </>
   )
 }
 

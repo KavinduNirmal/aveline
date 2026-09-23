@@ -22,11 +22,15 @@ import type { InventoryItemMock } from './mockData'
 interface InventoryTabProps {
   inventory: InventoryItemMock[]
   onAddNewPiece: () => void
+  /** Absent means the grid is a plain list of tiles with no piece page to open. */
+  onOpenItem?: (item: InventoryItemMock) => void
   onViewMatches: (item: InventoryItemMock) => void
   onComposeOutfit: (item: InventoryItemMock) => void
   onEditItem: (item: InventoryItemMock) => void
   onViewQr: (item: InventoryItemMock) => void
   onDeleteItem: (item: InventoryItemMock) => void
+  onReduceStock?: (item: InventoryItemMock) => void
+  onMarkOutOfStock?: (item: InventoryItemMock) => void
 }
 
 const CATEGORY_PILLS = [
@@ -42,11 +46,14 @@ const CATEGORY_PILLS = [
 export function InventoryTab({
   inventory,
   onAddNewPiece,
+  onOpenItem,
   onViewMatches,
   onComposeOutfit,
   onEditItem,
   onViewQr,
   onDeleteItem,
+  onReduceStock,
+  onMarkOutOfStock,
 }: InventoryTabProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('All')
@@ -205,11 +212,14 @@ export function InventoryTab({
                 key={item.id}
                 item={item}
                 matchCount={matchCount}
+                onOpen={onOpenItem}
                 onViewMatches={onViewMatches}
                 onComposeOutfit={onComposeOutfit}
                 onEditItem={onEditItem}
                 onViewQr={onViewQr}
                 onDeleteItem={onDeleteItem}
+                onReduceStock={onReduceStock}
+                onMarkOutOfStock={onMarkOutOfStock}
               />
             )
           })}

@@ -14,6 +14,12 @@ class VisualAgentState(TypedDict, total=False):
     customer_id: str | None
     customer_name: str | None
     message: str
+    # The reference arm: the API's ``attachments[].reference`` (kind ``attachment`` or
+    # ``inventoryImage``, strategy §5.1 S5). Preferred over ``image_url``.
+    image_ref_kind: str | None
+    image_ref_id: str | None
+    # The compatibility bridge: an absolute, single-use, opaque tokenised URL. Never persisted
+    # or logged, and used only when no reference is present (strategy §3.5, C14).
     image_url: str | None
     intent_type: str | None
     preferences: dict[str, Any] | None

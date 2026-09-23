@@ -52,6 +52,8 @@ import { FloorTagStudio } from './FloorTagStudio'
 interface AddProductModalProps {
   open: boolean
   organizationId?: string
+  /** The boutique's slug, so a floor tag's encoded URL names the shop. */
+  organizationSlug?: string
   onClose: () => void
   onSave: (item: InventoryItemMock) => void
   onDelete?: (item: InventoryItemMock) => void
@@ -120,6 +122,7 @@ function Field({
 export function AddProductModal({
   open,
   organizationId,
+  organizationSlug,
   onClose,
   onSave,
   onDelete,
@@ -130,9 +133,10 @@ export function AddProductModal({
   const [category, setCategory] = useState(editingItem?.category ?? 'Sarees')
   const [garmentType, setGarmentType] = useState<string | null>(null)
   const [color, setColor] = useState(editingItem?.color ?? '')
-  const [colorHex, setColorHex] = useState(
-    editingItem?.colorHex ?? getColorHex(editingItem?.color, DEFAULT_COLOR_HEX),
-  )
+  // The state holds only a real measurement. An unmeasured colour stays empty and the control
+  // below supplies its own default at render time; a default in the state would be saved as
+  // though it had been measured.
+  const [colorHex, setColorHex] = useState(editingItem?.colorHex ?? '')
   const [fabric, setFabric] = useState(editingItem?.fabric ?? '')
   const [style, setStyle] = useState(editingItem?.style ?? '')
   const [pattern, setPattern] = useState(editingItem?.pattern ?? '')
@@ -151,6 +155,11 @@ export function AddProductModal({
   const [imageUrl, setImageUrl] = useState(
     editingItem?.imageUrl ?? '',
   )
+  // The stored row id of the current photograph, when it has been uploaded. The saved item needs
+  // the relative `url` in `imageUrl`, but the vision provider cannot read a relative path, so the
+  // id is what the manual re-analysis addresses. Kept in lockstep with `imageUrl`: every path that
+  // changes or clears the photograph clears this too.
+  const [uploadedImageId, setUploadedImageId] = useState<string | null>(null)
   const [description, setDescription] = useState(editingItem?.description ?? '')
   const [analyzing, setAnalyzing] = useState(false)
   const [generatingDescription, setGeneratingDescription] = useState(false)
@@ -177,7 +186,7 @@ export function AddProductModal({
         setSku(editingItem.sku || `AVL-${Math.floor(100 + Math.random() * 900)}`)
         setCategory(editingItem.category || 'Sarees')
         setColor(editingItem.color || '')
-        setColorHex(editingItem.colorHex || getColorHex(editingItem.color, DEFAULT_COLOR_HEX))
+        setColorHex(editingItem.colorHex || '')
         setFabric(editingItem.fabric || '')
         setStyle(editingItem.style || '')
         setPattern(editingItem.pattern || '')
@@ -192,6 +201,7 @@ export function AddProductModal({
               : '38, 40, 42',
         )
         setImageUrl(editingItem.imageUrl || '')
+        setUploadedImageId(null)
         setDescription(editingItem.description || '')
         setAiConfidence(editingItem.confidenceScore ?? null)
         setSelectedFileName(null)
@@ -202,7 +212,10 @@ export function AddProductModal({
         setCategory('Sarees')
         setGarmentType(null)
         setColor('')
-        setColorHex(DEFAULT_COLOR_HEX)
+        // No measured colour yet, so no hex is held. The colour control still renders a usable
+        // swatch by falling back at the input itself (see the `value={colorHex || …}` binding);
+        // seeding the state with a literal here would persist a colour nobody measured.
+        setColorHex('')
         setFabric('')
         setStyle('')
         setPattern('')
@@ -211,6 +224,7 @@ export function AddProductModal({
         setStockQuantity('4')
         setSizesInput('38, 40, 42')
         setImageUrl('')
+        setUploadedImageId(null)
         setDescription('')
         setAiConfidence(null)
         setSelectedFileName(null)
@@ -301,24 +315,38 @@ export function AddProductModal({
       // 2. Call backend Vision AI (Google Gemini / OpenAI / Backend Cloth Engine)
       let backendResult = null
       if (targetOrgId) {
-        try {
-          backendResult = await analyzeProductImage(targetOrgId, payload, activeFileName)
-        } catch {
-          // Backend offline or unreachable fallback
+        // Address the analysis at something the provider can actually read, in this order:
+        //   1. a stored upload, by row id - the backend resolves the row and inlines its bytes;
+        //   2. a `data:` URL, which carries its own bytes (the pre-upload pass);
+        //   3. an absolute `http(s)` URL.
+        // A relative path is none of those. The provider rejects it with "Unsupported image_url
+        // format" and the backend silently degrades to a filename-derived guess, so the operator
+        // would see a fabricated colour. Posting one is therefore never an option: the client-side
+        // extraction below is the honest answer instead.
+        const isDataUrl = payload.startsWith('data:')
+        const isAbsoluteHttpUrl = /^https?:\/\//i.test(payload)
+        if (uploadedImageId) {
+          try {
+            backendResult = await analyzeProductImage(targetOrgId, '', activeFileName, undefined, uploadedImageId)
+          } catch {
+            // Backend offline or unreachable fallback
+          }
+        } else if (isDataUrl || isAbsoluteHttpUrl) {
+          try {
+            backendResult = await analyzeProductImage(targetOrgId, payload, activeFileName)
+          } catch {
+            // Backend offline or unreachable fallback
+          }
         }
       }
 
-      // Check whether backend returned a real live multimodal result or fallback
-      const isLiveAiResult = Boolean(
-        backendResult &&
-        !backendResult.isFallback &&
-        backendResult.confidenceScore > 0.85 &&
-        !(
-          backendResult.detectedColor?.toLowerCase() === 'emerald' &&
-          backendResult.category?.toLowerCase() === 'gowns' &&
-          !activeFileName?.toLowerCase().includes('emerald')
-        )
-      )
+      // Check whether the backend returned a real live multimodal result or its deterministic
+      // fallback. `isFallback` is the honest signal: the fallback never sampled a pixel, it
+      // pattern-matched the filename and hint text, so its answer must lose to the client's actual
+      // pixel segmentation. A genuine answer is trusted regardless of the confidence it reports —
+      // gating on `> 0.85` used to discard a real reading of 0.7 and hand the form to the client
+      // heuristic instead, which is the wrong direction for a low-confidence measurement to fail in.
+      const isLiveAiResult = Boolean(backendResult && !backendResult.isFallback)
 
       let resolvedColor: string
       let resolvedHex: string
@@ -327,50 +355,79 @@ export function AddProductModal({
       let resolvedFabric: string
       let resolvedPattern: string
       let resolvedStyle: string
-      let resolvedConfidence: number
+      let resolvedConfidence: number | null
       let resolvedName: string
       let resolvedDesc: string
 
+      // 3. Precedence. A real multimodal analysis of this image beats the client-side heuristic,
+      //    so it is checked first. The client result is used whenever the backend is unreachable,
+      //    declined the reference, or fell back to its text-only deterministic guess.
       if (isLiveAiResult && backendResult) {
-        resolvedColor = backendResult.detectedColor
-        resolvedHex = visualClientAnalysis?.hex || backendResult.colorHex || getColorHex(backendResult.detectedColor)
+        // The name and the swatch come from the SAME source, so they cannot disagree. Preferring the
+        // model's name and the client's independently-sampled hex produced a chip reading
+        // "Fuchsia Magenta" beside an emerald dot whenever the two heuristics disagreed. The model
+        // answered here, so its pair wins; the client's pair is used only when the model named
+        // nothing. When the chosen source supplies a name but no hex, no swatch is drawn rather than
+        // borrowing the other source's.
+        const modelNamedColour = Boolean(backendResult.detectedColor)
+        resolvedColor = backendResult.detectedColor || visualClientAnalysis?.colorName || ''
+        resolvedHex = modelNamedColour
+          ? backendResult.colorHex || ''
+          : visualClientAnalysis?.hex || ''
         resolvedCategory = normalizeCategory(backendResult.category)
         resolvedGarment = backendResult.garmentType || `${resolvedColor} ${resolvedCategory}`
-        resolvedFabric = backendResult.fabric || 'Pure Mulberry Silk'
-        resolvedPattern = backendResult.pattern || 'Gold Zari Brocade'
-        resolvedStyle = backendResult.style || 'Contemporary Luxe'
-        resolvedConfidence = backendResult.confidenceScore
-        resolvedName = backendResult.suggestedItemName || `${resolvedColor} ${resolvedFabric} ${resolvedGarment}`.replace(/\s+/g, ' ').trim()
-        resolvedDesc = backendResult.description || `Exquisite ${resolvedColor.toLowerCase()} ${resolvedGarment.toLowerCase()} crafted from premium ${resolvedFabric.toLowerCase()} featuring a refined ${resolvedPattern.toLowerCase()} aesthetic.`
+        // Gap-filling from the client is attribution-safe only for a value the client MEASURED. Its
+        // colour is measured; its fabric/pattern/style are keyword and silhouette inferences, so an
+        // absent model value stays absent rather than borrowing an inference.
+        resolvedFabric = backendResult.fabric || ''
+        resolvedPattern = backendResult.pattern || ''
+        resolvedStyle = backendResult.style || ''
+        resolvedConfidence = backendResult.confidenceScore ?? null
+        resolvedName = backendResult.suggestedItemName || [resolvedColor, resolvedFabric, resolvedGarment].filter(Boolean).join(' ').trim()
+        // Only the provider's own copy. A synthesized sentence built from absent attributes would
+        // invent a weave and a finish the analysis never observed; the drawer's explicit
+        // "generate description" action is where prose is composed, and it is the operator's call.
+        resolvedDesc = backendResult.description || ''
       } else if (visualClientAnalysis) {
-        resolvedColor = visualClientAnalysis.colorName
-        resolvedHex = visualClientAnalysis.hex
+        // The client measured this image itself. Its colour is a measurement; its fabric, pattern
+        // and style are inferences from the filename and the silhouette, which is what the section
+        // labels them ("Detected Fabric"), and the extractor now reports no analysis at all rather
+        // than a fabricated one when it could read nothing.
+        resolvedColor = visualClientAnalysis.colorName || ''
+        resolvedHex = visualClientAnalysis.hex || ''
         resolvedCategory = visualClientAnalysis.category
         resolvedGarment = visualClientAnalysis.garmentType
         resolvedFabric = visualClientAnalysis.fabric
         resolvedPattern = visualClientAnalysis.pattern
         resolvedStyle = visualClientAnalysis.style
-        resolvedConfidence = visualClientAnalysis.confidenceScore
+        resolvedConfidence = visualClientAnalysis.confidenceScore ?? null
         resolvedName = visualClientAnalysis.suggestedItemName
         resolvedDesc = visualClientAnalysis.description
       } else if (backendResult) {
-        resolvedColor = backendResult.detectedColor
-        resolvedHex = backendResult.colorHex || getColorHex(backendResult.detectedColor)
+        // The backend's deterministic fallback with no client measurement to arbitrate. Its answer
+        // is filename-derived and `isFallback` is set, so nothing here is a reading: only a colour
+        // the fallback actually named is carried, and no hex is derived from that name.
+        resolvedColor = backendResult.detectedColor || ''
+        // Same rule as the live branch: only the model's own hex is a measurement.
+        resolvedHex = backendResult.colorHex || ''
         resolvedCategory = normalizeCategory(backendResult.category)
         resolvedGarment = backendResult.garmentType || `${resolvedColor} ${resolvedCategory}`
-        resolvedFabric = backendResult.fabric || 'Pure Mulberry Silk'
-        resolvedPattern = backendResult.pattern || 'Gold Zari Brocade'
-        resolvedStyle = backendResult.style || 'Contemporary Luxe'
-        resolvedConfidence = backendResult.confidenceScore
-        resolvedName = backendResult.suggestedItemName || `${resolvedColor} ${resolvedFabric} ${resolvedGarment}`.replace(/\s+/g, ' ').trim()
-        resolvedDesc = backendResult.description || `Exquisite ${resolvedColor.toLowerCase()} ${resolvedGarment.toLowerCase()} crafted from premium ${resolvedFabric.toLowerCase()}.`
+        resolvedFabric = backendResult.fabric || ''
+        resolvedPattern = backendResult.pattern || ''
+        resolvedStyle = backendResult.style || ''
+        resolvedConfidence = backendResult.confidenceScore ?? null
+        resolvedName = backendResult.suggestedItemName || [resolvedColor, resolvedFabric, resolvedGarment].filter(Boolean).join(' ').trim()
+        resolvedDesc = backendResult.description || ''
       } else {
         throw new Error('Analysis yielded no attributes')
       }
 
       // Update state hooks to refresh all form inputs immediately
       setColor(resolvedColor)
-      setColorHex(resolvedHex)
+      // Normalised to lowercase: the swatch below is the HTML colour control, which accepts only
+      // `#rrggbb` and silently renders black for an uppercase value. An unmeasured colour stays
+      // empty here and the control supplies its own default only for display.
+      setColorHex(resolvedHex ? resolvedHex.toLowerCase() : '')
       setCategory(resolvedCategory)
       setGarmentType(resolvedGarment)
       setFabric(resolvedFabric)
@@ -402,6 +459,9 @@ export function AddProductModal({
     try {
       setSelectedFileName(file.name)
       setSelectedFileSize(file.size)
+      // A new photograph invalidates any remembered upload, so a failed replacement upload can
+      // never leave the previous row id pointing at an image the operator no longer sees.
+      setUploadedImageId(null)
       const dataUrl = await compressAndResizeImage(file, 1280, 0.85)
       setImageUrl(dataUrl)
 
@@ -415,6 +475,10 @@ export function AddProductModal({
           const uploadRes = await uploadBase64Image(organizationId, dataUrl, file.name)
           if (uploadRes?.url) {
             setImageUrl(uploadRes.url)
+          }
+          // The save payload needs the relative url above; the re-analysis needs this row id.
+          if (uploadRes?.id) {
+            setUploadedImageId(uploadRes.id)
           }
         } catch {
           // Retain dataUrl if upload endpoint is unreachable
@@ -453,6 +517,7 @@ export function AddProductModal({
 
   const handleClearImage = () => {
     setImageUrl('')
+    setUploadedImageId(null)
     setSelectedFileName(null)
     setSelectedFileSize(null)
     if (fileInputRef.current) {
@@ -486,6 +551,9 @@ export function AddProductModal({
             resolvedImageUrl = uploadRes.url
             setImageUrl(resolvedImageUrl)
           }
+          if (uploadRes?.id) {
+            setUploadedImageId(uploadRes.id)
+          }
         } catch {
           // Fall back to backend auto-offloader
         }
@@ -496,10 +564,18 @@ export function AddProductModal({
         name: name.trim(),
         sku: sku.trim(),
         category,
-        color: color.trim() || 'Multicolor',
+        color: color.trim(),
+        // Empty string means "no measurement": `CatalogPanel` turns that into an omitted field, so
+        // no default is ever sent as though the analysis had produced it. `InventoryItemMock` types
+        // this as a required string, which is why the honest value here is '' and not `undefined`.
         colorHex,
-        fabric: fabric.trim() || 'Silk Blend',
-        style: style.trim() || 'Classic Luxury',
+        // No invented fabric or style. The drawer used to substitute `Silk Blend` and
+        // `Classic Luxury` here, which put a weave and a house style on the product card that
+        // nothing had observed; an empty field is omitted from the payload and the server stores
+        // null. Same reasoning for the confidence below: `?? 0.92` made an unanalysed piece claim
+        // "92% AI" in the attribute badge.
+        fabric: fabric.trim(),
+        style: style.trim(),
         pattern: pattern.trim() || undefined,
         sizes: sizes.length > 0 ? sizes : ['Standard'],
         price: parsedPrice,
@@ -507,7 +583,7 @@ export function AddProductModal({
         stockQuantity: parsedStock,
         status: parsedStock === 0 ? 'reserved' : parsedStock <= 2 ? 'low_stock' : 'available',
         imageUrl: resolvedImageUrl,
-        confidenceScore: aiConfidence ?? 0.92,
+        confidenceScore: aiConfidence ?? undefined,
         description: description.trim() || undefined,
         createdAt: editingItem?.createdAt ?? new Date().toISOString(),
       }
@@ -664,6 +740,7 @@ export function AddProductModal({
                         variant="ghost"
                         size="sm"
                         onClick={handleClearImage}
+                        aria-label="Remove photograph"
                         className="size-7 p-0 text-muted-foreground hover:text-destructive"
                       >
                         <Trash2 className="size-3.5" />
@@ -680,6 +757,8 @@ export function AddProductModal({
                     value={imageUrl}
                     onChange={(e) => {
                       setImageUrl(e.target.value)
+                      // Typing a URL abandons any stored upload, so its row id must not survive.
+                      setUploadedImageId(null)
                       setSelectedFileName(null)
                       setSelectedFileSize(null)
                     }}
@@ -822,19 +901,20 @@ export function AddProductModal({
                   <Input
                     type="color"
                     aria-label="Dominant colour"
-                    value={colorHex}
+                    value={colorHex || DEFAULT_COLOR_HEX}
                     onChange={(e) => setColorHex(e.target.value)}
                     className="size-6 shrink-0 cursor-pointer rounded border border-border p-0"
                   />
                   <Input
                     value={color}
+                    aria-label="Colour name"
                     onChange={(e) => {
                       const val = e.target.value
                       setColor(val)
                       const hex = getColorHex(val, '')
                       if (hex) setColorHex(hex)
                     }}
-                    placeholder="Emerald Green"
+                    placeholder="Enter colour name"
                     className="h-7 text-xs min-w-0"
                   />
                 </div>
@@ -845,6 +925,7 @@ export function AddProductModal({
                 <Input
                   value={fabric}
                   onChange={(e) => setFabric(e.target.value)}
+                  aria-label="Detected fabric"
                   placeholder="Pure Mulberry Silk"
                   className="h-7 text-xs"
                 />
@@ -858,6 +939,7 @@ export function AddProductModal({
                     setPattern(e.target.value)
                     setStyle(e.target.value)
                   }}
+                  aria-label="Style and pattern"
                   placeholder="Zari Brocade"
                   className="h-7 text-xs"
                 />
@@ -934,6 +1016,7 @@ export function AddProductModal({
           >
             <FloorTagStudio
               organizationId={organizationId}
+              organizationSlug={organizationSlug}
               itemId={effectiveItemId}
               sku={sku}
               name={name}

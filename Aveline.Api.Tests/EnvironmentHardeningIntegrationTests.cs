@@ -44,6 +44,10 @@ public class EnvironmentHardeningIntegrationTests : IAsyncLifetime
                 builder.UseSetting("Telemetry:IpHashSalt", "test-production-ip-salt");
                 // Required by the Production scrape-token guard (S-1).
                 builder.UseSetting("Metrics:ScrapeToken", "test-production-scrape-token");
+                // Required by the Production media-provider guard (Q11): this host boots the safe
+                // default (Media:Provider=database), which Production refuses without the
+                // documented escape hatch.
+                builder.UseSetting("Media:AllowDatabaseProviderInProduction", "true");
             });
 
         _client = _factory.CreateClient();

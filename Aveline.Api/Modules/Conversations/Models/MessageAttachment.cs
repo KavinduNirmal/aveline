@@ -48,6 +48,13 @@ public class MessageAttachment : ITenantEntity
     public int? Height { get; set; }
 
     /// <summary>
+    /// The lowercase-hex SHA-256 of the stored bytes (64 characters), or <c>null</c> on a row
+    /// written before the column existed. This is the same identity the Elle workstream consumes
+    /// as <c>VisionAnalysis.ImageSha256</c> — one helper, one convention.
+    /// </summary>
+    public string? ContentHash { get; set; }
+
+    /// <summary>
     /// Where a reader fetches the bytes. The database provider stores the authenticated
     /// conversations attachment URL; a CDN provider stores its own secure URL.
     /// </summary>

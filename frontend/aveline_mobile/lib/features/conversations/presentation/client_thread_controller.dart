@@ -65,6 +65,21 @@ class ClientThreadController extends ChangeNotifier {
   /// How many messages a page holds.
   final int pageSize;
 
+  /// The server's per-message attachment cap (`MediaContentTypes.MaxPerMessage`), enforced
+  /// when a send binds its files (`ConversationService.cs:307-310`).
+  ///
+  /// Mirrored on the pick path so the sixth file is refused before a byte is uploaded:
+  /// uploading bytes that could never be bound only leaves an orphan for the sweep, and the
+  /// associate gets a generic send failure instead of an answer about the file.
+  static const int maxAttachmentsPerMessage = 5;
+
+  /// What the associate is told when a message already carries the cap.
+  ///
+  /// Deliberately the API's own sentence, built the same way from the same number, so the
+  /// client cannot drift from the server on either the rule or the wording.
+  static const String attachmentCapMessage =
+      'A message may carry at most $maxAttachmentsPerMessage attachments.';
+
   List<ThreadMessage> _messages = const [];
 
   /// The page the window is currently reading from.
@@ -294,6 +309,15 @@ class ClientThreadController extends ChangeNotifier {
     int? width,
     int? height,
   }) async {
+    // The server refuses a sixth file when the send binds it (`ConversationService.cs:307-310`).
+    // Refusing it here means nothing is uploaded that could never be bound, and the associate
+    // is told why in the server's own words rather than by a generic send failure.
+    if (_pendingAttachments.length >= maxAttachmentsPerMessage) {
+      _actionError = attachmentCapMessage;
+      _notify();
+      return;
+    }
+
     final pending = PendingThreadAttachment(
       localId: 'local_att_${++_attachmentCount}',
       fileName: fileName,
@@ -350,7 +374,9 @@ class ClientThreadController extends ChangeNotifier {
       pending.error = null;
     } catch (error) {
       pending.attachmentId = null;
-      pending.error = 'Could not upload.';
+      // Named after the file: the tray draws this beside the retry control, and "Could not
+      // upload." would not say which of several held files failed.
+      pending.error = 'Could not upload ${pending.fileName}.';
     } finally {
       pending.uploading = false;
       _notify();

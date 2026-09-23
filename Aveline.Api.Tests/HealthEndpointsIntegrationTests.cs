@@ -120,6 +120,10 @@ public class HealthEndpointsIntegrationTests : IAsyncLifetime
                 builder.UseSetting("Telemetry:IpHashSalt", "test-production-ip-salt");
                 // Required by the Production scrape-token guard (S-1).
                 builder.UseSetting("Metrics:ScrapeToken", "test-production-scrape-token");
+                // Required by the Production media-provider guard (Q11): this host deliberately
+                // boots the safe default (Media:Provider=database), which Production refuses
+                // unless the escape hatch is set explicitly.
+                builder.UseSetting("Media:AllowDatabaseProviderInProduction", "true");
                 builder.UseSetting("AgentService:BaseUrl", _agentServer.BaseUrl);
                 builder.UseSetting("AgentService:InternalToken", "test-internal-token");
                 builder.UseSetting("Observability:AgentIsCritical", "false");

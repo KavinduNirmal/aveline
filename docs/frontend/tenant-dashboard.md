@@ -281,7 +281,7 @@ T1 closed the defects that made the dashboard's data untrustworthy regardless of
 | **F-2** | Every catalogue write inherited the group's `catalog:view`, and `catalog:manage` was enforced on zero routes | The fourteen-route table: four managed (`catalog:manage`), ten operational (`BoutiqueMember`) |
 | **F-5** | The approval actor was `Guid.TryParse`d from the Clerk `sub`, which is `user_…`, so `DecidedBy` was always null | Resolved through `IUserRepository.GetByClerkIdAsync`, the way every other actor is |
 | **F-6** | `GET …/usage` was gated by `catalog:view` against its own doc comment | Moved to `BoutiqueBillingSelfView` (`billing:view:self`); every org role already held it |
-| **F-7** | The catalogue image route was `AllowAnonymous` with no stated reason | Kept, with the reason recorded on the attribute: catalogue imagery is public and the direction is Cloudinary |
+| **F-7** | The catalogue image route was `AllowAnonymous` with no stated reason | Kept **deliberately anonymous**, with the reason recorded on the attribute: catalogue imagery is public product imagery, so the route stays `AllowAnonymous` (F-7/Q4). Only the delivery mechanism changed — the route answers `302` to the absolute Cloudinary CDN URL for a Cloudinary row and streams bytes for a database row. See [ADR-022](../ADR/ADR-022-media-storage-and-access.md) |
 | **F-9** | The catalogue panel fell back to the hardcoded tenant `…0001` and retained a rejected draft after a failed save | A missing organisation is a hard error (no request sent), and the optimistic write moved inside the success path so the list always shows the server's state |
 | **F-11** | `Endpoints/BusinessRulesEndpoints.cs` was dead code | Deleted |
 
@@ -867,6 +867,14 @@ recorded here so the gap is a known one rather than a page that overstates the t
 
 ## Deliberate exclusions
 
+> **Updated by the Cloudinary media workstream:** the media statements on this page have been
+> corrected to match the shipped code. Catalog imagery is **no longer** excluded from Cloudinary:
+> moving delivery to a CDN shipped, and the decision is recorded in
+> [ADR-022](../ADR/ADR-022-media-storage-and-access.md) and
+> [`media-access.md`](../security/media-access.md). What did *not* change is the tier decision —
+> catalog imagery is public product imagery, so `GET …/catalog/images/{id}` stays `AllowAnonymous`
+> (F-7/Q4).
+
 Recorded so they are decisions rather than gaps.
 
 - **No tenant-authored ledger adjustment.** Boutique roles hold no moving-money permission by
@@ -874,9 +882,16 @@ Recorded so they are decisions rather than gaps.
   adjustment.
 - **No invoices** (TD8). A statement of account only, with the prerequisites for a real invoice
   subsystem named: a provider client, a currency column, and a numbering rule.
-- **No Cloudinary.** Catalog imagery keeps `AllowAnonymous` (public product imagery) and is still
-  served from `InventoryImage.ImageData`. Moving delivery to a CDN is its own slice with its own
-  upload/transform contract.
+- **Catalog imagery is served from Cloudinary (this supersedes the former "No Cloudinary"
+  exclusion).** Delivery moved to Cloudinary's CDN; bytes no longer have to come from
+  `InventoryImage.ImageData`. `GET …/catalog/images/{id}` keeps `AllowAnonymous` for the unchanged
+  reason — catalog imagery is public product imagery (F-7/Q4) — and answers `302` to the absolute
+  CDN delivery URL for a Cloudinary row, streaming bytes only for a database row. `ImageUrl` holds
+  the provider's **absolute CDN URL carrying exactly one width plus `f_auto,q_auto`**. The
+  delivery mechanism and the tier decision are recorded in
+  [ADR-022](../ADR/ADR-022-media-storage-and-access.md) and
+  [`media-access.md`](../security/media-access.md); uploading through an arbitrary image URL remains
+  a separately gated slice.
 - **No authenticated E2E walk** unless a Clerk test session is available; the signed-out walk ships
   regardless and the role matrix is pinned by integration and DOM tests.
 - **No per-user or per-action Blossom split.** `AiUsageRecord` carries no user, customer or agent

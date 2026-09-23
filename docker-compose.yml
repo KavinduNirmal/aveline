@@ -122,9 +122,64 @@ services:
       Embeddings__BaseUrl: ${EMBEDDINGS_BASE_URL:-https://api.openai.com/v1}
       Embeddings__Model: ${EMBEDDINGS_MODEL:-text-embedding-3-small}
       # OpenAI-compatible vision provider for Visual Intelligence (Elle, Slice 2 image analysis).
+      # VISION_API_KEY is the vision provider's own credential and is intentionally not
+      # LLM_API_KEY (a text model such as DeepSeek): see .env.example. Leaving it unset is
+      # allowed - the API logs a warning and falls back to a filename-derived deterministic
+      # result instead of analysing the image.
       Vision__ApiKey: ${VISION_API_KEY:-}
-      Vision__BaseUrl: ${VISION_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai/}
-      Vision__Model: ${VISION_MODEL:-gemini-2.0-flash}
+      # These two fallbacks mirror the committed Aveline.Api/appsettings.json pair, so the no-.env
+      # default is coherent and currently valid. The model id must be a multimodal model that
+      # actually exists for the chosen provider; the previous Gemini fallback `gemini-2.0-flash`
+      # is retired and now answers 404. A non-DeepSeek provider must not be sent the DeepSeek-only
+      # `thinking` field (the code now sends it only when the resolved provider is DeepSeek).
+      Vision__BaseUrl: ${VISION_BASE_URL:-https://api.openai.com}
+      Vision__Model: ${VISION_MODEL:-gpt-4o-mini}
+      # Media storage rollout flags (docs/architecture/media-rollout-flags.md). .env.example
+      # documents these three keys as the operator's opt-in, but compose mapped none of them, so
+      # the documented switch was inert: the container always fell through to the `database`
+      # default in MediaOptions.cs and every catalog and attachment byte was written to the row.
+      # Media__Provider selects the byte-storage tier (database | cloudinary);
+      # Media__ReadFromCloudinary makes the protected read path honour a Cloudinary reference on a
+      # row that carries one; Media__DualWrite also keeps the bytes on the row.
+      Media__Provider: ${Media__Provider:-database}
+      Media__ReadFromCloudinary: ${Media__ReadFromCloudinary:-false}
+      Media__DualWrite: ${Media__DualWrite:-false}
+      # Media token signing. REQUIRED when Media__Provider=cloudinary: MediaOptionsValidator
+      # (ValidateSigningKey) refuses the boot on a blank, non-base64 or wrong-length value. The
+      # default database provider boots without it. Media__PublicBaseUrl is the absolute origin
+      # the minted media-token URLs are built from; when set it must be an absolute http(s) URL
+      # the caller can reach, not a localhost address.
+      Media__SigningKey: ${MEDIA_SIGNING_KEY:-}
+      Media__PublicBaseUrl: ${MEDIA_PUBLIC_BASE_URL:-http://api:8080}
+      # The rest of the `Media:*` surface, passed through under the same `Media__*` names. Their
+      # authoritative defaults live in Aveline.Api/appsettings.json (backed by MediaOptions.cs);
+      # they are repeated here as the compose fallback so the key an operator reads in
+      # .env.example is the key the container receives. An unset value keeps the safe default.
+      Media__AllowDatabaseProviderInProduction: ${Media__AllowDatabaseProviderInProduction:-false}
+      Media__VisionTokenTtlSeconds: ${Media__VisionTokenTtlSeconds:-600}
+      Media__AttachmentTokenTtlSeconds: ${Media__AttachmentTokenTtlSeconds:-900}
+      Media__ClockSkewToleranceSeconds: ${Media__ClockSkewToleranceSeconds:-30}
+      Media__VisionUsePrivateDownload: ${Media__VisionUsePrivateDownload:-false}
+      Media__ImageUrlUploadEnabled: ${Media__ImageUrlUploadEnabled:-false}
+      Media__ImageUrlAllowlist: ${Media__ImageUrlAllowlist:-}
+      Media__ImageUrlMaxRedirects: ${Media__ImageUrlMaxRedirects:-2}
+      Media__ImageUrlFetchTimeoutSeconds: ${Media__ImageUrlFetchTimeoutSeconds:-10}
+      Media__AllowInsecureImageFetch: ${Media__AllowInsecureImageFetch:-false}
+      Media__CatalogMaxFileBytes: ${Media__CatalogMaxFileBytes:-2097152}
+      Media__CatalogDisplayWidth: ${Media__CatalogDisplayWidth:-800}
+      # Cloudinary media provider credentials (strategy §3.4). Read as root configuration keys by
+      # CloudinaryUrlParser, so they keep their SDK names. Required only when Media:Provider is
+      # cloudinary; the pass-through default leaves them empty otherwise. CLOUDINARY_URL is the
+      # primary shape (cloudinary://<key>:<secret>@<cloud_name>); the discrete key/secret pair is
+      # the documented fallback. Passing these names is what makes the Wave 1 live suite
+      # ([Trait("Category","CloudinaryLive")]) runnable from compose (A7.1, closed by Q3).
+      CLOUDINARY_URL: ${CLOUDINARY_URL:-}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:-}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:-}
+      # The discrete fallback's cloud name. CLOUDINARY_URL already carries a cloud name, so this is
+      # read only when the deployment stores the credential as separate variables; it completes the
+      # fallback rather than adding a fourth credential.
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:-}
       # AES-256-GCM key for tenant integration credentials (base64, 32 bytes).
       Credentials__EncryptionKey: ${CREDENTIALS_ENCRYPTION_KEY:?CREDENTIALS_ENCRYPTION_KEY is required}
       # WhatsApp (Meta) integration gateway — base URL + API version (defaults used if unset).

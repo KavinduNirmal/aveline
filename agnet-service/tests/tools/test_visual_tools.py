@@ -1,9 +1,16 @@
+import json
+
 import httpx
 import pytest
 import respx
 
 from app.tools.client import InternalApiClient
 from app.tools.registry import ToolRegistry
+
+# A real tenant id (never the all-zeros sentinel C15 forbids) and a real reference id.
+REAL_ORG = "11111111-2222-3333-4444-555555555555"
+REAL_ATTACHMENT = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+ALL_ZEROS = "00000000-0000-0000-0000-000000000000"
 
 
 @pytest.mark.asyncio
@@ -38,6 +45,102 @@ async def test_analyze_product_image_sends_correct_request():
 
     assert route.called
     assert route.calls.last.request.headers.get("x-internal-token") == "secret-token"
+    body = json.loads(route.calls.last.request.content)
+    assert body["organizationId"] == "org-123"
+    assert body["imageUrl"] == "https://example.com/saree.jpg"
+    assert "imageRefKind" not in body
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_analyze_product_image_sends_reference_with_real_organization():
+    """The reference arm carries the real tenant UUID and no all-zeros sentinel (strategy §4 C15)."""
+    route = respx.post("http://backend/internal/visual/analyze-image").respond(
+        status_code=200,
+        json={"category": "saree", "primary_color": "emerald"},
+    )
+
+    client = InternalApiClient(base_url="http://backend", internal_token="secret-token")
+    registry = ToolRegistry(client)
+
+    await registry.analyze_product_image(
+        image_url=None,
+        org_id=REAL_ORG,
+        image_ref_kind="attachment",
+        image_ref_id=REAL_ATTACHMENT,
+    )
+
+    assert route.called
+    body = json.loads(route.calls.last.request.content)
+    assert body["organizationId"] == REAL_ORG
+    assert body["organizationId"] != ALL_ZEROS
+    assert body["imageRefKind"] == "attachment"
+    assert body["imageRefId"] == REAL_ATTACHMENT
+    assert "imageUrl" not in body
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_analyze_product_image_prefers_reference_over_the_url_bridge():
+    """When both arms are present the reference wins and the rotating URL is not sent."""
+    route = respx.post("http://backend/internal/visual/analyze-image").respond(
+        status_code=200,
+        json={"category": "saree", "primary_color": "emerald"},
+    )
+
+    client = InternalApiClient(base_url="http://backend", internal_token="secret-token")
+    registry = ToolRegistry(client)
+
+    await registry.analyze_product_image(
+        image_url="https://bridge.example/api/v1/media/rotating-token",
+        org_id=REAL_ORG,
+        image_ref_kind="attachment",
+        image_ref_id=REAL_ATTACHMENT,
+    )
+
+    body = json.loads(route.calls.last.request.content)
+    assert body["imageRefKind"] == "attachment"
+    assert body["imageRefId"] == REAL_ATTACHMENT
+    assert "imageUrl" not in body
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_analyze_product_image_legacy_url_arm_still_works():
+    """With no reference, the legacy imageUrl arm is unchanged."""
+    route = respx.post("http://backend/internal/visual/analyze-image").respond(
+        status_code=200,
+        json={"category": "saree", "primary_color": "emerald"},
+    )
+
+    client = InternalApiClient(base_url="http://backend", internal_token="secret-token")
+    registry = ToolRegistry(client)
+
+    await registry.analyze_product_image("https://example.com/saree.jpg", org_id=REAL_ORG)
+
+    body = json.loads(route.calls.last.request.content)
+    assert body["imageUrl"] == "https://example.com/saree.jpg"
+    assert body["organizationId"] == REAL_ORG
+    assert "imageRefKind" not in body
+    assert "imageRefId" not in body
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_analyze_product_image_refuses_a_missing_organization():
+    """No organisation must fail loudly rather than substituting Guid.Empty."""
+    route = respx.post("http://backend/internal/visual/analyze-image").respond(
+        status_code=200,
+        json={"category": "saree", "primary_color": "emerald"},
+    )
+
+    client = InternalApiClient(base_url="http://backend", internal_token="secret-token")
+    registry = ToolRegistry(client)
+
+    with pytest.raises(ValueError):
+        await registry.analyze_product_image("https://example.com/saree.jpg")
+
+    assert not route.called
 
 
 @pytest.mark.asyncio

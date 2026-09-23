@@ -173,6 +173,30 @@ async def run_memory_agent(state: ConciergeState) -> dict[str, Any]:
     return {"memory_output": {"agent": "memory", "ran": True, **output}, "usage": usage}
 
 
+def _first_attachment_reference(
+    attachments: Any,
+) -> tuple[str | None, str | None]:
+    """Extract the first resolvable ``{kind, id}`` reference from the API's attachment list.
+
+    ``org_context.attachments[].reference`` is the contract the bridge publishes; it is what the
+    vision backend resolves tenant-scoped. A malformed or absent entry yields ``(None, None)`` so
+    the legacy ``image_url`` arm stays the only path.
+    """
+    if not isinstance(attachments, list):
+        return None, None
+    for attachment in attachments:
+        if not isinstance(attachment, dict):
+            continue
+        reference = attachment.get("reference")
+        if not isinstance(reference, dict):
+            continue
+        kind = reference.get("kind")
+        ref_id = reference.get("id")
+        if kind and ref_id:
+            return str(kind), str(ref_id)
+    return None, None
+
+
 async def run_visual_agent(state: ConciergeState) -> dict[str, Any]:
     """Run the Visual Insight Agent (Elle — Slice 2).
 
@@ -185,6 +209,7 @@ async def run_visual_agent(state: ConciergeState) -> dict[str, Any]:
     customer_name = org_context.get("customer_name")
     message = state.get("message", "")
     image_url = org_context.get("image_url")
+    image_ref_kind, image_ref_id = _first_attachment_reference(org_context.get("attachments"))
 
     direction = org_context.get("direction")
     staff_query = org_context.get("staff_query") if "staff_query" in org_context else (not direction or direction in ("outbound", "internal"))
@@ -197,6 +222,9 @@ async def run_visual_agent(state: ConciergeState) -> dict[str, Any]:
         "customer_id": str(customer_id) if customer_id else None,
         "customer_name": customer_name,
         "message": message,
+        # The reference arm is the contract; `image_url` is the compatibility bridge.
+        "image_ref_kind": image_ref_kind,
+        "image_ref_id": image_ref_id,
         "image_url": image_url,
         "intent_type": (state.get("intent") or {}).get("intent_type"),
         "preferences": (state.get("memory_output") or {}).get("extracted_memories"),

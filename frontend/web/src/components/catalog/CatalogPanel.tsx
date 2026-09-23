@@ -30,6 +30,7 @@ import type {
 
 import {
   fetchCatalogItems,
+  fetchCatalogItem,
   fetchLookbooks,
   fetchSourcingRequests,
   fetchSuppliers,
@@ -38,16 +39,22 @@ import {
   deleteCatalogItem,
   updateSourcingRequestStatus,
   createSourcingRequest,
+  updateLookbook,
+  deleteLookbook,
 } from '@/lib/catalog-api'
+import type { CatalogSaleReceipt, UpdateLookbookPayload } from '@/types/catalog'
 
 import { InventoryTab } from './InventoryTab'
 import { LookbooksTab } from './LookbooksTab'
 import { SourcingTab } from './SourcingTab'
 import { SuppliersTab } from './SuppliersTab'
 import { AddProductModal } from './AddProductModal'
+import { CatalogItemDetail } from './CatalogItemDetail'
 import { CustomerMatchesDrawer } from './CustomerMatchesDrawer'
 import { ComposeOutfitModal } from './ComposeOutfitModal'
 import { ItemQrModal } from './ItemQrModal'
+import { RecordSaleModal } from './RecordSaleModal'
+import { AdjustStockModal, type StockAdjustmentMode } from './AdjustStockModal'
 
 export type CatalogSubTab = 'inventory' | 'lookbooks' | 'sourcing' | 'suppliers'
 
@@ -71,7 +78,9 @@ function CatalogStat({
   return (
     <Card
       className={cn(
-        'flex items-center gap-3 p-4',
+        // Centred: the label, the figure and its hint are one column, so the four cards read as a
+        // row of equal tiles instead of four left-aligned blocks of different widths.
+        'flex flex-col items-center justify-center gap-2 p-4 text-center',
         tone === 'warning' && 'border-warning/40 bg-warning/[0.06]',
       )}
     >
@@ -104,12 +113,22 @@ function CatalogStat({
 interface CatalogPanelProps {
   organization?: OrganizationProfileDto | null
   role?: string | null
+  /**
+   * The piece named by the URL, when the catalog is showing one piece's information page. The
+   * shell owns the route so this panel stays router-free and testable on its own.
+   */
+  openItemId?: string | null
+  onOpenItem?: (item: InventoryItemMock) => void
+  onCloseItem?: () => void
   onOpenSalonForCustomer?: (customerId: string, clientName: string) => void
 }
 
 export function CatalogPanel({
   organization,
   role: _role,
+  openItemId = null,
+  onOpenItem,
+  onCloseItem,
   onOpenSalonForCustomer,
 }: CatalogPanelProps) {
   const [activeTab, setActiveTab] = useState<CatalogSubTab>('inventory')
@@ -136,8 +155,18 @@ export function CatalogPanel({
   const [selectedQrItem, setSelectedQrItem] = useState<InventoryItemMock | null>(null)
   const [itemToDelete, setItemToDelete] = useState<InventoryItemMock | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [saleItem, setSaleItem] = useState<InventoryItemMock | null>(null)
+  const [stockAdjustment, setStockAdjustment] = useState<{
+    item: InventoryItemMock
+    mode: StockAdjustmentMode
+  } | null>(null)
 
   const orgId = organization?.id
+
+  // The piece the URL names, resolved against what the server returned. `undefined` while the list
+  // is still loading is different from `null` after it arrived, which is why the detail view is
+  // handed both the resolved item and the loading flag.
+  const openItem = openItemId ? inventory.find((item) => item.id === openItemId) ?? null : null
 
   // Load catalog data from backend API when organization is mounted
   const loadCatalogData = async () => {
@@ -183,6 +212,30 @@ export function CatalogPanel({
     }
   }, [orgId])
 
+  // A deep link names one piece, which the list may not carry (the list is paged). Fetch it by id
+  // so a link to a piece beyond the loaded page still opens it, rather than claiming it is missing.
+  useEffect(() => {
+    if (!openItemId || !orgId) return
+    if (inventory.some((item) => item.id === openItemId)) return
+    let cancelled = false
+    fetchCatalogItem(orgId, openItemId)
+      .then((item) => {
+        if (cancelled) return
+        setInventory((prev) =>
+          prev.some((existing) => existing.id === item.id)
+            ? prev
+            : [item as unknown as InventoryItemMock, ...prev],
+        )
+      })
+      .catch(() => {
+        // The page already renders its own "not in the catalog" state; a failed lookup is that
+        // state, not a second error surface.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [openItemId, orgId, inventory])
+
   // Metrics Calculations
   const totalStockCount = inventory.reduce((sum, item) => sum + item.stockQuantity, 0)
   const totalValuation = inventory.reduce((sum, item) => sum + item.price * item.stockQuantity, 0)
@@ -218,12 +271,57 @@ export function CatalogPanel({
         setAddModalOpen(false)
         setEditingItem(null)
       }
+      // Removing the piece that the information page is showing leaves that URL pointing at
+      // nothing, so the reader is returned to the catalog rather than left on a dead page.
+      if (openItemId === deletedId) {
+        onCloseItem?.()
+      }
     } catch {
       toast.error('Failed to delete catalog piece')
     } finally {
       setIsDeleting(false)
     }
   }
+
+  /**
+   * Applies a sale's receipt to the list. The server's remaining stock is the truth, so the row is
+   * replaced from the receipt rather than decremented locally, and the status is the one the server
+   * derived (a sale that empties a shelf leaves the piece reserved).
+   */
+  const handleSaleRecorded = (receipt: CatalogSaleReceipt) => {
+    setInventory((prev) =>
+      prev.map((item) =>
+        item.id === receipt.itemId
+          ? {
+              ...item,
+              stockQuantity: receipt.remainingStock,
+              status: receipt.status as InventoryItemMock['status'],
+            }
+          : item,
+      ),
+    )
+  }
+
+  /**
+   * Applies a manual stock adjustment. Like a sale, the server's count is what the row now holds,
+   * so the list is replaced from the response rather than recomputed locally.
+   */
+  const handleStockAdjusted = (result: {
+    itemId: string
+    stockQuantity: number
+    status: InventoryItemMock['status']
+  }) => {
+    setInventory((prev) =>
+      prev.map((item) =>
+        item.id === result.itemId
+          ? { ...item, stockQuantity: result.stockQuantity, status: result.status }
+          : item,
+      ),
+    )
+  }
+
+  const openStockAdjustment = (item: InventoryItemMock, mode: StockAdjustmentMode) =>
+    setStockAdjustment({ item, mode })
 
   const handleSaveProduct = async (item: InventoryItemMock) => {
     // A missing organisation id is a hard error state, not a reason to write to a placeholder
@@ -244,6 +342,9 @@ export function CatalogPanel({
           itemName: item.name,
           category: item.category,
           color: item.color,
+          // Only a measured hex is sent. An unmeasured colour is an omitted field, never an empty
+          // string or a default the server would store as if it had been observed.
+          colorHex: item.colorHex || undefined,
           fabric: item.fabric,
           style: item.style,
           sizes: item.sizes,
@@ -262,7 +363,10 @@ export function CatalogPanel({
             sku: updated.sku || item.sku,
             category: updated.category,
             color: updated.color,
-            colorHex: updated.colorHex || item.colorHex,
+            // The server's own answer, taken as-is. Merging the previous value back in
+            // (`updated.colorHex || item.colorHex`) resurrected a hex the row no longer stores, so a
+            // colour could never be cleared and the card kept painting a stale swatch.
+            colorHex: updated.colorHex,
             fabric: updated.fabric || item.fabric,
             style: updated.style || item.style,
             pattern: updated.pattern || item.pattern,
@@ -278,6 +382,9 @@ export function CatalogPanel({
           itemName: item.name,
           category: item.category,
           color: item.color,
+          // Only a measured hex is sent. An unmeasured colour is an omitted field, never an empty
+          // string or a default the server would store as if it had been observed.
+          colorHex: item.colorHex || undefined,
           fabric: item.fabric,
           style: item.style,
           sizes: item.sizes,
@@ -296,7 +403,9 @@ export function CatalogPanel({
             sku: created.sku || item.sku,
             category: created.category,
             color: created.color,
-            colorHex: created.colorHex || item.colorHex,
+            // The server normalises the hex, so its answer is the truth — including `null` for a
+            // value it refused. Do not fall back to what the form happened to hold.
+            colorHex: created.colorHex,
             fabric: created.fabric || item.fabric,
             style: created.style || item.style,
             pattern: created.pattern || item.pattern,
@@ -354,6 +463,61 @@ export function CatalogPanel({
 
   const handleSaveOutfit = (newOutfit: OutfitCompositionMock) => {
     setOutfits((prev) => [newOutfit, ...prev])
+    // The composer persists the look server-side before this callback runs, so a reload of the
+    // list is what gives the local entry the row's real id and item detail. The optimistic add
+    // above keeps it on screen when the server is unreachable.
+    void loadCatalogData()
+  }
+
+  const handleUpdateOutfit = async (
+    id: string,
+    payload: UpdateLookbookPayload,
+  ): Promise<boolean> => {
+    if (!orgId) {
+      toast.error('Cannot update: this dashboard has no organisation id', {
+        description: 'Reload the page. No request was sent.',
+      })
+      return false
+    }
+
+    try {
+      const updated = await updateLookbook(orgId, id, payload)
+      setOutfits((prev) =>
+        prev.map((outfit) => (outfit.id === id ? { ...outfit, ...updated } : outfit)),
+      )
+      toast.success('Lookbook updated', { description: updated.name })
+      return true
+    } catch (err: any) {
+      const errorMsg =
+        err?.response?.data?.error || err?.response?.data?.message || err?.message || 'Server error'
+      toast.error('Could not update the lookbook. Nothing was changed.', {
+        description: errorMsg,
+      })
+      return false
+    }
+  }
+
+  const handleDeleteOutfit = async (id: string): Promise<boolean> => {
+    if (!orgId) {
+      toast.error('Cannot delete: this dashboard has no organisation id', {
+        description: 'Reload the page. No request was sent.',
+      })
+      return false
+    }
+
+    try {
+      await deleteLookbook(orgId, id)
+      setOutfits((prev) => prev.filter((outfit) => outfit.id !== id))
+      toast.success('Lookbook removed')
+      return true
+    } catch (err: any) {
+      const errorMsg =
+        err?.response?.data?.error || err?.response?.data?.message || err?.message || 'Server error'
+      toast.error('Could not remove the lookbook. Nothing was changed.', {
+        description: errorMsg,
+      })
+      return false
+    }
   }
 
   const handleUpdateSourcingStatus = async (
@@ -394,6 +558,22 @@ export function CatalogPanel({
 
   return (
     <div className="flex flex-col gap-6">
+      {openItemId ? (
+        <CatalogItemDetail
+          item={openItem}
+          isLoading={isLoading}
+          onBack={() => onCloseItem?.()}
+          onEdit={handleEditProduct}
+          onRecordSale={(item) => setSaleItem(item)}
+          onDelete={(item) => setItemToDelete(item)}
+          onViewMatches={handleViewMatches}
+          onComposeOutfit={handleComposeOutfit}
+          onViewQr={(item) => setSelectedQrItem(item)}
+          onReduceStock={(item) => openStockAdjustment(item, 'reduce')}
+          onMarkOutOfStock={(item) => openStockAdjustment(item, 'out-of-stock')}
+        />
+      ) : (
+        <>
       {/* Page header: what this section is, and one way to add a piece. */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -508,11 +688,14 @@ export function CatalogPanel({
               setEditingItem(null)
               setAddModalOpen(true)
             }}
+            onOpenItem={onOpenItem}
             onViewMatches={handleViewMatches}
             onComposeOutfit={handleComposeOutfit}
             onEditItem={handleEditProduct}
             onViewQr={(item) => setSelectedQrItem(item)}
             onDeleteItem={(item) => setItemToDelete(item)}
+            onReduceStock={(item) => openStockAdjustment(item, 'reduce')}
+            onMarkOutOfStock={(item) => openStockAdjustment(item, 'out-of-stock')}
           />
         )}
 
@@ -523,6 +706,8 @@ export function CatalogPanel({
               setComposeHeroItem(inventory[0] ?? null)
               setComposeModalOpen(true)
             }}
+            onUpdateLookbook={handleUpdateOutfit}
+            onDeleteLookbook={handleDeleteOutfit}
           />
         )}
 
@@ -537,11 +722,14 @@ export function CatalogPanel({
 
         {activeTab === 'suppliers' && <SuppliersTab suppliers={suppliers} />}
       </div>
+        </>
+      )}
 
       {/* Add / Edit Piece Modal */}
       <AddProductModal
         open={addModalOpen}
         organizationId={orgId}
+        organizationSlug={organization?.slug}
         onClose={() => {
           setAddModalOpen(false)
           setEditingItem(null)
@@ -582,12 +770,37 @@ export function CatalogPanel({
         item={selectedQrItem}
         open={selectedQrItem !== null}
         organizationId={orgId}
+        organizationSlug={organization?.slug}
         onClose={() => setSelectedQrItem(null)}
+      />
+
+      {/* Counter Sale Modal */}
+      <RecordSaleModal
+        open={saleItem !== null}
+        item={saleItem}
+        organizationId={orgId}
+        onClose={() => setSaleItem(null)}
+        onRecorded={handleSaleRecorded}
+      />
+
+      {/* Manual Stock Adjustment Modal */}
+      <AdjustStockModal
+        open={stockAdjustment !== null}
+        item={stockAdjustment?.item ?? null}
+        mode={stockAdjustment?.mode ?? 'reduce'}
+        organizationId={orgId}
+        onClose={() => setStockAdjustment(null)}
+        onAdjusted={handleStockAdjusted}
       />
 
       {/* Delete Confirmation Modal */}
       {itemToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Delete catalog piece"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200"
+        >
           <Card className="w-full max-w-md overflow-hidden border-border bg-card shadow-2xl">
             <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-destructive/10 shrink-0">
               <div className="flex items-center gap-2.5">

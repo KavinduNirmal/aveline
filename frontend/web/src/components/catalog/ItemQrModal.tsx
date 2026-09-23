@@ -19,12 +19,14 @@ import { QrCodeSvg } from '@/components/ui/QrCodeSvg'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { generateQrCode } from '@/lib/catalog-api'
 import { formatMoney } from '@/lib/format-money'
+import { buildItemQrJson, buildItemQrUrl } from './qrPayload'
 import type { InventoryItemMock } from './mockData'
 
 interface ItemQrModalProps {
   item: InventoryItemMock | null
   open: boolean
   organizationId?: string
+  organizationSlug?: string
   onClose: () => void
 }
 
@@ -32,6 +34,7 @@ export function ItemQrModal({
   item,
   open,
   organizationId,
+  organizationSlug,
   onClose,
 }: ItemQrModalProps) {
   const [copiedPayload, setCopiedPayload] = useState(false)
@@ -50,19 +53,29 @@ export function ItemQrModal({
     if (qrFormatType === 'sku') {
       return item.sku || 'AVL-000'
     }
-    if (qrFormatType === 'url') {
-      const origin = typeof window !== 'undefined' ? window.location.origin : 'https://aveline.app'
-      return `${origin}/catalog/items/${effectiveItemId}`
-    }
-    return JSON.stringify({
-      type: 'aveline_inventory_item',
-      orgId: effectiveOrgId,
+    const target = {
       itemId: effectiveItemId,
       sku: effectiveSku,
-      url: `/catalog/items/${effectiveItemId}`,
-      v: 1,
-    })
-  }, [item, qrFormatType, effectiveOrgId, effectiveItemId, effectiveSku])
+      organizationId: effectiveOrgId,
+      organizationSlug,
+    }
+    if (qrFormatType === 'url') {
+      return buildItemQrUrl(target)
+    }
+    return buildItemQrJson(target)
+  }, [item, qrFormatType, effectiveOrgId, effectiveItemId, effectiveSku, organizationSlug])
+
+  // The link the tag opens. Shown beside the payload so an operator can see which boutique it names.
+  const activeQrUrl = useMemo(
+    () =>
+      buildItemQrUrl({
+        itemId: effectiveItemId,
+        sku: effectiveSku,
+        organizationId: effectiveOrgId,
+        organizationSlug,
+      }),
+    [effectiveItemId, effectiveSku, effectiveOrgId, organizationSlug],
+  )
 
   if (!open || !item) return null
 
@@ -414,9 +427,7 @@ export function ItemQrModal({
               {item.id && (
                 <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                   <ExternalLink className="size-3 text-primary shrink-0" />
-                  <span className="truncate font-mono text-[10px]">
-                    /catalog/items/{item.id}
-                  </span>
+                  <span className="truncate font-mono text-[10px]">{activeQrUrl}</span>
                 </div>
               )}
             </div>

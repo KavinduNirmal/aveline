@@ -11,6 +11,11 @@
     </ItemGroup>
 
     <ItemGroup>
+        <!-- Pinned exactly. The SDK is not vendor-supported on net10.0 and drags in
+             Newtonsoft.Json; risk R17's mitigation is this pin plus the four-operation live
+             smoke suite (CloudinaryLiveSmokeTests), not an assumption. The one package this
+             wave adds. -->
+        <PackageReference Include="CloudinaryDotNet" Version="1.29.3" />
         <PackageReference Include="FirebaseAdmin" Version="3.6.0" />
         <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.12" />
         <!-- 10.0.11+ pulls the patched Microsoft.OpenApi (>= 2.7.5), closing GHSA-v5pm-xwqc-g5wc. -->

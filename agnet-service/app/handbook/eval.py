@@ -44,6 +44,11 @@ class ModeReport:
     hits_at_1: int
     hits_at_3: int
     misses: list[str] = field(default_factory=list)
+    #: Queries for which the mode returned nothing at all. Kept apart from `misses` because an
+    #: empty dense result usually means the embedding provider hiccuped, not that the index failed:
+    #: a real retrieval miss has neighbours, and scoring a provider outage as a ranking error
+    #: understates the mode without saying so.
+    empty: list[str] = field(default_factory=list)
 
     @property
     def recall_at_1(self) -> float:
@@ -54,10 +59,13 @@ class ModeReport:
         return self.hits_at_3 / self.total if self.total else 0.0
 
     def line(self) -> str:
-        return (
+        line = (
             f"{self.mode:<9} recall@1 {self.recall_at_1:6.1%}   "
             f"recall@3 {self.recall_at_3:6.1%}   n={self.total}"
         )
+        if self.empty:
+            line += f"   ({len(self.empty)} returned no rows)"
+        return line
 
 
 def load_golden_queries(path: Path) -> list[GoldenQuery]:
@@ -94,10 +102,14 @@ async def evaluate(
         hits_at_1 = 0
         hits_at_3 = 0
         misses: list[str] = []
+        empty: list[str] = []
 
         for query in queries:
             hits = await searcher(query.question, mode, top_k)
             rank = rank_of(hits, query.expect)
+
+            if not hits:
+                empty.append(query.question)
 
             if rank == 1:
                 hits_at_1 += 1
@@ -113,6 +125,7 @@ async def evaluate(
                 hits_at_1=hits_at_1,
                 hits_at_3=hits_at_3,
                 misses=misses,
+                empty=empty,
             )
         )
 

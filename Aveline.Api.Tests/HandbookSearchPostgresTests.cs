@@ -381,6 +381,21 @@ public class HandbookSearchPostgresTests : IAsyncLifetime
 
     // ------------------------------------------------------------------ helpers
 
+    // ------------------------------------------------------------------ paging
+
+    [Fact]
+    public async Task Single_leg_modes_respect_top_k()
+    {
+        // Found against a live index: the single-leg statements limited only the candidate pool, so
+        // a caller that asked for 5 rows got 20. topK is the request contract, not a hint.
+        await SeedAsync();
+
+        Assert.Single(await SearchAsync(Query, mode: "vector", topK: 1));
+        Assert.Equal(2, (await SearchAsync(Query, mode: "vector", topK: 2)).Count);
+        Assert.Single(await SearchAsync(Query, mode: "lexical", topK: 1));
+        Assert.Single(await SearchAsync(Query, mode: "hybrid", topK: 1));
+    }
+
     /// <summary>
     /// Deterministic stub: the exact input text selects a precomputed 1536-d vector, so the dense
     /// ordering is a property of the fixture rather than of a hash. 1536 dimensions, like the real

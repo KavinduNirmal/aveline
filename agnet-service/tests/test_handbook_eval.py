@@ -136,3 +136,21 @@ async def test_evaluate_reports_an_empty_set_without_dividing_by_zero():
 
 async def _empty() -> list[dict]:
     return []
+
+
+@pytest.mark.asyncio
+async def test_an_empty_response_is_reported_apart_from_a_ranking_miss():
+    # Found live: a transient embedding-provider failure returns no rows at all, which reads as a
+    # ranking miss unless it is counted separately.
+    queries = load_golden_queries(GOLDEN_PATH)[:2]
+
+    async def searcher(question: str, mode: str, top_k: int) -> list[dict]:
+        if question == queries[0].question:
+            return []
+        return [{"sourceKey": queries[1].expect}]
+
+    report = {r.mode: r for r in await evaluate(searcher, queries)}["hybrid"]
+
+    assert report.empty == [queries[0].question]
+    assert len(report.misses) == 1
+    assert "returned no rows" in report.line()

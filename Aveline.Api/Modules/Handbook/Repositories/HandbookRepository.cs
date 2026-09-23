@@ -160,14 +160,14 @@ public class HandbookRepository : IHandbookRepository
         HandbookSearchQuery query,
         CancellationToken cancellationToken)
     {
-        var (_, pool, fusionK, audience, kinds) = Normalise(query);
+        var (topK, pool, fusionK, audience, kinds) = Normalise(query);
 
         var sql = kinds is null
             ? LexicalOnlySql.Replace(LexicalKindsToken, string.Empty)
-            : LexicalOnlySql.Replace(LexicalKindsToken, "AND l.\"SourceKind\" = ANY({4})");
+            : LexicalOnlySql.Replace(LexicalKindsToken, "AND l.\"SourceKind\" = ANY({5})");
         var args = kinds is null
-            ? new object[] { query.Query, audience, fusionK, pool }
-            : new object[] { query.Query, audience, fusionK, pool, kinds };
+            ? new object[] { query.Query, audience, pool, topK, fusionK }
+            : new object[] { query.Query, audience, pool, topK, fusionK, kinds };
 
         return await RunAsync(sql, args, cancellationToken);
     }
@@ -176,15 +176,15 @@ public class HandbookRepository : IHandbookRepository
         HandbookSearchQuery query,
         CancellationToken cancellationToken)
     {
-        var (_, pool, _, audience, kinds) = Normalise(query);
+        var (topK, pool, _, audience, kinds) = Normalise(query);
         var literal = VectorLiteral(query.QueryEmbedding!);
 
         var sql = kinds is null
             ? VectorOnlySql.Replace(VectorKindsToken, string.Empty)
-            : VectorOnlySql.Replace(VectorKindsToken, "AND c.\"SourceKind\" = ANY({4})");
+            : VectorOnlySql.Replace(VectorKindsToken, "AND c.\"SourceKind\" = ANY({5})");
         var args = kinds is null
-            ? new object[] { literal, audience, pool, query.MinSimilarity }
-            : new object[] { literal, audience, pool, query.MinSimilarity, kinds };
+            ? new object[] { literal, audience, pool, topK, query.MinSimilarity }
+            : new object[] { literal, audience, pool, topK, query.MinSimilarity, kinds };
 
         return await RunAsync(sql, args, cancellationToken);
     }
@@ -300,8 +300,8 @@ public class HandbookRepository : IHandbookRepository
     /// embedding could be produced, so a provider outage degrades instead of failing. The same RRF
     /// constant is applied to the single leg so scores stay comparable with the hybrid path.
     ///
-    /// <para>Placeholders: {0} query text, {1} audience, {2} fusion constant, {3} candidate pool,
-    /// {4} source kinds (only when the kind token is substituted).</para>
+    /// <para>Placeholders: {0} query text, {1} audience, {2} candidate pool, {3} top-k, {4} fusion
+    /// constant, {5} source kinds (only when the kind token is substituted).</para>
     /// </summary>
     private const string LexicalOnlySql = """
         SELECT t."Id",
@@ -314,7 +314,7 @@ public class HandbookRepository : IHandbookRepository
                t."Content",
                NULL::bigint AS "VectorRank",
                t.rank AS "LexicalRank",
-               (1.0 / ({2} + t.rank))::double precision AS "Score"
+               (1.0 / ({4} + t.rank))::double precision AS "Score"
         FROM (
             SELECT l."Id",
                    l."SourceKey",
@@ -333,17 +333,19 @@ public class HandbookRepository : IHandbookRepository
               AND l."SearchVector" @@ websearch_to_tsquery('english'::regconfig, {0})
               /*LEXICAL_KINDS*/
             ORDER BY ts_rank_cd(l."SearchVector", websearch_to_tsquery('english'::regconfig, {0})) DESC
-            LIMIT {3}
+            LIMIT {2}
         ) t
         ORDER BY "Score" DESC
+        LIMIT {3}
         """;
 
     /// <summary>
     /// The dense leg alone, for <c>mode=vector</c>. Its score is the cosine similarity itself,
     /// because that is the quantity the caller is asking about when it asks for the vector leg.
     ///
-    /// <para>Placeholders: {0} embedding literal, {1} audience, {2} candidate pool, {3} minimum
-    /// cosine similarity, {4} source kinds (only when the kind token is substituted).</para>
+    /// <para>Placeholders: {0} embedding literal, {1} audience, {2} candidate pool, {3} top-k,
+    /// {4} minimum cosine similarity, {5} source kinds (only when the kind token is
+    /// substituted).</para>
     /// </summary>
     private const string VectorOnlySql = """
         SELECT v."Id",
@@ -372,12 +374,13 @@ public class HandbookRepository : IHandbookRepository
             WHERE c."IsActive"
               AND (c."Audience" = {1} OR c."Audience" = 'both')
               AND c.embedding IS NOT NULL
-              AND (1 - (c.embedding <=> CAST({0} AS vector))) >= {3}
+              AND (1 - (c.embedding <=> CAST({0} AS vector))) >= {4}
               /*VECTOR_KINDS*/
             ORDER BY c.embedding <=> CAST({0} AS vector)
             LIMIT {2}
         ) v
         ORDER BY "Score" DESC
+        LIMIT {3}
         """;
 
     /// <summary>

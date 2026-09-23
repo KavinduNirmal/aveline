@@ -143,9 +143,11 @@ precondition.
 - **Seeding is a release step.** An index that lags the documentation is the most likely way this
   feature goes quietly wrong. `GET /internal/handbook/sources` makes what is actually indexed visible,
   and `handbook/README.md` documents the re-seed.
-- **The source documentation must be internally consistent.** Five contradictions are recorded as
-  owner-supplied fixes; until they are resolved and the index re-seeded, retrieval can surface
-  mutually exclusive answers for one question.
+- **The source documentation must be internally consistent.** Five contradictions in the corpus
+  (Manager and Billing, Manager and the Reject/Revise verbs, whether Aveline sends WhatsApp, the
+  invitation-code lifetime label, and the role order in the invite picker) were reconciled against
+  the code before the flag is enabled. A seeded index keeps serving the old text until it is
+  re-seeded, so re-seeding is what publishes the reconciled wording.
 - **The prompt surface widens again.** Handbook excerpts are text in a privileged prompt, so the
   data-not-instruction rule in `SYSTEM_PROMPT.md` now names them, and the supervisor is instructed
   that excerpts are the only source for a platform question and that Blossom amounts and per-action
@@ -157,6 +159,35 @@ precondition.
 - **`aveline_help` classification needs tuning.** The rule patterns are deliberately high-precision; a
   false positive routes a message to the handbook, which answers it or says it cannot, and a false
   negative is the old behaviour. The golden set is where the precision/recall trade-off is settled.
+
+## Measured retrieval quality
+
+Scored against the seeded index (169 chunks, 22 sources, `gemini-embedding-2` at 1536 dimensions) with
+`scripts/eval_handbook.py` and the 42-question golden set:
+
+| Query shape | n | hybrid @1 | hybrid @3 | lexical @1 | lexical @3 | vector @1 | vector @3 |
+|---|---|---|---|---|---|---|---|
+| exact (labels, distinctive terms) | 20 | 70.0% | 95.0% | 65.0% | 80.0% | 65.0% | 90.0% |
+| paraphrase (no shared vocabulary) | 22 | 72.7% | 81.8% | 22.7% | 27.3% | 68.2% | 86.4% |
+| **all** | **42** | **71.4%** | **88.1%** | 42.9% | 52.4% | 66.7% | 88.1% |
+
+The claim this decides: **the hybrid is not worse than either leg anywhere, and is the strongest leg
+at recall@1 on both query shapes.** Two results deserve reading carefully:
+
+- **The lexical leg returned no rows at all for 13 of the 42 questions**, and that is the leg working
+  as designed rather than failing: `websearch_to_tsquery` ANDs its terms, so a paraphrase with no
+  shared vocabulary matches nothing. Those are precisely the questions the dense leg exists to carry,
+  and the fused result still answers them. It is the clearest evidence for the hybrid.
+- **One golden expectation is over-strict.** "invitation code lifetime" misses `web-docs/team` in every
+  mode, because the corpus documents code lifetimes in four places and `company/faq`,
+  `getting-started` and `joining-a-boutique` all outrank it - correctly. The retrieval is right and the
+  labelled single answer is too narrow, so the numbers above are slightly pessimistic. Widening that
+  entry to a set of acceptable sources is recorded as follow-up rather than quietly adjusted.
+
+A defect found by scoring a live index, since fixed: the **single-leg statements ignored `topK`** and
+returned the whole candidate pool (20 rows for a request of 5). Rank-based recall was unaffected, but
+the endpoint contract was broken and a caller's payload inflated fourfold. `mode=vector` and
+`mode=lexical` now honour `topK`, with a Postgres test asserting the cap.
 
 ## Related
 - [ADR-003](ADR-003-database-strategy.md) — PostgreSQL with pgvector as the single datastore

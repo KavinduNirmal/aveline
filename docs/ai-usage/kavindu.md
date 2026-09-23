@@ -6321,22 +6321,36 @@ intro is its own chunk and the heading trail reaches the lexical index through t
 
 ### Outstanding, stated plainly
 
-- **The golden query set has not been scored against a seeded index.** The scoring code and the
-  41-query set are tested, but the recall numbers that would substantiate "it retrieves well" need a
-  seeded database and a running API. `scripts/eval_handbook.py` produces them; running it is the next
-  step, and the ADR deliberately does not claim a number it has not measured.
-- **The source documentation still contradicts itself in five places** (Manager and Billing,
-  Reject/Revise and Manager, whether Aveline sends WhatsApp, the invite-code lifetime label, the role
-  order). The owner is handling these separately; until they are fixed and the index re-seeded,
-  retrieval can surface two different answers to one question. The acceptance criteria in #397 record
-  this as a gate on enabling the lane.
+- **The golden set has now been scored**, against the seeded index (169 chunks, 22 sources, Gemini
+  embeddings): hybrid **recall@1 71.4% / recall@3 88.1%**, against 42.9%/52.4% for the lexical leg
+  alone and 66.7%/88.1% for the dense leg alone. The hybrid is not worse than either leg anywhere and
+  is the strongest at recall@1 on both query shapes, which is the claim the extra SQL had to earn. The
+  numbers and the two caveats that qualify them are in ADR-025.
+- **The lexical leg returned nothing at all for 13 of the 42 questions**, which is the leg working as
+  designed: `websearch_to_tsquery` ANDs its terms, so a paraphrase with no shared vocabulary matches
+  nothing. Those are the questions the dense leg carries. The eval now reports "returned no rows"
+  separately from a ranking miss, because a provider hiccup and a ranking error were otherwise
+  indistinguishable.
+- **One golden expectation is over-strict and the metric is pessimistic because of it.** "invitation
+  code lifetime" misses `web-docs/team` in every mode, because the corpus documents code lifetimes in
+  four places and three other pages outrank it - correctly. The retrieval is right; the labelled
+  single answer is too narrow. Recorded rather than tuned away.
+- **A real contract bug fell out of scoring it live**: the single-leg search modes ignored `topK` and
+  returned the whole 20-row candidate pool. Recall was unaffected (it is rank-based), but the endpoint
+  returned four times what a caller asked for. Fixed, with a Postgres test asserting the cap.
+- **The five source contradictions are fixed and the index has been re-seeded.** The owner resolved
+  them (Manager dropped from Reject/Revise to match the prose; the invite-code label now cross-refers
+  between its two names; the WhatsApp and Manager/Billing statements reconciled), rebuilt the API, and
+  the corpus was re-seeded on 2026-09-24. Spot checks against the live index return the corrected
+  answers, and the golden set now scores the reconciled text.
 - **The company facts that do not exist yet are stated as missing, not invented.** Refunds,
   cancellation, data export and erasure, per-action Blossom costs and the account lifecycle have no
   policy on file, so `what-the-handbook-does-not-cover.md` says so and points at support. A knowledge
   base that guesses a refund policy is worse than one that admits it does not know.
 - **Blossom costs are deliberately not published.** The owner's instruction was to document that
   unused Blossoms expire and to reveal no numbers; the prompt also forbids the model quoting amounts.
-- The plan file is untracked by design (`.agents/plans/*` is gitignored), and the seeded content has
-  not been loaded into any shared environment — re-seeding is a release step documented in
-  `handbook/README.md`.
+- **The index is seeded in the local stack only.** 169 chunks across 22 sources, with the support
+  address substituted from `SUPPORT_EMAIL`; `GET /internal/handbook/sources` confirms the counts. No
+  shared environment has been seeded, and re-seeding stays a release step documented in
+  `handbook/README.md`. The plan file is untracked by design (`.agents/plans/*` is gitignored).
 

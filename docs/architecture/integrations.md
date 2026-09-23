@@ -76,6 +76,64 @@ WebhookEndpoints
 
 ---
 
+## 4a. Conversation-initiated orders and the approval loop (ADR-024)
+
+A customer message is persisted, broadcast into the Salon, and handed to the agent service by
+`ConversationService.TriggerInboundDraftAsync`. When the message asks to buy something, the API
+resolves it to inventory **before** the call, so the commerce agent has real line items to evaluate.
+
+```
+Customer: "I want to buy the emerald green saree, please send the order"
+        │
+        ▼
+ConversationService
+  1. OrderContextBuilder: purchase signal + inventory name match
+       -> items = [{ item_id, quantity, unit_price, wholesale_cost }]
+       (price and cost come from the inventory row; an unresolvable piece is omitted, never guessed)
+  2. POST /agents/query  { query, thread_id, org_context{ items, conversation_id, ... } }
+        │
+        ▼
+Agent Service (LangGraph, checkpointed by thread_id)
+  load_context -> supervisor -> resolve_customer -> memory -> visual -> commerce
+                                                                        │
+                         evaluate_deal: high-value / low-margin / discount rules
+                                                                        │
+                        breach? ── no ──> prepare_settlement -> payment link
+                                └── yes ─> commerce_approval: interrupt(payload)   [graph PAUSES]
+        │
+        ▼
+  Reply: status = pending_approval  +  output.approval { type, reason, triggered_rules }
+        │
+        ▼
+ConversationService (on that reply only)
+  3. IConversationOrderBridge -> IOrderService.CreateOrderAsync
+       -> Order(status=pending_approval) + ApprovalQueueEntry(ThreadId, ConversationId)
+       idempotent on (OrganizationId, ThreadId): a retried turn reuses the order it already drafted
+        │
+        ▼
+Owner decides in the dashboard  ->  POST /approvals/{id}/decision { approve | reject | revise }
+        │
+        ▼
+ApprovalService
+  4. transitions the order, then POST /agents/resume { thread_id, decision: "approved" | ... }
+        │
+        ▼
+Agent Service: Command(resume=...) re-enters AT commerce_approval
+  (the supervisor is NOT consulted and nothing before the pause re-runs)
+  approved/revised -> prepare_settlement -> payment link published into the Salon
+  rejected         -> handle_rejection
+```
+
+Two things this diagram exists to make obvious:
+
+- **The agent never writes an order.** It reports that one is required; the API prices, persists and
+  transitions it (ADR-023 Decision 3, `SYSTEM_PROMPT.md` rule 10).
+- **The resume is a resume, not a re-query.** Replaying the request would re-run every specialist and
+  every tool call before the pause, and a decision carries no commerce signal, so the routing that
+  was correct for the original message would be wrong for the decision.
+
+---
+
 ## 5. Outbound message flow
 
 ```

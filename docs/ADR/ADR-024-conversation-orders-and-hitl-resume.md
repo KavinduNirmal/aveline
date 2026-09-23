@@ -1,7 +1,18 @@
 # ADR-024: Conversation-Initiated Orders and the HITL Approval Loop
 
 ## Status
-Proposed
+Accepted — implemented in `.agents/plans/adr-024-conversation-orders-and-hitl-resume-implementation-plan.md`.
+
+Two details were settled during implementation and are worth recording here:
+
+- **A revision settles.** `revised` joins `approved` and `rejected` in the shared decision
+  vocabulary, and the commerce graph routes it to settlement. Re-evaluating after a revision can
+  still report `requires_approval` (the revised terms may breach the same rules), so the decision is
+  checked **before** the rules — otherwise the owner's ruling would be met with another pause.
+- **The discount crosses the seam as a rate, not an amount.** The API's decision speaks in absolute
+  money (it rewrites `Order.Discount`); the agent's pricing tools read `proposed_discount` as a rate.
+  The API converts before sending, and the agent discards an out-of-range value rather than clamping
+  it to 100% off.
 
 ## Context
 
@@ -168,6 +179,27 @@ and the routing-only boundary.
   a backfill decision for existing rows.
 - **Conversation-originated orders inherit order semantics** — status transitions, cancellation and
   the existing permission split between who may approve and who may reject.
+
+### How the consequences were honoured
+
+- **Idempotency is enforced twice.** The service checks
+  `GetPendingByThreadIdAsync` first, and the migration adds a **partial unique index** on
+  `(OrganizationId, ThreadId) WHERE Status = 'pending'`. The service check covers the common retry;
+  the index is what holds when two writes race. It is scoped to `pending` rows so a thread can
+  legitimately place another order once the first has been decided.
+- **The backfill the migration needed was decided explicitly.** The scaffolder's proposal was the
+  empty string, which would have made every legacy row collide on the new index. Rows are instead
+  set to `legacy-{orderId}` — distinct, and plainly not a checkpoint.
+- **A staff order has no agent run behind it.** `Orders` created from the dashboard rather than from
+  a conversation get a generated thread id (the column is NOT NULL), and the resume path skips them
+  because `ConversationId` is null. That null is the marker: a decision on such a row is complete
+  without an agent resume, and no attempt is made to resume a checkpoint that was never written.
+- **The checkpointer is compiled into the graph.** `Pregel.aget_state` — how a paused run is
+  discovered — reads the saver off the compiled graph and does not accept one per call. Passing it to
+  `ainvoke` worked for running, but not for asking whether the run was waiting.
+- **The `waiting` client state is used for the pause.** `commerce_approval` maps to `AgentState.waiting`
+  in `NODE_STATES`, which is the state both clients already render for "Aveline is waiting on
+  something".
 
 ## Out of Scope
 

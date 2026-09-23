@@ -1,4 +1,93 @@
 
+## Session 2026-09-23 (Customer Interaction Page Implementation - Flutter Mobile)
+
+**Task:** Design and implement a dedicated Customer Interaction Page in the Flutter mobile application (`frontend/aveline_mobile`) reusing the Serene Concierge luxury design system, complete with customer summary dossier, communication quick actions, filterable chronological timeline, and interactive interaction logging studio modal.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+1. **Domain & Data Modeling (`frontend/aveline_mobile/lib/features/customers/domain`)**:
+   - Enhanced `CustomerInteraction` entity in `customer_detail.dart` with optional `purchaseTotal`, `staffMemberName`, `tags`, `countedAsVisit`, and formatted `purchaseTotalLabel`.
+   - Created `RecordInteractionRequest` supporting in-person, phone call, WhatsApp, SMS, and email channels with directional tags, optional spend amounts, notes, and staff attribution.
+   - Created `CustomerInteractionQuery` with channel, direction, and search keyword filter narrowing.
+   - Extended `Customer.copyWith()` in `customer.dart` with `totalSpent`, `fullName`, `nickname`, `email`, and `tags`.
+2. **Repository & In-Memory Persistence Layer (`frontend/aveline_mobile/lib/features/customers/data`)**:
+   - Extended `CustomerRepository` interface with `fetchCustomerInteractions()` and `recordInteraction()`.
+   - Implemented `fetchCustomerInteractions` and `recordInteraction` in `DemoCustomerRepository` with in-memory persistence, recalculating lifetime spend and visit counts upon new transaction logs.
+   - Added rich seeded sample interactions for demo customers across In-Person, WhatsApp, and Phone Call touchpoints.
+3. **Application State Management (`frontend/aveline_mobile/lib/features/customers/presentation`)**:
+   - Implemented `CustomerInteractionsController` (`ChangeNotifier`) with state tracking for loading, error handling, query filtering (channel, direction, text search), and optimistic interaction creation.
+4. **Presentation Layer & UI Components (`frontend/aveline_mobile/lib/features/customers/presentation`)**:
+   - Built `CustomerQuickActionsBar` for one-tap client communication (Call, WhatsApp, Email, and Salon AI deep dive).
+   - Built `CustomerInteractionFilterRow` using `FilterPill` widgets for rapid channel and direction filtering.
+   - Built `LogInteractionSheet` modal bottom sheet studio with channel selectors, direction toggles, date-time picker, optional amount taken, and notes input with auto-closing and toast feedback.
+   - Built full `CustomerInteractionScreen` featuring sticky translucent glassmorphic app bar, client dossier summary card (avatar, VIP tier badge, phone, spend, visits, last contact), search & filters, and chronological activity rail.
+   - Added interaction timeline navigation button to the existing `CustomerScreen` activity section.
+5. **Routing & Navigation (`frontend/aveline_mobile`)**:
+   - Added `AppRoutes.customerInteractionsPattern` in `core/router/route_guards.dart`.
+   - Registered `/customers/:id/interactions` `GoRoute` in `app.dart`.
+6. **Testing & Verification**:
+   - Created comprehensive unit test suite in `customer_interaction_test.dart` for domain modeling and queries.
+   - Created controller unit tests in `customer_interactions_controller_test.dart`.
+   - Created widget and screen tests in `customer_interaction_screen_test.dart`.
+   - Updated existing mock repository stubs across the customer feature test suite.
+   - Verified 100% test pass rate (1,030/1,030 tests passing across the mobile app) and zero analyzer issues (`flutter analyze`).
+
+### Files Created or Modified
+- `frontend/aveline_mobile/lib/features/customers/domain/customer_detail.dart`
+- `frontend/aveline_mobile/lib/features/customers/domain/customer.dart`
+- `frontend/aveline_mobile/lib/features/customers/data/customer_repository.dart`
+- `frontend/aveline_mobile/lib/features/customers/data/demo_customer_repository.dart`
+- `frontend/aveline_mobile/lib/features/customers/presentation/customer_interactions_controller.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/customers/presentation/widgets/customer_quick_actions_bar.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/customers/presentation/widgets/customer_interaction_filter_row.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/customers/presentation/widgets/log_interaction_sheet.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/customers/presentation/screens/customer_interaction_screen.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/customers/presentation/screens/customer_screen.dart`
+- `frontend/aveline_mobile/lib/core/router/route_guards.dart`
+- `frontend/aveline_mobile/lib/app.dart`
+- `frontend/aveline_mobile/pubspec.yaml`
+- `frontend/aveline_mobile/test/features/customers/customer_interaction_test.dart` [NEW]
+- `frontend/aveline_mobile/test/features/customers/customer_interactions_controller_test.dart` [NEW]
+- `frontend/aveline_mobile/test/features/customers/customer_interaction_screen_test.dart` [NEW]
+- `frontend/aveline_mobile/test/features/customers/customer_screen_test.dart`
+- `frontend/aveline_mobile/test/features/customers/customers_controller_test.dart`
+- `frontend/aveline_mobile/test/features/customers/customers_screen_test.dart`
+- `frontend/aveline_mobile/test/features/customers/widgets/log_visit_sheet_test.dart`
+- `frontend/aveline_mobile/test/features/home/home_quick_actions_test.dart`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- `flutter analyze` completed with 0 errors and 0 warnings.
+- `flutter test test/features/customers/` passed (133/133 tests passed).
+- Full application test suite `flutter test` passed (1,030/1,030 tests passed).
+
+---
+
+## Session 2026-09-23 (Branch Switch & Auth Error Diagnosis)
+
+**Task:** Diagnosed `{arg} (ERROR RECEIVED FROM SERVER)` sign-up/sign-in error in Flutter mobile app, fixed `ClerkError` message extraction in `ClerkAuthRepository`, and switched git branch to `development`.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+1. Diagnosed the root cause of the `{arg} (ERROR RECEIVED FROM SERVER)` snackbar message in `frontend/aveline_mobile`:
+   - Identified that `ClerkAuthRepository._run()` returned `error.message` on `clerk.ClerkError`, which contains the unpopulated localization template string `'{arg} (ERROR RECEIVED FROM SERVER)'` rather than extracting the actual server error message from `error.errors?.errorMessage` or `error.argument`.
+   - Updated `ClerkAuthRepository._run()` in `lib/features/auth/data/clerk_auth_repository.dart` to prioritize `error.errors?.errorMessage ?? error.argument`.
+2. Switched git repository branch from `feature/visual-insight-agent` to `development` and pulled the latest updates from `origin/development`.
+3. Ran all Flutter auth domain unit tests (`flutter test test/features/auth`) to confirm all 21 tests pass.
+
+### Files Created or Modified
+- `frontend/aveline_mobile/lib/features/auth/data/clerk_auth_repository.dart`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- `flutter test test/features/auth` passed (21/21 tests passed).
+- `git status` verified clean working tree on `development` branch.
+- `git pull origin development` confirmed branch is up to date with remote.
+
+---
+
 ## Session 2026-09-18 (Catalog Item Delete Feature - Frontend & Backend)
 
 **Task:** Design and implement catalog inventory item deletion across ASP.NET Core backend (Soft Delete endpoint, services, integration tests) and React frontend (ProductCard delete button, Edit modal delete action, confirmation dialog, optimistic state updates).

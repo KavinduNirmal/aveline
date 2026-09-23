@@ -41,4 +41,16 @@ abstract interface class CustomerRepository implements CustomerBookSource {
   /// that. Resolving from the id makes the screen a pure function of the
   /// location.
   Future<CustomerDetail?> fetchCustomer(String id);
+
+  /// Fetches interactions for a customer, optionally filtered.
+  Future<List<CustomerInteraction>> fetchCustomerInteractions(
+    String customerId, {
+    CustomerInteractionQuery query = const CustomerInteractionQuery(),
+  });
+
+  /// Records a new interaction with a customer (visit, WhatsApp, call, etc.).
+  Future<CustomerInteraction> recordInteraction(
+    String customerId,
+    RecordInteractionRequest request,
+  );
 }

@@ -6187,3 +6187,11 @@ locally because `.env` overrides all three `VISION_*` values to DeepSeek.
 - `AddProductModal` still invents a few save-time fallbacks (`'Multicolor'`, `'Silk Blend'`,
   `'Classic Luxury'`, `confidenceScore ?? 0.92`). They were left because the reported defect was the
   colour, but they are the same class as the ones removed and are recorded here rather than forgotten.
+
+### 2026-09-23 Session
+- **Work Performed:** Connected Customer Interaction components to live backend API.
+- **Files Created/Modified:** pi_customer_repository.dart, pp.dart, customer_level.dart.
+- **Tests:** Ran lutter analyze and lutter test, all passing.
+- **Decisions:** Created ApiCustomerRepository utilizing Dio to parse C# DTOs to Dart domain models, mapped in root injector.
+- **Status:** Complete.
+

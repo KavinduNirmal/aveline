@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../../../core/router/route_guards.dart';
 import '../../../../shared/utils/date_formatter.dart';
 import '../../../../shared/widgets/app_toast.dart';
 import '../../../../shared/widgets/aurora_field.dart';
@@ -501,6 +503,20 @@ class _Profile extends StatelessWidget {
               const SizedBox(height: 30),
               _SectionHeading('Recent activity', count: detail.interactions.length),
               _ActivityRail(interactions: detail.interactions, now: now),
+              if (detail.interactions.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    key: const Key('customer_view_interactions'),
+                    onPressed: () => context.push(
+                      AppRoutes.customerInteractions(customer.id),
+                    ),
+                    icon: const Icon(Icons.forum_outlined, size: 16),
+                    label: const Text('View full interaction timeline'),
+                  ),
+                ),
+              ],
               if (past.isNotEmpty) ...[
                 const SizedBox(height: 30),
                 const _SectionHeading('Past occasions'),
@@ -511,6 +527,9 @@ class _Profile extends StatelessWidget {
               _Actions(
                 onLogVisit: onLogVisit,
                 onRecomputeStatus: onRecomputeStatus,
+                onOpenInteractions: () => context.push(
+                  AppRoutes.customerInteractions(customer.id),
+                ),
               ),
             ],
           ),
@@ -1575,10 +1594,15 @@ class _PastOccasions extends StatelessWidget {
 
 /// What an associate can do from the profile.
 class _Actions extends StatelessWidget {
-  const _Actions({required this.onLogVisit, required this.onRecomputeStatus});
+  const _Actions({
+    required this.onLogVisit,
+    required this.onRecomputeStatus,
+    required this.onOpenInteractions,
+  });
 
   final VoidCallback onLogVisit;
   final VoidCallback onRecomputeStatus;
+  final VoidCallback onOpenInteractions;
 
   @override
   Widget build(BuildContext context) {
@@ -1587,10 +1611,18 @@ class _Actions extends StatelessWidget {
         // Stacked, one to a row, each with its own weight: a row of identical
         // buttons makes the associate read all of them before choosing.
         _ActionButton(
+          buttonKey: const Key('customer_action_interactions'),
+          icon: Icons.forum_outlined,
+          label: 'Customer interaction timeline',
+          tone: _ActionTone.primary,
+          onPressed: onOpenInteractions,
+        ),
+        const SizedBox(height: 10),
+        _ActionButton(
           buttonKey: const Key('customer_action_visit'),
           icon: Icons.storefront_outlined,
           label: 'Log a visit',
-          tone: _ActionTone.primary,
+          tone: _ActionTone.quiet,
           onPressed: onLogVisit,
         ),
         const SizedBox(height: 10),

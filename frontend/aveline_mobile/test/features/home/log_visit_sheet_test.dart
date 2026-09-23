@@ -68,6 +68,23 @@ class _StubBook implements CustomerRepository {
 
   @override
   Future<CustomerDetail?> fetchCustomer(String id) async => null;
+
+  @override
+  Future<List<CustomerInteraction>> fetchCustomerInteractions(
+    String customerId, {
+    CustomerInteractionQuery query = const CustomerInteractionQuery(),
+  }) async => const [];
+
+  @override
+  Future<CustomerInteraction> recordInteraction(
+    String customerId,
+    RecordInteractionRequest request,
+  ) async => CustomerInteraction(
+        id: 'rec-stub',
+        channel: request.channel,
+        direction: request.direction,
+        createdAtUtc: request.occurredAtUtc,
+      );
 }
 
 /// Opens the sheet from a page, and reports the client that came back.

@@ -219,8 +219,13 @@ class Customer {
   Customer copyWith({
     CustomerLevel? level,
     CustomerStatus? status,
+    String? fullName,
+    String? nickname,
+    String? email,
+    double? totalSpent,
     int? visitCount,
     DateTime? lastVisitAtUtc,
+    Set<String>? tags,
   }) {
     return Customer(
       id: id,
@@ -228,14 +233,14 @@ class Customer {
       phoneNumber: phoneNumber,
       level: level ?? this.level,
       status: status ?? this.status,
-      fullName: fullName,
-      nickname: nickname,
-      email: email,
-      totalSpent: totalSpent,
+      fullName: fullName ?? this.fullName,
+      nickname: nickname ?? this.nickname,
+      email: email ?? this.email,
+      totalSpent: totalSpent ?? this.totalSpent,
       visitCount: visitCount ?? this.visitCount,
       lastVisitAtUtc: lastVisitAtUtc ?? this.lastVisitAtUtc,
       createdAtUtc: createdAtUtc,
-      tags: tags,
+      tags: tags ?? this.tags,
     );
   }
 }

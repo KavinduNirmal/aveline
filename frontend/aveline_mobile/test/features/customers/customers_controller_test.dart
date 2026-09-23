@@ -41,10 +41,25 @@ class _FixedRepository implements CustomerRepository {
     return book;
   }
 
-  /// The book controller never opens a client; the profile screen does, and it
-  /// has its own test.
   @override
   Future<CustomerDetail?> fetchCustomer(String id) async => null;
+
+  @override
+  Future<List<CustomerInteraction>> fetchCustomerInteractions(
+    String customerId, {
+    CustomerInteractionQuery query = const CustomerInteractionQuery(),
+  }) async => const [];
+
+  @override
+  Future<CustomerInteraction> recordInteraction(
+    String customerId,
+    RecordInteractionRequest request,
+  ) async => CustomerInteraction(
+        id: 'rec-1',
+        channel: request.channel,
+        direction: request.direction,
+        createdAtUtc: request.occurredAtUtc,
+      );
 }
 
 /// Hands back one completer per call, so a reply can be held open and released
@@ -65,6 +80,23 @@ class _ControlledRepository implements CustomerRepository {
 
   @override
   Future<CustomerDetail?> fetchCustomer(String id) async => null;
+
+  @override
+  Future<List<CustomerInteraction>> fetchCustomerInteractions(
+    String customerId, {
+    CustomerInteractionQuery query = const CustomerInteractionQuery(),
+  }) async => const [];
+
+  @override
+  Future<CustomerInteraction> recordInteraction(
+    String customerId,
+    RecordInteractionRequest request,
+  ) async => CustomerInteraction(
+        id: 'rec-2',
+        channel: request.channel,
+        direction: request.direction,
+        createdAtUtc: request.occurredAtUtc,
+      );
 }
 
 void main() {

@@ -315,6 +315,10 @@ class CustomerInteraction {
     required this.direction,
     required this.createdAtUtc,
     this.messageContent,
+    this.purchaseTotal,
+    this.staffMemberName,
+    this.tags = const <String>[],
+    this.countedAsVisit = false,
   });
 
   final String id;
@@ -322,6 +326,10 @@ class CustomerInteraction {
   final InteractionDirection direction;
   final DateTime createdAtUtc;
   final String? messageContent;
+  final double? purchaseTotal;
+  final String? staffMemberName;
+  final List<String> tags;
+  final bool countedAsVisit;
 
   bool get isInbound => direction == InteractionDirection.inbound;
 
@@ -334,6 +342,72 @@ class CustomerInteraction {
   /// `Today · 14:32`.
   String whenLabel({DateTime? now}) =>
       relativeDayAndTime(createdAtUtc, now: now);
+
+  /// Formatted purchase total, e.g. `LKR 45,000`.
+  String? get purchaseTotalLabel {
+    if (purchaseTotal == null || purchaseTotal! <= 0) return null;
+    final formatted = purchaseTotal!.toStringAsFixed(0).replaceAllMapped(
+          RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+          (Match m) => '${m[1]},',
+        );
+    return 'LKR $formatted';
+  }
+}
+
+/// A request to record a customer interaction.
+class RecordInteractionRequest {
+  const RecordInteractionRequest({
+    required this.occurredAtUtc,
+    required this.channel,
+    this.direction = InteractionDirection.inbound,
+    this.note,
+    this.purchaseTotal,
+    this.tags = const <String>[],
+  });
+
+  final DateTime occurredAtUtc;
+  final InteractionChannel channel;
+  final InteractionDirection direction;
+  final String? note;
+  final double? purchaseTotal;
+  final List<String> tags;
+}
+
+/// The narrowing customer interactions are queried under.
+class CustomerInteractionQuery {
+  const CustomerInteractionQuery({
+    this.search = '',
+    this.channel,
+    this.direction,
+  });
+
+  final String search;
+  final InteractionChannel? channel;
+  final InteractionDirection? direction;
+
+  bool get isEmpty =>
+      search.trim().isEmpty && channel == null && direction == null;
+
+  bool matches(CustomerInteraction interaction) {
+    if (channel != null && interaction.channel != channel) return false;
+    if (direction != null && interaction.direction != direction) return false;
+    if (search.trim().isNotEmpty) {
+      final q = search.trim().toLowerCase();
+      final content = interaction.messageContent?.toLowerCase() ?? '';
+      final staff = interaction.staffMemberName?.toLowerCase() ?? '';
+      final channelName = interaction.channelLabel.toLowerCase();
+      final directionName = interaction.directionLabel.toLowerCase();
+      final tagMatch = interaction.tags.any((t) => t.toLowerCase().contains(q));
+      if (!content.contains(q) &&
+          !staff.contains(q) &&
+          !channelName.contains(q) &&
+          !directionName.contains(q) &&
+          !tagMatch) {
+        return false;
+      }
+    }
+    return true;
+  }
 }
 
 /// Everything the concierge knows about one client.

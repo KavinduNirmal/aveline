@@ -133,7 +133,11 @@ class ClerkAuthRepository implements AuthRepository {
       return null;
     } on clerk.ClerkError catch (error) {
       debugPrint('[clerk auth error] ClerkError: ${error.message} - ${error.code}');
-      return error.message;
+      final detail = error.errors?.errorMessage ?? error.argument;
+      if (detail != null && detail.isNotEmpty) {
+        return detail;
+      }
+      return error.message.isNotEmpty ? error.message : error.toString();
     } catch (error, stack) {
       debugPrint('[clerk auth error] $error\n$stack');
       return error.toString().replaceFirst('Exception: ', '');

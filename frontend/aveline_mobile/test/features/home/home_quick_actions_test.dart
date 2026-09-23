@@ -99,6 +99,23 @@ class _StubBook implements CustomerRepository {
 
   @override
   Future<CustomerDetail?> fetchCustomer(String id) async => null;
+
+  @override
+  Future<List<CustomerInteraction>> fetchCustomerInteractions(
+    String customerId, {
+    CustomerInteractionQuery query = const CustomerInteractionQuery(),
+  }) async => const [];
+
+  @override
+  Future<CustomerInteraction> recordInteraction(
+    String customerId,
+    RecordInteractionRequest request,
+  ) async => CustomerInteraction(
+        id: 'rec-home',
+        channel: request.channel,
+        direction: request.direction,
+        createdAtUtc: request.occurredAtUtc,
+      );
 }
 
 /// A phone surface, and the router Home pushes its destinations onto.

@@ -39,6 +39,14 @@ abstract final class AppRoutes {
 
   /// One client, addressed by their own id.
   static String customer(String customerId) => '/customers/$customerId';
+
+  /// Route pattern for one client's interaction dossier and timeline.
+  static const String customerInteractionsPattern =
+      '/customers/:customerId/interactions';
+
+  /// One client's interaction dossier and timeline.
+  static String customerInteractions(String customerId) =>
+      '/customers/$customerId/interactions';
   static const String conversations = '/conversations';
 
   /// Route pattern for one client thread, opened from somewhere other than the inbox (a

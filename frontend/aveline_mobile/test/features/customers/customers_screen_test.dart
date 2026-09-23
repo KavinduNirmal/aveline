@@ -46,6 +46,20 @@ class _FlakyRepository implements CustomerRepository {
 
   @override
   Future<CustomerDetail?> fetchCustomer(String id) => _book().fetchCustomer(id);
+
+  @override
+  Future<List<CustomerInteraction>> fetchCustomerInteractions(
+    String customerId, {
+    CustomerInteractionQuery query = const CustomerInteractionQuery(),
+  }) =>
+      _book().fetchCustomerInteractions(customerId, query: query);
+
+  @override
+  Future<CustomerInteraction> recordInteraction(
+    String customerId,
+    RecordInteractionRequest request,
+  ) =>
+      _book().recordInteraction(customerId, request);
 }
 
 /// A phone-shaped viewport, so the book lays out the way it does on the devices

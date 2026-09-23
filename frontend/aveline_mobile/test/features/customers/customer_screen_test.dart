@@ -120,6 +120,26 @@ class _StubRepository implements CustomerRepository {
   Future<CustomerBook> fetchBook({
     CustomerQuery query = const CustomerQuery(),
   }) async => CustomerBook.empty;
+
+  @override
+  Future<List<CustomerInteraction>> fetchCustomerInteractions(
+    String customerId, {
+    CustomerInteractionQuery query = const CustomerInteractionQuery(),
+  }) async => detail?.interactions ?? const [];
+
+  @override
+  Future<CustomerInteraction> recordInteraction(
+    String customerId,
+    RecordInteractionRequest request,
+  ) async => CustomerInteraction(
+        id: 'stub-int',
+        channel: request.channel,
+        direction: request.direction,
+        createdAtUtc: request.occurredAtUtc,
+        messageContent: request.note,
+        purchaseTotal: request.purchaseTotal,
+        tags: request.tags,
+      );
 }
 
 /// A source that fails the first call and answers afterwards.
@@ -144,6 +164,26 @@ class _FlakyRepository implements CustomerRepository {
   Future<CustomerBook> fetchBook({
     CustomerQuery query = const CustomerQuery(),
   }) async => CustomerBook.empty;
+
+  @override
+  Future<List<CustomerInteraction>> fetchCustomerInteractions(
+    String customerId, {
+    CustomerInteractionQuery query = const CustomerInteractionQuery(),
+  }) async => detail.interactions;
+
+  @override
+  Future<CustomerInteraction> recordInteraction(
+    String customerId,
+    RecordInteractionRequest request,
+  ) async => CustomerInteraction(
+        id: 'flaky-int',
+        channel: request.channel,
+        direction: request.direction,
+        createdAtUtc: request.occurredAtUtc,
+        messageContent: request.note,
+        purchaseTotal: request.purchaseTotal,
+        tags: request.tags,
+      );
 }
 
 /// A phone-shaped viewport: the profile is a column of cards, and the cards have

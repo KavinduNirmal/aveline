@@ -29,6 +29,7 @@ class DemoCustomerRepository implements CustomerRepository {
   final Duration bookDelay;
 
   List<Customer>? _pool;
+  final Map<String, List<CustomerInteraction>> _recordedInteractions = {};
 
   @override
   Future<CustomerBook> fetchBook({
@@ -49,10 +50,82 @@ class DemoCustomerRepository implements CustomerRepository {
 
     for (final customer in _pool ??= _buildBook()) {
       if (customer.id == id) {
-        return _profileFor(customer);
+        final profile = _profileFor(customer);
+        final extra = _recordedInteractions[id];
+        if (extra != null && extra.isNotEmpty) {
+          return profile.copyWith(
+            interactions: <CustomerInteraction>[...extra, ...profile.interactions],
+          );
+        }
+        return profile;
       }
     }
     return null;
+  }
+
+  @override
+  Future<List<CustomerInteraction>> fetchCustomerInteractions(
+    String customerId, {
+    CustomerInteractionQuery query = const CustomerInteractionQuery(),
+  }) async {
+    final detail = await fetchCustomer(customerId);
+    if (detail == null) {
+      return const <CustomerInteraction>[];
+    }
+    return detail.interactions.where(query.matches).toList();
+  }
+
+  @override
+  Future<CustomerInteraction> recordInteraction(
+    String customerId,
+    RecordInteractionRequest request,
+  ) async {
+    if (bookDelay > Duration.zero) {
+      await Future<void>.delayed(bookDelay);
+    }
+
+    final at = request.occurredAtUtc;
+    final countedAsVisit = request.channel == InteractionChannel.inPerson &&
+        request.direction == InteractionDirection.inbound;
+
+    final created = CustomerInteraction(
+      id: 'int-rec-${DateTime.now().microsecondsSinceEpoch}',
+      channel: request.channel,
+      direction: request.direction,
+      createdAtUtc: at,
+      messageContent: request.note,
+      purchaseTotal: request.purchaseTotal,
+      staffMemberName: 'Boutique Staff',
+      tags: request.tags,
+      countedAsVisit: countedAsVisit,
+    );
+
+    _recordedInteractions.putIfAbsent(customerId, () => []).insert(0, created);
+
+    // Update customer in pool if counted as visit or has purchase
+    _pool ??= _buildBook();
+    final customerIndex = _pool!.indexWhere((c) => c.id == customerId);
+    if (customerIndex >= 0) {
+      final old = _pool![customerIndex];
+      final newSpent = old.totalSpent + (request.purchaseTotal ?? 0);
+      final newVisits = old.visitCount + (countedAsVisit ? 1 : 0);
+      final newLastVisit = countedAsVisit ? at : old.lastVisitAtUtc;
+
+      final updated = old.copyWith(
+        totalSpent: newSpent,
+        visitCount: newVisits,
+        lastVisitAtUtc: newLastVisit,
+        status: CustomerStatus.recommend(
+          totalSpent: newSpent,
+          visitCount: newVisits,
+          lastVisitAtUtc: newLastVisit,
+          now: _reference,
+        ),
+      );
+      _pool![customerIndex] = updated;
+    }
+
+    return created;
   }
 
   List<Customer> _filter(List<Customer> pool, CustomerQuery query) {
@@ -236,6 +309,11 @@ class DemoCustomerRepository implements CustomerRepository {
       direction: entry.direction,
       messageContent: entry.message,
       createdAtUtc: _reference.subtract(Duration(hours: hoursAgo)),
+      purchaseTotal: entry.purchaseTotal,
+      staffMemberName: entry.staff,
+      tags: entry.tags,
+      countedAsVisit: entry.channel == InteractionChannel.inPerson &&
+          entry.direction == InteractionDirection.inbound,
     );
   }
 
@@ -331,32 +409,58 @@ class DemoCustomerRepository implements CustomerRepository {
     InteractionChannel channel,
     InteractionDirection direction,
     String message,
+    double? purchaseTotal,
+    String? staff,
+    List<String> tags,
   })>
   _exchanges = [
     (
-      channel: InteractionChannel.whatsapp,
+      channel: InteractionChannel.inPerson,
       direction: InteractionDirection.inbound,
-      message: 'Is the wine raw silk back in stock yet?',
+      message: 'Walked in to inspect Kanjeevaram silk sarees for upcoming wedding reception. Tried Crimson Dahlia piece (AVL-SAR-001).',
+      purchaseTotal: 48000.0,
+      staff: 'Dilud',
+      tags: ['Kanjeevaram', 'Wedding', 'Raw Silk'],
     ),
     (
       channel: InteractionChannel.whatsapp,
       direction: InteractionDirection.outbound,
-      message: 'Held the ivory organza until Friday, as asked.',
+      message: 'Shared Autumn Silk Lookbook and private atelier video showcase via WhatsApp catalog link.',
+      purchaseTotal: null,
+      staff: 'Salon Concierge',
+      tags: ['Lookbook', 'Catalog'],
     ),
     (
-      channel: InteractionChannel.inPerson,
+      channel: InteractionChannel.whatsapp,
       direction: InteractionDirection.inbound,
-      message: 'Came in for a fitting and took the measurements home.',
+      message: 'Is the Ivory Organza piece (AVL-ORG-042) back in stock in size 38?',
+      purchaseTotal: null,
+      staff: null,
+      tags: ['Inquiry', 'Organza'],
     ),
     (
       channel: InteractionChannel.phone,
       direction: InteractionDirection.outbound,
-      message: 'Rang to confirm the alteration is ready.',
+      message: 'Rang client to confirm bespoke blouse embroidery alteration is completed and ready for collection.',
+      purchaseTotal: null,
+      staff: 'Dilud',
+      tags: ['Alteration', 'Blouse'],
     ),
     (
       channel: InteractionChannel.instagram,
       direction: InteractionDirection.inbound,
-      message: 'Sent a photo of the saree she wants matched.',
+      message: 'Sent DM with screenshot of Emerald Velvet Lehenga inquiring about matching bridal dupatta options.',
+      purchaseTotal: null,
+      staff: null,
+      tags: ['Instagram DM', 'Bridal', 'Velvet'],
+    ),
+    (
+      channel: InteractionChannel.inPerson,
+      direction: InteractionDirection.inbound,
+      message: 'Attended private VIP styling preview. Ordered custom Zardozi clutch accessory.',
+      purchaseTotal: 22500.0,
+      staff: 'Dilud',
+      tags: ['VIP Preview', 'Accessory'],
     ),
   ];
 

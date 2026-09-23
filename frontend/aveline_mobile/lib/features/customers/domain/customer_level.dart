@@ -13,13 +13,23 @@
 /// Declaration order is the order the row lists them, so the ladder reads the way
 /// the boutique ranks it.
 enum CustomerLevel {
-  vip('VIP'),
-  level3('LVL 3'),
-  level2('LVL 2'),
-  level1('LVL 1');
+  vip('vip', 'VIP'),
+  level3('level3', 'LVL 3'),
+  level2('level2', 'LVL 2'),
+  level1('level1', 'LVL 1');
 
-  const CustomerLevel(this.label);
+  const CustomerLevel(this.wireValue, this.label);
 
+  final String wireValue;
   /// What the pill and the badge print.
   final String label;
+
+  static CustomerLevel parse(String? value) {
+    for (final level in values) {
+      if (level.wireValue == value) {
+        return level;
+      }
+    }
+    return CustomerLevel.level1;
+  }
 }

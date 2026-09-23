@@ -106,9 +106,9 @@ class ThreadMessageBlocks extends StatelessWidget {
     }
 
     return Column(
-      crossAxisAlignment: message.isFromClient
-          ? CrossAxisAlignment.start
-          : CrossAxisAlignment.end,
+      crossAxisAlignment: message.isFromStaff
+          ? CrossAxisAlignment.end
+          : CrossAxisAlignment.start,
       children: [
         for (final block in blocks)
           Padding(

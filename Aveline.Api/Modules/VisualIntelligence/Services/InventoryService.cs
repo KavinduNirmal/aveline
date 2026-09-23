@@ -68,6 +68,53 @@ public class InventoryService : IInventoryService
         return items.Select(InventoryItemDto.FromDomain).ToList();
     }
 
+    public async Task<CatalogPagedResponse> QueryCatalogAsync(
+        Guid orgId,
+        CatalogQueryRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        // Validate status vocabulary if provided
+        if (request.Statuses is not null && request.Statuses.Count > 0)
+        {
+            foreach (var status in request.Statuses)
+            {
+                if (!Constants.CatalogStatusVocabulary.IsValid(status))
+                {
+                    throw new ArgumentException($"Invalid status value: '{status}'.", nameof(request));
+                }
+            }
+        }
+
+        var (items, total) = await _repository.QueryAsync(orgId, request, cancellationToken);
+
+        var page = request.Page > 0 ? request.Page : 1;
+        var pageSize = request.PageSize switch
+        {
+            < 1 => 20,
+            > 200 => 200,
+            _ => request.PageSize
+        };
+
+        return new CatalogPagedResponse
+        {
+            Items = items.Select(InventoryItemDto.FromDomain).ToList(),
+            Total = total,
+            Page = page,
+            PageSize = pageSize,
+            GeneratedAt = DateTime.UtcNow
+        };
+    }
+
+    public async Task<CatalogFacetsResponse> GetFacetsAsync(
+        Guid orgId,
+        CatalogQueryRequest? currentNarrowing = null,
+        CancellationToken cancellationToken = default)
+    {
+        return await _repository.GetFacetsAsync(orgId, currentNarrowing, cancellationToken);
+    }
+
     public async Task<InventoryItemDto?> GetItemByIdAsync(
         Guid id,
         Guid orgId,

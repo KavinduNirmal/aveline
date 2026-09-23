@@ -306,7 +306,15 @@ public class UserService : IUserService
                 user.Id.ToString(),
                 ActorKind: AuditActorKind.User,
                 ActorUserId: user.Id,
-                After: new { user.FirstName, user.LastName, user.DisplayName, user.PhoneNumber }), cancellationToken);
+                After: new
+                {
+                    user.FirstName,
+                    user.LastName,
+                    user.DisplayName,
+                    user.PhoneNumber,
+                    user.ContactPreference,
+                    user.PushNotificationsEnabled,
+                }), cancellationToken);
         }
 
         if (_eventBus is not null)

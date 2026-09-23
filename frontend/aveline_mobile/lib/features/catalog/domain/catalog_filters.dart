@@ -102,4 +102,56 @@ class CatalogFilters {
     next.removeWhere((_, values) => values.isEmpty);
     return CatalogFilters(next);
   }
+
+  Map<String, String> toQueryParameters() {
+    final params = <String, String>{};
+    for (final entry in _selected.entries) {
+      if (entry.value.isNotEmpty) {
+        params[entry.key.name] = entry.value.join('|');
+      }
+    }
+    return params;
+  }
+
+  static CatalogFilters fromQueryParameters(Map<String, String> queryParams) {
+    final selected = <CatalogFilterGroup, Set<String>>{};
+    for (final group in CatalogFilterGroup.values) {
+      final raw = queryParams[group.name];
+      if (raw != null && raw.isNotEmpty) {
+        final values = raw.split('|').where((s) => s.isNotEmpty).toSet();
+        if (values.isNotEmpty) {
+          selected[group] = values;
+        }
+      }
+    }
+    return CatalogFilters(selected);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    if (other is! CatalogFilters) return false;
+    if (_selected.length != other._selected.length) return false;
+    for (final entry in _selected.entries) {
+      final otherSet = other._selected[entry.key];
+      if (otherSet == null ||
+          otherSet.length != entry.value.length ||
+          !otherSet.containsAll(entry.value)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode {
+    int hash = 0;
+    for (final entry in _selected.entries) {
+      hash ^= entry.key.hashCode;
+      for (final v in entry.value) {
+        hash ^= v.hashCode;
+      }
+    }
+    return hash;
+  }
 }

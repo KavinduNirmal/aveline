@@ -992,6 +992,105 @@ public class CatalogEndpointsIntegrationTests : IAsyncLifetime
         (await getResponse.Content.ReadFromJsonAsync<InventoryItemDto>())!.Quantity.Should().Be(4);
     }
 
+    [Fact]
+    public async Task QueryItems_MultiSelectAndPriceBands_ReturnsEnvelope()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_query");
+        var token = CreateToken(user.ClerkId);
+
+        // Seed 3 items
+        var item1 = new CreateInventoryItemDto
+        {
+            ItemName = "Bridal Silk Saree",
+            Category = "Sarees",
+            Color = "Wine",
+            Fabric = "Raw silk",
+            Sizes = new List<string> { "36", "38" },
+            Price = 24000.00m,
+            Quantity = 5,
+            Status = "available"
+        };
+        var item2 = new CreateInventoryItemDto
+        {
+            ItemName = "Velvet Evening Gown",
+            Category = "Gowns",
+            Color = "Black",
+            Fabric = "Velvet",
+            Sizes = new List<string> { "40" },
+            Price = 65000.00m,
+            Quantity = 3,
+            Status = "available"
+        };
+        var item3 = new CreateInventoryItemDto
+        {
+            ItemName = "Chiffon Summer Saree",
+            Category = "Sarees",
+            Color = "Blue",
+            Fabric = "Chiffon",
+            Sizes = new List<string> { "38" },
+            Price = 180000.00m,
+            Quantity = 2,
+            Status = "sold_out"
+        };
+
+        await _client.SendAsync(Authorized(HttpMethod.Post, $"/api/v1/orgs/{org.Id}/catalog/items", token, JsonContent.Create(item1)));
+        await _client.SendAsync(Authorized(HttpMethod.Post, $"/api/v1/orgs/{org.Id}/catalog/items", token, JsonContent.Create(item2)));
+        await _client.SendAsync(Authorized(HttpMethod.Post, $"/api/v1/orgs/{org.Id}/catalog/items", token, JsonContent.Create(item3)));
+
+        // Query by multiple categories: Sarees and Gowns with price band under 75k
+        var queryRequest = new CatalogQueryRequest
+        {
+            Categories = new List<string> { "Sarees", "Gowns" },
+            PriceBands = new List<string> { "under_25k", "25k_to_75k" },
+            Page = 1,
+            PageSize = 10
+        };
+
+        var response = await _client.SendAsync(
+            Authorized(HttpMethod.Post, $"/api/v1/orgs/{org.Id}/catalog/items/query", token, JsonContent.Create(queryRequest)));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var paged = await response.Content.ReadFromJsonAsync<CatalogPagedResponse>();
+        paged.Should().NotBeNull();
+        paged!.Total.Should().Be(2);
+        paged.Items.Should().HaveCount(2);
+        paged.Page.Should().Be(1);
+        paged.PageSize.Should().Be(10);
+    }
+
+    [Fact]
+    public async Task GetFacets_ReturnsGroupsWithCounts()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_facets");
+        var token = CreateToken(user.ClerkId);
+
+        var item = new CreateInventoryItemDto
+        {
+            ItemName = "Royal Silk Saree",
+            Category = "Sarees",
+            Color = "Emerald",
+            Fabric = "Raw silk",
+            Sizes = new List<string> { "36" },
+            Price = 50000.00m,
+            Quantity = 4,
+            Status = "available"
+        };
+        await _client.SendAsync(Authorized(HttpMethod.Post, $"/api/v1/orgs/{org.Id}/catalog/items", token, JsonContent.Create(item)));
+
+        var response = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{org.Id}/catalog/facets", token));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var facets = await response.Content.ReadFromJsonAsync<CatalogFacetsResponse>();
+        facets.Should().NotBeNull();
+        facets!.TotalItems.Should().BeGreaterThanOrEqualTo(1);
+        facets.Groups.Should().Contain(g => g.Key == "availability");
+        facets.Groups.Should().Contain(g => g.Key == "category");
+        facets.Groups.Should().Contain(g => g.Key == "fabric");
+        facets.Groups.Should().Contain(g => g.Key == "size");
+        facets.Groups.Should().Contain(g => g.Key == "price");
+    }
+
     /// <summary>Creates one piece through the API and returns it, so a test names real server state.</summary>
     private async Task<InventoryItemDto> CreateItemAsync(Guid orgId, string token, string name, decimal price, int quantity)
     {

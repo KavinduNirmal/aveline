@@ -181,6 +181,17 @@ class UserProvider extends ChangeNotifier {
   /// The API's own words for a refused request, when it gave any.
   String? _serverDetail(Object? data) {
     if (data is Map) {
+      final errors = data['errors'];
+      if (errors is Map && errors.isNotEmpty) {
+        final firstList = errors.values.first;
+        if (firstList is List && firstList.isNotEmpty) {
+          final firstMsg = firstList.first;
+          if (firstMsg is String && firstMsg.isNotEmpty) {
+            return firstMsg;
+          }
+        }
+      }
+
       final detail = data['detail'] ?? data['message'];
       if (detail is String && detail.isNotEmpty) {
         return detail;

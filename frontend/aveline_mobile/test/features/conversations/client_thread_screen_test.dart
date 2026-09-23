@@ -858,6 +858,37 @@ void main() {
       expect(theirs, lessThan(100));
     });
 
+    testWidgets('puts an agent reply on the counterparty side, credited to its persona', (
+      tester,
+    ) async {
+      await _open(
+        tester,
+        repository: _SeedThread(
+          seed: {
+            _nadeesha.id: [
+              ThreadMessage(
+                id: 'msg_agent_side',
+                author: MessageAuthor.agent,
+                agentKey: 'ava',
+                kind: MessageKind.note,
+                status: MessageStatus.published,
+                text: 'She last bought evening wear.',
+                createdAt: DateTime.now().toUtc(),
+              ),
+            ],
+          },
+        ),
+      );
+
+      // The wire's author kinds are `User`, `Agent` and `System`: an agent is the
+      // counterparty rather than the associate, so its bubble sits on the left the
+      // way the client's does. It is also the thread's reply rather than a note to
+      // the record, so it must not wear the label a staff note wears.
+      expect(tester.getTopLeft(_bubble('msg_agent_side')).dx, lessThan(100));
+      expect(find.text('Ava'), findsOneWidget);
+      expect(find.textContaining('NOT SENT'), findsNothing);
+    });
+
     testWidgets('marks the note the client never saw', (tester) async {
       await _open(tester, repository: _StubThread());
 

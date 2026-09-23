@@ -157,8 +157,13 @@ class _CatalogScreenState extends State<CatalogScreen> {
       return;
     }
 
+    final uri = Uri(
+      path: AppRoutes.catalogFilters,
+      queryParameters: _filters.isEmpty ? null : _filters.toQueryParameters(),
+    );
+
     final result = await router.push<CatalogFilters>(
-      AppRoutes.catalogFilters,
+      uri.toString(),
       extra: _filters,
     );
     if (!mounted || result == null) {

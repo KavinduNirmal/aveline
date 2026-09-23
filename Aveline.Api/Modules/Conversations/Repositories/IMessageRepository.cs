@@ -26,6 +26,20 @@ public interface IMessageRepository
         Guid? around = null,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// The most recent <paramref name="take"/> messages of a conversation, returned **oldest
+    /// first** so a caller can read them as a transcript.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not <see cref="ListAsync"/> with a computed page: this window is not
+    /// page-aligned. The agent needs "the last N messages" wherever that lands in the pagination
+    /// grid, and reading the newest rows keeps the query bounded as a conversation grows.
+    /// </remarks>
+    Task<IReadOnlyList<Message>> ListLatestAsync(
+        Guid conversationId,
+        int take,
+        CancellationToken cancellationToken = default);
+
     Task SaveAsync(Message message, CancellationToken cancellationToken = default);
 
     /// <summary>Persists changes to an existing message (loaded via <see cref="GetAsync"/>).</summary>

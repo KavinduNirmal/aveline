@@ -4,6 +4,7 @@ import { AvelineAvatar } from './AvelineAvatar'
 import { AvelineBlossom } from './AvelineBlossom'
 import { BlockList } from './blocks'
 import { personaForAuthor } from './persona'
+import { hasTileRow } from './tileBlocks'
 import { TypewriterText } from './TypewriterText'
 
 interface MessageBubbleProps {
@@ -102,12 +103,19 @@ export function MessageBubble({
   const isSending = message.pending === 'sending'
   const isFailed = message.pending === 'failed'
   const streamText = shouldStreamContent(message) ? primaryText(message) : null
+  // A row of tiles has to count its columns against a definite width, and the bubble is otherwise
+  // shrink-to-fit: without this the grid resolves to a single track and the pieces stack. A message
+  // with a photograph in it already reached the same width through the image's own intrinsic size.
+  const tileRow = hasTileRow(message.contentBlocks)
 
   return (
     <div className={cn('flex w-full gap-2.5', isOwn && 'flex-row-reverse')}>
       {persona && <AgentAvatar persona={persona} />}
 
-      <div className={cn('flex max-w-[78%] flex-col gap-1', isOwn && 'items-end')}>
+      <div
+        data-slot="message-bubble"
+        className={cn('flex max-w-[78%] flex-col gap-1', tileRow && 'w-full', isOwn && 'items-end')}
+      >
         {persona && (
           <span className={cn('px-1 text-[11px] font-medium', persona.text)}>
             {persona.name}

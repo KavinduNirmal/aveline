@@ -1,4 +1,4 @@
-﻿using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Modules.Commerce.DTOs;
 using Aveline.Api.Modules.Commerce.Models;
 using Microsoft.EntityFrameworkCore;
@@ -29,6 +29,25 @@ public class ApprovalRepository : IApprovalRepository
                 .ThenInclude(o => o.Items)
             .OrderByDescending(a => a.CreatedAt)
             .FirstOrDefaultAsync(a => a.OrderId == orderId && a.OrganizationId == organizationId, ct);
+    }
+
+    public async Task<ApprovalQueueEntry?> GetPendingByThreadIdAsync(Guid organizationId, string threadId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(threadId))
+        {
+            return null;
+        }
+
+        var normalized = threadId.Trim();
+        return await _context.ApprovalQueue
+            .Include(a => a.Order)
+                .ThenInclude(o => o.Items)
+            .OrderByDescending(a => a.CreatedAt)
+            .FirstOrDefaultAsync(
+                a => a.OrganizationId == organizationId
+                     && a.ThreadId == normalized
+                     && a.Status.ToLower() == "pending",
+                ct);
     }
 
     public async Task<PagedResult<ApprovalQueueEntry>> ListAsync(Guid organizationId, string? status, int page, int pageSize, CancellationToken ct = default)

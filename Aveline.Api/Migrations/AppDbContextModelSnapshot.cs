@@ -1107,6 +1107,7 @@ namespace Aveline.Api.Migrations
                         .HasColumnType("character varying(50)");
 
                     b.Property<string>("ThreadId")
+                        .IsRequired()
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
@@ -1128,6 +1129,11 @@ namespace Aveline.Api.Migrations
                     b.HasIndex("Status");
 
                     b.HasIndex("ThreadId");
+
+                    b.HasIndex("OrganizationId", "ThreadId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_ApprovalQueue_OrganizationId_ThreadId_Pending")
+                        .HasFilter("\"Status\" = 'pending'");
 
                     b.ToTable("ApprovalQueue", (string)null);
                 });

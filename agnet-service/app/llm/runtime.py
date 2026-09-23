@@ -55,4 +55,20 @@ def visual_llm_or_none(settings: Settings) -> BaseChatModel | None:
     return create_chat_model(settings)
 
 
+def supervisor_llm_or_none(settings: Settings) -> BaseChatModel | None:
+    """Return a chat model for the supervisor, or ``None`` to stay rule-based.
+
+    Sampled at temperature 0 (ADR-023): routing is a decision, not a composition, so two identical
+    messages should not take different paths because of sampling noise. Drafting keeps its own
+    temperature through ``memory_llm_or_none``.
+    """
+    if not settings.agent_llm_enabled:
+        logger.info("LLM disabled for agent workflows (agent_llm_enabled=false); using rule-based mode.")
+        return None
+    if not settings.llm_api_key or not settings.llm_model:
+        logger.info("LLM not configured (missing api key or model); using rule-based mode.")
+        return None
+    return create_chat_model(settings, temperature=0.0)
+
+
 workflow_llm_or_none = memory_llm_or_none

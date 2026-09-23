@@ -177,6 +177,18 @@ public class ConversationServiceTests
             return Task.FromResult<(IReadOnlyList<Message>, int, int)>((scoped, scoped.Count, 1));
         }
 
+        public Task<IReadOnlyList<Message>> ListLatestAsync(Guid conversationId, int take, CancellationToken ct)
+        {
+            // Mirrors the real repository's contract: the newest `take` rows, returned oldest first.
+            var scoped = _messages
+                .Where(m => m.ConversationId == conversationId)
+                .OrderByDescending(m => m.CreatedAt)
+                .Take(take)
+                .OrderBy(m => m.CreatedAt)
+                .ToList();
+            return Task.FromResult<IReadOnlyList<Message>>(scoped);
+        }
+
         public Task SaveAsync(Message message, CancellationToken ct)
         {
             SaveCount++;
@@ -446,6 +458,42 @@ public class ConversationServiceTests
         Assert.Equal(2, _messages.SaveCount);
         Assert.Equal(1, _agent.PostCount);
         Assert.Equal("/agents/query", _agent.LastPath);
+    }
+
+    /// <summary>
+    /// A staff question about the customer in front of them must carry the conversation's customer
+    /// binding. Without it the agent had no customer context, Ava skipped personalization, and the
+    /// Salon rendered only Aveline's one-line summary with nothing beneath it.
+    /// </summary>
+    [Fact]
+    public async Task SendStaffNoteAsync_ForwardsTheConversationsCustomerToTheAgent()
+    {
+        var orgId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
+        var salon = await _sut.GetOrCreateSalonAsync(orgId, userId, customerId, CancellationToken.None);
+
+        await _sut.SendStaffNoteAsync(
+            orgId, userId, salon.Id, "what do we have on file for her?", null, null, CancellationToken.None);
+
+        Assert.Equal(1, _agent.PostCount);
+        Assert.Contains("\"customer_id\":\"" + customerId + "\"", _agent.LastBody);
+    }
+
+    [Fact]
+    public async Task SendStaffNoteAsync_ForwardsNoCustomerForTheGeneralSalon()
+    {
+        // The general Salon has no customer, and inventing one would let Ava pull a stranger's
+        // memories into an unrelated note.
+        var orgId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var salon = await _sut.GetOrCreateSalonAsync(orgId, userId, null, CancellationToken.None);
+
+        await _sut.SendStaffNoteAsync(
+            orgId, userId, salon.Id, "what do we have on file?", null, null, CancellationToken.None);
+
+        Assert.Equal(1, _agent.PostCount);
+        Assert.DoesNotContain("\"customer_id\":\"", _agent.LastBody);
     }
 
     [Fact]
@@ -734,6 +782,38 @@ public class ConversationServiceTests
         var conversation = Assert.Single(rows).Conversation;
         Assert.Equal(customerId, conversation.CustomerId);
         Assert.Equal("+94771234567", conversation.ExternalRef);
+    }
+
+    [Fact]
+    public async Task RecordInboundClientMessageAsync_ForwardsTheConversationsCustomerToTheAgent()
+    {
+        // The agent must not re-derive identity from the sender's number alone. A number that has
+        // since changed no longer matches, so resolving by phone finds nobody and creates a second,
+        // nameless customer - after which every message is answered as an unknown customer. The
+        // conversation's own binding is authoritative and travels with the brief.
+        var orgId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
+
+        await _sut.RecordInboundClientMessageAsync(
+            orgId, "94763475058", "94763475058", "Please recheck the emerald saree", customerId, null,
+            CancellationToken.None);
+
+        Assert.Equal(1, _agent.PostCount);
+        Assert.Contains("\"customer_id\":\"" + customerId + "\"", _agent.LastBody);
+    }
+
+    [Fact]
+    public async Task RecordInboundClientMessageAsync_SendsNoCustomerForAFirstContact()
+    {
+        // A first-contact thread is unbound, so the agent falls back to the phone - which is what
+        // creates the customer in the first place.
+        var orgId = Guid.NewGuid();
+
+        await _sut.RecordInboundClientMessageAsync(
+            orgId, "+94779998888", "+94779998888", "Hello", null, null, CancellationToken.None);
+
+        Assert.Equal(1, _agent.PostCount);
+        Assert.DoesNotContain("\"customer_id\":\"", _agent.LastBody);
     }
 
     [Fact]

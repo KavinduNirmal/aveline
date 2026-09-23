@@ -173,7 +173,10 @@ public sealed class AgentRunIngestService(
     /// <summary>Terminal runs are immutable; only a byte-identical report is idempotent.</summary>
     private static bool MatchesTerminal(AgentWorkflowRun run, AgentRunReportRequest request) =>
         run.Status == request.Status
-        && run.CompletedAt == request.CompletedAt
+        // Compared in UTC, matching what <see cref="ApplyRun"/> persists: an inbound offset-bearing
+        // timestamp arrives as Kind=Local, so a raw comparison would misread an identical retry as
+        // a conflicting report once the stored value is normalized.
+        && run.CompletedAt == ToUtc(request.CompletedAt)
         && string.Equals(run.ErrorCode, request.ErrorCode, StringComparison.Ordinal);
 
     private static void ValidateWorkflowId(string workflowId)
@@ -329,13 +332,15 @@ public sealed class AgentRunIngestService(
         run.CustomerId = request.CustomerId;
         run.InitiatedByUserId = request.InitiatedByUserId;
         run.Status = request.Status;
-        run.StartedAt = request.StartedAt;
-        run.CompletedAt = request.CompletedAt;
+        // Every timestamp is normalized to UTC: Npgsql rejects non-UTC kinds on
+        // `timestamp with time zone`, and an inbound offset-bearing string arrives as Kind=Local.
+        run.StartedAt = ToUtc(request.StartedAt);
+        run.CompletedAt = ToUtc(request.CompletedAt);
         run.DurationMs = ResolveDuration(request);
         run.PausedAt = request.Status == AgentRunStatus.PausedForApproval
-            ? request.PausedAt ?? now
-            : request.PausedAt;
-        run.ResumedAt = request.ResumedAt;
+            ? ToUtc(request.PausedAt ?? now)
+            : ToUtc(request.PausedAt);
+        run.ResumedAt = ToUtc(request.ResumedAt);
         run.ApprovalWaitMs = ResolveApprovalWait(request);
         run.StepCount = steps.Count;
         run.ToolCallCount = request.ToolCallCount > 0
@@ -416,6 +421,34 @@ public sealed class AgentRunIngestService(
         }
     }
 
+    /// <summary>
+    /// Normalizes an inbound timestamp to <see cref="DateTimeKind.Utc"/> before it is written to a
+    /// <c>timestamp with time zone</c> column.
+    /// </summary>
+    /// <remarks>
+    /// The agent service serializes timestamps with <c>datetime.now(UTC).isoformat()</c>, i.e.
+    /// <c>2026-09-22T20:47:56.123456+00:00</c>. System.Text.Json materializes an offset-bearing
+    /// string into <see cref="DateTimeKind.Local"/> (the same instant, a different <c>Kind</c>),
+    /// and Npgsql rejects anything that is not UTC for <c>timestamptz</c>:
+    /// <c>Cannot write DateTime with Kind=Local to PostgreSQL type 'timestamp with time zone'</c>.
+    /// That turned every run report into a 500 and silently discarded all run telemetry.
+    ///
+    /// <para>
+    /// <see cref="DateTimeKind.Local"/> carries a correct instant, so converting it preserves the
+    /// value. <see cref="DateTimeKind.Unspecified"/> carries no offset at all and is treated as
+    /// UTC, matching the documented contract that the agent service reports UTC.
+    /// </para>
+    /// </remarks>
+    private static DateTime ToUtc(DateTime value) => value.Kind switch
+    {
+        DateTimeKind.Utc => value,
+        DateTimeKind.Local => value.ToUniversalTime(),
+        _ => DateTime.SpecifyKind(value, DateTimeKind.Utc),
+    };
+
+    /// <summary>Nullable counterpart of <see cref="ToUtc"/>.</summary>
+    private static DateTime? ToUtc(DateTime? value) => value is { } nonNull ? ToUtc(nonNull) : null;
+
     /// <summary>Steps of a run already persisted, projected for tool-call counting.</summary>
     private static AgentStepReportRequest ToPlaceholder(AgentStepRun step) => new(
         step.StepIndex, step.AgentKey, step.NodeName, step.StepKind, step.ToolName,
@@ -437,8 +470,8 @@ public sealed class AgentRunIngestService(
             ToolName = step.ToolName,
             Status = step.Status,
             AttemptNumber = step.AttemptNumber,
-            StartedAt = step.StartedAt,
-            CompletedAt = step.CompletedAt,
+            StartedAt = ToUtc(step.StartedAt),
+            CompletedAt = ToUtc(step.CompletedAt),
             DurationMs = step.DurationMs,
             Provider = step.Provider,
             Model = step.Model,

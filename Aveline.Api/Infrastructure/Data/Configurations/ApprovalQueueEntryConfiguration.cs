@@ -59,10 +59,25 @@ public class ApprovalQueueEntryConfiguration : IEntityTypeConfiguration<Approval
             .HasMaxLength(1000);
 
         // LangGraph Checkpoint & Salon Thread Link (ADR-016)
+        //
+        // `ThreadId` is required (ADR-024, Decision 4): an approval row with no thread could not be
+        // resumed, so the owner's decision was written and never delivered. A staff order created
+        // outside any conversation is given a generated value that names no checkpoint; a null
+        // `ConversationId` is what marks such a row as having no agent run behind it.
         builder.Property(a => a.ThreadId)
+            .IsRequired()
             .HasMaxLength(64);
 
         builder.HasIndex(a => a.ThreadId);
+
+        // One *outstanding* approval per thread. The pause path is a side effect of a run that may be
+        // retried (a redelivered webhook, a client timeout), and a second order for one pause would
+        // double every figure derived from it. Scoped to `pending` rows so a thread can legitimately
+        // place another order once the first has been decided.
+        builder.HasIndex(a => new { a.OrganizationId, a.ThreadId })
+            .IsUnique()
+            .HasFilter("\"Status\" = 'pending'")
+            .HasDatabaseName("IX_ApprovalQueue_OrganizationId_ThreadId_Pending");
 
         builder.Property(a => a.ConversationId);
 

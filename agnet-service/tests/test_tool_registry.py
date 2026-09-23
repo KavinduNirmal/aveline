@@ -285,3 +285,58 @@ async def test_registry_calculate_margin(client):
     result = await registry.calculate_margin("order-1")
     assert route.called
     assert result == {"margin": 0.2}
+
+
+# ---------------------------------------------------------------------------
+# Conversation transcript read (ADR-023, W1.2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_client_forwards_query_params(client):
+    """GET reads are scoped by query, not by body (the transcript window)."""
+    route = respx.get(f"{BASE_URL}/internal/conversations/conv-1/messages").respond(
+        status_code=200, json={"items": []}
+    )
+    await client.request(
+        "GET",
+        "/internal/conversations/conv-1/messages",
+        params={"organizationId": "org-1", "limit": 5},
+    )
+    assert route.called
+    sent = route.calls.last.request.url
+    assert sent.params["organizationId"] == "org-1"
+    assert sent.params["limit"] == "5"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_registry_get_conversation_history(client):
+    """The window is requested with an explicit org and limit, and the envelope is returned."""
+    route = respx.get(f"{BASE_URL}/internal/conversations/conv-1/messages").respond(
+        status_code=200,
+        json={
+            "conversationId": "conv-1",
+            "organizationId": "org-1",
+            "items": [
+                {
+                    "id": "m-1",
+                    "authorKind": "System",
+                    "agentKey": None,
+                    "kind": "ClientMessage",
+                    "text": "Any pinkish gowns?",
+                    "createdAt": "2026-09-22T10:00:00+00:00",
+                }
+            ],
+        },
+    )
+    registry = ToolRegistry(client)
+    result = await registry.get_conversation_history("org-1", "conv-1", limit=5)
+
+    assert route.called
+    sent = route.calls.last.request.url
+    assert sent.params["organizationId"] == "org-1"
+    assert sent.params["limit"] == "5"
+    assert route.calls.last.request.headers["X-Internal-Token"] == "test-token"
+    assert result["items"][0]["text"] == "Any pinkish gowns?"

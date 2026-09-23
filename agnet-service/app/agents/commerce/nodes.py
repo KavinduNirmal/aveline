@@ -258,14 +258,22 @@ class CommerceAgent:
         )
         payment_details = PaymentDetails.model_validate(payment_dict)
 
-        # 2. Book courier if delivery address provided
-        courier_dict = await book_courier(
-            org_id=org_id,
-            order_id=order_id,
-            delivery_address=delivery_address,
-            registry=self.registry,
-        )
-        courier_details = CourierDetails.model_validate(courier_dict)
+        # 2. Plan the courier only when there is somewhere to deliver.
+        #
+        # `plan_delivery` reports status "skipped" for a missing address, but "skipped" is not a
+        # courier state (`CourierStatusType` is planned/booked/in_transit/delivered/failed). Feeding
+        # it to CourierDetails raised ValidationError and 500'd every settlement that had no
+        # delivery address - i.e. the whole non-approval path. A delivery with no address is not a
+        # plan in a skipped state; it is simply not a plan.
+        courier_details: CourierDetails | None = None
+        if delivery_address:
+            courier_dict = await book_courier(
+                org_id=org_id,
+                order_id=order_id,
+                delivery_address=delivery_address,
+                registry=self.registry,
+            )
+            courier_details = CourierDetails.model_validate(courier_dict)
 
         discount_pct = float(state.get("proposed_discount") or 0.0)
         if discount_pct > 0:
@@ -300,7 +308,7 @@ class CommerceAgent:
         return {
             "status": SUCCESS,
             "payment_details": payment_details.model_dump(),
-            "courier_details": courier_details.model_dump(),
+            "courier_details": courier_details.model_dump() if courier_details else None,
             "summary": summary,
             "output": output.model_dump(),
         }

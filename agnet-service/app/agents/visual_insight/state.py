@@ -31,6 +31,11 @@ class VisualAgentState(TypedDict, total=False):
     image_attributes: dict[str, Any] | None
     search_criteria: dict[str, Any] | None
     matched_items: list[dict[str, Any]]
+    #: Set when the inventory lookup itself failed (transport/contract error), as opposed to
+    #: succeeding and legitimately matching nothing. The two demand different answers: an empty
+    #: result may justify sourcing, a failed search must not claim a piece is out of stock.
+    search_failed: bool
+    search_error: str | None
     composed_looks: list[dict[str, Any]]
     sourcing_request: dict[str, Any] | None
     suggestion: str | None

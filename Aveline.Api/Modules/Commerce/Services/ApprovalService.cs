@@ -81,6 +81,11 @@ public class ApprovalService : IApprovalService
 
         var order = entry.Order ?? await _orderRepository.GetByIdAsync(entry.OrderId, organizationId, ct);
 
+        // The agent's pricing tools speak in *rates* (0.10 = 10% off) while an approval decision
+        // speaks in absolute money. The rate is derived from the order the decision just produced, and
+        // only for `revise`; every other verb leaves the discount alone.
+        decimal? revisedDiscountRate = null;
+
         switch (decision)
         {
             case "approve":
@@ -120,6 +125,10 @@ public class ApprovalService : IApprovalService
                         order.Status = "revised";
                         order.UpdatedAt = DateTime.UtcNow;
                         await _orderRepository.UpdateAsync(order, ct);
+
+                        revisedDiscountRate = order.Subtotal > 0m
+                            ? Math.Round(order.Discount / order.Subtotal, 4)
+                            : 0m;
                     }
                 }
                 entry.Status = "revised";
@@ -131,34 +140,95 @@ public class ApprovalService : IApprovalService
 
         await _approvalRepository.UpdateAsync(entry, ct);
 
-        // Resume the paused LangGraph workflow when a thread ID is associated with the approval (HITL resume)
-        if (!string.IsNullOrWhiteSpace(entry.ThreadId) && _agentClient != null)
-        {
-            try
-            {
-                var payload = new
-                {
-                    query = $"[Human Approval Decision: {decision}] {dto.Reason ?? string.Empty}".Trim(),
-                    thread_id = entry.ThreadId,
-                    org_context = new
-                    {
-                        organization_id = organizationId,
-                        order_id = entry.OrderId,
-                        approval_decision = decision,
-                        approval_comment = dto.Reason,
-                        revised_discount = dto.RevisedDiscount,
-                    }
-                };
-                using var content = JsonContent.Create(payload);
-                await _agentClient.PostAsync("/agents/query", content, ct);
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogWarning(ex, "Failed to send approval decision resume to Agent Service for thread {ThreadId}", entry.ThreadId);
-            }
-        }
+        // Resume the paused workflow through its checkpoint (ADR-024, Decision 3).
+        //
+        // A decision is not a new question. This resumes the graph at the node that interrupted, so
+        // the supervisor is never re-consulted and nothing before the pause re-executes. The previous
+        // implementation re-queried `/agents/query` with the decision as the question text, which
+        // re-ran the whole pipeline and - because a decision carries no commerce signal - routed to
+        // the memory agent, so the resumed deal was never settled.
+        await ResumePausedWorkflowAsync(
+            entry, organizationId, decision, dto, order?.CustomerName, revisedDiscountRate, ct);
 
         return MapToDto(entry);
+    }
+
+    /// <summary>
+    /// Tell the agent to settle the deal the decision was made about.
+    /// </summary>
+    /// <remarks>
+    /// Best-effort, like every other agent call on this path: the owner's decision is already
+    /// persisted and the order transitioned, and a failure to reach the agent must not roll that
+    /// back or surface as an error to the dashboard. It is logged loudly because a decision the
+    /// agent never heard is a decision the customer never sees.
+    /// </remarks>
+    private async Task ResumePausedWorkflowAsync(
+        ApprovalQueueEntry entry,
+        Guid organizationId,
+        string decision,
+        ApprovalDecisionDto dto,
+        string? customerName,
+        decimal? revisedDiscountRate,
+        CancellationToken ct)
+    {
+        if (_agentClient is null || string.IsNullOrWhiteSpace(entry.ThreadId))
+        {
+            return;
+        }
+
+        // An approval with no conversation has no agent run behind it - it was raised from the
+        // dashboard, and its thread id is generated rather than naming a checkpoint. Resuming it
+        // would 404 at best; skipping is the honest reading of a row that never involved the agent.
+        if (entry.ConversationId is null)
+        {
+            _logger?.LogInformation(
+                "Approval {ApprovalId} has no conversation; the decision is complete without an agent resume.",
+                entry.Id);
+            return;
+        }
+
+        // The API's HTTP verbs and the graph's vocabulary are two different sets; this is the single
+        // place the translation happens.
+        var agentDecision = ApprovalDecisions.ToAgentDecision(decision);
+        if (agentDecision is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var payload = new
+            {
+                thread_id = entry.ThreadId,
+                decision = agentDecision,
+                comment = dto.Reason,
+                organization_id = organizationId,
+                order_id = entry.OrderId,
+                // The settlement quotes the customer by name. The API knows it - it wrote the order -
+                // while the checkpoint's conversation context often does not.
+                customer_name = customerName,
+                // A rate, not an amount: the agent's pricing tools read `proposed_discount` as
+                // 0.10 == 10% off. See `revisedDiscountRate` above.
+                revised_discount = revisedDiscountRate,
+                conversation_id = entry.ConversationId,
+            };
+            using var content = JsonContent.Create(payload);
+            var response = await _agentClient.PostAsync("/agents/resume", content, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger?.LogWarning(
+                    "Agent resume for thread {ThreadId} returned {StatusCode}; the decision was recorded but the workflow was not settled.",
+                    entry.ThreadId,
+                    (int)response.StatusCode);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(
+                ex,
+                "Failed to resume the paused workflow for thread {ThreadId}.",
+                entry.ThreadId);
+        }
     }
 
     private static ApprovalQueueResponseDto MapToDto(ApprovalQueueEntry entry)

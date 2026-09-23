@@ -68,6 +68,37 @@ class ToolRegistry:
             body["fullName"] = full_name
         return await self._client.request("POST", "/internal/customers/identify", json=body)
 
+    async def update_customer(
+        self,
+        org_id: str,
+        customer_id: str,
+        full_name: str | None = None,
+        phone_number: str | None = None,
+    ) -> dict[str, Any]:
+        """Apply an explicit staff instruction to a customer's name or phone (ADR-023 follow-up).
+
+        Only the fields actually supplied are sent, so an update that mentions a name cannot blank
+        out the phone. This never creates a customer: naming someone who is not on file is a
+        different operation, and silently creating a record from a chat message would be wrong.
+
+        Raises:
+            httpx.HTTPStatusError: 409 when another customer already holds the phone number, 404
+                when the customer is not in the organization. Both must surface to staff rather
+                than be swallowed - an update that silently did nothing is worse than an error.
+        """
+        body: dict[str, Any] = {}
+        if full_name is not None:
+            body["fullName"] = full_name
+        if phone_number is not None:
+            body["phoneNumber"] = phone_number
+
+        return await self._client.request(
+            "PATCH",
+            f"/internal/customers/{customer_id}",
+            json=body,
+            params={"organizationId": org_id},
+        )
+
     async def lookup_customers(
         self,
         org_id: str,
@@ -189,6 +220,35 @@ class ToolRegistry:
         """Check a customer's consent status via the backend."""
         return await self._client.request(
             "GET", f"/internal/customers/{customer_id}/consent?organizationId={org_id}"
+        )
+
+    # ============================== CONVERSATION ==============================
+
+    async def get_conversation_history(
+        self,
+        org_id: str,
+        conversation_id: str,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """Read a bounded, oldest-first window of a conversation's transcript (ADR-023).
+
+        The concierge workflow receives only the newest message, so nothing referential
+        ("yes, that one", "is it still available?") can be resolved without this. The window is
+        deliberately bounded by the caller: the transcript is a context budget, not an archive.
+
+        Args:
+            org_id: The owning organization (tenant scope).
+            conversation_id: The conversation to read.
+            limit: Maximum turns to return, newest-last. Clamped by the backend.
+
+        Returns:
+            The backend ``{conversationId, organizationId, items}`` envelope, where each item is
+            ``{id, authorKind, agentKey, kind, text, createdAt}``.
+        """
+        return await self._client.request(
+            "GET",
+            f"/internal/conversations/{conversation_id}/messages",
+            params={"organizationId": org_id, "limit": limit},
         )
 
     # ============================== VISUAL AGENT ==============================

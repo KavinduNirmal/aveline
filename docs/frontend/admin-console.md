@@ -598,10 +598,13 @@ the ratchet in `vitest.admin-coverage.config.ts` was raised to match.
   it **with a copy button**, because the exception itself is never serialised and the `traceId` is
   the only thing that ties a user-visible failure to a server log line. The dashboard's failed-read
   card now uses it.
-- **`frontend/web/src/docs/admin-access.md` corrected (Q9).** It previously promised support
-  impersonation, enforced MFA, 15-minute idle expiry and cryptographic append-only logs; none has a
-  backend counterpart. The page now states what is enforced and lists those four explicitly under
-  **"Not implemented — do not rely on these"**, so nobody plans around them.
+- **`frontend/web/src/docs/admin-access.md` corrected (Q9), then retired.** It previously promised
+  support impersonation, enforced MFA, 15-minute idle expiry and cryptographic append-only logs; none
+  has a backend counterpart. It was corrected to state what is enforced and to list those four under
+  **"Not implemented — do not rely on these"**. The tenant-documentation overhaul then removed the
+  page from `frontend/web/src/docs/` entirely, because that directory is the **tenant-facing** set and
+  the console is the Aveline team's surface; this page is now the console's only documentation. The
+  corrected statements it carried are the ones recorded above.
 - **Deployment requirements recorded** in `docs/deployment.md` §10: the SPA fallback rewrite that
   stops `/admin/<id>/users` returning `404` on refresh, the two `VITE_GRAFANA_*` variables and their
   disabled-link behaviour, and the A9 dependency on a non-null `/auth/claims` email.

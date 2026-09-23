@@ -120,6 +120,23 @@ public interface IConversationService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// A bounded, oldest-first transcript window for an internal (service-to-service) caller
+    /// (ADR-023, W1.1).
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="ListMessagesAsync"/> on purpose: that path is scoped to a staff
+    /// user's visibility, whereas the agent service is not a user and must be scoped by
+    /// organization alone. The tenant check is therefore the <paramref name="orgId"/> match on
+    /// the conversation, not a visibility rule.
+    /// </remarks>
+    /// <returns><c>null</c> when the conversation does not exist in <paramref name="orgId"/>.</returns>
+    Task<ConversationHistoryDto?> GetHistoryAsync(
+        Guid orgId,
+        Guid conversationId,
+        int limit,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Stores an uploaded attachment against a conversation, unbound. Returns <c>null</c> when
     /// the conversation is not visible to the caller. The caller has already applied the type
     /// and size policy; the service owns storage.

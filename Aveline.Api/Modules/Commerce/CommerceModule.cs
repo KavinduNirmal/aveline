@@ -16,6 +16,15 @@ public static class CommerceModule
         services.AddScoped<IOrderRepository, OrderRepository>();
         services.AddScoped<IOrderService, OrderService>();
 
+        // Derives the line items a customer message asks to buy, resolved against the catalog
+        // (ADR-024, Decision 1). Reads inventory through the shared service, never writes an order.
+        services.AddScoped<IOrderContextBuilder, OrderContextBuilder>();
+
+        // Turns an agent's `pending_approval` verdict into an order the owner can act on
+        // (ADR-024, Decision 2). Delegates the write to `IOrderService`, so the agent still owns
+        // no persistence.
+        services.AddScoped<IConversationOrderBridge, ConversationOrderBridge>();
+
         // Approvals (Feature 4)
         services.AddScoped<IApprovalRepository, ApprovalRepository>();
         services.AddScoped<IApprovalService, ApprovalService>();

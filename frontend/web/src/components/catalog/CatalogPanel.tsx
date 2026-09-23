@@ -242,8 +242,9 @@ export function CatalogPanel({
   const lowStockCount = inventory.filter(
     (item) => item.status === 'low_stock' || (item.stockQuantity > 0 && item.stockQuantity <= 2),
   ).length
+  // An archived ticket is off the pipeline, so it is not work in progress either.
   const activeSourcingCount = sourcingRequests.filter(
-    (req) => req.status !== 'fulfilled',
+    (req) => req.status !== 'fulfilled' && req.status !== 'archived',
   ).length
 
   // Handlers

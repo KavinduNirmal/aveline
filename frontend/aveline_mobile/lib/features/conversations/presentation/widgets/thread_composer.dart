@@ -154,4 +154,3 @@ class _ThreadComposerState extends State<ThreadComposer> {
     );
   }
 }
-

@@ -34,6 +34,7 @@ class InternalApiClient:
         method: str,
         path: str,
         json: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
     ) -> Any:
         """Perform an authenticated request and return the parsed JSON body.
 
@@ -41,6 +42,8 @@ class InternalApiClient:
             method: HTTP method (``GET``, ``POST``, ...).
             path: Endpoint path, e.g. ``/api/internal/customers/{id}``.
             json: Optional JSON body for POST/PUT/PATCH.
+            params: Optional query parameters, for GET reads that are scoped by query
+                rather than by body (e.g. the conversation transcript window).
 
         Returns:
             The parsed JSON response body.
@@ -53,7 +56,7 @@ class InternalApiClient:
         url = f"{self._base_url}{path}"
 
         async with httpx.AsyncClient(timeout=self._timeout) as http:
-            response = await http.request(method, url, headers=headers, json=json)
+            response = await http.request(method, url, headers=headers, json=json, params=params)
             response.raise_for_status()
             if response.content:
                 return response.json()

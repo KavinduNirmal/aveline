@@ -36,8 +36,18 @@ public class ApprovalQueueEntry : ITenantEntity
 
     public Guid? DecidedBy { get; set; } // Owner / Manager User ID
 
-    /// <summary>LangGraph checkpoint thread id for resuming the paused workflow (ADR-016).</summary>
-    public string? ThreadId { get; set; }
+    /// <summary>
+    /// LangGraph checkpoint thread id for resuming the paused workflow (ADR-016).
+    /// </summary>
+    /// <remarks>
+    /// Required, because a pause is actionable only if it is linked (ADR-024, Decision 4): the resume
+    /// silently skipped a row whose thread was null, so the owner's decision was recorded and never
+    /// delivered. A staff order created outside any conversation still gets a generated value - it
+    /// names no checkpoint, and <see cref="ConversationId"/> being null is what marks it as such.
+    /// </remarks>
+    [Required]
+    [MaxLength(64)]
+    public string ThreadId { get; set; } = string.Empty;
 
     /// <summary>The Salon conversation this approval surfaces in (ADR-016).</summary>
     public Guid? ConversationId { get; set; }

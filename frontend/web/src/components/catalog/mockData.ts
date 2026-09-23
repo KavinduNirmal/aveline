@@ -81,7 +81,14 @@ export interface SourcingRequestMock {
   estimatedCost: number
   proposedMarkup: number
   targetPrice: number
-  status: 'pending' | 'quoted' | 'approved' | 'ordered' | 'fulfilled'
+  /**
+   * The pipeline stages, plus `archived` for a ticket taken off the board.
+   *
+   * `archived` is a status rather than a delete because the ticket is a record of work done for a
+   * client, and the API's status column has always been a plain string — so archiving needs no
+   * schema change, and a restored ticket is one more status write.
+   */
+  status: 'pending' | 'quoted' | 'approved' | 'ordered' | 'fulfilled' | 'archived'
   createdAt: string
 }
 

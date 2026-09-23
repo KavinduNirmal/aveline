@@ -69,7 +69,13 @@ def test_load_system_prompt_accepts_explicit_path(tmp_path):
 
 
 def test_agent_prompts_has_all_three_agents():
-    assert set(agent_prompts.AGENT_PROMPTS.keys()) == {"memory", "visual", "commerce"}
+    # Plus the supervisor, which is a routing layer rather than a specialist persona (ADR-023).
+    assert set(agent_prompts.AGENT_PROMPTS.keys()) == {
+        "memory",
+        "visual",
+        "commerce",
+        "supervisor",
+    }
 
 
 def test_agent_prompts_are_placeholders():

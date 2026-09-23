@@ -109,8 +109,16 @@ public class GrafanaProvisioningTests
 
         compose.Should().Contain("image: grafana/grafana:13.2.2");
         compose.Should().NotContain("grafana/grafana:13.0.0", "13.0.0 was withdrawn after a migration bug");
-        compose.Should().Contain("GF_AUTH_ANONYMOUS_ENABLED: \"false\"");
-        compose.Should().Contain("GF_USERS_ALLOW_SIGN_UP: \"false\"");
+        // The lock-down flags are `.env`-overridable but must default to the secure value.
+        compose.Should().Contain(
+            "GF_AUTH_ANONYMOUS_ENABLED: \"${GRAFANA_ANONYMOUS_ENABLED:-false}\"",
+            "anonymous access must default off");
+        compose.Should().Contain(
+            "GF_USERS_ALLOW_SIGN_UP: \"${GRAFANA_ALLOW_SIGN_UP:-false}\"",
+            "self-signup must default off");
+        compose.Should().Contain(
+            "GF_SECURITY_ALLOW_EMBEDDING: \"${GRAFANA_ALLOW_EMBEDDING:-false}\"",
+            "embedding must default off");
         compose.Should().Contain("${GRAFANA_ADMIN_PASSWORD:?", "Grafana must never start with a default password");
     }
 

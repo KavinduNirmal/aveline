@@ -57,6 +57,9 @@ async def test_visual_insight_graph_in_stock_look():
     assert output["items"][0]["name"] == "Peach Raw-Silk Drape Gown"
     assert len(output["looks"]) == 1
     assert "Wedding" in output["looks"][0]["name"]
+    # The look names no photograph: borrowing the gown's would show the same picture twice in the
+    # Salon, once as the piece and once as the look.
+    assert output["looks"][0]["imageUrl"] is None
     assert "Elle curated 2 piece(s)" in output["suggestion"]
     assert output["sourcing_request"] is None
 

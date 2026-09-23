@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Maximize2 } from 'lucide-react'
 
+import { WhatsAppIcon } from '@/components/dashboard/BrandIcons'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -20,7 +21,10 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { Spinner } from '@/components/ui/spinner'
 import { apiClient } from '@/lib/api'
+import { formatLkPhone } from '@/lib/boutique'
 import { cn } from '@/lib/utils'
+import { MentionText } from './Mentions'
+import { isTileBlock, withoutBorrowedLookImages } from './tileBlocks'
 
 /** An option in a customer-resolution `choice` block. */
 export interface ChoiceOption {
@@ -90,7 +94,15 @@ export function BlockRenderer({
 }: BlockRendererProps) {
   switch (block.type) {
     case 'text':
-      return <p className="whitespace-pre-wrap text-sm leading-relaxed">{block.text}</p>
+      // Staff point the resolver at an exact customer with a mention, so their own words are the
+      // one place a `@name` in the transcript is an entity rather than punctuation (ADR-019).
+      return (
+        <MentionText
+          text={block.text ?? ''}
+          tone={tone}
+          className="whitespace-pre-wrap text-sm leading-relaxed"
+        />
+      )
     case 'piece':
       return <PieceBlock block={block} onSignOff={onSignOff} persona={persona} />
     case 'at_a_glance':
@@ -165,30 +177,52 @@ function ChoiceBlock({
   )
 }
 
+/**
+ * One catalogue piece as a tile, not a panel.
+ *
+ * An answer routinely carries several pieces, and the old full-width card turned each one into a
+ * band that pushed the next off-screen, so a curated set read as a single recommendation. The tile
+ * is deliberately narrow: a 4:3 plate, the name, size and stock, then the money. `BlockList` is what
+ * keeps it thin, by gridding a run of tiles instead of stacking them.
+ */
 function PieceBlock({ block }: BlockRendererProps) {
+  const name = block.name ?? 'Piece'
   return (
-    <Card className="overflow-hidden">
-      {block.imageUrl && (
-        <img src={block.imageUrl} alt={block.name ?? 'Piece'} className="h-40 w-full object-cover" />
+    <Card className="min-w-0 gap-0 overflow-hidden rounded-xl border-border/70 bg-card py-0 shadow-none">
+      {block.imageUrl ? (
+        <img
+          src={block.imageUrl}
+          alt={name}
+          className="aspect-4/3 w-full bg-muted object-cover"
+        />
+      ) : (
+        // A missing photograph is a state, not a broken image or a stretched blank.
+        <div className="flex aspect-4/3 w-full items-center justify-center bg-muted text-[10px] text-muted-foreground">
+          No photograph
+        </div>
       )}
-      <CardContent className="p-3">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <p className="truncate font-serif text-sm font-medium">{block.name ?? 'Piece'}</p>
-            {block.size && (
-              <p className="text-xs text-muted-foreground">Size {block.size}</p>
-            )}
-          </div>
-          {typeof block.price === 'number' && (
-            <p className="shrink-0 text-sm font-semibold text-primary">
-              LKR {block.price.toLocaleString()}
-            </p>
+      <CardContent className="flex flex-1 flex-col gap-1 p-2.5">
+        <p className="line-clamp-2 font-serif text-xs font-medium leading-snug" title={name}>
+          {name}
+        </p>
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+          {block.size && (
+            <span className="min-w-0 truncate text-[10px] text-muted-foreground">
+              Size {block.size}
+            </span>
+          )}
+          {typeof block.stock === 'number' && (
+            <Badge variant="secondary" className="h-4 px-1.5 text-[10px] font-normal">
+              {block.stock} in stock
+            </Badge>
           )}
         </div>
-        {typeof block.stock === 'number' && (
-          <Badge variant="secondary" className="mt-2">
-            {block.stock} in stock
-          </Badge>
+        {/* The money is the last line and sits on the floor of the tile, so a row's prices line up
+            even when one name wraps to a second line and the others do not. */}
+        {typeof block.price === 'number' && (
+          <p className="mt-auto pt-1 text-xs font-semibold tabular-nums text-primary">
+            LKR {block.price.toLocaleString()}
+          </p>
         )}
       </CardContent>
     </Card>
@@ -257,14 +291,80 @@ function SignOffBlock({ block, onSignOff }: BlockRendererProps) {
   )
 }
 
+/**
+ * The customer's handle as a person reads it.
+ *
+ * WhatsApp hands the number over as a bare `94763475058`. A Sri Lankan one gets the convention the
+ * rest of the dashboard already spaces numbers with; anything else is left exactly as the channel
+ * gave it, because forcing the local country code onto a foreign number would invent an address the
+ * customer does not have.
+ */
+function customerHandle(handle: string): string {
+  const digits = handle.replace(/\D/g, '')
+  const isSriLankan =
+    (digits.length === 11 && digits.startsWith('94')) ||
+    (digits.length === 10 && digits.startsWith('0'))
+  return isSriLankan ? formatLkPhone(handle) : handle
+}
+
+/**
+ * An inbound customer message, relayed from WhatsApp into the thread.
+ *
+ * These are the customer's own words rather than an agent's summary, so the block is drawn as the
+ * message it arrived as: the WhatsApp mark and the handle name the channel, and the text sits in an
+ * inbound chat bubble on the channel's canvas. It keeps its own surface whatever bubble the thread
+ * placed it in, which is why it ignores `tone` — a tint of the staff bubble's ink would read as
+ * Aveline talking, and the whole point of the block is that she is not.
+ */
 function ClientMessageBlock({ block }: BlockRendererProps) {
+  const handle = typeof block.from === 'string' ? block.from.trim() : ''
+
   return (
-    <div className="rounded-lg border border-border bg-muted/40 p-3">
-      <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        Customer · {block.from ?? 'WhatsApp'}
-      </p>
-      <p className="whitespace-pre-wrap text-sm">{block.text}</p>
-    </div>
+    // The card paints its own surface, so it states its own ink rather than inheriting it: the
+    // staff bubble's `text-primary-foreground` is white, which on this white card is invisible.
+    <figure className="overflow-hidden rounded-xl border border-whatsapp/25 bg-card text-card-foreground">
+      <figcaption className="flex items-center gap-2.5 border-b border-whatsapp/20 bg-whatsapp/10 px-3 py-2">
+        <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-whatsapp text-whatsapp-foreground">
+          <WhatsAppIcon className="size-4" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Customer
+          </span>
+          {handle && (
+            <span className="block truncate text-[13px] font-medium" title={handle}>
+              {customerHandle(handle)}
+            </span>
+          )}
+        </span>
+        {/* The channel is named in ink, not in the brand green: white on the mark fails contrast at
+            label size, and the mark beside it is already the brand. */}
+        <span
+          data-slot="client-channel"
+          className="shrink-0 rounded-full bg-whatsapp/15 px-2 py-0.5 text-[10px] font-semibold text-whatsapp-deep"
+        >
+          WhatsApp
+        </span>
+      </figcaption>
+      {block.text && (
+        <div className="bg-whatsapp-canvas px-3 py-2.5">
+          {/* `w-fit` so the bubble hugs what the customer actually wrote — a one-line question in a
+              full-width plate reads as an empty form, which is the opposite of a chat. */}
+          <div className="relative w-fit max-w-[95%] rounded-2xl rounded-tl-sm bg-card px-3 py-2 shadow-xs">
+            {/* The inbound tail: a right-pointing triangle in the bubble's own fill, so it matches
+                the bubble in either theme without carrying a border of its own. */}
+            <span
+              aria-hidden
+              className="absolute -left-[7px] top-0 size-0 border-y-[7px] border-r-[7px] border-y-transparent border-r-card"
+            />
+            {/* Deliberately plain text, not `MentionText`: these are the customer's own words. A
+                `@` a customer types is a handle or an at-sign, not an entity the resolver read — a
+                mention is a staff affordance, and only staff messages are resolved for one. */}
+            <p className="whitespace-pre-wrap text-sm leading-relaxed">{block.text}</p>
+          </div>
+        </div>
+      )}
+    </figure>
   )
 }
 
@@ -289,8 +389,12 @@ function CourierBlock({ block }: BlockRendererProps) {
   )
 }
 
-function SuggestionBlock({ block, persona }: BlockRendererProps) {
-  const borderClass =
+/**
+ * The tinted surface an editorial note wears: Elle's gold, Ava's rose, Lina's wine, and the app's
+ * accent when the note is not attributed to an agent.
+ */
+function personaSurface(persona: Persona | null | undefined) {
+  const border =
     persona?.key === 'ava'
       ? 'border-memory/20'
       : persona?.key === 'elle'
@@ -299,7 +403,7 @@ function SuggestionBlock({ block, persona }: BlockRendererProps) {
           ? 'border-commerce/20'
           : 'border-primary/20'
 
-  const bgClass =
+  const bg =
     persona?.key === 'ava'
       ? 'bg-memory/5'
       : persona?.key === 'elle'
@@ -308,32 +412,115 @@ function SuggestionBlock({ block, persona }: BlockRendererProps) {
           ? 'bg-commerce/5'
           : 'bg-primary/5'
 
-  const textClass = persona?.text ?? 'text-primary'
+  return { border, bg, text: persona?.text ?? 'text-primary' }
+}
+
+function SuggestionBlock({ block, persona, tone }: BlockRendererProps) {
+  const surface = personaSurface(persona)
 
   return (
-    <div className={cn('rounded-lg border p-3', borderClass, bgClass)}>
-      <p className={cn('text-xs font-medium', textClass)}>Suggestion</p>
-      {block.text && <p className="mt-1 text-sm">{block.text}</p>}
+    <div className={cn('rounded-lg border p-3', surface.border, surface.bg)}>
+      <p className={cn('text-xs font-medium', surface.text)}>Suggestion</p>
+      {block.text && <MentionText text={block.text} tone={tone} className="mt-1 text-sm" />}
     </div>
   )
 }
 
-function LookBlock({ block, persona }: BlockRendererProps) {
-  const bgSoftClass = persona?.bgSoft ?? 'bg-visual/10'
-  const textClass = persona?.text ?? 'text-visual'
+/**
+ * Elle's curated look.
+ *
+ * A look is a pairing and a rationale, and the boutique has no photograph of it — only of each
+ * piece. With a picture of its own it is a tile like a piece; without one it is the styling note
+ * about the row, labelled with the look's name and read at the row's full width. It is deliberately
+ * never given a blank plate to fill.
+ */
+function LookBlock({ block, persona, tone }: BlockRendererProps) {
+  const surface = personaSurface(persona)
+
+  if (!block.imageUrl) {
+    return (
+      <div className={cn('min-w-0 rounded-lg border p-3', surface.border, surface.bg)}>
+        <p className={cn('text-xs font-medium', surface.text)}>{block.name ?? 'Look'}</p>
+        {block.text && (
+          <MentionText text={block.text} tone={tone} className="mt-1 text-sm leading-relaxed" />
+        )}
+      </div>
+    )
+  }
 
   return (
-    <div className="overflow-hidden rounded-lg border">
-      {block.imageUrl ? (
-        <img src={block.imageUrl} alt={block.name ?? 'Look'} className="h-44 w-full object-cover" />
-      ) : (
-        <div className={cn('flex h-24 items-center justify-center', bgSoftClass, textClass)}>
-          <span className="text-xs font-medium">Look</span>
+    <div className="min-w-0 overflow-hidden rounded-xl border border-border/70 bg-card">
+      <img
+        src={block.imageUrl}
+        alt={block.name ?? 'Look'}
+        className="aspect-4/3 w-full bg-muted object-cover"
+      />
+      {block.text && (
+        // The padding sits on a wrapper, not on the clamped paragraph: `overflow: hidden` clips at
+        // the padding box, so padding below a line clamp lets the next line show through it.
+        <div className="p-2.5">
+          <p
+            className="line-clamp-4 text-[11px] leading-relaxed text-muted-foreground"
+            title={block.text}
+          >
+            {block.text}
+          </p>
         </div>
       )}
-      {block.text && (
-        <p className="border-t p-2 text-xs text-muted-foreground">{block.text}</p>
-      )}
+    </div>
+  )
+}
+
+/**
+ * A run of consecutive tiles, or one block that has to keep the full bubble width.
+ */
+type BlockGroup =
+  | { kind: 'tiles'; blocks: ContentBlock[] }
+  | { kind: 'single'; block: ContentBlock }
+
+/** Groups consecutive tiles together; every other block stands on its own. */
+function groupBlocks(blocks: ContentBlock[]): BlockGroup[] {
+  const groups: BlockGroup[] = []
+  for (const block of blocks) {
+    if (isTileBlock(block)) {
+      const last = groups[groups.length - 1]
+      if (last?.kind === 'tiles') last.blocks.push(block)
+      else groups.push({ kind: 'tiles', blocks: [block] })
+      continue
+    }
+    groups.push({ kind: 'single', block })
+  }
+  return groups
+}
+
+/**
+ * The row a run of tiles sits in.
+ *
+ * `auto-fit` sizes the row to the bubble: four across a wide thread, two in a narrower one, one in
+ * the floating drawer when there is truly no room for a second. It only works because the message
+ * bubble spans its full width whenever the message carries a row of tiles (`MessageBubble`), which
+ * gives the grid a definite width to count columns against — under the shrink-to-fit bubble a
+ * text-only message gets, a grid with `auto-fit` resolves to a single track and the tiles stack.
+ *
+ * A run of one is the exception: it stays shrink-to-fit beside its own 16rem cap, so a single piece
+ * is a card and not a band, with no dead space beside it inside the bubble.
+ */
+const TILE_GRID_CLASS = 'grid-cols-[repeat(auto-fit,minmax(min(100%,11rem),1fr))]'
+
+/** A run of product tiles, laid out as the row of a curated set. */
+function TileGrid({
+  blocks,
+  render,
+}: {
+  blocks: ContentBlock[]
+  render: (block: ContentBlock, key: number) => ReactNode
+}) {
+  return (
+    <div
+      data-slot="tile-grid"
+      className={cn('grid gap-2', TILE_GRID_CLASS, blocks.length === 1 && 'max-w-64')}
+    >
+      {blocks.map((block, i) => render(block, i))}
     </div>
   )
 }
@@ -354,21 +541,33 @@ export function BlockList({
   persona?: Persona | null
   tone?: AttachmentTone
 }) {
-  const parsed = (blocks ?? []) as ContentBlock[]
+  const parsed = withoutBorrowedLookImages(blocks ?? []) as ContentBlock[]
   if (parsed.length === 0) return null
+
+  const renderBlock = (block: ContentBlock, key: number) => (
+    <BlockRenderer
+      key={key}
+      block={block}
+      onSignOff={onSignOff}
+      onSelectCustomer={onSelectCustomer}
+      onOpenAttachment={onOpenAttachment}
+      persona={persona}
+      tone={tone}
+    />
+  )
+
+  const groups = groupBlocks(parsed)
+
   return (
     <div className="space-y-2">
-      {parsed.map((block, i) => (
+      {groups.map((group, i) => (
         <div key={i}>
           {i > 0 && <Separator className="my-2" />}
-          <BlockRenderer
-            block={block}
-            onSignOff={onSignOff}
-            onSelectCustomer={onSelectCustomer}
-            onOpenAttachment={onOpenAttachment}
-            persona={persona}
-            tone={tone}
-          />
+          {group.kind === 'tiles' ? (
+            <TileGrid blocks={group.blocks} render={renderBlock} />
+          ) : (
+            renderBlock(group.block, 0)
+          )}
         </div>
       ))}
     </div>

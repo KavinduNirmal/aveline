@@ -152,10 +152,21 @@ def get_current_collector() -> TelemetryCollector | None:
 class TelemetryCollector:
     """High-resolution timing, step, and usage collector for an active workflow."""
 
-    def __init__(self, workflow_id: str, organization_id: str | None = None, request_id: str | None = None):
+    def __init__(
+        self,
+        workflow_id: str,
+        organization_id: str | None = None,
+        request_id: str | None = None,
+        conversation_id: str | None = None,
+        customer_id: str | None = None,
+    ):
         self.workflow_id = workflow_id
         self.organization_id = organization_id
         self.request_id = request_id
+        # Carried so the run can be linked back to the thread it served. Without them a run is an
+        # orphan row: the Salon and the HITL focus feed cannot say which conversation paused.
+        self.conversation_id = conversation_id
+        self.customer_id = customer_id
         self.start_perf = time.perf_counter()
         self.start_utc = _utc_now_iso()
         self.steps: list[AgentStepTelemetry] = []
@@ -257,6 +268,8 @@ class TelemetryCollector:
             workflow_id=self.workflow_id,
             organization_id=self.organization_id,
             request_id=self.request_id,
+            conversation_id=self.conversation_id,
+            customer_id=self.customer_id,
             status=status,
             agents_involved=sorted(self._agents) if self._agents else ["orchestrator"],
             started_at=self.start_utc,

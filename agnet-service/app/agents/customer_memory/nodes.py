@@ -9,11 +9,15 @@ import json
 import logging
 from typing import Any
 
+import httpx
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from app.agents.customer_memory.introduction import extract_self_introduced_name
 from app.agents.customer_memory.parsing import parse_message
 from app.agents.customer_memory.state import MemoryAgentState
+from app.agents.customer_memory.update_instruction import extract_customer_update
+from app.llm.replies import unwrap_reply
 from app.prompts.assembly import assemble_system_prompt
 from app.schemas.customer_memory import MemoryAgentOutput
 from app.tools.registry import ToolRegistry
@@ -42,36 +46,10 @@ def coerce_output(output: dict[str, Any]) -> MemoryAgentOutput | None:
 def _unwrap_reply(content: str) -> str:
     """Extract a plain-text reply from an LLM completion.
 
-    The universal system prompt tells the model to emit a JSON envelope, so a draft call may
-    return fenced JSON (``{status, output: {assistant_reply: ...}}``). This unwraps code fences and
-    any envelope to keep the staff-facing ``draft_response`` plain text. Non-JSON text is returned
-    unchanged.
+    Thin wrapper over the shared helper (``app/llm/replies.py``), which owns the envelope
+    unwrapping because the visual agent needs exactly the same behaviour.
     """
-    text = content.strip()
-
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if lines and lines[0].strip().startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
-
-    try:
-        parsed = json.loads(text)
-    except (ValueError, TypeError):
-        return text
-
-    if not isinstance(parsed, dict):
-        return text
-
-    output = parsed.get("output")
-    candidates = output if isinstance(output, dict) else parsed
-    for key in ("assistant_reply", "draft_response", "reply", "text"):
-        value = candidates.get(key) if isinstance(candidates, dict) else None
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return text
+    return unwrap_reply(content, fallback=content if isinstance(content, str) else "")
 
 
 class CustomerMemoryAgent:
@@ -99,10 +77,140 @@ class CustomerMemoryAgent:
             return self._skip("no customer context (customer_id/phone) available")
 
         if not customer_id and phone:
-            profile = await self.registry.identify_customer(org_id, phone, state.get("customer_name"))
+            # A first inbound message frequently *is* the introduction ("I'm Kasha vivian, this is
+            # for a cocktail party"). Without reading the name out of it the customer stays
+            # nameless: the profile is created on the phone number alone.
+            name = state.get("customer_name") or extract_self_introduced_name(state.get("message"))
+            profile = await self.registry.identify_customer(org_id, phone, name)
             customer_id = str(profile.get("customerId") or profile.get("id") or "")
             return {"customer_id": customer_id, "profile": profile}
+
+        if customer_id:
+            # The orchestrator may have resolved this customer from the phone before this node ran,
+            # in which case the name was never offered for storage and the record stays unnamed.
+            # Identify is idempotent and only backfills a *missing* name, so an existing name is
+            # never overwritten by a later guess.
+            profile = state.get("profile") or {}
+            already_named = profile.get("fullName") or state.get("customer_name")
+            introduced = extract_self_introduced_name(state.get("message"))
+            if introduced and not already_named and phone:
+                profile = await self.registry.identify_customer(org_id, phone, introduced)
+                return {"customer_id": customer_id, "profile": profile}
+
         return {}
+
+    async def apply_staff_update(self, state: MemoryAgentState) -> dict[str, Any]:
+        """Apply an explicit staff instruction to the bound customer's details.
+
+        Staff type "please update this customer with the name X and number Y" into the Salon. This
+        is the only path that writes identity fields from chat, so it is deliberately narrow:
+
+        - **Staff only.** A customer messaging in is never taken as instructing us to rewrite their
+          own record. ``staff_query`` is what separates the two.
+        - **Explicit only.** ``extract_customer_update`` requires an update verb; a message that
+          merely mentions a name is not an instruction to store one.
+        - **Bound customer only.** With no customer on the conversation there is nobody to update,
+          and guessing from a name would risk editing the wrong record. It asks instead.
+        - **Never creates.** Naming someone not on file is a different operation; silently creating
+          a record from a chat message would be wrong.
+
+        A failure is reported, not swallowed: an update that appears to succeed while doing nothing
+        is worse than one that says why it could not.
+        """
+        if not state.get("staff_query"):
+            return {}
+
+        instruction = extract_customer_update(state.get("message"))
+        if instruction is None or instruction.is_empty:
+            return {}
+
+        org_id = state.get("org_id")
+        customer_id = state.get("customer_id")
+
+        # The run short-circuits before `parse`, so the intent is carried from the upstream decision
+        # instead of being left empty: `MemoryAgentOutput` requires one, and the upstream
+        # classification is the honest value.
+        intent_type = state.get("intent_type") or "general_inquiry"
+        intent = {"intent_type": intent_type}
+
+        if not customer_id:
+            return {
+                "parsed_intent": intent,
+                "customer_update_error": (
+                    "I could not tell which customer to update - no customer is linked to this "
+                    "conversation yet. Open the customer's thread, or say which one you mean."
+                ),
+            }
+
+        try:
+            profile = await self.registry.update_customer(
+                str(org_id),
+                str(customer_id),
+                full_name=instruction.full_name,
+                phone_number=instruction.phone_number,
+            )
+        except httpx.HTTPStatusError as exc:
+            return {
+                "parsed_intent": intent,
+                "customer_update_error": self._update_failure_message(exc, instruction),
+            }
+        except Exception as exc:  # noqa: BLE001 - reported to staff, never silently dropped
+            logger.warning("Customer update failed: %s", exc)
+            return {
+                "parsed_intent": intent,
+                "customer_update_error": "I could not reach the customer book to apply that.",
+            }
+
+        return {
+            "parsed_intent": intent,
+            "profile": profile,
+            "applied_customer_update": {
+                "full_name": instruction.full_name,
+                "phone_number": instruction.phone_number,
+                "customer_id": str(customer_id),
+            },
+        }
+
+    @staticmethod
+    def _update_failure_message(exc: httpx.HTTPStatusError, instruction: Any) -> str:
+        """Turn a backend refusal into something a staff member can act on."""
+        status = exc.response.status_code
+        if status == 409:
+            return (
+                f"Another customer already has {instruction.phone_number}. "
+                "Merge the two records or use a different number, then try again."
+            )
+        if status == 404:
+            return "That customer is not in this boutique, so nothing was changed."
+        if status == 400:
+            return "The customer book rejected that change: the name or number looks invalid."
+        return f"The customer book refused the change (HTTP {status}). Nothing was changed."
+
+    @staticmethod
+    def _update_confirmation(state: MemoryAgentState) -> str | None:
+        """A staff-facing sentence describing what an update instruction did, or ``None``.
+
+        Only reached when the update node short-circuited the run, so it is never produced for an
+        ordinary message.
+        """
+        error = state.get("customer_update_error")
+        if error:
+            return str(error)
+
+        applied = state.get("applied_customer_update")
+        if not applied:
+            return None
+
+        changed: list[str] = []
+        if applied.get("full_name"):
+            changed.append(f"name to {applied['full_name']}")
+        if applied.get("phone_number"):
+            changed.append(f"number to {applied['phone_number']}")
+
+        if not changed:
+            return "Nothing was changed."
+
+        return "Updated this customer's " + " and ".join(changed) + "."
 
     async def check_consent(self, state: MemoryAgentState) -> dict[str, Any]:
         """Refuse to process customers who have revoked consent."""
@@ -246,7 +354,16 @@ class CustomerMemoryAgent:
         staff = bool(state.get("staff_query"))
         backend = await self._backend_brief(state)
 
-        if staff:
+        # A handled update answers the instruction directly. Running the normal brief/draft path
+        # would add a customer-facing suggestion nobody asked for, and `parsed_intent` is empty here
+        # because the run short-circuited before parsing.
+        update_confirmation = self._update_confirmation(state)
+        if update_confirmation is not None:
+            interaction_brief = update_confirmation
+            draft = None
+            usage = None
+            action = None
+        elif staff:
             interaction_brief = self._staff_text(state, name, profile, backend)
             draft = None
             usage = None
@@ -266,7 +383,12 @@ class CustomerMemoryAgent:
             "customer": {
                 "customer_id": state.get("customer_id"),
                 "phone_number": profile.get("phoneNumber") or state.get("phone_number"),
-                "full_name": profile.get("fullName") or name,
+                # The backend brief is the one source that reliably knows the name: when the
+                # conversation already carries a customer id, the resolver takes its fast path and
+                # returns no profile, so `fullName` is absent and this block fell back to the
+                # placeholder "The customer" - while the brief right beside it named them. Aveline's
+                # summary line renders this field, so the two disagreed in the same message.
+                "full_name": backend.get("customerName") or profile.get("fullName") or name,
                 "status": profile.get("status") or "new",
                 "consent_status": state.get("consent_status") or "pending",
             },
@@ -348,26 +470,54 @@ class CustomerMemoryAgent:
         prefs = backend.get("preferenceSummary")
         tags = backend.get("tags") if isinstance(backend.get("tags"), list) else []
 
+        # What the boutique has actually recorded about this customer. These are semantic memories
+        # (events, preferences, complaints), which the interaction brief does not carry - so a
+        # question like "what do we have on file for her?" answered "nothing on file yet" while
+        # three memories sat in the store.
+        remembered = [
+            str(memory.get("content")).strip()
+            for memory in (state.get("semantic_context") or [])
+            if isinstance(memory, dict) and memory.get("content")
+        ]
+
+        def _details() -> list[str]:
+            """The grounded facts, in a stable order."""
+            facts: list[str] = []
+            if prefs:
+                facts.append(f"preferences: {prefs}")
+            if events:
+                facts.append(f"upcoming events: {events}")
+            if remembered:
+                facts.append(f"on file: {'; '.join(remembered)}")
+            if tags:
+                facts.append(f"tags: {', '.join(tags)}")
+            return facts
+
         if intent_type == "event_query":
             if events:
                 return f"Upcoming events for {display_name}: {events}."
+            # The absence of a dated event stays the headline answer; anything else on file is
+            # added because it is usually what the staff member actually wanted to know.
+            if remembered:
+                return (
+                    f"No upcoming events on file for {display_name}. "
+                    f"On file: {'; '.join(remembered)}."
+                )
             return f"No upcoming events on file for {display_name}."
 
         # General staff query: give the staff a readable, grounded summary.
-        if status == "new" and not events and not prefs and not tags:
-            return f"{display_name} is a new customer - nothing on file yet."
-        if not events and not prefs and not tags:
-            return f"{display_name} ({status}) has no preferences or events on file yet."
+        if status == "new":
+            facts = _details()
+            if not facts:
+                return f"{display_name} is a new customer - nothing on file yet."
+            # Announcing "new" stays useful for onboarding even when some memory exists, so the
+            # framing is kept and the facts are appended rather than replacing it.
+            return f"{display_name} is a new customer - {'; '.join(facts)}."
 
-        details: list[str] = []
-        if prefs:
-            details.append(f"preferences: {prefs}")
-        if events:
-            details.append(f"upcoming events: {events}")
-        if tags:
-            details.append(f"tags: {', '.join(tags)}")
-        summary = "; ".join(details)
-        return f"{display_name} ({status}) - {summary}."
+        facts = _details()
+        if not facts:
+            return f"{display_name} ({status}) has no preferences or events on file yet."
+        return f"{display_name} ({status}) - {'; '.join(facts)}."
 
     async def _generate_draft(
         self,

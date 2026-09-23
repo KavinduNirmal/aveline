@@ -9,7 +9,12 @@ from app.tools.inventory.image_tools import (
     analyze_product_image,
     parse_image_attributes_dict,
 )
-from app.tools.inventory.inventory_tools import check_stock, dict_to_piece_item, search_inventory
+from app.tools.inventory.inventory_tools import (
+    check_stock,
+    dict_to_piece_item,
+    search_inventory,
+    unwrap_items,
+)
 from app.tools.inventory.matching_tools import match_customers_to_item
 from app.tools.inventory.outfit_tools import compose_outfit
 from app.tools.inventory.sourcing_tools import create_sourcing_request
@@ -178,6 +183,38 @@ def test_compose_outfit():
     assert len(look.items) == 2
 
 
+def test_compose_outfit_does_not_borrow_a_piece_photograph():
+    """A look is a pairing, not a picture of one of its pieces.
+
+    The composer used to hand the look the first matched piece's photo. The Salon then rendered that
+    photograph twice — once on the piece and once on the look — so a one-item answer read as a
+    duplicated result. A look has no photograph of its own, and now says so.
+    """
+    items = [
+        PieceItem(
+            itemId="1",
+            name="Peach Raw-Silk Gown",
+            price=1200.0,
+            imageUrl="https://cdn/peach-gown.jpg",
+        ),
+        PieceItem(
+            itemId="2",
+            name="Pearl Drop Earrings",
+            price=350.0,
+            imageUrl="https://cdn/pearl-earrings.jpg",
+        ),
+    ]
+
+    look = compose_outfit(items)
+
+    assert look.imageUrl is None
+    # The pieces keep theirs; only the look's borrowed copy is gone.
+    assert [item.imageUrl for item in look.items] == [
+        "https://cdn/peach-gown.jpg",
+        "https://cdn/pearl-earrings.jpg",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_create_sourcing_request():
     registry = MagicMock()
@@ -213,3 +250,92 @@ async def test_search_supplier_catalog():
     items = await search_supplier_catalog(registry, "Mulberry Silk", "org-1")
     assert len(items) == 1
     assert items[0]["supplier"] == "Como Silks"
+
+
+# ---------------------------------------------------------------------------
+# The camelCase wire contract (regression: a real match became "out of stock")
+# ---------------------------------------------------------------------------
+#
+# The internal endpoint returns a bare JSON **array** of camelCase rows. The tool called `.get` on
+# that array, which raised `AttributeError`, and a broad `except` turned the failure into an empty
+# result. Elle then told the customer "we do not have this in stock" and raised a sourcing request -
+# for a piece sitting in inventory with 10 units. Silent, and wrong in the customer's face.
+
+#: A real row as the internal endpoint returns it.
+API_ROW = {
+    "id": "96050729-811b-4781-b65a-d071c8102dbf",
+    "orgId": "org-1",
+    "itemName": "Fuchsia Pink Bodycon Mini Dress",
+    "category": "Gowns",
+    "color": "Fuchsia Pink",
+    "sizes": ["38", "40", "42"],
+    "price": 10000.00,
+    "cost": 9500.00,
+    "quantity": 10,
+    "status": "available",
+    "imageUrl": "https://cdn.example.test/dress.jpg",
+}
+
+
+def test_unwrap_items_handles_the_bare_array_the_endpoint_actually_returns():
+    assert unwrap_items([API_ROW]) == [API_ROW]
+
+
+@pytest.mark.parametrize("key", ["items", "results", "data"])
+def test_unwrap_items_accepts_each_wrapper_key(key):
+    assert unwrap_items({key: [API_ROW]}) == [API_ROW]
+
+
+@pytest.mark.parametrize("payload", [None, "a string", 42, {}, {"items": "not-a-list"}, []])
+def test_unwrap_items_returns_nothing_for_unusable_payloads(payload):
+    # A malformed envelope must not yield one junk item, which would surface to a customer as a
+    # piece literally named "Boutique Piece".
+    assert unwrap_items(payload) == []
+
+
+def test_maps_the_camel_case_wire_fields_rather_than_defaulting_them():
+    item = dict_to_piece_item(API_ROW)
+
+    # `itemName` is the real field; missing it produced the placeholder "Boutique Piece".
+    assert item.name == "Fuchsia Pink Bodycon Mini Dress"
+    assert item.itemId == API_ROW["id"]
+    assert item.color == "Fuchsia Pink"
+    assert item.category == "Gowns"
+    assert item.stock == 10
+    assert item.price == 10000.00
+    assert item.imageUrl == "https://cdn.example.test/dress.jpg"
+    # A `sizes` array is joined rather than dropped, so a size match stays reason-able.
+    assert item.size == "38, 40, 42"
+
+
+def test_zero_stock_is_preserved_rather_than_treated_as_absent():
+    # `stock or quantity` would let a real 0 fall through to the next source; 0 in stock is a
+    # meaningful fact and must not become None.
+    item = dict_to_piece_item({"itemName": "Sold Out Gown", "quantity": 0})
+    assert item.stock == 0
+
+
+@pytest.mark.asyncio
+async def test_search_inventory_maps_a_real_camel_case_response():
+    registry = MagicMock()
+    registry.search_inventory = AsyncMock(return_value=[API_ROW])
+
+    items = await search_inventory(registry, {"organizationId": "org-1", "query": "gowns"})
+
+    assert len(items) == 1
+    assert items[0].name == "Fuchsia Pink Bodycon Mini Dress"
+
+
+@pytest.mark.asyncio
+async def test_search_inventory_raises_on_a_transport_failure_rather_than_reporting_no_stock():
+    """A failed lookup must not be indistinguishable from an empty one.
+
+    Downstream, an empty result means "not in stock" and triggers a sourcing request. Swallowing a
+    transport error therefore told customers a piece was unavailable when nobody had actually
+    checked.
+    """
+    registry = MagicMock()
+    registry.search_inventory = AsyncMock(side_effect=httpx.ConnectError("backend down"))
+
+    with pytest.raises(httpx.ConnectError):
+        await search_inventory(registry, {"organizationId": "org-1"})

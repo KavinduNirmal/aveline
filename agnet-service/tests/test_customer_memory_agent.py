@@ -7,6 +7,8 @@ explicit preference extraction.
 """
 
 
+import httpx
+
 from app.agents.customer_memory.graph import build_memory_graph
 from app.agents.customer_memory.parsing import parse_message
 
@@ -544,3 +546,350 @@ def test_parse_no_event_no_preference():
     assert parsed["event_type"] is None
     assert parsed["preference_signals"] == []
     assert parsed["parsed_intent"]["intent_type"] == "general_inquiry"
+
+
+# ---------------------------------------------------------------------------
+# Learning the customer's name from their own introduction
+# ---------------------------------------------------------------------------
+#
+# The customer stayed "Unknown customer" across messages because the name was never read out of the
+# message. It only ever reached the backend if it arrived in org_context, which an inbound WhatsApp
+# message never carries.
+
+
+class _NamedRegistry(FakeRegistry):
+    """A registry whose stored customer has no name yet, recording what it was offered."""
+
+    def __init__(self, *, existing_name: str | None = None) -> None:
+        super().__init__()
+        self.profile = {
+            "customerId": "cust-kasha",
+            "phoneNumber": "94763475058",
+            "fullName": existing_name,
+            "status": "new",
+            "tags": [],
+        }
+        self.offered_names: list[str | None] = []
+
+    async def identify_customer(self, org_id, phone_number, full_name=None):
+        self.identify_calls += 1
+        self.offered_names.append(full_name)
+        if full_name and not (self.profile.get("fullName") or "").strip():
+            self.profile = {**self.profile, "fullName": full_name}
+        return self.profile
+
+
+async def _run_memory(
+    registry, *, customer_id, phone, message, customer_name=None, intent_type="item_search"
+):
+    graph = build_memory_graph(registry)
+    return await graph.ainvoke(
+        {
+            "org_id": "org-1",
+            "customer_id": customer_id,
+            "phone_number": phone,
+            "customer_name": customer_name,
+            "message": message,
+            # The upstream gate's decision. In production this is what the memory agent echoes,
+            # so it is the value that has to survive this agent's output schema.
+            "intent_type": intent_type,
+            "channel": "whatsapp",
+            "direction": "inbound",
+        }
+    )
+
+
+async def test_introduction_is_stored_when_the_customer_was_already_resolved_by_phone():
+    """The reported bug: the phone resolved the customer, so identify was never called.
+
+    An inbound message resolves the customer from the sender's own number before this node runs, so
+    the ``not customer_id and phone`` branch is skipped - and with it the only place the name was
+    ever offered for storage. The name must be backfilled on the existing-customer path too.
+    """
+    registry = _NamedRegistry(existing_name=None)
+
+    await _run_memory(
+        registry,
+        customer_id="cust-kasha",
+        phone="94763475058",
+        message="I'm Kasha vivian, this is for a cocktail party",
+    )
+
+    assert registry.offered_names == ["Kasha vivian"]
+
+
+async def test_introduction_is_stored_when_the_customer_is_resolved_for_the_first_time():
+    registry = _NamedRegistry(existing_name=None)
+
+    await _run_memory(
+        registry,
+        customer_id=None,
+        phone="94763475058",
+        message="I'm Kasha vivian, this is for a cocktail party",
+    )
+
+    assert registry.offered_names == ["Kasha vivian"]
+
+
+async def test_an_existing_name_is_never_overwritten_by_a_later_guess():
+    """Identify only backfills a missing name; a stored name wins."""
+    registry = _NamedRegistry(existing_name="Kasha Vivian")
+
+    await _run_memory(
+        registry,
+        customer_id="cust-kasha",
+        phone="94763475058",
+        message="I'm someone else entirely",
+        customer_name="Kasha Vivian",
+    )
+
+    assert registry.offered_names == []
+
+
+async def test_a_message_without_an_introduction_offers_no_name():
+    """A product question must not be mined for a name, or prose would end up on the record."""
+    registry = _NamedRegistry(existing_name=None)
+
+    await _run_memory(
+        registry,
+        customer_id="cust-kasha",
+        phone="94763475058",
+        message="Hello there. Are there any pinkish gowns in your collection?",
+    )
+
+    assert registry.offered_names == []
+
+
+# ---------------------------------------------------------------------------
+# Applying an explicit staff update instruction
+# ---------------------------------------------------------------------------
+#
+# Staff type "please update this customer with the name X and number Y". This is the only path that
+# writes identity fields from chat, so the guards matter more than the happy path.
+
+
+class _UpdateRegistry(FakeRegistry):
+    """A registry recording customer updates and able to refuse one."""
+
+    def __init__(self, *, fail_with: int | None = None) -> None:
+        super().__init__()
+        self.updates: list[tuple[str, str, str | None, str | None]] = []
+        self._fail_with = fail_with
+
+    async def update_customer(self, org_id, customer_id, full_name=None, phone_number=None):
+        self.updates.append((org_id, customer_id, full_name, phone_number))
+        if self._fail_with is not None:
+            request = httpx.Request("PATCH", "http://api/internal/customers/cust-1")
+            response = httpx.Response(self._fail_with, request=request, json={})
+            raise httpx.HTTPStatusError("refused", request=request, response=response)
+        return {**self.profile, "fullName": full_name or self.profile.get("fullName")}
+
+
+async def _run_update(registry, *, message, customer_id="cust-kasha", staff_query=True):
+    graph = build_memory_graph(registry)
+    return await graph.ainvoke(
+        {
+            "org_id": "org-1",
+            "customer_id": customer_id,
+            "phone_number": "94763475058",
+            "message": message,
+            "channel": "whatsapp",
+            "direction": None if staff_query else "inbound",
+            "staff_query": staff_query,
+        }
+    )
+
+
+UPDATE_MESSAGE = "Please update this customer with the name Kasha Vivian Perera and number 0771234567"
+
+
+async def test_staff_instruction_applies_the_update_and_confirms():
+    registry = _UpdateRegistry()
+
+    result = await _run_update(registry, message=UPDATE_MESSAGE)
+
+    assert registry.updates == [
+        ("org-1", "cust-kasha", "Kasha Vivian Perera", "0771234567")
+    ]
+    # The answer states what changed, so staff can see it landed.
+    assert "Kasha Vivian Perera" in result["output"]["interaction_brief"]
+    assert "0771234567" in result["output"]["interaction_brief"]
+
+
+async def test_a_handled_update_produces_no_customer_draft():
+    """The staff member asked for a record change, not a reply to the customer."""
+    registry = _UpdateRegistry()
+
+    result = await _run_update(registry, message=UPDATE_MESSAGE)
+
+    assert result["output"]["draft_response"] is None
+    assert result["output"]["action_required"] is None
+
+
+async def test_an_inbound_customer_message_never_updates_its_own_record():
+    """A customer is not taken as instructing us to rewrite their identity."""
+    registry = _UpdateRegistry()
+
+    result = await _run_update(registry, message=UPDATE_MESSAGE, staff_query=False)
+
+    assert registry.updates == []
+    assert result["output"]["draft_response"] is not None
+
+
+async def test_a_run_with_no_customer_context_at_all_updates_nothing():
+    """No customer id and no phone: the run has nobody to act on and skips."""
+    registry = _UpdateRegistry()
+    graph = build_memory_graph(registry)
+
+    result = await graph.ainvoke(
+        {
+            "org_id": "org-1",
+            "customer_id": None,
+            "phone_number": None,
+            "message": UPDATE_MESSAGE,
+            "channel": "whatsapp",
+            "staff_query": True,
+        }
+    )
+
+    assert registry.updates == []
+    assert result["status"] == "skipped"
+
+
+async def test_the_update_node_refuses_when_no_customer_is_bound():
+    """The defensive guard, exercised directly: it is unreachable through the graph.
+
+    ``resolve_customer`` either resolves a customer from the phone or skips the run entirely, so by
+    the time this node runs a customer id exists. The guard stays because a future change to that
+    resolution could otherwise let a chat message edit an arbitrary record.
+    """
+    from app.agents.customer_memory.nodes import CustomerMemoryAgent
+
+    agent = CustomerMemoryAgent(_UpdateRegistry())
+    result = await agent.apply_staff_update(
+        {
+            "org_id": "org-1",
+            "customer_id": None,
+            "message": UPDATE_MESSAGE,
+            "staff_query": True,
+        }
+    )
+
+    assert "could not tell which customer" in result["customer_update_error"]
+
+
+async def test_a_duplicate_phone_is_explained_rather_than_silently_dropped():
+    registry = _UpdateRegistry(fail_with=409)
+
+    result = await _run_update(registry, message=UPDATE_MESSAGE)
+
+    brief = result["output"]["interaction_brief"]
+    assert "already has" in brief
+    # The staff member needs to know it did NOT apply.
+    assert result["output"]["draft_response"] is None
+
+
+async def test_a_missing_customer_is_explained():
+    registry = _UpdateRegistry(fail_with=404)
+
+    result = await _run_update(registry, message=UPDATE_MESSAGE)
+
+    assert "not in this boutique" in result["output"]["interaction_brief"]
+
+
+async def test_an_ordinary_message_does_not_touch_the_customer_book():
+    registry = _UpdateRegistry()
+
+    await _run_update(registry, message="Do you have anything pink?", staff_query=True)
+
+    assert registry.updates == []
+
+
+async def test_staff_query_surfaces_what_is_actually_on_file():
+    """A question about the customer must reflect the memories the boutique has stored.
+
+    The interaction brief carries preferences, dated events and tags - not semantic memories. So
+    "what do we have on file for her?" answered "nothing on file yet" while memories sat in the
+    store. The retrieved context is now part of the staff answer.
+    """
+    registry = FakeRegistry()
+
+    async def brief(org_id, customer_id):
+        # The brief knows nothing, exactly as the backend does for a customer whose only facts are
+        # undated memories.
+        return {
+            "customerName": "Kasha Vivian",
+            "status": "new",
+            "upcomingEvents": None,
+            "preferenceSummary": None,
+            "tags": [],
+        }
+
+    registry.generate_interaction_brief = brief
+    graph = build_memory_graph(registry)
+
+    result = await graph.ainvoke(
+        {
+            "org_id": "org-1",
+            "customer_id": "cust-kasha",
+            "message": "what do we have on file for her?",
+            "intent_type": "general_inquiry",
+            "channel": "whatsapp",
+            "direction": None,
+            "staff_query": True,
+        }
+    )
+
+    brief_text = result["output"]["interaction_brief"]
+    # FakeRegistry.get_customer_memories returns "Prefers emerald silk".
+    assert "emerald silk" in brief_text
+    assert "nothing on file yet" not in brief_text
+
+
+async def test_purchase_intent_does_not_fail_the_memory_agent():
+    """The reported symptom: a purchase-intent message made Ava go silent.
+
+    The gate emits `order_placement` for "purchase"/"buy"/"order", but the memory output schema did
+    not allow it, so `MemoryAgentOutput` validation failed and the agent emitted an error instead of
+    a brief - which is why the thread showed Aveline's summary and no Ava block for
+    "Is the emerald green saree available for purchase?".
+    """
+    registry = FakeRegistry()
+
+    result = await _run_memory(
+        registry,
+        customer_id="cust-kasha",
+        phone=None,
+        message="Is the emerald green saree available for purchase?",
+        intent_type="order_placement",
+    )
+
+    assert result["status"] == "success", f"memory agent errored: {result.get('reason')}"
+    output = result["output"]
+    assert output["status"] == "success"
+    assert output["parsed_intent"]["intent_type"] == "order_placement"
+    assert output["interaction_brief"]
+
+
+async def test_customer_name_matches_the_brief_when_the_resolver_took_the_fast_path():
+    """Aveline's summary names the customer; it must not say "The customer" beside a named brief.
+
+    When the conversation already carries a customer id, the resolver's fast path returns no
+    profile, so `full_name` had nothing to fall back on but the placeholder - while the backend
+    brief named them. Both appear in one message, so the mismatch was visible to staff.
+    """
+    registry = FakeRegistry()
+
+    async def brief(org_id, customer_id):
+        return {"customerName": "Kasha Vivian Perera", "status": "new", "tags": []}
+
+    registry.generate_interaction_brief = brief
+
+    result = await _run_memory(
+        registry,
+        customer_id="cust-kasha",
+        phone=None,
+        message="Do you still have the emerald green saree?",
+    )
+
+    assert result["output"]["customer"]["full_name"] == "Kasha Vivian Perera"

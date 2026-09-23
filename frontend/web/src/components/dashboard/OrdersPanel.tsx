@@ -223,7 +223,7 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
       {/* KPI Highlights */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardHeader className="flex flex-row items-center justify-between gap-0 pb-2">
             <CardTitle className="text-sm font-medium">Orders Count</CardTitle>
             <ShoppingBag className="size-4 text-muted-foreground" />
           </CardHeader>
@@ -234,7 +234,7 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardHeader className="flex flex-row items-center justify-between gap-0 pb-2">
             <CardTitle className="text-sm font-medium">Page Revenue</CardTitle>
             <TrendingUp className="size-4 text-muted-foreground" />
           </CardHeader>
@@ -245,12 +245,12 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardHeader className="flex flex-row items-center justify-between gap-0 pb-2">
             <CardTitle className="text-sm font-medium">Average Margin</CardTitle>
-            <TrendingUp className="size-4 text-emerald-600 dark:text-emerald-400" />
+            <TrendingUp className="size-4 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+            <div className="text-2xl font-bold text-primary">
               {avgMargin.toFixed(1)}%
             </div>
             <p className="text-xs text-muted-foreground mt-1">Wholesale margin average</p>
@@ -258,12 +258,12 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardHeader className="flex flex-row items-center justify-between gap-0 pb-2">
             <CardTitle className="text-sm font-medium">Pending Approval</CardTitle>
-            <Clock className="size-4 text-amber-500" />
+            <Clock className="size-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-amber-600 dark:text-amber-500">
+            <div className="text-2xl font-bold text-foreground">
               {pendingCount}
             </div>
             <p className="text-xs text-muted-foreground mt-1">Awaiting decision</p>
@@ -358,7 +358,7 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
                       <TableCell className="text-right text-muted-foreground">
                         {formatMoney(o.totalCost)}
                       </TableCell>
-                      <TableCell className="text-right font-medium text-emerald-600 dark:text-emerald-400">
+                      <TableCell className="text-right font-medium text-primary">
                         {formatMoney(o.margin)}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
@@ -477,7 +477,7 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
 
               {/* Financial summary */}
               <div className="flex justify-end">
-                <div className="w-64 space-y-1.5 text-sm">
+                <div className="w-64 flex flex-col gap-1.5 text-sm">
                   <div className="flex justify-between text-muted-foreground">
                     <span>Subtotal:</span>
                     <span>{formatMoney(selectedOrder.subtotal)}</span>
@@ -496,7 +496,7 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
                     <span>Total Cost:</span>
                     <span>{formatMoney(selectedOrder.totalCost)}</span>
                   </div>
-                  <div className="flex justify-between text-xs text-emerald-600 font-medium">
+                  <div className="flex justify-between text-xs text-primary font-medium">
                     <span>Calculated Margin:</span>
                     <span>{formatMoney(selectedOrder.margin)}</span>
                   </div>

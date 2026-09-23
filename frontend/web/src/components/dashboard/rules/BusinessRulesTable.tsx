@@ -16,6 +16,13 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import {
   Table,
@@ -321,16 +328,16 @@ export function BusinessRulesTable({
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="create-rule-type">Rule Type</Label>
-              <select
-                id="create-rule-type"
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                value={newRuleType}
-                onChange={(e) => setNewRuleType(e.target.value)}
-              >
-                <option value="HighValueThreshold">High Value Threshold</option>
-                <option value="MinimumProfitMargin">Minimum Profit Margin</option>
-                <option value="DiscountLimit">Discount Limit</option>
-              </select>
+              <Select value={newRuleType} onValueChange={setNewRuleType}>
+                <SelectTrigger id="create-rule-type" aria-label="Select rule type">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="HighValueThreshold">High Value Threshold</SelectItem>
+                  <SelectItem value="MinimumProfitMargin">Minimum Profit Margin</SelectItem>
+                  <SelectItem value="DiscountLimit">Discount Limit</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="create-rule-value">Value / Limit</Label>

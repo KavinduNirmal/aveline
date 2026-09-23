@@ -1032,5 +1032,43 @@ None — the updated API is now running and both the Administrator Console (`/ad
 - Deduplicated `QueryItems_MultiSelectAndPriceBands_ReturnsEnvelope` and `GetFacets_ReturnsGroupsWithCounts` in `Aveline.Api.Tests/CatalogEndpointsIntegrationTests.cs`.
 - Fixed syntax error in `frontend/aveline_mobile/lib/features/conversations/presentation/widgets/thread_composer.dart` caused by duplicate unclosed `Container`/`Row` children and removed unreferenced dead `_AttachmentTray`. Verified with `flutter analyze` passing with 0 errors.
 
+## Session 2026-09-23
 
+**Task:** Fix 5 failing CI tests in `bun run test:coverage` without changing other passing tests.
+**Tool used:** Antigravity AI Assistant
 
+### Intended Work
+Fix exactly 5 test failures identified from the GitHub Actions CI run:
+- 2 failures in `ApprovalsPanel.dom.test.tsx` (`useNotifications must be used within a NotificationsProvider`)
+- 3 failures in `tenant-conformance.test.ts` (rule 1a palette, rule 2 raw-control, rule 4 space-utility)
+
+### Work Performed
+
+**Fix 1 — `ApprovalsPanel.dom.test.tsx`:**
+- Added `vi.mock('@/contexts/NotificationsContext', () => ({ useNotifications: () => ({ connectionState: 'Disconnected', lastNotification: null }) }))` after the existing `sonner` mock.
+- This mirrors the pattern used in `AdminLogs.dom.test.tsx` and prevents the provider-context throw when the component renders in isolation.
+
+**Fix 2 — `OrdersPanel.tsx` (tenant conformance rules 1a and 4):**
+- Replaced `text-emerald-600 dark:text-emerald-400` on the Average Margin KPI card icon and value with `text-primary`.
+- Replaced `text-amber-500` icon and `text-amber-600 dark:text-amber-500` value on the Pending Approval KPI card with `text-muted-foreground` and `text-foreground`.
+- Replaced `text-emerald-600 dark:text-emerald-400` on the margin column `TableCell` with `text-primary`.
+- Replaced `text-emerald-600` in the order detail modal margin row with `text-primary`.
+- Replaced `space-y-1.5` on the financial summary `div` with `flex flex-col gap-1.5`.
+- Replaced all four `space-y-0` on `CardHeader` elements in the KPI grid with `gap-0`.
+
+**Fix 3 — `BusinessRulesTable.tsx` (tenant conformance rule 2):**
+- Added shadcn `Select`, `SelectContent`, `SelectItem`, `SelectTrigger`, `SelectValue` imports.
+- Replaced the raw `<select>` and `<option>` elements in the Create Rule dialog with the shadcn `<Select>` primitive, bound via `onValueChange`.
+
+### Files Modified
+- `frontend/web/src/components/dashboard/ApprovalsPanel.dom.test.tsx`
+- `frontend/web/src/components/dashboard/OrdersPanel.tsx`
+- `frontend/web/src/components/dashboard/rules/BusinessRulesTable.tsx`
+
+### Verification
+- `vitest run src/test/tenant-conformance.test.ts` — **7/7 passed**
+- `vitest run src/components/dashboard/ApprovalsPanel.dom.test.tsx` — **2/2 passed**
+- No other tests modified. Fix is surgical and does not touch any passing test or unrelated production code.
+
+### Remaining Work
+- Create branch `feature/web-owner-commerce-dashboard` and commit these fixes to open a new PR.

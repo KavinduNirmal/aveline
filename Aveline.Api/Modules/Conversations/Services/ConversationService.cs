@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Aveline.Api.Common.Media;
 using Aveline.Api.Infrastructure.Integrations;
+using Aveline.Api.Modules.Commerce.Services;
 using Aveline.Api.Modules.Conversations.Attachments;
 using Aveline.Api.Modules.Conversations.DTOs;
 using Aveline.Api.Modules.Conversations.Models;
@@ -23,6 +24,8 @@ public class ConversationService : IConversationService
     private readonly IAgentServiceClient _agentClient;
     private readonly ILogger<ConversationService> _logger;
     private readonly MediaTokenMintService? _mediaTokens;
+    private readonly IOrderContextBuilder? _orderContext;
+    private readonly IConversationOrderBridge? _orderBridge;
 
     /// <summary>
     /// <paramref name="mediaTokens"/> mints the bridge's absolute <c>image_url</c>. It is optional
@@ -30,6 +33,13 @@ public class ConversationService : IConversationService
     /// container always supplies it (<c>MediaModule</c> registers it, and <c>Program.cs</c>
     /// registers the media module before this one).
     /// </summary>
+    /// <remarks>
+    /// <paramref name="orderContext"/> and <paramref name="orderBridge"/> are the ADR-024 pair:
+    /// the first resolves what a message asks to buy, the second turns a pause into an order. Both
+    /// are optional for the same direct-construction reason as <paramref name="mediaTokens"/>. With
+    /// them absent a conversation behaves exactly as it did before ADR-024 - the agent still pauses,
+    /// but no order is drafted.
+    /// </remarks>
     public ConversationService(
         IConversationRepository conversations,
         IMessageRepository messages,
@@ -39,7 +49,9 @@ public class ConversationService : IConversationService
         IAttachmentStore attachmentStore,
         IAgentServiceClient agentClient,
         ILogger<ConversationService> logger,
-        MediaTokenMintService? mediaTokens = null)
+        MediaTokenMintService? mediaTokens = null,
+        IOrderContextBuilder? orderContext = null,
+        IConversationOrderBridge? orderBridge = null)
     {
         _conversations = conversations;
         _messages = messages;
@@ -50,6 +62,8 @@ public class ConversationService : IConversationService
         _agentClient = agentClient;
         _logger = logger;
         _mediaTokens = mediaTokens;
+        _orderContext = orderContext;
+        _orderBridge = orderBridge;
     }
 
     public async Task<ConversationDto> GetOrCreateSalonAsync(
@@ -878,6 +892,8 @@ public class ConversationService : IConversationService
                 conversation.OrganizationId,
                 attachment is null ? Array.Empty<MessageAttachment>() : new[] { attachment });
 
+            var orderContext = await BuildOrderContextAsync(conversation.OrganizationId, text, cancellationToken);
+
             var payload = new
             {
                 query = text,
@@ -899,23 +915,144 @@ public class ConversationService : IConversationService
                     direction = "inbound",
                     attachments,
                     image_url = imageUrl,
+                    // The line items this message asks to buy, resolved against real inventory
+                    // (ADR-024, Decision 1). Empty for a question, and empty when nothing resolves;
+                    // the commerce agent then skips, which is not the same as approving a deal.
+                    items = orderContext.Items.Select(ToWireItem).ToList(),
                 },
             };
             using var content = JsonContent.Create(payload);
             // Best-effort: a failure to reach the agent must not fail the webhook. The agent
             // replies arrive later as message.created events.
             var response = await _agentClient.PostAsync("/agents/query", content, cancellationToken);
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogWarning(
-                    "Agent inbound draft returned {StatusCode} for conversation {ConversationId}.",
-                    (int)response.StatusCode,
-                    conversation.Id);
-            }
+            await HandleAgentOutcomeAsync(
+                conversation, response, orderContext, from, customerName: null, cancellationToken);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to trigger inbound draft for conversation {ConversationId}.", conversation.Id);
+        }
+    }
+
+    /// <summary>
+    /// Derive the line items a message asks to buy, or an empty context when it asks for nothing
+    /// purchasable (ADR-024, Decision 1).
+    /// </summary>
+    /// <remarks>
+    /// Never throws: order context is an enhancement to an agent run, not a precondition for one. A
+    /// failed catalog read leaves the run without items, and the commerce agent then skips - which is
+    /// the honest outcome, and visibly different from "evaluated and auto-approved".
+    /// </remarks>
+    private async Task<OrderContext> BuildOrderContextAsync(
+        Guid organizationId,
+        string? message,
+        CancellationToken cancellationToken)
+    {
+        if (_orderContext is null)
+        {
+            return OrderContext.Empty;
+        }
+
+        try
+        {
+            return await _orderContext.BuildAsync(organizationId, message, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to derive order context for organization {OrganizationId}; running without line items.",
+                organizationId);
+            return OrderContext.Empty;
+        }
+    }
+
+    /// <summary>The wire shape the agent's commerce node reads: snake_case, prices as decimal numbers.</summary>
+    private static object ToWireItem(OrderContextItem item) => new
+    {
+        item_id = item.ItemId,
+        item_name = item.ItemName,
+        quantity = item.Quantity,
+        unit_price = item.UnitPrice,
+        wholesale_cost = item.WholesaleCost,
+        total_price = item.TotalPrice
+    };
+
+    /// <summary>
+    /// React to what the agent did with the message: when it stopped for approval, create the order
+    /// the pause needs and bind the conversation to the customer it belongs to (ADR-024,
+    /// Decision 2).
+    /// </summary>
+    /// <remarks>
+    /// Best-effort throughout, for the same reason the trigger itself is: a draft order that could not
+    /// be written must never fail the webhook that delivered the customer's message. Every failure is
+    /// logged, and the pause survives in run telemetry either way.
+    /// </remarks>
+    private async Task HandleAgentOutcomeAsync(
+        Conversation conversation,
+        HttpResponseMessage response,
+        OrderContext orderContext,
+        string? phoneNumber,
+        string? customerName,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning(
+                    "Agent query returned {StatusCode} for conversation {ConversationId}.",
+                    (int)response.StatusCode,
+                    conversation.Id);
+                return;
+            }
+
+            if (_orderBridge is null)
+            {
+                return;
+            }
+
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!AgentQueryResult.IsPaused(body))
+            {
+                return;
+            }
+
+            var outcome = await _orderBridge.CreateForPausedRunAsync(
+                conversation.OrganizationId,
+                conversation.ThreadId,
+                conversation.Id,
+                conversation.CustomerId,
+                phoneNumber,
+                customerName,
+                orderContext.Items,
+                cancellationToken);
+
+            if (outcome is null)
+            {
+                return;
+            }
+
+            _logger.LogInformation(
+                "Agent paused conversation {ConversationId}; order {OrderId} queued for approval (created={Created}).",
+                conversation.Id,
+                outcome.OrderId,
+                outcome.Created);
+
+            // A first-contact order resolves the customer as a side effect. Binding the conversation
+            // to that record is what stops the next message being answered as an unknown customer.
+            if (conversation.CustomerId is null && outcome.CustomerId != Guid.Empty)
+            {
+                conversation.CustomerId = outcome.CustomerId;
+                await _conversations.SaveAsync(conversation, cancellationToken);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to process the agent outcome for conversation {ConversationId}.",
+                conversation.Id);
         }
     }
 
@@ -937,6 +1074,8 @@ public class ConversationService : IConversationService
             var (described, imageUrl) = DescribeAttachments(
                 conversation.OrganizationId, attachments ?? Array.Empty<MessageAttachment>());
 
+            var orderContext = await BuildOrderContextAsync(conversation.OrganizationId, query, cancellationToken);
+
             var payload = new
             {
                 query,
@@ -949,19 +1088,17 @@ public class ConversationService : IConversationService
                     customer_id = customerId,
                     attachments = described,
                     image_url = imageUrl,
+                    // See TriggerInboundDraftAsync: staff can place an order through the agent too,
+                    // and it must pause on exactly the same rules (ADR-024, Decision 1).
+                    items = orderContext.Items.Select(ToWireItem).ToList(),
                 },
             };
             using var content = JsonContent.Create(payload);
             // Best-effort: a failure to reach the agent must not fail the staff note. The
             // agent replies arrive later as message.created events.
             var response = await _agentClient.PostAsync("/agents/query", content, cancellationToken);
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogWarning(
-                    "Agent query returned {StatusCode} for conversation {ConversationId}.",
-                    (int)response.StatusCode,
-                    conversation.Id);
-            }
+            await HandleAgentOutcomeAsync(
+                conversation, response, orderContext, phoneNumber: null, customerName: null, cancellationToken);
         }
         catch (Exception ex)
         {

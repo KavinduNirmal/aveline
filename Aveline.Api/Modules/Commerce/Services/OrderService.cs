@@ -174,6 +174,14 @@ public class OrderService : IOrderService
         {
             try
             {
+                // `ThreadId` is required (ADR-024, Decision 4). An order raised from the dashboard
+                // rather than from a conversation has no checkpoint to resume, so it gets a generated
+                // value; a null `ConversationId` is what tells the resume path there is no agent run
+                // behind the row rather than silently re-querying with a thread that names nothing.
+                var threadId = string.IsNullOrWhiteSpace(dto.ThreadId)
+                    ? Guid.NewGuid().ToString("N")
+                    : dto.ThreadId.Trim();
+
                 var approvalEntry = new ApprovalQueueEntry
                 {
                     Id = Guid.NewGuid(),
@@ -183,12 +191,12 @@ public class OrderService : IOrderService
                     Status = "pending",
                     ThresholdExceeded = true,
                     Reason = approvalReason,
-                    ThreadId = dto.ThreadId,
+                    ThreadId = threadId,
                     ConversationId = dto.ConversationId,
                     CreatedAt = DateTime.UtcNow
                 };
                 await _approvalRepository.AddAsync(approvalEntry, cancellationToken);
-                _logger.LogInformation("Enqueued order {OrderId} for approval with ThreadId {ThreadId}", createdOrder.Id, dto.ThreadId);
+                _logger.LogInformation("Enqueued order {OrderId} for approval with ThreadId {ThreadId}", createdOrder.Id, threadId);
             }
             catch (Exception ex)
             {

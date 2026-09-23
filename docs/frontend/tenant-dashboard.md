@@ -896,3 +896,29 @@ Recorded so they are decisions rather than gaps.
   regardless and the role matrix is pinned by integration and DOM tests.
 - **No per-user or per-action Blossom split.** `AiUsageRecord` carries no user, customer or agent
   key, so any "who spent the Blossoms" chart would be invented.
+
+## Tenant-facing documentation (`frontend/web/src/docs/`)
+
+The directory `frontend/web/src/docs/` is the **tenant-facing** documentation set: Markdown pages
+registered in `src/docs/config.ts` and statically imported by `src/routes/DocsPage.tsx`, rendered at
+`/docs/:slug` for boutique owners and staff. It is the only tenant documentation surface; the
+console's documentation is [`admin-console.md`](admin-console.md).
+
+The set was overhauled to describe the shipped tenant surface, and three pages that described
+features the repository does not have were retired:
+
+| Retired slug | Replacement |
+| --- | --- |
+| `/docs/ava`, `/docs/elle`, `/docs/lina` | The agent personas are covered in `salon.md` (names, roles and what an agent bubble shows) and `catalog.md` (Elle in look composition). The former pages documented an `elle.composeLook()` API, an ERP/HMAC sync and a memory-graph JSON payload that do not exist. |
+| `/docs/admin-access` | The administrator console is the Aveline team's surface, not a tenant feature, so it left the tenant set. Its content is on this page's counterpart, [`admin-console.md`](admin-console.md). |
+
+An unknown slug falls back to `DEFAULT_SLUG`, so the retired addresses land on *Getting Started*
+rather than 404ing.
+
+**Recorded gaps in the shipped surface**, so a writer does not document them as working:
+`/app/b/:slug/upgrade` is not a member of `SECTIONS`, so the shell's `activeSection` fallback
+(`DashboardShell.tsx:171-174`) rewrites it to `overview` and `UpgradePanel` never mounts — the two
+*Upgrade plan* CTAs therefore land on Overview; and `CatalogPanel` accepts a `role` prop that it
+destructures unused (`CatalogPanel.tsx:128`; `catalog:manage` appears nowhere under
+`components/catalog/`), so the catalog's write affordances are visible to a role the server's
+`BoutiqueCatalogManagePolicy` refuses.

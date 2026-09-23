@@ -44,46 +44,88 @@ public class InventoryRepository : IInventoryRepository
         bool inStockOnly = true,
         int page = 1,
         int pageSize = 20,
+        string? query = null,
         CancellationToken cancellationToken = default)
     {
-        var query = _db.InventoryItems
+        var dbQuery = _db.InventoryItems
             .AsNoTracking()
             .Where(x =>
                 x.OrgId == orgId &&
                 x.DeletedAt == null &&
                 x.Status == "available");
 
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            var stopWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "do", "we", "you", "u", "have", "any", "in", "stock", "is", "there", "a", "an", "the",
+                "are", "show", "me", "find", "looking", "for", "please", "can", "i", "get", "what",
+                "pieces", "available", "items", "some", "our"
+            };
+            var terms = query
+                .Split(new[] { ' ', '?', '!', '.', ',', '"', '\'', ':', ';', '-', '/' }, StringSplitOptions.RemoveEmptyEntries)
+                .Where(t => t.Length > 1 && !stopWords.Contains(t))
+                .Select(t => t.Trim().ToLower())
+                .Distinct()
+                .ToList();
+
+            if (terms.Count > 0)
+            {
+                foreach (var term in terms)
+                {
+                    dbQuery = dbQuery.Where(x =>
+                        (x.ItemName != null && x.ItemName.ToLower().Contains(term)) ||
+                        (x.Category != null && x.Category.ToLower().Contains(term)) ||
+                        (x.Description != null && x.Description.ToLower().Contains(term)) ||
+                        (x.Fabric != null && x.Fabric.ToLower().Contains(term)) ||
+                        (x.Style != null && x.Style.ToLower().Contains(term)) ||
+                        (x.Color != null && x.Color.ToLower().Contains(term)));
+                }
+            }
+        }
+
         if (!string.IsNullOrWhiteSpace(category))
         {
             var trimmedCategory = category.Trim().ToLower();
-            query = query.Where(x => x.Category.ToLower().Contains(trimmedCategory));
+            dbQuery = dbQuery.Where(x => x.Category.ToLower().Contains(trimmedCategory));
         }
 
         if (!string.IsNullOrWhiteSpace(color))
         {
-            var trimmedColor = color.Trim().ToLower();
-            query = query.Where(x =>
-                x.Color.ToLower().Contains(trimmedColor) ||
-                (x.ItemName != null && x.ItemName.ToLower().Contains(trimmedColor)) ||
-                (x.Description != null && x.Description.ToLower().Contains(trimmedColor)));
+            var colors = color.Split(new[] { ',', '|' }, StringSplitOptions.RemoveEmptyEntries)
+                              .Select(c => c.Trim().ToLower())
+                              .ToList();
+            
+            dbQuery = dbQuery.Where(x =>
+                (x.Color != null && colors.Any(c => x.Color.ToLower().Contains(c))) ||
+                (x.ItemName != null && colors.Any(c => 
+                    x.ItemName.ToLower() == c || 
+                    x.ItemName.ToLower().StartsWith(c + " ") || 
+                    x.ItemName.ToLower().EndsWith(" " + c) || 
+                    x.ItemName.ToLower().Contains(" " + c + " "))) ||
+                (x.Description != null && colors.Any(c => 
+                    x.Description.ToLower() == c || 
+                    x.Description.ToLower().StartsWith(c + " ") || 
+                    x.Description.ToLower().EndsWith(" " + c) || 
+                    x.Description.ToLower().Contains(" " + c + " "))));
         }
 
         if (minPrice.HasValue)
         {
-            query = query.Where(x => x.Price >= minPrice.Value);
+            dbQuery = dbQuery.Where(x => x.Price >= minPrice.Value);
         }
 
         if (maxPrice.HasValue)
         {
-            query = query.Where(x => x.Price <= maxPrice.Value);
+            dbQuery = dbQuery.Where(x => x.Price <= maxPrice.Value);
         }
 
         if (inStockOnly)
         {
-            query = query.Where(x => x.StockQuantity > 0);
+            dbQuery = dbQuery.Where(x => x.StockQuantity > 0);
         }
 
-        var results = await query
+        var results = await dbQuery
             .OrderBy(x => x.ItemName)
             .ToListAsync(cancellationToken);
 

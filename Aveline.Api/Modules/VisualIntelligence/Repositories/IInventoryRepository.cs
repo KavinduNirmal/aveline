@@ -16,6 +16,7 @@ public interface IInventoryRepository
         bool inStockOnly = true,
         int page = 1,
         int pageSize = 20,
+        string? query = null,
         CancellationToken cancellationToken = default);
     Task<IReadOnlyList<InventoryItem>> GetLowStockAsync(
         Guid orgId,

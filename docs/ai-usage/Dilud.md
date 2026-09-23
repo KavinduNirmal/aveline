@@ -1,4 +1,114 @@
 
+## Session 2026-09-22 (Flutter Mobile Android Build & SDK Diagnosis)
+
+**Task:** Identify root cause of `flutter run` failure on Android (`Gradle task assembleDebug failed with exit code 1`, `Process sdkmanager.bat finished with non-zero exit value -1073740791`), initialize missing Android SDK build toolchains, and verify full debug build.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+1. **Diagnosis of `flutter run` Failure**:
+   - Identified that the local Android SDK installation (`C:\Users\Admin\AppData\Local\Android\sdk`) was missing the required target SDK platforms (`platforms/android-36`, `platforms/android-35`, `platforms/android-34`), NDK revision (`ndk/28.2.13676358`), and native build dependencies (`cmake/3.22.1`).
+   - Identified that on initial execution, the Android Gradle Plugin (AGP) invoked `cmdline-tools/latest/bin/sdkmanager.bat` to auto-download packages.
+   - The newest Android SDK replaced legacy `sdkmanager` with the self-extracting `android` CLI. On its very first run, it performed self-extraction while unquoted semicolon package arguments (`ndk;28.2.13676358`) in Windows batch caused argument splitting (`ndk` and `28.2.13676358`), resulting in exit status `0xC0000409` (-1073740791).
+2. **Environment & Toolchain Initialization**:
+   - Initialized Android CLI and accepted all required SDK and CMake licenses.
+   - Downloaded and provisioned Android SDK Platforms 34, 35, 36, NDK `28.2.13676358`, and CMake `3.22.1`.
+   - Executed `:app:compileFlutterBuildDebug` to build Flutter engine/Dart kernel intermediate targets.
+   - Executed full Gradle assembly (`.\gradlew.bat assembleDebug`) across all 15 Flutter plugin modules.
+3. **Verification**:
+   - Verified that Gradle build completed with `BUILD SUCCESSFUL in 3m 59s` (514 actionable tasks executed/up-to-date).
+
+### Files Created or Modified
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- `flutter doctor -v` diagnostics inspected.
+- Android CLI package inventory verified.
+- `.\gradlew.bat assembleDebug` executed and succeeded with exit code 0.
+
+---
+
+## Session 2026-09-22 (Admin Access & Approval Queue Database Synchronization)
+
+**Task:** Resolve "Administrator access required" error blocking access to the administrator console, insert approved admin access record into PostgreSQL database for user account, and synchronize user/role claims across backend authentication middleware and frontend session context.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+1. **Database Update (`AdminApprovalRequests` & `Users`)**:
+   - Inserted approved administrator access record (`Status = 1`, `ReviewedByClerkUserId = 'system'`) for user `diludfernando@gmail.com` (`user_3J0AWF7QWU6RdigZ30rkpgcQ70B`) in the `AdminApprovalRequests` table.
+   - Verified that user account has `UserRole = 'owner'`, `AccountState = 'Active'`, and `HasCompletedOnboarding = true` in PostgreSQL.
+   - Flushed stale Redis user profile and onboarding caches (`FLUSHALL`).
+
+2. **Backend Authentication & Role Synchronization (`Aveline.Api`)**:
+   - Updated `OnboardingMiddleware.cs` to enrich `ClaimsIdentity` with `userStatus.UserRole` and `userStatus.OrganizationRole` from the synchronized database read model, ensuring all backend authorization policies (`AdminReviewPolicy`, `[Authorize(Roles = "...")]`, `StatsSystemPolicy`, etc.) properly recognize database roles.
+   - Updated `AuthEndpoints.cs` (`GET /auth/claims`) to include `currentUser.UserRole` and `currentUser.OrganizationRole` in the returned `Roles` array.
+   - Recompiled and published ASP.NET Core backend binaries to the running Docker `aveline_api` container.
+
+3. **Frontend Admin Session Context & Navigation Routing (`frontend/web`)**:
+   - Updated `AdminSessionContext.tsx` to merge `claims.account.userRole` and `claims.account.organizationRole` with `claims.roles` into `effectiveRoles`.
+   - Updated `Dashboard.tsx` (`DashboardRedirect`) to detect active boutique memberships and `org:boutique_*` roles so boutique owners are routed directly to their Boutique Tenant Dashboard (`/app/b/{slug}`) rather than forced into `/admin`.
+   - Added seamless console/boutique switcher navigation in `DashboardShell.tsx` (user menu) and `AdminSidePanel.tsx` (footer).
+   - Fixed Windows file path separator matching in `admin-conformance.test.ts`.
+   - Verified that all 932 frontend unit and DOM tests pass (133 test files, 100% pass rate).
+
+### Files Created or Modified
+- `Aveline.Api/Common/Middleware/OnboardingMiddleware.cs`
+- `Aveline.Api/Endpoints/AuthEndpoints.cs`
+- `frontend/web/src/contexts/AdminSessionContext.tsx`
+- `frontend/web/src/routes/Dashboard.tsx`
+- `frontend/web/src/components/dashboard/DashboardShell.tsx`
+- `frontend/web/src/components/admin/shell/AdminSidePanel.tsx`
+- `frontend/web/src/test/admin-conformance.test.ts`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- Verified database record in `AdminApprovalRequests` in PostgreSQL (`Status: 1 / Approved`).
+- Verified `Aveline.Api` builds cleanly with 0 errors (`dotnet build`).
+- Verified `aveline_api` container updated and restarted successfully.
+- Verified frontend test suite passes 100% (`npm test -- --run` -> 932/932 tests passed across 133 test files).
+- Verified boutique dashboard redirection for boutique owners (`/app` -> `/app/b/{slug}`).
+
+---
+
+## Session 2026-09-19 (Docker Compose API Container Fix & Firebase Config Clarification)
+
+**Task:** Diagnose and fix `aveline_api` container mount error during `docker compose up --build -d`, verify git sync state with `origin/development` without pushing uncommitted changes, and clarify Firebase service account / client configuration placement for Flutter.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+1. Checked git branch tracking status with `origin/development`; verified local branch is up to date without altering or pushing uncommitted changes in working directory.
+2. Cleaned stale Docker container and bind mount state via `docker compose down`.
+3. Started infrastructure with `docker compose up --build -d` and verified `aveline_api`, `aveline_agent`, `aveline_postgres`, and `aveline_redis` are all running healthy without errors.
+4. Clarified Firebase configuration architecture: root `firebase-service-account.json` is for backend server push notifications, whereas Flutter Android client expects `frontend/aveline_mobile/android/app/google-services.json`.
+
+### Files Created or Modified
+- `docs/ai-usage/Dilud.md`
+
+---
+
+## Session 2026-09-19 (Flutter Mobile Android Build & NDK Configuration)
+
+**Task:** Resolve `MissingPluginException` on Web/Windows and `assembleDebug` failure (`Android sdkmanager did not install NDK 28.2.13676358`) when running Flutter app on connected Samsung Android phone (`SM M176B`).
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+1. Diagnosed `MissingPluginException: getApplicationDocumentsDirectory` on Web due to platform channel dependencies on mobile file systems.
+2. Accepted Android SDK package licenses using `sdkmanager --licenses`.
+3. Auto-provisioned Android NDK `28.2.13676358` and Android SDK Platforms 34, 35, and 36 into `C:\Users\DILUD\AppData\Local\Android\Sdk`.
+4. Configured `frontend/aveline_mobile/android/gradle.properties` to use stable Eclipse Adoptium JDK 17 (`jdk-17.0.12.7-hotspot`) with 2048MB heap to prevent JVM daemon crashes.
+5. Configured `frontend/aveline_mobile/android/app/build.gradle.kts` with matching `ndkVersion = flutter.ndkVersion`.
+6. Terminated stale daemon processes and verified device recognition for `SM M176B` (API 36).
+
+### Files Created or Modified
+- `frontend/aveline_mobile/android/app/build.gradle.kts`
+- `frontend/aveline_mobile/android/gradle.properties`
+- `docs/ai-usage/Dilud.md`
+
+---
+
 ## Session 2026-09-18 (Catalog Item Delete Feature - Frontend & Backend)
 
 **Task:** Design and implement catalog inventory item deletion across ASP.NET Core backend (Soft Delete endpoint, services, integration tests) and React frontend (ProductCard delete button, Edit modal delete action, confirmation dialog, optimistic state updates).
@@ -2882,4 +2992,180 @@
   - Branches: **86.65%** (Threshold: >= 70%)
   - Functions: **86.20%** (Threshold: >= 70%)
 - `bun run build`: `tsc -b && vite build` built clean (0 TypeScript errors, production assets bundled successfully).
+
+---
+
+## Session 2026-09-20 (Pull Development Branch Changes)
+
+**Task:** Pull upstream changes from remote `origin/development` while preserving local working directory changes without committing or pushing.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+1. Stashed active local uncommitted changes.
+2. Executed `git pull origin development` to bring the local branch up to date with `5b8865d` (`feat(observability): Prometheus + Grafana metrics infrastructure (Slices 1-8)`).
+3. Restored stashed changes, resolved local `gradle.properties` configuration to maintain Windows local environment settings, and reset index so all user modifications remain unstaged and uncommitted.
+
+### Files Created or Modified
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- `git pull origin development`: Fast-forward pull successful (exit code 0).
+- `git status`: Local branch is up to date with `origin/development`; local modifications are unstaged and uncommitted as requested.
+
+---
+
+## Session 2026-09-20 (Configure Observability Credentials & Secret Mounts)
+
+**Task:** Configure missing observability environment variables in `.env` and create mounted secret companion files for Prometheus and Postgres Exporter to resolve Docker Compose interpolation errors.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+1. Updated [`.env`](file:///e:/3Y%201%20sem/aveline/.env) with required metrics and observability variables (`METRICS_SCRAPE_TOKEN`, `GRAFANA_ADMIN_PASSWORD`, `POSTGRES_EXPORTER_PASSWORD`, `POSTGRES_EXPORTER_USER`, `PROMETHEUS_PORT`, `GRAFANA_PORT`, `TELEMETRY_IP_HASH_SALT`).
+2. Generated and created companion secret files required by container volume mounts:
+   - `observability/prometheus/secrets/scrape_token`
+   - `postgres-exporter-password`
+3. Validated Docker Compose configuration with `docker compose config --quiet` and confirmed zero interpolation errors.
+4. Executed `python scripts/validate_observability_config.py` confirming complete observability configuration integrity.
+
+### Files Created or Modified
+- `.env`
+- `observability/prometheus/secrets/scrape_token`
+- `postgres-exporter-password`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- `docker compose config --quiet`: Passed with exit code 0.
+- `python scripts/validate_observability_config.py`: Passed ("Observability configuration validation passed.").
+
+---
+
+## Session 2026-09-20 (Run Frontend Web Dev Server)
+
+**Task:** Start the web frontend development server.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+1. Verified package manager availability (`bun` and `pnpm` not installed/configured; utilized `npm.cmd` as fallback).
+2. Launched Vite dev server for `frontend/web` on `http://localhost:5173/`.
+
+### Files Created or Modified
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- Checked dev server status and confirmed it is running at `http://localhost:5173/` (Vite v8.2.2).
+
+---
+
+## Session 2026-09-21 (Running pytest in Agent Service)
+
+**Task:** Guide user on installing dev dependencies and executing `pytest` for `agnet-service`.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+1. Clarified that `pytest` and its plugins are located in `requirements-dev.txt`.
+2. Provided the command to install `requirements-dev.txt` and execute `python -m pytest` / `pytest`.
+
+### Files Created or Modified
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- Inspected `agnet-service/requirements-dev.txt`.
+
+---
+
+## Session 2026-09-23 (Pull Development Branch Changes)
+
+**Task:** Safely pull upstream `origin/development` branch changes while preserving local unstaged modifications across backend and frontend.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+1. Stashed active local uncommitted changes.
+2. Pulled upstream `origin/development` commits (`0a1bd18`: Cloudinary media seam, conversation attachments, catalogue CRUD).
+3. Restored stashed changes with `git stash pop`, resolved local `gradle.properties` configuration to maintain local Windows environment settings, and dropped the temporary stash.
+4. Reset git index with `git reset` so all user modifications remain unstaged in the working tree.
+5. Built and validated `Aveline.Api/Aveline.Api.csproj` with `dotnet build` confirming 0 errors.
+
+### Files Created or Modified
+- `frontend/aveline_mobile/android/gradle.properties`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- `git pull origin development`: Pulled successfully.
+- `dotnet build Aveline.Api/Aveline.Api.csproj`: Succeeded with 0 errors.
+- `git status`: Working tree is cleanly up to date with `origin/development` and local edits are preserved.
+
+---
+
+## Session 2026-09-23 (Visual Agent Catalog Retrieval & Category Search Fix)
+
+**Task:** Resolve issue where Elle (Visual Insight Agent) fails to retrieve matching inventory items when queried about garment availability in The Salon.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+1. Diagnosed root cause: `parse_visual_intent` lacked garment category extraction (e.g. `dress`, `lehenga`, `gown`, `saree`), and backend `SearchInventoryDto` / `InventoryRepository` lacked free-text `Query` filtering across item name, category, description, and fabric.
+2. Extended `Aveline.Api/Modules/VisualIntelligence/DTOs/SearchInventoryDto.cs` with optional `Query` parameter.
+3. Updated `IInventoryRepository.cs`, `InventoryRepository.cs`, and `InventoryService.cs` to support case-insensitive free-text query matching across `ItemName`, `Category`, `Description`, `Fabric`, and `Style`.
+4. Extended `agnet-service/app/agents/visual_insight/nodes.py` with comprehensive fashion category taxonomy (dresses, gowns, sarees, lehengas, blouses, suits, etc.), sizing pattern extraction, and search fallback.
+5. Added unit tests in `Aveline.Api.Tests/InventoryServiceTests.cs` and `agnet-service/tests/test_visual_agent.py`.
+6. Rebuilt and restarted `aveline_api` and `aveline_agent` Docker containers with latest images.
+
+### Files Created or Modified
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/SearchInventoryDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/IInventoryRepository.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/InventoryRepository.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/InventoryService.cs`
+- `Aveline.Api.Tests/InventoryServiceTests.cs`
+- `agnet-service/app/agents/visual_insight/nodes.py`
+- `agnet-service/tests/test_visual_agent.py`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj --filter "FullyQualifiedName~InventoryServiceTests"`: 33/33 tests passed.
+- `python -m pytest tests/test_visual_agent.py tests/agents/test_visual_insight_graph.py`: 15/15 tests passed.
+- `python -m pytest tests/`: 429/429 tests passed.
+- `docker compose restart agent api`: Containers restarted cleanly with updated binaries and code.
+
+---
+
+## Session 2026-09-23 (Inventory Price Extraction, Color Family Expansion & Salon Image Deduplication)
+
+**Task:** 
+1. Enable price range extraction (under, over, between) in natural language queries for garment inventory search.
+2. Expand base color queries (e.g. red) to match color family variations (e.g. crimson, ruby, maroon) in backend search.
+3. Fix partial word matching in database color filtering (e.g. "colored" matching "red").
+4. Eliminate duplicate image cards in The Salon when inventory pieces and looks share the same photograph.
+
+**Tool used:** Antigravity AI Assistant  
+**Status:** Completed
+
+### Work Performed
+1. Added regex parsing in `agnet-service/app/agents/visual_insight/nodes.py` to extract `minPrice` and `maxPrice` constraints and carry them through search criteria and fallback logic.
+2. Added color family mappings in `nodes.py` to expand base color keywords into related shade families (e.g. Red -> red, crimson, ruby, maroon, burgundy, wine, magenta, rose, coral).
+3. Updated `Aveline.Api/Modules/VisualIntelligence/Repositories/InventoryRepository.cs` to split comma-separated color filters and perform an OR search across variants, using space-padded word boundary checks for ItemName and Description to eliminate false positives (e.g. "colored" matching "red").
+4. Updated `agnet-service/app/events/block_builders.py` in `build_elle_blocks` to track rendered piece images and omit `imageUrl` from look blocks if the photograph was already rendered by a piece card in the same message.
+5. Updated `frontend/web/src/components/conversation/blocks.tsx`:
+   - Updated `LookBlock` to gracefully render styling commentary cards without empty placeholder banners when no image is present.
+   - Updated `BlockList` to deduplicate look block images matching piece block images in the same message.
+6. Added unit tests in `agnet-service/tests/test_block_builders.py` and `frontend/web/src/components/conversation/blocks.test.tsx`.
+
+### Files Created or Modified
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/InventoryRepository.cs`
+- `agnet-service/app/agents/visual_insight/nodes.py`
+- `agnet-service/app/events/block_builders.py`
+- `agnet-service/tests/test_block_builders.py`
+- `frontend/web/src/components/conversation/blocks.tsx`
+- `frontend/web/src/components/conversation/blocks.test.tsx`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- `python -m pytest tests/test_visual_agent.py tests/test_block_builders.py tests/agents/test_visual_insight_graph.py`: 42/42 tests passed.
+- `npm test -- src/components/conversation/blocks.test.tsx --run`: 11/11 tests passed.
+- `npm test -- --run`: 1055/1055 tests passed (141 test files).
+
 

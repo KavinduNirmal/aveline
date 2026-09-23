@@ -99,21 +99,86 @@ class VisualInsightAgent:
             "red", "green", "yellow", "pink", "purple", "brown"
         ]
 
+        color_families = {
+            "Red": "red,crimson,ruby,maroon,burgundy,wine,magenta,rose,coral",
+            "Blue": "blue,navy,sapphire,teal,turquoise,aqua,cobalt,indigo,peacock",
+            "Green": "green,emerald,jade,olive,sage,mint",
+            "Yellow": "yellow,mustard,ochre,gold,buttercup",
+            "Pink": "pink,blush,rose,fuchsia,magenta",
+            "Purple": "purple,lavender,lilac,amethyst,plum",
+            "White": "white,ivory,cream,pearl",
+            "Black": "black,charcoal",
+            "Grey": "grey,gray,slate,pewter",
+            "Brown": "brown,terracotta,rust,camel,taupe,sand,espresso",
+            "Gold": "gold,champagne,zari,antique",
+            "Silver": "silver,platinum,pewter"
+        }
+
         for col in fashion_colors:
             if re.search(r"\b" + re.escape(col) + r"\b", msg):
                 color = col.title()
+                if color in color_families:
+                    color = color_families[color]
                 break
 
-        if not color and color_theme:
-            color = color_theme
+        # Comprehensive Fashion Garment Category taxonomy & keyword mapping
+        category = None
+        fashion_categories: list[tuple[str, tuple[str, ...]]] = [
+            ("Dress", ("evening dress", "cocktail dress", "maxi dress", "midi dress", "mini dress", "shift dress", "wrap dress", "sun dress", "dresses", "dress", "frock", "frocks")),
+            ("Gown", ("evening gown", "ball gown", "silk gown", "gowns", "gown")),
+            ("Saree", ("handloom saree", "silk saree", "cotton saree", "organza saree", "sarees", "saree", "saris", "sari")),
+            ("Lehenga", ("lehenga choli", "bridal lehenga", "lehengas", "lehenga")),
+            ("Blouse", ("crop blouse", "silk blouse", "saree blouse", "blouses", "blouse", "crop top", "corset")),
+            ("Suit", ("pant suit", "trouser suit", "blazer", "suits", "suit", "tuxedo")),
+            ("Skirt", ("maxi skirt", "pleated skirt", "pencil skirt", "skirts", "skirt")),
+            ("Kurta", ("kurti", "kurtas", "kurta", "tunics", "tunic")),
+            ("Trousers", ("palazzo", "trousers", "trouser", "pants", "pant")),
+            ("Jacket", ("cape", "jackets", "jacket", "shrug", "kimono", "coat")),
+            ("Accessory", ("jewellery", "jewelry", "necklace", "earrings", "clutch", "handbag", "bag", "belt", "scarf", "shawl", "dupatta", "footwear", "shoes", "heels", "sandals")),
+        ]
+
+        for cat_name, keywords in fashion_categories:
+            if any(re.search(r"\b" + re.escape(kw) + r"\b", msg) for kw in keywords):
+                category = cat_name
+                break
+
+        # Sizing pattern extraction
+        size = None
+        size_patterns = [
+            r"\b(uk\s*(?:4|6|8|10|12|14|16|18|20))\b",
+            r"\b(us\s*(?:0|2|4|6|8|10|12|14|16))\b",
+            r"\b(xxs|xs|small|s|medium|m|large|l|xl|xxl)\b",
+        ]
+        for pat in size_patterns:
+            match = re.search(pat, msg)
+            if match:
+                raw_size = match.group(1).strip()
+                size = raw_size.upper() if raw_size.lower().startswith(("uk", "us", "x")) or len(raw_size) <= 2 else raw_size.capitalize()
+                break
 
         criteria = {
             "organizationId": org_id,
             "query": state.get("message", ""),
+            "category": category,
             "occasion": occasion,
             "color": color,
             "color_theme": color_theme,
+            "size": size,
         }
+
+        # Price range extraction
+        between_match = re.search(r"\b(?:between|from)\s+(?:\$|£|€)?\s*(\d+(?:\.\d+)?)\s+(?:and|to)\s+(?:\$|£|€)?\s*(\d+(?:\.\d+)?)\b", msg)
+        if between_match:
+            criteria["minPrice"] = float(between_match.group(1))
+            criteria["maxPrice"] = float(between_match.group(2))
+        else:
+            under_match = re.search(r"\b(?:under|less than|below|max(?:imum)?|up to)\s*(?:\$|£|€)?\s*(\d+(?:\.\d+)?)\b", msg)
+            if under_match:
+                criteria["maxPrice"] = float(under_match.group(1))
+            
+            over_match = re.search(r"\b(?:over|more than|above|min(?:imum)?)\s*(?:\$|£|€)?\s*(\d+(?:\.\d+)?)\b", msg)
+            if over_match:
+                criteria["minPrice"] = float(over_match.group(1))
 
         return {"search_criteria": criteria}
 
@@ -169,7 +234,7 @@ class VisualInsightAgent:
         }
 
     async def search_inventory(self, state: VisualAgentState) -> dict[str, Any]:
-        """Query boutique inventory using compiled criteria."""
+        """Query boutique inventory using compiled criteria with fallback for relaxed matching."""
         criteria = state.get("search_criteria") or {
             "organizationId": state.get("org_id", ""),
             "query": state.get("message", ""),
@@ -177,6 +242,21 @@ class VisualInsightAgent:
 
         try:
             items: list[PieceItem] = await search_inventory(self._registry, criteria)
+
+            # Fallback: if filtered search returned 0 items but user requested a specific category/term, try query alone
+            if not items and (criteria.get("category") or criteria.get("color") or criteria.get("size")):
+                fallback_criteria = {
+                    "organizationId": criteria.get("organizationId", ""),
+                    "query": criteria.get("category") or criteria.get("query", ""),
+                }
+                for preserve_key in ["minPrice", "maxPrice", "color", "size"]:
+                    if preserve_key in criteria and criteria[preserve_key]:
+                        fallback_criteria[preserve_key] = criteria[preserve_key]
+                    
+                relaxed_items = await search_inventory(self._registry, fallback_criteria)
+                if relaxed_items:
+                    items = relaxed_items
+
             return {"matched_items": [item.model_dump() for item in items]}
         except Exception as e:
             logger.warning("Inventory search failed: %s", e)

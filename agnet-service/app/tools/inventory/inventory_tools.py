@@ -43,7 +43,10 @@ async def search_inventory(
     """Search boutique inventory by structured criteria (category, color, query, size)."""
     try:
         res = await registry.search_inventory(criteria=criteria)
-        raw_items = res.get("items") or res.get("results") or (res if isinstance(res, list) else [])
+        if isinstance(res, list):
+            raw_items = res
+        else:
+            raw_items = res.get("items") or res.get("results") or []
         return [dict_to_piece_item(item) for item in raw_items]
     except Exception:
         return []

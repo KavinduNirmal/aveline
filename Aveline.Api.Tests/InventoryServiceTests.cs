@@ -29,8 +29,9 @@ public class InventoryServiceTests
                 It.IsAny<bool>(),
                 It.IsAny<int>(),
                 It.IsAny<int>(),
+                It.IsAny<string?>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Guid orgId, string? cat, string? col, string? size, decimal? minP, decimal? maxP, bool inStock, int page, int pageSize, CancellationToken ct) =>
+            .ReturnsAsync((Guid orgId, string? cat, string? col, string? size, decimal? minP, decimal? maxP, bool inStock, int page, int pageSize, string? q, CancellationToken ct) =>
             {
                 var query = _inMemoryItems.Where(x =>
                     x.OrgId == orgId &&
@@ -41,7 +42,10 @@ public class InventoryServiceTests
                     (size == null || x.Sizes.Any(s => s.Equals(size, StringComparison.OrdinalIgnoreCase))) &&
                     (!minP.HasValue || x.Price >= minP.Value) &&
                     (!maxP.HasValue || x.Price <= maxP.Value) &&
-                    (!inStock || x.Quantity > 0)
+                    (!inStock || x.Quantity > 0) &&
+                    (q == null || (x.ItemName != null && x.ItemName.Contains(q, StringComparison.OrdinalIgnoreCase)) ||
+                                  (x.Category != null && x.Category.Contains(q, StringComparison.OrdinalIgnoreCase)) ||
+                                  (x.Description != null && x.Description.Contains(q, StringComparison.OrdinalIgnoreCase)))
                 );
 
                 return query
@@ -460,4 +464,52 @@ public class InventoryServiceTests
     {
         InventoryService.NormalizeColorHex(input).Should().Be(expected);
     }
+
+    [Fact]
+    public async Task SearchInventoryAsync_WithFreeTextQuery_ReturnsMatchingItems()
+    {
+        // Arrange
+        var orgId = Guid.NewGuid();
+        await SeedInventory(orgId, "Peach Silk Evening Dress", "Evening", "Peach", 45000, 2);
+        await SeedInventory(orgId, "Emerald Handloom Saree", "Traditional", "Emerald", 32000, 3);
+        await SeedInventory(orgId, "Ivory Raw Silk Kurta", "Casual", "Ivory", 18000, 1);
+
+        var searchDto = new SearchInventoryDto
+        {
+            OrgId = orgId,
+            Query = "dress",
+            InStockOnly = true,
+        };
+
+        // Act
+        var results = await _service.SearchInventoryAsync(searchDto);
+
+        // Assert
+        results.Should().HaveCount(1);
+        results[0].ItemName.Should().Be("Peach Silk Evening Dress");
+    }
+
+    [Fact]
+    public async Task SearchInventoryAsync_WithQueryMatchingCategory_ReturnsMatchingItems()
+    {
+        // Arrange
+        var orgId = Guid.NewGuid();
+        await SeedInventory(orgId, "Midnight Shimmer Piece", "Dress", "Black", 50000, 4);
+        await SeedInventory(orgId, "Gold Filigree Belt", "Accessory", "Gold", 12000, 2);
+
+        var searchDto = new SearchInventoryDto
+        {
+            OrgId = orgId,
+            Query = "dress",
+            InStockOnly = true,
+        };
+
+        // Act
+        var results = await _service.SearchInventoryAsync(searchDto);
+
+        // Assert
+        results.Should().HaveCount(1);
+        results[0].ItemName.Should().Be("Midnight Shimmer Piece");
+    }
 }
+

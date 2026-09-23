@@ -275,6 +275,37 @@ def test_elle_blocks_staff_query_emits_text_block_no_suggestion():
     assert any(b["type"] == "piece" for b in blocks)
 
 
+def test_elle_blocks_suppresses_duplicate_image_in_look_when_already_in_piece():
+    visual = {
+        "agent": "visual",
+        "ran": True,
+        "status": "success",
+        "items": [
+            {
+                "itemId": "i1",
+                "name": "Red Saree",
+                "price": 1250,
+                "imageUrl": "https://cdn/red-saree.jpg",
+            }
+        ],
+        "looks": [
+            {
+                "name": "Look: Boutique Collection",
+                "imageUrl": "https://cdn/red-saree.jpg",
+                "text": "Harmonized for Boutique Collection",
+            }
+        ],
+    }
+    blocks = build_elle_blocks(visual)
+
+    piece_block = next(b for b in blocks if b["type"] == "piece")
+    assert piece_block["imageUrl"] == "https://cdn/red-saree.jpg"
+
+    look_block = next(b for b in blocks if b["type"] == "look")
+    assert "imageUrl" not in look_block
+    assert look_block["text"] == "Harmonized for Boutique Collection"
+
+
 # ----------------------------------------------------------------------- Lina (commerce)
 
 

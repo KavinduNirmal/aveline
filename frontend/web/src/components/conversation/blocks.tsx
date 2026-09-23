@@ -322,17 +322,22 @@ function LookBlock({ block, persona }: BlockRendererProps) {
   const bgSoftClass = persona?.bgSoft ?? 'bg-visual/10'
   const textClass = persona?.text ?? 'text-visual'
 
+  if (!block.imageUrl && !block.text) {
+    return null
+  }
+
   return (
     <div className="overflow-hidden rounded-lg border">
       {block.imageUrl ? (
         <img src={block.imageUrl} alt={block.name ?? 'Look'} className="h-44 w-full object-cover" />
-      ) : (
-        <div className={cn('flex h-24 items-center justify-center', bgSoftClass, textClass)}>
-          <span className="text-xs font-medium">Look</span>
-        </div>
-      )}
+      ) : null}
       {block.text && (
-        <p className="border-t p-2 text-xs text-muted-foreground">{block.text}</p>
+        <div className={cn(block.imageUrl ? 'border-t p-2' : 'p-3', !block.imageUrl && bgSoftClass)}>
+          {block.name && !block.imageUrl && (
+            <p className={cn('mb-1 text-xs font-medium', textClass)}>{block.name}</p>
+          )}
+          <p className="text-xs text-muted-foreground">{block.text}</p>
+        </div>
       )}
     </div>
   )
@@ -356,21 +361,35 @@ export function BlockList({
 }) {
   const parsed = (blocks ?? []) as ContentBlock[]
   if (parsed.length === 0) return null
+
+  const pieceImageUrls = new Set(
+    parsed
+      .filter((b) => b.type === 'piece' && b.imageUrl)
+      .map((b) => b.imageUrl as string),
+  )
+
   return (
     <div className="space-y-2">
-      {parsed.map((block, i) => (
-        <div key={i}>
-          {i > 0 && <Separator className="my-2" />}
-          <BlockRenderer
-            block={block}
-            onSignOff={onSignOff}
-            onSelectCustomer={onSelectCustomer}
-            onOpenAttachment={onOpenAttachment}
-            persona={persona}
-            tone={tone}
-          />
-        </div>
-      ))}
+      {parsed.map((block, i) => {
+        const effectiveBlock =
+          block.type === 'look' && block.imageUrl && pieceImageUrls.has(block.imageUrl)
+            ? { ...block, imageUrl: undefined }
+            : block
+
+        return (
+          <div key={i}>
+            {i > 0 && <Separator className="my-2" />}
+            <BlockRenderer
+              block={effectiveBlock}
+              onSignOff={onSignOff}
+              onSelectCustomer={onSelectCustomer}
+              onOpenAttachment={onOpenAttachment}
+              persona={persona}
+              tone={tone}
+            />
+          </div>
+        )
+      })}
     </div>
   )
 }

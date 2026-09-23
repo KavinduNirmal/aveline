@@ -94,6 +94,7 @@ def build_elle_blocks(visual_output: Any) -> list[dict[str, Any]]:
     if suggestion:
         blocks.append({"type": "suggestion", "text": str(suggestion)})
 
+    rendered_image_urls: set[str] = set()
     for item in visual.get("items") or []:
         item = _as_dict(item)
         block: dict[str, Any] = {"type": "piece", "name": item.get("name") or "Piece"}
@@ -107,13 +108,16 @@ def build_elle_blocks(visual_output: Any) -> list[dict[str, Any]]:
             block["stock"] = item["stock"]
         if item.get("imageUrl"):
             block["imageUrl"] = item["imageUrl"]
+            rendered_image_urls.add(str(item["imageUrl"]))
         blocks.append(block)
 
     for look in visual.get("looks") or []:
         look = _as_dict(look)
         block = {"type": "look"}
-        if look.get("imageUrl"):
-            block["imageUrl"] = look["imageUrl"]
+        img = look.get("imageUrl")
+        if img and str(img) not in rendered_image_urls:
+            block["imageUrl"] = img
+            rendered_image_urls.add(str(img))
         if look.get("name"):
             block["name"] = look["name"]
         if look.get("text"):

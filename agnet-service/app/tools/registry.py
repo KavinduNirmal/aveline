@@ -193,7 +193,7 @@ class ToolRegistry:
 
     # ============================== VISUAL AGENT ==============================
 
-    async def search_inventory(self, criteria: dict[str, Any]) -> dict[str, Any]:
+    async def search_inventory(self, criteria: dict[str, Any]) -> Any:
         """Search inventory by structured criteria via the backend."""
         payload = dict(criteria)
         if "org_id" in payload and "organizationId" not in payload:

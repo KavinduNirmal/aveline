@@ -86,4 +86,17 @@ describe('BlockList', () => {
     expect(html).toContain('Three pieces match.')
     expect(html).toContain('Dress')
   })
+
+  it('deduplicates look image when piece block already has the same imageUrl', () => {
+    const blocks = [
+      { type: 'piece', name: 'Red Saree', price: 1250, imageUrl: 'https://cdn/red-saree.jpg' },
+      { type: 'look', name: 'Look: Boutique Collection', text: 'Harmonized look', imageUrl: 'https://cdn/red-saree.jpg' },
+    ]
+    const html = renderToString(<BlockList blocks={blocks} />)
+    expect(html).toContain('Red Saree')
+    expect(html).toContain('Harmonized look')
+    // Exactly one <img> tag should be rendered across both cards
+    const imgMatches = html.match(/<img /g)
+    expect(imgMatches).toHaveLength(1)
+  })
 })

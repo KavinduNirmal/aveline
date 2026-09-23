@@ -183,6 +183,38 @@ def test_compose_outfit():
     assert len(look.items) == 2
 
 
+def test_compose_outfit_does_not_borrow_a_piece_photograph():
+    """A look is a pairing, not a picture of one of its pieces.
+
+    The composer used to hand the look the first matched piece's photo. The Salon then rendered that
+    photograph twice — once on the piece and once on the look — so a one-item answer read as a
+    duplicated result. A look has no photograph of its own, and now says so.
+    """
+    items = [
+        PieceItem(
+            itemId="1",
+            name="Peach Raw-Silk Gown",
+            price=1200.0,
+            imageUrl="https://cdn/peach-gown.jpg",
+        ),
+        PieceItem(
+            itemId="2",
+            name="Pearl Drop Earrings",
+            price=350.0,
+            imageUrl="https://cdn/pearl-earrings.jpg",
+        ),
+    ]
+
+    look = compose_outfit(items)
+
+    assert look.imageUrl is None
+    # The pieces keep theirs; only the look's borrowed copy is gone.
+    assert [item.imageUrl for item in look.items] == [
+        "https://cdn/peach-gown.jpg",
+        "https://cdn/pearl-earrings.jpg",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_create_sourcing_request():
     registry = MagicMock()

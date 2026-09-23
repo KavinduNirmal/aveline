@@ -324,7 +324,9 @@ public static class OrganizationEndpoints
                     OrganizationName = org?.Name,
                     Slug = org?.Slug,
                     membership.BoutiqueRole,
-                    membership.Status,
+                    // Serialize as the string name (e.g. "Active") rather than the raw integer
+                    // so the frontend status === 'Active' check matches correctly.
+                    Status = membership.Status.ToString(),
                 });
             }
             return Results.Ok(result);

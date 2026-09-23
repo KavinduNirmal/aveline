@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Check, ClipboardCheck, RefreshCw, X } from 'lucide-react'
+import { Check, ClipboardCheck, RefreshCw, SlidersHorizontal, X } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
@@ -31,6 +31,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toApiError } from '@/lib/api-error'
 import { usePanelLoad } from '@/hooks/usePanelLoad'
 import {
@@ -42,9 +43,12 @@ import {
   type ApprovalDecision,
   type ApprovalQueueEntry,
 } from '@/lib/approvals-api'
+import { fetchBusinessRules, type BusinessRuleResponseDto } from '@/lib/business-rules-api'
 import { formatMoney } from '@/lib/format-money'
 import { hasPermission } from '@/lib/permissions'
+import { useNotifications } from '@/contexts/NotificationsContext'
 import type { OrganizationProfileDto } from '@/types/organization'
+import { BusinessRulesTable } from '@/components/dashboard/rules/BusinessRulesTable'
 
 interface ApprovalsPanelProps {
   organization: OrganizationProfileDto
@@ -68,24 +72,27 @@ const VERB_DESCRIPTION: Record<ApprovalDecision, string> = {
 /**
  * The Approvals section.
  *
- * **The verbs are gated by what they do, not by who is looking (Q14).** Staff hold
- * `approvals:approve`, so they may approve a customer's order; `reject` cancels it and `revise`
- * rewrites its money, so both require `orders:manage` and are **not rendered** without it. The
- * server enforces the same split, including on the `/decision` body, so this is the first of two
- * locks rather than the only one.
+ * Real-time queue listening for `ApprovalNeeded` notifications over SignalR.
+ * Tabbed interface offering the queue inbox and the dynamic business rules configuration.
  */
 export function ApprovalsPanel({ organization, role }: ApprovalsPanelProps) {
   const decisions = availableDecisions(
     hasPermission(role, 'approvals:approve'),
     hasPermission(role, 'orders:manage'),
   )
+  const canManageRules = hasPermission(role, 'orders:manage')
 
+  const [activeTab, setActiveTab] = useState<'queue' | 'rules'>('queue')
   const [status, setStatus] = useState<string>('pending')
   const [page, setPage] = useState(1)
   const [entries, setEntries] = useState<ApprovalQueueEntry[]>([])
   const [total, setTotal] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  // Rules state
+  const [rules, setRules] = useState<BusinessRuleResponseDto[]>([])
+  const [rulesLoading, setRulesLoading] = useState(false)
 
   const [target, setTarget] = useState<ApprovalQueueEntry | null>(null)
   const [verb, setVerb] = useState<ApprovalDecision>('approve')
@@ -97,7 +104,9 @@ export function ApprovalsPanel({ organization, role }: ApprovalsPanelProps) {
   const pageSize = 20
   const lastPage = Math.max(1, Math.ceil(total / pageSize))
 
-  // A cancelled request is not a failure, and a superseded one must not overwrite a newer result.
+  // Real-time signal integration:
+  const { lastNotification } = useNotifications()
+
   const load = usePanelLoad(
     (signal?: AbortSignal) =>
       fetchApprovals(
@@ -127,11 +136,37 @@ export function ApprovalsPanel({ organization, role }: ApprovalsPanelProps) {
     [load],
   )
 
+  const loadRules = useCallback(async () => {
+    if (!canManageRules) return
+    setRulesLoading(true)
+    try {
+      const data = await fetchBusinessRules(organization.id, false)
+      setRules(data)
+    } catch {
+      toast.error('Could not load business rules.')
+    } finally {
+      setRulesLoading(false)
+    }
+  }, [organization.id, canManageRules])
+
   useEffect(() => {
     const controller = new AbortController()
     void runLoad(controller.signal)
+    if (canManageRules) {
+      void loadRules()
+    }
     return () => controller.abort()
-  }, [runLoad])
+  }, [runLoad, loadRules, canManageRules])
+
+  // Automatically refresh queue on incoming ApprovalNeeded SignalR notification
+  useEffect(() => {
+    if (lastNotification?.type === 'ApprovalNeeded') {
+      toast.info('New approval request received', {
+        description: lastNotification.body,
+      })
+      void runLoad()
+    }
+  }, [lastNotification, runLoad])
 
   const openDecision = (entry: ApprovalQueueEntry, next: ApprovalDecision) => {
     setActionError(null)
@@ -164,7 +199,6 @@ export function ApprovalsPanel({ organization, role }: ApprovalsPanelProps) {
       setTarget(null)
       await runLoad()
     } catch (caught) {
-      // The server's own message is the explanation: a 409 names the rule, a 403 the permission.
       const message = toApiError(caught).message
       setActionError(message)
     } finally {
@@ -174,170 +208,217 @@ export function ApprovalsPanel({ organization, role }: ApprovalsPanelProps) {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <p className="text-sm font-medium uppercase tracking-[0.15em] text-muted-foreground">
-          {organization.name}
-        </p>
-        <h1 className="mt-2 font-serif text-4xl font-medium tracking-tight">Approvals</h1>
-        <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-          Discounts and orders waiting on a decision. Approving keeps the quoted price; rejecting
-          cancels the order, and revising rewrites it.
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <p className="text-sm font-medium uppercase tracking-[0.15em] text-muted-foreground">
+            {organization.name}
+          </p>
+          <h1 className="mt-2 font-serif text-4xl font-medium tracking-tight">Approvals</h1>
+          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+            Discounts and orders waiting on a decision. Approving keeps the quoted price; rejecting
+            cancels the order, and revising rewrites it.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="gap-2"
+          onClick={() => {
+            void runLoad()
+            if (canManageRules) void loadRules()
+          }}
+        >
+          <RefreshCw className="size-3.5" aria-hidden /> Refresh
+        </Button>
       </div>
 
-      <Card className="shadow-[0_4px_20px_rgba(122,48,63,0.06)]">
-        <CardHeader>
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <CardTitle className="font-serif text-lg font-medium">Queue</CardTitle>
-              <CardDescription>
-                {decisions.length === 0
-                  ? 'You may view this queue, but no decision verb is available to your role.'
-                  : `You may ${decisions.join(', ')}.`}
-              </CardDescription>
-            </div>
-            <Select
-              value={status}
-              onValueChange={(value) => {
-                setStatus(value)
-                setPage(1)
-              }}
-            >
-              <SelectTrigger aria-label="Filter by status" className="w-[11rem]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All statuses</SelectItem>
-                {STATUSES.map((option) => (
-                  <SelectItem key={option} value={option}>
-                    {option}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          {isLoading ? (
-            <Skeleton className="h-48 w-full" />
-          ) : error ? (
-            <div className="flex flex-col items-start gap-3">
-              <p className="text-sm text-destructive">{error}</p>
-              <Button type="button" variant="outline" size="sm" onClick={() => void runLoad()}>
-                Try again
-              </Button>
-            </div>
-          ) : entries.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Nothing waiting. An order that exceeds a discount threshold appears here.
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Order</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Reason</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Decision</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {entries.map((entry) => (
-                  <TableRow key={entry.id}>
-                    <TableCell>
-                      <div className="flex flex-col">
-                        <span className="font-medium">
-                          {entry.order?.customerName ?? 'Order unavailable'}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          {entry.order ? formatMoney(entry.order.total) : entry.orderId}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{entry.approvalType}</Badge>
-                      {entry.thresholdExceeded ? (
-                        <Badge variant="outline" className="ml-2 text-destructive">
-                          over threshold
-                        </Badge>
-                      ) : null}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{entry.reason}</TableCell>
-                    <TableCell>
-                      <Badge variant={entry.status === 'pending' ? 'secondary' : 'outline'}>
-                        {entry.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap items-center justify-end gap-2">
-                        {decisions.includes('approve') ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => openDecision(entry, 'approve')}
-                          >
-                            <Check className="size-3.5" aria-hidden /> Approve
-                          </Button>
-                        ) : null}
-                        {decisions.includes('reject') ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => openDecision(entry, 'reject')}
-                          >
-                            <X className="size-3.5" aria-hidden /> Reject
-                          </Button>
-                        ) : null}
-                        {decisions.includes('revise') ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => openDecision(entry, 'revise')}
-                          >
-                            <ClipboardCheck className="size-3.5" aria-hidden /> Revise
-                          </Button>
-                        ) : null}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+      <Tabs value={activeTab} onValueChange={(val) => setActiveTab(val as 'queue' | 'rules')}>
+        <TabsList>
+          <TabsTrigger value="queue" className="gap-2">
+            Approval Queue
+            {total > 0 && status === 'pending' && (
+              <Badge variant="secondary" className="px-1.5 py-0 text-xs">
+                {total}
+              </Badge>
+            )}
+          </TabsTrigger>
+          {canManageRules && (
+            <TabsTrigger value="rules" className="gap-2">
+              <SlidersHorizontal className="size-3.5" />
+              Rules & Thresholds
+            </TabsTrigger>
           )}
+        </TabsList>
 
-          {total > pageSize ? (
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-muted-foreground">
-                Page {page} of {lastPage} · {total} entries
-              </p>
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={page <= 1}
-                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+        <TabsContent value="queue" className="mt-4">
+          <Card className="shadow-[0_4px_20px_rgba(122,48,63,0.06)]">
+            <CardHeader>
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <CardTitle className="font-serif text-lg font-medium">Queue</CardTitle>
+                  <CardDescription>
+                    {decisions.length === 0
+                      ? 'You may view this queue, but no decision verb is available to your role.'
+                      : `You may ${decisions.join(', ')}.`}
+                  </CardDescription>
+                </div>
+                <Select
+                  value={status}
+                  onValueChange={(value) => {
+                    setStatus(value)
+                    setPage(1)
+                  }}
                 >
-                  Previous
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={page >= lastPage}
-                  onClick={() => setPage((current) => current + 1)}
-                >
-                  Next
-                </Button>
+                  <SelectTrigger aria-label="Filter by status" className="w-[11rem]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All statuses</SelectItem>
+                    {STATUSES.map((option) => (
+                      <SelectItem key={option} value={option}>
+                        {option}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              {isLoading ? (
+                <Skeleton className="h-48 w-full" />
+              ) : error ? (
+                <div className="flex flex-col items-start gap-3">
+                  <p className="text-sm text-destructive">{error}</p>
+                  <Button type="button" variant="outline" size="sm" onClick={() => void runLoad()}>
+                    Try again
+                  </Button>
+                </div>
+              ) : entries.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Nothing waiting. An order that exceeds a discount threshold appears here.
+                </p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Order</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Reason</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Decision</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {entries.map((entry) => (
+                      <TableRow key={entry.id}>
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span className="font-medium">
+                              {entry.order?.customerName ?? 'Order unavailable'}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              {entry.order ? formatMoney(entry.order.total) : entry.orderId}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{entry.approvalType}</Badge>
+                          {entry.thresholdExceeded ? (
+                            <Badge variant="outline" className="ml-2 text-destructive">
+                              over threshold
+                            </Badge>
+                          ) : null}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">{entry.reason}</TableCell>
+                        <TableCell>
+                          <Badge variant={entry.status === 'pending' ? 'secondary' : 'outline'}>
+                            {entry.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap items-center justify-end gap-2">
+                            {decisions.includes('approve') ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => openDecision(entry, 'approve')}
+                              >
+                                <Check className="size-3.5" aria-hidden /> Approve
+                              </Button>
+                            ) : null}
+                            {decisions.includes('reject') ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => openDecision(entry, 'reject')}
+                              >
+                                <X className="size-3.5" aria-hidden /> Reject
+                              </Button>
+                            ) : null}
+                            {decisions.includes('revise') ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => openDecision(entry, 'revise')}
+                              >
+                                <ClipboardCheck className="size-3.5" aria-hidden /> Revise
+                              </Button>
+                            ) : null}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+
+              {total > pageSize ? (
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">
+                    Page {page} of {lastPage} · {total} entries
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={page <= 1}
+                      onClick={() => setPage((current) => Math.max(1, current - 1))}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={page >= lastPage}
+                      onClick={() => setPage((current) => current + 1)}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {canManageRules && (
+          <TabsContent value="rules" className="mt-4">
+            <BusinessRulesTable
+              organizationId={organization.id}
+              rules={rules}
+              isLoading={rulesLoading}
+              canManage={canManageRules}
+              onReload={loadRules}
+            />
+          </TabsContent>
+        )}
+      </Tabs>
 
       <Dialog open={target !== null} onOpenChange={(open) => !open && setTarget(null)}>
         <DialogContent>

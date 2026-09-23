@@ -11,6 +11,7 @@ import {
   Settings,
   Share2,
   Shirt,
+  ShoppingBag,
   Sparkles,
   Store,
   Users,
@@ -27,6 +28,7 @@ import { AvelineChatLauncher } from '@/components/conversation/AvelineChatLaunch
 import { SalonPanel } from '@/components/conversation/SalonPanel'
 import { Overview } from '@/components/dashboard/Overview'
 import { ApprovalsPanel } from '@/components/dashboard/ApprovalsPanel'
+import { OrdersPanel } from '@/components/dashboard/OrdersPanel'
 import { CustomersPanel } from '@/components/dashboard/CustomersPanel'
 import { IncomePanel } from '@/components/dashboard/IncomePanel'
 import { BillingPanel } from '@/components/dashboard/billing/BillingPanel'
@@ -71,6 +73,7 @@ type SectionId =
   | 'salon'
   | 'customers'
   | 'catalog'
+  | 'orders'
   | 'income'
   | 'approvals'
   | 'integrations'
@@ -95,6 +98,7 @@ const SECTIONS: SectionDef[] = [
   { id: 'salon', label: 'Salon', icon: MessageSquare },
   { id: 'customers', label: 'Customers', icon: Users, placeholder: 'Customer concierge & memory', permission: 'customers:view' },
   { id: 'catalog', label: 'Catalog', icon: Shirt, placeholder: 'Visual intelligence & sourcing', permission: 'catalog:view' },
+  { id: 'orders', label: 'Orders', icon: ShoppingBag, placeholder: 'Live orders & profitability', permission: 'catalog:view' },
   // The shop's own takings. `reports:view` is the permission the grant map already gave manager,
   // supervisor and owner; staff see a reduced card on Overview instead of this register.
   { id: 'income', label: 'Income', icon: Coins, placeholder: 'Takings, register & reconciliation', permission: 'reports:view' },
@@ -438,6 +442,8 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
               role={role}
               onOpenSalonForCustomer={(_id, _name) => goToSection('salon')}
             />
+          ) : activeSection === 'orders' ? (
+            <OrdersPanel organization={organization} role={role} />
           ) : activeSection === 'team' ? (
             <TeamManagement
               organization={organization}

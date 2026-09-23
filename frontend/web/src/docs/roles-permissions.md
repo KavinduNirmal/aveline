@@ -24,9 +24,9 @@ boutique switcher moves you between them, and you may hold a different role in e
 | Reduce stock or mark a piece out of stock | | ✓ | ✓ | ✓ |
 | Edit or delete a lookbook | | ✓ | ✓ | ✓ |
 | Open the income register | | ✓ | ✓ | ✓ |
-| Open the approval queue | ✓ | ✓ | ✓ | ✓ |
-| **Approve** an order | ✓ | ✓ | ✓ | ✓ |
-| **Reject** or **revise** an order | | ✓ | ✓ | ✓ |
+| Open the approval queue | ✓ | ✓ | | ✓ |
+| **Approve** an order | ✓ | ✓ | | ✓ |
+| **Reject** or **revise** an order | | ✓ | | ✓ |
 | See the Blossom balance | ✓ | ✓ | ✓ | ✓ |
 | See usage against plan limits, burn rate and consumption | | | ✓ | ✓ |
 | See API consumption | | ✓ | ✓ | ✓ |
@@ -38,11 +38,11 @@ boutique switcher moves you between them, and you may hold a different role in e
 
 ## How the roles differ, in one line each
 
-- **Owner** — full authority: the only role that reaches Billing, Settings and the integrations
-  credentials. One owner is created when the boutique is set up.
-- **Manager** — runs the shop day to day: clients, catalog, income, staff and the sourcing side of
-  orders. Notably a Manager cannot **approve** an order, and never sees your channel credentials or
-  Billing.
+- **Owner** — full authority: the only role that reaches Settings and the integrations credentials.
+  One owner is created when the boutique is set up.
+- **Manager** — runs the shop day to day: clients, catalog, income, staff, Billing and the sourcing
+  side of orders. Notably a Manager cannot **approve** an order, and never sees your channel
+  credentials.
 - **Supervisor** — oversees the counter: clients, catalog, the income register and the full set of
   approval decisions.
 - **Staff** — the counter: clients, visits, orders and the Salon, including approving a customer's
@@ -58,7 +58,8 @@ different things:
 - **Reject** cancels the order. Supervisor and Owner hold this.
 - **Revise** rewrites the order's discount and total. Supervisor and Owner hold this.
 
-A Manager holds the permission to change orders but not the one to approve them, so a Manager does
+A Manager holds the order-management permission but not the one that opens Approvals. Rejecting and
+revising are shown only when a role holds **both**, so a Manager is offered no decision verb and does
 not see the Approvals section at all. A button your role does not hold is **not shown** rather than
 shown and refused. See [Approvals](/docs/approvals).
 

@@ -55,9 +55,12 @@ zero. **`0` is a measurement; a blank is not.** A missing balance is unknown, no
 The order appears in **Approvals** with an over-threshold badge. Three verbs decide it:
 
 - **Approve** — the order proceeds and the quoted discount stands. Staff, Supervisor and Owner.
-- **Reject** — the order is cancelled, and cannot be undone from the dashboard. Supervisor, Manager
-  and Owner.
-- **Revise** — the order's discount and total are rewritten. Supervisor, Manager and Owner.
+- **Reject** — the order is cancelled, and cannot be undone from the dashboard. Supervisor and
+  Owner.
+- **Revise** — the order's discount and total are rewritten. Supervisor and Owner.
+
+A Manager sees neither the section nor a verb: rejecting and revising are shown only to a role that
+holds order management **and** the approval permission that opens Approvals.
 
 The limit itself is the discount ceiling configured for your boutique, not a number Aveline decides.
 

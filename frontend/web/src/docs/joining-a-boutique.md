@@ -63,7 +63,7 @@ If none of that applies, the message in the red panel is the server's own explan
 - Your account becomes active and your role — Staff, Supervisor or Manager — is set from the code.
 - **Staff** sees clients, the catalog, the Salon and the usage balance, and can approve orders.
 - **Supervisor** adds the income register and reject/revise decisions.
-- **Manager** runs the shop without reaching your channel credentials or billing.
+- **Manager** runs the shop, including Billing, without reaching your channel credentials.
 - [Roles & Permissions](/docs/roles-permissions) has the full table.
 
 ## Limits

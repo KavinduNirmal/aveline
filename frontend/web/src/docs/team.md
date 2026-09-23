@@ -65,13 +65,14 @@ either **Invite staff** or **Pending codes** in the page header.
 
 1. Click **Invite staff** (or **Pending codes**, then **New code**).
 2. Choose the **Staff role**. The drawer explains each one:
-   - **Manager** — *Runs the shop day to day: clients, catalog, income and staff, without the
-     integrations credentials.*
    - **Supervisor** — *Approves and oversees the counter: clients, catalog and the income
      register.*
+   - **Manager** — *Runs the shop day to day: clients, catalog, income and staff, without the
+     integrations credentials.*
    - **Staff** — *The counter: clients, visits and orders, with no register or settings.*
-3. Choose the **Code lifetime**: **24 Hours (Standard)**, **7 Days** or **30 Days**. After that the
-   code stops working. The server clamps any lifetime to between one hour and 30 days.
+3. Choose the **Code lifetime** (the setup wizard calls this **Code Expiration**): **24 Hours
+   (Standard)**, **7 Days** or **30 Days**. After that the code stops working. The server clamps any
+   lifetime to between one hour and 30 days.
 4. Choose **How many**: **One**, or **Batch** for up to ten codes at a time.
    - With **One**, you can optionally enter an address in **Send to**. Leave it empty to copy the
      code and share it yourself.

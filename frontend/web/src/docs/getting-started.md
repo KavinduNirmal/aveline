@@ -90,8 +90,9 @@ only.
 ## Step 7: Invite your team (optional)
 
 Generate an onboarding code for a colleague: choose the **Staff Role** (Supervisor, Manager or
-Staff) and a **Code Expiration** (24 hours, 7 days or 30 days), and optionally enter their email.
-Click **Generate Code**, then copy the code, copy the invitation link, or show its QR code.
+Staff) and a **Code Expiration** (24 hours, 7 days or 30 days) — [Team](/docs/team) calls the same
+setting **Code lifetime** — and optionally enter their email. Click **Generate Code**, then copy the
+code, copy the invitation link, or show its QR code.
 
 You can also do this later from [Team](/docs/team).
 
@@ -117,9 +118,9 @@ Blossom allowance and warms up your agents. The success screen confirms your all
 
 ## What your role can do
 
-You are the **Owner** of the boutique: the only role that reaches Billing, Settings and
-Integrations. [Roles & Permissions](/docs/roles-permissions) has the full table, and it is what to
-read before you invite your first colleague.
+You are the **Owner** of the boutique: the only role that reaches Settings and Integrations.
+Billing is open to a Manager too. [Roles & Permissions](/docs/roles-permissions) has the full table,
+and it is what to read before you invite your first colleague.
 
 ## Where to go next
 

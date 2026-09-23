@@ -116,3 +116,6 @@ in ADR-023.
 - [`app/context/__init__.py`](../../agnet-service/app/context/__init__.py) — window, compaction, rendering
 - [`inbox.md`](./inbox.md) — the conversation surface the context is drawn from
 - [`integrations.md`](./integrations.md) — the `.NET` to agent-service contract
+- [`handbook.md`](./handbook.md) — the documentation lane, and [`tenant-awareness.md`](./tenant-awareness.md)
+  for the live-figures lane. Both are *live data* rather than conversation history: they are fetched
+  per turn into their own prompt blocks and never enter the window, the summary, or `pinned_slots`.

@@ -800,6 +800,45 @@ ingestion idempotent on `(organizationId, workflowId)`.
 
 Internal reads. `records` returns a **bare array** and does not clamp `page`.
 
+#### `GET /internal/usage/tenant/{organizationId:guid}`
+
+Internal read. **Not callable by frontends.** One organisation's own account position, for Aveline
+to answer "how many Blossoms do I have left?" (ADR-026). The agent service reads it from the
+`load_tenant_usage` node, and only when the request that reached it carried `staff_query: true`, so
+a customer message never causes this route to be called at all.
+
+**Response `200`:**
+
+```json
+{
+  "organizationId": "…",
+  "blossoms": {
+    "organizationId": "…", "periodStart": "2026-09-01T00:00:00Z",
+    "periodEnd": "2026-09-30T23:59:59Z", "periodIsClosed": false, "planTier": "Bloom",
+    "monthlyBlossomLimit": 500, "blossomGranted": 100, "blossomAdjusted": 0,
+    "blossomUsed": 87.4, "blossomRemaining": 512.6, "percentUsed": 17.48,
+    "lowBalanceThresholdPercent": 20, "asOf": "…"
+  },
+  "staff": { "key": "staff.max", "used": 2, "limit": 3, "remaining": 1,
+             "percentUsed": 66.67, "isHardLimit": true },
+  "customers": { "key": "customers.active.max", "used": 118, "limit": 250, "remaining": 132,
+                 "percentUsed": 47.2, "isHardLimit": true },
+  "customerCountBasis": "customers active in the last 90 days (… )",
+  "blossomsAreLow": false,
+  "asOf": "…"
+}
+```
+
+**Errors:** `404 { "message": "…" }` when the organisation does not exist; `401` empty.
+
+**Composition, not calculation.** `blossoms` is `BlossomBalanceDto`, the same projection
+`GET /api/v1/orgs/{organizationId}/blossoms/balance` returns, so it carries the reconciled
+`blossomRemaining` rather than one derived from the limit; `staff` and `customers` come from
+`ISubscriptionService.GetEntitlementUsageAsync`. Entitlement usage is read **first** because the
+balance read creates the period account on demand, so it validates the tenant before anything is
+written. `blossoms.planTier` is the billing period's snapshot (written by the rollover job, not by a
+mid-period plan change) and is deliberately **not** shown to the model.
+
 ### B.10 Webhooks
 
 | Method | Path | Auth | Notes |

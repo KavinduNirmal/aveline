@@ -277,6 +277,26 @@ class ToolRegistry:
             params={"organizationId": org_id, "limit": limit},
         )
 
+    # ============================== TENANT ACCOUNT ==============================
+
+    async def get_tenant_usage(self, org_id: str) -> dict[str, Any]:
+        """Read the organisation's own account position (ADR-026).
+
+        The Blossom balance and the seat/customer allowances the boutique's dashboard shows, from
+        the same backend projections that dashboard renders. The caller is responsible for the
+        audience check: this method performs no permission reasoning of its own, and must only be
+        reached for an organisation whose request carried explicit staff evidence.
+
+        Args:
+            org_id: The organisation (tenant scope).
+
+        Returns:
+            The backend snapshot envelope ``{organizationId, blossoms, staff, customers,
+            customerCountBasis, asOf}``, with each allowance carrying
+            ``{key, used, limit, remaining, percentUsed, isHardLimit}``.
+        """
+        return await self._client.request("GET", f"/internal/usage/tenant/{org_id}")
+
     # ============================== VISUAL AGENT ==============================
 
     async def search_inventory(self, criteria: dict[str, Any]) -> dict[str, Any]:

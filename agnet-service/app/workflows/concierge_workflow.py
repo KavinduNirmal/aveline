@@ -33,7 +33,7 @@ from app.agents.visual_insight.routing import route_after_visual
 from app.context import compact
 from app.core.config import get_settings
 from app.customer_resolution import resolve_customer
-from app.gate import classify_by_rules, supervise
+from app.gate import classify_by_rules, may_read_tenant_account, supervise
 from app.llm.runtime import (
     memory_llm_or_none,
     supervisor_llm_or_none,
@@ -74,6 +74,10 @@ class ConciergeState(TypedDict, total=False):
     # Handbook excerpts retrieved for a platform question (ADR-025). Retrieved before the
     # supervisor so the model composes a grounded answer rather than routing one.
     handbook_hits: list[dict[str, Any]]
+    # This boutique's own account figures - Blossom balance, seat and customer allowances - for an
+    # account question, and only when the request was allowed to see them (ADR-026). Absent means
+    # "not fetched or not permitted", and the reply says so rather than guessing.
+    tenant_usage: dict[str, Any] | None
     intent: dict[str, Any] | None
     # True when the run is backed by a checkpoint thread. A real pause needs one: `interrupt()`
     # writes the pause into the checkpoint, and without a thread there is nothing to resume.
@@ -189,6 +193,51 @@ async def run_load_handbook(state: ConciergeState) -> dict[str, Any]:
     return {"handbook_hits": hits}
 
 
+async def run_load_tenant_usage(state: ConciergeState) -> dict[str, Any]:
+    """Fetch this boutique's own account figures for an account question (ADR-026).
+
+    Runs between ``load_handbook`` and ``supervisor``, for the same reason the handbook does: the
+    supervisor composes the answer in the call that would otherwise only route it. Four gates, and
+    all of them must pass before anything is fetched:
+
+    1. **The feature is on.** ``tenant_awareness_enabled`` is the operator's kill switch.
+    2. **Audience.** Only a request that declared itself staff may see the figures
+       (:func:`app.gate.may_read_tenant_account`). The API sends ``staff_query: true`` on the staff
+       paths and ``false`` on the inbound customer path, so a customer message never reaches the
+       tenant endpoint at all - the leak is closed before the fetch rather than after it.
+    3. **Relevance.** Only an account question needs the figures; fetching them for a product
+       question would be a query the model was never going to use.
+    4. **A tenant.** Without an organisation there is nothing to read.
+
+    Best-effort, exactly like its neighbours: a fetch failure leaves the figures absent and the run
+    proceeds, because losing the numbers degrades an answer but must never prevent one. Unlike the
+    handbook, this is *not* skipped when no model is configured: the figures are data, so the reply
+    can be built from them with no LLM at all.
+    """
+    settings = get_settings()
+    if not settings.tenant_awareness_enabled:
+        return {"tenant_usage": None}
+
+    if not may_read_tenant_account(state.get("org_context")):
+        return {"tenant_usage": None}
+
+    if classify_by_rules(state.get("message", "")).intent_type != "tenant_account":
+        return {"tenant_usage": None}
+
+    org_context = state.get("org_context") or {}
+    org_id = org_context.get("organization_id") or org_context.get("org_id")
+    if not org_id:
+        return {"tenant_usage": None}
+
+    try:
+        snapshot = await ToolRegistry().get_tenant_usage(str(org_id))
+    except Exception:  # noqa: BLE001 - account figures are an enhancement, never a precondition
+        logger.exception("Tenant account fetch failed; continuing without the figures.")
+        return {"tenant_usage": None}
+
+    return {"tenant_usage": snapshot if isinstance(snapshot, dict) else None}
+
+
 def _context_fields(state: ConciergeState) -> dict[str, Any]:
     """The three ADR-023 context layers, ready to spread into a sub-graph's initial state.
 
@@ -218,9 +267,10 @@ async def run_supervisor(state: ConciergeState) -> dict[str, Any]:
     """
     settings = get_settings()
     rule_intent = classify_by_rules(state["message"])
-    # The supervisor is consulted for the two intents it can actually act on: an unclassifiable
-    # message it may route, and a platform question it composes an answer to from the handbook.
-    consultable = rule_intent.intent_type in {"general_inquiry", "aveline_help"}
+    # The supervisor is consulted for the intents it can actually act on: an unclassifiable
+    # message it may route, a platform question it composes an answer to from the handbook, and an
+    # account question it composes from the fetched figures (ADR-026).
+    consultable = rule_intent.intent_type in {"general_inquiry", "aveline_help", "tenant_account"}
 
     plan = await supervise(
         state["message"],
@@ -232,6 +282,7 @@ async def run_supervisor(state: ConciergeState) -> dict[str, Any]:
         thread_summary=state.get("thread_summary"),
         pinned_slots=state.get("pinned_slots"),
         handbook_hits=state.get("handbook_hits"),
+        tenant_usage=state.get("tenant_usage"),
     )
     logger.debug(
         "Supervisor decided %s -> agents=%s clarification=%s",
@@ -741,8 +792,9 @@ def _route_after_resolve(state: ConciergeState) -> str:
 
     # A platform question is answered, not routed (ADR-025). Aveline's grounded reply is already
     # composed, so running Ava over it would only add a customer brief nobody asked for - and for a
-    # staff question about the product there is no customer to brief on.
-    if intent.get("intent_type") == "aveline_help" and intent.get("reply"):
+    # staff question about the product there is no customer to brief on. An account question is the
+    # same shape with live figures instead of documentation (ADR-026).
+    if intent.get("intent_type") in {"aveline_help", "tenant_account"} and intent.get("reply"):
         return "formulate_response"
 
     # A resolved-or-not miss is not a veto. Only skip the memory agent when the supervisor
@@ -946,6 +998,7 @@ def build_concierge_graph(
 
     graph.add_node("load_context", node("load_context", run_load_context))
     graph.add_node("load_handbook", node("load_handbook", run_load_handbook))
+    graph.add_node("load_tenant_usage", node("load_tenant_usage", run_load_tenant_usage))
     graph.add_node("supervisor", node("supervisor", run_supervisor))
     graph.add_node("resolve_customer", node("resolve_customer", run_resolve_customer))
     graph.add_node("memory_agent", node("memory_agent", run_memory_agent))
@@ -958,7 +1011,10 @@ def build_concierge_graph(
     # The handbook is retrieved before the supervisor, so a platform question can be answered in
     # the same call that would otherwise only route it (ADR-025).
     graph.add_edge("load_context", "load_handbook")
-    graph.add_edge("load_handbook", "supervisor")
+    # The boutique's own figures are read after the handbook, before the supervisor, so an account
+    # question is answered in the same call that would otherwise only route it (ADR-026).
+    graph.add_edge("load_handbook", "load_tenant_usage")
+    graph.add_edge("load_tenant_usage", "supervisor")
     graph.add_conditional_edges("supervisor", _route_after_intent)
     graph.add_conditional_edges("resolve_customer", _route_after_resolve)
     graph.add_conditional_edges("memory_agent", _route_after_memory)
@@ -1010,6 +1066,7 @@ async def run_concierge(
         "thread_summary": None,
         "pinned_slots": {},
         "handbook_hits": [],
+        "tenant_usage": None,
         "intent": None,
         "checkpointing": thread_id is not None,
         "resolution": None,

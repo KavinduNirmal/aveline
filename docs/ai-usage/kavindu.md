@@ -6425,3 +6425,128 @@ set, tapping opens the page; without it, tapping shows the path instead.
   locally is the outstanding check.
 
 
+## Session 2026-09-24 (b) — Tenant account awareness: Aveline can answer for the boutique itself
+
+**Task:** "give the agent tenant information awareness, so when the tenant asks, how much blossoms do
+I have left, how many customers do I have left, or how many seats I have left aveline can answer?"
+
+**What the questions were doing before.** Two of the three landed in the wrong lane, and neither
+failure was a crash, which is why neither had been noticed:
+
+- "How many Blossoms do I have left?" already classified as **`aveline_help`**, because
+  `_AVELINE_HELP_PATTERNS` claims any mention of "blossom" (`r"\bblossoms?\b"`). So it was answered
+  from the handbook - the page explaining what Blossoms *are* - under a rule that forbids quoting
+  Blossom amounts. A deflection, with a citation.
+- "How many customers do I have left?" matched **nothing** and fell through to `general_inquiry`,
+  which routes the customer-memory agent. Ava would have briefed on a customer, when the question is
+  a count of them. (`"how much"` is a pricing keyword; `"how many"` is not.)
+
+**The figures already existed and were already authoritative.** `IBlossomService.GetBalanceAsync`
+calls itself "the authoritative balance projection for one period", and
+`ISubscriptionService.GetEntitlementUsageAsync` already computes all three of exactly what was asked -
+Blossoms, `staff.max`, `customers.active.max` - for the tenant dashboard's usage panel. Nothing new
+had to be calculated; the work was transport, audience and authority.
+
+### The audience is the whole feature
+
+This is the first time the concierge states a fact about the boutique's money, and the same workflow
+answers inbound WhatsApp messages from **customers**. A customer asking "how many Blossoms do I have
+left?" must not be shown the tenant's balance.
+
+Tracing the two call sites settled it. `ConversationService` has exactly two `/agents/query` callers:
+`TriggerInboundDraftAsync`, which marks itself `direction = "inbound"`, and `TriggerAgentAsync`,
+which sends no direction at all and serves the Salon note, regeneration and the agent brief. The
+commerce lane already reads that asymmetry through `staff_query`.
+
+But that heuristic is **open by default** - an absent direction reads as staff - which is right for
+identity and wrong for money: a future channel that forgets to declare itself would open the lane. So
+the API now states the audience explicitly on **both** paths (`staff_query: true` / `false`), and the
+agent's gate requires it to be present and true. A missing declaration yields a missing answer, never
+a leaked balance.
+
+Tracing that turned up a pre-existing inconsistency worth recording: the workflow derives "is this
+staff?" in **two** places and they disagree. The memory node reads it as `not direction`, the visual
+node as `not direction or direction in ("outbound", "internal")`, so they differ on
+`direction="outbound"`. I deliberately did **not** add a third named helper to unify them: that would
+have been a behaviour change to the memory agent smuggled into a billing feature, and picking either
+semantics for the account gate would have reopened the default-open problem. The account gate instead
+requires the explicit flag and says why in its docstring. Consolidating the two is a follow-up.
+
+### Reuse, not a second formula
+
+`GET /internal/usage/tenant/{organizationId}` (in the existing `/internal/usage` group,
+`InternalServicePolicy`) composes what already exists:
+
+- the Blossom half is literally `BlossomBalanceDto.From(balance, threshold)` - the projection the
+  boutique's own meter renders - so `blossomRemaining` is the reconciled remainder rather than
+  `limit - used`;
+- the seat/customer half is `GetEntitlementUsageAsync`, with `remaining` assembled from it;
+- `blossomsAreLow` is computed server-side by the rule the clients already apply.
+
+The codebase treats a second copy of a formula as a defect (`LedgerDerivedBalance` is shared by the
+metric collector and the admin console for exactly this reason), so the test that matters uses an
+account whose stored remainder differs from *every* derivable one - 500 limit + 100 granted - 87.4
+used = 512.6 stored, against 662.6 from the entitlement limit and 412.6 from the bare limit. A future
+"simplification" to arithmetic now fails loudly.
+
+Entitlement usage is read **first**, because the balance read creates the period account on demand:
+asking it about an unknown organisation would leave a stray account row. Pinned by a test that
+asserts the 404 *and* that no account was created.
+
+### The number is enforced, not requested
+
+The reply is model-written, so "do not invent amounts" would have been a request. Instead
+`_with_a_bounded_reply` keeps the model's wording only while **every numeral in it appears in the
+rendered snapshot block**, normalising `1,234.50` against `1234.5`; anything else is discarded in
+favour of a deterministic reply built from the snapshot, with a warning logged. `_pin_authoritative_lane`
+stops the model re-routing an account question out of the lane, which would have removed the guard.
+
+Keying that guard on the rendered *block* rather than on the snapshot merely existing made it stronger
+than a numeral check, and the difference is worth stating: with no figures to show, the model may not
+word an account answer at all - not even one carrying no numerals, because "you have none left" is a
+claim about the account whether or not it contains a digit. The first version of the guard let that
+through.
+
+That settled a documented conflict honestly: ADR-025 and `SYSTEM_PROMPT.md` say the concierge must not
+quote Blossom amounts. That rule is about **published** amounts - pricing policy - and a boutique's own
+balance is a different thing, already shown to every boutique role by `billing:view:self`. The prompt
+rule was narrowed to published pricing rather than repealed, and the handbook's silence is untouched.
+
+### The noun is not the intent
+
+`tenant_account` had to be checked **before** `is_aveline_help` (or `\bblossoms?\b` claims every
+balance question) while still leaving the documentation lane intact. The discriminator is the shape of
+the ask: "what is a Blossom?", "how much does a Blossom cost?" and "how many seats does the Orchid
+plan include?" are all documentation, and none of them carry a "left / remaining / do I have" tail.
+
+The first version of the pattern was wrong in a way only an existing test could show:
+`tests/test_handbook_retrieval.py` already asserted that "Where can I see my Blossom balance?" is
+`aveline_help`, and the new possessive pattern claimed it. *Locating* a figure is documentation;
+asking for its value is not. `_is_interface_location_question` encodes that, and the locating cases
+are now pinned in both directions.
+
+### Verification
+
+- Python: **799 passed, 2 skipped, 2 xfailed**; `ruff check app/ tests/ scripts/` clean. 52 new tests
+  across intent/precedence, the audience helpers, the block renderer, the deterministic reply, the
+  numeral guard and the node's four gates.
+- `.NET`: 9 new/updated tests pass - the audience flag at all three trigger sites, and 7 for the
+  endpoint (401, 404-with-no-stray-account, the authoritative-balance property, agreement with the
+  billing summary the meter reads, allowances against plan limits, the low-water boundary, and a
+  raw-document assertion that no operator detail leaked into the shape).
+- One test-host wrinkle, local-only: the suite boots the real app, so a machine whose environment
+  selects `Media:Provider=cloudinary` fails the media options validator before any assertion runs.
+  Pinning the provider to `database` in the test host makes it hermetic; CI selects nothing and reads
+  no `.env`.
+- **No frontend change.** Both apps already send staff messages down the staff path and the reply is
+  an ordinary `text` block.
+
+### Worth knowing
+
+- `blossoms.planTier` is deliberately **not** rendered. It is the billing period's snapshot
+  (`PlanTierSnapshot` is written by the rollover job, not by a mid-period plan change), so quoting it
+  could name a plan the boutique has already left. Reporting the live plan needs a live read.
+- `customers.active.max` counts customers active in the last **90 days**, not the customer book, so
+  `customerCountBasis` travels into the prompt and an answer cannot call it "your customers".
+- Like `load_handbook`, a model-first classification of a novel phrasing fails **safe**: no fetch
+  happened, so the reply is the "couldn't reach your figures" admission rather than a guess.

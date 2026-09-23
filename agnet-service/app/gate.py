@@ -30,6 +30,11 @@ IntentType = Literal[
     # Deliberately not `product_help`: `product` already means the boutique's inventory in this
     # codebase (it is Elle's whole lane), so `product_help` would read as "help with our products".
     "aveline_help",
+    # A question about this boutique's *own account*: "how many Blossoms do I have left?", "how
+    # many seats have I got?". Separate from `aveline_help`, which is answered from documentation:
+    # these are answered from live figures, so they have a different source, a different freshness
+    # and a staff-only audience (ADR-026).
+    "tenant_account",
 ]
 
 AgentName = Literal["memory", "visual", "commerce"]
@@ -100,6 +105,79 @@ def is_aveline_help(message: str) -> bool:
     return any(pattern.search(message) for pattern in _AVELINE_HELP_PATTERNS)
 
 
+#: High-precision shapes for "what is left on this boutique's own account" (ADR-026). Checked
+#: *before* :func:`is_aveline_help`, which already claims any mention of "blossom": "what is a
+#: Blossom?" is a documentation question, but "how many Blossoms do I have left?" is a question
+#: about this tenant's own balance, and the two cannot share a lane.
+#:
+#: The distinction is the tail, not the noun. A counter word alone is not enough - "how much does a
+#: Blossom cost?" and "how many seats does the Orchid plan include?" are both documentation
+#: questions, and both are deliberately left to ``aveline_help``. What marks a tenant question is
+#: asking about *the asker's own* position: what is left, what remains, what they have.
+_TENANT_ACCOUNT_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        # "how many/much <counter> ... left / remaining / do I have / can I add"
+        r"\bhow (?:many|much)\b[^.?!]{0,40}"
+        r"\b(?:blossoms?|credits?|seats?|staff|customers?|users?)\b[^.?!]{0,30}"
+        r"\b(?:left|remaining|used|do (?:i|we) have|have (?:i|we) got"
+        r"|can (?:i|we) (?:add|invite|create|have))\b",
+        # "how much do I have left?" - the counter word is in the previous turn.
+        r"\bhow (?:much|many)\b[^.?!]{0,25}\b(?:do (?:i|we) have|have (?:i|we) got)\b"
+        r"[^.?!]{0,15}\bleft\b",
+        # "<counter> left / remaining"
+        r"\b(?:blossoms?|credits?|seats?|customers?)\s+(?:left|remaining)\b",
+        # "my/our <counter> ... left / remaining / balance"
+        r"\b(?:my|our)\s+(?:blossoms?|credits?|seats?|customers?|staff|users?)\b"
+        r"[^.?!]{0,25}\b(?:left|remaining|balance)\b",
+        r"\b(?:blossom|credit)\s+balance\b",
+        r"\b(?:am i|are we)\s+(?:near|at|over|close to)\s+(?:my|our)\s+limit\b",
+    )
+)
+
+
+def is_tenant_account(message: str) -> bool:
+    """Whether ``message`` asks about this boutique's own account figures (ADR-026)."""
+    if _is_interface_location_question(message):
+        return False
+    return any(pattern.search(message) for pattern in _TENANT_ACCOUNT_PATTERNS)
+
+
+#: Shapes that point at the *interface* rather than asking for a value. "Where can I see my Blossom
+#: balance?" is documentation - the handbook says which screen - while "what is my Blossom balance?"
+#: is a question about the account. Both carry the same possessive phrase, so the tense of the verb
+#: is the only thing separating them, and the handbook lane keeps the locating form.
+_INTERFACE_LOCATION_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\b(?:where|how)\b[^.?!]{0,30}\b(?:see|find|check|view|look at)\b",
+        r"\b(?:show|tell) me (?:where|how)\b",
+        r"\bis there a way to\b",
+    )
+)
+
+
+def _is_interface_location_question(message: str) -> bool:
+    """Whether ``message`` asks where a figure lives rather than what it is."""
+    return any(pattern.search(message) for pattern in _INTERFACE_LOCATION_PATTERNS)
+
+
+def may_read_tenant_account(org_context: dict[str, Any] | None) -> bool:
+    """Whether this request may be shown the boutique's own account figures (ADR-026).
+
+    Requires the caller to have said so *explicitly*: the API sends ``staff_query: true`` on the
+    staff paths and ``false`` on the inbound customer path, so the failure mode of a new channel
+    that forgets the flag is a missing answer rather than a leaked Blossom balance. A missing seat
+    count is recoverable; a customer reading the boutique's balance is not.
+
+    This deliberately does **not** reuse the ``direction``-based derivations in the workflow's
+    memory and visual nodes. Those are identity heuristics that read an absent direction as staff,
+    which is right for deciding whether a customer brief is wanted and wrong for money: it would
+    open this lane for any future caller that simply forgot to declare itself.
+    """
+    return (org_context or {}).get("staff_query") is True
+
+
 # Which agents handle each intent.
 _AGENT_ROUTING: dict[IntentType, list[AgentName]] = {
     "order_placement": ["memory", "visual", "commerce"],
@@ -111,6 +189,9 @@ _AGENT_ROUTING: dict[IntentType, list[AgentName]] = {
     # A platform question is not a customer question: no specialist runs, and Aveline answers from
     # the handbook herself.
     "aveline_help": [],
+    # Nor is a question about the boutique's own account a customer question. Aveline answers it
+    # from the fetched figures, so no specialist runs (ADR-026).
+    "tenant_account": [],
     "out_of_scope": [],
 }
 
@@ -144,6 +225,14 @@ def classify_by_rules(message: str) -> IntentGateOutput:
             suggested_agents=[],
             is_relevant=False,
             safety_flags=["out_of_scope"],
+        )
+
+    # A question about this boutique's own account outranks both: it is the more specific reading,
+    # and `is_aveline_help` would otherwise claim it on the word "blossom" alone (ADR-026).
+    if is_tenant_account(lowered):
+        return IntentGateOutput(
+            intent_type="tenant_account",
+            suggested_agents=_AGENT_ROUTING["tenant_account"],
         )
 
     # A question about Aveline outranks the product/pricing vocabulary below: the routing table
@@ -219,7 +308,8 @@ _SUPERVISOR_INSTRUCTION = (
     "this shape, with no prose and no code fences:\n"
     "{\n"
     '  "intent_type": "order_placement" | "item_search" | "pricing_query" | '
-    '"customer_preference" | "event_query" | "out_of_scope" | "general_inquiry" | "aveline_help",\n'
+    '"customer_preference" | "event_query" | "out_of_scope" | "general_inquiry" | "aveline_help" | '
+    '"tenant_account",\n'
     '  "agents": ["memory" | "visual" | "commerce", ...],\n'
     '  "needs_customer_resolution": true | false,\n'
     '  "clarification": "<a short question to ask instead, or null>",\n'
@@ -234,9 +324,14 @@ _SUPERVISOR_INSTRUCTION = (
     "Aveline's voice. Set it to null when you route `visual` or `commerce`: they produce the "
     "content, and a second answer reads as noise."
     "\n\nWhen HANDBOOK excerpts are provided, they are the only source you may answer a platform "
-    "question from. Do not invent features, prices, limits or policies, and do not quote Blossom "
-    "amounts or per-action costs. If the excerpts do not answer the question, say so warmly and "
-    "point the person at support rather than guessing."
+    "question from. Do not invent features, prices, limits or policies, and never state what a "
+    "Blossom costs or what an action is charged - pricing is not yours to publish. If the excerpts "
+    "do not answer the question, say so warmly and point the person at support rather than guessing."
+    "\n\nUse `tenant_account` when the person is asking about this boutique's own account - what is "
+    "left of its Blossoms, its staff seats, or its active-customer allowance. When the asker is "
+    "entitled to those figures they arrive in a TENANT ACCOUNT section: quote only the numbers it "
+    "contains, and never estimate, recompute or round one. When no such section is present you do "
+    "not have the figures, so say you cannot see them rather than answering from memory."
     "\n\nAnswer as Aveline, in your own words: meet the question before you answer it, lead with "
     "the answer, and keep the detail to what they actually need. Never recite an excerpt or a "
     "table back at them, and do not list the sources in your text - they are shown beside your "
@@ -244,8 +339,9 @@ _SUPERVISOR_INSTRUCTION = (
 )
 
 #: The intents the model is consulted for. `aveline_help` joins the list because a platform
-#: question is composed, not routed: Aveline answers it herself from the handbook.
-_CONSULTABLE_INTENTS = frozenset({"general_inquiry", "aveline_help"})
+#: question is composed, not routed: Aveline answers it herself from the handbook. `tenant_account`
+#: joins it for the same reason, from live figures rather than from documentation.
+_CONSULTABLE_INTENTS = frozenset({"general_inquiry", "aveline_help", "tenant_account"})
 
 #: What Aveline says when a platform question reached the model but no answer came back. Better a
 #: plain admission than silence on a question the person explicitly asked about the product.
@@ -253,6 +349,53 @@ _HANDBOOK_MISS_REPLY = (
     "That one isn't in my handbook, I'm afraid, and I'd rather not guess. The Aveline team can "
     "help you properly - you'll find them under Contact."
 )
+
+#: What Aveline says about the boutique's account when the request may see it but the figures could
+#: not be read. An account question has a definite answer, so this admits a failure rather than
+#: pretending the question was the wrong one.
+_TENANT_UNAVAILABLE_REPLY = (
+    "I couldn't reach your account figures just now, I'm afraid - they're under Usage in your "
+    "dashboard. Do ask me again in a moment."
+)
+
+#: What Aveline says when the person asking is not staff. Deliberately says nothing about the
+#: boutique's position: the fact that a balance exists is itself the boutique's business, and this
+#: reply is the one a customer message would receive.
+_TENANT_NOT_STAFF_REPLY = (
+    "That's the boutique's own account rather than anything on your side, so it isn't mine to "
+    "share here. The Aveline team can help you with your own account."
+)
+
+
+def _tenant_reply(snapshot: dict[str, Any] | None) -> str:
+    """A deterministic answer built from the fetched figures (ADR-026).
+
+    The offline and fallback path, and also the guard's replacement when a model reply quotes a
+    number the account does not contain. Every figure here is one the rendered ``TENANT ACCOUNT``
+    block also carries, so the reply and the block cannot state different numbers.
+    """
+    from app.context import tenant_summary
+
+    figures = tenant_summary(snapshot)
+    if figures is None:
+        return _TENANT_UNAVAILABLE_REPLY
+
+    parts = [f"You have {figures['blossoms_remaining']} Blossoms left for this period"]
+
+    staff = figures.get("staff_remaining") or ""
+    if staff == "0":
+        parts.append("every staff seat is taken")
+    elif staff:
+        parts.append(f"{staff} staff {'seat' if staff == '1' else 'seats'} still free")
+
+    customers = figures.get("customers_remaining") or ""
+    if customers:
+        parts.append(f"room for {customers} more active customers")
+
+    sentence = ", ".join(parts) + "."
+    if figures.get("period_end"):
+        sentence += f" Your Blossoms reset on {figures['period_end']}."
+    return sentence
 
 
 async def supervise(
@@ -264,18 +407,21 @@ async def supervise(
     thread_summary: str | None = None,
     pinned_slots: dict[str, str] | None = None,
     handbook_hits: list[dict[str, Any]] | None = None,
+    tenant_usage: dict[str, Any] | None = None,
 ) -> SupervisorPlan:
-    """Decide how ``message`` should be handled (ADR-023, Decision 3; ADR-025 for the handbook).
+    """Decide how ``message`` should be handled (ADR-023, Decision 3; ADR-025; ADR-026).
 
     Deterministic rules run first as a cheap pre-filter: they are free, they are fast, and they are
     right for unambiguous input. The LLM supervisor is consulted when the rules land on
     ``general_inquiry`` (the case they cannot resolve - an unrecognised vocabulary, or a reference
-    that needs the conversation) and on ``aveline_help`` (a platform question, which is composed
-    from ``handbook_hits`` rather than routed).
+    that needs the conversation), on ``aveline_help`` (a platform question, composed from
+    ``handbook_hits``) and on ``tenant_account`` (a question about this boutique's own account,
+    composed from the live ``tenant_usage`` figures).
 
     With no LLM this returns the rule-based decision, which is the guarantee that CI and offline
     development stay deterministic (``app/llm/runtime.py``). A platform question degrades to the
-    conversational path there, because there is no model to compose a grounded answer.
+    conversational path there, because there is no model to compose a grounded answer; an account
+    question does not, because its figures are data and the reply can be built without a model.
 
     A supervisor failure degrades to the rule decision rather than raising: routing must always
     produce *something*, and the rules are a complete fallback rather than a partial one.
@@ -284,7 +430,11 @@ async def supervise(
     rule_plan = _rules_to_plan(rule_intent)
 
     if llm is None:
-        return _or_general_inquiry(rule_plan)
+        return _with_a_bounded_reply(
+            _or_general_inquiry(rule_plan),
+            tenant_usage=tenant_usage,
+            org_context=org_context,
+        )
 
     if rule_intent.intent_type not in _CONSULTABLE_INTENTS:
         return rule_plan
@@ -298,18 +448,47 @@ async def supervise(
                 thread_summary=thread_summary,
                 pinned_slots=pinned_slots,
                 handbook_hits=handbook_hits,
+                tenant_usage=tenant_usage,
             )
         )
     except Exception:  # noqa: BLE001 - routing must not break on a provider failure
         logger.exception("Supervisor call failed; falling back to the rule-based plan.")
-        return _or_general_inquiry(rule_plan)
+        return _with_a_bounded_reply(
+            _or_general_inquiry(rule_plan),
+            tenant_usage=tenant_usage,
+            org_context=org_context,
+        )
 
     refined = _parse_plan(getattr(response, "content", None))
     if refined is None:
         logger.warning("Supervisor returned no usable plan; keeping the rule-based decision.")
-        return _or_general_inquiry(rule_plan)
+        return _with_a_bounded_reply(
+            _or_general_inquiry(rule_plan),
+            tenant_usage=tenant_usage,
+            org_context=org_context,
+        )
 
-    return _with_a_bounded_reply(refined)
+    refined = _pin_authoritative_lane(refined, rule_plan)
+    return _with_a_bounded_reply(refined, tenant_usage=tenant_usage, org_context=org_context)
+
+
+def _pin_authoritative_lane(plan: SupervisorPlan, rules: SupervisorPlan) -> SupervisorPlan:
+    """Stop the model from routing away from a lane whose answer is enforced in code.
+
+    An account question is answered from fetched figures, and :func:`_with_a_bounded_reply`
+    guarantees those figures come from the snapshot only while the plan stays in the lane. The
+    model still writes the wording; it does not get to move the question out from under the guard
+    that stops it inventing a balance.
+    """
+    if rules.intent_type != "tenant_account" or plan.intent_type == "tenant_account":
+        return plan
+
+    logger.info(
+        "Supervisor re-routed a tenant-account question to %s; keeping the account lane so its "
+        "figures stay snapshot-bound.",
+        plan.intent_type,
+    )
+    return plan.model_copy(update={"intent_type": "tenant_account", "suggested_agents": []})
 
 
 def _or_general_inquiry(plan: SupervisorPlan) -> SupervisorPlan:
@@ -318,6 +497,9 @@ def _or_general_inquiry(plan: SupervisorPlan) -> SupervisorPlan:
     Reached when the rules classify ``aveline_help`` but no model is available to compose a grounded
     answer (or the call failed). Falling back to ``general_inquiry`` keeps Aveline's deterministic
     reply rather than leaving the question unanswered.
+
+    An account question is deliberately **not** degraded: its answer is fetched data rather than
+    composed prose, so :func:`_with_a_bounded_reply` can answer it with no model at all.
     """
     if plan.intent_type != "aveline_help":
         return plan
@@ -331,21 +513,72 @@ def _or_general_inquiry(plan: SupervisorPlan) -> SupervisorPlan:
     )
 
 
-def _with_a_bounded_reply(plan: SupervisorPlan) -> SupervisorPlan:
+#: Numeral-shaped tokens, including thousands separators and a decimal part.
+_NUMERAL = re.compile(r"\d[\d,]*\.?\d*")
+
+
+def _numerals(text: str) -> set[str]:
+    """The numeral-shaped tokens in ``text``, normalised so equivalent spellings compare equal.
+
+    ``1,234.50`` and ``1234.5`` reduce to the same token, so the account guard does not reject a
+    reply merely for formatting a figure differently from the block it was given.
+    """
+    found: set[str] = set()
+    for raw in _NUMERAL.findall(text or ""):
+        token = raw.replace(",", "").rstrip(".")
+        whole, _, fraction = token.partition(".")
+        fraction = fraction.rstrip("0")
+        found.add(f"{whole}.{fraction}" if fraction else whole)
+    return found
+
+
+def _with_a_bounded_reply(
+    plan: SupervisorPlan,
+    *,
+    tenant_usage: dict[str, Any] | None = None,
+    org_context: dict[str, Any] | None = None,
+) -> SupervisorPlan:
     """Keep the supervisor's own reply within its lane.
 
-    Three bounds, all enforced here rather than trusted to the model:
+    Four bounds, all enforced here rather than trusted to the model:
 
     - A plan that routes a content specialist never carries a reply. Those agents answer, and two
       answers to one message read as noise.
     - A conversational message for which no model answer arrived still gets the deterministic
       reply, so a greeting is never left unanswered.
     - A platform question that produced no answer gets a plain admission rather than silence.
+    - An account question gets its figures from the fetched snapshot, never from the model. The
+      model may word the answer only when it was actually shown the figures, and only while every
+      numeral it used appears in what it was shown. A Blossom balance is a fact about money, so a
+      plausible-looking invention is rejected in favour of the deterministic reply rather than
+      passed through (ADR-026).
     """
+    from app.context import render_tenant_block
+
     reply = plan.reply
 
     if _CONTENT_AGENTS.intersection(plan.suggested_agents):
         reply = None
+    elif plan.intent_type == "tenant_account":
+        # Keyed on the rendered block rather than on the snapshot being present: the block *is*
+        # what the model was shown, so it is also exactly the set of figures it may quote. When it
+        # is empty the model saw no account data, so it does not get to word an account answer at
+        # all - not even one carrying no numerals, because "you have none left" is a claim about
+        # the account regardless of whether it contains a digit.
+        block = render_tenant_block(tenant_usage)
+        if block:
+            if reply and not _numerals(reply) <= _numerals(block):
+                logger.warning(
+                    "Discarding a tenant-account reply that quoted a figure absent from the "
+                    "account snapshot; answering from the snapshot instead."
+                )
+                reply = None
+            if not reply:
+                reply = _tenant_reply(tenant_usage)
+        elif may_read_tenant_account(org_context):
+            reply = _TENANT_UNAVAILABLE_REPLY
+        else:
+            reply = _TENANT_NOT_STAFF_REPLY
     elif not reply:
         if plan.intent_type == "aveline_help":
             reply = _HANDBOOK_MISS_REPLY
@@ -382,15 +615,17 @@ def _build_supervisor_messages(
     thread_summary: str | None,
     pinned_slots: dict[str, str] | None,
     handbook_hits: list[dict[str, Any]] | None = None,
+    tenant_usage: dict[str, Any] | None = None,
 ) -> list[Any]:
-    """Assemble the supervisor's prompt from the bounded context window (ADR-023) and handbook.
+    """Assemble the supervisor's prompt from the bounded context window (ADR-023), the handbook
+    (ADR-025) and this boutique's own account figures (ADR-026).
 
     Imports are local so this module stays importable without the prompt package, keeping the
     deterministic gate cheap to unit-test.
     """
     from langchain_core.messages import HumanMessage, SystemMessage
 
-    from app.context import render_context_block, render_handbook_block
+    from app.context import render_context_block, render_handbook_block, render_tenant_block
     from app.prompts.assembly import assemble_system_prompt
 
     lines: list[str] = []
@@ -406,6 +641,13 @@ def _build_supervisor_messages(
     handbook_block = render_handbook_block(handbook_hits)
     if handbook_block:
         lines.append(handbook_block)
+
+    # The boutique's own live figures, when the request was allowed to fetch them (ADR-026). Placed
+    # after the handbook so the two never read as one source: documentation is quoted, accounts are
+    # read.
+    tenant_block = render_tenant_block(tenant_usage)
+    if tenant_block:
+        lines.append(tenant_block)
 
     lines.append(f"NEWEST MESSAGE:\n{message}")
     lines.append(_SUPERVISOR_INSTRUCTION)

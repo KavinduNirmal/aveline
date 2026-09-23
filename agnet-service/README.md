@@ -200,6 +200,25 @@ python scripts/seed_handbook.py --dry-run                      # no HTTP at all
 python scripts/seed_handbook.py --token "$INTERNAL_API_TOKEN"  # idempotent upsert
 ```
 
+## Tenant account (the boutique's own figures)
+
+`load_tenant_usage` runs after `load_handbook` and answers questions about the boutique's *own*
+account — "how many Blossoms do I have left?", "how many seats have I got?" — from
+`GET /internal/usage/tenant/{organizationId}`. It is gated four ways: the
+`TENANT_AWARENESS_ENABLED` flag, an **explicitly affirmative** `org_context.staff_query`, the
+`tenant_account` intent, and a present organisation.
+
+That audience gate is the important one. The API sends `staff_query: true` on the staff paths and
+`false` on the inbound customer path, so a customer message never causes the tenant endpoint to be
+called at all — and the agent requires the flag to be present and true rather than falling back to
+the `direction` heuristic, so a channel that forgets to declare itself gets a missing answer instead
+of a leaked balance. Aveline's reply is bound to the fetched snapshot: every numeral in it must appear
+in the data she was given, or the deterministic reply is used instead. Unlike the handbook, this lane
+still answers with no LLM configured — the answer is data, not composition.
+
+See `docs/architecture/tenant-awareness.md` and
+[`docs/ADR/ADR-026-tenant-account-awareness.md`](../docs/ADR/ADR-026-tenant-account-awareness.md).
+
 See `docs/architecture/handbook.md` for the corpus, chunking rules and the hybrid retrieval, and
 `handbook/README.md` for authoring a company page.
 

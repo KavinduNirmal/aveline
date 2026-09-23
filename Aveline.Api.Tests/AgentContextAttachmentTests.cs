@@ -216,6 +216,41 @@ public class AgentContextAttachmentTests
     }
 
     // =======================================================================================
+    // ADR-026 — the tenant-account audience flag, declared at every site
+    // =======================================================================================
+
+    [Fact]
+    public async Task EveryStaffSite_DeclaresTheTenantAccountAudience()
+    {
+        // Aveline reads the boutique's own Blossom balance and seat counts only when the caller
+        // says so *explicitly*, and these are the paths a staff member's question travels:
+        // SendStaffNoteAsync, and the TriggerAgentAsync payload builder its other callers use.
+        // A site that dropped the flag would silently lose the answer rather than leak it, which is
+        // still a bug — hence a per-site assertion.
+        var staffNote = await StaffNoteContextAsync();
+        var agentPayload = await AgentPayloadContextAsync();
+
+        foreach (var context in new[] { staffNote, agentPayload })
+        {
+            Assert.True(
+                context.TryGetProperty("staff_query", out var flag) && flag.ValueKind == JsonValueKind.True,
+                "a staff trigger must declare staff_query: true");
+        }
+    }
+
+    [Fact]
+    public async Task TheInboundCustomerSite_DeniesTheTenantAccountAudience()
+    {
+        // The same flag from the customer path. It is an explicit false rather than an absent key,
+        // so a future change to a missing-flag default cannot quietly open the tenant lane to an
+        // inbound WhatsApp message.
+        var context = await InboundContextAsync();
+
+        Assert.True(context.TryGetProperty("staff_query", out var flag));
+        Assert.Equal(JsonValueKind.False, flag.ValueKind);
+    }
+
+    // =======================================================================================
     // Helpers
     // =======================================================================================
 

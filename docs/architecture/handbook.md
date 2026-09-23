@@ -124,11 +124,17 @@ Design points worth knowing:
 
 ```mermaid
 flowchart LR
-    START --> load_context --> load_handbook --> supervisor
+    START --> load_context --> load_handbook --> load_tenant_usage --> supervisor
     supervisor -->|aveline_help| formulate_response
+    supervisor -->|tenant_account| formulate_response
     supervisor -->|else| resolve_customer --> memory_agent --> formulate_response
     formulate_response --> END
 ```
+
+`load_tenant_usage` sits between the handbook and the supervisor and reads the boutique's own account
+figures for the `tenant_account` intent; the two lanes are mutually exclusive by intent, so exactly
+one of them does any work on a given turn. See
+[`tenant-awareness.md`](./tenant-awareness.md).
 
 - `load_handbook` retrieves for the two intents the supervisor is consulted for (`general_inquiry`
   and `aveline_help`). The trigger is deterministic, so the model never has to decide to search and is
@@ -191,7 +197,11 @@ report per-leg recall; the agent always asks for hybrid.
   platform question.
 - **No invented facts.** The corpus is authored, writes are token-gated, and the "not covered" page
   gives the model somewhere honest to land.
-- **Known limits.** Blossom amounts and per-action costs are never quoted. Instagram and payment
+- **Known limits.** **Published** Blossom amounts and per-action costs are never quoted: what a
+  Blossom costs, or what an action is charged, is pricing policy and the corpus does not carry it.
+  That is a limit of the *documentation* lane, not of Aveline — a boutique's own balance is answered
+  from live figures by the separate account lane ([`tenant-awareness.md`](./tenant-awareness.md),
+  ADR-026), which never reads this corpus. Instagram and payment
   integration messaging is not described as working. The source documentation's contradictions (see
   ADR-025) must be fixed and re-seeded before the answers are trustworthy.
 - **Cost.** One embedding call and one indexed query per help-shaped turn, bounded by `topK` and the

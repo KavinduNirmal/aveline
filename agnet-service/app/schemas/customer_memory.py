@@ -27,7 +27,7 @@ class ParsedIntent(BaseModel):
     # message ("...available for purchase?") made Ava emit an error and say nothing at all.
     intent_type: Literal[
         "order_placement", "item_search", "pricing_query", "customer_preference",
-        "event_query", "out_of_scope", "general_inquiry", "aveline_help",
+        "event_query", "out_of_scope", "general_inquiry", "aveline_help", "tenant_account",
     ]
     occasion: str | None = None
     color: str | None = None

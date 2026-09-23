@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     # staff | customer | both. The handbook is staff-facing today.
     handbook_audience: str = "staff"
 
+    # --- Tenant account awareness (ADR-026) ---
+    # Whether the concierge may fetch a boutique's own account figures (Blossom balance, seat and
+    # customer allowances) so Aveline can answer questions about the tenant's plan. The fetch is
+    # additionally gated per request on explicit staff evidence, so this flag can only widen a lane
+    # that the caller's audience already opened.
+    tenant_awareness_enabled: bool = True
+
     # --- Database (PostgreSQL + pgvector) ---
     database_url: str = ""
 

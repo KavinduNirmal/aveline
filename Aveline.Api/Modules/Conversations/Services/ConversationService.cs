@@ -1019,6 +1019,11 @@ public class ConversationService : IConversationService
                     phone_number = from,
                     channel = "whatsapp",
                     direction = "inbound",
+                    // A customer message must never surface the boutique's own numbers. The agent
+                    // requires this flag to be explicitly true before it fetches the tenant's
+                    // Blossom balance or seat/customer counts (ADR-026), so `false` here is what
+                    // closes that lane rather than relying on `direction` alone.
+                    staff_query = false,
                     attachments,
                     image_url = imageUrl,
                     // The line items this message asks to buy, resolved against real inventory
@@ -1192,6 +1197,12 @@ public class ConversationService : IConversationService
                     // See TriggerInboundDraftAsync: the transcript window is keyed by this id.
                     conversation_id = conversation.Id,
                     customer_id = customerId,
+                    // The staff path (Salon note, regeneration, agent brief), so the tenant's own
+                    // account figures are in scope: "how many Blossoms do I have left?" is a
+                    // question about this boutique, not about a customer (ADR-026). This flag is
+                    // the positive evidence the agent gates on; `TriggerInboundDraftAsync` sends
+                    // false for the customer path.
+                    staff_query = true,
                     attachments = described,
                     image_url = imageUrl,
                     // See TriggerInboundDraftAsync: staff can place an order through the agent too,

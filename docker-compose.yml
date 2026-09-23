@@ -257,6 +257,10 @@ services:
       AGENT_LLM_ENABLED: ${AGENT_LLM_ENABLED:-true}
       # Artificial delay (ms) between emitted agent states for integration testing.
       AGENT_STATE_DELAY_MS: ${AGENT_STATE_DELAY_MS:-0}
+      # Whether Aveline may read this boutique's own account figures (Blossom balance, seat and
+      # customer allowances) to answer questions about its plan (ADR-026). The per-request audience
+      # check still applies on top of this: only a request that declared itself staff is served.
+      TENANT_AWARENESS_ENABLED: ${TENANT_AWARENESS_ENABLED:-true}
       # Observability (OpenTelemetry) — export traces to the otel-collector.
       # The collector's in-network port is fixed by otel-collector-config.yaml; keep
       # OTEL_COLLECTOR_PORT in step with that receiver endpoint if you change it.

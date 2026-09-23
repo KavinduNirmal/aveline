@@ -704,9 +704,13 @@ class _FakeConnection implements RealtimeConnection {
 }
 
 /// A phone-shaped viewport, so the thread lays out the way it does on the devices
-/// this app ships to.
-void _usePhoneSurface(WidgetTester tester) {
-  tester.view.physicalSize = const Size(1170, 2532);
+/// this app ships to. A shorter [size] is for the cases that need the transcript to
+/// overflow, which a compact thread no longer does on a full-height phone.
+void _usePhoneSurface(
+  WidgetTester tester, {
+  Size size = const Size(1170, 2532),
+}) {
+  tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 3.0;
   addTearDown(tester.view.reset);
 }
@@ -772,8 +776,9 @@ Future<void> _open(
   String? boutiqueRole,
   AttachmentPicker? attachmentPicker,
   AttachmentOpener? attachmentOpener,
+  Size surface = const Size(1170, 2532),
 }) async {
-  _usePhoneSurface(tester);
+  _usePhoneSurface(tester, size: surface);
   await tester.pumpWidget(
     _wrap(
       conversation,
@@ -830,7 +835,9 @@ void main() {
     });
 
     testWidgets('opens at the newest word rather than at the top', (tester) async {
-      await _open(tester);
+      // A viewport the transcript does not fit in, so there is a scroll position to
+      // open at rather than a thread that simply fits.
+      await _open(tester, surface: const Size(1170, 900));
 
       // The list is reversed, so the newest message sits at the foot of the
       // screen: the first thing an associate sees is what was said last.
@@ -840,11 +847,19 @@ void main() {
           .dy;
 
       expect(newest, lessThan(listBottom));
-      expect(
-        _bubble('msg_nd_1'),
-        findsNothing,
-        reason: 'the oldest message should be above the window',
-      );
+      // The oldest word is scrolled off the top. It may still be *built* — the list
+      // keeps a cache margin, and the compact transcript reaches further — so the
+      // assertion is about where it sits, not about whether it exists.
+      final oldest = _bubble('msg_nd_1');
+      if (oldest.evaluate().isNotEmpty) {
+        expect(
+          tester.getBottomLeft(oldest).dy,
+          lessThanOrEqualTo(
+            tester.getTopLeft(find.byKey(const Key('thread_scroll'))).dy,
+          ),
+          reason: 'the oldest message should be above the window',
+        );
+      }
     });
 
     testWidgets('puts the client on the left and the boutique on the right', (tester) async {
@@ -1142,10 +1157,10 @@ void main() {
 
       expect(find.text('Is it ready?'), findsOneWidget);
       expect(
-        find.byKey(const Key('thread_client_handle_msg_c1')),
+        find.byKey(const Key('client_channel_handle')),
         findsOneWidget,
       );
-      expect(find.text('whatsapp:+94771234567'), findsOneWidget);
+      expect(find.text('+94 77 12 34 567'), findsOneWidget);
     });
 
     testWidgets('a piece-only message is never an empty bubble', (tester) async {
@@ -1165,11 +1180,40 @@ void main() {
         ),
       );
 
+      // A piece is drawn as the tile the Salon draws, not as a one-line summary.
       expect(
-        find.byKey(const Key('thread_block_msg_p1_piece')),
+        find.byKey(const Key('message_piece_Silk Slip Dress')),
         findsOneWidget,
       );
       expect(find.textContaining('Silk Slip Dress'), findsOneWidget);
+    });
+
+    testWidgets('lays a run of pieces across the bubble instead of stacking them',
+        (tester) async {
+      await _open(
+        tester,
+        repository: seeded(
+          ThreadMessage(
+            id: 'msg_run',
+            author: MessageAuthor.agent,
+            kind: MessageKind.piece,
+            text: '',
+            createdAt: age(),
+            blocks: const [
+              ThreadBlock('piece', {'type': 'piece', 'name': 'One', 'price': 1000}),
+              ThreadBlock('piece', {'type': 'piece', 'name': 'Two', 'price': 2000}),
+            ],
+          ),
+        ),
+      );
+
+      // One row. The run has to reach the renderer together for the grouping to see
+      // it, and a card-per-block call stacked a curated set one under the other.
+      expect(find.byKey(const Key('message_tile_grid')), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.byKey(const Key('message_piece_One'))).dy,
+        tester.getTopLeft(find.byKey(const Key('message_piece_Two'))).dy,
+      );
     });
 
     testWidgets('a courier-only message is never an empty bubble', (tester) async {
@@ -1189,11 +1233,8 @@ void main() {
         ),
       );
 
-      expect(
-        find.byKey(const Key('thread_block_msg_cr1_courier')),
-        findsOneWidget,
-      );
-      expect(find.textContaining('Pronto'), findsOneWidget);
+      expect(find.byKey(const Key('message_courier')), findsOneWidget);
+      expect(find.textContaining('in transit'), findsOneWidget);
     });
 
     testWidgets('an unknown block type still says something', (tester) async {

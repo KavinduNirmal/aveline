@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:aveline_mobile/features/conversations/presentation/attachment_picker.dart';
 import 'package:aveline_mobile/features/salon/presentation/screens/salon_screen.dart';
+import 'package:aveline_mobile/features/salon/presentation/widgets/message_bubble.dart';
 import 'package:aveline_mobile/features/salon/presentation/widgets/salon_composer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -47,9 +48,15 @@ void main() {
       find.byType(TextField),
       'Please draft a note for Mrs. Perera.',
     );
+    // The send control enables from the field's `onChanged`, so the frame carrying
+    // the typed text has to land before the tap can reach it. Without this the tap
+    // hits a disabled button and the assertion below passes off the text still
+    // sitting in the field, which is not the thing being tested.
+    await tester.pump();
     await tester.tap(find.byTooltip('Send message'));
     await tester.pump();
 
+    expect(find.byType(MessageBubble), findsNWidgets(5));
     expect(
       find.text('Please draft a note for Mrs. Perera.'),
       findsOneWidget,
@@ -211,6 +218,34 @@ void main() {
     expect(find.byKey(const Key('salon_attachment_notice')), findsOneWidget);
     expect(
       find.text('A message may carry at most 5 attachments.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('a note the associate types is drawn by the block renderer', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const MaterialApp(home: SalonScreen()));
+    await settle(tester);
+
+    await tester.enterText(
+      find.byType(TextField),
+      'Ask @Samantha Arias, she is collecting the saree.',
+    );
+    // The send control enables on the frame the typed text arrives.
+    await tester.pump();
+    await tester.tap(find.byTooltip('Send message'));
+    await settle(tester);
+
+    // End to end through the real screen: the composer's words become a message,
+    // the message becomes the block it would have arrived as, and the mention in it
+    // is lifted into the pill the resolver's grammar covers.
+    expect(find.byKey(const Key('mention_customer_4')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('mention_customer_4')),
+        matching: find.text('@Samantha Arias'),
+      ),
       findsOneWidget,
     );
   });

@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../../shared/persona.dart';
 import '../../../../shared/utils/currency_formatter.dart';
 import '../../../../shared/widgets/app_toast.dart';
 import '../../domain/thread_message.dart';
+import '../../domain/tile_blocks.dart';
+import 'message_blocks.dart';
 
 /// A one-line summary of a content block the thread has no card for.
 ///
@@ -105,42 +108,78 @@ class ThreadMessageBlocks extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
+    // A run of consecutive tiles has to reach the renderer *together*: the grouping is
+    // what lays a curated set across the bubble instead of stacking it one card per
+    // line, and a per-block call could never see the row.
     return Column(
       crossAxisAlignment: message.isFromStaff
           ? CrossAxisAlignment.end
           : CrossAxisAlignment.start,
       children: [
-        for (final block in blocks)
+        for (final group in groupTileBlocks(blocks))
           Padding(
             padding: const EdgeInsets.only(top: 6),
-            child: _block(context, block),
+            child: switch (group) {
+              TileRun(:final blocks) => MessageBlockList(
+                messageId: message.id,
+                blocks: blocks,
+                persona: personaForAgent(message.agentKey),
+              ),
+              LoneBlock(:final block) => _block(context, block),
+            },
           ),
       ],
     );
   }
 
-  Widget _block(BuildContext context, ThreadBlock block) => switch (block.type) {
-    'suggestion' => _SuggestionCard(
-      messageId: message.id,
-      text: block.text ?? '',
-    ),
-    'choice' => _ChoiceCard(
-      messageId: message.id,
-      block: block,
-      onSelectCustomer: onSelectCustomer,
-    ),
-    'attachment' => _AttachmentCard(
-      messageId: message.id,
-      block: block,
-      loadAttachment: loadAttachment,
-      openAttachment: openAttachment,
-    ),
-    _ => _SummaryChip(
-      messageId: message.id,
-      type: block.type,
-      summary: threadBlockSummary(block),
-    ),
+  /// The block types the shared renderer gives a real treatment to.
+  ///
+  /// A run of tiles never reaches here — `groupTileBlocks` has already sent it to the
+  /// renderer — but a *lone* look does, because without a photograph of its own it is
+  /// Elle's styling note rather than a tile. Everything else is either drawn by the
+  /// bubble itself (`text`, `client_message`, `sign_off`), carries a thread-specific
+  /// card (`choice`, `attachment`, and the `suggestion` the associate copies out), or is
+  /// a block this build has not been taught — which is what the open default keeps from
+  /// drawing an empty bubble.
+  static const Set<String> _richTypes = {
+    'look',
+    'at_a_glance',
+    'payment',
+    'courier',
   };
+
+  Widget _block(BuildContext context, ThreadBlock block) {
+    if (_richTypes.contains(block.type)) {
+      return MessageBlockList(
+        messageId: message.id,
+        blocks: [block],
+        persona: personaForAgent(message.agentKey),
+      );
+    }
+
+    return switch (block.type) {
+      'suggestion' => _SuggestionCard(
+        messageId: message.id,
+        text: block.text ?? '',
+      ),
+      'choice' => _ChoiceCard(
+        messageId: message.id,
+        block: block,
+        onSelectCustomer: onSelectCustomer,
+      ),
+      'attachment' => ThreadAttachmentCard(
+        messageId: message.id,
+        block: block,
+        loadAttachment: loadAttachment,
+        openAttachment: openAttachment,
+      ),
+      _ => _SummaryChip(
+        messageId: message.id,
+        type: block.type,
+        summary: threadBlockSummary(block),
+      ),
+    };
+  }
 }
 
 /// A draft an agent wrote for the associate to send, with a copy action.
@@ -322,8 +361,14 @@ class _SummaryChip extends StatelessWidget {
 
 /// A file attached to a message: an image renders as a thumbnail that opens full screen, and
 /// anything else as a document chip with its name and size.
-class _AttachmentCard extends StatefulWidget {
-  const _AttachmentCard({
+///
+/// Public because the Salon draws the same block from its own renderer: a Salon attachment and
+/// a client-thread attachment are the same wire block and must look the same in both places.
+/// The bytes are fetched through the authenticated client rather than an `<Image.network>` of
+/// the stored route, which cannot carry the bearer token.
+class ThreadAttachmentCard extends StatefulWidget {
+  const ThreadAttachmentCard({
+    super.key,
     required this.messageId,
     required this.block,
     this.loadAttachment,
@@ -336,10 +381,10 @@ class _AttachmentCard extends StatefulWidget {
   final Future<void> Function(Uint8List bytes, String fileName)? openAttachment;
 
   @override
-  State<_AttachmentCard> createState() => _AttachmentCardState();
+  State<ThreadAttachmentCard> createState() => _ThreadAttachmentCardState();
 }
 
-class _AttachmentCardState extends State<_AttachmentCard> {
+class _ThreadAttachmentCardState extends State<ThreadAttachmentCard> {
   Uint8List? _bytes;
   bool _loading = false;
 
@@ -352,7 +397,7 @@ class _AttachmentCardState extends State<_AttachmentCard> {
   }
 
   @override
-  void didUpdateWidget(covariant _AttachmentCard oldWidget) {
+  void didUpdateWidget(covariant ThreadAttachmentCard oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.block.attachmentId != widget.block.attachmentId) {
       _bytes = null;

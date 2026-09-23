@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../../../shared/widgets/chat_input.dart';
+
 import '../client_thread_controller.dart';
 import '../attachment_picker.dart';
 import 'attachment_tray.dart';
@@ -127,9 +129,10 @@ class _ThreadComposerState extends State<ThreadComposer> {
                     textCapitalization: TextCapitalization.sentences,
                     onChanged: (_) => setState(() {}),
                     onSubmitted: (_) => _submit(),
-                    decoration: InputDecoration(
+                    style: chatInputStyle(context),
+                    decoration: chatInputDecoration(
+                      context,
                       hintText: widget.placeholder,
-                      isDense: true,
                     ),
                   ),
                 ),

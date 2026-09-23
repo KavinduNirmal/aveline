@@ -157,6 +157,30 @@ class ThreadBlock {
 
   String? get prompt => _string(data['prompt']);
 
+  /// A `piece`/`look` tile's photograph. Absent is a state, not a broken image.
+  String? get imageUrl => _string(data['imageUrl']);
+
+  /// A `piece` tile's size label.
+  String? get size => _string(data['size']);
+
+  /// A `piece` tile's stock count.
+  int? get stock => _number('stock')?.toInt();
+
+  /// A copy of this block with its photograph dropped.
+  ///
+  /// Elle composes a look around the pieces it matched, and the composer used to
+  /// hand the look the first matched piece's photo as its own. New answers no
+  /// longer borrow one, but every message already stored carries the copy, so it is
+  /// dropped on the way to the renderer: the piece keeps its photograph, and the
+  /// look becomes the styling note it always was.
+  ThreadBlock withoutImageUrl() {
+    if (imageUrl == null) {
+      return this;
+    }
+    final copy = Map<String, dynamic>.from(data)..remove('imageUrl');
+    return ThreadBlock(type, copy);
+  }
+
   /// The `payment`/`sign_off` amount, or a `piece`'s price.
   num? get amount => _number('amount') ?? _number('price');
 

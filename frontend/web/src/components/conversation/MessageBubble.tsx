@@ -2,6 +2,7 @@ import { cn } from '@/lib/utils'
 import type { ChatMessage } from '@/contexts/ConversationsContext'
 import { AvelineAvatar } from './AvelineAvatar'
 import { AvelineBlossom } from './AvelineBlossom'
+import type { BlockActionBridge } from './blockActions'
 import { BlockList } from './blocks'
 import { personaForAuthor } from './persona'
 import { hasTileRow } from './tileBlocks'
@@ -18,6 +19,8 @@ interface MessageBubbleProps {
   onOpenAttachment?: (attachmentId: string) => void
   /** Called as a streamed message types out, so the thread can keep the tail in view. */
   onStreamProgress?: () => void
+  /** The thread's action-rail config. Absent draws every block without one. */
+  blockActions?: BlockActionBridge
 }
 
 function timeLabel(iso: string): string {
@@ -97,6 +100,7 @@ export function MessageBubble({
   onSelectCustomer,
   onOpenAttachment,
   onStreamProgress,
+  blockActions,
 }: MessageBubbleProps) {
   const persona = personaForAuthor(message.authorKind, message.agentKey)
   const isAgent = message.authorKind === 'Agent'
@@ -137,6 +141,8 @@ export function MessageBubble({
           ) : (
             <BlockList
               blocks={message.contentBlocks}
+              messageId={message.id}
+              bridge={blockActions}
               onSignOff={onSignOff}
               onSelectCustomer={onSelectCustomer}
               onOpenAttachment={onOpenAttachment}

@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 
 import '../../../../shared/persona.dart';
 import '../../../../shared/utils/currency_formatter.dart';
+import '../../domain/block_actions.dart';
 import '../../domain/thread_message.dart';
+import 'block_action_rail.dart';
 import 'client_channel_surface.dart';
 import 'thread_blocks.dart';
 import '../../domain/tile_blocks.dart';
@@ -33,6 +35,8 @@ class MessageBlockList extends StatelessWidget {
     this.onSignOff,
     this.loadAttachment,
     this.openAttachment,
+    this.bridge,
+    this.blockIndices,
   });
 
   /// The message the blocks belong to. It keys the interactive parts, so a
@@ -61,6 +65,19 @@ class MessageBlockList extends StatelessWidget {
   /// Opens a document through the platform viewer. `null` leaves the chip a label.
   final Future<void> Function(Uint8List bytes, String fileName)? openAttachment;
 
+  /// The action rail's wiring for the thread this list is drawn in. `null` draws no
+  /// rail at all, which is what a preview or a renderer with no thread behind it wants.
+  final BlockActionBridge? bridge;
+
+  /// Each block's position in the message, parallel to [blocks].
+  ///
+  /// A message is rendered in groups — a run of tiles here, a lone card there — so the
+  /// position *within this list* is not the block's position in the message. The caller
+  /// that holds the whole message hands the real indices down; without them the rail
+  /// falls back to the position here, which is correct wherever a list is a message's
+  /// whole body.
+  final List<int>? blockIndices;
+
   @override
   Widget build(BuildContext context) {
     final parsed = withoutBorrowedLookImages(blocks);
@@ -69,24 +86,52 @@ class MessageBlockList extends StatelessWidget {
     }
 
     final groups = groupTileBlocks(parsed);
+    final children = <Widget>[];
+    // `withoutBorrowedLookImages` and `groupTileBlocks` both preserve order and length,
+    // so a cursor over the groups reconstructs each block's position exactly.
+    var cursor = 0;
+    for (var i = 0; i < groups.length; i += 1) {
+      final group = groups[i];
+      final indices = [
+        for (var j = 0; j < _spanOf(group); j += 1) _indexAt(cursor + j),
+      ];
+      cursor += indices.length;
+      children.add(
+        _grouped(
+          context,
+          index: i,
+          child: switch (group) {
+            TileRun(:final blocks) => _TileGrid(
+              blocks: blocks,
+              indices: indices,
+              render: _render,
+            ),
+            LoneBlock(:final block) => _render(context, block, indices.first),
+          },
+        ),
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
-      children: [
-        for (var i = 0; i < groups.length; i += 1)
-          _grouped(
-            context,
-            index: i,
-            child: switch (groups[i]) {
-              TileRun(:final blocks) => _TileGrid(
-                blocks: blocks,
-                render: _render,
-              ),
-              LoneBlock(:final block) => _render(context, block),
-            },
-          ),
-      ],
+      children: children,
     );
+  }
+
+  /// How many blocks a group consumed.
+  static int _spanOf(SalonBlockGroup group) => switch (group) {
+    TileRun(:final blocks) => blocks.length,
+    LoneBlock() => 1,
+  };
+
+  /// The message-level index of the block at [position] in this list.
+  int _indexAt(int position) {
+    final indices = blockIndices;
+    if (indices != null && position < indices.length) {
+      return indices[position];
+    }
+    return position;
   }
 
   /// Separates two groups.
@@ -116,13 +161,27 @@ class MessageBlockList extends StatelessWidget {
     );
   }
 
-  Widget _render(BuildContext context, ThreadBlock block, [double? tileWidth]) {
+  Widget _render(
+    BuildContext context,
+    ThreadBlock block,
+    int blockIndex, [
+    double? tileWidth,
+  ]) {
     if (block.type == 'piece') {
-      return _PieceTile(block: block, width: tileWidth);
+      return _PieceTile(
+        messageId: messageId,
+        block: block,
+        blockIndex: blockIndex,
+        bridge: bridge,
+        width: tileWidth,
+      );
     }
     if (block.type == 'look') {
       return _LookBlock(
+        messageId: messageId,
         block: block,
+        blockIndex: blockIndex,
+        bridge: bridge,
         persona: persona,
         tone: tone,
         width: tileWidth,
@@ -137,7 +196,14 @@ class MessageBlockList extends StatelessWidget {
       );
     }
     if (block.type == 'suggestion') {
-      return _SuggestionBlock(block: block, persona: persona, tone: tone);
+      return _SuggestionBlock(
+        messageId: messageId,
+        block: block,
+        blockIndex: blockIndex,
+        bridge: bridge,
+        persona: persona,
+        tone: tone,
+      );
     }
     if (block.type == 'at_a_glance') {
       return _AtAGlanceBlock(block: block);
@@ -253,16 +319,28 @@ TextStyle _serif({
 /// A run of one is the exception: it stays shrink-to-fit beside its own 16rem cap,
 /// so a single piece is a card and not a band.
 class _TileGrid extends StatelessWidget {
-  const _TileGrid({required this.blocks, required this.render});
+  const _TileGrid({
+    required this.blocks,
+    required this.indices,
+    required this.render,
+  });
 
   final List<ThreadBlock> blocks;
+
+  /// Each block's position in the message, parallel to [blocks].
+  final List<int> indices;
 
   /// Draws one tile. It is handed the width the grid resolved for it, because a
   /// tile's plate is a fixed 4:3 box: `Image` reports no intrinsic size, so a row
   /// measured by `IntrinsicHeight` would collapse to its text if the plate's height
   /// were left to the image.
-  final Widget Function(BuildContext context, ThreadBlock block, double width)
-      render;
+  final Widget Function(
+    BuildContext context,
+    ThreadBlock block,
+    int blockIndex,
+    double width,
+  )
+  render;
 
   /// Web's `11rem` — the track a tile is drawn at wherever it genuinely fits.
   static const double _tilePreferred = 176;
@@ -317,12 +395,18 @@ class _TileGrid extends StatelessWidget {
         // what stops a last lone card from doubling in width.
         final tileWidth = (width - _gap * (columns - 1)) / columns;
 
-        final rows = <List<ThreadBlock>>[];
-        for (var i = 0; i < blocks.length; i += columns) {
+        // The rows carry each block's message-level index with it, so the rail a tile
+        // draws is keyed to the block rather than to its position in this row.
+        final entries = [
+          for (var i = 0; i < blocks.length; i += 1)
+            (index: indices[i], block: blocks[i]),
+        ];
+        final rows = <List<({int index, ThreadBlock block})>>[];
+        for (var i = 0; i < entries.length; i += columns) {
           rows.add(
-            blocks.sublist(
+            entries.sublist(
               i,
-              (i + columns) > blocks.length ? blocks.length : i + columns,
+              (i + columns) > entries.length ? entries.length : i + columns,
             ),
           );
         }
@@ -345,7 +429,12 @@ class _TileGrid extends StatelessWidget {
                         if (c > 0) const SizedBox(width: _gap),
                         SizedBox(
                           width: tileWidth,
-                          child: render(context, rows[r][c], tileWidth),
+                          child: render(
+                            context,
+                            rows[r][c].block,
+                            rows[r][c].index,
+                            tileWidth,
+                          ),
                         ),
                       ],
                     ],
@@ -367,9 +456,18 @@ class _TileGrid extends StatelessWidget {
 /// recommendation. The tile is deliberately narrow: a 4:3 plate, the name, size and
 /// stock, then the money.
 class _PieceTile extends StatelessWidget {
-  const _PieceTile({required this.block, required this.width});
+  const _PieceTile({
+    required this.messageId,
+    required this.block,
+    required this.blockIndex,
+    required this.bridge,
+    required this.width,
+  });
 
+  final String messageId;
   final ThreadBlock block;
+  final int blockIndex;
+  final BlockActionBridge? bridge;
 
   /// The track the grid resolved for this tile, which the plate is measured from.
   final double? width;
@@ -380,9 +478,20 @@ class _PieceTile extends StatelessWidget {
     final name = block.name ?? 'Piece';
     final price = block.amount;
     final tileWidth = width ?? _TileGrid._singleCap;
+    final rail = _rail(
+      messageId: messageId,
+      block: block,
+      blockIndex: blockIndex,
+      bridge: bridge,
+      // A tile is around eleven rems wide; the word is dropped and the glyph carries
+      // the segment, while the tooltip and the accessible name stay whole.
+      compact: true,
+    );
 
     return Container(
       key: ValueKey('message_piece_${block.name}'),
+      // The card's clipping decoration shapes the rail's bottom corners: card and rail
+      // are one box, so the rail reads as the tile's footer rather than a floating row.
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: scheme.surfaceContainerLowest,
@@ -456,6 +565,7 @@ class _PieceTile extends StatelessWidget {
               ),
             ),
           ),
+          ?rail,
         ],
       ),
     );
@@ -562,13 +672,19 @@ class _StockBadge extends StatelessWidget {
 /// at the row's full width. It is deliberately never given a blank plate to fill.
 class _LookBlock extends StatelessWidget {
   const _LookBlock({
+    required this.messageId,
     required this.block,
+    required this.blockIndex,
+    required this.bridge,
     required this.persona,
     required this.tone,
     required this.width,
   });
 
+  final String messageId;
   final ThreadBlock block;
+  final int blockIndex;
+  final BlockActionBridge? bridge;
   final Persona? persona;
   final BubbleTone tone;
 
@@ -581,11 +697,24 @@ class _LookBlock extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final surface = _personaSurface(context, persona);
     final text = block.text;
+    // A look with its own plate is a narrow tile like a piece; one without is the
+    // styling note at the row's full width, where the printed word has room.
+    final asTile = block.imageUrl != null && block.imageUrl!.isNotEmpty;
+    final rail = _rail(
+      messageId: messageId,
+      block: block,
+      blockIndex: blockIndex,
+      bridge: bridge,
+      compact: asTile,
+      tone: tone,
+    );
 
-    if (block.imageUrl == null || block.imageUrl!.isEmpty) {
+    if (!asTile) {
       return Container(
         key: const Key('message_look_note'),
-        padding: const EdgeInsets.all(12),
+        // Card and rail are one clipped box, so the rail's bottom corners follow the
+        // card's radius.
+        clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           color: surface.background,
           borderRadius: BorderRadius.circular(8),
@@ -595,24 +724,34 @@ class _LookBlock extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              block.name ?? 'Look',
-              style: _sans(
-                context,
-                size: 12,
-                height: 1.4,
-                weight: FontWeight.w500,
-                color: surface.ink,
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    block.name ?? 'Look',
+                    style: _sans(
+                      context,
+                      size: 12,
+                      height: 1.4,
+                      weight: FontWeight.w500,
+                      color: surface.ink,
+                    ),
+                  ),
+                  if (text != null) ...[
+                    const SizedBox(height: 4),
+                    MentionText(
+                      text: text,
+                      tone: tone,
+                      style: _sans(context, color: _inkFor(scheme, tone)),
+                    ),
+                  ],
+                ],
               ),
             ),
-            if (text != null) ...[
-              const SizedBox(height: 4),
-              MentionText(
-                text: text,
-                tone: tone,
-                style: _sans(context, color: _inkFor(scheme, tone)),
-              ),
-            ],
+            ?rail,
           ],
         ),
       );
@@ -655,6 +794,7 @@ class _LookBlock extends StatelessWidget {
                 ),
               ),
             ),
+          ?rail,
         ],
       ),
     );
@@ -689,12 +829,18 @@ class _TextBlock extends StatelessWidget {
 /// A note an agent wrote for the associate, on the persona's own tint.
 class _SuggestionBlock extends StatelessWidget {
   const _SuggestionBlock({
+    required this.messageId,
     required this.block,
+    required this.blockIndex,
+    required this.bridge,
     required this.persona,
     required this.tone,
   });
 
+  final String messageId;
   final ThreadBlock block;
+  final int blockIndex;
+  final BlockActionBridge? bridge;
   final Persona? persona;
   final BubbleTone tone;
 
@@ -703,10 +849,20 @@ class _SuggestionBlock extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final surface = _personaSurface(context, persona);
     final text = block.text;
+    final rail = _rail(
+      messageId: messageId,
+      block: block,
+      blockIndex: blockIndex,
+      bridge: bridge,
+      compact: false,
+      tone: tone,
+    );
 
     return Container(
       key: const Key('message_suggestion'),
-      padding: const EdgeInsets.all(12),
+      // Card and rail are one clipped box, so the rail's bottom corners follow the
+      // card's radius.
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: surface.background,
         borderRadius: BorderRadius.circular(8),
@@ -716,28 +872,63 @@ class _SuggestionBlock extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            'Suggestion',
-            style: _sans(
-              context,
-              size: 12,
-              height: 1.4,
-              weight: FontWeight.w500,
-              color: surface.ink,
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Suggestion',
+                  style: _sans(
+                    context,
+                    size: 12,
+                    height: 1.4,
+                    weight: FontWeight.w500,
+                    color: surface.ink,
+                  ),
+                ),
+                if (text != null) ...[
+                  const SizedBox(height: 4),
+                  MentionText(
+                    text: text,
+                    tone: tone,
+                    style: _sans(context, color: _inkFor(scheme, tone)),
+                  ),
+                ],
+              ],
             ),
           ),
-          if (text != null) ...[
-            const SizedBox(height: 4),
-            MentionText(
-              text: text,
-              tone: tone,
-              style: _sans(context, color: _inkFor(scheme, tone)),
-            ),
-          ],
+          ?rail,
         ],
       ),
     );
   }
+}
+
+/// The action rail for a block, or `null` when the renderer has no thread behind it.
+///
+/// A renderer with no bridge — a preview, a test, the docs gallery — draws the card it
+/// always drew rather than an inert row of segments.
+Widget? _rail({
+  required String messageId,
+  required ThreadBlock block,
+  required int blockIndex,
+  required BlockActionBridge? bridge,
+  required bool compact,
+  BubbleTone tone = BubbleTone.other,
+}) {
+  if (bridge == null || !hasBlockActions(block)) {
+    return null;
+  }
+  return BlockActionRail(
+    block: block,
+    messageId: messageId,
+    blockIndex: blockIndex,
+    bridge: bridge,
+    compact: compact,
+    tone: tone,
+  );
 }
 
 /// The `at_a_glance` briefing table.

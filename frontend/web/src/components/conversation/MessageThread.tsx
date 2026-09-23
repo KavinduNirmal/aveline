@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { AgentActivity, ChatMessage } from '@/contexts/ConversationsContext'
 import { AgentActivityBubble } from './AgentActivityBubble'
+import type { BlockActionBridge } from './blockActions'
 import { MessageBubble } from './MessageBubble'
 
 interface MessageThreadProps {
@@ -15,6 +16,8 @@ interface MessageThreadProps {
   onSelectCustomer?: (customerId: string) => void
   /** Called with the attachment id when a thread attachment is opened for viewing. */
   onOpenAttachment?: (attachmentId: string) => void
+  /** The action rail's handlers and thread state, from `useBlockActions`. */
+  blockActions?: BlockActionBridge
 }
 
 /**
@@ -30,6 +33,7 @@ export function MessageThread({
   onSignOff,
   onSelectCustomer,
   onOpenAttachment,
+  blockActions,
 }: MessageThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -78,6 +82,7 @@ export function MessageThread({
           <MessageBubble
             message={message}
             isOwn={message.authorKind === 'User'}
+            blockActions={blockActions}
             onStreamProgress={handleStreamProgress}
             onSelectCustomer={onSelectCustomer}
             onOpenAttachment={onOpenAttachment}

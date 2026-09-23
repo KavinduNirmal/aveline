@@ -23,6 +23,8 @@ import { Spinner } from '@/components/ui/spinner'
 import { apiClient } from '@/lib/api'
 import { formatLkPhone } from '@/lib/boutique'
 import { cn } from '@/lib/utils'
+import { ActionableBlock } from './ActionableBlock'
+import { blockTitle, type BlockActionBridge } from './blockActions'
 import { MentionText } from './Mentions'
 import { isTileBlock, withoutBorrowedLookImages } from './tileBlocks'
 
@@ -81,6 +83,10 @@ interface BlockRendererProps {
   onOpenAttachment?: (attachmentId: string) => void
   persona?: Persona | null
   tone?: AttachmentTone
+  /** The message this block belongs to; the action rail names it for regenerate and share. */
+  messageId?: string
+  /** The thread behind the action rail. Absent draws the block with no rail at all. */
+  bridge?: BlockActionBridge
 }
 
 /** Renders a single content block by type. */
@@ -91,6 +97,8 @@ export function BlockRenderer({
   onOpenAttachment,
   persona,
   tone = 'other',
+  messageId,
+  bridge,
 }: BlockRendererProps) {
   switch (block.type) {
     case 'text':
@@ -104,7 +112,15 @@ export function BlockRenderer({
         />
       )
     case 'piece':
-      return <PieceBlock block={block} onSignOff={onSignOff} persona={persona} />
+      return (
+        <PieceBlock
+          block={block}
+          onSignOff={onSignOff}
+          persona={persona}
+          messageId={messageId}
+          bridge={bridge}
+        />
+      )
     case 'at_a_glance':
       return <AtAGlanceBlock block={block} onSignOff={onSignOff} persona={persona} />
     case 'sign_off':
@@ -116,9 +132,27 @@ export function BlockRenderer({
     case 'courier':
       return <CourierBlock block={block} onSignOff={onSignOff} persona={persona} />
     case 'suggestion':
-      return <SuggestionBlock block={block} onSignOff={onSignOff} persona={persona} />
+      return (
+        <SuggestionBlock
+          block={block}
+          onSignOff={onSignOff}
+          persona={persona}
+          tone={tone}
+          messageId={messageId}
+          bridge={bridge}
+        />
+      )
     case 'look':
-      return <LookBlock block={block} onSignOff={onSignOff} persona={persona} />
+      return (
+        <LookBlock
+          block={block}
+          onSignOff={onSignOff}
+          persona={persona}
+          tone={tone}
+          messageId={messageId}
+          bridge={bridge}
+        />
+      )
     case 'choice':
       return <ChoiceBlock block={block} onSelectCustomer={onSelectCustomer} />
     case 'attachment':
@@ -184,11 +218,20 @@ function ChoiceBlock({
  * band that pushed the next off-screen, so a curated set read as a single recommendation. The tile
  * is deliberately narrow: a 4:3 plate, the name, size and stock, then the money. `BlockList` is what
  * keeps it thin, by gridding a run of tiles instead of stacking them.
+ *
+ * Its rail is one segment wide — an item block forwards, and nothing else — so the tile's foot is a
+ * single joined strip rather than a row of chips.
  */
-function PieceBlock({ block }: BlockRendererProps) {
+function PieceBlock({ block, messageId, bridge }: BlockRendererProps) {
   const name = block.name ?? 'Piece'
   return (
-    <Card className="min-w-0 gap-0 overflow-hidden rounded-xl border-border/70 bg-card py-0 shadow-none">
+    <ActionableBlock
+      block={block}
+      messageId={messageId}
+      bridge={bridge}
+      title={blockTitle(block)}
+      className="rounded-xl border border-border/70 bg-card"
+    >
       {block.imageUrl ? (
         <img
           src={block.imageUrl}
@@ -201,7 +244,7 @@ function PieceBlock({ block }: BlockRendererProps) {
           No photograph
         </div>
       )}
-      <CardContent className="flex flex-1 flex-col gap-1 p-2.5">
+      <div className="flex flex-1 flex-col gap-1 p-2.5">
         <p className="line-clamp-2 font-serif text-xs font-medium leading-snug" title={name}>
           {name}
         </p>
@@ -224,8 +267,8 @@ function PieceBlock({ block }: BlockRendererProps) {
             LKR {block.price.toLocaleString()}
           </p>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </ActionableBlock>
   )
 }
 
@@ -415,14 +458,22 @@ function personaSurface(persona: Persona | null | undefined) {
   return { border, bg, text: persona?.text ?? 'text-primary' }
 }
 
-function SuggestionBlock({ block, persona, tone }: BlockRendererProps) {
+function SuggestionBlock({ block, persona, tone, messageId, bridge }: BlockRendererProps) {
   const surface = personaSurface(persona)
 
   return (
-    <div className={cn('rounded-lg border p-3', surface.border, surface.bg)}>
+    <ActionableBlock
+      block={block}
+      messageId={messageId}
+      bridge={bridge}
+      title={blockTitle(block)}
+      tone={tone}
+      className={cn('rounded-lg border', surface.border, surface.bg)}
+      contentClassName="p-3"
+    >
       <p className={cn('text-xs font-medium', surface.text)}>Suggestion</p>
       {block.text && <MentionText text={block.text} tone={tone} className="mt-1 text-sm" />}
-    </div>
+    </ActionableBlock>
   )
 }
 
@@ -434,22 +485,37 @@ function SuggestionBlock({ block, persona, tone }: BlockRendererProps) {
  * about the row, labelled with the look's name and read at the row's full width. It is deliberately
  * never given a blank plate to fill.
  */
-function LookBlock({ block, persona, tone }: BlockRendererProps) {
+function LookBlock({ block, persona, tone, messageId, bridge }: BlockRendererProps) {
   const surface = personaSurface(persona)
 
   if (!block.imageUrl) {
     return (
-      <div className={cn('min-w-0 rounded-lg border p-3', surface.border, surface.bg)}>
+      <ActionableBlock
+        block={block}
+        messageId={messageId}
+        bridge={bridge}
+        title={blockTitle(block)}
+        tone={tone}
+        className={cn('rounded-lg border', surface.border, surface.bg)}
+        contentClassName="p-3"
+      >
         <p className={cn('text-xs font-medium', surface.text)}>{block.name ?? 'Look'}</p>
         {block.text && (
           <MentionText text={block.text} tone={tone} className="mt-1 text-sm leading-relaxed" />
         )}
-      </div>
+      </ActionableBlock>
     )
   }
 
   return (
-    <div className="min-w-0 overflow-hidden rounded-xl border border-border/70 bg-card">
+    <ActionableBlock
+      block={block}
+      messageId={messageId}
+      bridge={bridge}
+      title={blockTitle(block)}
+      tone={tone}
+      className="rounded-xl border border-border/70 bg-card"
+    >
       <img
         src={block.imageUrl}
         alt={block.name ?? 'Look'}
@@ -467,7 +533,7 @@ function LookBlock({ block, persona, tone }: BlockRendererProps) {
           </p>
         </div>
       )}
-    </div>
+    </ActionableBlock>
   )
 }
 
@@ -533,6 +599,8 @@ export function BlockList({
   onOpenAttachment,
   persona,
   tone = 'other',
+  messageId,
+  bridge,
 }: {
   blocks: unknown[]
   onSignOff?: (approved: boolean) => void
@@ -540,6 +608,10 @@ export function BlockList({
   onOpenAttachment?: (attachmentId: string) => void
   persona?: Persona | null
   tone?: AttachmentTone
+  /** The message the blocks belong to, so each action rail can name it. */
+  messageId?: string
+  /** The thread's action handlers; absent draws every block without a rail. */
+  bridge?: BlockActionBridge
 }) {
   const parsed = withoutBorrowedLookImages(blocks ?? []) as ContentBlock[]
   if (parsed.length === 0) return null
@@ -553,6 +625,8 @@ export function BlockList({
       onOpenAttachment={onOpenAttachment}
       persona={persona}
       tone={tone}
+      messageId={messageId}
+      bridge={bridge}
     />
   )
 

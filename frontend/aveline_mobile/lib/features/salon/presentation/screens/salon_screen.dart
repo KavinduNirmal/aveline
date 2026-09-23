@@ -1,8 +1,8 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../core/config/app_config.dart';
@@ -11,8 +11,14 @@ import '../../../../core/network/conversation_realtime_service.dart';
 import '../../../../core/notifications/realtime_connection_factory.dart';
 import '../../../../core/providers/agent_state_provider.dart';
 import '../../../../core/providers/user_provider.dart';
+import '../../../../shared/widgets/app_toast.dart';
+import '../../../conversations/domain/block_actions.dart';
+// Only the block model is wanted here: this file's own `MessageDeliveryStatus` is the
+// Salon's, and importing the thread's whole model would make the two names ambiguous.
+import '../../../conversations/domain/thread_message.dart' show ThreadBlock;
 import '../../../conversations/presentation/attachment_picker.dart';
 import '../../../conversations/presentation/client_thread_controller.dart';
+import '../../../conversations/presentation/widgets/block_action_rail.dart';
 import '../../data/conversation_api.dart';
 import '../../domain/agent_activity.dart';
 import '../../domain/agent_state.dart';
@@ -72,6 +78,12 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
   /// The staged replies whose decision is in flight, so a second tap cannot record a
   /// second decision on the same message.
   final Set<String> _deciding = {};
+
+  /// The block-level actions in flight, keyed by `messageId#blockIndex`.
+  ///
+  /// Per block rather than per message, because one answer can carry several pieces and
+  /// regenerating one must not disable the rail on the others.
+  final Map<String, BlockActionId> _pendingBlockActions = {};
 
   /// True while the thread is scrolled to (or within [_atBottomThreshold] of) the newest
   /// message. Drives both auto-following replies and the jump-to-latest button.
@@ -602,6 +614,99 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
     }
   }
 
+  /// The Salon's action rail, for the content blocks an agent publishes here.
+  ///
+  /// The rail is the same one a client thread draws, because the blocks are the same
+  /// blocks. What differs is the environment: the concierge Salon is not bound to a
+  /// client, so "send to customer" is drawn disabled with its reason rather than
+  /// pretending to have a destination, and the Salon does not hold the inbox's thread
+  /// list, so Forward is drawn the same way. Copy and Regenerate are live.
+  BlockActionBridge get _blockActions => BlockActionBridge(
+    hasCustomerDestination: false,
+    hasForwardDestination: false,
+    // The agent is already answering, so a second regenerate would race the first.
+    agentBusy: _agentActivity != null,
+    pendingAction: (messageId, blockIndex) =>
+        _pendingBlockActions['$messageId#$blockIndex'],
+    onAction: _onBlockAction,
+  );
+
+  /// Runs one segment of a Salon block's rail.
+  void _onBlockAction(
+    ThreadBlock block,
+    String messageId,
+    int blockIndex,
+    BlockActionId action,
+  ) {
+    switch (action) {
+      case BlockActionId.copy:
+        _copyBlock(block);
+      case BlockActionId.regenerate:
+        _regenerateBlock(messageId, block, blockIndex);
+      case BlockActionId.sendToCustomer:
+      case BlockActionId.forward:
+        // The rail resolves these unavailable in the Salon, so this is only reached if
+        // the environment ever changes without the handler following.
+        AppToast.show(context, BlockActionReasons.noCustomer);
+    }
+  }
+
+  /// Copies the **block's** words, not the message's.
+  Future<void> _copyBlock(ThreadBlock block) async {
+    final text = blockToText(block);
+    if (text.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: text));
+    if (mounted) {
+      AppToast.show(context, '${blockTitle(block)} copied');
+    }
+  }
+
+  /// Asks for a fresh reply behind one block's message.
+  ///
+  /// Nothing is swapped locally: the endpoint is accepted rather than answered, and the
+  /// new reply arrives over the hub like any other agent message.
+  Future<void> _regenerateBlock(
+    String messageId,
+    ThreadBlock block,
+    int blockIndex,
+  ) async {
+    final organizationId = _organizationId;
+    final conversationId = _conversationId;
+    final api = _conversationApi;
+    final key = '$messageId#$blockIndex';
+    if (_pendingBlockActions.containsKey(key)) return;
+    if (organizationId == null || conversationId == null || api == null) {
+      AppToast.show(context, 'The Salon is not connected yet.', error: true);
+      return;
+    }
+
+    setState(() => _pendingBlockActions[key] = BlockActionId.regenerate);
+    try {
+      await api.regenerate(
+        organizationId: organizationId,
+        conversationId: conversationId,
+        messageId: messageId,
+      );
+      if (mounted) {
+        AppToast.show(context, 'Asking Aveline for a fresh take.');
+      }
+    } catch (_) {
+      if (mounted) {
+        AppToast.show(
+          context,
+          'Could not regenerate that ${blockTitle(block).toLowerCase()}.',
+          error: true,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _pendingBlockActions.remove(key));
+      } else {
+        _pendingBlockActions.remove(key);
+      }
+    }
+  }
+
   /// Tracks whether the reader is following the newest message, so an incoming reply only
   /// pulls the thread down when they are already at the bottom.
   void _onScroll() {
@@ -706,6 +811,7 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
               onSelectCustomer: _selectCustomer,
               onSignOff: _decideSignOff,
               loadAttachment: _loadAttachment,
+              bridge: _blockActions,
             ),
           ),
         );

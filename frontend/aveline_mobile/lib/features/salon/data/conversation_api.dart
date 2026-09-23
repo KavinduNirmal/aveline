@@ -188,4 +188,21 @@ class ConversationApi {
     );
     return Conversation.fromJson(response.data ?? const {});
   }
+
+  /// Asks the agent for a fresh reply to the turn behind [messageId].
+  ///
+  /// Accepted rather than answered: the route returns `202` with no body, and the new
+  /// reply arrives over the existing hub stream exactly like any other agent message. The
+  /// Salon draws nothing itself, which is why the action bar only shows a per-block
+  /// pending state until this future resolves.
+  Future<void> regenerate({
+    required String organizationId,
+    required String conversationId,
+    required String messageId,
+  }) async {
+    await _dio.post<void>(
+      '/api/v1/orgs/$organizationId/conversations/$conversationId'
+      '/messages/$messageId/regenerate',
+    );
+  }
 }

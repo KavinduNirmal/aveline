@@ -45,6 +45,16 @@ public class ConversationEndpointsIntegrationTests : IAsyncLifetime
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.UseSetting("AgentService:BaseUrl", _agentServer.BaseUrl);
                 builder.UseSetting("AgentService:InternalToken", "test-internal-token");
+                // The credential store is a required deployment setting (it encrypts tenant
+                // integration secrets). Delivery reads it to find a channel a boutique has
+                // connected, so a host without it can only answer 500 — which is the honest
+                // answer to a server that cannot read its own credentials, but not what these
+                // tests are about.
+                builder.UseSetting(
+                    "Credentials:EncryptionKey",
+                    // Exactly 32 bytes: the store derives a key from it and refuses anything else.
+                    Convert.ToBase64String(
+                        System.Text.Encoding.UTF8.GetBytes("aveline-test-credentials-key-012")));
             });
         _client = _factory.CreateClient();
     }
@@ -625,6 +635,146 @@ public class ConversationEndpointsIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, send.StatusCode);
     }
 
+    /// <summary>Seeds a client on file, so a thread can be bound to somebody reachable.</summary>
+    private async Task<Guid> SeedCustomerAsync(Organization org, string phoneNumber)
+    {
+        await using var context = CreateContext();
+        var customer = new Aveline.Api.Modules.CustomerConcierge.Models.Customer
+        {
+            OrganizationId = org.Id,
+            PhoneNumber = phoneNumber,
+            FullName = "Nadia Perera",
+            Status = "returning",
+        };
+        context.Customers.Add(customer);
+        await context.SaveChangesAsync();
+        return customer.Id;
+    }
+
+    [Fact]
+    public async Task Deliver_WithoutAConnectedChannel_Is409AndSaysSo()
+    {
+        // Delivery is the outbound channel path, and this deployment has no channel connected, so
+        // the honest answer is a refusal that says exactly that — not a note written into the
+        // Salon, which would reach nobody while reading as though it had.
+        var (owner, org) = await SeedActiveOwnerAsync("conv_owner_deliver", "conversations-deliver");
+        var token = CreateToken(owner.ClerkId, owner.Email);
+        var customerId = await SeedCustomerAsync(org, "94771234567");
+
+        var create = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations", token, new { customerId }));
+        var conversation = await create.Content.ReadFromJsonAsync<ConversationDto>();
+
+        var deliver = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation!.Id}/deliver", token,
+            new { text = "Silk Slip Dress · Size M · LKR 24,000" }));
+
+        Assert.Equal(HttpStatusCode.Conflict, deliver.StatusCode);
+        var result = await deliver.Content.ReadFromJsonAsync<DeliveryResultDto>();
+        Assert.NotNull(result);
+        Assert.False(result!.Delivered);
+        Assert.Equal("channel_not_connected", result.Refusal);
+        Assert.Contains("WhatsApp", result.Detail);
+
+        // Nothing was recorded: a row saying `Sent` is a claim that a customer was messaged.
+        var list = await _client.SendAsync(Authorized(HttpMethod.Get,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation.Id}/messages", token));
+        var page = await list.Content.ReadFromJsonAsync<MessagePage>();
+        Assert.DoesNotContain(page!.Items, m => m.Status == "Sent");
+    }
+
+    [Fact]
+    public async Task Deliver_OnAThreadWithNoClient_Is409WithItsOwnRefusal()
+    {
+        var (owner, org) = await SeedActiveOwnerAsync("conv_owner_deliver_noclient", "conversations-deliver-noclient");
+        var token = CreateToken(owner.ClerkId, owner.Email);
+
+        var create = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations", token, new { customerId = (Guid?)null }));
+        var conversation = await create.Content.ReadFromJsonAsync<ConversationDto>();
+
+        var deliver = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation!.Id}/deliver", token,
+            new { text = "hello" }));
+
+        Assert.Equal(HttpStatusCode.Conflict, deliver.StatusCode);
+        var result = await deliver.Content.ReadFromJsonAsync<DeliveryResultDto>();
+        Assert.Equal("no_customer", result!.Refusal);
+    }
+
+    [Fact]
+    public async Task Deliver_OnAnUnknownConversation_Is404()
+    {
+        var (owner, org) = await SeedActiveOwnerAsync("conv_owner_deliver_404", "conversations-deliver-404");
+        var token = CreateToken(owner.ClerkId, owner.Email);
+
+        var deliver = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{Guid.NewGuid()}/deliver", token,
+            new { text = "hello" }));
+
+        Assert.Equal(HttpStatusCode.NotFound, deliver.StatusCode);
+    }
+
+    [Fact]
+    public async Task Deliver_WithNoWords_Is400()
+    {
+        var (owner, org) = await SeedActiveOwnerAsync("conv_owner_deliver_blank", "conversations-deliver-blank");
+        var token = CreateToken(owner.ClerkId, owner.Email);
+        var create = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations", token, new { customerId = (Guid?)null }));
+        var conversation = await create.Content.ReadFromJsonAsync<ConversationDto>();
+
+        var deliver = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation!.Id}/deliver", token,
+            new { text = "   " }));
+
+        Assert.Equal(HttpStatusCode.BadRequest, deliver.StatusCode);
+    }
+
+    [Fact]
+    public async Task Regenerate_ReRunsTheTurnAndAnswers202()
+    {
+        // Regeneration re-runs the question, not the answer, so the agent must be asked again and
+        // the fresh blocks arrive over the hub rather than in this response.
+        var (owner, org) = await SeedActiveOwnerAsync("conv_owner_regen", "conversations-regen");
+        var token = CreateToken(owner.ClerkId, owner.Email);
+
+        var create = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations", token, new { customerId = (Guid?)null }));
+        var conversation = await create.Content.ReadFromJsonAsync<ConversationDto>();
+
+        var send = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation!.Id}/messages", token,
+            new { text = "Do we have the slip dress in a medium?" }));
+        var message = await send.Content.ReadFromJsonAsync<MessageDto>();
+        var runsAfterSend = _agentServer.QueryCount;
+
+        var regenerate = await _client.SendAsync(Authorized(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation.Id}/messages/{message!.Id}/regenerate", token));
+
+        Assert.Equal(HttpStatusCode.Accepted, regenerate.StatusCode);
+        // The question is re-run: the agent is asked a second time, with the turn's own words.
+        Assert.Equal(runsAfterSend + 1, _agentServer.QueryCount);
+        Assert.NotNull(_agentServer.ReceivedBody);
+        Assert.Contains("slip dress in a medium", _agentServer.ReceivedBody);
+    }
+
+    [Fact]
+    public async Task Regenerate_ForAMessageOutsideTheThread_Is404()
+    {
+        var (owner, org) = await SeedActiveOwnerAsync("conv_owner_regen_404", "conversations-regen-404");
+        var token = CreateToken(owner.ClerkId, owner.Email);
+        var create = await _client.SendAsync(AuthorizedJson(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations", token, new { customerId = (Guid?)null }));
+        var conversation = await create.Content.ReadFromJsonAsync<ConversationDto>();
+
+        var regenerate = await _client.SendAsync(Authorized(HttpMethod.Post,
+            $"/api/v1/orgs/{org.Id}/conversations/{conversation!.Id}/messages/{Guid.NewGuid()}/regenerate", token));
+
+        Assert.Equal(HttpStatusCode.NotFound, regenerate.StatusCode);
+    }
+
+    private sealed record DeliveryResultDto(bool Delivered, string? Channel, string? ProviderMessageId, MessageDto? Message, string? Refusal, string? Detail);
     private sealed record ConversationDto(Guid Id, string Kind, Guid? CustomerId, string ThreadId, string Status, DateTime? LastMessageAt, System.Collections.Generic.IReadOnlyList<string>? Markers = null);
     private sealed record ConversationPage(System.Collections.Generic.IReadOnlyList<ConversationDto> Items, int Total, int Page, int PageSize);
     private sealed record AttachmentResponse(Guid AttachmentId, string Url, string ContentType, string FileName, long SizeBytes, int? Width, int? Height);

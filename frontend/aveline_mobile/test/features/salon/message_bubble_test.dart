@@ -1,4 +1,6 @@
+import 'package:aveline_mobile/features/conversations/domain/block_actions.dart';
 import 'package:aveline_mobile/features/conversations/domain/thread_message.dart' as wire;
+import 'package:aveline_mobile/features/conversations/presentation/widgets/block_action_rail.dart';
 import 'package:aveline_mobile/features/salon/domain/salon_message.dart';
 import 'package:aveline_mobile/features/salon/presentation/widgets/message_bubble.dart';
 import 'package:aveline_mobile/features/salon/presentation/widgets/typewriter_text.dart';
@@ -276,6 +278,67 @@ void main() {
       // to render its blocks or its tiles would not appear until a reload.
       expect(find.byType(TypewriterText), findsNothing);
       expect(find.byKey(const Key('message_tile_grid')), findsOneWidget);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // The action rail, on the Salon's own blocks
+  // ---------------------------------------------------------------------------
+  group('block action rail', () {
+    SalonMessage suggestionMessage() => SalonMessage(
+      id: 'm5',
+      authorKind: 'Agent',
+      agentKey: 'ava',
+      text: '',
+      createdAt: DateTime(2026, 9, 9, 10, 0),
+      blocks: [
+        wire.ThreadBlock('suggestion', {'type': 'suggestion', 'text': 'Draft body'}),
+      ],
+    );
+
+    BlockActionBridge bridge() => BlockActionBridge(
+      // The concierge Salon is not bound to a client, and does not hold the inbox's
+      // thread list: the rail says so rather than inventing a destination.
+      hasCustomerDestination: false,
+      hasForwardDestination: false,
+      agentBusy: false,
+      pendingAction: (_, _) => null,
+      onAction: (_, _, _, _) {},
+    );
+
+    testWidgets('draws the same rail a client thread draws', (tester) async {
+      await tester.pumpWidget(wrap(
+        MessageBubble(message: suggestionMessage(), bridge: bridge()),
+      ));
+
+      expect(
+        find.byKey(const ValueKey('block_action_rail_m5_0')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('block_action_copy_m5_0')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('block_action_regenerate_m5_0')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('says why Send to customer is unavailable in the concierge Salon',
+        (tester) async {
+      await tester.pumpWidget(wrap(
+        MessageBubble(message: suggestionMessage(), bridge: bridge()),
+      ));
+
+      expect(find.byTooltip(BlockActionReasons.noCustomer), findsOneWidget);
+    });
+
+    testWidgets('draws no rail when the bubble has no thread behind it',
+        (tester) async {
+      await tester.pumpWidget(wrap(MessageBubble(message: suggestionMessage())));
+
+      expect(
+        find.byKey(const ValueKey('block_action_rail_m5_0')),
+        findsNothing,
+      );
     });
   });
 }

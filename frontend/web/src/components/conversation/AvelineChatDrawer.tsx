@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { AvelineAvatar } from '@/components/conversation/AvelineAvatar'
 import { Composer } from '@/components/conversation/Composer'
 import { MessageThread } from '@/components/conversation/MessageThread'
+import { useBlockActions } from '@/components/conversation/useBlockActions'
 import { Button } from '@/components/ui/button'
 import { useConversations } from '@/contexts/ConversationsContext'
 import { cn } from '@/lib/utils'
@@ -27,6 +28,7 @@ interface AvelineChatDrawerProps {
  */
 export function AvelineChatDrawer({ open, onClose }: AvelineChatDrawerProps) {
   const {
+    conversations,
     avelineConversationId,
     avelineMessages,
     avelineLoading,
@@ -36,6 +38,8 @@ export function AvelineChatDrawer({ open, onClose }: AvelineChatDrawerProps) {
     openAveline,
     sendToAveline,
     decideAveline,
+    regenerateAveline,
+    deliverToClient,
     // The drawer's thread shares the one pending-attachment tray, keyed by conversation id, with the
     // Salon. It was only ever wired for the Salon, so the drawer's composer had no paperclip at all.
     pendingAttachments,
@@ -43,6 +47,20 @@ export function AvelineChatDrawer({ open, onClose }: AvelineChatDrawerProps) {
     retryAttachment,
     removeAttachment,
   } = useConversations()
+
+  // The drawer's rail is built for the drawer's own thread. It has no client of its own — the
+  // concierge Salon is client-less — so "send to customer" is refused here with its reason rather
+  // than pointing at whichever client the Salon section happens to have open. Forward still works:
+  // it picks a client from the list, and the delivery goes out on that client's channel.
+  const { bridge: blockActions, dialogs: blockActionDialogs } = useBlockActions({
+    conversationId: avelineConversationId,
+    customerName: null,
+    customerReachable: false,
+    conversations,
+    deliver: deliverToClient,
+    regenerate: regenerateAveline,
+    agentBusy: avelineAgentState === 'thinking',
+  })
 
   // Opening the drawer opens Aveline's thread, once. Guarding on the id rather than only on `open`
   // keeps this from re-opening (and re-fetching) when `openAveline` is re-created by a conversation
@@ -90,6 +108,7 @@ export function AvelineChatDrawer({ open, onClose }: AvelineChatDrawerProps) {
           messages={avelineMessages}
           loading={avelineLoading && !avelineConversationId}
           agentActivity={avelineAgentActivity}
+          blockActions={blockActions}
           onSignOff={(messageId, approved) => void decideAveline(messageId, approved)}
         />
       </div>
@@ -112,6 +131,9 @@ export function AvelineChatDrawer({ open, onClose }: AvelineChatDrawerProps) {
         sending={avelineSending}
         placeholder="Ask Aveline…"
       />
+
+      {/* The forward picker and the send confirmation, driven by the rail above. */}
+      {blockActionDialogs}
     </div>
   )
 }

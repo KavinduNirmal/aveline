@@ -101,10 +101,10 @@ each one:
 | `text` | the bubble's words |
 | `client_message` | the client's words, on the left, with `from` printed as the channel handle |
 | `sign_off` | the overline and the decision row (`AWAITING APPROVAL` / `APPROVED` / `DISMISSED`); its `reason` or `amount` stands in when the message has no text |
-| `suggestion` | a draft card with a **Copy** action - Ava's `draft_response` |
+| `suggestion` | a draft card closing in an action rail: **Copy**, **Send to customer**, **Regenerate** - Ava's `draft_response` |
 | `choice` | the prompt and its options; tapping one calls `POST …/select-customer` and re-reads the thread, so the header's name follows |
-| `piece` | one line: the name and, when priced, the price |
-| `look` | one line: its name, or "A new look" |
+| `piece` | a tile closing in an action rail: **Forward** |
+| `look` | a tile, or the styling note at the row's width, closing in an action rail: **Copy**, **Forward**, **Regenerate** |
 | `at_a_glance` | one line: "N details" |
 | `payment` | one line: the amount, or the status |
 | `courier` | one line: the carrier and the status |
@@ -113,6 +113,56 @@ each one:
 A message may carry several blocks: the text is drawn first and the cards follow
 inside the same bubble. A reply whose parent is in the window draws one quoted line
 above the bubble; a parent outside the window is omitted rather than fetched.
+
+### The action rail
+
+An actionable block closes in a rail attached to **the card's own bottom edge**, not a
+row of buttons floating under it. The segments are joined - a single hairline between
+neighbours, no rounding of their own - and the card's clipping decoration shapes the
+rail's bottom corners, so the whole thing reads as the card's footer. Nothing there uses
+the app's shared button styles, whose pill radius is exactly the floating-chip look the
+rail is not. On a narrow tile the printed word is dropped and the glyph carries the
+segment, but its tooltip and its full accessible name never change.
+
+Which actions a block offers is a property of the **block**, not of the bubble it sits
+in: a `suggestion` is copied, sent to the customer and regenerated; a `piece` carries
+Forward alone; a `look` is copied, forwarded and regenerated. There is deliberately no
+Share, and a block type this build has not been taught gets no rail rather than a guessed
+one. The mapping, the clipboard payload and the availability rules are plain data in
+`domain/block_actions.dart`, pinned without pumping a widget.
+
+What each segment hands over is the **block**, never the message: a `suggestion` is its
+own text, a `piece` is one line (`Silk Wrap Blouse · Size M · LKR 18,500`) with only the
+parts the server actually sent, and a `look` is `"<name> — <note>"` when it has both,
+otherwise whichever it has.
+
+Three of the four segments leave the app, so each says what it did:
+
+- **Copy** writes the block's words to the clipboard and toasts.
+- **Send to customer** confirms first, in a dialog that names the customer and prints the
+  exact text, because a channel delivery cannot be unsent; it then calls
+  `POST …/deliver` on this conversation and toasts. A refusal toasts that **nothing was
+  sent**, with the server's `refusal` code turned into a sentence.
+- **Forward** opens a picker of the boutique's **other** client threads and delivers into
+  the chosen one. Only threads that can actually receive a delivery are offered - one
+  with a `customerId`, or a channel thread carrying an `externalRef`. The client-less
+  concierge Salon is never a destination.
+- **Regenerate** calls `POST …/messages/{id}/regenerate` for the block's own message. The
+  endpoint is accepted rather than answered (`202`, no body): the rail shows a per-block
+  busy state, disables the block's other segments while it is in flight, and clears when
+  the call resolves. The fresh reply then arrives over the hub through the ordinary
+  pipeline; nothing is fabricated or replaced locally.
+
+A disabled segment is **focusable** and carries its reason in its tooltip and its
+semantic hint ("This thread isn't linked to a client yet.", "No other client Salon to
+forward to yet.", "Aveline is still working on a reply.", "Another action is already
+running on this block."); pressing it says the reason out loud rather than leaving a
+greyed-out word with no explanation. The pending state is keyed per **block** (message
+id plus position), so one piece can be mid-send while another is idle.
+
+The Salon draws the same rail, because it draws the same blocks. It has no client
+destination and does not hold the inbox's thread list, so there Send to customer and
+Forward are drawn disabled with their real reasons while Copy and Regenerate are live.
 
 **D2 = A pins the composer's honesty.** A staff note is stored `Published`, which
 means it is visible in the Salon and reached no customer channel, so it keeps the
@@ -173,7 +223,9 @@ per-user read model the thread writes behind it is deliberately not surfaced her
   concierge is not one of the results.
 - `client_thread_screen.dart` - the thread with one client. Its own `Scaffold`
   rather than a shell body, because a thread is a place you go rather than a tab
-  you sit on.
+  you sit on. It also owns the action rail's copy, its send confirmation and its
+  forward picker, because those are about this device and this conversation; the
+  network calls belong to the controller.
 
 ### `presentation/`
 - `conversations_controller.dart` - owns the inbox and the order it is read in,
@@ -185,7 +237,10 @@ per-user read model the thread writes behind it is deliberately not surfaced her
   reading from, the message in flight and the draft waiting on the associate.
   History is served oldest first and paged from the oldest end, so it opens on the
   *last* page and walks backwards one press at a time, which keeps the window
-  contiguous from the newest message down.
+  contiguous from the newest message down. It also owns the action rail's
+  per-**block** pending state and the three calls behind the rail: a delivery into
+  this thread, a delivery into another, and a regenerate. The forward picker's
+  destinations are read once from the inbox the screen was opened from.
 
 ### `presentation/widgets/`
 - `aveline_conversation_tile.dart` - the pinned Salon card.
@@ -195,9 +250,17 @@ per-user read model the thread writes behind it is deliberately not surfaced her
 - `thread_message_bubble.dart` - one message in a thread: the side, the treatment,
   the kind-first overline, the quoted parent, the blocks, the tick, and the decision
   a staged reply is waiting on.
+- `block_action_rail.dart` - the action rail that closes an actionable block, and the
+  `BlockActionBridge` that threads the thread's wiring down to it. The rail is the
+  card's footer: joined segments, one hairline between neighbours, the card's own
+  clipping decoration shaping its bottom corners, tooltips and semantic hints
+  everywhere, and a disabled segment that stays focusable so its reason is reachable.
 - `thread_blocks.dart` - the briefing cards a message carries: the `suggestion`
-  draft with its copy action, the `choice` question with its options, and the
-  one-line summary every other block type falls back to.
+  draft with its rail, the `choice` question with its options, and the one-line
+  summary every other block type falls back to.
+- `message_blocks.dart` - the shared block renderer both the Salon and the client
+  thread use: product tiles as a row, the persona-tinted note, the briefing table,
+  and the rail on each actionable card.
 - `thread_composer.dart` - the input at the foot of a thread.
 
 ### `data/`
@@ -213,30 +276,41 @@ per-user read model the thread writes behind it is deliberately not surfaced her
   constructs it; the screen falls back to `EmptyConversationRepository`.
 - `empty_conversation_repository.dart` - an inbox with nothing in it, so a screen
   built with no injection renders the honest empty state rather than a seed.
-- `thread_repository.dart` - the thread contract: a page of history, a send, and a
-  sign-off decision. The decision takes the whole message rather than its id,
-  because the API binds it to the hash of the content the approver was shown.
+- `thread_repository.dart` - the thread contract: a page of history, a send, the
+  delivery (`deliver`) and regeneration (`regenerate`) routes behind the action rail,
+  and a sign-off decision. The decision takes the whole message rather than its id,
+  because the API binds it to the hash of the content the approver was shown; a
+  refusal to deliver travels as its own `DeliveryRefused` type, carrying the server's
+  reason code so the copy layer can turn each one into a sentence.
 - `api_thread_repository.dart` - the thread contract over `Dio`, following
-  `docs/api/openapi.yaml`, including the sign-off endpoint. It reads the active
-  membership's org id through a callback **at call time**, because the id arrives
-  from `GET /orgs/my` after the shell mounts; a null or blank id is the shared
-  `OrgContextUnavailable`, which the controller keeps as a loading state rather
-  than an error. It validates that a conversation or message id is UUID-shaped
-  before it builds a path, so a bad id names itself instead of returning the
-  route constraint's opaque 400. It refuses to decide a draft it has no hash for
-  rather than sending a blank one the API would reject with a 400 nobody can act
-  on.
+  `docs/api/openapi.yaml`, including the sign-off, `deliver` and `regenerate`
+  endpoints. It reads the active membership's org id through a callback **at call
+  time**, because the id arrives from `GET /orgs/my` after the shell mounts; a null or
+  blank id is the shared `OrgContextUnavailable`, which the controller keeps as a
+  loading state rather than an error. It validates that a conversation or message id
+  is UUID-shaped before it builds a path, so a bad id names itself instead of
+  returning the route constraint's opaque 400. It refuses to decide a draft it has no
+  hash for rather than sending a blank one the API would reject with a 400 nobody can
+  act on, and it turns a `409`/`502` delivery body into a `DeliveryRefused` rather than
+  leaving the caller to read a raw status.
 - `empty_thread_repository.dart` - a thread with nothing in it, used wherever no
   real source was injected. The inbox used to fall back to a demo repository, so
   the registry's `const ConversationsScreen()` rendered eight invented exchanges
   on a production path; T0 replaced that fallback with this honest stand-in, which
-  serves no history and refuses a send or a decision with something readable.
+  serves no history and refuses a send, a delivery, a regeneration or a decision
+  with something readable.
   `ClientThreadScreen.repository` is now **required**, because the screen is built
   only by the inbox and by tests, and both name what they are reading.
 
 ### `domain/`
 - `conversation.dart` - one thread, mirroring `ConversationDto` and the richer row
-  the inbox needs. Also the conversation's `status` and who spoke last.
+  the inbox needs. Also the conversation's `status`, who spoke last, and
+  `isDeliveryTarget` (bound to a client, or a channel thread with a handle), which is
+  what keeps the client-less concierge out of the forward picker.
+- `block_actions.dart` - the action vocabulary as plain data: which actions each block
+  type offers, what each hands over as text, why one is unavailable, and which other
+  threads a forward may choose. No Flutter in sight, so every rule is pinned by a unit
+  test.
 - `thread_message.dart` - one message, mirroring `MessageDto`, with its ordered
   `ThreadBlock` list. It promotes a forwarded `client_message` to the client's own
   words (and keeps its channel handle), marks a published staff message as a note the
@@ -355,3 +429,12 @@ failure is shown.
 - `MessageStatus.draft` and `failed` are modelled but never produced by the
   backend, and a message stuck in `AwaitingSignOff` can only be decided from the
   thread it is in - there is no queue of everything waiting on the associate.
+- **The forward picker reads one page of the inbox.** The destinations come from the
+  same list the inbox serves, which is newest-first and paged; a boutique with more
+  client threads than one page can only forward to the newest ones. A search field in
+  the picker, or a paged read, is the next step if that becomes a real complaint.
+- **The Salon can copy and regenerate, not deliver.** The concierge Salon draws the
+  same rail because it draws the same blocks, but it is not bound to a client and does
+  not hold the inbox's thread list, so Send to customer and Forward are drawn disabled
+  with their real reasons there. Wiring them would mean giving the Salon the inbox's
+  repository, which is a plumbing change rather than a rail one.

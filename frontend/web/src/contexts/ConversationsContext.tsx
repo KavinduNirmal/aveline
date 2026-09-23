@@ -17,9 +17,11 @@ import {
 } from '@/lib/conversations'
 import {
   decideSignOff,
+  deliverBlockToCustomer,
   fetchConversations,
   fetchMessages,
   getOrCreateConversation,
+  regenerateMessage as requestRegeneration,
   selectConversationCustomer,
   sendMessage,
   uploadConversationAttachment,
@@ -196,6 +198,29 @@ interface ConversationsContextValue {
   selectCustomer: (customerId: string) => Promise<void>
 
   /**
+   * Delivers a block's words to a client's own channel and records it in that client's thread.
+   *
+   * This is the only outbound path: it calls the delivery endpoint, which resolves the client's
+   * handle, sends over the channel the boutique has connected (WhatsApp today) and writes the row
+   * as `Sent`. It deliberately does **not** post a note into the Salon and trigger the agent —
+   * that reaches nobody and is not a forward. `targetConversationId` names which client thread the
+   * delivery belongs to; the customer and channel are resolved server-side from it. Rejects with
+   * a {@link DeliveryRefusedError} when the server refuses, carrying its sentence.
+   */
+  deliverToClient: (
+    targetConversationId: string,
+    text: string,
+    clientMessageId?: string,
+  ) => Promise<void>
+  /**
+   * Asks Aveline to answer the turn behind `messageId` again. Resolves when the **request** is
+   * accepted, not when the fresh blocks land: those arrive over the hub like any other agent
+   * reply, so the caller leaves its action state on the request and the thread's own working
+   * indicator carries the wait.
+   */
+  regenerate: (messageId: string) => Promise<void>
+
+  /**
    * The Aveline drawer's **own** thread. It shares the conversation list and the hub connection
    * with the Salon section, but never the open thread: one shared `activeConversationId` meant
    * opening a client's Salon in either surface moved the other one with it.
@@ -214,6 +239,8 @@ interface ConversationsContextValue {
    */
   sendToAveline: (text: string, attachmentIds?: string[]) => Promise<void>
   decideAveline: (messageId: string, approved: boolean) => Promise<void>
+  /** `regenerate`, for the drawer's own thread slot. */
+  regenerateAveline: (messageId: string) => Promise<void>
 }
 
 const ConversationsContext = createContext<ConversationsContextValue | undefined>(undefined)
@@ -845,6 +872,69 @@ export function ConversationsProvider({
     [activeConversationId, applyAgentState, organizationId],
   )
 
+  /**
+   * Delivers a block to a client's own channel and shows it in that client's thread.
+   *
+   * It records the row the server wrote rather than the optimistic one: a delivery has no
+   * optimistic phase, because a bubble that says "Sent" before the provider has accepted would be
+   * the console claiming a customer was messaged when nobody was. The server's `Sent` row is
+   * broadcast over the hub, so the target thread updates itself if it is open.
+   */
+  const deliverToClient = useCallback(
+    async (targetConversationId: string, text: string, clientMessageId?: string) => {
+      const body = text.trim()
+      if (!targetConversationId || !body) return
+      const receipt = await deliverBlockToCustomer(
+        organizationId,
+        targetConversationId,
+        body,
+        clientMessageId,
+      )
+      // Keep the target row's preview and ordering honest in the list the picker was drawn from.
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === targetConversationId
+            ? {
+                ...c,
+                lastMessageAt: receipt.message?.createdAt ?? new Date().toISOString(),
+                lastMessagePreview: body.slice(0, 120),
+              }
+            : c,
+        ),
+      )
+    },
+    [organizationId],
+  )
+
+  /**
+   * Re-runs the agent for the turn behind a message in the panel's thread.
+   *
+   * The wait after this resolves is Aveline's, not the caller's: the fresh blocks arrive through
+   * the event subscriber and the hub, so the thread's working indicator is set here and cleared by
+   * the same terminal agent-state handling every other reply goes through.
+   */
+  const regenerate = useCallback(
+    async (messageId: string) => {
+      if (!activeConversationId) return
+      await requestRegeneration(organizationId, activeConversationId, messageId)
+      setAgentActivity({ startedAt: Date.now(), currentState: 'thinking' })
+      applyAgentState('thinking')
+    },
+    [activeConversationId, applyAgentState, organizationId],
+  )
+
+  /** `regenerate`, bound to the drawer's own thread slot rather than the panel's. */
+  const regenerateAveline = useCallback(
+    async (messageId: string) => {
+      const conversationId = avelineIdRef.current
+      if (!conversationId) return
+      await requestRegeneration(organizationId, conversationId, messageId)
+      setAvelineAgentActivity({ startedAt: Date.now(), currentState: 'thinking' })
+      applyAvelineAgentState('thinking')
+    },
+    [applyAvelineAgentState, organizationId],
+  )
+
   return (
     <ConversationsContext.Provider
       value={{
@@ -867,6 +957,8 @@ export function ConversationsProvider({
         attachmentsReady,
         decide,
         selectCustomer,
+        deliverToClient,
+        regenerate,
         avelineConversationId,
         avelineMessages,
         avelineAgentState,
@@ -876,6 +968,7 @@ export function ConversationsProvider({
         openAveline,
         sendToAveline,
         decideAveline,
+        regenerateAveline,
       }}
     >
       {children}

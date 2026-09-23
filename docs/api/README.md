@@ -644,6 +644,8 @@ is optional to the consumer. Registration is via `/api/v1/users/me/devices`
 | `GET` | `/api/v1/orgs/{organizationId:guid}/conversations/{conversationId:guid}` | — | `ConversationDto` |
 | `GET` | `.../{conversationId:guid}/messages` | `page`, `pageSize`, `around?` | `MessagePage` |
 | `POST` | `.../{conversationId:guid}/messages` | `{ text }` | `MessageDto` |
+| `POST` | `.../{conversationId:guid}/deliver` | `{ text, clientMessageId? }` | `DeliveryResultDto` |
+| `POST` | `.../{conversationId:guid}/messages/{messageId:guid}/regenerate` | — | `202` |
 | `POST` | `.../{conversationId:guid}/select-customer` | `{ customerId, query? }` | `200` |
 | `POST` | `.../messages/{messageId:guid}/sign-off` | `{ approved, contentHash }` | `200` |
 
@@ -673,6 +675,36 @@ contentBlocks, contentHash, replyToMessageId, status, createdAt }`.
 **Sign-off is content-hash guarded.** The client must echo the `contentHash` of the
 message it approved; a mismatch is rejected so an approval cannot be applied to
 edited content (`Modules/Conversations/Services/ContentHash.cs`).
+
+**`deliver` is the only outbound customer path, and it is not `messages`.** `POST …/messages`
+writes a staff **note** into the Salon: it reaches no customer and, on a client-bound thread, it
+triggers the agent. `POST …/deliver` is the opposite promise — it resolves the thread's client,
+finds a channel the tenant has connected, hands the words to the provider and then records the row
+with `status: Sent`, which is what makes the transcript say what actually went out. The two are
+separate routes on purpose (`ICustomerDeliveryService`).
+
+`DeliveryResultDto`: `{ delivered, channel?, providerMessageId?, message?, refusal?, detail? }`.
+`refusal` is a closed vocabulary — `conversation_not_found | no_customer | no_channel_handle |
+channel_not_connected | channel_unsupported | provider_refused` — and `detail` is the sentence to
+show the associate, because "you have not connected WhatsApp" and "that client has no number on
+file" are different things to do next. Statuses: `404` unknown thread, `409` this thread or this
+tenant cannot deliver at all, `502` the provider was reached and refused. **Nothing is recorded on
+a refusal.** A replay carrying the same `clientMessageId` whose stored row already went out is
+answered from that row without a second send.
+
+Channel resolution: the thread's `externalRef` (the handle an inbound message arrived from) is
+preferred over the client's `phoneNumber`, so a number edited on the customer record cannot
+silently redirect a reply to a different handset. WhatsApp Cloud API is the only channel with a
+provider today; Instagram has credentials but no provider and no webhook, so an Instagram-only
+tenant is told exactly that rather than handed a send that never happens.
+
+**`regenerate` re-runs the question, not the answer.** It resolves the staff turn the message
+replied to (falling back to the message's own first block text), triggers the agent with the
+thread's customer context, and answers `202`: the fresh blocks arrive as `message.created` events
+like every other agent reply, so there is no body. `404` when the message is not in the thread. It
+writes no message and does not touch the superseded block, whose stored row is immutable history a
+later read would return anyway.
+
 **Errors:** `400` empty message text / missing content hash / hash mismatch;
 `401` empty; `404 { "message": "Conversation not found." }`.
 **Source:** `Endpoints/ConversationEndpoints.cs:22-217`,

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:aveline_mobile/core/network/org_context.dart';
 import 'package:aveline_mobile/features/conversations/data/api_thread_repository.dart';
+import 'package:aveline_mobile/features/conversations/data/thread_repository.dart';
 import 'package:aveline_mobile/features/conversations/domain/thread_message.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -635,6 +636,144 @@ void main() {
           approved: true,
         ),
         throwsA(isA<StateError>()),
+      );
+      expect(api.adapter.requests, isEmpty);
+    });
+  });
+
+  group('ApiThreadRepository.deliver', () {
+    test('posts the text to the delivery route and reads where it went', () async {
+      final api = _api(
+        jsonEncode({
+          'delivered': true,
+          'channel': 'WhatsApp',
+          'providerMessageId': 'wamid.1',
+          'message': jsonDecode(_messageBody(text: 'On my way.')),
+        }),
+      );
+
+      final delivery = await api.repository.deliver(_conversationId, 'On my way.');
+
+      final request = api.adapter.requests.single;
+      expect(request.method, 'POST');
+      expect(
+        request.path,
+        '/api/v1/orgs/$_orgId/conversations/$_conversationId/deliver',
+      );
+      expect(request.data, {'text': 'On my way.'});
+      expect(delivery.delivered, isTrue);
+      expect(delivery.channel, 'WhatsApp');
+      expect(delivery.providerMessageId, 'wamid.1');
+      expect(delivery.message?.text, 'On my way.');
+    });
+
+    test('carries the idempotency key when it has one', () async {
+      final api = _api('{"delivered":true}');
+
+      await api.repository.deliver(
+        _conversationId,
+        'On my way.',
+        clientMessageId: '22222222-2222-4222-8222-222222222222',
+      );
+
+      expect(api.adapter.requests.single.data, {
+        'text': 'On my way.',
+        'clientMessageId': '22222222-2222-4222-8222-222222222222',
+      });
+    });
+
+    test('omits the key when there is none', () async {
+      final api = _api('{"delivered":true}');
+
+      await api.repository.deliver(_conversationId, 'On my way.');
+
+      expect(
+        (api.adapter.requests.single.data as Map).containsKey('clientMessageId'),
+        isFalse,
+      );
+    });
+
+    test('a refusal names the reason rather than surfacing a raw status', () async {
+      final api = _api(
+        '{"refusal":"no_customer","detail":"This thread has no client."}',
+        statusCode: 409,
+      );
+
+      await expectLater(
+        api.repository.deliver(_conversationId, 'On my way.'),
+        throwsA(
+          isA<DeliveryRefused>()
+              .having((refusal) => refusal.refusal, 'refusal', 'no_customer')
+              .having(
+                (refusal) => refusal.detail,
+                'detail',
+                'This thread has no client.',
+              ),
+        ),
+      );
+    });
+
+    test('a provider refusal is its own code', () async {
+      final api = _api(
+        '{"refusal":"provider_refused"}',
+        statusCode: 502,
+      );
+
+      await expectLater(
+        api.repository.deliver(_conversationId, 'On my way.'),
+        throwsA(
+          isA<DeliveryRefused>()
+              .having((refusal) => refusal.refusal, 'refusal', 'provider_refused'),
+        ),
+      );
+    });
+
+    test('an unknown conversation stays a transport failure, not a refusal', () async {
+      final api = _api('{"message":"gone"}', statusCode: 404);
+
+      await expectLater(
+        api.repository.deliver(_conversationId, 'On my way.'),
+        throwsA(
+          isA<DioException>().having(
+            (error) => error.response?.statusCode,
+            'status',
+            404,
+          ),
+        ),
+      );
+    });
+
+    test('refuses a conversation id that is not a UUID, without a request', () async {
+      final api = _api('{}');
+
+      await expectLater(
+        api.repository.deliver('cnv_nadeesha', 'On my way.'),
+        throwsA(isA<ArgumentError>()),
+      );
+      expect(api.adapter.requests, isEmpty);
+    });
+  });
+
+  group('ApiThreadRepository.regenerate', () {
+    test('asks the agent for a fresh reply and accepts the 202 with no body', () async {
+      final api = _api('', statusCode: 202);
+
+      await api.repository.regenerate(_conversationId, _messageId);
+
+      final request = api.adapter.requests.single;
+      expect(request.method, 'POST');
+      expect(
+        request.path,
+        '/api/v1/orgs/$_orgId/conversations/$_conversationId/messages/$_messageId/regenerate',
+      );
+    });
+
+    test('refuses a message id that is not a UUID, without a request', () async {
+      final api = _api('', statusCode: 202);
+
+      await expectLater(
+        api.repository.regenerate(_conversationId, 'msg_9'),
+        throwsA(isA<ArgumentError>()),
       );
       expect(api.adapter.requests, isEmpty);
     });

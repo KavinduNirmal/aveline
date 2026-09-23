@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../../../shared/persona.dart';
 import '../../../../shared/utils/date_formatter.dart';
 import '../../domain/thread_message.dart';
+import 'block_action_rail.dart';
 import 'client_channel_surface.dart';
 import 'conversation_avatar.dart';
 import 'thread_blocks.dart';
@@ -38,6 +39,7 @@ class ThreadMessageBubble extends StatelessWidget {
     this.onSelectCustomer,
     this.loadAttachment,
     this.openAttachment,
+    this.bridge,
   });
 
   final ThreadMessage message;
@@ -70,6 +72,12 @@ class ThreadMessageBubble extends StatelessWidget {
 
   /// Opens a document through the platform viewer.
   final Future<void> Function(Uint8List bytes, String fileName)? openAttachment;
+
+  /// The action rail's wiring for the thread the bubble is drawn in.
+  ///
+  /// Threaded down to the block renderer rather than read from a context, so the bubble
+  /// stays drawable on its own and simply gets no rail when there is no thread behind it.
+  final BlockActionBridge? bridge;
 
   @override
   Widget build(BuildContext context) {
@@ -190,6 +198,7 @@ class ThreadMessageBubble extends StatelessWidget {
                                 onSelectCustomer: onSelectCustomer,
                                 loadAttachment: loadAttachment,
                                 openAttachment: openAttachment,
+                                bridge: bridge,
                               ),
                             ],
                           ),
@@ -291,6 +300,7 @@ class ThreadMessageBubble extends StatelessWidget {
         onSelectCustomer: onSelectCustomer,
         loadAttachment: loadAttachment,
         openAttachment: openAttachment,
+        bridge: bridge,
       ),
     );
   }

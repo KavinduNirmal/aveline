@@ -106,6 +106,10 @@ public class ConversationEventSubscriberTests
         public Task<MessageDto> SendStaffNoteAsync(Guid orgId, Guid userId, Guid conversationId, string text, Guid? clientMessageId = null, IReadOnlyList<Guid>? attachmentIds = null, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
+        // The subscriber under test never regenerates; this exists only to satisfy the seam.
+        public Task<bool> RegenerateAsync(Guid orgId, Guid userId, Guid conversationId, Guid messageId, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
         public Task<Aveline.Api.Modules.Conversations.Models.MessageAttachment?> CreateAttachmentAsync(Guid orgId, Guid userId, Guid conversationId, byte[] bytes, string contentType, string fileName, int? width, int? height, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 

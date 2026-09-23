@@ -219,6 +219,10 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
         builder: (_) => ClientThreadScreen(
           conversation: conversation,
           repository: widget.threadRepository ?? const EmptyThreadRepository(),
+          // The same inbox the list was read from, so a forward can offer the other
+          // client threads.
+          conversationRepository:
+              widget.repository ?? const EmptyConversationRepository(),
           pageSize: widget.pageSize,
           onOpenClient: () => _openClient(conversation),
         ),

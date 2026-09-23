@@ -1251,4 +1251,86 @@ public class ConversationServiceTests
         Assert.Equal(MarkReadOutcome.ConversationNotFound, outcome);
         Assert.Empty(_readStates.All);
     }
+
+    /// <summary>Appends an agent block to a thread, the way the event subscriber does.</summary>
+    private Task<MessageDto> GivenAnAgentBlock(Guid conversationId, string threadId, string text)
+        => _sut.ApplyAgentMessageAsync(
+            new AgentMessageEvent(
+                conversationId,
+                threadId,
+                AgentKeys.Ava,
+                MessageKind.Note,
+                JsonSerializer.Deserialize<JsonElement>(
+                    $"[{{\"type\":\"suggestion\",\"text\":{JsonSerializer.Serialize(text)}}}]"),
+                null,
+                null),
+            CancellationToken.None);
+
+    [Fact]
+    public async Task RegenerateAsync_ReRunsTheStaffQuestionTheBlockAnswered()
+    {
+        var orgId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
+        var salon = await _sut.GetOrCreateSalonAsync(orgId, userId, customerId, CancellationToken.None);
+        await _sut.SendStaffNoteAsync(orgId, userId, salon.Id, "Do we have the slip dress in a medium?", null, null, CancellationToken.None);
+        var block = await GivenAnAgentBlock(salon.Id, salon.ThreadId, "Draft: yes, one left.");
+        var postsBefore = _agent.PostCount;
+
+        var started = await _sut.RegenerateAsync(orgId, userId, salon.Id, block.Id, CancellationToken.None);
+
+        Assert.True(started);
+        Assert.Equal(postsBefore + 1, _agent.PostCount);
+        Assert.Equal("/agents/query", _agent.LastPath);
+        // The question travels, not the answer the associate is unhappy with.
+        Assert.Contains("Do we have the slip dress in a medium?", _agent.LastBody);
+        Assert.DoesNotContain("Draft: yes, one left.", _agent.LastBody);
+        // The customer context rides along, exactly as it does for an ordinary send.
+        Assert.Contains($"\"customer_id\":\"{customerId}\"", _agent.LastBody);
+    }
+
+    [Fact]
+    public async Task RegenerateAsync_FallsBackToTheBlocksOwnWords_WhenNoStaffTurnIsInTheWindow()
+    {
+        // A thread whose only words are the agent's own: re-asking the block is a worse prompt than
+        // the staff question, but it is a prompt, and the rail must not be a dead button.
+        var orgId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var salon = await _sut.GetOrCreateSalonAsync(orgId, userId, null, CancellationToken.None);
+        var block = await GivenAnAgentBlock(salon.Id, salon.ThreadId, "Silk Slip Dress · LKR 24,000");
+        var postsBefore = _agent.PostCount;
+
+        var started = await _sut.RegenerateAsync(orgId, userId, salon.Id, block.Id, CancellationToken.None);
+
+        Assert.True(started);
+        Assert.Equal(postsBefore + 1, _agent.PostCount);
+        Assert.Contains("Silk Slip Dress", _agent.LastBody);
+    }
+
+    [Fact]
+    public async Task RegenerateAsync_ReportsAnUnknownMessage_WithoutCallingTheAgent()
+    {
+        var orgId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var salon = await _sut.GetOrCreateSalonAsync(orgId, userId, null, CancellationToken.None);
+        var postsBefore = _agent.PostCount;
+
+        var started = await _sut.RegenerateAsync(orgId, userId, salon.Id, Guid.NewGuid(), CancellationToken.None);
+
+        Assert.False(started);
+        Assert.Equal(postsBefore, _agent.PostCount);
+    }
+
+    [Fact]
+    public async Task RegenerateAsync_ReportsAnInvisibleConversation()
+    {
+        var salon = await _sut.GetOrCreateSalonAsync(Guid.NewGuid(), Guid.NewGuid(), null, CancellationToken.None);
+        var postsBefore = _agent.PostCount;
+
+        var started = await _sut.RegenerateAsync(
+            Guid.NewGuid(), Guid.NewGuid(), salon.Id, Guid.NewGuid(), CancellationToken.None);
+
+        Assert.False(started);
+        Assert.Equal(postsBefore, _agent.PostCount);
+    }
 }

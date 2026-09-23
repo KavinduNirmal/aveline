@@ -1577,6 +1577,122 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
 
+  /api/v1/orgs/{organizationId}/conversations/{conversationId}/deliver:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - $ref: "#/components/parameters/ConversationId"
+    post:
+      tags: [Conversations]
+      summary: Deliver a block to the customer's own channel
+      operationId: deliverConversationBlockToCustomer
+      description: |
+        Sends the words to the thread's **customer**, on a channel the boutique has connected, and
+        then records the outbound row with `status: Sent`.
+
+        This route is deliberately not `POST …/messages`. A message there is a staff **note**: it
+        is written into the Salon, reaches no customer, and on a client-bound thread it triggers
+        the agent. Delivery is the opposite promise, so the two are separate calls and a caller
+        cannot reach one by asking for the other.
+
+        **Channel resolution.** The thread's `externalRef` — the handle an inbound message arrived
+        from — is preferred over the client's `phoneNumber`, so a number edited on the customer
+        record cannot silently redirect a reply to a different handset. WhatsApp Cloud API is the
+        only channel with a provider today; Instagram has credentials but no provider and no
+        webhook, so an Instagram-only tenant is answered `channel_unsupported` rather than handed
+        a send that never happened.
+
+        **Nothing is recorded on a refusal.** A row saying `Sent` is a claim that a customer was
+        messaged, so it is only written once the provider has accepted. A provider success whose
+        record then fails to write is logged and still reported as delivered, because the customer
+        does have the message.
+
+        **Idempotency.** `clientMessageId` is a client-generated UUIDv4, stable for one delivery
+        across retries. A replay whose stored row already went out is answered from that row with
+        `200` and does not send the words to the customer a second time.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text:
+                  type: string
+                  minLength: 1
+                  description: |
+                    The words to send, already rendered by the client from the block — a draft's
+                    sentence, a piece's line, a look's name and note.
+                clientMessageId:
+                  type: string
+                  format: uuid
+                  nullable: true
+                  description: Client-generated idempotency key, stable across retries
+      responses:
+        "200":
+          description: Delivered, with the row the thread records it as
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeliveryResultDto" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The conversation does not exist in this organization, or is not visible
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeliveryResultDto" }
+        "409":
+          description: |
+            This thread or this tenant cannot deliver at all — `no_customer`, `no_channel_handle`,
+            `channel_not_connected` or `channel_unsupported`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeliveryResultDto" }
+        "502":
+          description: The provider was reached and refused the send (`provider_refused`)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeliveryResultDto" }
+
+  /api/v1/orgs/{organizationId}/conversations/{conversationId}/messages/{messageId}/regenerate:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - $ref: "#/components/parameters/ConversationId"
+      - name: messageId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Conversations]
+      summary: Regenerate the agent's answer to a turn
+      operationId: regenerateConversationMessage
+      description: |
+        Re-runs the **question**, not the answer. The staff turn the message replied to is
+        resolved (falling back to the message's own first block text when the staff turn has
+        scrolled out of the look-back window) and the agent is triggered again with the thread's
+        customer context.
+
+        Answered `202`: the fresh content does not exist yet and arrives the way every other agent
+        reply does, as `message.created` events applied by the subscriber and broadcast over the
+        Salon hub. There is therefore no response body.
+
+        It writes no message and does not touch the superseded block. Stored message rows are
+        immutable history that a later read returns, so a client that wants a view-level
+        replacement must do that itself; see `docs/frontend/tenant-dashboard.md`.
+      responses:
+        "202":
+          description: The run was accepted; the reply arrives on the hub
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The message is not in this conversation, or the thread is not visible
+
   /api/v1/orgs/{organizationId}/conversations/{conversationId}/select-customer:
     parameters:
       - $ref: "#/components/parameters/OrganizationId"
@@ -8441,6 +8557,48 @@ components:
           format: uuid
           nullable: true
           description: The LangGraph run that produced this message, for bubble-to-run correlation.
+    DeliveryResultDto:
+      type: object
+      description: |
+        The result of one attempt to put a block in front of the customer on their own channel.
+        `delivered` is the whole answer: when it is false **nothing reached the customer**,
+        `refusal` names the state in machine terms and `detail` is the sentence to show the
+        associate. The sentence is the server's because only it knows which state applies —
+        "you have not connected WhatsApp" and "that client has no number on file" are different
+        things to do next, and one generic failure for both would be a worse answer than either.
+      required: [delivered]
+      properties:
+        delivered: { type: boolean }
+        channel:
+          type: string
+          nullable: true
+          description: The channel the words actually left on, when they did (`WhatsApp`).
+        providerMessageId:
+          type: string
+          nullable: true
+          description: The provider's own id for the outbound message, for support.
+        message:
+          allOf:
+            - $ref: "#/components/schemas/MessageDto"
+          nullable: true
+          description: |
+            The row the delivery was recorded as, with `status: Sent`. This is the difference the
+            transcript exists to show: `Sent` says a customer has it, where a `Published` note
+            would be a record of something that never left the shop.
+        refusal:
+          type: string
+          nullable: true
+          enum:
+            - conversation_not_found
+            - no_customer
+            - no_channel_handle
+            - channel_not_connected
+            - channel_unsupported
+            - provider_refused
+        detail:
+          type: string
+          nullable: true
+          description: The reason, phrased for the associate.
     MessagePage:
       allOf:
         - $ref: "#/components/schemas/PageMeta"

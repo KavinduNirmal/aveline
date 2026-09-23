@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../../../shared/persona.dart';
 import '../../../../shared/widgets/blossom.dart';
 import '../../../conversations/domain/thread_message.dart';
+import '../../../conversations/presentation/widgets/block_action_rail.dart';
 import '../../../conversations/presentation/widgets/client_channel_surface.dart';
 import '../../domain/salon_message.dart';
 import '../../../conversations/domain/tile_blocks.dart';
@@ -24,6 +25,7 @@ class MessageBubble extends StatelessWidget {
     this.onSignOff,
     this.loadAttachment,
     this.openAttachment,
+    this.bridge,
   });
 
   final SalonMessage message;
@@ -45,6 +47,13 @@ class MessageBubble extends StatelessWidget {
 
   /// Opens a document through the platform viewer.
   final Future<void> Function(Uint8List bytes, String fileName)? openAttachment;
+
+  /// The action rail's wiring for the Salon.
+  ///
+  /// The Salon draws the same AI content blocks as a client thread, so it draws the same
+  /// rail. `null` leaves the cards exactly as they were, which is what a preview or a
+  /// test with no surface behind it wants.
+  final BlockActionBridge? bridge;
 
   @override
   Widget build(BuildContext context) {
@@ -123,6 +132,7 @@ class MessageBubble extends StatelessWidget {
                           onSelectCustomer: onSelectCustomer,
                           loadAttachment: loadAttachment,
                           openAttachment: openAttachment,
+                          bridge: bridge,
                         )
                       else
                         Container(
@@ -205,6 +215,7 @@ class MessageBubble extends StatelessWidget {
           : null,
       loadAttachment: loadAttachment,
       openAttachment: openAttachment,
+      bridge: bridge,
     );
   }
 }
@@ -233,6 +244,7 @@ class _ClientSurface extends StatelessWidget {
     required this.onSelectCustomer,
     required this.loadAttachment,
     required this.openAttachment,
+    this.bridge,
   });
 
   final String messageId;
@@ -243,6 +255,7 @@ class _ClientSurface extends StatelessWidget {
   final ValueChanged<String>? onSelectCustomer;
   final Future<Uint8List> Function(String attachmentId)? loadAttachment;
   final Future<void> Function(Uint8List bytes, String fileName)? openAttachment;
+  final BlockActionBridge? bridge;
 
   @override
   Widget build(BuildContext context) {
@@ -264,6 +277,7 @@ class _ClientSurface extends StatelessWidget {
             onSelectCustomer: onSelectCustomer,
             loadAttachment: loadAttachment,
             openAttachment: openAttachment,
+            bridge: bridge,
           ),
         ],
       ],

@@ -64,5 +64,29 @@ void main() {
         throwsA(isA<StateError>()),
       );
     });
+
+    test('refuses a delivery with something the caller can read', () async {
+      const repository = EmptyThreadRepository();
+
+      await expectLater(
+        repository.deliver('cnv_any', 'Hello.'),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('no thread source'),
+          ),
+        ),
+      );
+    });
+
+    test('refuses a regeneration with something the caller can read', () async {
+      const repository = EmptyThreadRepository();
+
+      await expectLater(
+        repository.regenerate('cnv_any', 'msg_1'),
+        throwsA(isA<StateError>()),
+      );
+    });
   });
 }

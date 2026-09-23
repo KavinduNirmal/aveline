@@ -1,11 +1,12 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../../../shared/persona.dart';
 import '../../../../shared/utils/currency_formatter.dart';
-import '../../../../shared/widgets/app_toast.dart';
 import '../../domain/thread_message.dart';
 import '../../domain/tile_blocks.dart';
+import 'block_action_rail.dart';
 import 'message_blocks.dart';
 
 /// A one-line summary of a content block the thread has no card for.
@@ -81,6 +82,7 @@ class ThreadMessageBlocks extends StatelessWidget {
     this.onSelectCustomer,
     this.loadAttachment,
     this.openAttachment,
+    this.bridge,
   });
 
   final ThreadMessage message;
@@ -101,6 +103,10 @@ class ThreadMessageBlocks extends StatelessWidget {
   /// a preview wants.
   final Future<void> Function(Uint8List bytes, String fileName)? openAttachment;
 
+  /// The action rail's wiring for the thread. `null` draws no rail, which is what a
+  /// preview or a renderer with no controller behind it wants.
+  final BlockActionBridge? bridge;
+
   @override
   Widget build(BuildContext context) {
     final blocks = message.bodyBlocks;
@@ -111,24 +117,46 @@ class ThreadMessageBlocks extends StatelessWidget {
     // A run of consecutive tiles has to reach the renderer *together*: the grouping is
     // what lays a curated set across the bubble instead of stacking it one card per
     // line, and a per-block call could never see the row.
+    //
+    // A cursor walks the groups to hand each rendered block its position in the
+    // **message**, because a message drawn in groups would otherwise number two pieces
+    // in different groups alike, and the rail's per-block state would collide.
+    final groups = groupTileBlocks(blocks);
+    final children = <Widget>[];
+    var cursor = 0;
+    for (final group in groups) {
+      final span = switch (group) {
+        TileRun(:final blocks) => blocks.length,
+        LoneBlock() => 1,
+      };
+      final indices = [for (var i = 0; i < span; i += 1) cursor + i];
+      cursor += span;
+      children.add(
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: switch (group) {
+            TileRun(:final blocks) => MessageBlockList(
+              messageId: message.id,
+              blocks: blocks,
+              blockIndices: indices,
+              persona: personaForAgent(message.agentKey),
+              bridge: bridge,
+            ),
+            LoneBlock(:final block) => _block(
+              context,
+              block,
+              indices.first,
+            ),
+          },
+        ),
+      );
+    }
+
     return Column(
       crossAxisAlignment: message.isFromStaff
           ? CrossAxisAlignment.end
           : CrossAxisAlignment.start,
-      children: [
-        for (final group in groupTileBlocks(blocks))
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: switch (group) {
-              TileRun(:final blocks) => MessageBlockList(
-                messageId: message.id,
-                blocks: blocks,
-                persona: personaForAgent(message.agentKey),
-              ),
-              LoneBlock(:final block) => _block(context, block),
-            },
-          ),
-      ],
+      children: children,
     );
   }
 
@@ -148,19 +176,23 @@ class ThreadMessageBlocks extends StatelessWidget {
     'courier',
   };
 
-  Widget _block(BuildContext context, ThreadBlock block) {
+  Widget _block(BuildContext context, ThreadBlock block, int blockIndex) {
     if (_richTypes.contains(block.type)) {
       return MessageBlockList(
         messageId: message.id,
         blocks: [block],
+        blockIndices: [blockIndex],
         persona: personaForAgent(message.agentKey),
+        bridge: bridge,
       );
     }
 
     return switch (block.type) {
       'suggestion' => _SuggestionCard(
         messageId: message.id,
-        text: block.text ?? '',
+        block: block,
+        blockIndex: blockIndex,
+        bridge: bridge,
       ),
       'choice' => _ChoiceCard(
         messageId: message.id,
@@ -182,33 +214,38 @@ class ThreadMessageBlocks extends StatelessWidget {
   }
 }
 
-/// A draft an agent wrote for the associate to send, with a copy action.
+/// A draft an agent wrote for the associate to send, with its action rail.
 ///
-/// This is Ava's `draft_response`: "here is a message you can send them, copy it?".
+/// This is Ava's `draft_response`: "here is a message you can send them". The rail closes
+/// the card: Copy, Send to customer and Regenerate, in that order, joined to the bottom of
+/// the same clipped box.
 class _SuggestionCard extends StatelessWidget {
-  const _SuggestionCard({required this.messageId, required this.text});
+  const _SuggestionCard({
+    required this.messageId,
+    required this.block,
+    required this.blockIndex,
+    required this.bridge,
+  });
 
   final String messageId;
-  final String text;
-
-  Future<void> _copy(BuildContext context) async {
-    await Clipboard.setData(ClipboardData(text: text));
-    if (context.mounted) {
-      AppToast.show(context, 'Draft copied');
-    }
-  }
+  final ThreadBlock block;
+  final int blockIndex;
+  final BlockActionBridge? bridge;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final text = block.text ?? '';
 
     return Container(
       key: ValueKey('thread_suggestion_$messageId'),
       constraints: BoxConstraints(
         maxWidth: MediaQuery.of(context).size.width * 0.78,
       ),
-      padding: const EdgeInsets.fromLTRB(12, 10, 8, 6),
+      // One clipped box: the card's radius shapes the rail's bottom corners, so the
+      // segments read as the card's footer rather than as floating chips.
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: scheme.surfaceContainerLowest,
         borderRadius: BorderRadius.circular(12),
@@ -216,31 +253,34 @@ class _SuggestionCard extends StatelessWidget {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            'DRAFT',
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: scheme.primary,
-              letterSpacing: 1.1,
-              fontSize: 10,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'DRAFT',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: scheme.primary,
+                    letterSpacing: 1.1,
+                    fontSize: 10,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(text, style: theme.textTheme.bodyMedium),
+              ],
             ),
           ),
-          const SizedBox(height: 4),
-          Text(text, style: theme.textTheme.bodyMedium),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              key: ValueKey('thread_suggestion_copy_$messageId'),
-              onPressed: () => _copy(context),
-              icon: const Icon(Icons.copy_rounded, size: 15),
-              label: const Text('Copy'),
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                minimumSize: const Size(0, 30),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
+          if (bridge != null)
+            BlockActionRail(
+              block: block,
+              messageId: messageId,
+              blockIndex: blockIndex,
+              bridge: bridge!,
             ),
-          ),
         ],
       ),
     );

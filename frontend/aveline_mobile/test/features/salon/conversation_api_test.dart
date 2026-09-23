@@ -202,4 +202,27 @@ void main() {
       expect(adapter.requests, hasLength(1));
     });
   });
+
+  group('ConversationApi regenerate', () {
+    test('asks the agent for a fresh reply to the turn behind a message', () async {
+      final adapter = _RecordingAdapter('');
+      final api = ConversationApi(Dio()..httpClientAdapter = adapter);
+
+      await api.regenerate(
+        organizationId: _orgId,
+        conversationId: _conversationId,
+        messageId: _attachmentId,
+      );
+
+      final request = adapter.requests.single;
+      expect(request.method, 'POST');
+      expect(
+        request.path,
+        '/api/v1/orgs/$_orgId/conversations/$_conversationId'
+        '/messages/$_attachmentId/regenerate',
+      );
+      // The endpoint is accepted rather than answered, so there is no body to send.
+      expect(request.data, isNull);
+    });
+  });
 }

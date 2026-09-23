@@ -6,8 +6,10 @@ import 'package:aveline_mobile/core/network/conversation_realtime_service.dart';
 import 'package:aveline_mobile/core/notifications/realtime_connection.dart';
 import 'package:aveline_mobile/core/providers/boutique_provider.dart';
 import 'package:aveline_mobile/core/theme/app_theme.dart';
+import 'package:aveline_mobile/features/conversations/data/conversation_repository.dart';
 import 'package:aveline_mobile/features/conversations/data/empty_thread_repository.dart';
 import 'package:aveline_mobile/features/conversations/data/thread_repository.dart';
+import 'package:aveline_mobile/features/conversations/domain/block_actions.dart';
 import 'package:aveline_mobile/features/conversations/domain/conversation.dart';
 import 'package:aveline_mobile/features/conversations/domain/thread_attachment.dart';
 import 'package:aveline_mobile/features/conversations/domain/thread_message.dart';
@@ -81,6 +83,15 @@ class _SeedThread implements ThreadRepository {
 
   /// Whether `uploadAttachment` refuses, so a test can drive the tray's failure state.
   bool failUpload = false;
+
+  /// The deliveries the action bar asked for, by conversation and text.
+  final List<({String conversationId, String text})> delivered = [];
+
+  /// The regenerations the action bar asked for.
+  final List<({String conversationId, String messageId})> regenerated = [];
+
+  /// Whether a delivery refuses, so a test can drive the "nothing was sent" toast.
+  bool failDeliver = false;
 
   /// The bytes `fetchAttachmentBytes` serves.
   final List<int> _attachmentBytes = _tinyPng;
@@ -208,6 +219,37 @@ class _SeedThread implements ThreadRepository {
     String attachmentId,
   ) async => Uint8List.fromList(_attachmentBytes);
 
+  @override
+  Future<ThreadDelivery> deliver(
+    String conversationId,
+    String text, {
+    String? clientMessageId,
+  }) async {
+    if (failDeliver) {
+      throw Exception('The delivery was refused.');
+    }
+    delivered.add((conversationId: conversationId, text: text));
+    final stored = ThreadMessage(
+      id: 'msg_deliver_${delivered.length}',
+      author: MessageAuthor.staff,
+      kind: MessageKind.note,
+      status: MessageStatus.sent,
+      text: text,
+      createdAt: DateTime.now().toUtc(),
+    );
+    _threadOf(conversationId).add(stored);
+    return ThreadDelivery(
+      delivered: true,
+      channel: 'WhatsApp',
+      message: stored,
+    );
+  }
+
+  @override
+  Future<void> regenerate(String conversationId, String messageId) async {
+    regenerated.add((conversationId: conversationId, messageId: messageId));
+  }
+
   List<ThreadMessage> _threadOf(String conversationId) =>
       _threads.putIfAbsent(
         conversationId,
@@ -323,9 +365,14 @@ class _StubThread implements ThreadRepository {
   final List<String> sent = [];
   final List<String> markedRead = [];
   final List<String> uploaded = [];
+  final List<({String conversationId, String text})> delivered = [];
+  final List<({String conversationId, String messageId})> regenerated = [];
   final List<int> _attachmentBytes = _tinyPng;
   int _attachmentCount = 0;
   bool failSend = false;
+
+  /// Whether a delivery refuses, so a test can drive the "nothing was sent" toast.
+  bool failDeliver = false;
 
   /// Builds the four short messages against the wall clock.
   void _seedItems() {
@@ -463,6 +510,36 @@ class _StubThread implements ThreadRepository {
     String conversationId,
     String attachmentId,
   ) async => Uint8List.fromList(_attachmentBytes);
+
+  @override
+  Future<ThreadDelivery> deliver(
+    String conversationId,
+    String text, {
+    String? clientMessageId,
+  }) async {
+    if (failDeliver) {
+      throw Exception('The delivery was refused.');
+    }
+    delivered.add((conversationId: conversationId, text: text));
+    final stored = ThreadMessage(
+      id: 'stub_deliver_${delivered.length}',
+      author: MessageAuthor.staff,
+      status: MessageStatus.sent,
+      text: text,
+      createdAt: _now,
+    );
+    items = [...items, stored];
+    return ThreadDelivery(
+      delivered: true,
+      channel: 'WhatsApp',
+      message: stored,
+    );
+  }
+
+  @override
+  Future<void> regenerate(String conversationId, String messageId) async {
+    regenerated.add((conversationId: conversationId, messageId: messageId));
+  }
 }
 
 /// Holds the first read open until a test releases it.
@@ -557,6 +634,47 @@ class _DelayedThread implements ThreadRepository {
     String conversationId,
     String attachmentId,
   ) => _inner.fetchAttachmentBytes(conversationId, attachmentId);
+
+  @override
+  Future<ThreadDelivery> deliver(
+    String conversationId,
+    String text, {
+    String? clientMessageId,
+  }) => _inner.deliver(
+    conversationId,
+    text,
+    clientMessageId: clientMessageId,
+  );
+
+  @override
+  Future<void> regenerate(String conversationId, String messageId) =>
+      _inner.regenerate(conversationId, messageId);
+}
+
+/// The inbox, as the thread reads it for the forward picker's destinations.
+class _Inbox implements ConversationRepository {
+  _Inbox(this.items);
+
+  final List<Conversation> items;
+
+  @override
+  Future<ConversationPage> fetchConversations({int page = 1}) async =>
+      ConversationPage(
+        items: items,
+        total: items.length,
+        page: page,
+        pageSize: 50,
+      );
+
+  @override
+  Future<Conversation?> fetchConversation(String id) async {
+    for (final conversation in items) {
+      if (conversation.id == id) {
+        return conversation;
+      }
+    }
+    return null;
+  }
 }
 
 /// Fails the read until it is told to stop.
@@ -648,6 +766,21 @@ class _FailingThread implements ThreadRepository {
     String conversationId,
     String attachmentId,
   ) => _inner.fetchAttachmentBytes(conversationId, attachmentId);
+
+  @override
+  Future<ThreadDelivery> deliver(
+    String conversationId,
+    String text, {
+    String? clientMessageId,
+  }) => _inner.deliver(
+    conversationId,
+    text,
+    clientMessageId: clientMessageId,
+  );
+
+  @override
+  Future<void> regenerate(String conversationId, String messageId) =>
+      _inner.regenerate(conversationId, messageId);
 }
 
 /// A thread whose id is a UUID, so the realtime service accepts it.
@@ -718,6 +851,7 @@ void _usePhoneSurface(
 Widget _wrap(
   Conversation conversation, {
   ThreadRepository? repository,
+  ConversationRepository? conversationRepository,
   int pageSize = 50,
   VoidCallback? onOpenClient,
   ConversationRealtimeService? realtimeService,
@@ -750,6 +884,7 @@ Widget _wrap(
           child: ClientThreadScreen(
             conversation: conversation,
             repository: repository ?? _SeedThread(),
+            conversationRepository: conversationRepository,
             pageSize: pageSize,
             onOpenClient: onOpenClient,
             realtimeService: realtimeService,
@@ -770,6 +905,7 @@ Future<void> _open(
   WidgetTester tester, {
   Conversation conversation = _nadeesha,
   ThreadRepository? repository,
+  ConversationRepository? conversationRepository,
   int pageSize = 50,
   VoidCallback? onOpenClient,
   ConversationRealtimeService? realtimeService,
@@ -783,6 +919,7 @@ Future<void> _open(
     _wrap(
       conversation,
       repository: repository,
+      conversationRepository: conversationRepository,
       pageSize: pageSize,
       onOpenClient: onOpenClient,
       realtimeService: realtimeService,
@@ -1292,8 +1429,9 @@ void main() {
       // A suggestion-only message must not be reported as plain text; it is a card.
       expect(find.byKey(const Key('thread_suggestion_msg_s1')), findsOneWidget);
 
+      // Copy is the rail's first segment, joined to the bottom of the card.
       await tester.tap(
-        find.byKey(const Key('thread_suggestion_copy_msg_s1')),
+        find.byKey(const Key('block_action_copy_msg_s1_0')),
       );
       await tester.pumpAndSettle();
 
@@ -1455,6 +1593,184 @@ void main() {
 
       expect(find.byKey(const Key('thread_quote_msg_orphan')), findsNothing);
       expect(find.text('As discussed.'), findsOneWidget);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // The per-block action bar
+  // ---------------------------------------------------------------------------
+  group('ClientThreadScreen block actions', () {
+    DateTime age([int minutes = 5]) =>
+        DateTime.now().toUtc().subtract(Duration(minutes: minutes));
+
+    _SeedThread seeded(ThreadMessage message) =>
+        _SeedThread(seed: {_nadeesha.id: [message]});
+
+    ThreadMessage agent(String id, List<ThreadBlock> blocks) => ThreadMessage(
+      id: id,
+      author: MessageAuthor.agent,
+      kind: MessageKind.note,
+      text: '',
+      createdAt: age(),
+      blocks: blocks,
+    );
+
+    ThreadBlock suggestion([String text = 'Draft body']) =>
+        ThreadBlock('suggestion', {'type': 'suggestion', 'text': text});
+
+    ThreadBlock piece([String name = 'Silk Slip']) =>
+        ThreadBlock('piece', {'type': 'piece', 'name': name});
+
+    const salon = Conversation(id: 'cnv_salon', kind: ConversationKind.aveline);
+
+    testWidgets('a suggestion offers Copy, Send to customer and Regenerate',
+        (tester) async {
+      await _open(
+        tester,
+        repository: seeded(agent('msg_b1', [suggestion()])),
+      );
+
+      expect(find.byKey(const Key('block_action_copy_msg_b1_0')), findsOneWidget);
+      expect(
+        find.byKey(const Key('block_action_sendToCustomer_msg_b1_0')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('block_action_regenerate_msg_b1_0')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('a piece offers Forward alone, never Regenerate', (tester) async {
+      await _open(
+        tester,
+        repository: seeded(agent('msg_b2', [piece()])),
+      );
+
+      expect(find.byKey(const Key('block_action_forward_msg_b2_0')), findsOneWidget);
+      expect(
+        find.byKey(const Key('block_action_regenerate_msg_b2_0')),
+        findsNothing,
+      );
+      expect(find.byKey(const Key('block_action_copy_msg_b2_0')), findsNothing);
+    });
+
+    testWidgets('sending to the customer confirms the client and the exact block text',
+        (tester) async {
+      final thread = seeded(agent('msg_b4', [suggestion('Tell her it is back.')]));
+      await _open(tester, repository: thread);
+
+      await tester.tap(
+        find.byKey(const Key('block_action_sendToCustomer_msg_b4_0')),
+      );
+      await tester.pumpAndSettle();
+
+      // It cannot be unsent, so the dialog names who receives it and prints what will go.
+      expect(find.byKey(const Key('block_send_confirm')), findsOneWidget);
+      expect(find.text('Send to Nadeesha Perera?'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('block_send_confirm')),
+          matching: find.text('Tell her it is back.'),
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const Key('block_send_confirm_send')));
+      await tester.pumpAndSettle();
+
+      expect(thread.delivered.single.conversationId, _nadeesha.id);
+      expect(thread.delivered.single.text, 'Tell her it is back.');
+      expect(find.text('Sent to Nadeesha Perera.'), findsOneWidget);
+    });
+
+    testWidgets('cancelling the confirmation sends nothing', (tester) async {
+      final thread = seeded(agent('msg_b5', [suggestion('Tell her it is back.')]));
+      await _open(tester, repository: thread);
+
+      await tester.tap(
+        find.byKey(const Key('block_action_sendToCustomer_msg_b5_0')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('block_send_cancel')));
+      await tester.pumpAndSettle();
+
+      expect(thread.delivered, isEmpty);
+    });
+
+    testWidgets('a refused delivery says nothing was sent', (tester) async {
+      final thread = seeded(agent('msg_b6', [suggestion('Tell her it is back.')]))
+        ..failDeliver = true;
+      await _open(tester, repository: thread);
+
+      await tester.tap(
+        find.byKey(const Key('block_action_sendToCustomer_msg_b6_0')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('block_send_confirm_send')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('That could not be sent. Nothing was sent.'), findsOneWidget);
+    });
+
+    testWidgets('Forward opens the other client threads, never the concierge',
+        (tester) async {
+      final thread = seeded(agent('msg_b7', [piece()]));
+      await _open(
+        tester,
+        repository: thread,
+        conversationRepository: _Inbox([_nadeesha, _menaka, salon]),
+      );
+
+      await tester.tap(find.byKey(const Key('block_action_forward_msg_b7_0')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('block_forward_picker')), findsOneWidget);
+      expect(
+        find.byKey(const Key('block_forward_target_cnv_menaka')),
+        findsOneWidget,
+      );
+      // The client-less concierge Salon is not a delivery target.
+      expect(
+        find.byKey(const Key('block_forward_target_cnv_salon')),
+        findsNothing,
+      );
+
+      await tester.tap(find.byKey(const Key('block_forward_target_cnv_menaka')));
+      await tester.pumpAndSettle();
+
+      expect(thread.delivered.single.conversationId, _menaka.id);
+      expect(thread.delivered.single.text, 'Silk Slip');
+      expect(find.text('Forwarded to Menaka Rathnayake.'), findsOneWidget);
+    });
+
+    testWidgets('Forward has no target and says why when the inbox holds no other client',
+        (tester) async {
+      await _open(
+        tester,
+        repository: seeded(agent('msg_b8', [piece()])),
+        conversationRepository: _Inbox([_nadeesha, salon]),
+      );
+
+      expect(
+        find.byTooltip(BlockActionReasons.noForwardTarget),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('Regenerate asks the server for the block message and reports it',
+        (tester) async {
+      final thread = seeded(agent('msg_b9', [suggestion()]));
+      await _open(tester, repository: thread);
+
+      await tester.tap(
+        find.byKey(const Key('block_action_regenerate_msg_b9_0')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(thread.regenerated.single.conversationId, _nadeesha.id);
+      expect(thread.regenerated.single.messageId, 'msg_b9');
+      expect(find.text('Asking Aveline for a fresh take.'), findsOneWidget);
     });
   });
 

@@ -90,26 +90,6 @@ public class InventoryRepository : IInventoryRepository
             dbQuery = dbQuery.Where(x => x.Category.ToLower().Contains(trimmedCategory));
         }
 
-        if (!string.IsNullOrWhiteSpace(color))
-        {
-            var colors = color.Split(new[] { ',', '|' }, StringSplitOptions.RemoveEmptyEntries)
-                              .Select(c => c.Trim().ToLower())
-                              .ToList();
-            
-            dbQuery = dbQuery.Where(x =>
-                (x.Color != null && colors.Any(c => x.Color.ToLower().Contains(c))) ||
-                (x.ItemName != null && colors.Any(c => 
-                    x.ItemName.ToLower() == c || 
-                    x.ItemName.ToLower().StartsWith(c + " ") || 
-                    x.ItemName.ToLower().EndsWith(" " + c) || 
-                    x.ItemName.ToLower().Contains(" " + c + " "))) ||
-                (x.Description != null && colors.Any(c => 
-                    x.Description.ToLower() == c || 
-                    x.Description.ToLower().StartsWith(c + " ") || 
-                    x.Description.ToLower().EndsWith(" " + c) || 
-                    x.Description.ToLower().Contains(" " + c + " "))));
-        }
-
         if (minPrice.HasValue)
         {
             dbQuery = dbQuery.Where(x => x.Price >= minPrice.Value);
@@ -129,7 +109,28 @@ public class InventoryRepository : IInventoryRepository
             .OrderBy(x => x.ItemName)
             .ToListAsync(cancellationToken);
 
-        // Size filter evaluation in memory to support JSON array across all providers
+        // Color and size filter evaluation in memory to support complex fuzzy variants and JSON arrays across all providers
+        if (!string.IsNullOrWhiteSpace(color))
+        {
+            var colors = color.Split(new[] { ',', '|' }, StringSplitOptions.RemoveEmptyEntries)
+                              .Select(c => c.Trim().ToLower())
+                              .ToList();
+
+            results = results.Where(x =>
+                (x.Color != null && colors.Any(c => x.Color.ToLower().Contains(c))) ||
+                (x.ItemName != null && colors.Any(c => 
+                    x.ItemName.ToLower() == c || 
+                    x.ItemName.ToLower().StartsWith(c + " ") || 
+                    x.ItemName.ToLower().EndsWith(" " + c) || 
+                    x.ItemName.ToLower().Contains(" " + c + " "))) ||
+                (x.Description != null && colors.Any(c => 
+                    x.Description.ToLower() == c || 
+                    x.Description.ToLower().StartsWith(c + " ") || 
+                    x.Description.ToLower().EndsWith(" " + c) || 
+                    x.Description.ToLower().Contains(" " + c + " ")))
+            ).ToList();
+        }
+
         if (!string.IsNullOrWhiteSpace(size))
         {
             results = results

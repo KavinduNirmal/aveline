@@ -175,7 +175,7 @@ class VisualInsightAgent:
             under_match = re.search(r"\b(?:under|less than|below|max(?:imum)?|up to)\s*(?:\$|£|€)?\s*(\d+(?:\.\d+)?)\b", msg)
             if under_match:
                 criteria["maxPrice"] = float(under_match.group(1))
-            
+
             over_match = re.search(r"\b(?:over|more than|above|min(?:imum)?)\s*(?:\$|£|€)?\s*(\d+(?:\.\d+)?)\b", msg)
             if over_match:
                 criteria["minPrice"] = float(over_match.group(1))
@@ -252,7 +252,7 @@ class VisualInsightAgent:
                 for preserve_key in ["minPrice", "maxPrice", "color", "size"]:
                     if preserve_key in criteria and criteria[preserve_key]:
                         fallback_criteria[preserve_key] = criteria[preserve_key]
-                    
+
                 relaxed_items = await search_inventory(self._registry, fallback_criteria)
                 if relaxed_items:
                     items = relaxed_items

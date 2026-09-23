@@ -3168,4 +3168,42 @@
 - `npm test -- src/components/conversation/blocks.test.tsx --run`: 11/11 tests passed.
 - `npm test -- --run`: 1055/1055 tests passed (141 test files).
 
+---
+
+## Session 2026-09-23 (CI Fixes: APIsec Guard, Python Ruff Linter, Redis Package Version & EF Core InMemory Color Query)
+
+**Task:** Resolve GitHub Actions CI failures on `feature/visual-insight-agent`:
+1. Guard `APIsec / Trigger_APIsec_scan` to skip cleanly when repo credentials are not set.
+2. Fix `Ruff` whitespace lint errors in Python Agent Service (`nodes.py`).
+3. Revert `StackExchange.Redis` version from `3.3.0` to `2.7.27` to pass dependency & security checks.
+4. Resolve EF Core LINQ translation exception in `InventoryRepository.SearchAsync` by evaluating color matching in memory alongside size.
+5. Fix CRLF normalization in `TenantDashboardDocumentationTests.cs` for consistent cross-platform execution.
+
+**Tool used:** Antigravity AI Assistant  
+**Status:** Completed
+
+### Work Performed
+1. Updated `.github/workflows/apisec-scan.yml` with `if: ${{ secrets.apisec_username != '' }}` so the job skips gracefully when secrets are absent on PR builds.
+2. Ran `ruff check --fix app/` in `agnet-service` to fix trailing whitespace in `nodes.py`.
+3. Reverted `StackExchange.Redis` in `Aveline.Api/Aveline.Api.csproj` to `2.7.27`.
+4. Moved color filtering in `Aveline.Api/Modules/VisualIntelligence/Repositories/InventoryRepository.cs` to in-memory post-query processing (matching `Sizes` evaluation) so complex substring/boundary matching works across EF Core database providers without LINQ translation errors.
+5. Fixed `TenantDashboardDocumentationTests.cs` to normalize `\r\n` line endings when reading OpenAPI spec files.
+
+### Files Created or Modified
+- `.github/workflows/apisec-scan.yml`
+- `Aveline.Api/Aveline.Api.csproj`
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/InventoryRepository.cs`
+- `Aveline.Api.Tests/TenantDashboardDocumentationTests.cs`
+- `agnet-service/app/agents/visual_insight/nodes.py`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- `dotnet list Aveline.Api/Aveline.Api.sln package --vulnerable --include-transitive`: 0 vulnerable packages.
+- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj --filter "FullyQualifiedName~Inventory"`: 79/79 passed.
+- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj --filter "FullyQualifiedName~TenantDashboardDocumentationTests"`: 47/47 passed.
+- `ruff check app/`: All checks passed with 0 errors.
+- `python -m pytest tests/`: 430 passed, 2 skipped.
+- `npm test -- --run` in `frontend/web`: 1055/1055 passed (141 files).
+
+
 

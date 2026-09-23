@@ -321,3 +321,9 @@ docs/final_document/
 # because tracked files are unaffected by these patterns.
 .vercel/
 .env*
+
+# Local diagnostic & scratch scripts
+scripts/check_inventory.py
+scripts/inspect_*.py
+agnet-service/test_*.py
+

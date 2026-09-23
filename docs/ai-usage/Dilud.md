@@ -3190,6 +3190,7 @@
 5. Fixed `TenantDashboardDocumentationTests.cs` to normalize `\r\n` line endings when reading OpenAPI spec files.
 
 ### Files Created or Modified
+- `.gitignore`
 - `.github/workflows/apisec-scan.yml`
 - `Aveline.Api/Aveline.Api.csproj`
 - `Aveline.Api/Modules/VisualIntelligence/Repositories/InventoryRepository.cs`

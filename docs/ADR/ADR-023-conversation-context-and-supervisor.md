@@ -241,11 +241,11 @@ layer + dynamic context), adding a `supervisor` entry to `AGENT_PROMPTS`. Handbo
 
 ## Out of Scope
 
-- **Aveline customer-support handbook / product-help lane.** This is a separate feature with a
-  different audience (boutique owners and staff asking *how to use Aveline* vs. customers asking
-  about products). It requires a knowledge source that **does not exist in the repository yet**,
-  and a decision between grounded retrieval (RAG, appropriate for a document that changes) and a
-  static prompt block (appropriate for a short, stable doc). To be proposed as its own ADR.
+- **Aveline customer-support handbook / product-help lane.** This was deferred here and is now
+  decided: [ADR-025](ADR-025-handbook-knowledge-base.md) adopts grounded retrieval (a hybrid
+  pgvector + full-text index) over a static prompt block, using the documentation corpus that now
+  exists. The lane is delivered by the supervisor herself under the `aveline_help` intent, with no
+  new subagent.
 - Replacing LangGraph, the checkpointer, or the response envelope.
 - Token-level streaming (`ADR-018` explicitly defers this).
 

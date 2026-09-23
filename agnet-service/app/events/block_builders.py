@@ -169,7 +169,8 @@ def build_aveline_blocks(
 
     - A **clarification** she asked is rendered verbatim and takes precedence over everything.
     - Her own **reply** is rendered when no specialist produced content. The reply comes from the
-      supervisor, which writes one for a conversational message that has nothing to route.
+      supervisor, which writes one for a conversational message that has nothing to route, and
+      which grounds a platform answer in retrieved handbook excerpts (ADR-025).
     - Otherwise she is **silent**. A routing summary ("Treated this as a product search.") is not
       content: it describes what the orchestrator did instead of answering the person, and it read
       as a bug when it was the only thing a customer ever saw.
@@ -192,9 +193,34 @@ def build_aveline_blocks(
 
     reply = out.get("reply")
     if isinstance(reply, str) and reply.strip():
-        return [{"type": "text", "text": reply.strip()}]
+        text = reply.strip()
+        sources = _render_handbook_sources(out.get("handbook_sources"))
+        if sources:
+            text = f"{text}\n\n{sources}"
+        return [{"type": "text", "text": text}]
 
     return []
+
+
+def _render_handbook_sources(sources: Any) -> str:
+    """A one-line citation for a handbook-grounded answer (ADR-025).
+
+    Built from the chunks that were actually retrieved, never from the model's text: a model asked
+    to cite will sometimes cite something it did not use, and a fabricated source is worse than no
+    source. One entry per page, because five chunks from one page are one source.
+    """
+    if not isinstance(sources, list):
+        return ""
+
+    titles: list[str] = []
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        title = str(source.get("title") or "").strip()
+        if title and title not in titles:
+            titles.append(title)
+
+    return f"Sources: {', '.join(titles)}" if titles else ""
 
 
 def build_clarification_blocks(clarification: Any) -> list[dict[str, Any]]:

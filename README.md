@@ -165,6 +165,7 @@ All pull requests and commits targeting `development`, `main`, and `master` trig
 - [Redis Pub/Sub Event Bus Architecture](docs/architecture/eventing.md)
 - [The Salon — Conversation Inbox Architecture](docs/architecture/inbox.md)
 - [Conversation Context Propagation](docs/architecture/agent-context.md)
+- [The Handbook Knowledge Base](docs/architecture/handbook.md)
 - [Customer Memory Agent (AVA) Architecture](docs/architecture/customer-memory.md)
 - [Authentication Security Review](docs/security/auth-security-review.md)
 - [Owner Onboarding Flow Architecture](docs/architecture/onboarding-flow.md)

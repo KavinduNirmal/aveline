@@ -184,8 +184,29 @@ Propagation requires **both** a declaration on the sub-graph's state schema and 
 the orchestrator node; LangGraph drops undeclared state keys silently. See
 `docs/architecture/agent-context.md` for the path, scope, and limits.
 
+## Handbook (platform questions)
+
+`load_handbook` runs between `load_context` and the supervisor and retrieves handbook excerpts for
+the two intents the supervisor is consulted for (`general_inquiry`, `aveline_help`). The supervisor
+answers a platform question herself from those excerpts; the specialist sub-graphs do not run, and the
+`Sources:` line is built from the chunks that were actually retrieved rather than from the model's
+text. With `HANDBOOK_ENABLED=false`, or with no LLM configured, the node makes no call at all and the
+run is unchanged.
+
+The index is seeded from a repository checkout, not at runtime:
+
+```bash
+python scripts/seed_handbook.py --dry-run                      # no HTTP at all
+python scripts/seed_handbook.py --token "$INTERNAL_API_TOKEN"  # idempotent upsert
+```
+
+See `docs/architecture/handbook.md` for the corpus, chunking rules and the hybrid retrieval, and
+`handbook/README.md` for authoring a company page.
+
 ## Further reading
 
 - Internal service auth: `docs/ADR/ADR-009-internal-service-authentication.md`
 - Conversation context propagation: `docs/architecture/agent-context.md`
 - Layered context and the supervisor: `docs/ADR/ADR-023-conversation-context-and-supervisor.md`
+- Handbook knowledge base: `docs/architecture/handbook.md`
+- Handbook decision record: `docs/ADR/ADR-025-handbook-knowledge-base.md`

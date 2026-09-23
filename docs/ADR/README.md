@@ -36,6 +36,7 @@ control as an audit trail.
 | `ADR-022-media-storage-and-access.md` | Media storage and access — the two-tier Cloudinary model (`upload` catalog vs `authenticated` protected), the streaming token proxy, the tag/context schema, "no third-party CDN" (AUP §4.2), R2 as the recorded escape hatch, and the deferred `ImageData` drop |
 | `ADR-023-conversation-context-and-supervisor.md` | Layered conversation context (bounded turn window + rolling thread summary + reusable pgvector memory + on-demand tools) and the supervisor LLM that replaces the keyword table as routing authority; clarification becomes a first-class outcome instead of a resolution veto; handbook/product-help lane deferred to its own ADR |
 | `ADR-024-conversation-orders-and-hitl-resume.md` | Conversation-initiated orders and the HITL approval loop — order context is derived on the API side from explicit customer intent, the API (never the agent) creates the Order and approval entry when a run pauses, and approval resumes through the LangGraph checkpointer rather than replaying the request |
+| `ADR-025-handbook-knowledge-base.md` | The handbook knowledge base — a global, audience-scoped corpus in `.NET`; hybrid retrieval (pgvector cosine + PostgreSQL full-text, fused with Reciprocal Rank Fusion) with both search columns outside the EF model per ADR-017; a deterministic `load_handbook` node feeding the supervisor's own reply, with a citation built from the retrieved chunks rather than from model text |
 
 ## ADR Template
 

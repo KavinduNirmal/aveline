@@ -10,6 +10,7 @@ slice business logic.
 
 import json
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
@@ -25,6 +26,10 @@ IntentType = Literal[
     "event_query",
     "out_of_scope",
     "general_inquiry",
+    # Help with Aveline itself: "how do I invite a staff member?", "what is a Blossom?".
+    # Deliberately not `product_help`: `product` already means the boutique's inventory in this
+    # codebase (it is Elle's whole lane), so `product_help` would read as "help with our products".
+    "aveline_help",
 ]
 
 AgentName = Literal["memory", "visual", "commerce"]
@@ -56,6 +61,45 @@ _OUT_OF_SCOPE_KEYWORDS = (
     "math problem",
 )
 
+#: High-precision shapes for "help me use Aveline". Checked after the out-of-scope guard and before
+#: the routing keyword table, because the table cannot tell "how much is the Orchid plan?" (a
+#: question about Aveline) from "how much is this saree?" (a question about a product).
+#:
+#: Precision matters more than recall here: a false positive routes a message to the handbook, which
+#: either answers it or says it cannot - it never invents. A false negative is today's behaviour. The
+#: set is tuned against the golden query set (ADR-025, Phase 6), not guessed once and frozen.
+_AVELINE_HELP_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bhow (?:do|does|can|would|should) (?:i|we|you)\b",
+        r"\bhow to\b",
+        r"\bwhere (?:do|can) (?:i|we|you)\b",
+        r"\bwhat (?:is|are) (?:a |an |the )?aveline\b",
+        r"\bhow does aveline\b",
+        r"\bwhat does (?:the |a )?(?:plan|subscription|blossom|salon|approval|entitlement|quota|seat|invoice|handbook)\b",
+        r"\b(?:is|are) there a way to\b",
+        r"\b(?:handbook|documentation|user guide|tutorial)\b",
+        r"\bblossoms?\b",
+        r"\b(?:seed|bloom|orchid|rose)\b[^.]{0,16}\bplan\b",
+        r"\bplan\b[^.]{0,16}\b(?:seed|bloom|orchid|rose)\b",
+        r"\b(?:my|our) (?:plan|subscription|allowance|seats?|quota|entitlements?)\b",
+        r"\b(?:invitation|invite) code\b",
+        r"\bapi key\b",
+        r"\bwebhook\b",
+        r"\bfloor tag\b",
+        r"\bnot measured\b",
+        r"\bentitlements?\b",
+        r"\btop up\b",
+        r"\bpermissions?\b",
+    )
+)
+
+
+def is_aveline_help(message: str) -> bool:
+    """Whether ``message`` asks how Aveline itself works (ADR-025)."""
+    return any(pattern.search(message) for pattern in _AVELINE_HELP_PATTERNS)
+
+
 # Which agents handle each intent.
 _AGENT_ROUTING: dict[IntentType, list[AgentName]] = {
     "order_placement": ["memory", "visual", "commerce"],
@@ -64,6 +108,9 @@ _AGENT_ROUTING: dict[IntentType, list[AgentName]] = {
     "customer_preference": ["memory"],
     "event_query": ["memory"],
     "general_inquiry": ["memory"],
+    # A platform question is not a customer question: no specialist runs, and Aveline answers from
+    # the handbook herself.
+    "aveline_help": [],
     "out_of_scope": [],
 }
 
@@ -97,6 +144,14 @@ def classify_by_rules(message: str) -> IntentGateOutput:
             suggested_agents=[],
             is_relevant=False,
             safety_flags=["out_of_scope"],
+        )
+
+    # A question about Aveline outranks the product/pricing vocabulary below: the routing table
+    # cannot tell "how much is the Orchid plan?" from "how much is this saree?".
+    if is_aveline_help(lowered):
+        return IntentGateOutput(
+            intent_type="aveline_help",
+            suggested_agents=_AGENT_ROUTING["aveline_help"],
         )
 
     for intent_type, keywords in _RULE_KEYWORDS:
@@ -164,17 +219,35 @@ _SUPERVISOR_INSTRUCTION = (
     "this shape, with no prose and no code fences:\n"
     "{\n"
     '  "intent_type": "order_placement" | "item_search" | "pricing_query" | '
-    '"customer_preference" | "event_query" | "out_of_scope" | "general_inquiry",\n'
+    '"customer_preference" | "event_query" | "out_of_scope" | "general_inquiry" | "aveline_help",\n'
     '  "agents": ["memory" | "visual" | "commerce", ...],\n'
     '  "needs_customer_resolution": true | false,\n'
     '  "clarification": "<a short question to ask instead, or null>",\n'
     '  "reply": "<a short message of your own, or null>",\n'
     '  "requires_approval": true | false\n'
     "}"
+    "\n\nUse `aveline_help` when the person is asking how Aveline itself works - a feature, a "
+    "plan, Blossoms, an invitation, a setting. Those questions route no specialist: answer them "
+    "yourself from the HANDBOOK excerpts."
     "\n\n`reply` is your own short, warm message to the person, used only when no specialist "
     "answers - a greeting, small talk, a thank-you, or a general question. Keep it to one or two "
     "sentences in the boutique's voice. Set it to null when you route `visual` or `commerce`: "
     "they produce the content, and a second answer reads as noise."
+    "\n\nWhen HANDBOOK excerpts are provided, they are the only source you may answer a platform "
+    "question from. Do not invent features, prices, limits or policies, and do not quote Blossom "
+    "amounts or per-action costs. If the excerpts do not answer the question, say plainly that the "
+    "handbook does not cover it and point the person at support."
+)
+
+#: The intents the model is consulted for. `aveline_help` joins the list because a platform
+#: question is composed, not routed: Aveline answers it herself from the handbook.
+_CONSULTABLE_INTENTS = frozenset({"general_inquiry", "aveline_help"})
+
+#: What Aveline says when a platform question reached the model but no answer came back. Better a
+#: plain admission than silence on a question the person explicitly asked about the product.
+_HANDBOOK_MISS_REPLY = (
+    "I could not find that in my handbook. If it is about your account or billing, the Aveline "
+    "team can help - ask me for the contact details."
 )
 
 
@@ -186,23 +259,30 @@ async def supervise(
     history: list[dict[str, Any]] | None = None,
     thread_summary: str | None = None,
     pinned_slots: dict[str, str] | None = None,
+    handbook_hits: list[dict[str, Any]] | None = None,
 ) -> SupervisorPlan:
-    """Decide how ``message`` should be handled (ADR-023, Decision 3).
+    """Decide how ``message`` should be handled (ADR-023, Decision 3; ADR-025 for the handbook).
 
     Deterministic rules run first as a cheap pre-filter: they are free, they are fast, and they are
-    right for unambiguous input. The LLM supervisor is consulted only when the rules land on
-    ``general_inquiry``, which is exactly the case they cannot resolve - an unrecognised
-    vocabulary, or a reference that needs the conversation to interpret.
+    right for unambiguous input. The LLM supervisor is consulted when the rules land on
+    ``general_inquiry`` (the case they cannot resolve - an unrecognised vocabulary, or a reference
+    that needs the conversation) and on ``aveline_help`` (a platform question, which is composed
+    from ``handbook_hits`` rather than routed).
 
-    With no LLM this returns the rule-based decision unchanged, which is the guarantee that CI and
-    offline development stay deterministic (``app/llm/runtime.py``).
+    With no LLM this returns the rule-based decision, which is the guarantee that CI and offline
+    development stay deterministic (``app/llm/runtime.py``). A platform question degrades to the
+    conversational path there, because there is no model to compose a grounded answer.
 
     A supervisor failure degrades to the rule decision rather than raising: routing must always
     produce *something*, and the rules are a complete fallback rather than a partial one.
     """
-    rule_plan = _rules_to_plan(classify_by_rules(message))
+    rule_intent = classify_by_rules(message)
+    rule_plan = _rules_to_plan(rule_intent)
 
-    if llm is None or rule_plan.intent_type != "general_inquiry":
+    if llm is None:
+        return _or_general_inquiry(rule_plan)
+
+    if rule_intent.intent_type not in _CONSULTABLE_INTENTS:
         return rule_plan
 
     try:
@@ -213,36 +293,60 @@ async def supervise(
                 history=history,
                 thread_summary=thread_summary,
                 pinned_slots=pinned_slots,
+                handbook_hits=handbook_hits,
             )
         )
     except Exception:  # noqa: BLE001 - routing must not break on a provider failure
         logger.exception("Supervisor call failed; falling back to the rule-based plan.")
-        return rule_plan
+        return _or_general_inquiry(rule_plan)
 
     refined = _parse_plan(getattr(response, "content", None))
     if refined is None:
         logger.warning("Supervisor returned no usable plan; keeping the rule-based decision.")
-        return rule_plan
+        return _or_general_inquiry(rule_plan)
 
     return _with_a_bounded_reply(refined)
+
+
+def _or_general_inquiry(plan: SupervisorPlan) -> SupervisorPlan:
+    """Degrade an unanswerable platform question to the conversational path.
+
+    Reached when the rules classify ``aveline_help`` but no model is available to compose a grounded
+    answer (or the call failed). Falling back to ``general_inquiry`` keeps Aveline's deterministic
+    reply rather than leaving the question unanswered.
+    """
+    if plan.intent_type != "aveline_help":
+        return plan
+
+    return plan.model_copy(
+        update={
+            "intent_type": "general_inquiry",
+            "suggested_agents": list(_AGENT_ROUTING["general_inquiry"]),
+            "reply": _DEFAULT_REPLY,
+        }
+    )
 
 
 def _with_a_bounded_reply(plan: SupervisorPlan) -> SupervisorPlan:
     """Keep the supervisor's own reply within its lane.
 
-    Two bounds, both enforced here rather than trusted to the model:
+    Three bounds, all enforced here rather than trusted to the model:
 
     - A plan that routes a content specialist never carries a reply. Those agents answer, and two
       answers to one message read as noise.
     - A conversational message for which no model answer arrived still gets the deterministic
       reply, so a greeting is never left unanswered.
+    - A platform question that produced no answer gets a plain admission rather than silence.
     """
     reply = plan.reply
 
     if _CONTENT_AGENTS.intersection(plan.suggested_agents):
         reply = None
-    elif plan.intent_type == "general_inquiry" and not reply:
-        reply = _DEFAULT_REPLY
+    elif not reply:
+        if plan.intent_type == "aveline_help":
+            reply = _HANDBOOK_MISS_REPLY
+        elif plan.intent_type == "general_inquiry":
+            reply = _DEFAULT_REPLY
 
     if reply == plan.reply:
         return plan
@@ -273,15 +377,16 @@ def _build_supervisor_messages(
     history: list[dict[str, Any]] | None,
     thread_summary: str | None,
     pinned_slots: dict[str, str] | None,
+    handbook_hits: list[dict[str, Any]] | None = None,
 ) -> list[Any]:
-    """Assemble the supervisor's prompt from the bounded context window (ADR-023).
+    """Assemble the supervisor's prompt from the bounded context window (ADR-023) and handbook.
 
     Imports are local so this module stays importable without the prompt package, keeping the
     deterministic gate cheap to unit-test.
     """
     from langchain_core.messages import HumanMessage, SystemMessage
 
-    from app.context import render_context_block
+    from app.context import render_context_block, render_handbook_block
     from app.prompts.assembly import assemble_system_prompt
 
     lines: list[str] = []
@@ -292,6 +397,11 @@ def _build_supervisor_messages(
     )
     if context_block:
         lines.append(context_block)
+
+    # Retrieved handbook excerpts, when the message looked like a platform question (ADR-025).
+    handbook_block = render_handbook_block(handbook_hits)
+    if handbook_block:
+        lines.append(handbook_block)
 
     lines.append(f"NEWEST MESSAGE:\n{message}")
     lines.append(_SUPERVISOR_INSTRUCTION)

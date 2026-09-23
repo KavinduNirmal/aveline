@@ -71,6 +71,9 @@ class ConciergeState(TypedDict, total=False):
     history: list[dict[str, Any]]
     thread_summary: str | None
     pinned_slots: dict[str, str]
+    # Handbook excerpts retrieved for a platform question (ADR-025). Retrieved before the
+    # supervisor so the model composes a grounded answer rather than routing one.
+    handbook_hits: list[dict[str, Any]]
     intent: dict[str, Any] | None
     # True when the run is backed by a checkpoint thread. A real pause needs one: `interrupt()`
     # writes the pause into the checkpoint, and without a thread there is nothing to resume.
@@ -146,6 +149,46 @@ async def run_load_context(state: ConciergeState) -> dict[str, Any]:
     }
 
 
+async def run_load_handbook(state: ConciergeState) -> dict[str, Any]:
+    """Retrieve handbook excerpts for a platform question (ADR-025).
+
+    Runs between ``load_context`` and ``supervisor`` so the model composes a grounded answer in the
+    same call that would otherwise only route. The trigger is deterministic rather than
+    model-chosen: for exactly the two intents the supervisor is consulted for (``general_inquiry``
+    and ``aveline_help``) one embedding call and one indexed hybrid query is cheap, and it means the
+    model is never handed a handbook it did not need.
+
+    Best-effort, exactly like ``load_context``: a retrieval failure leaves the excerpts empty and
+    the run proceeds, because losing the handbook degrades an answer but must never prevent one.
+    """
+    settings = get_settings()
+    if not settings.handbook_enabled:
+        return {"handbook_hits": []}
+
+    intent = classify_by_rules(state.get("message", ""))
+    if intent.intent_type not in {"general_inquiry", "aveline_help"}:
+        return {"handbook_hits": []}
+
+    if supervisor_llm_or_none(settings) is None:
+        # Without a model there is nothing to ground an answer in, so the retrieval would be pure
+        # cost. The offline path stays exactly as it was before the handbook existed.
+        return {"handbook_hits": []}
+
+    try:
+        hits = await ToolRegistry().search_handbook(
+            state.get("message", ""),
+            top_k=settings.handbook_top_k,
+            audience=settings.handbook_audience,
+            min_similarity=settings.handbook_min_similarity,
+        )
+    except Exception:  # noqa: BLE001 - the handbook is an enhancement, never a precondition
+        logger.exception("Handbook retrieval failed; continuing without handbook context.")
+        return {"handbook_hits": []}
+
+    logger.debug("Handbook retrieved %d excerpt(s).", len(hits))
+    return {"handbook_hits": hits}
+
+
 def _context_fields(state: ConciergeState) -> dict[str, Any]:
     """The three ADR-023 context layers, ready to spread into a sub-graph's initial state.
 
@@ -175,7 +218,9 @@ async def run_supervisor(state: ConciergeState) -> dict[str, Any]:
     """
     settings = get_settings()
     rule_intent = classify_by_rules(state["message"])
-    consultable = rule_intent.intent_type == "general_inquiry"
+    # The supervisor is consulted for the two intents it can actually act on: an unclassifiable
+    # message it may route, and a platform question it composes an answer to from the handbook.
+    consultable = rule_intent.intent_type in {"general_inquiry", "aveline_help"}
 
     plan = await supervise(
         state["message"],
@@ -186,6 +231,7 @@ async def run_supervisor(state: ConciergeState) -> dict[str, Any]:
         history=state.get("history"),
         thread_summary=state.get("thread_summary"),
         pinned_slots=state.get("pinned_slots"),
+        handbook_hits=state.get("handbook_hits"),
     )
     logger.debug(
         "Supervisor decided %s -> agents=%s clarification=%s",
@@ -587,6 +633,10 @@ def formulate_response(state: ConciergeState) -> dict[str, Any]:
             # The supervisor's own message, used only when no specialist produces content
             # (ADR-023). Null means "the specialists answer", not "say nothing".
             "reply": intent.get("reply"),
+            # The provenance of the excerpts a platform answer was grounded in, built from the
+            # retrieved hits rather than from model text so a citation cannot be invented
+            # (ADR-025).
+            "handbook_sources": _handbook_sources(state.get("handbook_hits")),
         }
         if clarification is not None:
             # The run asked instead of acting, so there is no specialist content to attach. This is
@@ -604,6 +654,41 @@ def formulate_response(state: ConciergeState) -> dict[str, Any]:
             metadata=metadata,
         )
     return {"response": response.model_dump()}
+
+
+def _handbook_sources(hits: Any) -> list[dict[str, Any]]:
+    """The provenance of the excerpts a platform answer was grounded in (ADR-025).
+
+    One entry per distinct source page, not per chunk: a reader wants to know which pages an answer
+    came from, and listing five chunks from the same page reads as five sources. Built here from
+    the retrieved hits rather than from the model's text, so the citation is deterministic and
+    cannot be invented.
+    """
+    if not isinstance(hits, list):
+        return []
+
+    sources: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for hit in hits:
+        if not isinstance(hit, dict):
+            continue
+
+        title = str(hit.get("sourceTitle") or hit.get("source_title") or "").strip()
+        if not title or title in seen:
+            continue
+
+        seen.add(title)
+        sources.append(
+            {
+                "sourceKey": str(hit.get("sourceKey") or hit.get("source_key") or "").strip(),
+                "title": title,
+                "heading": str(hit.get("headingPath") or hit.get("heading_path") or "").strip(),
+                "url": str(hit.get("sourceUrl") or hit.get("source_url") or "").strip(),
+            }
+        )
+
+    return sources
 
 
 def _build_usage_metadata(usage: dict[str, Any] | None) -> AgentMetadata:
@@ -652,10 +737,17 @@ def _route_after_resolve(state: ConciergeState) -> str:
     if _clarification_for(state) is not None:
         return "formulate_response"
 
+    intent = state.get("intent") or {}
+
+    # A platform question is answered, not routed (ADR-025). Aveline's grounded reply is already
+    # composed, so running Ava over it would only add a customer brief nobody asked for - and for a
+    # staff question about the product there is no customer to brief on.
+    if intent.get("intent_type") == "aveline_help" and intent.get("reply"):
+        return "formulate_response"
+
     # A resolved-or-not miss is not a veto. Only skip the memory agent when the supervisor
     # explicitly said customer resolution is a precondition and it is genuinely out of reach
     # (no customer id and no phone to look up).
-    intent = state.get("intent") or {}
     if intent.get("needs_customer_resolution"):
         resolution = state.get("resolution") or {}
         org_context = state.get("org_context") or {}
@@ -853,6 +945,7 @@ def build_concierge_graph(
         return _instrumented_node(name, node_fn, collector)
 
     graph.add_node("load_context", node("load_context", run_load_context))
+    graph.add_node("load_handbook", node("load_handbook", run_load_handbook))
     graph.add_node("supervisor", node("supervisor", run_supervisor))
     graph.add_node("resolve_customer", node("resolve_customer", run_resolve_customer))
     graph.add_node("memory_agent", node("memory_agent", run_memory_agent))
@@ -862,7 +955,10 @@ def build_concierge_graph(
     graph.add_node("formulate_response", node("formulate_response", formulate_response))
 
     graph.add_edge(START, "load_context")
-    graph.add_edge("load_context", "supervisor")
+    # The handbook is retrieved before the supervisor, so a platform question can be answered in
+    # the same call that would otherwise only route it (ADR-025).
+    graph.add_edge("load_context", "load_handbook")
+    graph.add_edge("load_handbook", "supervisor")
     graph.add_conditional_edges("supervisor", _route_after_intent)
     graph.add_conditional_edges("resolve_customer", _route_after_resolve)
     graph.add_conditional_edges("memory_agent", _route_after_memory)
@@ -913,6 +1009,7 @@ async def run_concierge(
         "history": [],
         "thread_summary": None,
         "pinned_slots": {},
+        "handbook_hits": [],
         "intent": None,
         "checkpointing": thread_id is not None,
         "resolution": None,

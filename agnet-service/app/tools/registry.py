@@ -140,6 +140,32 @@ class ToolRegistry:
             json={"organizationId": org_id, "customerId": customer_id, "query": query, "topK": top_k},
         )
 
+    async def search_handbook(
+        self,
+        query: str,
+        top_k: int = 5,
+        audience: str = "staff",
+        min_similarity: float = 0.0,
+    ) -> list[dict[str, Any]]:
+        """Hybrid (dense + lexical) search over the Aveline handbook (ADR-025).
+
+        The backend runs both retrieval legs over the same filter and fuses them with Reciprocal
+        Rank Fusion; see ``docs/architecture/handbook.md``. Each hit carries its vector and lexical
+        rank alongside the fused score, which is what lets the retrieval eval report per-leg
+        quality instead of one opaque number.
+        """
+        result = await self._client.request(
+            "POST",
+            "/internal/handbook/search",
+            json={
+                "query": query,
+                "topK": top_k,
+                "audience": audience,
+                "minSimilarity": min_similarity,
+            },
+        )
+        return result if isinstance(result, list) else []
+
     async def save_customer_memory(
         self,
         org_id: str,

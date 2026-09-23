@@ -360,3 +360,52 @@ def test_lina_blocks_do_not_emit_sign_off_from_the_generic_builder():
         "approval": {"amount": 50000, "reason": "above limit"},
     }
     assert all(b["type"] != "sign_off" for b in build_lina_blocks(commerce))
+
+
+# ------------------------------------------------------- Aveline (handbook citation, ADR-025)
+
+
+def test_aveline_appends_a_deterministic_sources_line():
+    output = {
+        "intent": "aveline_help",
+        "reply": "Invite them from the Team section.",
+        "handbook_sources": [{"sourceKey": "web-docs/team", "title": "Team", "url": "/docs/team"}],
+    }
+
+    blocks = build_aveline_blocks(output)
+
+    assert blocks[0]["text"] == "Invite them from the Team section.\n\nSources: Team"
+
+
+def test_aveline_omits_the_sources_line_without_sources():
+    output = {"intent": "general_inquiry", "reply": "Hello!"}
+
+    assert build_aveline_blocks(output)[0]["text"] == "Hello!"
+
+
+def test_the_sources_line_comes_from_the_chunks_not_the_reply():
+    # The citation is built from what was actually retrieved, so a model that names a page it did
+    # not use cannot put that page in the thread.
+    output = {
+        "intent": "aveline_help",
+        "reply": "See the Billing page for that.",
+        "handbook_sources": [{"title": "Team"}],
+    }
+
+    text = build_aveline_blocks(output)[0]["text"]
+
+    assert "Sources: Team" in text
+    assert text.startswith("See the Billing page for that.")
+
+
+def test_the_sources_line_names_each_page_once():
+    output = {
+        "intent": "aveline_help",
+        "reply": "x",
+        "handbook_sources": [{"title": "Team"}, {"title": "Team"}, {"title": "Salon"}],
+    }
+
+    text = build_aveline_blocks(output)[0]["text"]
+
+    assert text.count("Team") == 1
+    assert "Sources: Team, Salon" in text

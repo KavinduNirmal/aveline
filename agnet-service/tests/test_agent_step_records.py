@@ -37,6 +37,7 @@ REGISTERED_AGENT_KEYS = {"customer_memory", "visual_insight", "commerce", "orche
 #: The concierge graph's top-level nodes (bounded label values).
 CONCIERGE_NODE_NAMES = {
     "load_context",
+    "load_handbook",
     "supervisor",
     "resolve_customer",
     "memory_agent",

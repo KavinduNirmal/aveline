@@ -856,3 +856,172 @@ async def test_a_greeting_publishes_a_reply_message_and_no_meta_note():
     text = aveline[0]["blocks"][0]["text"]
     assert text == result["response"]["output"]["reply"]
     assert "Treated this as" not in text
+
+
+# ---------------------------------------------------------------------------
+# Handbook retrieval and the platform-question lane (ADR-025)
+# ---------------------------------------------------------------------------
+
+HANDBOOK_HIT = {
+    "sourceKey": "web-docs/team",
+    "sourceTitle": "Team",
+    "sourceUrl": "/docs/team",
+    "headingPath": "Invitations > Generate a code",
+    "content": "Open Team and mint an invitation code.",
+    "score": 0.03,
+}
+
+
+class _HandbookSettings:
+    """The subset of Settings that `run_load_handbook` reads."""
+
+    handbook_enabled = True
+    handbook_top_k = 5
+    handbook_audience = "staff"
+    handbook_min_similarity = 0.0
+
+
+class _HandbookRegistry:
+    """A ToolRegistry double exposing only the handbook search."""
+
+    def __init__(self, hits: list | None = None, *, fails: bool = False) -> None:
+        self._hits = hits if hits is not None else [HANDBOOK_HIT]
+        self._fails = fails
+        self.calls: list[tuple] = []
+
+    async def search_handbook(self, query, top_k=5, audience="staff", min_similarity=0.0):
+        self.calls.append((query, top_k, audience, min_similarity))
+        if self._fails:
+            raise RuntimeError("handbook backend down")
+        return self._hits
+
+
+def _patch_handbook(monkeypatch, registry, *, llm=None, enabled=True):
+    settings = _HandbookSettings()
+    settings.handbook_enabled = enabled
+    monkeypatch.setattr("app.workflows.concierge_workflow.get_settings", lambda: settings)
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.supervisor_llm_or_none", lambda settings: llm
+    )
+    monkeypatch.setattr("app.workflows.concierge_workflow.ToolRegistry", lambda *a, **k: registry)
+    return settings
+
+
+@pytest.mark.asyncio
+async def test_load_handbook_is_a_no_op_without_an_llm(monkeypatch):
+    # With no model there is nothing to ground an answer in, so the retrieval would be pure cost.
+    registry = _HandbookRegistry()
+    _patch_handbook(monkeypatch, registry, llm=None)
+    from app.workflows.concierge_workflow import run_load_handbook
+
+    assert await run_load_handbook({"message": "How do I invite a staff member?"}) == {
+        "handbook_hits": []
+    }
+    assert registry.calls == []
+
+
+@pytest.mark.asyncio
+async def test_load_handbook_retrieves_for_a_platform_question(monkeypatch):
+    registry = _HandbookRegistry()
+    _patch_handbook(monkeypatch, registry, llm=object())
+    from app.workflows.concierge_workflow import run_load_handbook
+
+    result = await run_load_handbook({"message": "How do I invite a staff member?"})
+
+    assert result["handbook_hits"] == [HANDBOOK_HIT]
+    assert registry.calls == [("How do I invite a staff member?", 5, "staff", 0.0)]
+
+
+@pytest.mark.asyncio
+async def test_load_handbook_skips_a_product_search(monkeypatch):
+    # A product question is Elle's, and paying for an embedding call on it is waste.
+    registry = _HandbookRegistry()
+    _patch_handbook(monkeypatch, registry, llm=object())
+    from app.workflows.concierge_workflow import run_load_handbook
+
+    result = await run_load_handbook({"message": "Do you have a blue saree for a wedding?"})
+
+    assert result["handbook_hits"] == []
+    assert registry.calls == []
+
+
+@pytest.mark.asyncio
+async def test_load_handbook_survives_a_backend_failure(monkeypatch):
+    # Losing the handbook degrades an answer; it must never prevent one.
+    registry = _HandbookRegistry(fails=True)
+    _patch_handbook(monkeypatch, registry, llm=object())
+    from app.workflows.concierge_workflow import run_load_handbook
+
+    assert await run_load_handbook({"message": "What is a Blossom?"}) == {"handbook_hits": []}
+
+
+@pytest.mark.asyncio
+async def test_load_handbook_respects_the_disable_flag(monkeypatch):
+    registry = _HandbookRegistry()
+    _patch_handbook(monkeypatch, registry, llm=object(), enabled=False)
+    from app.workflows.concierge_workflow import run_load_handbook
+
+    assert await run_load_handbook({"message": "What is a Blossom?"}) == {"handbook_hits": []}
+    assert registry.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_platform_question_is_answered_without_running_a_specialist(monkeypatch):
+    """Aveline answers it herself; Ava has nothing to brief on a question about the product."""
+    from app.gate import SupervisorPlan
+
+    async def planner(message, **kwargs):
+        return SupervisorPlan(
+            intent_type="aveline_help",
+            suggested_agents=[],
+            reply="Invite them from Team; the code lasts as long as you choose.",
+        )
+
+    monkeypatch.setattr("app.workflows.concierge_workflow.supervise", planner)
+
+    result = await build_concierge_graph().ainvoke({
+        "message": "How do I invite a staff member?",
+        "org_context": {},
+        "history": [],
+        "thread_summary": None,
+        "pinned_slots": {},
+        "handbook_hits": [],
+        "intent": None,
+        "resolution": None,
+        "memory_output": None,
+        "visual_output": None,
+        "commerce_output": None,
+        "usage": None,
+        "response": None,
+    })
+
+    assert result["intent"]["intent_type"] == "aveline_help"
+    assert result["memory_output"] is None, "a platform question must not run Ava"
+    assert result["visual_output"] is None
+    assert result["response"]["output"]["reply"].startswith("Invite them from Team")
+
+
+def test_formulate_response_surfaces_the_handbook_sources():
+    from app.workflows.concierge_workflow import formulate_response
+
+    out = formulate_response({
+        "message": "How do I invite a staff member?",
+        "intent": {"intent_type": "aveline_help", "reply": "From the Team section."},
+        "handbook_hits": [
+            HANDBOOK_HIT,
+            {**HANDBOOK_HIT, "headingPath": "Invitations > Pending codes"},
+            {**HANDBOOK_HIT, "sourceKey": "company/faq", "sourceTitle": "Frequently Asked Questions"},
+        ],
+    })
+
+    sources = out["response"]["output"]["handbook_sources"]
+    # One entry per page: three chunks from two pages are two sources.
+    assert [source["title"] for source in sources] == ["Team", "Frequently Asked Questions"]
+
+
+def test_formulate_response_omits_sources_without_hits():
+    from app.workflows.concierge_workflow import formulate_response
+
+    out = formulate_response({"message": "Hi", "intent": {"intent_type": "general_inquiry"}})
+
+    assert out["response"]["output"]["handbook_sources"] == []

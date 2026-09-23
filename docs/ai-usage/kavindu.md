@@ -6187,3 +6187,156 @@ locally because `.env` overrides all three `VISION_*` values to DeepSeek.
 - `AddProductModal` still invents a few save-time fallbacks (`'Multicolor'`, `'Silk Blend'`,
   `'Classic Luxury'`, `confidenceScore ?? 0.92`). They were left because the reported defect was the
   colour, but they are the same class as the ones removed and are recorded here rather than forgotten.
+
+---
+
+## Session 2026-09-23 — Three ADR-023 follow-ups, and the handbook knowledge base
+
+Three requests, in order: implement the minimal-context plan; stop Aveline answering a customer with
+the routing note "Treated this as a general inquiry."; and give her a vector-searchable handbook.
+The first two were committed before the third was designed, on the owner's instruction, so the
+handbook work started from a clean tree.
+
+### The minimal-context plan, verified rather than assumed
+
+`.agents/plans/subagent-minimal-context-implementation.ignore.md` claimed a missing parameter at
+three call sites, made silent by a second defect. Both halves held up against the code:
+
+- `ConciergeState` carried `history`/`thread_summary`/`pinned_slots` and exactly one consumer read
+  them (the supervisor's prompt). The three specialist nodes built fixed dictionaries with no context
+  key, and **none of the three state schemas declared one**.
+- The plan's central trap was real and worth the experiment it demanded: LangGraph drops undeclared
+  state keys silently, so a fix that touched only the invocation sites would pass a mocked test and do
+  nothing in production.
+
+Two plan claims did **not** survive contact and were corrected in the implementation rather than
+copied:
+
+- **`parse_visual_intent` is rule-based**, not an LLM call, so forwarding history does not help it
+  resolve "the pink one". The context reaches Elle's styling prompt only. Documented as such instead
+  of claiming a behavioural gain that does not exist.
+- **`_CONTEXT_MAX_CHARS = 4000` would have been a second, tighter budget** than
+  `context_window_tokens` (2000 tokens ≈ 8000 characters), silently truncating context the window
+  deliberately kept. Omitted; the renderer adds no budget of its own.
+
+`_context_fields(state)` was introduced as one spread at all four call sites instead of writing the
+same three keys out four times, which is what stops the next sub-graph invocation from quietly
+omitting them.
+
+### Aveline answers, instead of describing her routing
+
+The screenshot was a real defect with a cheap fix, and the cheapest part was noticing that the LLM
+call already happened: the supervisor is consulted **exactly** for `general_inquiry`, and it was
+returning a routing plan while Aveline posted a note *about* the plan. Giving it a `reply` field uses
+the call that was already being paid for.
+
+Both bounds are enforced in code rather than requested in the prompt: a plan that routes
+`visual`/`commerce` never carries a reply, and a conversational message whose model answer did not
+arrive gets a deterministic fallback. The "Treated this as ..." template is deleted, and
+`build_aveline_blocks` now emits a reply only when no specialist produced content.
+
+### The handbook: hybrid, because one leg is not enough
+
+The corpus and the infrastructure both already existed — 15 pages, 1,879 lines, 104 `H2` sections, and
+ADR-017's pgvector pattern — so the interesting decision was retrieval. The plan's first draft had a
+dense-only index; the owner asked for BM25 as well, and the corpus proves why:
+
+- "How do I invite a staff member?" is answered by exact stems, which the dense leg ranks mediocrely.
+- "the page about people joining my shop" shares no vocabulary with the page, which the lexical leg
+  cannot see at all.
+- "Code Expiration" is a UI label: the query *is* the term.
+
+**Hybrid, fused with Reciprocal Rank Fusion in one SQL statement.** RRF is rank-based because cosine
+and `ts_rank_cd` are not on a comparable scale and their distributions move per query, so a raw-score
+blend can be skewed by whichever leg happens to produce large numbers. The claim is not taken on
+faith: the Testcontainers test builds a fixture where one chunk is **rank 2 on the dense leg and rank
+1 on the lexical leg**, and asserts it outranks the dense winner after fusion. Neither single leg can
+produce that ordering, which is the entire argument for the extra SQL.
+
+Two honesty adjustments went in rather than being papered over:
+
+- **Postgres `ts_rank_cd` is lexical, not BM25.** The code, the ADR and the architecture doc all say
+  "lexical"; ParadeDB `pg_search` is recorded as the upgrade path, confined to one CTE behind
+  `IHandbookRepository`.
+- **The intent is `aveline_help`, not `product_help`.** `product` already means the boutique's
+  inventory in this codebase — it is Elle's whole lane — so `product_help` would read as "help with
+  our products" to both the model and a human reading a trace.
+
+### Defects found by things that were already there
+
+Four were caught by existing guards rather than by review, which is the argument for having them:
+
+- **A precision bug in the help patterns.** `\bhelp me\b` classified "Can you help me with
+  something?" as a platform question. `test_infer_intent_calls_llm_on_ambiguous` failed, and the
+  pattern was removed rather than the test adjusted.
+- **The memory schema's intent vocabulary** must equal the gate's, so adding `aveline_help` broke
+  `test_parsed_intent_accepts_every_intent_the_gate_can_produce`. That guard exists because the same
+  drift once made every purchase-intent message fail validation.
+- **The bounded concierge node list** in `test_agent_step_records.py` gained `load_handbook`; the test
+  exists so a new node cannot silently escape the telemetry contract.
+- **A DELETE route that could not carry its own key.** `DELETE /internal/handbook/sources/{sourceKey}`
+  cannot match `web-docs/team` (the slash is a path separator), and the failure surfaced as a 401 in
+  the Postgres test. The route is now a catch-all segment.
+
+One design correction came out of the chunker work: the plan proposed prefixing each page's `H1` and
+intro onto **every** chunk. That was written before the hybrid decision and is actively harmful with a
+lexical leg — the intro's terms would appear in every chunk and match every query equally — so the
+intro is its own chunk and the heading trail reaches the lexical index through the weighted
+`SearchVector` instead.
+
+### TDD, and what each test is for
+
+- **10 .NET tests**, including a Testcontainers run against real `pgvector/pgvector:pg16` that asserts
+  the cosine ordering, the lexical-only hit, the fusion win, the audience filter, the inactive-chunk
+  filter, source-kind restriction, the source listing and the delete, and that both search columns and
+  indexes exist in the database rather than only in the model.
+- **78 new Python tests** across the chunker, the corpus manifest and seeder, retrieval and grounding,
+  the golden-query scoring, and the workflow lane. The chunker additionally runs against the **real
+  corpus** and asserts that not one table row is dropped, because the corpus carries its facts in
+  tables and a split table is a silently wrong answer.
+
+### Verification
+
+- Python: **733 passed, 2 skipped, 2 xfailed**; `ruff check app/ tests/ scripts/` clean.
+- .NET: the 10 handbook tests pass, including the seeded Postgres run.
+- The full .NET suite is **3079 passed / 28 failed**, and all 28 failures are media or Cloudinary
+  tests. They fail because the developer's own `.env` sets `Media__Provider=cloudinary` without a
+  signing key — `MediaProductionGuardIntegrationTests.TheDefaultHost_StartsWithNoMediaConfigurationAtAll`
+  fails against that file by definition. Supplying `Media__SigningKey`/`Media__PublicBaseUrl` turned a
+  sampled failure green, and CI reads no `.env`, so this is local configuration and not a regression.
+  It is recorded because "3079/3107" without that context reads like a broken branch.
+- The hybrid SQL was validated directly against the running `aveline_postgres` container before any
+  .NET code depended on it: the generated-column DDL, the HNSW and GIN indexes, and a hand-run of the
+  fusion query showing a chunk at dense-rank 2 and lexical-rank 1 outscoring the dense winner.
+
+### Documentation and artefacts
+
+- `ADR-023` is `Accepted`, its out-of-scope note now points at `ADR-025`, and its consequences record
+  the widened prompt surface and the two specialists that cannot consume context.
+- New: `ADR-025`, `docs/architecture/handbook.md`, `docs/architecture/agent-context.md`,
+  `handbook/README.md` and seven authored company pages. Updated: both READMEs and the ADR index.
+- Issue **#397** carries the feature, its acceptance criteria and the known input blocker.
+- Commits: `ad33786` (context + Aveline's reply), `a436c46` (store and ingestion), `b075220` (the
+  platform-question lane and docs).
+
+### Outstanding, stated plainly
+
+- **The golden query set has not been scored against a seeded index.** The scoring code and the
+  41-query set are tested, but the recall numbers that would substantiate "it retrieves well" need a
+  seeded database and a running API. `scripts/eval_handbook.py` produces them; running it is the next
+  step, and the ADR deliberately does not claim a number it has not measured.
+- **The source documentation still contradicts itself in five places** (Manager and Billing,
+  Reject/Revise and Manager, whether Aveline sends WhatsApp, the invite-code lifetime label, the role
+  order). The owner is handling these separately; until they are fixed and the index re-seeded,
+  retrieval can surface two different answers to one question. The acceptance criteria in #397 record
+  this as a gate on enabling the lane.
+- **The company facts that do not exist yet are stated as missing, not invented.** Refunds,
+  cancellation, data export and erasure, per-action Blossom costs and the account lifecycle have no
+  policy on file, so `what-the-handbook-does-not-cover.md` says so and points at support. A knowledge
+  base that guesses a refund policy is worse than one that admits it does not know.
+- **Blossom costs are deliberately not published.** The owner's instruction was to document that
+  unused Blossoms expire and to reveal no numbers; the prompt also forbids the model quoting amounts.
+- The plan file is untracked by design (`.agents/plans/*` is gitignored), and the seeded content has
+  not been loaded into any shared environment — re-seeding is a release step documented in
+  `handbook/README.md`.
+

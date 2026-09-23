@@ -132,9 +132,11 @@ The agent service maps the concierge `AgentResponse.output` into blocks in
 `agnet-service/app/events/block_builders.py`. A persona posts a message only when it
 produces real content (no placeholder text).
 
-- **Aveline summary** (`build_aveline_blocks`): a single `text` block that is intent-aware
-  and names the resolved customer when the memory agent found one. It never duplicates
-  Ava's rich detail. When the orchestrator cannot resolve a customer it instead renders a
+- **Aveline reply** (`build_aveline_blocks`): the entry point speaks only when no specialist
+  does. She renders the supervisor's own short `reply` as a single `text` block when the run
+  produced no specialist content; otherwise she stays silent. She never emits a routing summary
+  ("Treated this as a product search."): that described the orchestrator instead of answering the
+  person. When the orchestrator cannot resolve a customer she instead renders a
   **clarification** (`build_clarification_blocks`): an ambiguous lookup becomes a `choice`
   block listing candidate customers to tap; a not-found lookup becomes a `text` block asking
   for a phone number (Issue #161).

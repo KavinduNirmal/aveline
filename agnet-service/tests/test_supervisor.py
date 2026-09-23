@@ -202,8 +202,10 @@ async def test_the_prompt_uses_the_supervisor_prompt_layer():
 
     system = llm.prompts[0][0].content
     assert "Supervisor" in system
-    # The routing-only boundary is stated in the prompt, not merely implied by the schema (I7).
-    assert "Routing only" in system
+    # The boundary is stated in the prompt, not merely implied by the schema: routing stays the
+    # authority, and a reply is the bounded exception rather than a licence to answer anything.
+    assert "Route or reply, never both" in system
+    assert "reply" in system
 
 
 @pytest.mark.asyncio
@@ -261,3 +263,89 @@ async def test_an_asked_clarification_is_rendered_and_replaces_specialist_work(m
 
     blocks = build_clarification_blocks(clarification)
     assert blocks[0]["text"] == "Which one did you mean - the silk or the linen?"
+
+
+# ---------------------------------------------------------------------------
+# The supervisor's own reply (conversational fallback)
+#
+# The supervisor is the entry point. When the rules cannot classify a message it is asked to route
+# it; for a purely conversational message there is nothing to route and nobody else will answer, so
+# it writes the reply itself instead of a routing note.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_rule_path_replies_to_a_general_inquiry():
+    # With no LLM the reply is still produced, deterministically: a greeting must never go unanswered
+    # just because the model is unavailable.
+    plan = await supervise("Hi", llm=None)
+
+    assert plan.intent_type == "general_inquiry"
+    assert plan.reply
+    assert "treated this as" not in plan.reply.lower()
+    assert "general inquiry" not in plan.reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_the_rule_path_does_not_reply_to_a_product_search():
+    # The specialists answer product questions; a second reply from the supervisor reads as noise.
+    plan = await supervise("Do you have a blue saree?", llm=None)
+
+    assert plan.intent_type == "item_search"
+    assert plan.reply is None
+
+
+@pytest.mark.asyncio
+async def test_reads_the_reply_the_supervisor_writes():
+    llm = _StubLlm(_plan(intent_type="general_inquiry", agents=["memory"], reply="Hello! How can I help you today?"))
+
+    plan = await supervise("Hi", llm=llm)
+
+    assert plan.reply == "Hello! How can I help you today?"
+
+
+@pytest.mark.asyncio
+async def test_a_specialist_route_never_carries_a_reply():
+    # A reply is the fallback for when nobody else speaks. If the supervisor routes a content
+    # specialist, its reply is discarded rather than duplicated into the thread.
+    llm = _StubLlm(
+        _plan(intent_type="item_search", agents=["memory", "visual"], reply="Treated this as a product search.")
+    )
+
+    plan = await supervise("Any pinkish gowns?", llm=llm)
+
+    assert plan.suggested_agents == ["memory", "visual"]
+    assert plan.reply is None
+
+
+@pytest.mark.asyncio
+async def test_a_general_inquiry_without_a_model_reply_gets_the_fallback():
+    # A model that routes a conversational message but forgets to answer it must not leave the person
+    # with silence.
+    llm = _StubLlm(_plan(intent_type="general_inquiry", agents=["memory"], clarification=None))
+
+    plan = await supervise("Hi", llm=llm)
+
+    assert plan.reply
+
+
+@pytest.mark.asyncio
+async def test_treats_a_blank_reply_as_no_reply():
+    llm = _StubLlm(_plan(intent_type="item_search", agents=["memory", "visual"], reply="   "))
+
+    plan = await supervise("Any pinkish gowns?", llm=llm)
+
+    assert plan.reply is None
+
+
+@pytest.mark.asyncio
+async def test_the_prompt_states_the_reply_contract():
+    llm = _StubLlm(_plan(intent_type="general_inquiry", agents=["memory"], reply="Hello!"))
+
+    await supervise("Hi", llm=llm)
+
+    contract = llm.prompts[0][-1].content
+    assert "reply" in contract
+    system = llm.prompts[0][0].content
+    # The reply is bounded: it is never a way to execute an action or bypass a specialist.
+    assert "reply" in system

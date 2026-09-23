@@ -122,7 +122,8 @@ class SupervisorPlan(IntentGateOutput):
 
     The routing authority in the concierge graph. ``suggested_agents`` is ordered and is the set
     the driver executes; ``clarification`` is a question to ask *instead of* routing, and is the
-    only way a run may decline to produce specialist work.
+    only way a run may decline to produce specialist work. ``reply`` is the supervisor's own
+    message to the person, used only when no specialist ends up speaking.
     """
 
     clarification: str | None = Field(
@@ -133,6 +134,27 @@ class SupervisorPlan(IntentGateOutput):
         default=False,
         description="Whether resolving a specific customer is a precondition for useful work.",
     )
+    reply: str | None = Field(
+        default=None,
+        description=(
+            "A short, customer-facing message from the supervisor herself. It is used only when "
+            "no specialist produces content (a greeting, small talk, a general question); null "
+            "when the specialists answer."
+        ),
+    )
+
+
+#: What Aveline says when a conversational message needs an answer and no model wrote one. Kept
+#: deterministic so the offline/CI path stays reproducible: a greeting must never go unanswered
+#: just because the model is unavailable.
+_DEFAULT_REPLY = (
+    "Hello! I'm Aveline, your boutique concierge. Tell me what you're looking for - an occasion, "
+    "a colour, a size, or a piece - and I'll help you find it."
+)
+
+#: Agents whose content *is* the answer. A reply beside one of them would be a second answer, so a
+#: plan that routes one never carries a reply.
+_CONTENT_AGENTS = frozenset({"visual", "commerce"})
 
 
 #: The supervisor returns a plan as JSON. Instructed here rather than via provider-native
@@ -146,8 +168,13 @@ _SUPERVISOR_INSTRUCTION = (
     '  "agents": ["memory" | "visual" | "commerce", ...],\n'
     '  "needs_customer_resolution": true | false,\n'
     '  "clarification": "<a short question to ask instead, or null>",\n'
+    '  "reply": "<a short message of your own, or null>",\n'
     '  "requires_approval": true | false\n'
     "}"
+    "\n\n`reply` is your own short, warm message to the person, used only when no specialist "
+    "answers - a greeting, small talk, a thank-you, or a general question. Keep it to one or two "
+    "sentences in the boutique's voice. Set it to null when you route `visual` or `commerce`: "
+    "they produce the content, and a second answer reads as noise."
 )
 
 
@@ -197,7 +224,29 @@ async def supervise(
         logger.warning("Supervisor returned no usable plan; keeping the rule-based decision.")
         return rule_plan
 
-    return refined
+    return _with_a_bounded_reply(refined)
+
+
+def _with_a_bounded_reply(plan: SupervisorPlan) -> SupervisorPlan:
+    """Keep the supervisor's own reply within its lane.
+
+    Two bounds, both enforced here rather than trusted to the model:
+
+    - A plan that routes a content specialist never carries a reply. Those agents answer, and two
+      answers to one message read as noise.
+    - A conversational message for which no model answer arrived still gets the deterministic
+      reply, so a greeting is never left unanswered.
+    """
+    reply = plan.reply
+
+    if _CONTENT_AGENTS.intersection(plan.suggested_agents):
+        reply = None
+    elif plan.intent_type == "general_inquiry" and not reply:
+        reply = _DEFAULT_REPLY
+
+    if reply == plan.reply:
+        return plan
+    return plan.model_copy(update={"reply": reply})
 
 
 def _rules_to_plan(rules: IntentGateOutput) -> SupervisorPlan:
@@ -212,6 +261,8 @@ def _rules_to_plan(rules: IntentGateOutput) -> SupervisorPlan:
         requires_approval=rules.requires_approval,
         is_relevant=rules.is_relevant,
         safety_flags=list(rules.safety_flags),
+        # A conversational message the rules cannot route has nobody else to answer it.
+        reply=_DEFAULT_REPLY if rules.intent_type == "general_inquiry" else None,
     )
 
 
@@ -230,22 +281,17 @@ def _build_supervisor_messages(
     """
     from langchain_core.messages import HumanMessage, SystemMessage
 
+    from app.context import render_context_block
     from app.prompts.assembly import assemble_system_prompt
 
     lines: list[str] = []
 
-    if thread_summary:
-        lines.append(f"SUMMARY OF EARLIER CONVERSATION:\n{thread_summary}")
-
-    if pinned_slots:
-        rendered = "\n".join(f"- {key}: {value}" for key, value in pinned_slots.items())
-        lines.append(f"ESTABLISHED SO FAR:\n{rendered}")
-
-    if history:
-        recent = "\n".join(
-            f"{turn.get('authorKind')}: {turn.get('text')}" for turn in history
-        )
-        lines.append(f"RECENT CONVERSATION (oldest first):\n{recent}")
+    # The same rendering the specialists get, so the transcript cannot drift between prompts.
+    context_block = render_context_block(
+        history=history, thread_summary=thread_summary, pinned_slots=pinned_slots
+    )
+    if context_block:
+        lines.append(context_block)
 
     lines.append(f"NEWEST MESSAGE:\n{message}")
     lines.append(_SUPERVISOR_INSTRUCTION)
@@ -300,6 +346,12 @@ def _parse_plan(content: Any) -> SupervisorPlan | None:
     else:
         clarification = clarification.strip()
 
+    reply = parsed.get("reply")
+    if not isinstance(reply, str) or not reply.strip():
+        reply = None
+    else:
+        reply = reply.strip()
+
     return SupervisorPlan(
         intent_type=intent,
         # An intent the rules know implies a set; trust the model's ordering when it named one,
@@ -309,6 +361,7 @@ def _parse_plan(content: Any) -> SupervisorPlan | None:
         is_relevant=True,
         clarification=clarification,
         needs_customer_resolution=bool(parsed.get("needs_customer_resolution", False)),
+        reply=reply,
     )
 
 

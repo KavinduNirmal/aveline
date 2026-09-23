@@ -99,42 +99,64 @@ def test_ava_blocks_skip_at_a_glance_when_no_memories():
     assert all(b["type"] != "at_a_glance" for b in blocks)
 
 
-# ----------------------------------------------------------------------- Aveline (summary)
+# ------------------------------------------------------------------- Aveline (reply)
 
 
-def test_aveline_summary_is_a_text_block_without_the_old_intent_template():
+def test_aveline_renders_the_supervisors_reply():
     output = {
-        "intent": "item_search",
-        "memory": _memory_with_customer(),
+        "intent": "general_inquiry",
+        "reply": "Hello! I'm Aveline. What are you looking for today?",
+        "memory": _memory_skipped(),
         "visual": None,
         "commerce": None,
     }
     blocks = build_aveline_blocks(output)
 
-    assert len(blocks) == 1
-    assert blocks[0]["type"] == "text"
-    # The old stub "Intent: item_search" must be gone.
-    assert "Intent:" not in blocks[0]["text"]
+    assert blocks == [{"type": "text", "text": "Hello! I'm Aveline. What are you looking for today?"}]
 
 
-def test_aveline_summary_mentions_the_resolved_customer_when_present():
+def test_aveline_is_silent_when_there_is_nothing_to_say():
+    # The reported defect: an unroutable message produced the meta note "Treated this as a general
+    # inquiry." A routing summary is not content, so with no reply Aveline posts nothing at all.
+    output = {"intent": "general_inquiry", "memory": _memory_skipped(), "visual": None, "commerce": None}
+
+    assert build_aveline_blocks(output) == []
+
+
+def test_aveline_never_renders_a_routing_summary():
+    for intent in ("item_search", "pricing_query", "event_query", "general_inquiry", "order_placement"):
+        blocks = build_aveline_blocks({"intent": intent})
+        text = " ".join(b.get("text", "") for b in blocks)
+        assert "Treated this as" not in text
+        assert "Intent:" not in text
+
+
+def test_aveline_reply_is_withheld_when_a_specialist_spoke():
+    # One answer per message: if a specialist produced content, Aveline's fallback reply is dropped.
     output = {
-        "intent": "item_search",
+        "intent": "general_inquiry",
+        "reply": "Hello! I'm Aveline.",
         "memory": _memory_with_customer(),
         "visual": None,
         "commerce": None,
     }
-    text = build_aveline_blocks(output)[0]["text"]
 
-    assert "Michael" in text
+    assert build_aveline_blocks(output, specialist_spoke=True) == []
 
 
-def test_aveline_summary_does_not_duplicate_ava_content_when_no_customer():
-    output = {"intent": "general_inquiry", "memory": _memory_skipped(), "visual": None, "commerce": None}
-    text = build_aveline_blocks(output)[0]["text"]
+def test_a_clarification_still_wins_over_a_reply():
+    output = {
+        "intent": "general_inquiry",
+        "reply": "Hello!",
+        "clarification": {
+            "kind": "asked",
+            "question": "Which one did you mean - the silk or the linen?",
+        },
+    }
+    blocks = build_aveline_blocks(output, specialist_spoke=True)
 
-    assert text  # non-empty, still an acknowledgement
-    assert "Michael" not in text
+    assert blocks[0]["text"] == "Which one did you mean - the silk or the linen?"
+
 
 
 # ------------------------------------------------------------------ Clarification (Aveline)

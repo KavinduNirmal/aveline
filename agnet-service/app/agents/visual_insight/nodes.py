@@ -9,6 +9,7 @@ import re
 from typing import Any
 
 from app.agents.visual_insight.state import VisualAgentState
+from app.context import render_context_block
 from app.core.config import get_settings
 from app.llm.replies import unwrap_reply
 from app.prompts.assembly import assemble_system_prompt
@@ -211,7 +212,18 @@ class VisualInsightAgent:
             completion_tokens = 0
             if self.llm is not None:
                 try:
-                    system_prompt = assemble_system_prompt("visual", {"organization_id": state.get("org_id")})
+                    # The bounded conversation window (ADR-023) rides on the system layer beside
+                    # the boutique context, so the styling commentary can see what the thread has
+                    # established rather than only the pieces matched this turn.
+                    system_prompt = assemble_system_prompt(
+                        "visual",
+                        {"organization_id": state.get("org_id")},
+                        dialogue_context=render_context_block(
+                            history=state.get("history"),
+                            thread_summary=state.get("thread_summary"),
+                            pinned_slots=state.get("pinned_slots"),
+                        ),
+                    )
                     # Stock is stated as fact because the model otherwise hedges: an unstated
                     # availability became "availability: unknown" plus a "please verify current
                     # stock" caveat, on pieces we had just confirmed in stock.

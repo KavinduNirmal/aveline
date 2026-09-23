@@ -893,3 +893,86 @@ async def test_customer_name_matches_the_brief_when_the_resolver_took_the_fast_p
     )
 
     assert result["output"]["customer"]["full_name"] == "Kasha Vivian Perera"
+
+
+# ---------------------------------------------------------------------------
+# Conversation-context transport (ADR-023) — the window must reach the draft prompt.
+# ---------------------------------------------------------------------------
+
+
+class _CapturingChatModel:
+    """A chat-model double that records every message list it is invoked with."""
+
+    def __init__(self) -> None:
+        self.calls: list[list] = []
+
+    async def ainvoke(self, messages):
+        self.calls.append(messages)
+        return _Msg("Ava LLM draft.")
+
+    def prompt_text(self) -> str:
+        return "\n".join(
+            getattr(message, "content", None) or str(message) for message in self.calls[0]
+        )
+
+
+async def test_history_reaches_the_draft_prompt():
+    """A follow-up such as "the pink one" must carry its referent into the model.
+
+    This fails for *both* missing halves: the state schema must declare ``history`` (LangGraph
+    drops undeclared keys silently) and the node must render it. It is the load-bearing test for
+    the schema half of the defect.
+    """
+    registry = FakeRegistry()
+    llm = _CapturingChatModel()
+    graph = build_memory_graph(registry, llm=llm)
+
+    state = await _llm_state()
+    state["message"] = "the pink one"
+    state["history"] = [
+        {"authorKind": "Customer", "text": "Any pinkish gowns?"},
+        {"authorKind": "Agent", "text": "We have three."},
+    ]
+    state["thread_summary"] = "She is shopping for a December wedding."
+    state["pinned_slots"] = {"budget": "50k"}
+
+    result = await graph.ainvoke(state)
+
+    assert result["status"] == "success"
+    assert llm.calls, "the LLM was never invoked, so there is no prompt to inspect"
+    prompt = llm.prompt_text()
+    assert "Any pinkish gowns?" in prompt
+    assert "December wedding" in prompt
+    assert "budget: 50k" in prompt
+
+
+async def test_history_is_dropped_without_an_llm_but_the_run_still_succeeds():
+    """The deterministic path must be unchanged: no LLM, no context render, same template draft."""
+    registry = FakeRegistry()
+    graph = build_memory_graph(registry, llm=None)
+
+    state = await _llm_state()
+    state["history"] = [{"authorKind": "Customer", "text": "Any pinkish gowns?"}]
+
+    result = await graph.ainvoke(state)
+
+    assert result["status"] == "success"
+    assert result["output"]["draft_response"].startswith("Hi Sarah Perera!")
+
+
+async def test_dialogue_context_is_not_rendered_without_an_llm(monkeypatch):
+    """No LLM means no prompt, so the block must not be computed at all (no wasted work)."""
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.agents.customer_memory.nodes.render_context_block",
+        lambda **kwargs: calls.append(kwargs) or "",
+    )
+
+    registry = FakeRegistry()
+    graph = build_memory_graph(registry, llm=None)
+    state = await _llm_state()
+    state["history"] = [{"authorKind": "Customer", "text": "Any pinkish gowns?"}]
+
+    await graph.ainvoke(state)
+
+    assert calls == []

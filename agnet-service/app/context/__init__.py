@@ -72,6 +72,50 @@ class CompactedContext:
     compacted: bool = False
 
 
+def render_turns(turns: list[dict[str, Any]] | None) -> str:
+    """Render ``turns`` as ``authorKind: text`` lines, oldest first.
+
+    The single transcript renderer for every prompt that is shown conversation turns. Extracted
+    from the supervisor's prompt so the supervisor and the specialists cannot drift into two
+    subtly different transcripts of the same window.
+    """
+    return "\n".join(
+        f"{turn.get('authorKind')}: {turn.get('text')}" for turn in (turns or [])
+    )
+
+
+def render_context_block(
+    history: list[dict[str, Any]] | None = None,
+    thread_summary: str | None = None,
+    pinned_slots: dict[str, str] | None = None,
+) -> str:
+    """Render the three context layers as one prompt fragment (ADR-023).
+
+    The layers stay distinct - summary, then established slots, then the verbatim window - because
+    they answer different questions and are consumed at different strengths: the window is what a
+    reference resolves against, the summary is what survives its trimming, and the pinned slots are
+    the facts age must not evict.
+
+    Returns the empty string when all three are empty, so a run with no conversation id (the
+    offline/CI path) assembles a prompt byte-identical to one with no context block at all. The
+    renderer applies no budget of its own: the window it renders is already bounded by
+    ``context_window_tokens``, which keeps a single policy threshold rather than two.
+    """
+    lines: list[str] = []
+
+    if thread_summary:
+        lines.append(f"SUMMARY OF EARLIER CONVERSATION:\n{thread_summary}")
+
+    if pinned_slots:
+        rendered = "\n".join(f"- {key}: {value}" for key, value in pinned_slots.items())
+        lines.append(f"ESTABLISHED SO FAR:\n{rendered}")
+
+    if history:
+        lines.append(f"RECENT CONVERSATION (oldest first):\n{render_turns(history)}")
+
+    return "\n\n".join(lines)
+
+
 def estimate_tokens(turns: list[dict[str, Any]]) -> int:
     """Approximate the token cost of ``turns``.
 

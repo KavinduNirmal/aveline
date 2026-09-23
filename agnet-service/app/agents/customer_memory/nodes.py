@@ -17,6 +17,7 @@ from app.agents.customer_memory.introduction import extract_self_introduced_name
 from app.agents.customer_memory.parsing import parse_message
 from app.agents.customer_memory.state import MemoryAgentState
 from app.agents.customer_memory.update_instruction import extract_customer_update
+from app.context import render_context_block
 from app.llm.replies import unwrap_reply
 from app.prompts.assembly import assemble_system_prompt
 from app.schemas.customer_memory import MemoryAgentOutput
@@ -549,7 +550,17 @@ class CustomerMemoryAgent:
             "Do not auto-send; it is reviewed by a human associate."
         )
 
-        system = assemble_system_prompt("memory", self.org_context)
+        # The bounded conversation window (ADR-023), rendered here rather than added to
+        # `context_lines` so it reaches the model as a system-layer fragment: conversation context
+        # is data the model is given, not part of the current turn's instruction.
+        dialogue_context = render_context_block(
+            history=state.get("history"),
+            thread_summary=state.get("thread_summary"),
+            pinned_slots=state.get("pinned_slots"),
+        )
+        system = assemble_system_prompt(
+            "memory", self.org_context, dialogue_context=dialogue_context
+        )
         try:
             result = await self.llm.ainvoke(
                 [SystemMessage(content=system), HumanMessage(content="\n".join(context_lines))]

@@ -146,6 +146,21 @@ async def run_load_context(state: ConciergeState) -> dict[str, Any]:
     }
 
 
+def _context_fields(state: ConciergeState) -> dict[str, Any]:
+    """The three ADR-023 context layers, ready to spread into a sub-graph's initial state.
+
+    Defined once rather than written out at each of the four invocation sites: the transport is
+    the same everywhere, and a single definition is what stops the next sub-graph invocation from
+    quietly omitting it. The sub-graph's own schema must also declare the fields - LangGraph drops
+    undeclared state keys without warning - which is why they are pinned by a schema guard test.
+    """
+    return {
+        "history": state.get("history") or [],
+        "thread_summary": state.get("thread_summary"),
+        "pinned_slots": state.get("pinned_slots") or {},
+    }
+
+
 async def run_supervisor(state: ConciergeState) -> dict[str, Any]:
     """Decide how the message is handled, as the routing authority (ADR-023, Decision 3).
 
@@ -259,6 +274,7 @@ async def run_memory_agent(state: ConciergeState) -> dict[str, Any]:
         "channel": channel or "whatsapp",
         "direction": direction,
         "staff_query": staff_query,
+        **_context_fields(state),
     }
     result = await graph.ainvoke(mem_state)
     output = result.get("output") or {
@@ -330,6 +346,7 @@ async def run_visual_agent(state: ConciergeState) -> dict[str, Any]:
         "channel": org_context.get("channel", "internal"),
         "direction": direction,
         "staff_query": bool(staff_query),
+        **_context_fields(state),
     }
     result = await graph.ainvoke(vis_state)
     output = result.get("output") or {
@@ -387,6 +404,7 @@ async def run_commerce_agent(state: ConciergeState) -> dict[str, Any]:
         "delivery_address": delivery_address,
         "channel": channel,
         "message": state.get("message", ""),
+        **_context_fields(state),
     }
     result = await graph.ainvoke(commerce_state)
     output = result.get("output") or {
@@ -453,6 +471,7 @@ async def run_commerce_approval(state: ConciergeState) -> dict[str, Any]:
         "message": state.get("message", ""),
         "approval_decision": decision,
         "approval_comment": comments,
+        **_context_fields(state),
     }
 
     graph = build_commerce_graph(ToolRegistry(), org_context=org_context)
@@ -565,6 +584,9 @@ def formulate_response(state: ConciergeState) -> dict[str, Any]:
         clarification = _clarification_for(state)
         output: dict[str, Any] = {
             "intent": intent.get("intent_type", "general_inquiry"),
+            # The supervisor's own message, used only when no specialist produces content
+            # (ADR-023). Null means "the specialists answer", not "say nothing".
+            "reply": intent.get("reply"),
         }
         if clarification is not None:
             # The run asked instead of acting, so there is no specialist content to attach. This is

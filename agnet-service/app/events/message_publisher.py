@@ -3,11 +3,11 @@
 The concierge workflow produces an ``AgentResponse``. This module turns it into one or
 more ``message.created`` events attributed to the personas that produced real content:
 
-- **Aveline** (the orchestrator) always emits a summary ``Note``.
+- **Aveline** (the entry point) answers only when no specialist produced content, and never
+  with a routing summary.
 - **Ava** (memory) emits when the memory agent produced real customer content
   (brief, memories, draft response).
-- **Elle** (visual) and **Lina** (commerce) emit when their sub-output carries content;
-  their stubs are wired by Issue #151.
+- **Elle** (visual) and **Lina** (commerce) emit when their sub-output carries content.
 
 The API consumes these events and becomes the system of record; the agent service never
 writes message rows directly (ADR-016).
@@ -66,18 +66,23 @@ def build_agent_messages(
         messages.append(_message("aveline", "Note", _text_block(str(reason)), thread_id, workflow_run_id))
         return messages
 
-    # Aveline (orchestrator) always summarizes the outcome.
-    aveline_blocks = build_aveline_blocks(output)
-    if aveline_blocks:
-        messages.append(_message("aveline", "Note", aveline_blocks, thread_id, workflow_run_id))
-
     # Each specialist that produced real content gets its own attributed message.
+    specialist_messages: list[dict[str, Any]] = []
     for agent_key, field, builder in _SPECIALISTS:
         sub_output = output.get(field) if isinstance(output, dict) else None
         blocks = builder(sub_output)
         if blocks:
-            messages.append(_message(agent_key, "Note", blocks, thread_id, workflow_run_id))
+            specialist_messages.append(
+                _message(agent_key, "Note", blocks, thread_id, workflow_run_id)
+            )
 
+    # Aveline (the entry point) answers only when no specialist did, and never with a routing
+    # summary: one answer per message, and a summary is not an answer.
+    aveline_blocks = build_aveline_blocks(output, specialist_spoke=bool(specialist_messages))
+    if aveline_blocks:
+        messages.append(_message("aveline", "Note", aveline_blocks, thread_id, workflow_run_id))
+
+    messages.extend(specialist_messages)
     return messages
 
 

@@ -11,21 +11,6 @@ silent (its message is simply omitted by the publisher).
 
 from typing import Any
 
-#: Concierge intent type -> short, human-readable phrase for Aveline's summary.
-_INTENT_LABELS: dict[str, str] = {
-    "item_search": "a product search",
-    "pricing_query": "a pricing question",
-    "customer_preference": "a preference lookup",
-    "event_query": "an event request",
-    "general_inquiry": "a general inquiry",
-}
-
-
-def _intent_label(intent: Any) -> str:
-    if isinstance(intent, str):
-        return _INTENT_LABELS.get(intent, intent.replace("_", " "))
-    return "a general inquiry"
-
 
 def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
@@ -170,16 +155,29 @@ def build_lina_blocks(commerce_output: Any) -> list[dict[str, Any]]:
     return blocks
 
 
-# ----------------------------------------------------------------------- Aveline (summary)
+# ------------------------------------------------------------------- Aveline (entry point)
 
 
-def build_aveline_blocks(output: Any) -> list[dict[str, Any]]:
-    """Map the concierge outcome into Aveline's summary ``Note`` text block.
+def build_aveline_blocks(
+    output: Any,
+    *,
+    specialist_spoke: bool = False,
+) -> list[dict[str, Any]]:
+    """Map the concierge outcome into Aveline's content blocks.
 
-    The summary is intent-aware and names the customer when the memory agent resolved one,
-    but it deliberately does not duplicate Ava's rich blocks (brief/memories/draft live in
-    Ava's own message). When the orchestrator could not resolve a customer it carries a
-    ``clarification`` (ambiguous candidates or not-found) which is rendered instead.
+    Aveline is the entry point, and she speaks only when nobody else does:
+
+    - A **clarification** she asked is rendered verbatim and takes precedence over everything.
+    - Her own **reply** is rendered when no specialist produced content. The reply comes from the
+      supervisor, which writes one for a conversational message that has nothing to route.
+    - Otherwise she is **silent**. A routing summary ("Treated this as a product search.") is not
+      content: it describes what the orchestrator did instead of answering the person, and it read
+      as a bug when it was the only thing a customer ever saw.
+
+    Args:
+        output: The concierge ``AgentResponse.output``.
+        specialist_spoke: True when at least one specialist emitted content this run. A
+            specialist's answer and Aveline's fallback reply must not both land in one thread.
     """
     out = _as_dict(output)
 
@@ -189,20 +187,14 @@ def build_aveline_blocks(output: Any) -> list[dict[str, Any]]:
         if blocks:
             return blocks
 
-    label = _intent_label(out.get("intent"))
+    if specialist_spoke:
+        return []
 
-    customer_name: str | None = None
-    memory = _as_dict(out.get("memory"))
-    if memory.get("status") != "skipped":
-        customer = _as_dict(memory.get("customer"))
-        customer_name = customer.get("full_name") or customer.get("customer_id")
+    reply = out.get("reply")
+    if isinstance(reply, str) and reply.strip():
+        return [{"type": "text", "text": reply.strip()}]
 
-    if customer_name:
-        text = f"Treated this as {label}. I have pulled up what we know on {customer_name} - the details are below."
-    else:
-        text = f"Treated this as {label}."
-
-    return [{"type": "text", "text": text}]
+    return []
 
 
 def build_clarification_blocks(clarification: Any) -> list[dict[str, Any]]:

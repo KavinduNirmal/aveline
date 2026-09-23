@@ -171,6 +171,21 @@ Coverage gate: ≥ 90% (`--cov=app --cov-fail-under=90`). DB integration tests a
 skipped unless `TEST_DATABASE_URL` is set (e.g.
 `postgresql+asyncpg://aveline:change-me@localhost:5433/aveline`).
 
+## Conversation context
+
+`load_context` loads the conversation transcript named by `org_context.conversation_id`, fits it
+to `context_window_tokens`, and carries it in three layers (`history`, `thread_summary`,
+`pinned_slots`). The supervisor and the specialist sub-graphs that own a prompt all render the same
+block through `app.context.render_context_block`, which is what lets a follow-up such as "the pink
+one" resolve its referent. Without a conversation id the context is empty and the assembled prompt
+is unchanged, so offline and CI runs stay deterministic.
+
+Propagation requires **both** a declaration on the sub-graph's state schema and a pass-through in
+the orchestrator node; LangGraph drops undeclared state keys silently. See
+`docs/architecture/agent-context.md` for the path, scope, and limits.
+
 ## Further reading
 
 - Internal service auth: `docs/ADR/ADR-009-internal-service-authentication.md`
+- Conversation context propagation: `docs/architecture/agent-context.md`
+- Layered context and the supervisor: `docs/ADR/ADR-023-conversation-context-and-supervisor.md`

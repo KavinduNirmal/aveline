@@ -600,3 +600,259 @@ async def test_load_context_bounds_a_long_transcript(monkeypatch):
     assert 0 < len(result["history"]) < len(items)
     # The newest turn is always kept: a window without the message just received is useless.
     assert result["history"][-1]["id"] == "m59"
+
+
+# ---------------------------------------------------------------------------
+# Conversation-context transport into the sub-graphs (ADR-023)
+#
+# The orchestrator builds each sub-graph's initial state as an explicit dictionary. Omitting a
+# context key there loses it silently, because the sub-graph's schema declares what it can hold.
+# These tests pin the orchestrator half; the schema half is pinned inside each sub-graph.
+# ---------------------------------------------------------------------------
+
+_CONTEXT = {
+    "history": [
+        {"id": "m1", "authorKind": "Customer", "text": "Any pinkish gowns?"},
+        {"id": "m2", "authorKind": "Agent", "text": "We have three."},
+    ],
+    "thread_summary": "She is shopping for a December wedding.",
+    "pinned_slots": {"budget": "50k"},
+}
+
+
+class _CapturingSubgraph:
+    """A sub-graph stand-in that records the exact state it is invoked with."""
+
+    def __init__(self, sink: dict) -> None:
+        self._sink = sink
+
+    async def ainvoke(self, state: dict) -> dict:
+        self._sink.update(state)
+        return {"output": {"status": "success", "agent": "stub", "ran": True}}
+
+
+def _assert_context_reached(captured: dict) -> None:
+    assert captured["history"] == _CONTEXT["history"]
+    assert captured["thread_summary"] == _CONTEXT["thread_summary"]
+    assert captured["pinned_slots"] == _CONTEXT["pinned_slots"]
+
+
+@pytest.mark.asyncio
+async def test_memory_agent_forwards_the_conversation_context(monkeypatch):
+    from app.workflows.concierge_workflow import run_memory_agent
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.build_memory_graph",
+        lambda registry, llm=None, org_context=None: _CapturingSubgraph(captured),
+    )
+    monkeypatch.setattr("app.workflows.concierge_workflow.ToolRegistry", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.memory_llm_or_none", lambda settings: None
+    )
+
+    await run_memory_agent({
+        "message": "the pink one",
+        "org_context": {
+            "organization_id": REAL_ORG,
+            "customer_id": "c1",
+            "direction": "inbound",
+        },
+        "intent": {"intent_type": "item_search"},
+        **_CONTEXT,
+    })
+
+    _assert_context_reached(captured)
+
+
+@pytest.mark.asyncio
+async def test_visual_agent_forwards_the_conversation_context(monkeypatch):
+    from app.workflows.concierge_workflow import run_visual_agent
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.build_visual_graph",
+        lambda registry, llm=None: _CapturingSubgraph(captured),
+    )
+    monkeypatch.setattr("app.workflows.concierge_workflow.ToolRegistry", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.visual_llm_or_none", lambda settings: None
+    )
+
+    await run_visual_agent({
+        "message": "the pink one",
+        "org_context": {"organization_id": REAL_ORG, "direction": "inbound"},
+        "intent": {"intent_type": "item_search"},
+        **_CONTEXT,
+    })
+
+    _assert_context_reached(captured)
+
+
+@pytest.mark.asyncio
+async def test_commerce_agent_forwards_the_conversation_context(monkeypatch):
+    from app.workflows.concierge_workflow import run_commerce_agent
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.build_commerce_graph",
+        lambda registry, org_context=None: _CapturingSubgraph(captured),
+    )
+    monkeypatch.setattr("app.workflows.concierge_workflow.ToolRegistry", lambda *a, **k: None)
+
+    await run_commerce_agent({
+        "message": "order the pink one",
+        "org_context": {"organization_id": REAL_ORG, "direction": "inbound"},
+        "intent": {"intent_type": "order_placement"},
+        **_CONTEXT,
+    })
+
+    _assert_context_reached(captured)
+
+
+@pytest.mark.asyncio
+async def test_the_commerce_resume_leg_forwards_the_conversation_context(monkeypatch):
+    # A resume is not a new turn, but the checkpoint carries the fields and the settled run must
+    # see the same conversation every other leg saw.
+    from app.workflows.concierge_workflow import run_commerce_approval
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.build_commerce_graph",
+        lambda registry, org_context=None: _CapturingSubgraph(captured),
+    )
+    monkeypatch.setattr("app.workflows.concierge_workflow.ToolRegistry", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.interrupt",
+        lambda payload: {"decision": "approved", "order_id": "o-1"},
+    )
+
+    await run_commerce_approval({
+        "message": "order the pink one",
+        "org_context": {"organization_id": REAL_ORG},
+        "commerce_output": {"status": "pending_approval"},
+        **_CONTEXT,
+    })
+
+    _assert_context_reached(captured)
+
+
+@pytest.mark.asyncio
+async def test_the_window_reaches_every_specialist_on_one_turn(monkeypatch):
+    """The acceptance criterion: one loaded window, both specialists, same turn (ADR-023).
+
+    This is the end-to-end shape of the reported failure: turn 1 established the referent, turn 2
+    referred to it, and the specialists saw only the bare follow-up. The test drives the real
+    orchestrator graph with a transcript from the (stubbed) backend.
+    """
+    transcript = [
+        {"id": "m1", "authorKind": "Customer", "text": "Any pinkish gowns?"},
+        {"id": "m2", "authorKind": "Agent", "text": "We have three."},
+    ]
+    _patch_registry(monkeypatch, _StubRegistry(payload={"items": transcript}))
+
+    memory_sink: dict = {}
+    visual_sink: dict = {}
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.build_memory_graph",
+        lambda registry, llm=None, org_context=None: _CapturingSubgraph(memory_sink),
+    )
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.build_visual_graph",
+        lambda registry, llm=None: _CapturingSubgraph(visual_sink),
+    )
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.memory_llm_or_none", lambda settings: None
+    )
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.visual_llm_or_none", lambda settings: None
+    )
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.workflow_llm_or_none", lambda settings: None
+    )
+
+    async def fake_resolve(org_id, message, *, registry, customer_id=None, phone=None):
+        return CustomerResolution(
+            kind="resolved", customer_id="c1", profile={"fullName": "Samantha"}
+        )
+
+    monkeypatch.setattr("app.workflows.concierge_workflow.resolve_customer", fake_resolve)
+
+    graph = build_concierge_graph()
+    result = await graph.ainvoke({
+        "message": "Do you still have that pinkish dress from the wedding?",
+        "org_context": {
+            "organization_id": REAL_ORG,
+            "conversation_id": "conv-1",
+            "customer_id": "c1",
+            "direction": "inbound",
+        },
+        "history": [],
+        "thread_summary": None,
+        "pinned_slots": {},
+        "intent": None,
+        "resolution": None,
+        "memory_output": None,
+        "visual_output": None,
+        "commerce_output": None,
+        "usage": None,
+        "response": None,
+    })
+
+    assert result["intent"]["intent_type"] == "item_search"
+    assert memory_sink["history"] == transcript
+    assert visual_sink["history"] == transcript
+    # The summary is None for a short conversation (compaction only runs on overflow) - the
+    # window itself is the layer that carries the referent, and that is what must arrive.
+    assert "thread_summary" in memory_sink
+
+
+# ---------------------------------------------------------------------------
+# Aveline's own reply (the entry point answers when nobody else does)
+# ---------------------------------------------------------------------------
+
+
+def test_formulate_response_surfaces_the_supervisors_reply():
+    from app.workflows.concierge_workflow import formulate_response
+
+    out = formulate_response({
+        "message": "Hi",
+        "intent": {"intent_type": "general_inquiry", "reply": "Hello! How can I help?"},
+    })
+
+    assert out["response"]["output"]["reply"] == "Hello! How can I help?"
+
+
+@pytest.mark.asyncio
+async def test_a_greeting_carries_a_reply_and_no_routing_summary():
+    result = await _invoke("Hello there")
+
+    output = result["response"]["output"]
+    assert result["intent"]["intent_type"] == "general_inquiry"
+    assert output["reply"]
+    assert "Treated this as" not in output["reply"]
+    assert "general inquiry" not in output["reply"].lower()
+
+
+@pytest.mark.asyncio
+async def test_a_product_search_carries_no_reply():
+    # The specialists answer product questions; the supervisor's reply stays empty so the thread
+    # does not carry two answers.
+    result = await _invoke("Do you have a blue saree for a wedding?")
+
+    assert result["response"]["output"]["reply"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_greeting_publishes_a_reply_message_and_no_meta_note():
+    from app.events.message_publisher import build_agent_messages
+    from app.schemas.response import AgentResponse
+
+    result = await _invoke("Hello there")
+    messages = build_agent_messages(AgentResponse.model_validate(result["response"]))
+
+    aveline = [m for m in messages if m["author"]["agent_key"] == "aveline"]
+    assert len(aveline) == 1
+    text = aveline[0]["blocks"][0]["text"]
+    assert text == result["response"]["output"]["reply"]
+    assert "Treated this as" not in text

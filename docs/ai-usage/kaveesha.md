@@ -1022,3 +1022,9 @@ Diagnose why the user with `kaveeshatharindi333@gmail.com` was seeing the "No ac
 ### Remaining Work
 None — the updated API is now running and both the Administrator Console (`/admin`) and Boutique Dashboard (`/app/b/aveline-boutique`) are accessible.
 
+### Merge Conflict Resolution (git pull origin development)
+- Resolved conflict in `frontend/aveline_mobile/android/gradle.properties`: removed obsolete `# org.gradle.java.home` line to adhere to portable Gradle configuration.
+- Resolved conflict in `Aveline.Api.Tests/CatalogEndpointsIntegrationTests.cs`: merged both the query/facet integration tests from `HEAD` and the lookbook/sales integration tests from `development` with proper scoping and assertion attributes.
+- Fixed Python syntax check in `.husky/pre-commit` to resolve working `python` executable when `python3` alias is an uninstalled Microsoft Store stub on Windows.
+- Successfully executed merge commit `8afb4c2` with all pre-commit quality gates passing.
+

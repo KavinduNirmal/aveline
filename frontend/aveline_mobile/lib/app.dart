@@ -58,6 +58,11 @@ import 'features/home/presentation/screens/main_shell.dart';
 import 'features/notifications/data/api_notification_repository.dart';
 import 'features/notifications/presentation/notifications_controller.dart';
 import 'features/notifications/presentation/screens/notifications_screen.dart';
+import 'features/commerce/data/repositories/api_commerce_repository.dart';
+import 'features/commerce/domain/repositories/commerce_repository.dart';
+import 'features/commerce/presentation/screens/create_order_screen.dart';
+import 'features/commerce/presentation/screens/order_detail_screen.dart';
+import 'features/commerce/presentation/screens/orders_list_screen.dart';
 import 'features/settings/presentation/screens/settings_screen.dart';
 import 'features/onboarding/data/onboarding_preferences.dart';
 import 'features/onboarding/data/owner_onboarding_api.dart';
@@ -330,6 +335,9 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
   /// One source for a client's thread, so the inbox's client rows and the thread
   /// screen they open read the same history.
   late final ThreadRepository _threadRepository;
+
+  /// Boutique commerce repository for orders, approvals, and payments.
+  late final CommerceRepository _commerceRepository;
   late final Dio _dio;
   late final GoRouter _router;
   final AppLinks _appLinks = AppLinks();
@@ -361,6 +369,10 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
     // reason: it arrives with `/orgs/my` after this shell is built. Until it does the thread
     // stays in its loading state, which is a "not yet" rather than an error.
     _threadRepository = ApiThreadRepository(
+      _dio,
+      organizationId: () => _boutiqueProvider.organizationId,
+    );
+    _commerceRepository = ApiCommerceRepository(
       _dio,
       organizationId: () => _boutiqueProvider.organizationId,
     );
@@ -773,6 +785,29 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
           name: 'notifications',
           builder: (context, state) => const MainShell(
             child: NotificationsScreen(),
+          ),
+        ),
+        GoRoute(
+          path: AppRoutes.orders,
+          name: 'orders',
+          builder: (context, state) => MainShell(
+            child: OrdersListScreen(repository: _commerceRepository),
+          ),
+        ),
+        GoRoute(
+          path: AppRoutes.createOrder,
+          name: 'createOrder',
+          builder: (context, state) => CreateOrderScreen(
+            commerceRepository: _commerceRepository,
+            catalogRepository: _catalogRepository,
+          ),
+        ),
+        GoRoute(
+          path: AppRoutes.orderDetailPattern,
+          name: 'orderDetail',
+          builder: (context, state) => OrderDetailScreen(
+            orderId: state.pathParameters['orderId'] ?? '',
+            repository: _commerceRepository,
           ),
         ),
         GoRoute(

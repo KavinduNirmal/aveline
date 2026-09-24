@@ -5,10 +5,9 @@ import '../../domain/entities/order_item.dart';
 import '../../domain/repositories/commerce_repository.dart';
 
 class OrderCreationController extends ChangeNotifier {
-  OrderCreationController({required CommerceRepository repository})
-      : _repository = repository;
+  OrderCreationController({required this.repository});
 
-  final CommerceRepository _repository;
+  final CommerceRepository repository;
 
   String _orderType = 'in_store';
   String _customerName = '';
@@ -115,7 +114,7 @@ class OrderCreationController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final order = await _repository.createOrder(
+      final order = await repository.createOrder(
         customerName: _customerName.trim(),
         orderType: _orderType,
         items: _items,

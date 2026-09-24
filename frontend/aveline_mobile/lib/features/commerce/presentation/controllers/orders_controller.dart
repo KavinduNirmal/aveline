@@ -4,10 +4,9 @@ import '../../domain/entities/order.dart';
 import '../../domain/repositories/commerce_repository.dart';
 
 class OrdersController extends ChangeNotifier {
-  OrdersController({required CommerceRepository repository})
-      : _repository = repository;
+  OrdersController({required this.repository});
 
-  final CommerceRepository _repository;
+  final CommerceRepository repository;
 
   List<Order> _orders = [];
   bool _isLoading = false;
@@ -28,7 +27,7 @@ class OrdersController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      _orders = await _repository.fetchOrders(
+      _orders = await repository.fetchOrders(
         status: _selectedStatus == 'all' ? null : _selectedStatus,
       );
     } catch (e) {

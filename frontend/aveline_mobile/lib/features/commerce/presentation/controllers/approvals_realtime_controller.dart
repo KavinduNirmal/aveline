@@ -10,15 +10,14 @@ import '../../domain/repositories/commerce_repository.dart';
 
 class ApprovalsRealtimeController extends ChangeNotifier {
   ApprovalsRealtimeController({
-    required CommerceRepository repository,
-    NotificationProvider? notificationProvider,
-  })  : _repository = repository,
-        _notificationProvider = notificationProvider {
-    _notificationProvider?.addListener(_onNotificationReceived);
+    required this.repository,
+    this.notificationProvider,
+  }) {
+    notificationProvider?.addListener(_onNotificationReceived);
   }
 
-  final CommerceRepository _repository;
-  final NotificationProvider? _notificationProvider;
+  final CommerceRepository repository;
+  final NotificationProvider? notificationProvider;
 
   String? _orderId;
   Order? _order;
@@ -34,11 +33,11 @@ class ApprovalsRealtimeController extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
 
-  bool get isRealtimeActive => _notificationProvider != null;
+  bool get isRealtimeActive => notificationProvider != null;
 
   void _onNotificationReceived() {
     if (_orderId == null) return;
-    final last = _notificationProvider?.latest;
+    final last = notificationProvider?.latest;
     if (last == null) return;
 
     // Refresh if notification mentions approval or matches order
@@ -74,9 +73,9 @@ class ApprovalsRealtimeController extends ChangeNotifier {
     if (_orderId == null) return;
     try {
       final results = await Future.wait([
-        _repository.fetchOrder(_orderId!),
-        _repository.fetchApprovalForOrder(_orderId!),
-        _repository.fetchPaymentForOrder(_orderId!),
+        repository.fetchOrder(_orderId!),
+        repository.fetchApprovalForOrder(_orderId!),
+        repository.fetchPaymentForOrder(_orderId!),
       ]);
 
       _order = results[0] as Order?;
@@ -97,7 +96,7 @@ class ApprovalsRealtimeController extends ChangeNotifier {
     }
 
     final payAmount = amount ?? _order!.total;
-    final created = await _repository.generatePayment(
+    final created = await repository.generatePayment(
       orderId: _order!.id,
       amount: payAmount,
       paymentType: paymentType,
@@ -109,22 +108,22 @@ class ApprovalsRealtimeController extends ChangeNotifier {
   }
 
   Future<Payment> confirmPayment(String paymentId, {String? paymentMethod}) async {
-    final confirmed = await _repository.confirmPayment(paymentId, paymentMethod: paymentMethod);
+    final confirmed = await repository.confirmPayment(paymentId, paymentMethod: paymentMethod);
     _payment = confirmed;
     if (_order != null) {
-      _order = await _repository.fetchOrder(_order!.id);
+      _order = await repository.fetchOrder(_order!.id);
     }
     notifyListeners();
     return confirmed;
   }
 
   Future<List<int>> getPaymentQrBytes(String paymentLink, {int size = 300}) {
-    return _repository.fetchPaymentQrBytes(paymentLink, size: size);
+    return repository.fetchPaymentQrBytes(paymentLink, size: size);
   }
 
   @override
   void dispose() {
-    _notificationProvider?.removeListener(_onNotificationReceived);
+    notificationProvider?.removeListener(_onNotificationReceived);
     super.dispose();
   }
 }

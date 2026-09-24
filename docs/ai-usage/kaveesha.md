@@ -1175,3 +1175,148 @@ The AI proposed a solid Clean Architecture structure conforming to ADR-005. I ma
 ### Remaining Work
 - Ready for staging and commit to PR branch.
 
+---
+
+## Session 2026-09-24 (Commerce Agent Persona & Role Prompt Definition)
+
+**Tool used:** Antigravity AI Assistant  
+**Task:** Replace the placeholder prompt for the Commerce Agent (`Lina` - Slice 3) in `agnet-service/app/prompts/agent_prompts.py` with a complete, production-grade persona prompt matching the depth and conventions established by peer agents (`Ava` - Customer Memory, `Elle` - Visual Insight), and update prompt test coverage.
+
+**Prompt(s) used:**  
+- "In my commerce agent the prompt is still a place holder. You can take reference from other prompts by my group mates. Clearly define the responsibilities here."
+
+**Output:**  
+- Updated `agnet-service/app/prompts/agent_prompts.py`:
+  - Defined Lina's identity as the boutique's commerce, deal structuring, and order fulfillment specialist.
+  - Specified 7 core responsibilities: deal economics evaluation, loyalty tier discount validation, business rule enforcement (high-value order threshold LKR 40,000, 25% minimum margin, tier discount caps), Human-in-the-Loop (HITL) approval pause, payment request generation (links/QRs), delivery routing and courier dispatch booking, and Salon transaction summary cards.
+  - Defined quiet luxury tone: precise, commercially astute, trustworthy, discreet, transparent with boutique staff on margins, and polite/reassuring with customers.
+  - Established 5 critical guardrail instructions: cost protection (never expose wholesale costs or margins to customers), mandatory HITL interrupt (never auto-approve deals breaching thresholds), truth in numbers (no guessed or negotiated prices), address prerequisite for courier booking, and manager decision respect.
+- Updated `agnet-service/tests/test_prompt_system.py`:
+  - Replaced `test_agent_prompts_are_placeholders()` with `test_commerce_prompt_is_implemented()` asserting `"PLACEHOLDER" not in prompt`, `"Commerce Agent" in prompt`, and `"Lina" in prompt`.
+
+**What I changed:**  
+- Aligned the responsibilities strictly with Slice 3 backend endpoints (`/orders`, `/approvals`, `/payments`, `/deliveries`, `/business-rules`) and LangGraph nodes (`evaluate_deal`, `pause_for_approval`, `handle_rejection`, `prepare_settlement`).
+- Added explicit guard rails against hallucinating prices or discounts, strictly requiring data derivation from tools.
+
+**Reflection:**  
+Peer agents Ava and Elle had well-structured prompts outlining responsibilities, tone, and special instructions. Defining Lina's prompt in the exact same format maintains system harmony and clear separation of concerns across the multi-agent concierge architecture.
+
+### Files Created or Modified
+- **Modified**:
+  - `agnet-service/app/prompts/agent_prompts.py`
+  - `agnet-service/tests/test_prompt_system.py`
+  - `docs/ai-usage/kaveesha.md`
+
+### Verification Performed
+- Ran `pytest tests/test_commerce_agent.py tests/test_commerce_graph.py tests/test_commerce_tools.py tests/test_prompt_system.py`: **37/37 tests passed**.
+- Ran `ruff check app/prompts/ tests/test_prompt_system.py`: **All checks passed (0 errors)**.
+
+### Remaining Work
+- None. Prompt definition and test assertions are complete.
+
+---
+
+## Session 2026-09-24 (Commerce Agent LLM Runtime Integration & Token Telemetry Wiring)
+
+**Tool used:** Antigravity AI Assistant  
+**Task:** Wire the runtime LLM factory into the Commerce Agent (`Lina` — Slice 3) so that deal narratives, approval pause explanations, and rejection notices are synthesized using the configured chat model (OpenAI / DeepSeek) instead of staying locked in the fallback deterministic mode, and emit token usage for Blossom billing.
+
+**Prompt(s) used:**  
+- "My group leader informed me that my agent Lina is not calling/invoking the LLM and the baseline deterministic is running. Explain what this is and how to fix this?"
+- "Yes fix it"
+
+**Work Performed:**
+- **Runtime LLM Gate (`app/llm/runtime.py` & `app/llm/__init__.py`)**:
+  - Implemented `commerce_llm_or_none(settings: Settings) -> BaseChatModel | None` matching peer gates `memory_llm_or_none` and `visual_llm_or_none`.
+  - Enforced graceful fallback: returns `None` (deterministic mode) when `agent_llm_enabled=False` or when `llm_api_key` / `llm_model` are unconfigured, ensuring offline CI/testing stays deterministic without keys.
+- **Concierge Workflow Wiring (`app/workflows/concierge_workflow.py`)**:
+  - Updated `run_commerce_agent()` and `run_commerce_approval()` to resolve the model via `commerce_llm_or_none(get_settings())` and inject `llm=llm` when instantiating the compiled commerce graph via `build_commerce_graph()`.
+  - Propagated token usage: merged `commerce_usage` from `res.get("usage")` into `state["usage"]` so `_build_usage_metadata()` populates `AgentMetadata` (`tokens_used`, `blossoms_consumed`) for Blossom ledger billing and observability.
+- **Commerce Agent Graph Nodes (`app/agents/commerce/nodes.py`)**:
+  - Implemented `_compose_narrative(state, scenario, fallback)` in `CommerceAgent`.
+  - Assembles system prompt with `assemble_system_prompt("commerce", org_context)`.
+  - Crafts scenario-specific prompts for approval required, rejection guidance, and order settlement.
+  - Calls `await self.llm.ainvoke([SystemMessage(...), HumanMessage(...)])`, extracts response text, unwraps JSON envelopes safely via `unwrap_reply()`, and extracts `usage_metadata` (`input_tokens`, `output_tokens`).
+  - Added robust exception handling to fallback cleanly to deterministic string formatting if the LLM invocation fails or timeouts.
+  - Updated `pause_for_approval()`, `handle_rejection()`, and `prepare_settlement()` to call `_compose_narrative()` and return `"usage"`.
+- **Test Coverage**:
+  - Updated `agnet-service/tests/test_llm_runtime.py`: Added assertions verifying `commerce_llm_or_none` behavior across disabled flag, missing key/model, and active providers.
+  - Updated `agnet-service/tests/test_commerce_agent.py`: Added `FakeCommerceChatModel` and unit tests:
+    - `test_llm_produces_deal_narrative_and_usage_when_injected`
+    - `test_llm_failure_falls_back_to_template_without_crashing`
+    - `test_llm_json_envelope_is_unwrapped_to_plain_text`
+
+**Important Architectural Decisions:**
+- **Zero-Crash Graceful Degradation (Rule 9 & 12)**: If LLM is disabled, missing credentials, or throws runtime network errors, `CommerceAgent` seamlessly falls back to deterministic rule-based strings without interrupting order workflows or payment generation.
+- **Blossom Ledger Alignment (ADR-003)**: Token usage (`input_tokens`, `output_tokens`) is bubbled up into `state["usage"]` matching Customer Memory and Visual Insight agents so organization token budgets and blossom credits are accurately billed.
+- **Layered Prompt Composition**: Adheres to the 3-layer system prompt pattern (Universal Concierge -> Lina Persona -> Boutique Dynamic Context) before sending requests to the chat model.
+
+**Files Created or Modified:**
+- **Modified**:
+  - `agnet-service/app/llm/runtime.py`
+  - `agnet-service/app/llm/__init__.py`
+  - `agnet-service/app/workflows/concierge_workflow.py`
+  - `agnet-service/app/agents/commerce/nodes.py`
+  - `agnet-service/tests/test_llm_runtime.py`
+  - `agnet-service/tests/test_commerce_agent.py`
+  - `docs/ai-usage/kaveesha.md`
+
+**Verification Performed:**
+- Ran `pytest tests/test_llm_runtime.py tests/test_commerce_agent.py tests/test_commerce_graph.py tests/test_commerce_tools.py tests/test_prompt_system.py`: **46/46 tests passed (100%)**.
+- Ran `pytest tests/test_tracing.py`: **5/5 tests passed**.
+- Ran `ruff check app/ tests/`: **All checks passed (0 errors, 0 warnings)**.
+
+**Remaining Work:**
+- None.
+
+---
+
+## Session 2026-09-24 (Flutter Static Analysis & CI Merge Fixes)
+
+**Tool used:** Antigravity AI Assistant  
+**Task:** Resolve all 21 static analysis errors, warnings, and infos reported by `flutter analyze --no-fatal-infos` on the mobile floor associate commerce screens to unblock GitHub Actions CI and PR auto-merging.
+
+**Prompt(s) used:**  
+- "Run flutter analyze --no-fatal-infos ... There are some errors in Automatic merging thing in git hub. Fix them"
+
+**Work Performed:**
+- **Fixed Compilation Errors (`MainAxisAlignment.between`)**:
+  - In `lib/features/commerce/presentation/screens/orders_list_screen.dart`: Corrected `MainAxisAlignment.between` to `MainAxisAlignment.spaceBetween` across order header and subtitle rows (lines 186, 213).
+- **Cleaned Unused & Redundant Imports**:
+  - Removed unused `order.dart` import from `orders_list_screen.dart`.
+  - Removed unused `catalog_filters.dart` import from `catalog_item_picker_sheet.dart` and `test/features/commerce/create_order_screen_test.dart`.
+  - Removed redundant `dart:typed_data` import from `payment_qr_modal.dart` (re-exported by `flutter/services.dart`).
+- **Standardized Initializing Formals (`prefer_initializing_formals`)**:
+  - Converted private-assigned constructor parameters to public initializing formals (`this.repository`, `this.notificationProvider`) in:
+    - `ApprovalsRealtimeController` (`approvals_realtime_controller.dart`)
+    - `OrderCreationController` (`order_creation_controller.dart`)
+    - `OrdersController` (`orders_controller.dart`)
+- **Updated Wildcard Underscores (`unnecessary_underscores`)**:
+  - Modernized `(_, __)` unused callback parameters to `(_, _)` in `create_order_screen.dart`, `order_detail_screen.dart`, `orders_list_screen.dart`, and `catalog_item_picker_sheet.dart`.
+- **Fixed Null Safety & Dead Code on CatalogProduct.cost**:
+  - In `catalog_item_picker_sheet.dart`: Replaced redundant null check and `!` operators on non-nullable `CatalogProduct.cost` with `if (p.cost > 0)` and `wholesaleCost: p.cost > 0 ? p.cost : (p.price * 0.6)`.
+- **Removed Unused Parameter (`unused_element_parameter`)**:
+  - Removed `unavailableMessage` parameter and field from private class `_MoreAction` in `more_actions_sheet.dart`.
+
+**Files Modified:**
+- `frontend/aveline_mobile/lib/features/commerce/presentation/controllers/approvals_realtime_controller.dart`
+- `frontend/aveline_mobile/lib/features/commerce/presentation/controllers/order_creation_controller.dart`
+- `frontend/aveline_mobile/lib/features/commerce/presentation/controllers/orders_controller.dart`
+- `frontend/aveline_mobile/lib/features/commerce/presentation/screens/create_order_screen.dart`
+- `frontend/aveline_mobile/lib/features/commerce/presentation/screens/order_detail_screen.dart`
+- `frontend/aveline_mobile/lib/features/commerce/presentation/screens/orders_list_screen.dart`
+- `frontend/aveline_mobile/lib/features/commerce/presentation/widgets/catalog_item_picker_sheet.dart`
+- `frontend/aveline_mobile/lib/features/commerce/presentation/widgets/payment_qr_modal.dart`
+- `frontend/aveline_mobile/lib/features/home/presentation/widgets/more_actions_sheet.dart`
+- `frontend/aveline_mobile/test/features/commerce/create_order_screen_test.dart`
+- `docs/ai-usage/kaveesha.md`
+
+**Verification Performed:**
+- Ran `flutter analyze --no-fatal-infos`: **No issues found! (0 errors, 0 warnings, 0 infos, exit code 0)**.
+- Ran `flutter test test/features/commerce/`: **All 22 tests passed! (100% pass rate, exit code 0)**.
+
+**Remaining Work:**
+- Stage, commit, and push to branch for CI green build.
+
+
+

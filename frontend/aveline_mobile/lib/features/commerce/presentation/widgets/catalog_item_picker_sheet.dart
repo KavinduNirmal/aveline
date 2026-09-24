@@ -156,7 +156,7 @@ class _CatalogItemPickerSheetState extends State<CatalogItemPickerSheet> {
                           )
                         : ListView.separated(
                             itemCount: _products.length,
-                            separatorBuilder: (_, __) => const Divider(height: 1),
+                            separatorBuilder: (_, _) => const Divider(height: 1),
                             itemBuilder: (context, index) {
                               final p = _products[index];
                               return ListTile(
@@ -201,7 +201,7 @@ class _CatalogItemPickerSheetState extends State<CatalogItemPickerSheet> {
                                       itemName: p.name,
                                       quantity: 1,
                                       unitPrice: p.price,
-                                      wholesaleCost: p.cost > 0 ? p.cost : p.price * 0.6,
+                                      wholesaleCost: p.cost > 0 ? p.cost : (p.price * 0.6),
                                     ),
                                   );
                                   Navigator.of(context).pop();

@@ -78,9 +78,11 @@ def test_agent_prompts_has_all_three_agents():
     }
 
 
-def test_agent_prompts_are_placeholders():
-    # Memory (Slice 1) & Visual (Slice 2) are implemented; commerce remains a placeholder for Slice 3.
-    assert "PLACEHOLDER" in agent_prompts.AGENT_PROMPTS["commerce"], "commerce prompt must be a placeholder"
+def test_commerce_prompt_is_implemented():
+    prompt = agent_prompts.AGENT_PROMPTS["commerce"]
+    assert "PLACEHOLDER" not in prompt
+    assert "Commerce Agent" in prompt
+    assert "Lina" in prompt
 
 
 def test_visual_prompt_is_implemented():

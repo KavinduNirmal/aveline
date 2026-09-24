@@ -85,21 +85,38 @@ def _configure_settings(monkeypatch):
     get_settings.cache_clear()
 
 
-@pytest.fixture
-def captured(monkeypatch):
-    """Capture the ``report_agent_run`` payload without touching the network."""
+def _capture(monkeypatch, *, terminal_only: bool) -> list[dict]:
+    """Stub the run reporter and collect the payloads a query reports.
+
+    A query now reports twice: a ``Running`` row when the run opens (ADR-027) and the terminal row
+    with the steps when it closes. Everything here is about *the run report* - the one carrying the
+    steps - so `captured` filters the start report out and `every_report` keeps both, in order.
+    """
     payloads: list[dict] = []
 
     async def noop_usage(**kwargs):
         return None
 
     async def capture_run(payload, **kwargs):
-        payloads.append(payload)
+        if not terminal_only or payload.get("status") != "Running":
+            payloads.append(payload)
         return None
 
     monkeypatch.setattr(agents, "report_usage", noop_usage)
     monkeypatch.setattr(agents, "report_agent_run", capture_run)
     return payloads
+
+
+@pytest.fixture
+def captured(monkeypatch):
+    """The completion report for each run, without touching the network."""
+    return _capture(monkeypatch, terminal_only=True)
+
+
+@pytest.fixture
+def every_report(monkeypatch):
+    """Both reports a run makes - the start and the completion - in the order they were sent."""
+    return _capture(monkeypatch, terminal_only=False)
 
 
 @pytest.fixture
@@ -304,3 +321,72 @@ def test_collector_carries_both_ids_onto_the_run_report():
 
     assert report.conversation_id == "conv-9"
     assert report.customer_id == "cust-9"
+
+
+# ---------------------------------------------------------------------------
+# The start report: the `Running` row that makes `agent.runs_running` real
+# ---------------------------------------------------------------------------
+
+
+def test_a_run_opens_a_running_row_before_it_works(every_report):
+    """The gauge counts `Running` rows, and nothing used to write one.
+
+    The agent reported a run exactly once, at completion, so `AgentWorkflowRuns` never held a
+    `Running` row and `aveline_agent_runs_running_count` was structurally 0 - a dashboard that looks
+    dead while the agent answers every message.
+    """
+    _query()
+
+    start = every_report[0]
+    assert start["status"] == "Running"
+    assert start["startedAt"]
+    # Non-terminal: the API rejects a non-terminal report that carries a completion.
+    assert start["completedAt"] is None
+    assert start["durationMs"] is None
+    assert start["steps"] == []
+
+
+def test_the_start_and_completion_reports_share_one_workflow_id(every_report):
+    """They must upsert the same row, or the start would orphan a `Running` row per query."""
+    _query()
+
+    statuses = [payload["status"] for payload in every_report]
+    assert statuses == ["Running", "Succeeded"], "start first, then the completion"
+    assert every_report[0]["workflowId"] == every_report[1]["workflowId"]
+
+
+def test_the_start_report_carries_the_linkage_the_row_needs(every_report, _noop_checkpointer):
+    _query_on_thread("thread-start-report", "conv-start")
+
+    start = every_report[0]
+    assert start["organizationId"] == ORG_ID
+    assert start["conversationId"] == "conv-start"
+
+
+def test_the_start_report_uses_a_short_timeout(every_report, monkeypatch):
+    """It is awaited before the workflow runs, so a slow API must not hold up an answer."""
+    timeouts: list[float] = []
+
+    async def capture_with_timeout(payload, **kwargs):
+        timeouts.append(kwargs.get("timeout"))
+        every_report.append(payload)
+        return None
+
+    monkeypatch.setattr(agents, "report_agent_run", capture_with_timeout)
+    _query()
+
+    assert timeouts[0] == agents._RUN_START_REPORT_TIMEOUT_SECONDS
+    assert timeouts[0] < 10.0, "the completion report keeps the long timeout; the start must not"
+
+
+def test_a_failed_start_report_does_not_fail_the_query(monkeypatch, captured):
+    """Telemetry never fails a query - and the completion report still opens the row."""
+
+    async def exploding(payload, **kwargs):
+        raise RuntimeError("api unavailable")
+
+    monkeypatch.setattr(agents, "report_agent_run", exploding)
+    _query()  # asserts 200 internally
+
+    # `captured` saw nothing because the stub raised, but the query answered regardless.
+    assert captured == []

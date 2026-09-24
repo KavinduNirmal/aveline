@@ -69,6 +69,22 @@ public sealed record MetricSnapshot
     /// <summary>Agent runs currently paused for approval.</summary>
     public long? AgentPausedCount { get; init; }
 
+    /// <summary>
+    /// Terminal agent runs, cumulative over the retained window. A counter, not a window: it is
+    /// what a rate or an increase is computed over, and the only agent metric that answers "is the
+    /// agent being used at all?" - the running and paused counts are instantaneous and read zero
+    /// between runs, however much work the agent is doing.
+    /// </summary>
+    /// <remarks>
+    /// Runs are pruned after <c>AgentStats:RunRetentionDays</c> (default 400), so this is monotonic
+    /// only within that window: it steps <em>down</em> when a day of runs ages out. That is a
+    /// counter reset as far as Prometheus is concerned, and <c>increase()</c> handles one by
+    /// restarting its accumulation - the interval spanning the prune under-reports, and no interval
+    /// reports a spike that did not happen. Preferred over an in-process counter because the value
+    /// then survives an API restart.
+    /// </remarks>
+    public long? AgentRunsTotal { get; init; }
+
     /// <summary>Mean step count of agent runs started in the last hour.</summary>
     public double? AgentStepsPerRun { get; init; }
 
@@ -125,6 +141,7 @@ public class SystemMetricCollector(
         "aveline.agent.success_rate",
         "aveline.agent.paused_count",
         "aveline.agent.steps_per_run",
+        "aveline.agent.runs_total",
         "aveline.blossom.balance",
         "aveline.blossom.reconciliation.drift",
         "aveline.blossom.consumed_rate",
@@ -297,6 +314,7 @@ public class SystemMetricCollector(
         AddDecimal("aveline.agent.success_rate", snapshot.AgentSuccessRate, "ratio");
         AddBigint("aveline.agent.paused_count", snapshot.AgentPausedCount, "count");
         AddDecimal("aveline.agent.steps_per_run", snapshot.AgentStepsPerRun, "count");
+        AddBigint("aveline.agent.runs_total", snapshot.AgentRunsTotal, "count");
         AddDecimalExact("aveline.blossom.balance", snapshot.BlossomBalance, "count");
         AddDecimalExact("aveline.blossom.reconciliation.drift", snapshot.BlossomReconciliationDrift, "count");
         AddDecimal("aveline.blossom.consumed_rate", snapshot.BlossomConsumedRate, "count");
@@ -413,6 +431,17 @@ public class SystemMetricCollector(
 
             snapshot = snapshot with
             {
+                // Cumulative, and deliberately a full count: the running and paused counts beside
+                // it already scan this table each pass, so this adds no new kind of cost. If the
+                // table ever grows enough to matter, the daily rollup is the bounded source.
+                AgentRunsTotal = await db.AgentWorkflowRuns
+                    .AsNoTracking()
+                    .LongCountAsync(
+                        run => run.Status == AgentRunStatus.Succeeded
+                               || run.Status == AgentRunStatus.Failed
+                               || run.Status == AgentRunStatus.Cancelled
+                               || run.Status == AgentRunStatus.TimedOut,
+                        cancellationToken),
                 AgentRunsRunning = await db.AgentWorkflowRuns
                     .AsNoTracking()
                     .LongCountAsync(run => run.Status == AgentRunStatus.Running, cancellationToken),

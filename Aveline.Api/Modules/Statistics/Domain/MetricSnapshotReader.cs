@@ -50,6 +50,7 @@ public static class MetricSnapshotReader
             ["aveline.agent.success_rate"] = snapshot.AgentSuccessRate,
             ["aveline.agent.paused_count"] = snapshot.AgentPausedCount,
             ["aveline.agent.steps_per_run"] = snapshot.AgentStepsPerRun,
+            ["aveline.agent.runs_total"] = snapshot.AgentRunsTotal,
 
             // The two currency metrics are `decimal?` so Postgres keeps them exact. The gauge is a
             // float64 approximation by design (N-10b); Postgres remains the record of truth.

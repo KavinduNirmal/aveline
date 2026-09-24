@@ -763,9 +763,17 @@ unless it appears in this catalog **and** in
 >   formula as `BlossomService.GetStatementAsync`), `aveline.blossom.consumed_rate` (blossoms
 >   per minute over the last hour), `aveline.agent.success_rate` (succeeded / terminal runs
 >   over the last hour), `aveline.agent.paused_count` (runs paused for approval),
+>   `aveline.agent.runs_total` (terminal runs, cumulative over the retention window — a counter, so
+>   an `increase()` over it is runs completed per interval; ADR-027),
 >   `aveline.agent.steps_per_run` (mean `StepCount` of runs started in the last hour) and
 >   `aveline.api.latency_p95` (bucket-interpolated p95 from `ApiRequestMetrics`). CPU seconds
 >   use the `count` unit because the documented unit set has no `seconds` member.
+> - **`aveline.agent.runs_running` counts a state the agent only began writing in ADR-027.** Before
+>   that the agent reported a run once, at completion, so every row was born terminal and this gauge
+>   was structurally 0. It is an instantaneous count and reads zero between runs by design; use
+>   `aveline.agent.runs_total` to answer whether the agent is being used. A `Running` row whose
+>   process died is swept to `TimedOut`/`run_abandoned` by `StaleAgentRunJob` within the hour
+>   (`AgentStats:RunningRunTimeoutHours`, default 1), so the gauge cannot stick above zero.
 > - **S-36** omits `inbound_message_backlog`: `InboundMessageLog` has no processed marker.
 >   The response lists it in `omitted` (BR-7.10).
 > - **S-37/S-38** database pool and cache metrics are not collected yet; the endpoints do

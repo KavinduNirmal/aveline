@@ -6647,3 +6647,101 @@ bounds the named clients, not the book.
 - **Client names are instructed, not guarded.** The guard is numeral-shaped: it proves a number came
   from the data, not that a name did.
 - The four duplicate rows already in the local store are still there.
+## Session 2026-09-24 (d) — The Agents dashboard was telling the truth
+
+**Task:** "please fix these, and make sure the agent runs data saves to database as expected as well",
+after a screenshot of four flat Agents panels and the question "why are we missing workflow metrics?
+when you inspected the database, the table was empty too right?"
+
+### First, a correction
+
+The table was **not** empty, and the 0-row result I showed earlier was my own error:
+`AgentStepRuns.WorkflowRunId` references `AgentWorkflowRuns.Id` (the row's PK), not `WorkflowId` (the
+run id the agent sends). I compared the wrong column and moved on instead of chasing it. The join I
+ran next returned all 9 step rows for that run.
+
+With Postgres back up, the baseline took one query:
+
+```
+Status    | runs        step_rows
+Succeeded |   42            379
+```
+
+**42 runs, every one `Succeeded`.** No row had ever been in any other state. That is the whole bug.
+
+### `agent.runs_running` counted a state nothing could write
+
+The gauge is `COUNT(*) FROM AgentWorkflowRuns WHERE Status='Running'`. The agent reported a run
+exactly once, *after* it finished — `usage_reporter` literally describes its payload as "a **complete**
+agent workflow run and steps" — so every row was created already terminal.
+
+Everything downstream had been built for the missing half: `AgentWorkflowRun.Status` *defaults* to
+`Running`, `IsTerminal` treats it as non-terminal, `ValidateRun` permits it, and `PublishAsync` maps
+it to `agent.run.started` / `agent.run.resumed` — two event types nothing could ever emit. The design
+was always "open a row at the start, close it at the end"; only the first half was never wired.
+
+So the fix is the missing half: the agent posts a `Running` report before it works
+(`_report_run_started_best_effort`). It is **awaited with a 2 s timeout**, not fired and forgotten,
+because a start report that lost the race to the completion report would arrive at a terminal row and
+be refused as a conflict — which is the correct API behaviour, and exactly why the ordering must be
+deterministic rather than lucky. A new ingest test pins that refusal.
+
+### The sweep had to grow an arm, or the gauge would stick
+
+`StaleAgentRunJob` only reaped `PausedForApproval` past 72 hours. That was complete while every row
+was born terminal, and incomplete the moment a `Running` row could outlive its process. It now reaps
+both, with different error codes so an operator can tell them apart:
+
+| Abandonment | Cutoff | `ErrorCode` |
+| --- | --- | --- |
+| An approval nobody answered | `PausedAt`, 72 h | `approval_timeout` |
+| A process that died before reporting | `StartedAt`, 1 h | `run_abandoned` |
+
+Without it, one crash would hold `runs_running` above zero forever — a permanent false alarm on the
+only panel that is supposed to mean something.
+
+### The activity view had no metric at all
+
+Two instantaneous gauges and two ratios: nothing counted runs *over time*, so a healthy system and a
+dead one looked equally flat. `aveline.agent.runs_total` is the cumulative count of terminal runs,
+bridged as a Prometheus counter, with a **Runs completed** panel plotting `increase()`.
+
+It is cumulative over the **retention window**, not forever — runs are pruned after
+`RunRetentionDays` (400), so the value steps down when a day ages out. Prometheus reads that as a
+counter reset: the one interval spanning a prune under-reports, and no interval invents a spike.
+Recorded rather than glossed, and a DB-derived counter was preferred to an in-process one so the
+value survives an API restart.
+
+### Verified end to end, against the running stack
+
+Not "the tests pass" — the actual pipeline, with the images rebuilt:
+
+- A real `/agents/query` (`"How many customers do we have?"`) was fired while polling the database,
+  and a **`Running` row was observed mid-flight** (`Running=1`, ~1 s in). It then closed as
+  `Succeeded` with **7 step rows**, leaving no orphan. Run count 42 → 43.
+- Prometheus now reports all four: `aveline_agent_runs_total = 43` (matching the database exactly,
+  which proves DB → snapshot → bridge → Prometheus end to end), `runs_running_count = 0`,
+  `paused_count = 0`, `success_rate_ratio = 1`.
+- Grafana loaded the new panel (`sum(increase(aveline_agent_runs_total[$__rate_interval]))`).
+- The response also showed the ADR-026 book lane working live — and surfaced a wart worth recording:
+  the "most recently active" clients came back as **phone numbers**, because the highlights read falls
+  back to the number when a client has no name. Naming clients by phone number in a chat answer is
+  poor; the read's `DisplayName` is the place to decide it.
+
+### Also fixed while in there
+
+The Docker containers failed 12 hours earlier with exit 127 on a bind-mount error, which is why the
+observability stack was down when I looked. I tested a file bind-mount from this FUSE volume
+(`fuseblk` on `/run/media/...`) and it worked, so the failure was transient — consistent with the
+machine's restart behaviour the owner described — and `docker compose up -d` recovered everything.
+
+### Verification
+
+- Python: **861 passed**, 2 skipped, 2 xfailed; `ruff check` clean. 16 tests in the run-telemetry
+  suite, including the start report's shape, ordering, short timeout, and its failure never failing a
+  query.
+- `.NET`: 13 ingest tests, including the started-then-completed upsert (one row, not two) and the
+  late-start refusal; the stale sweep, rewritten to assert both arms and that a *recent* `Running`
+  run is left alone.
+- The bridge fixture and `MetricsNamingTests` were updated for the new series — both correctly failed
+  first, which is how the two sinks stay in step.

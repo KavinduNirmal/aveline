@@ -218,7 +218,7 @@ rotation error degrades visibility without breaking anything else.
 
 ### 6.4 Why a panel is empty (read this before filing a bug)
 
-Four causes, only one of which is a defect:
+Five causes, and only some of which are defects:
 
 | What you see | Cause | Correct? |
 | --- | --- | --- |
@@ -226,11 +226,18 @@ Four causes, only one of which is a defect:
 | Every `aveline_*` panel empty, but `up{job="aveline-api"}` is 1 | The API image predates the bridge, or the collector has not completed a pass | Check **Bridge freshness** on the System overview; rebuild the image if it is old |
 | The error-ratio panel empty while the service is healthy | Was a real defect until it was fixed: a PromQL division whose numerator is an empty vector returns *no series*, not `0`. The recording rule now uses `… or vector(0)` on the numerator only, so it reads `0%` with traffic and no 5xx, and still has no data when there is no traffic at all | Fixed (Slice 8 follow-up) |
 | A counter panel empty (`events published`, `delivery attempts`) | The counter has no samples yet — nothing has been published this window | **Yes**; it populates with traffic |
+| **Runs running** and **Runs paused** both flat at zero while the agent is clearly answering | Was a real defect. `agent.runs_running` counted `AgentWorkflowRuns.Status='Running'`, but the agent reported a run only *after* it finished, so every row was born terminal — 42 runs, all `Succeeded`, and no other state had ever existed. The agent now opens a `Running` row when a run starts (ADR-027) | Fixed. These are still **instantaneous** counts and read zero between runs; **Runs completed** is the panel that answers "is the agent being used?" |
 
 **Bridge freshness** (`time() - max(timestamp(aveline_process_cpu_seconds_total))`) is the one panel
 that separates "the value is 0" from "the bridge stopped". Since the gauges are only written when a
 value exists, a stalled collector looks exactly like a gap, and a gap is what a stopped series should
 look like.
+
+**A gauge of a state is not a measure of activity.** Three of the four agent panels show a condition
+that is usually false — nothing running, nothing paused — so a healthy idle system and a broken one
+look identical on them. Before concluding a panel is broken, check whether its metric can be non-zero
+at all: `agent.runs_running` needed a writer, and for a long time it had none. `agent.runs_total` is
+the counter to reach for when the question is really "did anything happen?".
 
 ### 6.5 Adding a new metric
 

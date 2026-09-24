@@ -119,6 +119,65 @@ public class AgentRunIngestTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Report_StartedThenCompleted_CompletesOneRowWithItsSteps()
+    {
+        // The production shape since ADR-027: the agent opens the row when a run starts and closes
+        // the same row when it finishes. Two reports, one run - if they did not upsert on
+        // WorkflowId, every query would leave an orphan `Running` row behind and
+        // `agent.runs_running` would climb forever.
+        var workflowId = $"wf-lifecycle-{Guid.NewGuid():N}";
+        var organizationId = Guid.CreateVersion7();
+        var startedAt = DateTime.UtcNow.AddMinutes(-5);
+
+        var opened = await _client.SendAsync(Request(HttpMethod.Post, "/internal/agent-runs",
+            RunBody(organizationId, workflowId, "Running", startedAt)));
+        Assert.Equal(HttpStatusCode.Created, opened.StatusCode);
+
+        await using (var between = Context())
+        {
+            var running = await between.AgentWorkflowRuns.SingleAsync(r => r.WorkflowId == workflowId);
+            Assert.Equal(AgentRunStatus.Running, running.Status);
+            Assert.Null(running.CompletedAt);
+        }
+
+        var closed = await _client.SendAsync(Request(HttpMethod.Post, "/internal/agent-runs",
+            RunBody(organizationId, workflowId, "Succeeded", startedAt, startedAt.AddSeconds(3),
+                steps: new[] { Step(0), Step(1) })));
+        Assert.Equal(HttpStatusCode.OK, closed.StatusCode);
+
+        await using var context = Context();
+        Assert.Equal(1, await context.AgentWorkflowRuns.CountAsync(r => r.WorkflowId == workflowId));
+
+        var run = await context.AgentWorkflowRuns.SingleAsync(r => r.WorkflowId == workflowId);
+        Assert.Equal(AgentRunStatus.Succeeded, run.Status);
+        Assert.NotNull(run.CompletedAt);
+        Assert.Equal(2, await context.AgentStepRuns.CountAsync(step => step.WorkflowRunId == run.Id));
+    }
+
+    [Fact]
+    public async Task Report_StartedAfterTheRunHasFinished_IsRefusedRatherThanReopeningIt()
+    {
+        // Why the agent awaits its start report instead of firing and forgetting: a start that lost
+        // the race would arrive at a terminal row. Refusing it is what keeps the run's status
+        // history honest - a `Running` row must never exist for a run that has already finished.
+        var workflowId = $"wf-late-start-{Guid.NewGuid():N}";
+        var organizationId = Guid.CreateVersion7();
+        var startedAt = DateTime.UtcNow.AddMinutes(-5);
+
+        await _client.SendAsync(Request(HttpMethod.Post, "/internal/agent-runs",
+            RunBody(organizationId, workflowId, "Succeeded", startedAt, startedAt.AddSeconds(2))));
+
+        var late = await _client.SendAsync(Request(HttpMethod.Post, "/internal/agent-runs",
+            RunBody(organizationId, workflowId, "Running", startedAt)));
+
+        Assert.Equal(HttpStatusCode.Conflict, late.StatusCode);
+
+        await using var context = Context();
+        var run = await context.AgentWorkflowRuns.SingleAsync(r => r.WorkflowId == workflowId);
+        Assert.Equal(AgentRunStatus.Succeeded, run.Status);
+    }
+
+    [Fact]
     public async Task Report_WhenTerminalRunConflicts_Returns409()
     {
         var workflowId = $"wf-conflict-{Guid.NewGuid():N}";

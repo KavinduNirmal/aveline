@@ -40,6 +40,7 @@ public class MetricsBridgeExpositionTests
         ApiRequestsPerSecond = 2.5,
         ApiErrorRate = 0.02,
         AgentRunsRunning = 3,
+        AgentRunsTotal = 42,
         BlossomBalance = 120.5m,
         BlossomReconciliationDrift = 0.25m,
         BlossomConsumedRate = 3.5,

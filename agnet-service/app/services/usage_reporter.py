@@ -110,12 +110,19 @@ async def report_agent_run(
     payload: dict[str, Any],
     *,
     client: httpx.AsyncClient | None = None,
+    timeout: float = 10.0,
 ) -> dict[str, Any] | None:
-    """Submit a complete agent workflow run and steps to the .NET API (/internal/agent-runs).
+    """Submit an agent workflow run and its steps to the .NET API (/internal/agent-runs).
+
+    Called twice per run: once with ``status="Running"`` and no steps as the run starts, and once
+    with the terminal status and the collected steps when it finishes. The API upserts on
+    ``WorkflowId``, so the second report completes the row the first one opened.
 
     Args:
         payload: camelCase dictionary matching AgentRunReportRequest DTO.
         client: Optional httpx.AsyncClient for testing or reuse.
+        timeout: Per-request timeout in seconds. The start report passes a short one: it is awaited
+            before the workflow runs, so a slow API must not hold up an answer.
 
     Returns:
         JSON response dict from the API if successful, or None.
@@ -130,7 +137,7 @@ async def report_agent_run(
 
     should_close_client = False
     if client is None:
-        client = httpx.AsyncClient(timeout=10.0)
+        client = httpx.AsyncClient(timeout=timeout)
         should_close_client = True
 
     try:

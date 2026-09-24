@@ -40,6 +40,15 @@ List<ScreenConfig> staffScreens() => [
     builder: (_) => const CatalogScreen(),
   ),
   ScreenConfig(
+    id: 'orders',
+    label: 'Orders',
+    icon: Icons.receipt_long_outlined,
+    activeIcon: Icons.receipt_long_rounded,
+    route: AppRoutes.orders,
+    permission: null,
+    builder: (_) => const SizedBox.shrink(),
+  ),
+  ScreenConfig(
     id: 'conversations',
     // The screen titles itself `Messages`, and the two used to disagree: the
     // panel pointed at a word the page it opened never said. Only the label was

@@ -1072,3 +1072,106 @@ Fix exactly 5 test failures identified from the GitHub Actions CI run:
 
 ### Remaining Work
 - Create branch `feature/web-owner-commerce-dashboard` and commit these fixes to open a new PR.
+
+## Session 2026-09-23 (Feature 9: Flutter Mobile Floor Associate View)
+
+**Tool used:** Antigravity AI Assistant  
+**Task:** Implement Feature 9: Flutter Mobile Floor Associate View in `frontend/aveline_mobile` following ADR-005 Clean Architecture with Provider + ChangeNotifier. Build Floor Associate mobile screens for:
+1. Creating in-store / WhatsApp orders on the fly with live margin calculations and catalog item picker.
+2. Checking approval statuses in real-time backed by the SignalR notification stream.
+3. Generating customer payment QR codes and payment links with zero new external pub packages.
+
+**Prompt(s) used:**  
+- "⏳ Feature 9: Flutter Mobile Floor Associate View (frontend/aveline_mobile)
+Floor Associate mobile screens:
+Creating in-store/WhatsApp orders on the fly.
+Checking approval statuses in real-time.
+Generating customer payment QR codes/links.
+Ok let's move on to the official last feature. It is on the mobile app. Go through the whole project especially .md files and give me the implementation plan first."
+- "Yes continue"
+
+**Output:**  
+- **Domain Layer (`lib/features/commerce/domain/`)**:
+  - `entities/order.dart`: Domain `Order` model and `OrderStatus` enum transitions (`draft`, `pending_approval`, `confirmed`, `processing`, `fulfilled`, `cancelled`).
+  - `entities/order_item.dart`: Line item entity with automated gross profit and margin ratio (`(subtotal - wholesaleCost) / subtotal`).
+  - `entities/approval_entry.dart`: Approval queue tracking entity with status, threshold exceeded flag, reason, and manager decision comments.
+  - `entities/payment.dart`: Payment model tracking methods, payment links, and confirmation states.
+  - `repositories/commerce_repository.dart`: Abstract repository contract for orders, approvals, payments, and binary QR bytes.
+- **Data Layer (`lib/features/commerce/data/`)**:
+  - DTOs: `models/order_dto.dart`, `models/approval_dto.dart`, `models/payment_dto.dart` for serialization/deserialization against backend API endpoints.
+  - Repository: `repositories/api_commerce_repository.dart` implementing Dio HTTP client calls with tenant organization header injection and binary QR byte downloading.
+- **Presentation Layer (`lib/features/commerce/presentation/`)**:
+  - Controllers: `order_creation_controller.dart`, `approvals_realtime_controller.dart`, `orders_controller.dart`.
+  - Widgets: `catalog_item_picker_sheet.dart`, `approval_status_banner.dart`, `payment_qr_modal.dart`.
+  - Screens: `create_order_screen.dart`, `order_detail_screen.dart`, `orders_list_screen.dart`.
+- **Navigation & Routing**:
+  - Registered `/orders`, `/orders/create`, `/orders/:orderId` in `route_guards.dart` and `app.dart`.
+  - Added `Orders` navigation tile in staff drawer (`staff_screens.dart`).
+  - Linked `more_actions_sheet.dart` to `AppRoutes.createOrder` and `AppRoutes.orders`.
+- **Tests**:
+  - `test/features/commerce/commerce_dto_test.dart` (5 tests).
+  - `test/features/commerce/api_commerce_repository_test.dart` (8 tests).
+  - `test/features/commerce/order_creation_controller_test.dart` (4 tests).
+  - `test/features/commerce/approvals_realtime_controller_test.dart` (3 tests).
+  - `test/features/commerce/create_order_screen_test.dart` (1 test).
+  - `test/features/commerce/order_detail_screen_test.dart` (1 test).
+
+**What I changed:**  
+- Enforced zero new dependencies per Rules 3 & 19: rejected adding `qr_flutter` and instead leveraged the existing backend endpoint `POST /api/v1/orgs/{orgId}/catalog/qr/generate`, rendering the returned PNG bytes natively via `Image.memory` with an error fallback builder.
+- Wrapped `CatalogItemPickerSheet` in a `Material(color: scheme.surface, ...)` widget to provide the required Material ancestor for `ListTile` ink splashes.
+- Attached `ApprovalsRealtimeController` as a listener to `NotificationProvider` to react to incoming `ApprovalNeeded` and `OrderUpdated` SignalR events without polling.
+- Resolved trailing Git conflict markers in `frontend/aveline_mobile/lib/features/conversations/presentation/widgets/thread_composer.dart`.
+- Fixed `CatalogProduct` property mappings to align with existing domain entity fields (`name`, `organizationId`, `CatalogItemStatus` enum, and `DateTime createdAtUtc`).
+
+**Reflection:**  
+The AI proposed a solid Clean Architecture structure conforming to ADR-005. I made sure to strictly follow our team's zero-new-package rule by requesting binary QR PNG bytes from our existing ASP.NET Core catalog endpoint rather than pulling in external Flutter libraries. All 22 tests across DTOs, API repository, controllers, and screens passed cleanly on the first run.
+
+### Files Created or Modified
+- **Created**:
+  - `frontend/aveline_mobile/lib/features/commerce/domain/entities/order.dart`
+  - `frontend/aveline_mobile/lib/features/commerce/domain/entities/order_item.dart`
+  - `frontend/aveline_mobile/lib/features/commerce/domain/entities/approval_entry.dart`
+  - `frontend/aveline_mobile/lib/features/commerce/domain/entities/payment.dart`
+  - `frontend/aveline_mobile/lib/features/commerce/domain/repositories/commerce_repository.dart`
+  - `frontend/aveline_mobile/lib/features/commerce/data/models/order_dto.dart`
+  - `frontend/aveline_mobile/lib/features/commerce/data/models/approval_dto.dart`
+  - `frontend/aveline_mobile/lib/features/commerce/data/models/payment_dto.dart`
+  - `frontend/aveline_mobile/lib/features/commerce/data/repositories/api_commerce_repository.dart`
+  - `frontend/aveline_mobile/lib/features/commerce/presentation/controllers/order_creation_controller.dart`
+  - `frontend/aveline_mobile/lib/features/commerce/presentation/controllers/approvals_realtime_controller.dart`
+  - `frontend/aveline_mobile/lib/features/commerce/presentation/controllers/orders_controller.dart`
+  - `frontend/aveline_mobile/lib/features/commerce/presentation/widgets/catalog_item_picker_sheet.dart`
+  - `frontend/aveline_mobile/lib/features/commerce/presentation/widgets/approval_status_banner.dart`
+  - `frontend/aveline_mobile/lib/features/commerce/presentation/widgets/payment_qr_modal.dart`
+  - `frontend/aveline_mobile/lib/features/commerce/presentation/screens/create_order_screen.dart`
+  - `frontend/aveline_mobile/lib/features/commerce/presentation/screens/order_detail_screen.dart`
+  - `frontend/aveline_mobile/lib/features/commerce/presentation/screens/orders_list_screen.dart`
+  - `frontend/aveline_mobile/test/features/commerce/commerce_dto_test.dart`
+  - `frontend/aveline_mobile/test/features/commerce/api_commerce_repository_test.dart`
+  - `frontend/aveline_mobile/test/features/commerce/order_creation_controller_test.dart`
+  - `frontend/aveline_mobile/test/features/commerce/approvals_realtime_controller_test.dart`
+  - `frontend/aveline_mobile/test/features/commerce/create_order_screen_test.dart`
+  - `frontend/aveline_mobile/test/features/commerce/order_detail_screen_test.dart`
+- **Modified**:
+  - `frontend/aveline_mobile/lib/core/router/route_guards.dart`
+  - `frontend/aveline_mobile/lib/core/navigation/staff_screens.dart`
+  - `frontend/aveline_mobile/lib/features/home/presentation/widgets/more_actions_sheet.dart`
+  - `frontend/aveline_mobile/lib/app.dart`
+  - `frontend/aveline_mobile/lib/features/conversations/presentation/widgets/thread_composer.dart`
+  - `docs/ai-usage/kaveesha.md`
+
+### Important Architectural Decisions
+- **Zero New Dependencies (Rules 3 & 19)**: Avoided introducing external QR rendering packages (`qr_flutter`). Instead, the app requests standard PNG bytes directly from the existing backend `POST /api/v1/orgs/{orgId}/catalog/qr/generate` endpoint and displays them using Flutter's built-in `Image.memory`.
+- **Reactive SignalR Synchronization**: Attached `ApprovalsRealtimeController` as a listener to `NotificationProvider`. Incoming `ApprovalNeeded` and `OrderUpdated` notifications automatically trigger data re-fetching so floor staff see manager decisions immediately.
+- **Strict Layered Separation (ADR-005)**: Domain entities are completely decoupled from Dio HTTP client details and UI widgets. All data mapping happens through DTOs in the data layer.
+
+### Verification Performed
+- **Automated Tests**:
+  - Ran `flutter test test/features/commerce/`: **22/22 tests passed** (DTO serialization, API commerce repository, controllers, create order screen, and order detail screen).
+- **Code Quality**:
+  - Resolved merge conflict markers in `thread_composer.dart`.
+  - Verified quiet luxury styling tokens (`scheme.surface`, `scheme.primary`, `scheme.outlineVariant`).
+
+### Remaining Work
+- Ready for staging and commit to PR branch.
+

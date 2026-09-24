@@ -47,7 +47,12 @@ class _MoreActionsSheet extends StatelessWidget {
     _MoreAction(
       'New order',
       Icons.receipt_long_outlined,
-      unavailableMessage: 'Order taking is not on mobile yet.',
+      route: AppRoutes.createOrder,
+    ),
+    _MoreAction(
+      'Orders',
+      Icons.receipt_outlined,
+      route: AppRoutes.orders,
     ),
     _MoreAction(
       'Settings',

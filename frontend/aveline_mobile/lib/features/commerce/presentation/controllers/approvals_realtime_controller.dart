@@ -108,8 +108,8 @@ class ApprovalsRealtimeController extends ChangeNotifier {
     return created;
   }
 
-  Future<Payment> confirmPayment(String paymentId, {String? notes}) async {
-    final confirmed = await _repository.confirmPayment(paymentId, notes: notes);
+  Future<Payment> confirmPayment(String paymentId, {String? paymentMethod}) async {
+    final confirmed = await _repository.confirmPayment(paymentId, paymentMethod: paymentMethod);
     _payment = confirmed;
     if (_order != null) {
       _order = await _repository.fetchOrder(_order!.id);

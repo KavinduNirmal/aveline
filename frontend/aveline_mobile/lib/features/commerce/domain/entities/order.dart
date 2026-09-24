@@ -41,6 +41,10 @@ class Order {
   bool get isProcessing => status.toLowerCase() == 'processing';
   bool get isDelivered => status.toLowerCase() == 'delivered';
 
-  double get marginPercentage =>
-      total > 0 ? (margin / total) * 100 : 0.0;
+  /// The server's `margin` is a **ratio** in `[-1, 1]`, not a currency amount:
+  /// `OrderService` computes `(total - totalCost) / total` (rounded to 4 dp).
+  double get marginPercentage => margin * 100;
+
+  /// The margin in currency: what is left of [total] after [totalCost].
+  double get marginAmount => total - totalCost;
 }

@@ -69,7 +69,8 @@ void main() {
         'discount': 10000.0,
         'total': 50000.0,
         'totalCost': 30000.0,
-        'margin': 20000.0,
+        // The API sends `margin` as a ratio: (total - totalCost) / total = 20000 / 50000.
+        'margin': 0.4,
         'createdAt': '2026-09-23T10:00:00Z',
         'items': [
           {
@@ -89,6 +90,7 @@ void main() {
       expect(order.isPendingApproval, true);
       expect(order.items.length, 1);
       expect(order.marginPercentage, 40.0);
+      expect(order.marginAmount, 20000.0);
     });
 
     test('ApprovalQueueResponseDto fromJson and domain mapping', () {

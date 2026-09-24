@@ -308,7 +308,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                       children: [
                         Text('Margin', style: theme.textTheme.bodySmall?.copyWith(color: scheme.outline)),
                         Text(
-                          '${order.marginPercentage.toStringAsFixed(1)}% (LKR ${order.margin.toStringAsFixed(0)})',
+                          '${order.marginPercentage.toStringAsFixed(1)}% (LKR ${order.marginAmount.toStringAsFixed(0)})',
                           style: theme.textTheme.bodySmall?.copyWith(
                             fontWeight: FontWeight.w600,
                             color: const Color(0xFF28A745),

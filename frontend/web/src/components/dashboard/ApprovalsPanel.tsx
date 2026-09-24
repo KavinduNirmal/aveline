@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, ClipboardCheck, RefreshCw, SlidersHorizontal, X } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -56,6 +56,12 @@ interface ApprovalsPanelProps {
 }
 
 const STATUSES = ['pending', 'approved', 'rejected', 'revised'] as const
+
+const VERB_PAST_TENSE: Record<ApprovalDecision, string> = {
+  approve: 'approved',
+  reject: 'rejected',
+  revise: 'revised',
+}
 
 const VERB_TITLE: Record<ApprovalDecision, string> = {
   approve: 'Approve this order',
@@ -116,7 +122,7 @@ export function ApprovalsPanel({ organization, role }: ApprovalsPanelProps) {
       ),
     (result) => {
       setEntries(result.items)
-      setTotal(result.total)
+      setTotal(result.totalCount)
     },
     () => {
       setEntries([])
@@ -158,14 +164,20 @@ export function ApprovalsPanel({ organization, role }: ApprovalsPanelProps) {
     return () => controller.abort()
   }, [runLoad, loadRules, canManageRules])
 
-  // Automatically refresh queue on incoming ApprovalNeeded SignalR notification
+  // Automatically refresh queue on incoming ApprovalNeeded SignalR notification.
+  //
+  // Deduped on the notification id: `lastNotification` persists after it arrives, so keying only on
+  // `[lastNotification, runLoad]` re-fired this toast and this fetch on every page/filter change.
+  const handledApprovalNotification = useRef<string | null>(null)
   useEffect(() => {
-    if (lastNotification?.type === 'ApprovalNeeded') {
-      toast.info('New approval request received', {
-        description: lastNotification.body,
-      })
-      void runLoad()
-    }
+    if (lastNotification?.type !== 'ApprovalNeeded') return
+    const key = lastNotification.notificationId ?? `${lastNotification.type}:${lastNotification.title}`
+    if (handledApprovalNotification.current === key) return
+    handledApprovalNotification.current = key
+    toast.info('New approval request received', {
+      description: lastNotification.body,
+    })
+    void runLoad()
   }, [lastNotification, runLoad])
 
   const openDecision = (entry: ApprovalQueueEntry, next: ApprovalDecision) => {
@@ -178,6 +190,12 @@ export function ApprovalsPanel({ organization, role }: ApprovalsPanelProps) {
 
   const submit = async () => {
     if (!target) return
+    // `ApprovalService` sets the entry to `revised` even when no discount arrives, and leaves the
+    // order on `pending_approval` — so it drops out of the pending queue unrevised.
+    if (verb === 'revise' && revisedDiscount.trim() === '') {
+      setActionError('A revised discount is required to revise an order.')
+      return
+    }
     setIsSubmitting(true)
     setActionError(null)
     const payload = {
@@ -195,7 +213,7 @@ export function ApprovalsPanel({ organization, role }: ApprovalsPanelProps) {
       } else {
         await reviseApproval(organization.id, target.id, payload)
       }
-      toast.success(`Order ${verb}d.`)
+      toast.success(`Order ${VERB_PAST_TENSE[verb]}.`)
       setTarget(null)
       await runLoad()
     } catch (caught) {
@@ -453,7 +471,11 @@ export function ApprovalsPanel({ organization, role }: ApprovalsPanelProps) {
           </div>
 
           <DialogFooter>
-            <Button type="button" disabled={isSubmitting} onClick={() => void submit()}>
+            <Button
+              type="button"
+              disabled={isSubmitting || (verb === 'revise' && revisedDiscount.trim() === '')}
+              onClick={() => void submit()}
+            >
               {isSubmitting ? <RefreshCw className="size-4 animate-spin" aria-hidden /> : null}
               Confirm {verb}
             </Button>

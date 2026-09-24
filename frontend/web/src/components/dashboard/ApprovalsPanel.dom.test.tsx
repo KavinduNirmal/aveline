@@ -73,7 +73,7 @@ describe('ApprovalsPanel decision gating (Q14)', () => {
       items: [ENTRY],
       page: 1,
       pageSize: 20,
-      total: 1,
+      totalCount: 1,
     })
   })
 

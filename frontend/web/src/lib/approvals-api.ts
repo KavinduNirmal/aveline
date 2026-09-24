@@ -45,9 +45,10 @@ export interface ApprovalQueueEntry {
 
 export interface PagedApprovals {
   items: ApprovalQueueEntry[]
+  /** The server's `PagedResult<T>` calls this `totalCount`, not `total`. */
+  totalCount: number
   page: number
   pageSize: number
-  total: number
 }
 
 export type ApprovalDecision = 'approve' | 'reject' | 'revise'

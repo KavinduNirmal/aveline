@@ -1,16 +1,20 @@
 import { apiClient } from '@/lib/api'
 
+/**
+ * One line item, as `Aveline.Api.Modules.Commerce.DTOs.OrderItemDto` serialises it.
+ *
+ * The names are the server's, not the panel's: `itemName` (not `title`) and
+ * `wholesaleCost` (not `unitCost`). They used to disagree, which rendered every
+ * line item's name blank and its cost as "not measured".
+ */
 export interface OrderItemDto {
-  id: string
-  orderId: string
-  catalogItemId: string
-  title: string
+  id: string | null
+  itemId: string
+  itemName: string
   quantity: number
   unitPrice: number
-  unitCost: number
+  wholesaleCost: number
   totalPrice: number
-  totalCost: number
-  margin: number
 }
 
 export interface OrderResponseDto {
@@ -24,6 +28,11 @@ export interface OrderResponseDto {
   discount: number
   total: number
   totalCost: number
+  /**
+   * The order's margin as a **ratio** in `[-1, 1]`, not a currency amount.
+   * `OrderService` computes `(total - totalCost) / total`; render it with
+   * `formatPercent(margin * 100)`.
+   */
   margin: number
   createdBy: string | null
   createdAt: string
@@ -33,9 +42,10 @@ export interface OrderResponseDto {
 
 export interface PagedOrders {
   items: OrderResponseDto[]
+  /** The server's `PagedResult<T>` calls this `totalCount`, not `total`. */
+  totalCount: number
   page: number
   pageSize: number
-  total: number
 }
 
 export interface OrderQueryParameters {

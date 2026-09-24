@@ -31,6 +31,11 @@ GoRouter _router() => GoRouter(
           builder: (context, state) =>
               const Scaffold(body: Text('Notifications destination')),
         ),
+        GoRoute(
+          path: AppRoutes.createOrder,
+          builder: (context, state) =>
+              const Scaffold(body: Text('Create order destination')),
+        ),
       ],
     );
 
@@ -62,17 +67,16 @@ void main() {
       expect(find.textContaining('is not on mobile yet'), findsNothing);
     });
 
-    testWidgets('a row with no slice still says so', (tester) async {
+    testWidgets('the New order row reaches the create-order route', (tester) async {
       final router = _router();
       addTearDown(router.dispose);
 
       await _openSheet(tester, router);
 
       await tester.tap(find.text('New order'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
 
-      expect(find.text('Order taking is not on mobile yet.'), findsOneWidget);
+      expect(find.text('Create order destination'), findsOneWidget);
     });
   });
 }

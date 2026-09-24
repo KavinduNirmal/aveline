@@ -49,7 +49,7 @@ import {
   updateOrderStatus,
   type OrderResponseDto,
 } from '@/lib/orders-api'
-import { formatMoney } from '@/lib/format-money'
+import { formatMoney, formatPercent } from '@/lib/format-money'
 import { hasPermission } from '@/lib/permissions'
 import type { OrganizationProfileDto } from '@/types/organization'
 
@@ -58,12 +58,18 @@ interface OrdersPanelProps {
   role: string
 }
 
+// The statuses `OrderService.ValidTransitions` can actually write. `processing` is not one of
+// them, so a "Processing" filter matched nothing and a transition to it was refused with a 400.
 const STATUS_FILTERS = [
   { value: 'all', label: 'All statuses' },
   { value: 'pending_approval', label: 'Pending Approval' },
+  { value: 'approved', label: 'Approved' },
   { value: 'confirmed', label: 'Confirmed' },
-  { value: 'processing', label: 'Processing' },
+  { value: 'payment_requested', label: 'Payment Requested' },
+  { value: 'payment_confirmed', label: 'Paid' },
+  { value: 'delivery_scheduled', label: 'Delivery Scheduled' },
   { value: 'delivered', label: 'Delivered' },
+  { value: 'completed', label: 'Completed' },
   { value: 'cancelled', label: 'Cancelled' },
 ] as const
 
@@ -71,11 +77,34 @@ const STATUS_BADGE_VARIANTS: Record<
   string,
   { variant: 'default' | 'secondary' | 'outline' | 'destructive'; label: string }
 > = {
+  pending_hold: { variant: 'outline', label: 'On Hold' },
   pending_approval: { variant: 'outline', label: 'Pending Approval' },
+  approved: { variant: 'secondary', label: 'Approved' },
   confirmed: { variant: 'secondary', label: 'Confirmed' },
-  processing: { variant: 'secondary', label: 'Processing' },
+  revised: { variant: 'secondary', label: 'Revised' },
+  payment_requested: { variant: 'outline', label: 'Payment Requested' },
+  payment_confirmed: { variant: 'secondary', label: 'Paid' },
+  payment_expired: { variant: 'outline', label: 'Payment Expired' },
+  delivery_scheduled: { variant: 'secondary', label: 'Delivery Scheduled' },
   delivered: { variant: 'default', label: 'Delivered' },
+  completed: { variant: 'default', label: 'Completed' },
+  rejected: { variant: 'destructive', label: 'Rejected' },
   cancelled: { variant: 'destructive', label: 'Cancelled' },
+}
+
+/**
+ * The one lifecycle step this panel may take next, mirroring `OrderService.ValidTransitions`.
+ * Anything else the server refuses with "Invalid status transition".
+ */
+const NEXT_TRANSITION: Record<string, { next: string; label: string }> = {
+  approved: { next: 'payment_requested', label: 'Request Payment' },
+  confirmed: { next: 'payment_requested', label: 'Request Payment' },
+  revised: { next: 'payment_requested', label: 'Request Payment' },
+  payment_expired: { next: 'payment_requested', label: 'Re-request Payment' },
+  payment_requested: { next: 'payment_confirmed', label: 'Mark Paid' },
+  payment_confirmed: { next: 'delivery_scheduled', label: 'Schedule Delivery' },
+  delivery_scheduled: { next: 'delivered', label: 'Mark Delivered' },
+  delivered: { next: 'completed', label: 'Complete Order' },
 }
 
 export function OrdersPanel({ organization, role }: OrdersPanelProps) {
@@ -114,7 +143,7 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
       ),
     (result) => {
       setOrders(result.items)
-      setTotal(result.total)
+      setTotal(result.totalCount)
     },
     () => {
       setOrders([])
@@ -142,9 +171,10 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
 
   // Aggregate summary metrics on current list
   const grossRevenue = orders.reduce((sum, o) => sum + (o.status !== 'cancelled' ? o.total : 0), 0)
-  const totalMargin = orders.reduce((sum, o) => sum + (o.status !== 'cancelled' ? o.margin : 0), 0)
-  const avgMargin = grossRevenue > 0 ? (totalMargin / grossRevenue) * 100 : 0
+  const totalCost = orders.reduce((sum, o) => sum + (o.status !== 'cancelled' ? o.totalCost : 0), 0)
+  const avgMargin = grossRevenue > 0 ? ((grossRevenue - totalCost) / grossRevenue) * 100 : 0
   const pendingCount = orders.filter((o) => o.status === 'pending_approval').length
+  const nextTransition = selectedOrder ? NEXT_TRANSITION[selectedOrder.status] : undefined
 
   const handleStatusTransition = async (orderId: string, nextStatus: string) => {
     if (!canManageOrders) return
@@ -359,7 +389,7 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
                         {formatMoney(o.totalCost)}
                       </TableCell>
                       <TableCell className="text-right font-medium text-primary">
-                        {formatMoney(o.margin)}
+                        {formatPercent(o.margin * 100)}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {new Date(o.createdAt).toLocaleDateString()}
@@ -458,12 +488,12 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
                       </TableRow>
                     ) : (
                       selectedOrder.items.map((item) => (
-                        <TableRow key={item.id}>
-                          <TableCell className="font-medium">{item.title}</TableCell>
+                        <TableRow key={item.id ?? item.itemId}>
+                          <TableCell className="font-medium">{item.itemName}</TableCell>
                           <TableCell className="text-right">{item.quantity}</TableCell>
                           <TableCell className="text-right">{formatMoney(item.unitPrice)}</TableCell>
                           <TableCell className="text-right text-muted-foreground">
-                            {formatMoney(item.unitCost)}
+                            {formatMoney(item.wholesaleCost)}
                           </TableCell>
                           <TableCell className="text-right font-medium">
                             {formatMoney(item.totalPrice)}
@@ -498,7 +528,7 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
                   </div>
                   <div className="flex justify-between text-xs text-primary font-medium">
                     <span>Calculated Margin:</span>
-                    <span>{formatMoney(selectedOrder.margin)}</span>
+                    <span>{formatPercent(selectedOrder.margin * 100)}</span>
                   </div>
                 </div>
               </div>
@@ -534,24 +564,14 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
             </div>
 
             <div className="flex gap-2">
-              {canManageOrders && selectedOrder?.status === 'confirmed' && (
+              {canManageOrders && selectedOrder && nextTransition && (
                 <Button
                   type="button"
                   size="sm"
                   disabled={detailsLoading}
-                  onClick={() => void handleStatusTransition(selectedOrder.id, 'processing')}
+                  onClick={() => void handleStatusTransition(selectedOrder.id, nextTransition.next)}
                 >
-                  Mark Processing
-                </Button>
-              )}
-              {canManageOrders && selectedOrder?.status === 'processing' && (
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={detailsLoading}
-                  onClick={() => void handleStatusTransition(selectedOrder.id, 'delivered')}
-                >
-                  <CheckCircle2 className="size-3.5 mr-1" /> Mark Delivered
+                  <CheckCircle2 className="size-3.5 mr-1" /> {nextTransition.label}
                 </Button>
               )}
               <Button

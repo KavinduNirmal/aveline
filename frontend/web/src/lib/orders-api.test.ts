@@ -10,7 +10,7 @@ import {
 
 describe('orders-api', () => {
   it('fetchOrders queries orders endpoint with parameters', async () => {
-    const mockData = { items: [], page: 1, pageSize: 20, total: 0 }
+    const mockData = { items: [], page: 1, pageSize: 20, totalCount: 0 }
     const getSpy = vi.spyOn(apiClient, 'get').mockResolvedValueOnce({ data: mockData })
 
     const result = await fetchOrders('org-123', {

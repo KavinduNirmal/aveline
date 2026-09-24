@@ -58,7 +58,7 @@ class MockCommerceRepoForApprovals implements CommerceRepository {
   Future<Payment> confirmPayment(
     String paymentId, {
     String? transactionId,
-    String? notes,
+    String? paymentMethod,
   }) async {
     final confirmed = Payment(
       id: paymentId,

@@ -42,7 +42,7 @@ void main() {
                     'discount': 5000.0,
                     'total': 40000.0,
                     'totalCost': 25000.0,
-                    'margin': 15000.0,
+                    'margin': 0.375,
                     'createdAt': '2026-09-23T10:00:00Z',
                     'items': [
                       {
@@ -108,7 +108,7 @@ void main() {
                     'discount': 5000.0,
                     'total': 40000.0,
                     'totalCost': 25000.0,
-                    'margin': 15000.0,
+                    'margin': 0.375,
                     'createdAt': '2026-09-23T10:00:00Z',
                   },
                 ),
@@ -279,6 +279,15 @@ void main() {
       final confirmed = await repository.confirmPayment('pay-1');
       expect(confirmed.isConfirmed, true);
       expect(confirmed.confirmedAt, isNotNull);
+
+      // The API's ConfirmPaymentDto requires a non-blank gatewayTransactionId (its service
+      // rejects a blank one with a 400), so a counter confirmation must still send a reference.
+      final confirmRequest = recordedRequests.lastWhere(
+        (r) => (r['path'] as String).endsWith('/payments/pay-1/confirm'),
+      );
+      final body = confirmRequest['data'] as Map<String, dynamic>;
+      expect(body['gatewayTransactionId'], isA<String>());
+      expect((body['gatewayTransactionId'] as String).trim(), isNotEmpty);
     });
 
     test('fetchPaymentQrBytes requests PNG bytes from catalog QR endpoint', () async {

@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -105,7 +103,9 @@ class _PaymentQrModalState extends State<PaymentQrModal> {
     try {
       await widget.controller.confirmPayment(
         widget.payment.id,
-        notes: 'Confirmed by floor associate at boutique counter',
+        // The counter says how the money arrived. Without a method the payment keeps the
+        // generation-time default (`online`), and the takings ledger then calls a cash sale online.
+        paymentMethod: 'cash',
       );
       if (mounted) {
         AppToast.show(context, 'Payment marked as confirmed!');

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/router/route_guards.dart';
-import '../../domain/entities/order.dart';
 import '../../domain/repositories/commerce_repository.dart';
 import '../controllers/orders_controller.dart';
 
@@ -21,11 +20,15 @@ class OrdersListScreen extends StatefulWidget {
 class _OrdersListScreenState extends State<OrdersListScreen> {
   late final OrdersController _controller;
 
+  // The statuses `OrderService.ValidTransitions` can actually write. `processing` is not one of
+  // them, so that chip always answered "No orders found".
   static const List<Map<String, String>> _statusFilters = [
     {'label': 'All', 'value': 'all'},
     {'label': 'Pending Approval', 'value': 'pending_approval'},
     {'label': 'Confirmed', 'value': 'confirmed'},
-    {'label': 'Processing', 'value': 'processing'},
+    {'label': 'Payment Requested', 'value': 'payment_requested'},
+    {'label': 'Paid', 'value': 'payment_confirmed'},
+    {'label': 'Delivery Scheduled', 'value': 'delivery_scheduled'},
     {'label': 'Delivered', 'value': 'delivered'},
   ];
 
@@ -183,7 +186,7 @@ class _OrdersListScreenState extends State<OrdersListScreen> {
                                         crossAxisAlignment: CrossAxisAlignment.start,
                                         children: [
                                           Row(
-                                            mainAxisAlignment: MainAxisAlignment.between,
+                                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                             children: [
                                               Text(
                                                 order.customerName,
@@ -210,7 +213,7 @@ class _OrdersListScreenState extends State<OrdersListScreen> {
                                           ),
                                           const SizedBox(height: 8),
                                           Row(
-                                            mainAxisAlignment: MainAxisAlignment.between,
+                                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                             children: [
                                               Text(
                                                 '${order.orderType == 'whatsapp' ? 'WhatsApp' : 'In-Store'} · ${order.items.length} items',

@@ -183,13 +183,17 @@ class ApiCommerceRepository implements CommerceRepository {
   Future<Payment> confirmPayment(
     String paymentId, {
     String? transactionId,
-    String? notes,
+    String? paymentMethod,
   }) async {
     final orgId = _requireOrgId();
 
     final dto = ConfirmPaymentDto(
-      gatewayTransactionId: transactionId,
-      notes: notes,
+      // The API's `ConfirmPaymentDto.GatewayTransactionId` is `[Required]` and its service
+      // rejects a blank value, but a counter confirmation has no gateway reference. Name the
+      // manual provenance explicitly instead of sending nothing (which is a 400) or inventing
+      // a gateway id. Deterministic per payment, so a retried confirmation is idempotent.
+      gatewayTransactionId: transactionId ?? 'MANUAL-$paymentId',
+      paymentMethod: paymentMethod,
     );
 
     final response = await _dio.post<Map<String, dynamic>>(

@@ -39,10 +39,12 @@ abstract class CommerceRepository {
 
   Future<Payment?> fetchPaymentForOrder(String orderId);
 
+  /// Confirms a payment. `paymentMethod` is the API's own field (the counter confirmation sends
+  /// `cash`); a `null` method leaves the payment's generation-time method in place.
   Future<Payment> confirmPayment(
     String paymentId, {
     String? transactionId,
-    String? notes,
+    String? paymentMethod,
   });
 
   Future<List<int>> fetchPaymentQrBytes(String paymentLink, {int size = 300});

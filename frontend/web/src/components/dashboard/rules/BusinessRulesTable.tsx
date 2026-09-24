@@ -50,10 +50,73 @@ interface BusinessRulesTableProps {
   onReload: () => Promise<void>
 }
 
+// The evaluator (`BusinessRulesService.EvaluateOrderRulesAsync`) matches a **closed** set of
+// `ruleType` values, lower-cased: `approval_threshold`/`high_value`, `min_margin`/`margin`,
+// `discount`/`loyalty_tier`. It also parses `ruleValue` as a JSON object and reads a named
+// property. A rule created with another string, or with a bare number, is stored and listed
+// but never applied.
+const RULE_TYPES = [
+  { value: 'approval_threshold', label: 'High Value Threshold', key: 'threshold', hint: 'e.g. 40000' },
+  { value: 'min_margin', label: 'Minimum Profit Margin', key: 'min_margin', hint: 'e.g. 0.25 for 25%' },
+  { value: 'discount', label: 'Discount Limit', key: 'max_discount', hint: 'e.g. 0.15 for 15%' },
+] as const
+
 const RULE_TYPE_LABELS: Record<string, string> = {
-  HighValueThreshold: 'High Value Threshold',
-  MinimumProfitMargin: 'Minimum Profit Margin',
-  DiscountLimit: 'Discount Limit',
+  approval_threshold: 'High Value Threshold',
+  high_value: 'High Value Threshold',
+  min_margin: 'Minimum Profit Margin',
+  margin: 'Minimum Profit Margin',
+  discount: 'Discount Limit',
+  loyalty_tier: 'Discount Limit',
+}
+
+/** The JSON property the evaluator reads for a given rule type. */
+function ruleValueKey(ruleType: string): string {
+  switch (ruleType.toLowerCase()) {
+    case 'min_margin':
+    case 'margin':
+      return 'min_margin'
+    case 'discount':
+    case 'loyalty_tier':
+      return 'max_discount'
+    default:
+      return 'threshold'
+  }
+}
+
+/** The value hint for a rule type, tolerating the evaluator's aliases. */
+function ruleValueHint(ruleType: string): string {
+  const canonical = ruleValueKey(ruleType)
+  switch (canonical) {
+    case 'min_margin':
+      return 'e.g. 0.25 for 25%'
+    case 'max_discount':
+      return 'e.g. 0.15 for 15%'
+    default:
+      return 'e.g. 40000'
+  }
+}
+
+/** Builds the `{"<key>": <number>}` payload the evaluator expects from the operator's input. */
+function buildRuleValue(ruleType: string, raw: string): string {
+  const trimmed = raw.trim()
+  if (trimmed === '') return raw
+  // The dialog's own placeholder shows "LKR 40,000"; strip separators so it is not posted as
+  // non-JSON and rejected with "Invalid JSON format for RuleValue".
+  const numeric = Number(trimmed.replace(/[,\s]/g, ''))
+  if (!Number.isFinite(numeric)) return raw
+  return JSON.stringify({ [ruleValueKey(ruleType)]: numeric })
+}
+
+/** Reads the operator-facing number back out of a stored rule payload for the edit dialog. */
+function readRuleValue(ruleValue: string, ruleType: string): string {
+  try {
+    const parsed = JSON.parse(ruleValue) as Record<string, unknown> | null
+    const value = parsed?.[ruleValueKey(ruleType)]
+    return value === undefined || value === null ? ruleValue : String(value)
+  } catch {
+    return ruleValue
+  }
 }
 
 export function BusinessRulesTable({
@@ -72,7 +135,7 @@ export function BusinessRulesTable({
   // Create rule state
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [newRuleName, setNewRuleName] = useState('')
-  const [newRuleType, setNewRuleType] = useState('HighValueThreshold')
+  const [newRuleType, setNewRuleType] = useState('approval_threshold')
   const [newRuleValue, setNewRuleValue] = useState('')
   const [newRuleDescription, setNewRuleDescription] = useState('')
   const [isCreating, setIsCreating] = useState(false)
@@ -91,7 +154,7 @@ export function BusinessRulesTable({
 
   const openEditModal = (rule: BusinessRuleResponseDto) => {
     setTargetRule(rule)
-    setRuleValueDraft(rule.ruleValue)
+    setRuleValueDraft(readRuleValue(rule.ruleValue, rule.ruleType))
     setRuleDescriptionDraft(rule.description ?? '')
     setSaveError(null)
   }
@@ -102,7 +165,7 @@ export function BusinessRulesTable({
     setSaveError(null)
     try {
       const payload: UpdateBusinessRuleDto = {
-        ruleValue: ruleValueDraft.trim(),
+        ruleValue: buildRuleValue(targetRule.ruleType, ruleValueDraft.trim()),
         description: ruleDescriptionDraft.trim() || undefined,
       }
       await updateBusinessRule(organizationId, targetRule.id, payload)
@@ -127,7 +190,7 @@ export function BusinessRulesTable({
       const dto: CreateBusinessRuleDto = {
         ruleName: newRuleName.trim(),
         ruleType: newRuleType,
-        ruleValue: newRuleValue.trim(),
+        ruleValue: buildRuleValue(newRuleType, newRuleValue.trim()),
         description: newRuleDescription.trim() || undefined,
         isActive: true,
       }
@@ -274,7 +337,7 @@ export function BusinessRulesTable({
                 id="edit-rule-value"
                 value={ruleValueDraft}
                 onChange={(e) => setRuleValueDraft(e.target.value)}
-                placeholder="e.g. 40000 or 25"
+                placeholder={ruleValueHint(targetRule?.ruleType ?? '')}
               />
             </div>
             <div className="flex flex-col gap-1.5">
@@ -333,9 +396,11 @@ export function BusinessRulesTable({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="HighValueThreshold">High Value Threshold</SelectItem>
-                  <SelectItem value="MinimumProfitMargin">Minimum Profit Margin</SelectItem>
-                  <SelectItem value="DiscountLimit">Discount Limit</SelectItem>
+                  {RULE_TYPES.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -345,7 +410,7 @@ export function BusinessRulesTable({
                 id="create-rule-value"
                 value={newRuleValue}
                 onChange={(e) => setNewRuleValue(e.target.value)}
-                placeholder="e.g. 40000 or 25"
+                placeholder={ruleValueHint(newRuleType)}
               />
             </div>
             <div className="flex flex-col gap-1.5">

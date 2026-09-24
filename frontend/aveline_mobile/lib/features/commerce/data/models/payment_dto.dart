@@ -26,16 +26,19 @@ class GeneratePaymentRequestDto {
 class ConfirmPaymentDto {
   const ConfirmPaymentDto({
     this.gatewayTransactionId,
-    this.notes,
+    this.paymentMethod,
   });
 
   final String? gatewayTransactionId;
-  final String? notes;
+
+  /// The API's `ConfirmPaymentDto.PaymentMethod` — it has no `notes` field, so a note sent here
+  /// would be discarded while the payment kept its generation-time method (`online`).
+  final String? paymentMethod;
 
   Map<String, dynamic> toJson() {
     return {
       if (gatewayTransactionId != null) 'gatewayTransactionId': gatewayTransactionId,
-      if (notes != null) 'notes': notes,
+      if (paymentMethod != null) 'paymentMethod': paymentMethod,
     };
   }
 }

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../../../catalog/data/catalog_product_repository.dart';
-import '../../../catalog/domain/catalog_filters.dart';
 import '../../../catalog/domain/catalog_product.dart';
 import '../../domain/entities/order_item.dart';
 
@@ -157,7 +156,7 @@ class _CatalogItemPickerSheetState extends State<CatalogItemPickerSheet> {
                           )
                         : ListView.separated(
                             itemCount: _products.length,
-                            separatorBuilder: (_, __) => const Divider(height: 1),
+                            separatorBuilder: (_, _) => const Divider(height: 1),
                             itemBuilder: (context, index) {
                               final p = _products[index];
                               return ListTile(
@@ -185,9 +184,9 @@ class _CatalogItemPickerSheetState extends State<CatalogItemPickerSheet> {
                                         color: scheme.primary,
                                       ),
                                     ),
-                                    if (p.cost != null && p.cost! > 0)
+                                    if (p.cost > 0)
                                       Text(
-                                        'Cost: LKR ${p.cost!.toStringAsFixed(0)}',
+                                        'Cost: LKR ${p.cost.toStringAsFixed(0)}',
                                         style: theme.textTheme.bodySmall?.copyWith(
                                           color: scheme.outline,
                                           fontSize: 10,
@@ -202,7 +201,7 @@ class _CatalogItemPickerSheetState extends State<CatalogItemPickerSheet> {
                                       itemName: p.name,
                                       quantity: 1,
                                       unitPrice: p.price,
-                                      wholesaleCost: p.cost ?? (p.price * 0.6),
+                                      wholesaleCost: p.cost > 0 ? p.cost : (p.price * 0.6),
                                     ),
                                   );
                                   Navigator.of(context).pop();

@@ -8,8 +8,11 @@ import logging
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agents.commerce.state import CommerceAgentState
+from app.llm.replies import unwrap_reply
+from app.prompts.assembly import assemble_system_prompt
 from app.schemas.commerce import (
     CommerceAgentOutput,
     CourierDetails,
@@ -52,6 +55,83 @@ class CommerceAgent:
         self.registry = registry
         self.llm = llm
         self.org_context = org_context or {}
+
+    async def _compose_narrative(
+        self,
+        state: CommerceAgentState,
+        scenario: str,
+        fallback: str,
+    ) -> tuple[str, dict[str, int] | None]:
+        """Generate an LLM-crafted summary narrative and token usage, or return fallback when unavailable."""
+        if self.llm is None:
+            return fallback, None
+
+        org_id = state.get("org_id", "")
+        customer_name = state.get("customer_name") or "the customer"
+        total = state.get("total", 0.0)
+        subtotal = state.get("subtotal", 0.0)
+        margin = state.get("margin", 0.0)
+        items = state.get("items") or []
+        discount_pct = float(state.get("proposed_discount") or 0.0)
+        approval_reason = state.get("approval_reason")
+        rejection_reason = state.get("approval_comment")
+
+        item_descriptions = ", ".join(
+            f"{i.get('name', 'Garment')} (qty: {i.get('quantity', 1)}, price: LKR {float(i.get('unit_price', 0)):,.2f})"
+            for i in items
+        ) if items else "No specific line items"
+
+        context_lines = [
+            f"Scenario: {scenario}",
+            f"Customer: {customer_name}",
+            f"Items: {item_descriptions}",
+            f"Subtotal: LKR {subtotal:,.2f}",
+            f"Discount: {discount_pct:.1%}",
+            f"Total: LKR {total:,.2f}",
+            f"Profit Margin: {margin:.1%}",
+        ]
+        if approval_reason:
+            context_lines.append(f"Approval Flag / Reason: {approval_reason}")
+        if rejection_reason:
+            context_lines.append(f"Manager Decision Comment: {rejection_reason}")
+
+        if scenario == "approval_required":
+            context_lines.append(
+                "Write a concise, commercially articulate note (1-2 sentences) for the boutique manager "
+                "explaining why this deal requires approval and highlighting the key figures. "
+                "Do NOT emit JSON or code fences, only plain text."
+            )
+        elif scenario == "rejection":
+            context_lines.append(
+                "Write a tactful, professional note (1-2 sentences) informing the associate of the manager's "
+                "rejection and advising how to follow up with the customer. "
+                "Do NOT emit JSON or code fences, only plain text."
+            )
+        else:  # settlement / finalized
+            context_lines.append(
+                "Write an elegant, concise deal finalization note (1-2 sentences) confirming the order "
+                "total and next steps. "
+                "Do NOT emit JSON or code fences, only plain text."
+            )
+
+        try:
+            system_prompt = assemble_system_prompt("commerce", self.org_context or {"organization_id": org_id})
+            user_msg = "\n".join(context_lines)
+            llm_res = await self.llm.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=user_msg)])
+            content = getattr(llm_res, "content", None) or ""
+            narrative = unwrap_reply(content, fallback=fallback, max_chars=300)
+
+            usage: dict[str, int] | None = None
+            meta = getattr(llm_res, "usage_metadata", None) or {}
+            if meta:
+                usage = {
+                    "input_tokens": int(meta.get("input_tokens") or 0),
+                    "output_tokens": int(meta.get("output_tokens") or 0),
+                }
+            return narrative, usage
+        except Exception:
+            logger.warning("LLM narrative composition failed in CommerceAgent; using fallback.", exc_info=True)
+            return fallback, None
 
     async def evaluate_deal(self, state: CommerceAgentState) -> dict[str, Any]:
         """Evaluate line items, profit margin, loyalty discounts, and business rules."""
@@ -166,7 +246,8 @@ class CommerceAgent:
         approval_type = state.get("approval_type") or "high_value_order"
         total = state.get("total", 0.0)
 
-        summary = f"Deal requires owner approval: {reason} (Total: LKR {total:,.2f}). Workflow paused."
+        fallback_summary = f"Deal requires owner approval: {reason} (Total: LKR {total:,.2f}). Workflow paused."
+        summary, usage = await self._compose_narrative(state, "approval_required", fallback_summary)
 
         deal_eval = DealEvaluation(
             subtotal=state.get("subtotal", 0.0),
@@ -199,6 +280,7 @@ class CommerceAgent:
             "status": PENDING_APPROVAL,
             "requires_approval": True,
             "summary": summary,
+            "usage": usage,
             "output": output.model_dump(),
         }
 
@@ -206,7 +288,8 @@ class CommerceAgent:
         """Handle deal rejection when the store owner rejects the order on Web Dashboard."""
         reason = state.get("approval_comment") or "Deal was rejected during manager review."
         total = state.get("total", 0.0)
-        summary = f"Deal for LKR {total:,.2f} was rejected by store manager. {reason}"
+        fallback_summary = f"Deal for LKR {total:,.2f} was rejected by store manager. {reason}"
+        summary, usage = await self._compose_narrative(state, "rejection", fallback_summary)
 
         deal_eval = DealEvaluation(
             subtotal=state.get("subtotal", 0.0),
@@ -238,6 +321,7 @@ class CommerceAgent:
         return {
             "status": REJECTED,
             "summary": summary,
+            "usage": usage,
             "output": output.model_dump(),
         }
 
@@ -259,12 +343,6 @@ class CommerceAgent:
         payment_details = PaymentDetails.model_validate(payment_dict)
 
         # 2. Plan the courier only when there is somewhere to deliver.
-        #
-        # `plan_delivery` reports status "skipped" for a missing address, but "skipped" is not a
-        # courier state (`CourierStatusType` is planned/booked/in_transit/delivered/failed). Feeding
-        # it to CourierDetails raised ValidationError and 500'd every settlement that had no
-        # delivery address - i.e. the whole non-approval path. A delivery with no address is not a
-        # plan in a skipped state; it is simply not a plan.
         courier_details: CourierDetails | None = None
         if delivery_address:
             courier_dict = await book_courier(
@@ -277,9 +355,11 @@ class CommerceAgent:
 
         discount_pct = float(state.get("proposed_discount") or 0.0)
         if discount_pct > 0:
-            summary = f"Deal finalized for {customer_name} with {discount_pct:.0%} discount. Total: LKR {total:,.2f}."
+            fallback_summary = f"Deal finalized for {customer_name} with {discount_pct:.0%} discount. Total: LKR {total:,.2f}."
         else:
-            summary = f"Deal finalized for {customer_name}. Total: LKR {total:,.2f}."
+            fallback_summary = f"Deal finalized for {customer_name}. Total: LKR {total:,.2f}."
+
+        summary, usage = await self._compose_narrative(state, "settlement", fallback_summary)
 
         deal_eval = DealEvaluation(
             subtotal=state.get("subtotal", total),
@@ -310,5 +390,7 @@ class CommerceAgent:
             "payment_details": payment_details.model_dump(),
             "courier_details": courier_details.model_dump() if courier_details else None,
             "summary": summary,
+            "usage": usage,
             "output": output.model_dump(),
         }
+

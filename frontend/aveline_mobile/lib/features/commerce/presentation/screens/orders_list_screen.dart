@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/router/route_guards.dart';
-import '../../domain/entities/order.dart';
 import '../../domain/repositories/commerce_repository.dart';
 import '../controllers/orders_controller.dart';
 
@@ -104,7 +103,7 @@ class _OrdersListScreenState extends State<OrdersListScreen> {
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
                 itemCount: _statusFilters.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                separatorBuilder: (_, _) => const SizedBox(width: 8),
                 itemBuilder: (context, index) {
                   final filter = _statusFilters[index];
                   final isSelected = _controller.selectedStatus == filter['value'];
@@ -158,7 +157,7 @@ class _OrdersListScreenState extends State<OrdersListScreen> {
                             : ListView.separated(
                                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 80),
                                 itemCount: _controller.orders.length,
-                                separatorBuilder: (_, __) => const SizedBox(height: 12),
+                                separatorBuilder: (_, _) => const SizedBox(height: 12),
                                 itemBuilder: (context, index) {
                                   final order = _controller.orders[index];
                                   final statusColor = _getStatusColor(order.status, scheme);
@@ -183,7 +182,7 @@ class _OrdersListScreenState extends State<OrdersListScreen> {
                                         crossAxisAlignment: CrossAxisAlignment.start,
                                         children: [
                                           Row(
-                                            mainAxisAlignment: MainAxisAlignment.between,
+                                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                             children: [
                                               Text(
                                                 order.customerName,
@@ -210,7 +209,7 @@ class _OrdersListScreenState extends State<OrdersListScreen> {
                                           ),
                                           const SizedBox(height: 8),
                                           Row(
-                                            mainAxisAlignment: MainAxisAlignment.between,
+                                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                             children: [
                                               Text(
                                                 '${order.orderType == 'whatsapp' ? 'WhatsApp' : 'In-Store'} · ${order.items.length} items',

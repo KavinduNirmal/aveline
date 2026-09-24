@@ -35,6 +35,7 @@ from app.core.config import get_settings
 from app.customer_resolution import resolve_customer
 from app.gate import classify_by_rules, supervise
 from app.llm.runtime import (
+    commerce_llm_or_none,
     memory_llm_or_none,
     supervisor_llm_or_none,
     visual_llm_or_none,
@@ -376,7 +377,8 @@ async def run_commerce_agent(state: ConciergeState) -> dict[str, Any]:
     channel = org_context.get("channel") or "whatsapp"
 
     registry = ToolRegistry()
-    graph = build_commerce_graph(registry, org_context=org_context)
+    llm = commerce_llm_or_none(get_settings())
+    graph = build_commerce_graph(registry, llm=llm, org_context=org_context)
     commerce_state = {
         "org_id": str(org_id),
         "order_id": org_context.get("order_id"),
@@ -394,6 +396,17 @@ async def run_commerce_agent(state: ConciergeState) -> dict[str, Any]:
         "ran": True,
         "status": result.get("status") or "success",
     }
+    commerce_usage = result.get("usage")
+    current_usage = state.get("usage")
+    if commerce_usage:
+        if current_usage:
+            combined_usage = {
+                "input_tokens": int(current_usage.get("input_tokens") or 0) + int(commerce_usage.get("input_tokens") or 0),
+                "output_tokens": int(current_usage.get("output_tokens") or 0) + int(commerce_usage.get("output_tokens") or 0),
+            }
+        else:
+            combined_usage = commerce_usage
+        return {"commerce_output": output, "usage": combined_usage}
     return {"commerce_output": output}
 
 
@@ -455,7 +468,8 @@ async def run_commerce_approval(state: ConciergeState) -> dict[str, Any]:
         "approval_comment": comments,
     }
 
-    graph = build_commerce_graph(ToolRegistry(), org_context=org_context)
+    llm = commerce_llm_or_none(get_settings())
+    graph = build_commerce_graph(ToolRegistry(), llm=llm, org_context=org_context)
     result = await graph.ainvoke(commerce_state)
     logger.info("Commerce resumed from approval: decision=%s", decision)
 
@@ -464,7 +478,19 @@ async def run_commerce_approval(state: ConciergeState) -> dict[str, Any]:
         "ran": True,
         "status": result.get("status") or "error",
     }
+    commerce_usage = result.get("usage")
+    current_usage = state.get("usage")
+    if commerce_usage:
+        if current_usage:
+            combined_usage = {
+                "input_tokens": int(current_usage.get("input_tokens") or 0) + int(commerce_usage.get("input_tokens") or 0),
+                "output_tokens": int(current_usage.get("output_tokens") or 0) + int(commerce_usage.get("output_tokens") or 0),
+            }
+        else:
+            combined_usage = commerce_usage
+        return {"commerce_output": output, "usage": combined_usage}
     return {"commerce_output": output}
+
 
 
 def _approval_pause_payload(commerce: dict[str, Any]) -> dict[str, Any]:

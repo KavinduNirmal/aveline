@@ -1,5 +1,4 @@
 import 'package:aveline_mobile/features/catalog/data/catalog_product_repository.dart';
-import 'package:aveline_mobile/features/catalog/domain/catalog_filters.dart';
 import 'package:aveline_mobile/features/catalog/domain/catalog_product.dart';
 import 'package:aveline_mobile/features/commerce/domain/entities/order.dart';
 import 'package:aveline_mobile/features/commerce/domain/entities/order_item.dart';

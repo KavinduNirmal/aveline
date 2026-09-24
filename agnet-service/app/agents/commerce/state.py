@@ -26,6 +26,12 @@ class CommerceAgentState(TypedDict, total=False):
     delivery_address: str | None
     channel: str
     message: str
+    # Conversation context (ADR-023), forwarded verbatim by the orchestrator for uniformity with
+    # the other specialists. Commerce makes no LLM call, so nothing here renders it yet; it is
+    # declared so the transport is complete and a future prompt has the window available.
+    history: list[dict[str, Any]]
+    thread_summary: str | None
+    pinned_slots: dict[str, str]
     direction: str | None
     staff_query: bool | None
 

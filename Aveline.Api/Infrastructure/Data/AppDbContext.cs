@@ -155,6 +155,10 @@ public class AppDbContext : DbContext
     // Home module: the persisted half of the derived focus feed.
     public DbSet<FocusDismissal> FocusDismissals => Set<FocusDismissal>();
 
+    // Handbook module (ADR-025): the global, non-tenant knowledge corpus the agent retrieves from.
+    public DbSet<Modules.Handbook.Models.HandbookChunk> HandbookChunks =>
+        Set<Modules.Handbook.Models.HandbookChunk>();
+
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
         base.OnConfiguring(optionsBuilder);

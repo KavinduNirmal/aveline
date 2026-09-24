@@ -1,9 +1,10 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
-import '../../../core/network/org_context.dart';
 import '../../../shared/utils/uuid.dart';
+import '../data/conversation_repository.dart';
 import '../data/thread_repository.dart';
+import '../domain/block_actions.dart';
 import '../domain/conversation.dart';
 import '../domain/thread_message.dart';
 
@@ -55,12 +56,21 @@ class ClientThreadController extends ChangeNotifier {
     this.conversation,
     this._repository, {
     this.pageSize = 50,
+    this.conversationRepository,
   });
 
   /// The thread being read.
   final Conversation conversation;
 
   final ThreadRepository _repository;
+
+  /// The inbox, when the screen has one.
+  ///
+  /// Used only to answer "which other threads can receive a forward": a forward is a
+  /// delivery into a thread other than this one, and the only honest source for those is
+  /// the list the inbox already reads. `null` leaves Forward unavailable with its
+  /// reason rather than offering a picker that could not be filled.
+  final ConversationRepository? conversationRepository;
 
   /// How many messages a page holds.
   final int pageSize;
@@ -96,6 +106,22 @@ class ClientThreadController extends ChangeNotifier {
   bool _isSending = false;
   String? _errorMessage;
   String? _actionError;
+
+  /// Something that worked and is worth saying, or `null`.
+  ///
+  /// The counterpart of [actionError]: a delivery or a forward is a thing the associate
+  /// asked for and cannot see in this thread, so its outcome is spoken rather than
+  /// inferred from the screen.
+  String? _actionNotice;
+
+  /// The action waiting on the server, keyed by `messageId#blockIndex`.
+  ///
+  /// Per **block**, not per message: a message can carry several pieces, and one of them
+  /// regenerating must not disable the rail on the others.
+  final Map<String, BlockActionId> _pendingBlockActions = {};
+
+  /// The other threads a forward could land in, filtered to the ones that can receive.
+  List<ForwardTarget> _forwardTargets = const [];
 
   bool _disposed = false;
 
@@ -165,6 +191,26 @@ class ClientThreadController extends ChangeNotifier {
   /// still stands, and the message is only worth a toast. The screen clears it
   /// once shown, so it is reported exactly once.
   String? get actionError => _actionError;
+
+  /// Something that worked, or `null`. Reported exactly once, like [actionError].
+  String? get actionNotice => _actionNotice;
+
+  /// Whether this thread can receive a delivery at all.
+  ///
+  /// The same test the forward picker uses for its destinations: a client is bound, or
+  /// the thread carries a channel handle for a client not identified yet. The concierge
+  /// Salon has neither, so "send to customer" is drawn disabled with its reason.
+  bool get hasCustomerDestination => conversation.isDeliveryTarget;
+
+  /// The other client threads a forward could land in, in the inbox's order.
+  List<ForwardTarget> get forwardTargets => List.unmodifiable(_forwardTargets);
+
+  /// Whether there is anywhere to forward to.
+  bool get hasForwardDestination => _forwardTargets.isNotEmpty;
+
+  /// The action waiting on the server for one block, or `null`.
+  BlockActionId? pendingBlockAction(String messageId, int blockIndex) =>
+      _pendingBlockActions[_blockKey(messageId, blockIndex)];
 
   /// Whether the read finished and the two of them have never spoken.
   bool get isEmpty => _hasLoadedOnce && _messages.isEmpty;
@@ -530,6 +576,187 @@ class ClientThreadController extends ChangeNotifier {
     }
   }
 
+  /// Reads the other threads a forward could land in.
+  ///
+  /// Started once when the screen opens, so the rail knows before a tap whether Forward
+  /// has anywhere to go. Best-effort: a refused read leaves Forward unavailable with its
+  /// real reason rather than blocking the thread on a list it does not otherwise need.
+  Future<void> loadForwardTargets() async {
+    final repository = conversationRepository;
+    if (repository == null) {
+      return;
+    }
+    try {
+      final page = await repository.fetchConversations();
+      _forwardTargets = forwardTargetsFrom(page.items, conversation.id);
+      _notify();
+    } on OrgContextUnavailable {
+      // A "not yet": the org id arrives from `/orgs/my` after the shell mounts.
+    } catch (_) {
+      // The picker is not the thread's content, so a refused read is not the screen's
+      // error state. Forward simply stays unavailable.
+    }
+  }
+
+  /// Hands one block's words to the customer's channel, over the thread it is in.
+  ///
+  /// No optimistic row is drawn: the words go to the client, and the message the server
+  /// stored comes back on the response rather than being guessed here. A refusal is
+  /// spoken as "nothing was sent", because the confirmation that preceded it promised a
+  /// delivery.
+  Future<void> deliverBlock(
+    String messageId,
+    ThreadBlock block,
+    int blockIndex,
+  ) async {
+    final text = blockToText(block);
+    if (text.isEmpty ||
+        !_beginBlockAction(messageId, blockIndex, BlockActionId.sendToCustomer)) {
+      return;
+    }
+
+    try {
+      final delivery = await _repository.deliver(conversation.id, text);
+      if (!delivery.delivered) {
+        // A 200 that did not deliver is still nothing sent.
+        _actionError = 'That could not be sent. Nothing was sent.';
+      } else {
+        _actionNotice = 'Sent to ${conversation.title}.';
+        final stored = delivery.message;
+        if (stored != null) {
+          await receive(stored);
+        }
+      }
+    } catch (error) {
+      _actionError = _deliveryFailure(error);
+    } finally {
+      _endBlockAction(messageId, blockIndex);
+    }
+  }
+
+  /// Forwards one block's words into another client thread.
+  Future<void> forwardBlock(
+    String messageId,
+    ThreadBlock block,
+    int blockIndex, {
+    required String targetConversationId,
+    required String targetLabel,
+  }) async {
+    final text = blockToText(block);
+    if (text.isEmpty ||
+        !_beginBlockAction(messageId, blockIndex, BlockActionId.forward)) {
+      return;
+    }
+
+    const fallback = 'That could not be forwarded. Nothing was sent.';
+    try {
+      final delivery = await _repository.deliver(targetConversationId, text);
+      if (!delivery.delivered) {
+        _actionError = fallback;
+      } else {
+        _actionNotice = 'Forwarded to $targetLabel.';
+      }
+    } catch (error) {
+      _actionError = error is DeliveryRefused
+          ? _refusalSentence(error, fallback: fallback)
+          : fallback;
+    } finally {
+      _endBlockAction(messageId, blockIndex);
+    }
+  }
+
+  /// Asks the agent for a fresh reply to the turn behind one block's message.
+  ///
+  /// The endpoint is accepted rather than answered, so nothing is swapped locally: the
+  /// pending state clears when the call resolves, and the new reply arrives later over
+  /// the hub through the ordinary pipeline.
+  Future<void> regenerateBlock(
+    String messageId,
+    ThreadBlock block,
+    int blockIndex,
+  ) async {
+    if (!_beginBlockAction(messageId, blockIndex, BlockActionId.regenerate)) {
+      return;
+    }
+    try {
+      await _repository.regenerate(conversation.id, messageId);
+      _actionNotice = 'Asking Aveline for a fresh take.';
+    } catch (_) {
+      _actionError = 'Could not regenerate that ${blockTitle(block).toLowerCase()}.';
+    } finally {
+      _endBlockAction(messageId, blockIndex);
+    }
+  }
+
+  /// Claims one block for an action, or returns `false` when another already holds it.
+  ///
+  /// One action at a time on a block: two would race the same content, and the second
+  /// tap would ask the server to send or redo the same card twice.
+  bool _beginBlockAction(
+    String messageId,
+    int blockIndex,
+    BlockActionId action,
+  ) {
+    final key = _blockKey(messageId, blockIndex);
+    if (_pendingBlockActions.containsKey(key)) {
+      return false;
+    }
+    _pendingBlockActions[key] = action;
+    _actionError = null;
+    _actionNotice = null;
+    _notify();
+    return true;
+  }
+
+  void _endBlockAction(String messageId, int blockIndex) {
+    _pendingBlockActions.remove(_blockKey(messageId, blockIndex));
+    _notify();
+  }
+
+  /// The identity of one block, which is its message plus its position in it.
+  static String _blockKey(String messageId, int blockIndex) =>
+      '$messageId#$blockIndex';
+
+  /// What a refused delivery should say.
+  ///
+  /// Each refusal code gets its own sentence, because "no client is linked", "there is no
+  /// handle", "the channel is not connected" and "the provider said no" call for
+  /// different things from the associate. Every one ends by saying nothing was sent.
+  String _deliveryFailure(Object error) {
+    if (error is DeliveryRefused) {
+      return _refusalSentence(
+        error,
+        fallback: 'That could not be sent. Nothing was sent.',
+      );
+    }
+    if (error is DioException) {
+      switch (error.response?.statusCode) {
+        case 401:
+          return 'Your session has expired. Nothing was sent.';
+        case 403:
+          return 'You do not have access to this conversation. Nothing was sent.';
+        case 404:
+          return 'This conversation is no longer available. Nothing was sent.';
+      }
+    }
+    return 'That could not be sent. Nothing was sent.';
+  }
+
+  static String _refusalSentence(
+    DeliveryRefused refusal, {
+    required String fallback,
+  }) => switch (refusal.refusal) {
+    'no_customer' => "This thread isn't linked to a client yet. Nothing was sent.",
+    'no_channel_handle' =>
+      'This client has no channel handle. Nothing was sent.',
+    'channel_not_connected' =>
+      'This client is not connected on a channel. Nothing was sent.',
+    'channel_unsupported' =>
+      'This client\u2019s channel cannot carry a message. Nothing was sent.',
+    'provider_refused' => 'The channel refused the message. Nothing was sent.',
+    _ => fallback,
+  };
+
   /// Takes a message the hub pushed while the thread is open.
   ///
   /// Four things can arrive, and each is reconciled rather than appended:
@@ -617,6 +844,14 @@ class ClientThreadController extends ChangeNotifier {
   /// notifying from inside a notification would run that listener again.
   void clearActionError() {
     _actionError = null;
+  }
+
+  /// Clears [actionNotice] once the screen has reported it.
+  ///
+  /// Silent for the same reason as [clearActionError]: the screen calls this from its
+  /// own listener, and notifying from inside a notification would run it again.
+  void clearActionNotice() {
+    _actionNotice = null;
   }
 
   @override

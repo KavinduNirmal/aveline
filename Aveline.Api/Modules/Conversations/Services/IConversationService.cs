@@ -110,6 +110,25 @@ public interface IConversationService
         Guid? around = null,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Re-runs the agent for the turn that produced <paramref name="messageId"/>.
+    /// </summary>
+    /// <remarks>
+    /// Regeneration re-runs the <em>question</em>, not the answer: the staff message the block
+    /// replied to is resolved and triggered again with the thread's customer context. The fresh
+    /// content arrives the way every other agent reply does — as message events applied by the
+    /// subscriber and broadcast over the Salon hub — so this returns only whether the run was
+    /// started. It writes no message of its own and does not touch the superseded block, whose
+    /// stored row is immutable history a later read would return anyway.
+    /// </remarks>
+    /// <returns><c>false</c> when the conversation is not visible or the message is not in it.</returns>
+    Task<bool> RegenerateAsync(
+        Guid orgId,
+        Guid userId,
+        Guid conversationId,
+        Guid messageId,
+        CancellationToken cancellationToken = default);
+
     Task<MessageDto> SendStaffNoteAsync(
         Guid orgId,
         Guid userId,

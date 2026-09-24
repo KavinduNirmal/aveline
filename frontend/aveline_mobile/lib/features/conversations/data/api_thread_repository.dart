@@ -14,6 +14,8 @@ import 'thread_repository.dart';
 /// - `GET  .../conversations/{id}/messages`              paged, oldest first
 /// - `POST .../conversations/{id}/messages`              send `{ text }`
 /// - `POST .../conversations/{id}/messages/{mid}/sign-off`  `{ approved, contentHash }`
+/// - `POST .../conversations/{id}/deliver`               `{ text }` to the client's channel
+/// - `POST .../conversations/{id}/messages/{mid}/regenerate`  `202`, fresh reply over the hub
 ///
 /// The auth interceptor on the shared [Dio] attaches the Clerk token, so nothing
 /// here handles credentials.
@@ -217,5 +219,57 @@ class ApiThreadRepository implements ThreadRepository {
       '${_messagesPath(conversationId)}/read',
       data: {'lastReadMessageId': lastReadMessageId},
     );
+  }
+
+  @override
+  Future<ThreadDelivery> deliver(
+    String conversationId,
+    String text, {
+    String? clientMessageId,
+  }) async {
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '${_conversationPath(conversationId)}/deliver',
+        data: {'text': text, 'clientMessageId': ?clientMessageId},
+      );
+      return ThreadDelivery.fromJson(response.data ?? const {});
+    } on DioException catch (error) {
+      // A refusal is the server declining on purpose, not the transport failing: the
+      // body names the reason. It is thrown as its own type so the caller can turn each
+      // code into a sentence instead of reading a raw status off a `DioException`.
+      final refusal = _refusalOf(error.response?.data);
+      if (refusal != null) {
+        throw DeliveryRefused(refusal, detail: _detailOf(error.response?.data));
+      }
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> regenerate(String conversationId, String messageId) async {
+    _requireUuid(messageId, 'messageId');
+    await _dio.post<void>('${_messagesPath(conversationId)}/$messageId/regenerate');
+  }
+
+  /// The `refusal` code in an error body, when the API sent one.
+  static String? _refusalOf(Object? data) {
+    if (data is Map && data['refusal'] is String) {
+      final refusal = (data['refusal'] as String).trim();
+      if (refusal.isNotEmpty) {
+        return refusal;
+      }
+    }
+    return null;
+  }
+
+  /// The `detail` sentence in an error body, when the API sent one.
+  static String? _detailOf(Object? data) {
+    if (data is Map && data['detail'] is String) {
+      final detail = (data['detail'] as String).trim();
+      if (detail.isNotEmpty) {
+        return detail;
+      }
+    }
+    return null;
   }
 }

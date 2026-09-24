@@ -190,3 +190,79 @@ export async function selectConversationCustomer(
   )
   return response.data
 }
+
+/**
+ * Asks the agent to produce a fresh answer for the turn that produced `messageId`.
+ *
+ * Regeneration re-runs the *question*, not the answer: the server resolves the staff message the
+ * block replied to (falling back to the block's own words), triggers the agent with that query and
+ * the thread's customer context, and answers `202` because the new content arrives the same way
+ * every other agent reply does — as `message.created` events applied by the event subscriber and
+ * broadcast over the Salon hub. There is deliberately no message body in the reply: the fresh
+ * blocks are not known when this call returns.
+ *
+ * See POST /api/v1/orgs/{orgId}/conversations/{id}/messages/{messageId}/regenerate.
+ */
+export async function regenerateMessage(
+  organizationId: string,
+  conversationId: string,
+  messageId: string,
+): Promise<void> {
+  await apiClient.post(
+    `${conversationsBase(organizationId)}/${conversationId}/messages/${messageId}/regenerate`,
+  )
+}
+
+/** The channel a delivery left on, and the row it was recorded as. */
+export interface DeliveryReceipt {
+  delivered: boolean
+  channel: string | null
+  providerMessageId: string | null
+  message: MessageDto | null
+}
+
+/** A delivery the server refused, with the sentence to show the associate. */
+export class DeliveryRefusedError extends Error {
+  readonly refusal: string | null
+
+  constructor(refusal: string | null, detail: string | null) {
+    super(detail ?? 'That could not be delivered.')
+    this.name = 'DeliveryRefusedError'
+    this.refusal = refusal
+  }
+}
+
+/**
+ * Sends a block's words to the thread's customer on their own channel and records it in the
+ * thread. See POST /api/v1/orgs/{orgId}/conversations/{id}/deliver.
+ *
+ * Deliberately **not** the messages route. Sending a note writes into the Salon, where it is
+ * Aveline's context: it reaches no customer, and on a client-bound thread it wakes the agent.
+ * This is the opposite promise — the words leave over WhatsApp and the thread records what went
+ * out — so the two are separate calls and a caller cannot reach one by asking for the other.
+ *
+ * A refusal is thrown as {@link DeliveryRefusedError} carrying the server's own sentence, so the
+ * client shows the state the server understands (no client on the thread, no channel connected,
+ * the provider said no) rather than one generic failure for all of them.
+ */
+export async function deliverBlockToCustomer(
+  organizationId: string,
+  conversationId: string,
+  text: string,
+  clientMessageId?: string,
+): Promise<DeliveryReceipt> {
+  const body: { text: string; clientMessageId?: string } = { text }
+  if (clientMessageId) body.clientMessageId = clientMessageId
+
+  try {
+    const response = await apiClient.post<DeliveryReceipt>(
+      `${conversationsBase(organizationId)}/${conversationId}/deliver`,
+      body,
+    )
+    return response.data
+  } catch (error) {
+    const payload = (error as { response?: { data?: { refusal?: string; detail?: string } } })
+      ?.response?.data
+    throw new DeliveryRefusedError(payload?.refusal ?? null, payload?.detail ?? null)
+  }
+}

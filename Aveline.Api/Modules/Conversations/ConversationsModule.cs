@@ -50,6 +50,10 @@ public static class ConversationsModule
         // `TryAdd` keeps this idempotent with the registration `AnalyticsModule` also makes.
         services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<IConversationService, ConversationService>();
+        // The outbound channel path is its own service rather than a method on the conversation
+        // service: "written into the Salon" and "delivered to the customer's channel" are different
+        // promises, and one class that could do both is how a caller comes to confuse them.
+        services.AddScoped<ICustomerDeliveryService, CustomerDeliveryService>();
         services.AddScoped<IMessageBroadcaster, SignalRMessageBroadcaster>();
         services.AddHostedService<ConversationEventSubscriber>();
         // Unbound uploads (a cancelled picker, a refused send) are swept after the TTL.

@@ -140,6 +140,32 @@ class ToolRegistry:
             json={"organizationId": org_id, "customerId": customer_id, "query": query, "topK": top_k},
         )
 
+    async def search_handbook(
+        self,
+        query: str,
+        top_k: int = 5,
+        audience: str = "staff",
+        min_similarity: float = 0.0,
+    ) -> list[dict[str, Any]]:
+        """Hybrid (dense + lexical) search over the Aveline handbook (ADR-025).
+
+        The backend runs both retrieval legs over the same filter and fuses them with Reciprocal
+        Rank Fusion; see ``docs/architecture/handbook.md``. Each hit carries its vector and lexical
+        rank alongside the fused score, which is what lets the retrieval eval report per-leg
+        quality instead of one opaque number.
+        """
+        result = await self._client.request(
+            "POST",
+            "/internal/handbook/search",
+            json={
+                "query": query,
+                "topK": top_k,
+                "audience": audience,
+                "minSimilarity": min_similarity,
+            },
+        )
+        return result if isinstance(result, list) else []
+
     async def save_customer_memory(
         self,
         org_id: str,
@@ -248,6 +274,51 @@ class ToolRegistry:
         return await self._client.request(
             "GET",
             f"/internal/conversations/{conversation_id}/messages",
+            params={"organizationId": org_id, "limit": limit},
+        )
+
+    # ============================== TENANT ACCOUNT ==============================
+
+    async def get_tenant_usage(self, org_id: str) -> dict[str, Any]:
+        """Read the organisation's own account position (ADR-026).
+
+        The Blossom balance and the seat/customer allowances the boutique's dashboard shows, from
+        the same backend projections that dashboard renders. The caller is responsible for the
+        audience check: this method performs no permission reasoning of its own, and must only be
+        reached for an organisation whose request carried explicit staff evidence.
+
+        Args:
+            org_id: The organisation (tenant scope).
+
+        Returns:
+            The backend snapshot envelope ``{organizationId, blossoms, staff, customers,
+            customerCountBasis, asOf}``, with each allowance carrying
+            ``{key, used, limit, remaining, percentUsed, isHardLimit}``.
+        """
+        return await self._client.request("GET", f"/internal/usage/tenant/{org_id}")
+
+    async def get_customer_book_summary(
+        self,
+        org_id: str,
+        limit: int = 5,
+    ) -> dict[str, Any]:
+        """Read the boutique's client book at a glance (ADR-026).
+
+        How many clients there are, plus the few most recently active, taken from the same read the
+        tenant dashboard's Home rows use - so a client cannot be named here who is not in the book.
+        Same audience rule as :meth:`get_tenant_usage`: the caller decides who may see it.
+
+        Args:
+            org_id: The organisation (tenant scope).
+            limit: How many named clients to return. Clamped by the backend.
+
+        Returns:
+            The backend envelope ``{total, activitySince, highlights}``, where each highlight is
+            ``{customerId, name, level, activity, lastActivityAtUtc}``.
+        """
+        return await self._client.request(
+            "GET",
+            "/internal/customers/book-summary",
             params={"organizationId": org_id, "limit": limit},
         )
 

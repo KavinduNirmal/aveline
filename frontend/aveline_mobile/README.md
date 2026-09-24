@@ -23,6 +23,7 @@ flutter run \
 | `CLERK_PUBLISHABLE_KEY` | yes | Clerk publishable key (`pk_...`). |
 | `API_BASE_URL` | no | Defaults to `http://10.0.2.2:5091` (host API from the Android emulator). Use the host LAN IP on a physical device. |
 | `JWT_TEMPLATE_NAME` | no | Defaults to `jwt-aveline-v1` (mints `user_role` / `org_role` claims). |
+| `AVELINE_WEB_BASE_URL` | no | Public origin of the web app, e.g. `https://aveline.lk`. Turns a handbook citation's path (`/docs/team`) into a link the app opens in the browser. With no origin set the citation is still shown, and tapping tells you the path rather than opening a guessed host. |
 
 ## Authentication
 

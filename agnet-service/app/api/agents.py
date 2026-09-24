@@ -18,7 +18,7 @@ from app.schemas.query import AgentQueryRequest, AgentQueryResponse, AgentResume
 from app.schemas.response import AgentResponse
 from app.schemas.state import AgentState
 from app.services.usage_reporter import report_agent_run, report_usage
-from app.telemetry.agent_telemetry import NODE_STEP_KIND, TelemetryCollector
+from app.telemetry.agent_telemetry import NODE_STEP_KIND, AgentRunTelemetry, TelemetryCollector
 from app.workflows.concierge_workflow import (
     WORKFLOW_NAME,
     NoPausedRunError,
@@ -28,6 +28,11 @@ from app.workflows.concierge_workflow import (
 )
 
 logger = logging.getLogger("aveline.agent.api")
+
+#: The start report is awaited before the workflow runs, so its timeout bounds how long a slow
+#: API can delay an answer. Comfortably longer than a local write, far shorter than the 10s the
+#: completion report may take.
+_RUN_START_REPORT_TIMEOUT_SECONDS = 2.0
 
 router = APIRouter(
     prefix="/agents",
@@ -120,6 +125,18 @@ async def agents_query(payload: AgentQueryRequest, request: Request) -> AgentQue
     )
     run_started = time.perf_counter()
     run_status = "Succeeded"
+
+    # Open the run row before the workflow starts, so `agent.runs_running` counts something real for
+    # as long as the run lasts. Until this existed the agent reported a run exactly once, at
+    # completion, so `AgentWorkflowRuns` never held a `Running` row and that gauge was structurally
+    # 0 - which is what made the Agents dashboard look dead while the agent was answering.
+    if org_id is not None:
+        await _report_run_started_best_effort(
+            organization_id=str(org_id),
+            workflow_id=run_workflow_id,
+            request_id=request_id,
+            collector=collector,
+        )
 
     async def on_state(state: AgentState) -> None:
         if event_bus is not None and org_id is not None:
@@ -369,6 +386,44 @@ def _run_status_from_response(response: AgentResponse) -> str:
         "error": "Failed",
     }
     return status_map.get(str(response.status), "Succeeded")
+
+
+async def _report_run_started_best_effort(
+    *,
+    organization_id: str,
+    workflow_id: str,
+    request_id: str,
+    collector: TelemetryCollector,
+) -> None:
+    """Register the run as ``Running`` before the workflow starts (best-effort).
+
+    The completion report used to be the only one, so no `Running` row was ever written and the
+    `aveline_agent_runs_running_count` gauge had no producer. This is the missing half.
+
+    Deliberately **awaited**, with a short timeout, rather than fired and forgotten: a start report
+    that lost the race to the completion report would arrive at an already-terminal row and be
+    rejected as a conflict. The write is one local HTTP call; the timeout is short because a slow
+    API must not hold up an answer, and a failure is logged rather than raised - the run row is
+    telemetry, and telemetry never fails a query.
+    """
+    try:
+        run = AgentRunTelemetry(
+            workflow_id=workflow_id,
+            organization_id=organization_id,
+            request_id=request_id,
+            conversation_id=collector.conversation_id,
+            customer_id=collector.customer_id,
+            status="Running",
+            started_at=collector.start_utc,
+        )
+        await report_agent_run(run.to_api_payload(), timeout=_RUN_START_REPORT_TIMEOUT_SECONDS)
+    except Exception:  # noqa: BLE001 - run telemetry must never fail the agent query
+        logger.warning(
+            "Failed to report the start of run %s (best-effort); the completion report will still "
+            "open the row.",
+            workflow_id,
+            extra={"action": "report_agent_run_started", "workflow_id": workflow_id},
+        )
 
 
 async def _report_usage_best_effort(

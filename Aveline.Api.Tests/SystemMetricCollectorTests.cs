@@ -35,6 +35,7 @@ public class SystemMetricCollectorTests
         ApiRequestsPerSecond = 2.5,
         ApiErrorRate = 0.02,
         AgentRunsRunning = 3,
+        AgentRunsTotal = 42,
     };
 
     /// <summary>A snapshot with a value for every field the collector can map.</summary>
@@ -135,7 +136,8 @@ public class SystemMetricCollectorTests
         var first = SystemMetricCollector.BuildSamples(FullSnapshot());
         var second = SystemMetricCollector.BuildSamples(FullSnapshot());
 
-        Assert.Equal(13, first.Count);
+        // Fourteen since ADR-027 added `aveline.agent.runs_total` to the fully-populated fixture.
+        Assert.Equal(14, first.Count);
         Assert.All(first, sample =>
         {
             Assert.Equal(64, sample.DimensionHash.Length);

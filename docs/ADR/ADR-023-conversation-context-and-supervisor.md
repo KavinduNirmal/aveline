@@ -1,7 +1,12 @@
 # ADR-023: Layered Conversation Context and the Supervisor LLM
 
 ## Status
-Proposed
+Accepted
+
+> Implementation note: the supervisor, the layered context window, and the transport of those
+> layers into the specialist prompts (see [Consequences](#consequences)) are shipped. The
+> `Kind=Local` telemetry defect recorded in the Context section remains an open prerequisite for
+> routing evaluation.
 
 ## Context
 
@@ -158,7 +163,8 @@ for a verbatim 4k-token inventory dump per turn.
 
 A single supervisor call per turn runs before any specialist and emits a strict structured
 schema: `intent_type`, `agents` (ordered subset of `memory`/`visual`/`commerce`),
-`needs_customer_resolution`, `clarification` (nullable), `safety_flags`. Two constraints:
+`needs_customer_resolution`, `clarification` (nullable), `reply` (nullable), `safety_flags`.
+Three constraints:
 
 - **The supervisor decides; a deterministic driver executes.** LangGraph edges stay
   deterministic and the driver iterates the returned agent list. Routing becomes data, not a
@@ -167,6 +173,14 @@ schema: `intent_type`, `agents` (ordered subset of `memory`/`visual`/`commerce`)
   result degrades to the existing rule-based path when `agent_llm_enabled` is false or no key is
   configured. The current guarantee that "CI and local development stay green without an LLM"
   (`app/llm/runtime.py`) MUST be preserved.
+- **The supervisor may answer a conversational message herself, but only when nobody else
+  will.** `reply` carries a short customer-facing message (a greeting, small talk, a general
+  question); it is rendered only if no specialist produced content, and a plan that routes
+  `visual` or `commerce` never carries one. This replaces the earlier routing *summary* ("Treated
+  this as a general inquiry."), which described the orchestrator rather than answering the person
+  and was the only thing an unresolvable message ever showed. The bound is enforced in code
+  (`app/gate._with_a_bounded_reply`) and in the publisher, not merely requested in the prompt. The
+  offline path keeps a deterministic reply so a greeting is never silently dropped.
 
 ### Decision 4 — Clarification becomes a first-class outcome, not a veto
 
@@ -206,16 +220,32 @@ layer + dynamic context), adding a `supervisor` entry to `AGENT_PROMPTS`. Handbo
   bug is a prerequisite fix.
 - **Prompt injection becomes a real surface.** Once the supervisor consumes conversation text —
   and especially once it consumes handbook or retrieved content — untrusted input is in a
-  privileged prompt. The supervisor's authority MUST be bounded to *routing*, never to executing
-  actions or bypassing approval. No tool may be invoked directly from supervisor output.
+  privileged prompt. The supervisor's authority MUST be bounded to *routing and a reply*, never to
+  executing actions or bypassing approval. No tool may be invoked directly from supervisor output,
+  and the `reply` it writes is text only: it cannot approve, order, or call anything. Decision 3
+  now makes the supervisor a producer of customer-facing text as well as a router, which raises the
+  stakes on that bound without changing it.
+- **The context layers now reach the specialist prompts, not only the supervisor's.** Decision 1's
+  intent — a bounded window that makes referential ambiguity resolvable — is fulfilled for the
+  specialists as well as for routing. This **widens the injection surface from one prompt to
+  three**: the guard above now applies to `memory` and `visual` too, and
+  `SYSTEM_PROMPT.md` states the data-not-instruction rule for every prompt that carries turns. The
+  transport is a two-part contract (each sub-graph state must *declare* the fields; each
+  orchestrator node must *pass* them), because LangGraph drops undeclared state keys silently. See
+  [`docs/architecture/agent-context.md`](../architecture/agent-context.md) for the path, scope
+  (one conversation = one thread = one window), and limits.
+- **Two specialists consume context, and one does so only partially.** `commerce` makes no LLM
+  call, so the fields it now receives are inert. `visual`'s referent parsing is rule-based, so the
+  window reaches its styling commentary but not its search-criteria step. Neither is a behavioural
+  gain, and neither is claimed as one.
 
 ## Out of Scope
 
-- **Aveline customer-support handbook / product-help lane.** This is a separate feature with a
-  different audience (boutique owners and staff asking *how to use Aveline* vs. customers asking
-  about products). It requires a knowledge source that **does not exist in the repository yet**,
-  and a decision between grounded retrieval (RAG, appropriate for a document that changes) and a
-  static prompt block (appropriate for a short, stable doc). To be proposed as its own ADR.
+- **Aveline customer-support handbook / product-help lane.** This was deferred here and is now
+  decided: [ADR-025](ADR-025-handbook-knowledge-base.md) adopts grounded retrieval (a hybrid
+  pgvector + full-text index) over a static prompt block, using the documentation corpus that now
+  exists. The lane is delivered by the supervisor herself under the `aveline_help` intent, with no
+  new subagent.
 - Replacing LangGraph, the checkpointer, or the response envelope.
 - Token-level streaming (`ADR-018` explicitly defers this).
 
@@ -225,4 +255,5 @@ layer + dynamic context), adding a `supervisor` entry to `AGENT_PROMPTS`. Handbo
 - `ADR-018` — Realtime conversation delivery (`agent.status` lifecycle the supervisor emits into)
 - `ADR-019` — Entity mentions (`@name`/`#phone`; the staff-lookup path that legitimately clarifies)
 - `ADR-016` — Conversation inbox and `threadId` linkage
+- [`docs/architecture/agent-context.md`](../architecture/agent-context.md) — how the context layers propagate
 - Implementation plan: `.agents/plans/supervisor-llm-and-conversation-context-implementation-plan.md`

@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../../../shared/widgets/chat_input.dart';
+
 import '../../../conversations/presentation/attachment_picker.dart';
 import '../../../conversations/presentation/client_thread_controller.dart';
 import '../../../conversations/presentation/widgets/attachment_tray.dart';
@@ -125,9 +127,10 @@ class _SalonComposerState extends State<SalonComposer> {
                     textCapitalization: TextCapitalization.sentences,
                     onChanged: (_) => setState(() {}),
                     onSubmitted: (_) => _submit(),
-                    decoration: InputDecoration(
+                    style: chatInputStyle(context),
+                    decoration: chatInputDecoration(
+                      context,
                       hintText: widget.placeholder,
-                      isDense: true,
                     ),
                   ),
                 ),

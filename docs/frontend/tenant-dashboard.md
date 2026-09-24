@@ -796,6 +796,98 @@ use is extracted into `loadNewestPage` so they cannot disagree about which messa
 **The thread header shows the thread's own subject.** A client's thread header now carries the
 client's initial; the blossom was read as "this thread is Aveline's" when the thread is the client's.
 
+## Action bars on AI message blocks
+
+An AI message is a list of typed content blocks, and each block affords a different set of things an
+associate can do with it. The rail below a block is that set, and it is a property of the **block
+type**, not of the bubble: `conversation/blockActions.ts` holds the mapping as plain data, so the
+rules are asserted without rendering anything.
+
+| Block (`type`) | Brief's name | Actions |
+| --- | --- | --- |
+| `suggestion` | suggestion | Copy, Send to customer, Regenerate |
+| `piece` | item | Forward |
+| `look` | lookbook | Copy, Forward, Regenerate |
+
+Anything else — `text`, `at_a_glance`, `sign_off`, `payment`, `courier`, `client_message`,
+`attachment`, `choice`, an unknown type — draws no rail at all. The brief's own names (`item`,
+`lookbook`) are accepted as aliases so a payload written either way resolves to the same rail. There
+is deliberately **no Share**: the brief lists it as a general action, but nothing it could do is a
+thing a customer receives, and it would have sat beside Forward doing nothing.
+
+**The rail is the card's bottom edge, not a row of buttons under it.** `ActionableBlock` puts the
+block's content and the rail inside one `overflow-hidden` box, so the card's own radius clips the
+rail's bottom corners; the segments are joined, separated by a single hairline (`divide-x`), and
+carry no rounding of their own. Nothing here uses the shadcn `Button`, whose pill radius is exactly
+the floating-chip look the rail is not. Inside a tile row (a `piece` card is ~11rem wide) the
+printed word is dropped and the glyph carries the segment, but the accessible name and the tooltip
+do not change — which is the case the brief's "tooltips for icon-only buttons" is written for.
+
+**A disabled segment stays focusable** (`aria-disabled`, never the `disabled` attribute). The reason
+an action is unavailable *is* the tooltip, and a truly disabled button leaves the tab order and takes
+its explanation with it. Every unavailable segment states why in the app's voice: "This thread isn't
+linked to a client yet.", "No other client to forward to yet.", "Aveline is still working on a
+reply.", "Another action is already running on this block."
+
+### Send and Forward leave the boutique; neither is a room post
+
+This is the correction that shaped the feature. `POST …/conversations/{id}/messages` writes a staff
+**note** into the Salon: it reaches no customer, and on a client-bound thread it wakes the agent. A
+"send to the customer" that did that would be the console telling an associate a client was messaged
+when nobody was.
+
+Both delivery actions call `POST …/conversations/{id}/deliver` instead, which resolves the thread's
+client, finds a channel the tenant has connected, hands the words to the provider, and only then
+records the row with `status: Sent`. `ICustomerDeliveryService` owns that path, its own service
+rather than a method on `ConversationService`, because "written into the Salon" and "delivered to the
+customer's channel" are different promises and one class that could do both is how a caller comes to
+confuse them. The two actions differ only in destination: **Send to customer** is the client on
+screen, **Forward** is a client the associate picks from `ForwardPickerDialog`, and the picker offers
+only threads that can actually receive a delivery (a `customerId` or a channel `externalRef`) —
+the client-less concierge is not among them.
+
+Both are confirmed before anything leaves, because a message on a client's phone cannot be recalled.
+On failure the server's own sentence is shown rather than one generic error: "This boutique has not
+connected WhatsApp yet." and "That client has no WhatsApp number on file." are different things to do
+next. Nothing is recorded on a refusal, so the transcript never claims a delivery that did not happen.
+
+**Regenerate re-runs the question.** The endpoint resolves the staff turn the block replied to,
+triggers the agent with the thread's customer context and answers `202`; the fresh blocks arrive as
+`message.created` events like every other agent reply. The rail therefore holds a per-block pending
+state on the *request* and the thread's existing working indicator carries the wait. Regenerate is
+disabled while the agent is already answering, so two runs cannot race the same turn.
+
+**Recorded deviation from the brief.** The brief asks that Regenerate "replace the block on
+completion". Stored message rows are immutable history: the superseded block stays in the transcript
+and the fresh reply is appended, because a view-level replacement would silently reappear on the next
+read and the alternative — deleting or rewriting a stored row — trades the audit trail for a cosmetic
+detail. A real replacement needs a `supersededByMessageId` column and a read-path filter; it is
+raised as an open question in the PR rather than faked here.
+
+### Per-block state and where it lives
+
+`useBlockActions` is instantiated once per thread surface — the Salon section and the Aveline drawer
+each hold their own — so one surface's in-flight action cannot disable the other's. Its pending map is
+keyed by **message id**, so one block can be mid-delivery while another is mid-regenerate, and it is
+what disables the rest of a block's segments while one runs: two actions on the same content would
+race each other. Copy and Forward are wired by the rail's `BlockActionBridge`; a surface that wired
+no handler for an action drops that segment rather than drawing it dead.
+
+The drawer's rail has no client of its own — the concierge Salon is client-less — so its **Send to
+customer** segment is refused with its reason while **Forward** still works, picking a client whose
+channel the delivery goes out on.
+
+### Tests
+
+`blockActions.test.ts` (node) asserts the mapping per block type, that no other type draws a rail,
+the availability rules and their sentences, and the payload each action hands over.
+`BlockActionBar.dom.test.tsx` asserts the joined shape (one divided strip, `border-t`, no pill
+radius), keyboard reachability, the busy state, and that a disabled segment stays focusable and shows
+its reason as a tooltip. `blockActionRail.dom.test.tsx` drives the whole flow through `BlockList`
+(render block → press segment → assert the outcome) and that the rail is the card's last child.
+`useBlockActions.dom.test.tsx` covers each handler, the confirmation in front of a delivery, the
+picker's destinations, the server's refusal sentence, and per-block pending isolation.
+
 ## Coverage
 
 The tenant subtree was measured by **nothing**: the global run excludes `src/components/**`,

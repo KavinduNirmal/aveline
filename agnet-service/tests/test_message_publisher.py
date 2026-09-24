@@ -3,7 +3,8 @@
 The concierge workflow produces a result; the publisher turns it into ``message.created``
 events attributed to the personas that produced content:
 
-- **Aveline** (the orchestrator) always emits a summary ``Note``.
+- **Aveline** (the entry point) emits a reply ``Note`` only when no specialist produced
+  content; she never emits a routing summary.
 - **Ava** (memory) emits only when the memory agent produced real customer content.
 - **Elle**/**Lina** emit only when their output carries content (their stubs are wired by
   Issue #151); a bare ``{"ran": true}`` produces no message.
@@ -52,6 +53,8 @@ def _result_memory_skipped() -> AgentResponse:
         status=AgentStatus.success,
         output={
             "intent": "general_inquiry",
+            # The supervisor's own reply: the run routed nothing that could answer.
+            "reply": "Hello! I'm Aveline. What are you looking for today?",
             "memory": {
                 "agent": "memory",
                 "ran": True,
@@ -64,12 +67,40 @@ def _result_memory_skipped() -> AgentResponse:
     )
 
 
-def test_build_agent_messages_always_includes_aveline_summary():
-    messages = build_agent_messages(_result_with_memory())
+def _result_general_inquiry_with_reply() -> AgentResponse:
+    return _result_memory_skipped()
 
-    assert any(m["author"]["agent_key"] == "aveline" for m in messages)
-    assert all(m["kind"] == "Note" for m in messages)
-    assert all("blocks" in m for m in messages)
+
+def test_build_agent_messages_attributes_aveline_when_she_replied():
+    messages = build_agent_messages(_result_general_inquiry_with_reply())
+
+    aveline = [m for m in messages if m["author"]["agent_key"] == "aveline"]
+    assert len(aveline) == 1
+    assert aveline[0]["kind"] == "Note"
+    assert aveline[0]["blocks"] == [
+        {"type": "text", "text": "Hello! I'm Aveline. What are you looking for today?"}
+    ]
+
+
+def test_aveline_is_silent_when_a_specialist_spoke():
+    # _result_with_memory is an item_search answered by Ava's draft: no routing note, no second reply.
+    messages = build_agent_messages(_result_with_memory())
+    keys = {m["author"]["agent_key"] for m in messages}
+
+    assert "aveline" not in keys
+    assert "ava" in keys
+
+
+def test_no_message_ever_carries_the_routing_summary():
+    for result in (_result_with_memory(), _result_general_inquiry_with_reply()):
+        text = " ".join(
+            block.get("text", "")
+            for m in build_agent_messages(result)
+            for block in m["blocks"]
+            if isinstance(block, dict) and "text" in block
+        )
+        assert "Treated this as" not in text
+
 
 
 def test_build_agent_messages_attributes_ava_when_it_produced_real_content():
@@ -167,8 +198,23 @@ async def test_publish_agent_messages_publishes_one_event_per_message():
     bus = FakeBus()
     org_id = uuid4()
     thread_id = "thread-1"
+    two_specialists = AgentResponse(
+        status=AgentStatus.success,
+        output={
+            "intent": "item_search",
+            "memory": _memory_with_customer(),
+            "visual": {
+                "agent": "visual",
+                "ran": True,
+                "status": "success",
+                "suggestion": "These pieces match the request.",
+                "items": [{"itemId": "i1", "name": "Silk Slip Dress", "price": 24000, "stock": 2}],
+            },
+            "commerce": None,
+        },
+    )
 
-    await publish_agent_messages(bus, org_id, thread_id, _result_with_memory())
+    await publish_agent_messages(bus, org_id, thread_id, two_specialists)
 
     assert len(bus.published) >= 2
     for event_type, published_org, payload in bus.published:

@@ -110,7 +110,7 @@ def test_parsed_intent_accepts_every_intent_the_gate_can_produce():
 @pytest.mark.parametrize(
     "intent_type",
     ["order_placement", "item_search", "pricing_query", "customer_preference",
-     "event_query", "out_of_scope", "general_inquiry"],
+     "event_query", "out_of_scope", "general_inquiry", "aveline_help"],
 )
 def test_parsed_intent_validates_each_gate_intent(intent_type):
     parsed = ParsedIntent(intent_type=intent_type)

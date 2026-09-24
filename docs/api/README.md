@@ -644,6 +644,8 @@ is optional to the consumer. Registration is via `/api/v1/users/me/devices`
 | `GET` | `/api/v1/orgs/{organizationId:guid}/conversations/{conversationId:guid}` | — | `ConversationDto` |
 | `GET` | `.../{conversationId:guid}/messages` | `page`, `pageSize`, `around?` | `MessagePage` |
 | `POST` | `.../{conversationId:guid}/messages` | `{ text }` | `MessageDto` |
+| `POST` | `.../{conversationId:guid}/deliver` | `{ text, clientMessageId? }` | `DeliveryResultDto` |
+| `POST` | `.../{conversationId:guid}/messages/{messageId:guid}/regenerate` | — | `202` |
 | `POST` | `.../{conversationId:guid}/select-customer` | `{ customerId, query? }` | `200` |
 | `POST` | `.../messages/{messageId:guid}/sign-off` | `{ approved, contentHash }` | `200` |
 
@@ -673,6 +675,36 @@ contentBlocks, contentHash, replyToMessageId, status, createdAt }`.
 **Sign-off is content-hash guarded.** The client must echo the `contentHash` of the
 message it approved; a mismatch is rejected so an approval cannot be applied to
 edited content (`Modules/Conversations/Services/ContentHash.cs`).
+
+**`deliver` is the only outbound customer path, and it is not `messages`.** `POST …/messages`
+writes a staff **note** into the Salon: it reaches no customer and, on a client-bound thread, it
+triggers the agent. `POST …/deliver` is the opposite promise — it resolves the thread's client,
+finds a channel the tenant has connected, hands the words to the provider and then records the row
+with `status: Sent`, which is what makes the transcript say what actually went out. The two are
+separate routes on purpose (`ICustomerDeliveryService`).
+
+`DeliveryResultDto`: `{ delivered, channel?, providerMessageId?, message?, refusal?, detail? }`.
+`refusal` is a closed vocabulary — `conversation_not_found | no_customer | no_channel_handle |
+channel_not_connected | channel_unsupported | provider_refused` — and `detail` is the sentence to
+show the associate, because "you have not connected WhatsApp" and "that client has no number on
+file" are different things to do next. Statuses: `404` unknown thread, `409` this thread or this
+tenant cannot deliver at all, `502` the provider was reached and refused. **Nothing is recorded on
+a refusal.** A replay carrying the same `clientMessageId` whose stored row already went out is
+answered from that row without a second send.
+
+Channel resolution: the thread's `externalRef` (the handle an inbound message arrived from) is
+preferred over the client's `phoneNumber`, so a number edited on the customer record cannot
+silently redirect a reply to a different handset. WhatsApp Cloud API is the only channel with a
+provider today; Instagram has credentials but no provider and no webhook, so an Instagram-only
+tenant is told exactly that rather than handed a send that never happens.
+
+**`regenerate` re-runs the question, not the answer.** It resolves the staff turn the message
+replied to (falling back to the message's own first block text), triggers the agent with the
+thread's customer context, and answers `202`: the fresh blocks arrive as `message.created` events
+like every other agent reply, so there is no body. `404` when the message is not in the thread. It
+writes no message and does not touch the superseded block, whose stored row is immutable history a
+later read would return anyway.
+
 **Errors:** `400` empty message text / missing content hash / hash mismatch;
 `401` empty; `404 { "message": "Conversation not found." }`.
 **Source:** `Endpoints/ConversationEndpoints.cs:22-217`,
@@ -767,6 +799,72 @@ ingestion idempotent on `(organizationId, workflowId)`.
 #### `GET /internal/usage/summary/{orgId:guid}` and `GET /internal/usage/records/{orgId:guid}`
 
 Internal reads. `records` returns a **bare array** and does not clamp `page`.
+
+#### `GET /internal/usage/tenant/{organizationId:guid}`
+
+Internal read. **Not callable by frontends.** One organisation's own account position, for Aveline
+to answer "how many Blossoms do I have left?" (ADR-026). The agent service reads it from the
+`load_tenant_usage` node, and only when the request that reached it carried `staff_query: true`, so
+a customer message never causes this route to be called at all.
+
+**Response `200`:**
+
+```json
+{
+  "organizationId": "…",
+  "blossoms": {
+    "organizationId": "…", "periodStart": "2026-09-01T00:00:00Z",
+    "periodEnd": "2026-09-30T23:59:59Z", "periodIsClosed": false, "planTier": "Bloom",
+    "monthlyBlossomLimit": 500, "blossomGranted": 100, "blossomAdjusted": 0,
+    "blossomUsed": 87.4, "blossomRemaining": 512.6, "percentUsed": 17.48,
+    "lowBalanceThresholdPercent": 20, "asOf": "…"
+  },
+  "staff": { "key": "staff.max", "used": 2, "limit": 3, "remaining": 1,
+             "percentUsed": 66.67, "isHardLimit": true },
+  "customers": { "key": "customers.active.max", "used": 118, "limit": 250, "remaining": 132,
+                 "percentUsed": 47.2, "isHardLimit": true },
+  "customerCountBasis": "customers active in the last 90 days (… )",
+  "blossomsAreLow": false,
+  "asOf": "…"
+}
+```
+
+**Errors:** `404 { "message": "…" }` when the organisation does not exist; `401` empty.
+
+**Composition, not calculation.** `blossoms` is `BlossomBalanceDto`, the same projection
+`GET /api/v1/orgs/{organizationId}/blossoms/balance` returns, so it carries the reconciled
+`blossomRemaining` rather than one derived from the limit; `staff` and `customers` come from
+`ISubscriptionService.GetEntitlementUsageAsync`. Entitlement usage is read **first** because the
+balance read creates the period account on demand, so it validates the tenant before anything is
+written. `blossoms.planTier` is the billing period's snapshot (written by the rollover job, not by a
+mid-period plan change) and is deliberately **not** shown to the model.
+
+#### `GET /internal/customers/book-summary?organizationId={guid}&limit={int}`
+
+Internal read. **Not callable by frontends.** The other half of ADR-026's lane: the client **book**,
+for "who are our customers?". The agent service reads this instead of the allowance snapshot when
+the question is about the clients themselves, never both.
+
+**Response `200`:**
+
+```json
+{
+  "total": 214,
+  "activitySince": "2026-09-10T00:00:00Z",
+  "highlights": [
+    { "customerId": "…", "name": "Kasha Vivian Perera", "level": "level2",
+      "activity": "The customer has a party", "lastActivityAtUtc": "2026-09-23T20:00:09Z" }
+  ]
+}
+```
+
+**Errors:** `401` empty.
+
+`total` counts the book (soft-deleted excluded) and is a **larger number** than the
+`customers.active.max` allowance the tenant endpoint reports — they measure different things and are
+deliberately not reconciled. `highlights` is verbatim what `GetHighlightsAsync` returns for Home
+(newest activity first, within a 14-day window), so a client cannot be named here who is not in the
+book. `limit` bounds the *named* clients, not the book, and is clamped by the service.
 
 ### B.10 Webhooks
 

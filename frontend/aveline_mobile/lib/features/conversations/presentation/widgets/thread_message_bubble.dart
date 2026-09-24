@@ -2,8 +2,11 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+import '../../../../shared/persona.dart';
 import '../../../../shared/utils/date_formatter.dart';
 import '../../domain/thread_message.dart';
+import 'block_action_rail.dart';
+import 'client_channel_surface.dart';
 import 'conversation_avatar.dart';
 import 'thread_blocks.dart';
 
@@ -36,6 +39,7 @@ class ThreadMessageBubble extends StatelessWidget {
     this.onSelectCustomer,
     this.loadAttachment,
     this.openAttachment,
+    this.bridge,
   });
 
   final ThreadMessage message;
@@ -69,6 +73,12 @@ class ThreadMessageBubble extends StatelessWidget {
   /// Opens a document through the platform viewer.
   final Future<void> Function(Uint8List bytes, String fileName)? openAttachment;
 
+  /// The action rail's wiring for the thread the bubble is drawn in.
+  ///
+  /// Threaded down to the block renderer rather than read from a context, so the bubble
+  /// stays drawable on its own and simply gets no rail when there is no thread behind it.
+  final BlockActionBridge? bridge;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -79,6 +89,11 @@ class ThreadMessageBubble extends StatelessWidget {
     // decision cancels is a `Note`, and it must still read DISMISSED rather than vanish.
     final dismissed = message.status == MessageStatus.cancelled;
     final note = message.isInternalNote;
+    // The client's own words, relayed from their channel. The domain already promotes
+    // the `client_message` block's text onto the message, so the surface draws that
+    // and the handle names where it came from.
+    final isChannel =
+        message.isFromClient || message.clientMessageFrom != null;
 
     final radius = BorderRadius.only(
       topLeft: const Radius.circular(16),
@@ -134,60 +149,60 @@ class ThreadMessageBubble extends StatelessWidget {
                 const SizedBox(width: 8),
               ],
               Flexible(
-                child: Container(
-                  key: ValueKey('thread_message_${message.id}'),
+                child: ConstrainedBox(
                   constraints: BoxConstraints(
                     maxWidth: MediaQuery.of(context).size.width * 0.78,
                   ),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: _fill(scheme, note: note, dismissed: dismissed),
-                    borderRadius: radius,
-                    border: !message.isFromStaff || note || dismissed
-                        ? Border.all(
-                            color: note
-                                ? _noteInk(scheme).withValues(alpha: 0.35)
-                                : scheme.outlineVariant,
-                          )
-                        : null,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (message.clientMessageFrom != null) ...[
-                        Text(
-                          message.clientMessageFrom!,
-                          key: ValueKey('thread_client_handle_${message.id}'),
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                            fontSize: 10,
+                  child: isChannel
+                      ? _channelSurface(context, body, radius)
+                      : Container(
+                          key: ValueKey('thread_message_${message.id}'),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 9,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _fill(
+                              scheme,
+                              note: note,
+                              dismissed: dismissed,
+                            ),
+                            borderRadius: radius,
+                            border: !message.isFromStaff || note || dismissed
+                                ? Border.all(
+                                    color: note
+                                        ? _noteInk(scheme).withValues(alpha: 0.35)
+                                        : scheme.outlineVariant,
+                                  )
+                                : null,
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (body.isNotEmpty ||
+                                  message.bodyBlocks.isEmpty)
+                                Text(
+                                  body.isEmpty ? 'Update' : body,
+                                  style: _bodyStyle(
+                                    context,
+                                    message.isFromStaff
+                                        ? (note || dismissed
+                                              ? scheme.onSurfaceVariant
+                                              : scheme.onPrimary)
+                                        : scheme.onSurface,
+                                  ),
+                                ),
+                              ThreadMessageBlocks(
+                                message: message,
+                                onSelectCustomer: onSelectCustomer,
+                                loadAttachment: loadAttachment,
+                                openAttachment: openAttachment,
+                                bridge: bridge,
+                              ),
+                            ],
                           ),
                         ),
-                        const SizedBox(height: 2),
-                      ],
-                      if (body.isNotEmpty || message.bodyBlocks.isEmpty)
-                        Text(
-                          body.isEmpty ? 'Update' : body,
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: message.isFromStaff
-                                ? (note || dismissed
-                                      ? scheme.onSurfaceVariant
-                                      : scheme.onPrimary)
-                                : scheme.onSurface,
-                          ),
-                        ),
-                      ThreadMessageBlocks(
-                        message: message,
-                        onSelectCustomer: onSelectCustomer,
-                        loadAttachment: loadAttachment,
-                        openAttachment: openAttachment,
-                      ),
-                    ],
-                  ),
                 ),
               ),
             ],
@@ -262,23 +277,49 @@ class ThreadMessageBubble extends StatelessWidget {
 
   /// The ink a note wears, so "not sent" reads before the label is read.
   static Color _noteInk(ColorScheme scheme) => const Color(0xFF9A6B2F);
+
+  /// The customer's relayed message, drawn as the channel surface.
+  ///
+  /// The surface *is* the message here rather than a card inside a bubble: a bubble
+  /// wrapped around the channel would be two frames for one message and would set the
+  /// client's words a level deeper than everyone else's, which is the opposite of what
+  /// the treatment is for. Anything else the message carries — a photo they sent —
+  /// rides on the channel's canvas under their words.
+  Widget _channelSurface(
+    BuildContext context,
+    String words,
+    BorderRadius radius,
+  ) {
+    return ClientChannelSurface(
+      key: ValueKey('thread_message_${message.id}'),
+      text: words.isEmpty ? 'Update' : words,
+      handle: message.clientMessageFrom,
+      borderRadius: radius,
+      child: ThreadMessageBlocks(
+        message: message,
+        onSelectCustomer: onSelectCustomer,
+        loadAttachment: loadAttachment,
+        openAttachment: openAttachment,
+        bridge: bridge,
+      ),
+    );
+  }
 }
 
-/// The persona names an agent's words can wear.
-const Map<String, String> _agentPersonaNames = {
-  'aveline': 'Aveline',
-  'ava': 'Ava',
-  'elle': 'Elle',
-  'lina': 'Lina',
-};
+/// A message's prose: the web's `text-sm`.
+///
+/// A chat surface carries more words per screen than anything else in the app, and
+/// the theme's 16px body made a thread read as a document rather than as a
+/// conversation. The larger body sizes stay for the forms and panels they suit.
+TextStyle? _bodyStyle(BuildContext context, Color ink) =>
+    Theme.of(context).textTheme.bodyMedium?.copyWith(
+          fontSize: 14,
+          height: 1.55,
+          color: ink,
+        );
 
 /// The name to credit an agent's words to, falling back to the umbrella brand.
-String agentPersonaName(String? agentKey) {
-  if (agentKey == null || agentKey.isEmpty) {
-    return 'Aveline';
-  }
-  return _agentPersonaNames[agentKey.toLowerCase()] ?? 'Aveline';
-}
+String agentPersonaName(String? agentKey) => personaForAgent(agentKey).name;
 
 /// The persona a reply is credited to, above its bubble.
 ///
@@ -291,14 +332,18 @@ class _AgentName extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    // Each persona keeps its own accent, as it does in the Salon. A thread where every
+    // agent's name is the same wine reads as one voice, and the point of crediting a
+    // message to Elle or Ava is that they are not the same voice.
+    final persona = personaForAgent(agentKey);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 6),
       child: Text(
-        agentPersonaName(agentKey),
-        style: theme.textTheme.labelSmall?.copyWith(
-          color: theme.colorScheme.primary,
+        persona.name,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: persona.accent,
+          fontSize: 11,
           fontWeight: FontWeight.w600,
         ),
       ),

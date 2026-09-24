@@ -33,7 +33,12 @@ from app.agents.visual_insight.routing import route_after_visual
 from app.context import compact
 from app.core.config import get_settings
 from app.customer_resolution import resolve_customer
-from app.gate import classify_by_rules, supervise
+from app.gate import (
+    classify_by_rules,
+    is_customer_book_question,
+    may_read_tenant_account,
+    supervise,
+)
 from app.llm.runtime import (
     memory_llm_or_none,
     supervisor_llm_or_none,
@@ -71,6 +76,18 @@ class ConciergeState(TypedDict, total=False):
     history: list[dict[str, Any]]
     thread_summary: str | None
     pinned_slots: dict[str, str]
+    # Handbook excerpts retrieved for a platform question (ADR-025). Retrieved before the
+    # supervisor so the model composes a grounded answer rather than routing one.
+    handbook_hits: list[dict[str, Any]]
+    # This boutique's own account figures - Blossom balance, seat and customer allowances - for an
+    # account question, and only when the request was allowed to see them (ADR-026). Absent means
+    # "not fetched or not permitted", and the reply says so rather than guessing.
+    tenant_usage: dict[str, Any] | None
+    # The boutique's client book - its size and a few recently active clients - for a "who are our
+    # customers?" question, under exactly the same audience gate (ADR-026). Only one of the two is
+    # ever fetched: the allowance and the book answer from different numbers, and putting both in
+    # one prompt invites the model to confuse "active customers against the plan" with "the book".
+    customer_book: dict[str, Any] | None
     intent: dict[str, Any] | None
     # True when the run is backed by a checkpoint thread. A real pause needs one: `interrupt()`
     # writes the pause into the checkpoint, and without a thread there is nothing to resume.
@@ -146,6 +163,126 @@ async def run_load_context(state: ConciergeState) -> dict[str, Any]:
     }
 
 
+async def run_load_handbook(state: ConciergeState) -> dict[str, Any]:
+    """Retrieve handbook excerpts for a platform question (ADR-025).
+
+    Runs between ``load_context`` and ``supervisor`` so the model composes a grounded answer in the
+    same call that would otherwise only route. The trigger is deterministic rather than
+    model-chosen: for exactly the two intents the supervisor is consulted for (``general_inquiry``
+    and ``aveline_help``) one embedding call and one indexed hybrid query is cheap, and it means the
+    model is never handed a handbook it did not need.
+
+    Best-effort, exactly like ``load_context``: a retrieval failure leaves the excerpts empty and
+    the run proceeds, because losing the handbook degrades an answer but must never prevent one.
+    """
+    settings = get_settings()
+    if not settings.handbook_enabled:
+        return {"handbook_hits": []}
+
+    intent = classify_by_rules(state.get("message", ""))
+    if intent.intent_type not in {"general_inquiry", "aveline_help"}:
+        return {"handbook_hits": []}
+
+    if supervisor_llm_or_none(settings) is None:
+        # Without a model there is nothing to ground an answer in, so the retrieval would be pure
+        # cost. The offline path stays exactly as it was before the handbook existed.
+        return {"handbook_hits": []}
+
+    try:
+        hits = await ToolRegistry().search_handbook(
+            state.get("message", ""),
+            top_k=settings.handbook_top_k,
+            audience=settings.handbook_audience,
+            min_similarity=settings.handbook_min_similarity,
+        )
+    except Exception:  # noqa: BLE001 - the handbook is an enhancement, never a precondition
+        logger.exception("Handbook retrieval failed; continuing without handbook context.")
+        return {"handbook_hits": []}
+
+    logger.debug("Handbook retrieved %d excerpt(s).", len(hits))
+    return {"handbook_hits": hits}
+
+
+async def run_load_tenant_usage(state: ConciergeState) -> dict[str, Any]:
+    """Fetch this boutique's own account figures for an account question (ADR-026).
+
+    Runs between ``load_handbook`` and ``supervisor``, for the same reason the handbook does: the
+    supervisor composes the answer in the call that would otherwise only route it. Four gates, and
+    all of them must pass before anything is fetched:
+
+    1. **The feature is on.** ``tenant_awareness_enabled`` is the operator's kill switch.
+    2. **Audience.** Only a request that declared itself staff may see the figures
+       (:func:`app.gate.may_read_tenant_account`). The API sends ``staff_query: true`` on the staff
+       paths and ``false`` on the inbound customer path, so a customer message never reaches the
+       tenant endpoint at all - the leak is closed before the fetch rather than after it.
+    3. **Relevance.** Only an account question needs the figures; fetching them for a product
+       question would be a query the model was never going to use.
+    4. **A tenant.** Without an organisation there is nothing to read.
+
+    Best-effort, exactly like its neighbours: a fetch failure leaves the figures absent and the run
+    proceeds, because losing the numbers degrades an answer but must never prevent one. Unlike the
+    handbook, this is *not* skipped when no model is configured: the figures are data, so the reply
+    can be built from them with no LLM at all.
+    """
+    settings = get_settings()
+    if not settings.tenant_awareness_enabled:
+        return {"tenant_usage": None, "customer_book": None}
+
+    if not may_read_tenant_account(state.get("org_context")):
+        return {"tenant_usage": None, "customer_book": None}
+
+    message = state.get("message", "")
+    if classify_by_rules(message).intent_type != "tenant_account":
+        return {"tenant_usage": None, "customer_book": None}
+
+    org_context = state.get("org_context") or {}
+    org_id = org_context.get("organization_id") or org_context.get("org_id")
+    if not org_id:
+        return {"tenant_usage": None, "customer_book": None}
+
+    registry = ToolRegistry()
+
+    # One read, chosen by what was asked. The two answer from different numbers - the book's size
+    # versus the plan's active-customer allowance - so handing the model both is how it would come
+    # to report one as the other.
+    if is_customer_book_question(message):
+        try:
+            book = await registry.get_customer_book_summary(str(org_id))
+        except Exception:  # noqa: BLE001 - the book is an enhancement, never a precondition
+            logger.exception("Customer book fetch failed; continuing without it.")
+            return {"tenant_usage": None, "customer_book": None}
+        return {
+            "tenant_usage": None,
+            "customer_book": book if isinstance(book, dict) else None,
+        }
+
+    try:
+        snapshot = await registry.get_tenant_usage(str(org_id))
+    except Exception:  # noqa: BLE001 - account figures are an enhancement, never a precondition
+        logger.exception("Tenant account fetch failed; continuing without the figures.")
+        return {"tenant_usage": None, "customer_book": None}
+
+    return {
+        "tenant_usage": snapshot if isinstance(snapshot, dict) else None,
+        "customer_book": None,
+    }
+
+
+def _context_fields(state: ConciergeState) -> dict[str, Any]:
+    """The three ADR-023 context layers, ready to spread into a sub-graph's initial state.
+
+    Defined once rather than written out at each of the four invocation sites: the transport is
+    the same everywhere, and a single definition is what stops the next sub-graph invocation from
+    quietly omitting it. The sub-graph's own schema must also declare the fields - LangGraph drops
+    undeclared state keys without warning - which is why they are pinned by a schema guard test.
+    """
+    return {
+        "history": state.get("history") or [],
+        "thread_summary": state.get("thread_summary"),
+        "pinned_slots": state.get("pinned_slots") or {},
+    }
+
+
 async def run_supervisor(state: ConciergeState) -> dict[str, Any]:
     """Decide how the message is handled, as the routing authority (ADR-023, Decision 3).
 
@@ -160,7 +297,10 @@ async def run_supervisor(state: ConciergeState) -> dict[str, Any]:
     """
     settings = get_settings()
     rule_intent = classify_by_rules(state["message"])
-    consultable = rule_intent.intent_type == "general_inquiry"
+    # The supervisor is consulted for the intents it can actually act on: an unclassifiable
+    # message it may route, a platform question it composes an answer to from the handbook, and an
+    # account question it composes from the fetched figures (ADR-026).
+    consultable = rule_intent.intent_type in {"general_inquiry", "aveline_help", "tenant_account"}
 
     plan = await supervise(
         state["message"],
@@ -171,6 +311,9 @@ async def run_supervisor(state: ConciergeState) -> dict[str, Any]:
         history=state.get("history"),
         thread_summary=state.get("thread_summary"),
         pinned_slots=state.get("pinned_slots"),
+        handbook_hits=state.get("handbook_hits"),
+        tenant_usage=state.get("tenant_usage"),
+        customer_book=state.get("customer_book"),
     )
     logger.debug(
         "Supervisor decided %s -> agents=%s clarification=%s",
@@ -259,6 +402,7 @@ async def run_memory_agent(state: ConciergeState) -> dict[str, Any]:
         "channel": channel or "whatsapp",
         "direction": direction,
         "staff_query": staff_query,
+        **_context_fields(state),
     }
     result = await graph.ainvoke(mem_state)
     output = result.get("output") or {
@@ -330,6 +474,7 @@ async def run_visual_agent(state: ConciergeState) -> dict[str, Any]:
         "channel": org_context.get("channel", "internal"),
         "direction": direction,
         "staff_query": bool(staff_query),
+        **_context_fields(state),
     }
     result = await graph.ainvoke(vis_state)
     output = result.get("output") or {
@@ -387,6 +532,7 @@ async def run_commerce_agent(state: ConciergeState) -> dict[str, Any]:
         "delivery_address": delivery_address,
         "channel": channel,
         "message": state.get("message", ""),
+        **_context_fields(state),
     }
     result = await graph.ainvoke(commerce_state)
     output = result.get("output") or {
@@ -453,6 +599,7 @@ async def run_commerce_approval(state: ConciergeState) -> dict[str, Any]:
         "message": state.get("message", ""),
         "approval_decision": decision,
         "approval_comment": comments,
+        **_context_fields(state),
     }
 
     graph = build_commerce_graph(ToolRegistry(), org_context=org_context)
@@ -565,6 +712,13 @@ def formulate_response(state: ConciergeState) -> dict[str, Any]:
         clarification = _clarification_for(state)
         output: dict[str, Any] = {
             "intent": intent.get("intent_type", "general_inquiry"),
+            # The supervisor's own message, used only when no specialist produces content
+            # (ADR-023). Null means "the specialists answer", not "say nothing".
+            "reply": intent.get("reply"),
+            # The provenance of the excerpts a platform answer was grounded in, built from the
+            # retrieved hits rather than from model text so a citation cannot be invented
+            # (ADR-025).
+            "handbook_sources": _handbook_sources(state.get("handbook_hits")),
         }
         if clarification is not None:
             # The run asked instead of acting, so there is no specialist content to attach. This is
@@ -582,6 +736,41 @@ def formulate_response(state: ConciergeState) -> dict[str, Any]:
             metadata=metadata,
         )
     return {"response": response.model_dump()}
+
+
+def _handbook_sources(hits: Any) -> list[dict[str, Any]]:
+    """The provenance of the excerpts a platform answer was grounded in (ADR-025).
+
+    One entry per distinct source page, not per chunk: a reader wants to know which pages an answer
+    came from, and listing five chunks from the same page reads as five sources. Built here from
+    the retrieved hits rather than from the model's text, so the citation is deterministic and
+    cannot be invented.
+    """
+    if not isinstance(hits, list):
+        return []
+
+    sources: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for hit in hits:
+        if not isinstance(hit, dict):
+            continue
+
+        title = str(hit.get("sourceTitle") or hit.get("source_title") or "").strip()
+        if not title or title in seen:
+            continue
+
+        seen.add(title)
+        sources.append(
+            {
+                "sourceKey": str(hit.get("sourceKey") or hit.get("source_key") or "").strip(),
+                "title": title,
+                "heading": str(hit.get("headingPath") or hit.get("heading_path") or "").strip(),
+                "url": str(hit.get("sourceUrl") or hit.get("source_url") or "").strip(),
+            }
+        )
+
+    return sources
 
 
 def _build_usage_metadata(usage: dict[str, Any] | None) -> AgentMetadata:
@@ -630,10 +819,18 @@ def _route_after_resolve(state: ConciergeState) -> str:
     if _clarification_for(state) is not None:
         return "formulate_response"
 
+    intent = state.get("intent") or {}
+
+    # A platform question is answered, not routed (ADR-025). Aveline's grounded reply is already
+    # composed, so running Ava over it would only add a customer brief nobody asked for - and for a
+    # staff question about the product there is no customer to brief on. An account question is the
+    # same shape with live figures instead of documentation (ADR-026).
+    if intent.get("intent_type") in {"aveline_help", "tenant_account"} and intent.get("reply"):
+        return "formulate_response"
+
     # A resolved-or-not miss is not a veto. Only skip the memory agent when the supervisor
     # explicitly said customer resolution is a precondition and it is genuinely out of reach
     # (no customer id and no phone to look up).
-    intent = state.get("intent") or {}
     if intent.get("needs_customer_resolution"):
         resolution = state.get("resolution") or {}
         org_context = state.get("org_context") or {}
@@ -831,6 +1028,8 @@ def build_concierge_graph(
         return _instrumented_node(name, node_fn, collector)
 
     graph.add_node("load_context", node("load_context", run_load_context))
+    graph.add_node("load_handbook", node("load_handbook", run_load_handbook))
+    graph.add_node("load_tenant_usage", node("load_tenant_usage", run_load_tenant_usage))
     graph.add_node("supervisor", node("supervisor", run_supervisor))
     graph.add_node("resolve_customer", node("resolve_customer", run_resolve_customer))
     graph.add_node("memory_agent", node("memory_agent", run_memory_agent))
@@ -840,7 +1039,13 @@ def build_concierge_graph(
     graph.add_node("formulate_response", node("formulate_response", formulate_response))
 
     graph.add_edge(START, "load_context")
-    graph.add_edge("load_context", "supervisor")
+    # The handbook is retrieved before the supervisor, so a platform question can be answered in
+    # the same call that would otherwise only route it (ADR-025).
+    graph.add_edge("load_context", "load_handbook")
+    # The boutique's own figures are read after the handbook, before the supervisor, so an account
+    # question is answered in the same call that would otherwise only route it (ADR-026).
+    graph.add_edge("load_handbook", "load_tenant_usage")
+    graph.add_edge("load_tenant_usage", "supervisor")
     graph.add_conditional_edges("supervisor", _route_after_intent)
     graph.add_conditional_edges("resolve_customer", _route_after_resolve)
     graph.add_conditional_edges("memory_agent", _route_after_memory)
@@ -891,6 +1096,9 @@ async def run_concierge(
         "history": [],
         "thread_summary": None,
         "pinned_slots": {},
+        "handbook_hits": [],
+        "tenant_usage": None,
+        "customer_book": None,
         "intent": None,
         "checkpointing": thread_id is not None,
         "resolution": None,

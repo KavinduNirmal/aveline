@@ -600,3 +600,428 @@ async def test_load_context_bounds_a_long_transcript(monkeypatch):
     assert 0 < len(result["history"]) < len(items)
     # The newest turn is always kept: a window without the message just received is useless.
     assert result["history"][-1]["id"] == "m59"
+
+
+# ---------------------------------------------------------------------------
+# Conversation-context transport into the sub-graphs (ADR-023)
+#
+# The orchestrator builds each sub-graph's initial state as an explicit dictionary. Omitting a
+# context key there loses it silently, because the sub-graph's schema declares what it can hold.
+# These tests pin the orchestrator half; the schema half is pinned inside each sub-graph.
+# ---------------------------------------------------------------------------
+
+_CONTEXT = {
+    "history": [
+        {"id": "m1", "authorKind": "Customer", "text": "Any pinkish gowns?"},
+        {"id": "m2", "authorKind": "Agent", "text": "We have three."},
+    ],
+    "thread_summary": "She is shopping for a December wedding.",
+    "pinned_slots": {"budget": "50k"},
+}
+
+
+class _CapturingSubgraph:
+    """A sub-graph stand-in that records the exact state it is invoked with."""
+
+    def __init__(self, sink: dict) -> None:
+        self._sink = sink
+
+    async def ainvoke(self, state: dict) -> dict:
+        self._sink.update(state)
+        return {"output": {"status": "success", "agent": "stub", "ran": True}}
+
+
+def _assert_context_reached(captured: dict) -> None:
+    assert captured["history"] == _CONTEXT["history"]
+    assert captured["thread_summary"] == _CONTEXT["thread_summary"]
+    assert captured["pinned_slots"] == _CONTEXT["pinned_slots"]
+
+
+@pytest.mark.asyncio
+async def test_memory_agent_forwards_the_conversation_context(monkeypatch):
+    from app.workflows.concierge_workflow import run_memory_agent
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.build_memory_graph",
+        lambda registry, llm=None, org_context=None: _CapturingSubgraph(captured),
+    )
+    monkeypatch.setattr("app.workflows.concierge_workflow.ToolRegistry", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.memory_llm_or_none", lambda settings: None
+    )
+
+    await run_memory_agent({
+        "message": "the pink one",
+        "org_context": {
+            "organization_id": REAL_ORG,
+            "customer_id": "c1",
+            "direction": "inbound",
+        },
+        "intent": {"intent_type": "item_search"},
+        **_CONTEXT,
+    })
+
+    _assert_context_reached(captured)
+
+
+@pytest.mark.asyncio
+async def test_visual_agent_forwards_the_conversation_context(monkeypatch):
+    from app.workflows.concierge_workflow import run_visual_agent
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.build_visual_graph",
+        lambda registry, llm=None: _CapturingSubgraph(captured),
+    )
+    monkeypatch.setattr("app.workflows.concierge_workflow.ToolRegistry", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.visual_llm_or_none", lambda settings: None
+    )
+
+    await run_visual_agent({
+        "message": "the pink one",
+        "org_context": {"organization_id": REAL_ORG, "direction": "inbound"},
+        "intent": {"intent_type": "item_search"},
+        **_CONTEXT,
+    })
+
+    _assert_context_reached(captured)
+
+
+@pytest.mark.asyncio
+async def test_commerce_agent_forwards_the_conversation_context(monkeypatch):
+    from app.workflows.concierge_workflow import run_commerce_agent
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.build_commerce_graph",
+        lambda registry, org_context=None: _CapturingSubgraph(captured),
+    )
+    monkeypatch.setattr("app.workflows.concierge_workflow.ToolRegistry", lambda *a, **k: None)
+
+    await run_commerce_agent({
+        "message": "order the pink one",
+        "org_context": {"organization_id": REAL_ORG, "direction": "inbound"},
+        "intent": {"intent_type": "order_placement"},
+        **_CONTEXT,
+    })
+
+    _assert_context_reached(captured)
+
+
+@pytest.mark.asyncio
+async def test_the_commerce_resume_leg_forwards_the_conversation_context(monkeypatch):
+    # A resume is not a new turn, but the checkpoint carries the fields and the settled run must
+    # see the same conversation every other leg saw.
+    from app.workflows.concierge_workflow import run_commerce_approval
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.build_commerce_graph",
+        lambda registry, org_context=None: _CapturingSubgraph(captured),
+    )
+    monkeypatch.setattr("app.workflows.concierge_workflow.ToolRegistry", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.interrupt",
+        lambda payload: {"decision": "approved", "order_id": "o-1"},
+    )
+
+    await run_commerce_approval({
+        "message": "order the pink one",
+        "org_context": {"organization_id": REAL_ORG},
+        "commerce_output": {"status": "pending_approval"},
+        **_CONTEXT,
+    })
+
+    _assert_context_reached(captured)
+
+
+@pytest.mark.asyncio
+async def test_the_window_reaches_every_specialist_on_one_turn(monkeypatch):
+    """The acceptance criterion: one loaded window, both specialists, same turn (ADR-023).
+
+    This is the end-to-end shape of the reported failure: turn 1 established the referent, turn 2
+    referred to it, and the specialists saw only the bare follow-up. The test drives the real
+    orchestrator graph with a transcript from the (stubbed) backend.
+    """
+    transcript = [
+        {"id": "m1", "authorKind": "Customer", "text": "Any pinkish gowns?"},
+        {"id": "m2", "authorKind": "Agent", "text": "We have three."},
+    ]
+    _patch_registry(monkeypatch, _StubRegistry(payload={"items": transcript}))
+
+    memory_sink: dict = {}
+    visual_sink: dict = {}
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.build_memory_graph",
+        lambda registry, llm=None, org_context=None: _CapturingSubgraph(memory_sink),
+    )
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.build_visual_graph",
+        lambda registry, llm=None: _CapturingSubgraph(visual_sink),
+    )
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.memory_llm_or_none", lambda settings: None
+    )
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.visual_llm_or_none", lambda settings: None
+    )
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.workflow_llm_or_none", lambda settings: None
+    )
+
+    async def fake_resolve(org_id, message, *, registry, customer_id=None, phone=None):
+        return CustomerResolution(
+            kind="resolved", customer_id="c1", profile={"fullName": "Samantha"}
+        )
+
+    monkeypatch.setattr("app.workflows.concierge_workflow.resolve_customer", fake_resolve)
+
+    graph = build_concierge_graph()
+    result = await graph.ainvoke({
+        "message": "Do you still have that pinkish dress from the wedding?",
+        "org_context": {
+            "organization_id": REAL_ORG,
+            "conversation_id": "conv-1",
+            "customer_id": "c1",
+            "direction": "inbound",
+        },
+        "history": [],
+        "thread_summary": None,
+        "pinned_slots": {},
+        "intent": None,
+        "resolution": None,
+        "memory_output": None,
+        "visual_output": None,
+        "commerce_output": None,
+        "usage": None,
+        "response": None,
+    })
+
+    assert result["intent"]["intent_type"] == "item_search"
+    assert memory_sink["history"] == transcript
+    assert visual_sink["history"] == transcript
+    # The summary is None for a short conversation (compaction only runs on overflow) - the
+    # window itself is the layer that carries the referent, and that is what must arrive.
+    assert "thread_summary" in memory_sink
+
+
+# ---------------------------------------------------------------------------
+# Aveline's own reply (the entry point answers when nobody else does)
+# ---------------------------------------------------------------------------
+
+
+def test_formulate_response_surfaces_the_supervisors_reply():
+    from app.workflows.concierge_workflow import formulate_response
+
+    out = formulate_response({
+        "message": "Hi",
+        "intent": {"intent_type": "general_inquiry", "reply": "Hello! How can I help?"},
+    })
+
+    assert out["response"]["output"]["reply"] == "Hello! How can I help?"
+
+
+@pytest.mark.asyncio
+async def test_a_greeting_carries_a_reply_and_no_routing_summary():
+    result = await _invoke("Hello there")
+
+    output = result["response"]["output"]
+    assert result["intent"]["intent_type"] == "general_inquiry"
+    assert output["reply"]
+    assert "Treated this as" not in output["reply"]
+    assert "general inquiry" not in output["reply"].lower()
+
+
+@pytest.mark.asyncio
+async def test_a_product_search_carries_no_reply():
+    # The specialists answer product questions; the supervisor's reply stays empty so the thread
+    # does not carry two answers.
+    result = await _invoke("Do you have a blue saree for a wedding?")
+
+    assert result["response"]["output"]["reply"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_greeting_publishes_a_reply_message_and_no_meta_note():
+    from app.events.message_publisher import build_agent_messages
+    from app.schemas.response import AgentResponse
+
+    result = await _invoke("Hello there")
+    messages = build_agent_messages(AgentResponse.model_validate(result["response"]))
+
+    aveline = [m for m in messages if m["author"]["agent_key"] == "aveline"]
+    assert len(aveline) == 1
+    text = aveline[0]["blocks"][0]["text"]
+    assert text == result["response"]["output"]["reply"]
+    assert "Treated this as" not in text
+
+
+# ---------------------------------------------------------------------------
+# Handbook retrieval and the platform-question lane (ADR-025)
+# ---------------------------------------------------------------------------
+
+HANDBOOK_HIT = {
+    "sourceKey": "web-docs/team",
+    "sourceTitle": "Team",
+    "sourceUrl": "/docs/team",
+    "headingPath": "Invitations > Generate a code",
+    "content": "Open Team and mint an invitation code.",
+    "score": 0.03,
+}
+
+
+class _HandbookSettings:
+    """The subset of Settings that `run_load_handbook` reads."""
+
+    handbook_enabled = True
+    handbook_top_k = 5
+    handbook_audience = "staff"
+    handbook_min_similarity = 0.0
+
+
+class _HandbookRegistry:
+    """A ToolRegistry double exposing only the handbook search."""
+
+    def __init__(self, hits: list | None = None, *, fails: bool = False) -> None:
+        self._hits = hits if hits is not None else [HANDBOOK_HIT]
+        self._fails = fails
+        self.calls: list[tuple] = []
+
+    async def search_handbook(self, query, top_k=5, audience="staff", min_similarity=0.0):
+        self.calls.append((query, top_k, audience, min_similarity))
+        if self._fails:
+            raise RuntimeError("handbook backend down")
+        return self._hits
+
+
+def _patch_handbook(monkeypatch, registry, *, llm=None, enabled=True):
+    settings = _HandbookSettings()
+    settings.handbook_enabled = enabled
+    monkeypatch.setattr("app.workflows.concierge_workflow.get_settings", lambda: settings)
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.supervisor_llm_or_none", lambda settings: llm
+    )
+    monkeypatch.setattr("app.workflows.concierge_workflow.ToolRegistry", lambda *a, **k: registry)
+    return settings
+
+
+@pytest.mark.asyncio
+async def test_load_handbook_is_a_no_op_without_an_llm(monkeypatch):
+    # With no model there is nothing to ground an answer in, so the retrieval would be pure cost.
+    registry = _HandbookRegistry()
+    _patch_handbook(monkeypatch, registry, llm=None)
+    from app.workflows.concierge_workflow import run_load_handbook
+
+    assert await run_load_handbook({"message": "How do I invite a staff member?"}) == {
+        "handbook_hits": []
+    }
+    assert registry.calls == []
+
+
+@pytest.mark.asyncio
+async def test_load_handbook_retrieves_for_a_platform_question(monkeypatch):
+    registry = _HandbookRegistry()
+    _patch_handbook(monkeypatch, registry, llm=object())
+    from app.workflows.concierge_workflow import run_load_handbook
+
+    result = await run_load_handbook({"message": "How do I invite a staff member?"})
+
+    assert result["handbook_hits"] == [HANDBOOK_HIT]
+    assert registry.calls == [("How do I invite a staff member?", 5, "staff", 0.0)]
+
+
+@pytest.mark.asyncio
+async def test_load_handbook_skips_a_product_search(monkeypatch):
+    # A product question is Elle's, and paying for an embedding call on it is waste.
+    registry = _HandbookRegistry()
+    _patch_handbook(monkeypatch, registry, llm=object())
+    from app.workflows.concierge_workflow import run_load_handbook
+
+    result = await run_load_handbook({"message": "Do you have a blue saree for a wedding?"})
+
+    assert result["handbook_hits"] == []
+    assert registry.calls == []
+
+
+@pytest.mark.asyncio
+async def test_load_handbook_survives_a_backend_failure(monkeypatch):
+    # Losing the handbook degrades an answer; it must never prevent one.
+    registry = _HandbookRegistry(fails=True)
+    _patch_handbook(monkeypatch, registry, llm=object())
+    from app.workflows.concierge_workflow import run_load_handbook
+
+    assert await run_load_handbook({"message": "What is a Blossom?"}) == {"handbook_hits": []}
+
+
+@pytest.mark.asyncio
+async def test_load_handbook_respects_the_disable_flag(monkeypatch):
+    registry = _HandbookRegistry()
+    _patch_handbook(monkeypatch, registry, llm=object(), enabled=False)
+    from app.workflows.concierge_workflow import run_load_handbook
+
+    assert await run_load_handbook({"message": "What is a Blossom?"}) == {"handbook_hits": []}
+    assert registry.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_platform_question_is_answered_without_running_a_specialist(monkeypatch):
+    """Aveline answers it herself; Ava has nothing to brief on a question about the product."""
+    from app.gate import SupervisorPlan
+
+    async def planner(message, **kwargs):
+        return SupervisorPlan(
+            intent_type="aveline_help",
+            suggested_agents=[],
+            reply="Invite them from Team; the code lasts as long as you choose.",
+        )
+
+    monkeypatch.setattr("app.workflows.concierge_workflow.supervise", planner)
+
+    result = await build_concierge_graph().ainvoke({
+        "message": "How do I invite a staff member?",
+        "org_context": {},
+        "history": [],
+        "thread_summary": None,
+        "pinned_slots": {},
+        "handbook_hits": [],
+        "intent": None,
+        "resolution": None,
+        "memory_output": None,
+        "visual_output": None,
+        "commerce_output": None,
+        "usage": None,
+        "response": None,
+    })
+
+    assert result["intent"]["intent_type"] == "aveline_help"
+    assert result["memory_output"] is None, "a platform question must not run Ava"
+    assert result["visual_output"] is None
+    assert result["response"]["output"]["reply"].startswith("Invite them from Team")
+
+
+def test_formulate_response_surfaces_the_handbook_sources():
+    from app.workflows.concierge_workflow import formulate_response
+
+    out = formulate_response({
+        "message": "How do I invite a staff member?",
+        "intent": {"intent_type": "aveline_help", "reply": "From the Team section."},
+        "handbook_hits": [
+            HANDBOOK_HIT,
+            {**HANDBOOK_HIT, "headingPath": "Invitations > Pending codes"},
+            {**HANDBOOK_HIT, "sourceKey": "company/faq", "sourceTitle": "Frequently Asked Questions"},
+        ],
+    })
+
+    sources = out["response"]["output"]["handbook_sources"]
+    # One entry per page: three chunks from two pages are two sources.
+    assert [source["title"] for source in sources] == ["Team", "Frequently Asked Questions"]
+
+
+def test_formulate_response_omits_sources_without_hits():
+    from app.workflows.concierge_workflow import formulate_response
+
+    out = formulate_response({"message": "Hi", "intent": {"intent_type": "general_inquiry"}})
+
+    assert out["response"]["output"]["handbook_sources"] == []

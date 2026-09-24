@@ -171,6 +171,61 @@ Coverage gate: ≥ 90% (`--cov=app --cov-fail-under=90`). DB integration tests a
 skipped unless `TEST_DATABASE_URL` is set (e.g.
 `postgresql+asyncpg://aveline:change-me@localhost:5433/aveline`).
 
+## Conversation context
+
+`load_context` loads the conversation transcript named by `org_context.conversation_id`, fits it
+to `context_window_tokens`, and carries it in three layers (`history`, `thread_summary`,
+`pinned_slots`). The supervisor and the specialist sub-graphs that own a prompt all render the same
+block through `app.context.render_context_block`, which is what lets a follow-up such as "the pink
+one" resolve its referent. Without a conversation id the context is empty and the assembled prompt
+is unchanged, so offline and CI runs stay deterministic.
+
+Propagation requires **both** a declaration on the sub-graph's state schema and a pass-through in
+the orchestrator node; LangGraph drops undeclared state keys silently. See
+`docs/architecture/agent-context.md` for the path, scope, and limits.
+
+## Handbook (platform questions)
+
+`load_handbook` runs between `load_context` and the supervisor and retrieves handbook excerpts for
+the two intents the supervisor is consulted for (`general_inquiry`, `aveline_help`). The supervisor
+answers a platform question herself from those excerpts; the specialist sub-graphs do not run, and the
+`sources` block is built from the chunks that were actually retrieved rather than from the model's
+text, so both frontends can link each citation back to its page. With `HANDBOOK_ENABLED=false`, or
+with no LLM configured, the node makes no call at all and the run is unchanged.
+
+The index is seeded from a repository checkout, not at runtime:
+
+```bash
+python scripts/seed_handbook.py --dry-run                      # no HTTP at all
+python scripts/seed_handbook.py --token "$INTERNAL_API_TOKEN"  # idempotent upsert
+```
+
+## Tenant account (the boutique's own figures)
+
+`load_tenant_usage` runs after `load_handbook` and answers questions about the boutique's *own*
+account — "how many Blossoms do I have left?", "how many seats have I got?" — from
+`GET /internal/usage/tenant/{organizationId}`. It is gated four ways: the
+`TENANT_AWARENESS_ENABLED` flag, an **explicitly affirmative** `org_context.staff_query`, the
+`tenant_account` intent, and a present organisation.
+
+That audience gate is the important one. The API sends `staff_query: true` on the staff paths and
+`false` on the inbound customer path, so a customer message never causes the tenant endpoint to be
+called at all — and the agent requires the flag to be present and true rather than falling back to
+the `direction` heuristic, so a channel that forgets to declare itself gets a missing answer instead
+of a leaked balance. Aveline's reply is bound to the fetched snapshot: every numeral in it must appear
+in the data she was given, or the deterministic reply is used instead. Unlike the handbook, this lane
+still answers with no LLM configured — the answer is data, not composition.
+
+See `docs/architecture/tenant-awareness.md` and
+[`docs/ADR/ADR-026-tenant-account-awareness.md`](../docs/ADR/ADR-026-tenant-account-awareness.md).
+
+See `docs/architecture/handbook.md` for the corpus, chunking rules and the hybrid retrieval, and
+`handbook/README.md` for authoring a company page.
+
 ## Further reading
 
 - Internal service auth: `docs/ADR/ADR-009-internal-service-authentication.md`
+- Conversation context propagation: `docs/architecture/agent-context.md`
+- Layered context and the supervisor: `docs/ADR/ADR-023-conversation-context-and-supervisor.md`
+- Handbook knowledge base: `docs/architecture/handbook.md`
+- Handbook decision record: `docs/ADR/ADR-025-handbook-knowledge-base.md`

@@ -124,7 +124,7 @@ fields. A message may carry a single block or a composite (e.g. a `Note` plus se
 ```
 
 Block types: `text`, `piece`, `look`, `at_a_glance`, `sign_off`, `payment`, `courier`,
-`suggestion`, `client_message`, `attachment`, `choice`.
+`suggestion`, `client_message`, `attachment`, `choice`, `sources`.
 
 ### 5.1 Emitted blocks from real agent output
 
@@ -132,15 +132,28 @@ The agent service maps the concierge `AgentResponse.output` into blocks in
 `agnet-service/app/events/block_builders.py`. A persona posts a message only when it
 produces real content (no placeholder text).
 
-- **Aveline summary** (`build_aveline_blocks`): a single `text` block that is intent-aware
-  and names the resolved customer when the memory agent found one. It never duplicates
-  Ava's rich detail. When the orchestrator cannot resolve a customer it instead renders a
+- **Aveline reply** (`build_aveline_blocks`): the entry point speaks only when no specialist
+  does. She renders the supervisor's own short `reply` as a single `text` block when the run
+  produced no specialist content; otherwise she stays silent. She never emits a routing summary
+  ("Treated this as a product search."): that described the orchestrator instead of answering the
+  person. When the orchestrator cannot resolve a customer she instead renders a
   **clarification** (`build_clarification_blocks`): an ambiguous lookup becomes a `choice`
   block listing candidate customers to tap; a not-found lookup becomes a `text` block asking
   for a phone number (Issue #161).
+- **Aveline citations** (`sources`): when a platform answer was grounded in the handbook
+  (ADR-025), a `sources` block follows the reply with one `{ title, url, heading }` per page the
+  answer came from. It is a block rather than a line appended to the prose because a frontend can
+  make a block into links and cannot reliably find a link inside model-written text; the items are
+  built from the chunks that were actually retrieved, so a citation cannot be invented. Both
+  frontends render it as links, opening the documentation in a new tab.
 - **Ava / memory** (`build_ava_blocks`), in order:
-  1. `text` - the `interaction_brief`.
-  2. `at_a_glance` - one `Category`/`Content` row per `extracted_memories` entry.
+  1. `text` - the `interaction_brief`. It **summarises**; it does not recite the notes. Reciting
+     them inline produced "on file: The customer has a party; The customer has a party; Kasha vivian
+     has a party" in a real thread, because the store has no write-time de-duplication.
+  2. `at_a_glance` - one `Category`/`Content` row per note **on file** (`memories_on_file`), then
+     any extracted this turn, de-duplicated across both. One table rather than two: they are the
+     same kind of fact to a reader, and the stored rows come first because that is what "on file"
+     means.
   3. `suggestion` - the customer-facing `draft_response`.
   When the memory agent skipped (no customer context), no Ava message is emitted.
 - **Elle / visual** (`build_elle_blocks`): emits `suggestion`, `piece` (per `items`), and

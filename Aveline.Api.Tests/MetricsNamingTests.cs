@@ -94,6 +94,7 @@ public class MetricsNamingTests
         "aveline.agent.success_rate",
         "aveline.agent.paused_count",
         "aveline.agent.steps_per_run",
+        "aveline.agent.runs_total",
         "aveline.blossom.balance",
         "aveline.blossom.reconciliation.drift",
         "aveline.blossom.consumed_rate",

@@ -109,6 +109,17 @@ class _RouteThread implements ThreadRepository {
     String conversationId,
     String attachmentId,
   ) async => throw StateError('not used');
+
+  @override
+  Future<Never> deliver(
+    String conversationId,
+    String text, {
+    String? clientMessageId,
+  }) async => throw StateError('not used');
+
+  @override
+  Future<void> regenerate(String conversationId, String messageId) async =>
+      throw StateError('not used');
 }
 
 Widget _wrap(

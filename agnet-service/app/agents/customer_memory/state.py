@@ -17,6 +17,13 @@ class MemoryAgentState(TypedDict, total=False):
     phone_number: str | None
     customer_name: str | None
     message: str
+    # Conversation context (ADR-023), forwarded verbatim by the orchestrator: the bounded
+    # transcript window (oldest first), what fell outside it, and the working set that survives
+    # trimming. LangGraph drops state keys a schema does not declare, so the declaration is what
+    # makes the orchestrator's copy reach this agent at all.
+    history: list[dict[str, Any]]
+    thread_summary: str | None
+    pinned_slots: dict[str, str]
     channel: str
     direction: str
     # Intent hint from the upstream gate (optional)

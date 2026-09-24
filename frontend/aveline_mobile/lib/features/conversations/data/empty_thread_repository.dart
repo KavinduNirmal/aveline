@@ -94,4 +94,19 @@ class EmptyThreadRepository implements ThreadRepository {
   Future<void> markRead(String conversationId, String lastReadMessageId) async {
     // Nothing to mark: this repository serves no history, so there is no source to tell.
   }
+
+  @override
+  Future<ThreadDelivery> deliver(
+    String conversationId,
+    String text, {
+    String? clientMessageId,
+  }) async => throw StateError(
+    'There is no thread source, so nothing can be delivered.',
+  );
+
+  @override
+  Future<void> regenerate(String conversationId, String messageId) async =>
+      throw StateError(
+        'There is no thread source, so nothing can be regenerated.',
+      );
 }

@@ -81,6 +81,11 @@ internal static class MetricsCatalog
         Business("aveline.agent.success_rate", "aveline_agent_success_rate_ratio", "ratio"),
         Business("aveline.agent.paused_count", "aveline_agent_paused_count", "count"),
         Business("aveline.agent.steps_per_run", "aveline_agent_steps_per_run_count", "count"),
+        // Cumulative over the retention window, so it is a counter: an `increase()` over it is
+        // runs completed per interval, which is the activity view the gauges above cannot
+        // give. Pruning (RunRetentionDays, default 400) makes it step down, which Prometheus
+        // reads as a reset - correct, just under-reported for the one interval that spans it.
+        BusinessCounter("aveline.agent.runs_total", "aveline_agent_runs_total"),
         Business("aveline.blossom.balance", "aveline_blossom_balance_count", "count"),
         Business("aveline.blossom.reconciliation.drift", "aveline_blossom_reconciliation_drift_count", "count"),
         Business("aveline.blossom.consumed_rate", "aveline_blossom_consumed_rate_count", "count"),

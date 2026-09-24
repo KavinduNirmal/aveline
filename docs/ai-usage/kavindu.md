@@ -6187,3 +6187,561 @@ locally because `.env` overrides all three `VISION_*` values to DeepSeek.
 - `AddProductModal` still invents a few save-time fallbacks (`'Multicolor'`, `'Silk Blend'`,
   `'Classic Luxury'`, `confidenceScore ?? 0.92`). They were left because the reported defect was the
   colour, but they are the same class as the ones removed and are recorded here rather than forgotten.
+
+---
+
+## Session 2026-09-23 — Three ADR-023 follow-ups, and the handbook knowledge base
+
+Three requests, in order: implement the minimal-context plan; stop Aveline answering a customer with
+the routing note "Treated this as a general inquiry."; and give her a vector-searchable handbook.
+The first two were committed before the third was designed, on the owner's instruction, so the
+handbook work started from a clean tree.
+
+### The minimal-context plan, verified rather than assumed
+
+`.agents/plans/subagent-minimal-context-implementation.ignore.md` claimed a missing parameter at
+three call sites, made silent by a second defect. Both halves held up against the code:
+
+- `ConciergeState` carried `history`/`thread_summary`/`pinned_slots` and exactly one consumer read
+  them (the supervisor's prompt). The three specialist nodes built fixed dictionaries with no context
+  key, and **none of the three state schemas declared one**.
+- The plan's central trap was real and worth the experiment it demanded: LangGraph drops undeclared
+  state keys silently, so a fix that touched only the invocation sites would pass a mocked test and do
+  nothing in production.
+
+Two plan claims did **not** survive contact and were corrected in the implementation rather than
+copied:
+
+- **`parse_visual_intent` is rule-based**, not an LLM call, so forwarding history does not help it
+  resolve "the pink one". The context reaches Elle's styling prompt only. Documented as such instead
+  of claiming a behavioural gain that does not exist.
+- **`_CONTEXT_MAX_CHARS = 4000` would have been a second, tighter budget** than
+  `context_window_tokens` (2000 tokens ≈ 8000 characters), silently truncating context the window
+  deliberately kept. Omitted; the renderer adds no budget of its own.
+
+`_context_fields(state)` was introduced as one spread at all four call sites instead of writing the
+same three keys out four times, which is what stops the next sub-graph invocation from quietly
+omitting them.
+
+### Aveline answers, instead of describing her routing
+
+The screenshot was a real defect with a cheap fix, and the cheapest part was noticing that the LLM
+call already happened: the supervisor is consulted **exactly** for `general_inquiry`, and it was
+returning a routing plan while Aveline posted a note *about* the plan. Giving it a `reply` field uses
+the call that was already being paid for.
+
+Both bounds are enforced in code rather than requested in the prompt: a plan that routes
+`visual`/`commerce` never carries a reply, and a conversational message whose model answer did not
+arrive gets a deterministic fallback. The "Treated this as ..." template is deleted, and
+`build_aveline_blocks` now emits a reply only when no specialist produced content.
+
+### The handbook: hybrid, because one leg is not enough
+
+The corpus and the infrastructure both already existed — 15 pages, 1,879 lines, 104 `H2` sections, and
+ADR-017's pgvector pattern — so the interesting decision was retrieval. The plan's first draft had a
+dense-only index; the owner asked for BM25 as well, and the corpus proves why:
+
+- "How do I invite a staff member?" is answered by exact stems, which the dense leg ranks mediocrely.
+- "the page about people joining my shop" shares no vocabulary with the page, which the lexical leg
+  cannot see at all.
+- "Code Expiration" is a UI label: the query *is* the term.
+
+**Hybrid, fused with Reciprocal Rank Fusion in one SQL statement.** RRF is rank-based because cosine
+and `ts_rank_cd` are not on a comparable scale and their distributions move per query, so a raw-score
+blend can be skewed by whichever leg happens to produce large numbers. The claim is not taken on
+faith: the Testcontainers test builds a fixture where one chunk is **rank 2 on the dense leg and rank
+1 on the lexical leg**, and asserts it outranks the dense winner after fusion. Neither single leg can
+produce that ordering, which is the entire argument for the extra SQL.
+
+Two honesty adjustments went in rather than being papered over:
+
+- **Postgres `ts_rank_cd` is lexical, not BM25.** The code, the ADR and the architecture doc all say
+  "lexical"; ParadeDB `pg_search` is recorded as the upgrade path, confined to one CTE behind
+  `IHandbookRepository`.
+- **The intent is `aveline_help`, not `product_help`.** `product` already means the boutique's
+  inventory in this codebase — it is Elle's whole lane — so `product_help` would read as "help with
+  our products" to both the model and a human reading a trace.
+
+### Defects found by things that were already there
+
+Four were caught by existing guards rather than by review, which is the argument for having them:
+
+- **A precision bug in the help patterns.** `\bhelp me\b` classified "Can you help me with
+  something?" as a platform question. `test_infer_intent_calls_llm_on_ambiguous` failed, and the
+  pattern was removed rather than the test adjusted.
+- **The memory schema's intent vocabulary** must equal the gate's, so adding `aveline_help` broke
+  `test_parsed_intent_accepts_every_intent_the_gate_can_produce`. That guard exists because the same
+  drift once made every purchase-intent message fail validation.
+- **The bounded concierge node list** in `test_agent_step_records.py` gained `load_handbook`; the test
+  exists so a new node cannot silently escape the telemetry contract.
+- **A DELETE route that could not carry its own key.** `DELETE /internal/handbook/sources/{sourceKey}`
+  cannot match `web-docs/team` (the slash is a path separator), and the failure surfaced as a 401 in
+  the Postgres test. The route is now a catch-all segment.
+
+One design correction came out of the chunker work: the plan proposed prefixing each page's `H1` and
+intro onto **every** chunk. That was written before the hybrid decision and is actively harmful with a
+lexical leg — the intro's terms would appear in every chunk and match every query equally — so the
+intro is its own chunk and the heading trail reaches the lexical index through the weighted
+`SearchVector` instead.
+
+### TDD, and what each test is for
+
+- **10 .NET tests**, including a Testcontainers run against real `pgvector/pgvector:pg16` that asserts
+  the cosine ordering, the lexical-only hit, the fusion win, the audience filter, the inactive-chunk
+  filter, source-kind restriction, the source listing and the delete, and that both search columns and
+  indexes exist in the database rather than only in the model.
+- **78 new Python tests** across the chunker, the corpus manifest and seeder, retrieval and grounding,
+  the golden-query scoring, and the workflow lane. The chunker additionally runs against the **real
+  corpus** and asserts that not one table row is dropped, because the corpus carries its facts in
+  tables and a split table is a silently wrong answer.
+
+### Verification
+
+- Python: **733 passed, 2 skipped, 2 xfailed**; `ruff check app/ tests/ scripts/` clean.
+- .NET: the 10 handbook tests pass, including the seeded Postgres run.
+- The full .NET suite is **3079 passed / 28 failed**, and all 28 failures are media or Cloudinary
+  tests. They fail because the developer's own `.env` sets `Media__Provider=cloudinary` without a
+  signing key — `MediaProductionGuardIntegrationTests.TheDefaultHost_StartsWithNoMediaConfigurationAtAll`
+  fails against that file by definition. Supplying `Media__SigningKey`/`Media__PublicBaseUrl` turned a
+  sampled failure green, and CI reads no `.env`, so this is local configuration and not a regression.
+  It is recorded because "3079/3107" without that context reads like a broken branch.
+- The hybrid SQL was validated directly against the running `aveline_postgres` container before any
+  .NET code depended on it: the generated-column DDL, the HNSW and GIN indexes, and a hand-run of the
+  fusion query showing a chunk at dense-rank 2 and lexical-rank 1 outscoring the dense winner.
+
+### Documentation and artefacts
+
+- `ADR-023` is `Accepted`, its out-of-scope note now points at `ADR-025`, and its consequences record
+  the widened prompt surface and the two specialists that cannot consume context.
+- New: `ADR-025`, `docs/architecture/handbook.md`, `docs/architecture/agent-context.md`,
+  `handbook/README.md` and seven authored company pages. Updated: both READMEs and the ADR index.
+- Issue **#397** carries the feature, its acceptance criteria and the known input blocker.
+- Commits: `ad33786` (context + Aveline's reply), `a436c46` (store and ingestion), `b075220` (the
+  platform-question lane and docs).
+
+### Outstanding, stated plainly
+
+- **The golden set has now been scored**, against the seeded index (169 chunks, 22 sources, Gemini
+  embeddings): hybrid **recall@1 71.4% / recall@3 88.1%**, against 42.9%/52.4% for the lexical leg
+  alone and 66.7%/88.1% for the dense leg alone. The hybrid is not worse than either leg anywhere and
+  is the strongest at recall@1 on both query shapes, which is the claim the extra SQL had to earn. The
+  numbers and the two caveats that qualify them are in ADR-025.
+- **The lexical leg returned nothing at all for 13 of the 42 questions**, which is the leg working as
+  designed: `websearch_to_tsquery` ANDs its terms, so a paraphrase with no shared vocabulary matches
+  nothing. Those are the questions the dense leg carries. The eval now reports "returned no rows"
+  separately from a ranking miss, because a provider hiccup and a ranking error were otherwise
+  indistinguishable.
+- **One golden expectation is over-strict and the metric is pessimistic because of it.** "invitation
+  code lifetime" misses `web-docs/team` in every mode, because the corpus documents code lifetimes in
+  four places and three other pages outrank it - correctly. The retrieval is right; the labelled
+  single answer is too narrow. Recorded rather than tuned away.
+- **A real contract bug fell out of scoring it live**: the single-leg search modes ignored `topK` and
+  returned the whole 20-row candidate pool. Recall was unaffected (it is rank-based), but the endpoint
+  returned four times what a caller asked for. Fixed, with a Postgres test asserting the cap.
+- **The five source contradictions are fixed and the index has been re-seeded.** The owner resolved
+  them (Manager dropped from Reject/Revise to match the prose; the invite-code label now cross-refers
+  between its two names; the WhatsApp and Manager/Billing statements reconciled), rebuilt the API, and
+  the corpus was re-seeded on 2026-09-24. Spot checks against the live index return the corrected
+  answers, and the golden set now scores the reconciled text.
+- **The company facts that do not exist yet are stated as missing, not invented.** Refunds,
+  cancellation, data export and erasure, per-action Blossom costs and the account lifecycle have no
+  policy on file, so `what-the-handbook-does-not-cover.md` says so and points at support. A knowledge
+  base that guesses a refund policy is worse than one that admits it does not know.
+- **Blossom costs are deliberately not published.** The owner's instruction was to document that
+  unused Blossoms expire and to reveal no numbers; the prompt also forbids the model quoting amounts.
+- **The index is seeded in the local stack only.** 169 chunks across 22 sources, with the support
+  address substituted from `SUPPORT_EMAIL`; `GET /internal/handbook/sources` confirms the counts. No
+  shared environment has been seeded, and re-seeding stays a release step documented in
+  `handbook/README.md`. The plan file is untracked by design (`.agents/plans/*` is gitignored).
+
+---
+
+## Session 2026-09-24 — Aveline's voice, and citations you can click
+
+Two reports from a live screenshot of a handbook answer: she reads like a normal chatbot rather than
+Aveline, and the `Sources:` line is dead text.
+
+### The voice was nobody's job
+
+The universal prompt already asked for "quiet luxury", and the supervisor's own layer had **no tone
+section at all** - it was pure routing instructions, and the supervisor is the one who writes
+Aveline's `reply`. So the strongest voice guidance in the system sat several layers away from the
+prompt that actually produces her sentences, and the handbook instruction ("the only source you may
+answer from", "say plainly that the handbook does not cover it") pushed the model toward a clipped,
+manual-like register. The screenshot is what those three things produce together: a comma-separated
+recital of four plans, then a pointer to the entitlements table.
+
+Three changes, in the places that actually reach the model:
+
+- `agent_prompts.py` gains a **voice** section on the supervisor: first person, meet the question
+  before answering it, lead with the answer, never read the page aloud, never sound like software.
+  "Feminine, not fragile" is stated as poise rather than as decoration - she offers and takes care of
+  things, she does not apologise for existing.
+- `_SUPERVISOR_INSTRUCTION` now says to answer *as Aveline, in her own words*, never to recite an
+  excerpt or a table, and not to list sources in the text at all.
+- `SYSTEM_PROMPT.md` rule 9 (Tone) names her voice and forbids the software phrasings ("As an AI",
+  "I am unable to", "Please be advised"), so the specialists inherit it too.
+
+The two deterministic fallbacks were rewritten in the same voice, because they are the sentences
+users see when the model is unavailable: the greeting is now "Hello, I'm Aveline, the boutique's
+concierge..." and the miss is "That one isn't in my handbook, I'm afraid, and I'd rather not guess."
+
+### The citation had to become a block
+
+A link cannot be added to the existing line by finding it in the text: the reply is model-written
+prose, and the web renders a `text` block through `MentionText`, which is plain text with entity
+pills - no markdown, no link parsing. Options were to teach both frontends a markdown subset (and
+hope the model never rewrites a link), or to emit the citation as data.
+
+**A new `sources` block.** The agent already had the structured `handbook_sources` on the response
+and was flattening it into a string; it now emits `[text, sources]` with `{ title, url, heading }` per
+page. Checked before committing to it: `.NET` stores content blocks as JSON with **no type
+whitelist** (`ConversationBlockText` and `ConversationTileMapper` switch on a few types and ignore the
+rest), so a new type is additive and a build that has not learned it degrades to its one-line summary
+rather than a blank message - which is exactly the invariant `message_blocks.dart` already documents.
+
+- **Web**: a `SourcesBlock` renders each citation as an anchor, opening the docs in a new tab so
+  reading a reference does not lose the Salon. A plain anchor, not a router `Link`: the documentation
+  is its own public layout and the block renderer stays router-free. A citation with no URL renders as
+  plain text rather than a dead link.
+- **Flutter**: `ThreadBlock.sources` parses the items and `_SourcesBlock` draws them as tappable
+  entries, taking their ink from the bubble's own tone so the same block reads inside the associate's
+  filled bubble and the neutral agent bubble. `url_launcher` was promoted from a transitive
+  dependency of `clerk_flutter` to a named one, following the precedent the pubspec already sets for
+  `flutter_svg`.
+
+The mobile app had no web origin to resolve `/docs/team` against, and inventing one would send staff
+to a host nobody confirmed. `AVELINE_WEB_BASE_URL` is a new `--dart-define`, empty by default: with it
+set, tapping opens the page; without it, tapping shows the path instead.
+
+### Verification
+
+- Python: **745 passed, 2 skipped, 2 xfailed**; `ruff check app/ tests/ scripts/` clean.
+- Web: `tsc` clean, **199** conversation tests pass (4 new for the sources block), `oxlint` 0 errors.
+- Flutter: `dart analyze lib test` reports **no issues**.
+- **`flutter test` could not be run here** - the SDK's `bin/cache` is read-only under this sandbox, so
+  `flutter` and `dart test` both fail at the engine-version check. The new widget test is written and
+  analyzes clean, but it has not been executed; running `flutter test test/features/conversations`
+  locally is the outstanding check.
+
+
+## Session 2026-09-24 (b) — Tenant account awareness: Aveline can answer for the boutique itself
+
+**Task:** "give the agent tenant information awareness, so when the tenant asks, how much blossoms do
+I have left, how many customers do I have left, or how many seats I have left aveline can answer?"
+
+**What the questions were doing before.** Two of the three landed in the wrong lane, and neither
+failure was a crash, which is why neither had been noticed:
+
+- "How many Blossoms do I have left?" already classified as **`aveline_help`**, because
+  `_AVELINE_HELP_PATTERNS` claims any mention of "blossom" (`r"\bblossoms?\b"`). So it was answered
+  from the handbook - the page explaining what Blossoms *are* - under a rule that forbids quoting
+  Blossom amounts. A deflection, with a citation.
+- "How many customers do I have left?" matched **nothing** and fell through to `general_inquiry`,
+  which routes the customer-memory agent. Ava would have briefed on a customer, when the question is
+  a count of them. (`"how much"` is a pricing keyword; `"how many"` is not.)
+
+**The figures already existed and were already authoritative.** `IBlossomService.GetBalanceAsync`
+calls itself "the authoritative balance projection for one period", and
+`ISubscriptionService.GetEntitlementUsageAsync` already computes all three of exactly what was asked -
+Blossoms, `staff.max`, `customers.active.max` - for the tenant dashboard's usage panel. Nothing new
+had to be calculated; the work was transport, audience and authority.
+
+### The audience is the whole feature
+
+This is the first time the concierge states a fact about the boutique's money, and the same workflow
+answers inbound WhatsApp messages from **customers**. A customer asking "how many Blossoms do I have
+left?" must not be shown the tenant's balance.
+
+Tracing the two call sites settled it. `ConversationService` has exactly two `/agents/query` callers:
+`TriggerInboundDraftAsync`, which marks itself `direction = "inbound"`, and `TriggerAgentAsync`,
+which sends no direction at all and serves the Salon note, regeneration and the agent brief. The
+commerce lane already reads that asymmetry through `staff_query`.
+
+But that heuristic is **open by default** - an absent direction reads as staff - which is right for
+identity and wrong for money: a future channel that forgets to declare itself would open the lane. So
+the API now states the audience explicitly on **both** paths (`staff_query: true` / `false`), and the
+agent's gate requires it to be present and true. A missing declaration yields a missing answer, never
+a leaked balance.
+
+Tracing that turned up a pre-existing inconsistency worth recording: the workflow derives "is this
+staff?" in **two** places and they disagree. The memory node reads it as `not direction`, the visual
+node as `not direction or direction in ("outbound", "internal")`, so they differ on
+`direction="outbound"`. I deliberately did **not** add a third named helper to unify them: that would
+have been a behaviour change to the memory agent smuggled into a billing feature, and picking either
+semantics for the account gate would have reopened the default-open problem. The account gate instead
+requires the explicit flag and says why in its docstring. Consolidating the two is a follow-up.
+
+### Reuse, not a second formula
+
+`GET /internal/usage/tenant/{organizationId}` (in the existing `/internal/usage` group,
+`InternalServicePolicy`) composes what already exists:
+
+- the Blossom half is literally `BlossomBalanceDto.From(balance, threshold)` - the projection the
+  boutique's own meter renders - so `blossomRemaining` is the reconciled remainder rather than
+  `limit - used`;
+- the seat/customer half is `GetEntitlementUsageAsync`, with `remaining` assembled from it;
+- `blossomsAreLow` is computed server-side by the rule the clients already apply.
+
+The codebase treats a second copy of a formula as a defect (`LedgerDerivedBalance` is shared by the
+metric collector and the admin console for exactly this reason), so the test that matters uses an
+account whose stored remainder differs from *every* derivable one - 500 limit + 100 granted - 87.4
+used = 512.6 stored, against 662.6 from the entitlement limit and 412.6 from the bare limit. A future
+"simplification" to arithmetic now fails loudly.
+
+Entitlement usage is read **first**, because the balance read creates the period account on demand:
+asking it about an unknown organisation would leave a stray account row. Pinned by a test that
+asserts the 404 *and* that no account was created.
+
+### The number is enforced, not requested
+
+The reply is model-written, so "do not invent amounts" would have been a request. Instead
+`_with_a_bounded_reply` keeps the model's wording only while **every numeral in it appears in the
+rendered snapshot block**, normalising `1,234.50` against `1234.5`; anything else is discarded in
+favour of a deterministic reply built from the snapshot, with a warning logged. `_pin_authoritative_lane`
+stops the model re-routing an account question out of the lane, which would have removed the guard.
+
+Keying that guard on the rendered *block* rather than on the snapshot merely existing made it stronger
+than a numeral check, and the difference is worth stating: with no figures to show, the model may not
+word an account answer at all - not even one carrying no numerals, because "you have none left" is a
+claim about the account whether or not it contains a digit. The first version of the guard let that
+through.
+
+That settled a documented conflict honestly: ADR-025 and `SYSTEM_PROMPT.md` say the concierge must not
+quote Blossom amounts. That rule is about **published** amounts - pricing policy - and a boutique's own
+balance is a different thing, already shown to every boutique role by `billing:view:self`. The prompt
+rule was narrowed to published pricing rather than repealed, and the handbook's silence is untouched.
+
+### The noun is not the intent
+
+`tenant_account` had to be checked **before** `is_aveline_help` (or `\bblossoms?\b` claims every
+balance question) while still leaving the documentation lane intact. The discriminator is the shape of
+the ask: "what is a Blossom?", "how much does a Blossom cost?" and "how many seats does the Orchid
+plan include?" are all documentation, and none of them carry a "left / remaining / do I have" tail.
+
+The first version of the pattern was wrong in a way only an existing test could show:
+`tests/test_handbook_retrieval.py` already asserted that "Where can I see my Blossom balance?" is
+`aveline_help`, and the new possessive pattern claimed it. *Locating* a figure is documentation;
+asking for its value is not. `_is_interface_location_question` encodes that, and the locating cases
+are now pinned in both directions.
+
+### Verification
+
+- Python: **799 passed, 2 skipped, 2 xfailed**; `ruff check app/ tests/ scripts/` clean. 52 new tests
+  across intent/precedence, the audience helpers, the block renderer, the deterministic reply, the
+  numeral guard and the node's four gates.
+- `.NET`: 9 new/updated tests pass - the audience flag at all three trigger sites, and 7 for the
+  endpoint (401, 404-with-no-stray-account, the authoritative-balance property, agreement with the
+  billing summary the meter reads, allowances against plan limits, the low-water boundary, and a
+  raw-document assertion that no operator detail leaked into the shape).
+- One test-host wrinkle, local-only: the suite boots the real app, so a machine whose environment
+  selects `Media:Provider=cloudinary` fails the media options validator before any assertion runs.
+  Pinning the provider to `database` in the test host makes it hermetic; CI selects nothing and reads
+  no `.env`.
+- **No frontend change.** Both apps already send staff messages down the staff path and the reply is
+  an ordinary `text` block.
+
+### Worth knowing
+
+- `blossoms.planTier` is deliberately **not** rendered. It is the billing period's snapshot
+  (`PlanTierSnapshot` is written by the rollover job, not by a mid-period plan change), so quoting it
+  could name a plan the boutique has already left. Reporting the live plan needs a live read.
+- `customers.active.max` counts customers active in the last **90 days**, not the customer book, so
+  `customerCountBasis` travels into the prompt and an answer cannot call it "your customers".
+- Like `load_handbook`, a model-first classification of a novel phrasing fails **safe**: no fetch
+  happened, so the reply is the "couldn't reach your figures" admission rather than a guess.
+## Session 2026-09-24 (c) — Why Aveline went silent, and what "on file" was actually saying
+
+**Task, in three parts:** "does ava not have customer awareness?" (after "Who are our customers?"
+twice produced no reply at all), "also the dangling thinking bubble is back", and then "instead of
+whats on file: blah blah blah, ava should summarize it and then a content block of whats on file".
+
+### The silence was reproducible, and the database proved it
+
+The screenshot showed two identical questions and no answer. The thread in Postgres settled it:
+both turns wrote a **User** message and **no agent message at all**. The run itself succeeded
+(`AgentWorkflowRuns` `Succeeded`, 9 steps, `AgentsInvolved = {customer_memory, orchestrator}`), so
+nothing errored — nobody simply spoke.
+
+The path: "Who are our customers?" was classified `customer_preference` by the supervisor (the
+rules had said `general_inquiry`, and the memory agent has no tenant-wide read at all), so the plan
+routed `memory` only. Memory then skipped — a staff Salon message carries no customer to work on —
+`build_ava_blocks` returns `[]` for a skipped memory, and `_with_a_bounded_reply` had a fallback
+reply for `general_inquiry` and `aveline_help` but **not** for the other memory-only intents. No
+reply, no specialist content, no message.
+
+Two fixes, because the hole had two mouths:
+
+- `_fallback_reply` gives every plan that routes **no content specialist** a reply —
+  `_NO_CUSTOMER_REPLY` ("give me a name or a number") for the client-scoped intents,
+  `_HANDBOOK_MISS_REPLY` for a platform question, and `None` for `out_of_scope`, which carries its
+  own reason on the response status.
+- `supervise` returned a confident **rule** plan *unbounded*, so the same hole existed with an LLM
+  configured. It is now bounded too.
+
+Pinned by a property test over **every** `IntentType`: a resolved turn must publish at least one
+message. It immediately found that `out_of_scope` is answered by its status rather than a reply,
+which is now asserted separately.
+
+### The dangling bubble was a race that silence made deterministic
+
+The client sets "Aveline is working" optimistically on send, and clears it on an agent message or a
+terminal `agent.status`. The bug is the order: `ConversationEndpoints` **awaits** the whole agent
+run before returning, so the send promise resolves *after* the run's terminal state has already
+arrived. The optimistic set therefore lands last, with nothing left to clear it — and when the run
+produced no message, the other clearing condition never fires either. The two symptoms were one
+bug.
+
+`ConversationsContext` now tracks each thread slot's last observed state and declines to claim the
+indicator for a run that has already settled (`send`, `regenerate`, and their drawer twins).
+
+### "On file: X; X; X" was not a hallucination
+
+Ava's sentence looked fabricated. It was not: it came from `_staff_text`, a deterministic template
+that joined every retrieved memory into one line, and the store held:
+
+```
+The customer has a party   (22:06)
+The customer has a party   (22:16)
+Kasha vivian has a party   (22:19)
+The customer has a party   (2026-09-23 20:00)
+```
+
+Four rows, four repetitions, matching the screenshot exactly. **Nothing de-duplicates on write** —
+neither `_try_save_memory` in the agent nor `SaveMemoryAsync` in the API checks for an existing row —
+so the same fact was re-extracted and re-stored on four separate turns, once with the name lowercased.
+
+The shape is now split the way it was asked for: the sentence **summarises** ("One note is on file"),
+and the notes travel as their own `at_a_glance` block, collapsed by `normalise_memory_content` —
+one definition, living beside the memory models in `app/schemas/customer_memory.py`, because the
+agent that retrieves notes and the publisher that renders them must collapse the same pairs.
+That collapses three of the four rows; the reworded one still survives, which is the write-path gap
+recorded below rather than hidden here.
+
+### Customer awareness, as chosen
+
+"Who are our customers?" is now answered from the client **book**: `GET
+/internal/customers/book-summary` reuses the highlights read Home already uses (the earlier plan
+called this "a seventh thing to build" — it was not) plus a count of the book.
+
+It shares the account lane's audience gate and numeral guard but **never its data**: the allowance
+answers from a count against the plan and the book answers from the clients themselves, so
+`load_tenant_usage` fetches one or the other, never both. Two `"customers"` numbers in one prompt is
+exactly how the plan's active-customer allowance gets reported as the size of the book. `limit`
+bounds the named clients, not the book.
+
+### Verification
+
+- Python: **855 passed**, 2 skipped, 2 xfailed; `ruff check` clean.
+- `.NET`: 26 tests across the internal customer endpoints and the tenant snapshot pass, including
+  the book's size, ordering, limit, and cross-tenant exclusion.
+- Web: `tsc -b` clean, **1183** tests, `oxlint` 0 errors.
+
+### Left on the table, deliberately
+
+- **Write-time de-duplication is still missing**, so a reworded fact can still be stored twice. The
+  read path collapses what a reader would call one note; the write path needs a near-duplicate check
+  (the embedding is already computed at `SaveMemoryAsync`, so a cosine threshold against the
+  customer's existing rows is the obvious mechanism). That threshold is a judgement call, so it is
+  recorded rather than guessed.
+- **Client names are instructed, not guarded.** The guard is numeral-shaped: it proves a number came
+  from the data, not that a name did.
+- The four duplicate rows already in the local store are still there.
+## Session 2026-09-24 (d) — The Agents dashboard was telling the truth
+
+**Task:** "please fix these, and make sure the agent runs data saves to database as expected as well",
+after a screenshot of four flat Agents panels and the question "why are we missing workflow metrics?
+when you inspected the database, the table was empty too right?"
+
+### First, a correction
+
+The table was **not** empty, and the 0-row result I showed earlier was my own error:
+`AgentStepRuns.WorkflowRunId` references `AgentWorkflowRuns.Id` (the row's PK), not `WorkflowId` (the
+run id the agent sends). I compared the wrong column and moved on instead of chasing it. The join I
+ran next returned all 9 step rows for that run.
+
+With Postgres back up, the baseline took one query:
+
+```
+Status    | runs        step_rows
+Succeeded |   42            379
+```
+
+**42 runs, every one `Succeeded`.** No row had ever been in any other state. That is the whole bug.
+
+### `agent.runs_running` counted a state nothing could write
+
+The gauge is `COUNT(*) FROM AgentWorkflowRuns WHERE Status='Running'`. The agent reported a run
+exactly once, *after* it finished — `usage_reporter` literally describes its payload as "a **complete**
+agent workflow run and steps" — so every row was created already terminal.
+
+Everything downstream had been built for the missing half: `AgentWorkflowRun.Status` *defaults* to
+`Running`, `IsTerminal` treats it as non-terminal, `ValidateRun` permits it, and `PublishAsync` maps
+it to `agent.run.started` / `agent.run.resumed` — two event types nothing could ever emit. The design
+was always "open a row at the start, close it at the end"; only the first half was never wired.
+
+So the fix is the missing half: the agent posts a `Running` report before it works
+(`_report_run_started_best_effort`). It is **awaited with a 2 s timeout**, not fired and forgotten,
+because a start report that lost the race to the completion report would arrive at a terminal row and
+be refused as a conflict — which is the correct API behaviour, and exactly why the ordering must be
+deterministic rather than lucky. A new ingest test pins that refusal.
+
+### The sweep had to grow an arm, or the gauge would stick
+
+`StaleAgentRunJob` only reaped `PausedForApproval` past 72 hours. That was complete while every row
+was born terminal, and incomplete the moment a `Running` row could outlive its process. It now reaps
+both, with different error codes so an operator can tell them apart:
+
+| Abandonment | Cutoff | `ErrorCode` |
+| --- | --- | --- |
+| An approval nobody answered | `PausedAt`, 72 h | `approval_timeout` |
+| A process that died before reporting | `StartedAt`, 1 h | `run_abandoned` |
+
+Without it, one crash would hold `runs_running` above zero forever — a permanent false alarm on the
+only panel that is supposed to mean something.
+
+### The activity view had no metric at all
+
+Two instantaneous gauges and two ratios: nothing counted runs *over time*, so a healthy system and a
+dead one looked equally flat. `aveline.agent.runs_total` is the cumulative count of terminal runs,
+bridged as a Prometheus counter, with a **Runs completed** panel plotting `increase()`.
+
+It is cumulative over the **retention window**, not forever — runs are pruned after
+`RunRetentionDays` (400), so the value steps down when a day ages out. Prometheus reads that as a
+counter reset: the one interval spanning a prune under-reports, and no interval invents a spike.
+Recorded rather than glossed, and a DB-derived counter was preferred to an in-process one so the
+value survives an API restart.
+
+### Verified end to end, against the running stack
+
+Not "the tests pass" — the actual pipeline, with the images rebuilt:
+
+- A real `/agents/query` (`"How many customers do we have?"`) was fired while polling the database,
+  and a **`Running` row was observed mid-flight** (`Running=1`, ~1 s in). It then closed as
+  `Succeeded` with **7 step rows**, leaving no orphan. Run count 42 → 43.
+- Prometheus now reports all four: `aveline_agent_runs_total = 43` (matching the database exactly,
+  which proves DB → snapshot → bridge → Prometheus end to end), `runs_running_count = 0`,
+  `paused_count = 0`, `success_rate_ratio = 1`.
+- Grafana loaded the new panel (`sum(increase(aveline_agent_runs_total[$__rate_interval]))`).
+- The response also showed the ADR-026 book lane working live — and surfaced a wart worth recording:
+  the "most recently active" clients came back as **phone numbers**, because the highlights read falls
+  back to the number when a client has no name. Naming clients by phone number in a chat answer is
+  poor; the read's `DisplayName` is the place to decide it.
+
+### Also fixed while in there
+
+The Docker containers failed 12 hours earlier with exit 127 on a bind-mount error, which is why the
+observability stack was down when I looked. I tested a file bind-mount from this FUSE volume
+(`fuseblk` on `/run/media/...`) and it worked, so the failure was transient — consistent with the
+machine's restart behaviour the owner described — and `docker compose up -d` recovered everything.
+
+### Verification
+
+- Python: **861 passed**, 2 skipped, 2 xfailed; `ruff check` clean. 16 tests in the run-telemetry
+  suite, including the start report's shape, ordering, short timeout, and its failure never failing a
+  query.
+- `.NET`: 13 ingest tests, including the started-then-completed upsert (one row, not two) and the
+  late-start refusal; the stale sweep, rewritten to assert both arms and that a *recent* `Running`
+  run is left alone.
+- The bridge fixture and `MetricsNamingTests` were updated for the new series — both correctly failed
+  first, which is how the two sinks stay in step.

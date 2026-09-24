@@ -99,42 +99,64 @@ def test_ava_blocks_skip_at_a_glance_when_no_memories():
     assert all(b["type"] != "at_a_glance" for b in blocks)
 
 
-# ----------------------------------------------------------------------- Aveline (summary)
+# ------------------------------------------------------------------- Aveline (reply)
 
 
-def test_aveline_summary_is_a_text_block_without_the_old_intent_template():
+def test_aveline_renders_the_supervisors_reply():
     output = {
-        "intent": "item_search",
-        "memory": _memory_with_customer(),
+        "intent": "general_inquiry",
+        "reply": "Hello! I'm Aveline. What are you looking for today?",
+        "memory": _memory_skipped(),
         "visual": None,
         "commerce": None,
     }
     blocks = build_aveline_blocks(output)
 
-    assert len(blocks) == 1
-    assert blocks[0]["type"] == "text"
-    # The old stub "Intent: item_search" must be gone.
-    assert "Intent:" not in blocks[0]["text"]
+    assert blocks == [{"type": "text", "text": "Hello! I'm Aveline. What are you looking for today?"}]
 
 
-def test_aveline_summary_mentions_the_resolved_customer_when_present():
+def test_aveline_is_silent_when_there_is_nothing_to_say():
+    # The reported defect: an unroutable message produced the meta note "Treated this as a general
+    # inquiry." A routing summary is not content, so with no reply Aveline posts nothing at all.
+    output = {"intent": "general_inquiry", "memory": _memory_skipped(), "visual": None, "commerce": None}
+
+    assert build_aveline_blocks(output) == []
+
+
+def test_aveline_never_renders_a_routing_summary():
+    for intent in ("item_search", "pricing_query", "event_query", "general_inquiry", "order_placement"):
+        blocks = build_aveline_blocks({"intent": intent})
+        text = " ".join(b.get("text", "") for b in blocks)
+        assert "Treated this as" not in text
+        assert "Intent:" not in text
+
+
+def test_aveline_reply_is_withheld_when_a_specialist_spoke():
+    # One answer per message: if a specialist produced content, Aveline's fallback reply is dropped.
     output = {
-        "intent": "item_search",
+        "intent": "general_inquiry",
+        "reply": "Hello! I'm Aveline.",
         "memory": _memory_with_customer(),
         "visual": None,
         "commerce": None,
     }
-    text = build_aveline_blocks(output)[0]["text"]
 
-    assert "Michael" in text
+    assert build_aveline_blocks(output, specialist_spoke=True) == []
 
 
-def test_aveline_summary_does_not_duplicate_ava_content_when_no_customer():
-    output = {"intent": "general_inquiry", "memory": _memory_skipped(), "visual": None, "commerce": None}
-    text = build_aveline_blocks(output)[0]["text"]
+def test_a_clarification_still_wins_over_a_reply():
+    output = {
+        "intent": "general_inquiry",
+        "reply": "Hello!",
+        "clarification": {
+            "kind": "asked",
+            "question": "Which one did you mean - the silk or the linen?",
+        },
+    }
+    blocks = build_aveline_blocks(output, specialist_spoke=True)
 
-    assert text  # non-empty, still an acknowledgement
-    assert "Michael" not in text
+    assert blocks[0]["text"] == "Which one did you mean - the silk or the linen?"
+
 
 
 # ------------------------------------------------------------------ Clarification (Aveline)
@@ -338,3 +360,142 @@ def test_lina_blocks_do_not_emit_sign_off_from_the_generic_builder():
         "approval": {"amount": 50000, "reason": "above limit"},
     }
     assert all(b["type"] != "sign_off" for b in build_lina_blocks(commerce))
+
+
+# ------------------------------------------------------- Aveline (handbook citation, ADR-025)
+
+
+def test_aveline_emits_the_reply_and_a_sources_block():
+    output = {
+        "intent": "aveline_help",
+        "reply": "Of course - invite them from Team.",
+        "handbook_sources": [
+            {
+                "sourceKey": "web-docs/team",
+                "title": "Team",
+                "url": "/docs/team",
+                "heading": "Invitations",
+            }
+        ],
+    }
+
+    blocks = build_aveline_blocks(output)
+
+    assert blocks[0] == {"type": "text", "text": "Of course - invite them from Team."}
+    # The citation is structured, so a frontend can turn it into links. It is deliberately not
+    # appended to the prose: a frontend cannot reliably find a link inside model-written text.
+    assert blocks[1] == {
+        "type": "sources",
+        "items": [{"title": "Team", "url": "/docs/team", "heading": "Invitations"}],
+    }
+
+
+def test_aveline_omits_the_sources_block_without_sources():
+    output = {"intent": "general_inquiry", "reply": "Hello, I'm Aveline."}
+
+    assert build_aveline_blocks(output) == [{"type": "text", "text": "Hello, I'm Aveline."}]
+
+
+def test_the_sources_block_comes_from_the_chunks_not_the_reply():
+    # The citation is built from what was actually retrieved, so a model that names a page it did
+    # not use cannot put that page in the thread.
+    output = {
+        "intent": "aveline_help",
+        "reply": "See the Billing page for that.",
+        "handbook_sources": [{"title": "Team", "url": "/docs/team"}],
+    }
+
+    blocks = build_aveline_blocks(output)
+
+    assert blocks[1]["items"] == [{"title": "Team", "url": "/docs/team"}]
+    assert "Sources" not in blocks[0]["text"]
+
+
+def test_the_sources_block_names_each_page_once():
+    output = {
+        "intent": "aveline_help",
+        "reply": "x",
+        "handbook_sources": [{"title": "Team"}, {"title": "Team"}, {"title": "Salon"}],
+    }
+
+    items = build_aveline_blocks(output)[1]["items"]
+
+    assert [item["title"] for item in items] == ["Team", "Salon"]
+
+
+def test_a_source_without_a_url_still_renders_as_a_citation():
+    output = {"intent": "aveline_help", "reply": "x", "handbook_sources": [{"title": "Team"}]}
+
+    assert build_aveline_blocks(output)[1]["items"] == [{"title": "Team"}]
+
+
+# ------------------------------------------------- the notes on file, as their own block
+
+
+def _memory_with_notes_on_file() -> dict:
+    """A staff question about a customer who already has notes, and nothing new this turn.
+
+    Reproduces the real thread: the store held the same fact four times, and the brief recited all
+    four into one sentence.
+    """
+    return {
+        "agent": "memory",
+        "ran": True,
+        "status": "success",
+        "customer": {"customer_id": "c1", "full_name": "Kasha Vivian Pera", "status": "new"},
+        "interaction_brief": "Kasha Vivian Pera is a new customer. One note is on file.",
+        "memories_on_file": [
+            {"content": "The customer has a party", "category": "event"},
+            {"content": "The customer has a party", "category": "event"},
+            {"content": "the customer has a party.", "category": "event"},
+        ],
+        "extracted_memories": [],
+    }
+
+
+def test_notes_on_file_become_their_own_block():
+    blocks = build_ava_blocks(_memory_with_notes_on_file())
+
+    table = next(b for b in blocks if b["type"] == "at_a_glance")
+    assert table["columns"] == ["Category", "Content"]
+    assert table["rows"] == [["event", "The customer has a party"]]
+
+
+def test_the_brief_does_not_recite_the_notes():
+    # The sentence summarises; the block carries the detail. Reciting produced a list in a sentence.
+    blocks = build_ava_blocks(_memory_with_notes_on_file())
+
+    brief = blocks[0]["text"]
+    assert brief == "Kasha Vivian Pera is a new customer. One note is on file."
+    assert "The customer has a party" not in brief
+
+
+def test_a_note_extracted_this_turn_is_not_duplicated_by_the_block():
+    # One table, not two: the same fact learned this turn and already on file appears once.
+    memory = _memory_with_notes_on_file()
+    memory["extracted_memories"] = [
+        {"content": "The customer has a party", "category": "event", "confidence": 0.9}
+    ]
+
+    blocks = build_ava_blocks(memory)
+
+    tables = [b for b in blocks if b["type"] == "at_a_glance"]
+    assert len(tables) == 1
+    assert tables[0]["rows"] == [["event", "The customer has a party"]]
+
+
+def test_newly_extracted_memories_still_reach_the_block_alongside_on_file_notes():
+    memory = _memory_with_notes_on_file()
+    memory["memories_on_file"] = [{"content": "Prefers emerald silk", "category": "preference"}]
+    memory["extracted_memories"] = [
+        {"content": "Has a party on 2026-12-01", "category": "event", "confidence": 0.9}
+    ]
+
+    blocks = build_ava_blocks(memory)
+
+    table = next(b for b in blocks if b["type"] == "at_a_glance")
+    # On file first, then what this turn learned.
+    assert table["rows"] == [
+        ["preference", "Prefers emerald silk"],
+        ["event", "Has a party on 2026-12-01"],
+    ]

@@ -63,7 +63,7 @@ do what.
 | **Staff** | Approve |
 | **Supervisor** | Approve, Reject, Revise |
 | **Owner** | Approve, Reject, Revise |
-| **Manager** | No Approvals section. A Manager holds the permission to reject and revise orders but not the approval permission the section requires. |
+| **Manager** | No Approvals section, and no verb. A Manager holds order management but not the approval permission the section requires, and rejecting and revising are shown only when a role holds both. |
 
 ## When something is not on screen
 
@@ -78,5 +78,6 @@ do what.
 
 - The queue is the whole surface. There is no separate detail page for a request.
 - A rejection cannot be undone from the dashboard.
-- A Manager cannot approve: approving is the Staff-and-above permission, while rejecting and
-  revising additionally require order management.
+- A Manager cannot approve: approving needs the approval permission, which a Manager does not hold.
+  Rejecting and revising are shown only when a role holds that permission **and** order management,
+  so a Manager is offered no verb and never sees the section.

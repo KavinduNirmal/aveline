@@ -259,6 +259,112 @@ public class ConversationService : IConversationService
     /// <summary>The hard ceiling on a history window, so a caller cannot ask for an unbounded read.</summary>
     private const int MaxHistoryTurns = 200;
 
+    /// <summary>
+    /// How far back regeneration looks for the staff question a block answered.
+    /// </summary>
+    /// <remarks>
+    /// A block is normally the reply to the turn immediately above it, so this only has to be
+    /// generous enough to survive an attachment or an approval card landing between the two. A
+    /// question older than the window falls back to the block's own words, which is a worse
+    /// prompt but never an unbounded read.
+    /// </remarks>
+    private const int RegenerateLookbackTurns = 50;
+
+    public async Task<bool> RegenerateAsync(
+        Guid orgId,
+        Guid userId,
+        Guid conversationId,
+        Guid messageId,
+        CancellationToken cancellationToken = default)
+    {
+        var conversation = await _conversations.GetVisibleToUserAsync(
+            orgId, conversationId, userId, cancellationToken);
+        if (conversation is null)
+        {
+            return false;
+        }
+
+        var message = await _messages.GetAsync(conversationId, messageId, cancellationToken);
+        if (message is null)
+        {
+            return false;
+        }
+
+        // The question is the newest staff turn at or before the block. Falling back to the
+        // block's own text keeps a thread whose staff turn has scrolled out of the window
+        // regenerable: re-asking the words the agent itself wrote is a poor prompt, but it is a
+        // prompt, and refusing outright would leave the associate with a dead button.
+        var window = await _messages.ListLatestAsync(
+            conversationId, RegenerateLookbackTurns, cancellationToken);
+        var question = window
+            .Where(candidate =>
+                candidate.AuthorKind == AuthorKind.User
+                && candidate.CreatedAt <= message.CreatedAt)
+            .OrderByDescending(candidate => candidate.CreatedAt)
+            .Select(candidate => FirstTextBlock(candidate.ContentBlocksJson))
+            .FirstOrDefault(text => !string.IsNullOrWhiteSpace(text));
+
+        var query = string.IsNullOrWhiteSpace(question)
+            ? FirstTextBlock(message.ContentBlocksJson)
+            : question;
+
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return false;
+        }
+
+        // Best-effort inside, exactly like every other trigger: the agent's own answer arrives
+        // later as message events, so a failed run surfaces as an absence, not as an error here.
+        await TriggerAgentAsync(
+            conversation,
+            query,
+            customerId: conversation.CustomerId,
+            cancellationToken: cancellationToken);
+
+        return true;
+    }
+
+    /// <summary>
+    /// The first block's own words in a stored block array, or <c>null</c>.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not restricted to <c>text</c> blocks: a draft (<c>suggestion</c>) and a styling
+    /// note (<c>look</c>) both carry their prose in the same <c>text</c> field, and those are
+    /// precisely the blocks the rail offers Regenerate on.
+    /// </remarks>
+    private static string? FirstTextBlock(string? contentBlocksJson)
+    {
+        if (string.IsNullOrWhiteSpace(contentBlocksJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(contentBlocksJson);
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            foreach (var block in document.RootElement.EnumerateArray())
+            {
+                if (block.ValueKind != JsonValueKind.Object) continue;
+                if (!block.TryGetProperty("text", out var text)) continue;
+                if (text.ValueKind != JsonValueKind.String) continue;
+
+                var value = text.GetString();
+                if (!string.IsNullOrWhiteSpace(value)) return value;
+            }
+        }
+        catch (JsonException)
+        {
+            // A block array that will not parse has no question in it; the caller falls back.
+        }
+
+        return null;
+    }
+
     public async Task<MessageDto> SendStaffNoteAsync(
         Guid orgId,
         Guid userId,
@@ -913,6 +1019,11 @@ public class ConversationService : IConversationService
                     phone_number = from,
                     channel = "whatsapp",
                     direction = "inbound",
+                    // A customer message must never surface the boutique's own numbers. The agent
+                    // requires this flag to be explicitly true before it fetches the tenant's
+                    // Blossom balance or seat/customer counts (ADR-026), so `false` here is what
+                    // closes that lane rather than relying on `direction` alone.
+                    staff_query = false,
                     attachments,
                     image_url = imageUrl,
                     // The line items this message asks to buy, resolved against real inventory
@@ -1086,6 +1197,12 @@ public class ConversationService : IConversationService
                     // See TriggerInboundDraftAsync: the transcript window is keyed by this id.
                     conversation_id = conversation.Id,
                     customer_id = customerId,
+                    // The staff path (Salon note, regeneration, agent brief), so the tenant's own
+                    // account figures are in scope: "how many Blossoms do I have left?" is a
+                    // question about this boutique, not about a customer (ADR-026). This flag is
+                    // the positive evidence the agent gates on; `TriggerInboundDraftAsync` sends
+                    // false for the customer path.
+                    staff_query = true,
                     attachments = described,
                     image_url = imageUrl,
                     // See TriggerInboundDraftAsync: staff can place an order through the agent too,

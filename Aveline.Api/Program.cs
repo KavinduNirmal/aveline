@@ -22,6 +22,7 @@ using Aveline.Api.Modules.Conversations;
 using Aveline.Api.Modules.Conversations.Hubs;
 using Aveline.Api.Modules.Conversations.Media;
 using Aveline.Api.Modules.CustomerConcierge;
+using Aveline.Api.Modules.Handbook;
 using Aveline.Api.Modules.Home;
 using Aveline.Api.Modules.Home.Endpoints;
 using Aveline.Api.Modules.Integrations;
@@ -90,6 +91,7 @@ builder.Services.AddSignalR()
 builder.Services.AddNotificationsModule(builder.Configuration);
 builder.Services.AddConversationsModule(builder.Configuration);
 builder.Services.AddCustomerConciergeModule();
+builder.Services.AddHandbookModule();
 builder.Services.AddHomeModule();
 builder.Services.AddSystemHealthModule(builder.Configuration);
 builder.Services.AddStatisticsModule(builder.Configuration);
@@ -210,6 +212,8 @@ v1.MapCustomerTenantEndpoints();
 
 app.MapBillingEndpoints();
 app.MapCustomerConciergeEndpoints();
+// The handbook knowledge base (ADR-025): chunk ingest, hybrid search and source listing.
+app.MapHandbookEndpoints();
 // Internal (service-to-service) conversation transcript read for the agent service (ADR-023, W1.1).
 app.MapInternalConversationEndpoints();
 app.MapVisualEndpoints();

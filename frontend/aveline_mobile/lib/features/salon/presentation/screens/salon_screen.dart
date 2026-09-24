@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../core/config/app_config.dart';
@@ -8,8 +11,14 @@ import '../../../../core/network/conversation_realtime_service.dart';
 import '../../../../core/notifications/realtime_connection_factory.dart';
 import '../../../../core/providers/agent_state_provider.dart';
 import '../../../../core/providers/user_provider.dart';
+import '../../../../shared/widgets/app_toast.dart';
+import '../../../conversations/domain/block_actions.dart';
+// Only the block model is wanted here: this file's own `MessageDeliveryStatus` is the
+// Salon's, and importing the thread's whole model would make the two names ambiguous.
+import '../../../conversations/domain/thread_message.dart' show ThreadBlock;
 import '../../../conversations/presentation/attachment_picker.dart';
 import '../../../conversations/presentation/client_thread_controller.dart';
+import '../../../conversations/presentation/widgets/block_action_rail.dart';
 import '../../data/conversation_api.dart';
 import '../../domain/agent_activity.dart';
 import '../../domain/agent_state.dart';
@@ -44,6 +53,18 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
   String? _organizationId;
   String? _conversationId;
   AgentActivity? _agentActivity;
+
+  /// Collapses an activity bubble the workflow never confirmed as finished.
+  Timer? _activityTimeout;
+
+  /// How many agent messages have arrived in this session. It is the run's generation:
+  /// the hub can deliver the reply *before* the send's own HTTP response resolves, and
+  /// the response must not then open a bubble for a run that has already answered.
+  int _repliesSeen = 0;
+
+  /// How long a live bubble may go without any word from the workflow before it is
+  /// treated as stale.
+  static const Duration _activityStaleAfter = Duration(seconds: 60);
   bool _sending = false;
 
   /// The files picked and not yet sent, keyed by the local id the tray draws.
@@ -53,6 +74,16 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
   /// Why a pick was refused or a file could not be read, in the API's own words where it
   /// has them.
   String? _attachmentError;
+
+  /// The staged replies whose decision is in flight, so a second tap cannot record a
+  /// second decision on the same message.
+  final Set<String> _deciding = {};
+
+  /// The block-level actions in flight, keyed by `messageId#blockIndex`.
+  ///
+  /// Per block rather than per message, because one answer can carry several pieces and
+  /// regenerating one must not disable the rail on the others.
+  final Map<String, BlockActionId> _pendingBlockActions = {};
 
   /// True while the thread is scrolled to (or within [_atBottomThreshold] of) the newest
   /// message. Drives both auto-following replies and the jump-to-latest button.
@@ -175,11 +206,13 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
           // States are published next to the messages they describe but on separate channels,
           // so one can arrive after the reply it belonged to. Tracking only a run that is
           // actually in flight keeps a late state from reopening the activity bubble, which
-          // nothing would ever close again.
-          if (activity == null && !state.isTerminal) return;
+          // nothing would ever close again. `endsRun` rather than `isTerminal`: a run that
+          // paused for a decision has stopped, and its `waiting` state is what closes the
+          // bubble.
+          if (activity == null && !state.endsRun) return;
 
           _agentStateProvider.apply(state);
-          setState(() => _agentActivity = nextAgentActivity(activity, state));
+          setState(() => _setActivity(nextAgentActivity(activity, state)));
         },
         onMessage: (payload) {
           // The realtime service hands over the raw `MessageDto` the hub sent, so `core`
@@ -192,29 +225,54 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
     }
   }
 
+  /// Sets the live activity bubble and re-arms the backstop that collapses it.
+  ///
+  /// The bubble is opened optimistically the moment a note is sent, and it is confirmed by
+  /// whatever arrives next: a state, or the reply itself. A run that finishes without either
+  /// — a dropped event, or a socket that went away mid-run — would otherwise leave the bubble
+  /// up for the rest of the session, which is what "it never goes away" means.
+  void _setActivity(AgentActivity? activity) {
+    _agentActivity = activity;
+    _activityTimeout?.cancel();
+    if (activity == null) {
+      return;
+    }
+    _activityTimeout = Timer(_activityStaleAfter, () {
+      if (!mounted || _agentActivity == null) return;
+      setState(() => _setActivity(null));
+      _agentStateProvider.reset();
+    });
+  }
+
   /// Handles an incoming (agent) message: collapses the live activity into a "Thought for
   /// Xs" caption and appends the message.
   void _handleIncomingMessage(SalonMessage message) {
     if (!mounted) return;
     final wasAtBottom = _atBottom;
-    var isAgent = false;
+    final isAgent = message.authorKind == 'Agent';
+    // A message can arrive more than once — the hub publishes to more than one group the
+    // Salon belongs to, and a reconnect can replay one it already holds. A replay is not
+    // added twice, but it *is* still the run's visible end, so it settles the activity
+    // either way. Dropping it whole left the bubble that [send] opened spinning for good.
+    final isReplay = _messages.any((m) => m.id == message.id);
+
     setState(() {
-      if (_messages.any((m) => m.id == message.id)) return;
+      if (!isReplay) {
+        final activity = _agentActivity;
+        final thoughtSeconds = isAgent && activity != null
+            ? DateTime.now().difference(activity.startedAt).inMilliseconds / 1000.0
+            : null;
 
-      final activity = _agentActivity;
-      isAgent = message.authorKind == 'Agent';
-      final thoughtSeconds = isAgent && activity != null
-          ? DateTime.now().difference(activity.startedAt).inMilliseconds / 1000.0
-          : null;
-
-      _messages.add(
-        message.copyWith(
-          thoughtSeconds: thoughtSeconds,
-          streamIn: isAgent,
-        ),
-      );
+        _messages.add(
+          message.copyWith(
+            thoughtSeconds: thoughtSeconds,
+            streamIn: isAgent,
+          ),
+        );
+      }
       if (isAgent) {
-        _agentActivity = null;
+        _repliesSeen += 1;
+        _setActivity(null);
       }
     });
     // The reply is the visible end of the run, so settle the avatar/status with it. A terminal
@@ -224,7 +282,7 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
     }
     // Follow the conversation only when the reader is already at the newest message;
     // otherwise leave their position alone so the jump-to-latest button surfaces instead.
-    if (wasAtBottom) _scrollToBottom();
+    if (!isReplay && wasAtBottom) _scrollToBottom();
   }
 
   /// Whether every held file is stored. A send waits for its uploads rather than naming
@@ -383,6 +441,8 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
       deliveryStatus: MessageDeliveryStatus.sending,
     );
 
+    final repliesBeforeSend = _repliesSeen;
+
     setState(() {
       _messages.add(optimistic);
       _sending = true;
@@ -412,13 +472,19 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
       _clearAttachments();
 
       // Only once the user message is confirmed does Aveline's activity bubble appear.
-      setState(() {
-        _agentActivity = AgentActivity(
-          startedAt: DateTime.now(),
-          currentState: AgentState.thinking,
-        );
-      });
-      _agentStateProvider.apply(AgentState.thinking);
+      // The reply can land before this response does — the hub publishes it the moment the
+      // workflow answers, while the send's own response is still in flight. Opening the
+      // bubble regardless left a "Thinking…" card under every reply that nothing would ever
+      // close, because the only thing that closes one is a reply that has already arrived.
+      if (_repliesSeen == repliesBeforeSend) {
+        setState(() {
+          _setActivity(AgentActivity(
+            startedAt: DateTime.now(),
+            currentState: AgentState.thinking,
+          ));
+        });
+        _agentStateProvider.apply(AgentState.thinking);
+      }
     } catch (_) {
       _confirmMessage(
         optimistic.id,
@@ -469,14 +535,175 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
       );
       if (!mounted) return;
       setState(() {
-        _agentActivity = AgentActivity(
+        _setActivity(AgentActivity(
           startedAt: DateTime.now(),
           currentState: AgentState.thinking,
-        );
+        ));
       });
       _agentStateProvider.apply(AgentState.thinking);
     } catch (_) {
       // Best-effort; the agent reply (or lack of one) surfaces over the realtime channel.
+    }
+  }
+
+  /// Reads one attachment's bytes for the thread's image cards.
+  ///
+  /// The stored route is deliberately not used as an `<Image.network>` source: an
+  /// image element cannot carry the bearer token, so the bytes are fetched through
+  /// the same authenticated client every other call uses.
+  Future<Uint8List> _loadAttachment(String attachmentId) {
+    final api = _conversationApi;
+    final organizationId = _organizationId;
+    final conversationId = _conversationId;
+    if (api == null || organizationId == null || conversationId == null) {
+      throw StateError('The Salon is not connected to a conversation.');
+    }
+    return api.fetchAttachmentBytes(
+      organizationId: organizationId,
+      conversationId: conversationId,
+      attachmentId: attachmentId,
+    );
+  }
+
+  /// Records the associate's decision on a staged reply (ADR-024).
+  ///
+  /// The decision is bound to the content hash the associate was shown, so the whole
+  /// message is needed rather than just the boolean. The server's own copy of the
+  /// decided message replaces the staged one, which is what stops the buttons hanging
+  /// around after they have been pressed.
+  Future<void> _decideSignOff(SalonMessage message, bool approved) async {
+    final api = _conversationApi;
+    final organizationId = _organizationId;
+    final conversationId = _conversationId;
+    final hash = message.contentHash;
+    if (api == null ||
+        organizationId == null ||
+        conversationId == null ||
+        hash == null ||
+        hash.isEmpty) {
+      return;
+    }
+    // A second tap while the first is in flight would be a second decision on the same
+    // message, which the API refuses. The set keeps the button honest instead.
+    if (!_deciding.add(message.id)) {
+      return;
+    }
+    setState(() {});
+
+    try {
+      final decided = await api.decideSignOff(
+        organizationId: organizationId,
+        conversationId: conversationId,
+        messageId: message.id,
+        contentHash: hash,
+        approved: approved,
+      );
+      _confirmMessage(message.id, decided);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('That decision could not be recorded.')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _deciding.remove(message.id));
+      } else {
+        _deciding.remove(message.id);
+      }
+    }
+  }
+
+  /// The Salon's action rail, for the content blocks an agent publishes here.
+  ///
+  /// The rail is the same one a client thread draws, because the blocks are the same
+  /// blocks. What differs is the environment: the concierge Salon is not bound to a
+  /// client, so "send to customer" is drawn disabled with its reason rather than
+  /// pretending to have a destination, and the Salon does not hold the inbox's thread
+  /// list, so Forward is drawn the same way. Copy and Regenerate are live.
+  BlockActionBridge get _blockActions => BlockActionBridge(
+    hasCustomerDestination: false,
+    hasForwardDestination: false,
+    // The agent is already answering, so a second regenerate would race the first.
+    agentBusy: _agentActivity != null,
+    pendingAction: (messageId, blockIndex) =>
+        _pendingBlockActions['$messageId#$blockIndex'],
+    onAction: _onBlockAction,
+  );
+
+  /// Runs one segment of a Salon block's rail.
+  void _onBlockAction(
+    ThreadBlock block,
+    String messageId,
+    int blockIndex,
+    BlockActionId action,
+  ) {
+    switch (action) {
+      case BlockActionId.copy:
+        _copyBlock(block);
+      case BlockActionId.regenerate:
+        _regenerateBlock(messageId, block, blockIndex);
+      case BlockActionId.sendToCustomer:
+      case BlockActionId.forward:
+        // The rail resolves these unavailable in the Salon, so this is only reached if
+        // the environment ever changes without the handler following.
+        AppToast.show(context, BlockActionReasons.noCustomer);
+    }
+  }
+
+  /// Copies the **block's** words, not the message's.
+  Future<void> _copyBlock(ThreadBlock block) async {
+    final text = blockToText(block);
+    if (text.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: text));
+    if (mounted) {
+      AppToast.show(context, '${blockTitle(block)} copied');
+    }
+  }
+
+  /// Asks for a fresh reply behind one block's message.
+  ///
+  /// Nothing is swapped locally: the endpoint is accepted rather than answered, and the
+  /// new reply arrives over the hub like any other agent message.
+  Future<void> _regenerateBlock(
+    String messageId,
+    ThreadBlock block,
+    int blockIndex,
+  ) async {
+    final organizationId = _organizationId;
+    final conversationId = _conversationId;
+    final api = _conversationApi;
+    final key = '$messageId#$blockIndex';
+    if (_pendingBlockActions.containsKey(key)) return;
+    if (organizationId == null || conversationId == null || api == null) {
+      AppToast.show(context, 'The Salon is not connected yet.', error: true);
+      return;
+    }
+
+    setState(() => _pendingBlockActions[key] = BlockActionId.regenerate);
+    try {
+      await api.regenerate(
+        organizationId: organizationId,
+        conversationId: conversationId,
+        messageId: messageId,
+      );
+      if (mounted) {
+        AppToast.show(context, 'Asking Aveline for a fresh take.');
+      }
+    } catch (_) {
+      if (mounted) {
+        AppToast.show(
+          context,
+          'Could not regenerate that ${blockTitle(block).toLowerCase()}.',
+          error: true,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _pendingBlockActions.remove(key));
+      } else {
+        _pendingBlockActions.remove(key);
+      }
     }
   }
 
@@ -501,6 +728,11 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
   /// Deferred to the next frame so the list has laid out and `maxScrollExtent` accounts for
   /// the messages that were just added; scrolling before that leaves the thread parked at
   /// the top of the conversation.
+  ///
+  /// The list is built lazily, so the first `maxScrollExtent` is an estimate drawn from the
+  /// children that happened to fit. An immediate jump lands a few pixels short of the true
+  /// end, which is enough for the thread to open with the newest bubble clipped. One more
+  /// pass after that frame has settled lands on the end the list actually has.
   void _scrollToBottom({bool animate = true}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients) return;
@@ -510,8 +742,15 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
 
       if (!animate) {
         _scrollController.jumpTo(target);
-        _autoScrolling = false;
-        if (!_atBottom) setState(() => _atBottom = true);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !_scrollController.hasClients) return;
+          final settled = _scrollController.position.maxScrollExtent;
+          if (settled != target) {
+            _scrollController.jumpTo(settled);
+          }
+          _autoScrolling = false;
+          if (!_atBottom) setState(() => _atBottom = true);
+        });
         return;
       }
 
@@ -533,6 +772,7 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _scrollController.removeListener(_onScroll);
     _realtimeService?.disconnect();
+    _activityTimeout?.cancel();
     _agentStateProvider.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -569,6 +809,9 @@ class _SalonScreenState extends State<SalonScreen> with WidgetsBindingObserver {
                 if (_atBottom) _scrollToBottom();
               },
               onSelectCustomer: _selectCustomer,
+              onSignOff: _decideSignOff,
+              loadAttachment: _loadAttachment,
+              bridge: _blockActions,
             ),
           ),
         );

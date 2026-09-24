@@ -17,9 +17,10 @@ from app.agents.customer_memory.introduction import extract_self_introduced_name
 from app.agents.customer_memory.parsing import parse_message
 from app.agents.customer_memory.state import MemoryAgentState
 from app.agents.customer_memory.update_instruction import extract_customer_update
+from app.context import render_context_block
 from app.llm.replies import unwrap_reply
 from app.prompts.assembly import assemble_system_prompt
-from app.schemas.customer_memory import MemoryAgentOutput
+from app.schemas.customer_memory import MemoryAgentOutput, normalise_memory_content
 from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger("aveline.agent.customer_memory")
@@ -50,6 +51,51 @@ def _unwrap_reply(content: str) -> str:
     unwrapping because the visual agent needs exactly the same behaviour.
     """
     return unwrap_reply(content, fallback=content if isinstance(content, str) else "")
+
+
+def _unique_notes(memories: Any) -> list[dict[str, str]]:
+    """The customer's stored notes, first occurrence first, near-identical rows collapsed.
+
+    The store has no write-time de-duplication, so one fact can sit in it several times: a real
+    thread held three identical "The customer has a party" rows plus a reworded fourth, and reciting
+    them produced a sentence that read as a malfunction. This collapses what a reader would call the
+    same note. It cannot collapse a reworded one, which is the remaining gap - on the write path,
+    not here.
+    """
+    notes: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    for memory in memories or []:
+        if not isinstance(memory, dict):
+            continue
+        content = str(memory.get("content") or "").strip()
+        if not content:
+            continue
+        key = normalise_memory_content(content)
+        if key in seen:
+            continue
+        seen.add(key)
+        notes.append(
+            {
+                "content": content,
+                "category": str(memory.get("category") or "").strip() or "memory",
+            }
+        )
+
+    return notes
+
+
+def _notes_sentence(contents: list[str]) -> str:
+    """How Aveline refers to the notes she is about to show, without reciting them.
+
+    A count, not a list: the notes arrive as their own content block, and a sentence that enumerates
+    them reads as a malfunction as soon as the store holds near-duplicates.
+    """
+    if not contents:
+        return ""
+    if len(contents) == 1:
+        return "One note is on file."
+    return f"{len(contents)} notes are on file."
 
 
 class CustomerMemoryAgent:
@@ -393,6 +439,9 @@ class CustomerMemoryAgent:
                 "consent_status": state.get("consent_status") or "pending",
             },
             "extracted_memories": state.get("extracted_memories", []),
+            # What was already on file, kept out of the brief sentence so the publisher can render
+            # it as its own block (ADR-016's `at_a_glance`).
+            "memories_on_file": _unique_notes(state.get("semantic_context")),
             "detected_events": structured_events,
             "interaction_brief": interaction_brief,
             "draft_response": draft,
@@ -473,22 +522,21 @@ class CustomerMemoryAgent:
         # What the boutique has actually recorded about this customer. These are semantic memories
         # (events, preferences, complaints), which the interaction brief does not carry - so a
         # question like "what do we have on file for her?" answered "nothing on file yet" while
-        # three memories sat in the store.
-        remembered = [
-            str(memory.get("content")).strip()
-            for memory in (state.get("semantic_context") or [])
-            if isinstance(memory, dict) and memory.get("content")
-        ]
+        # three memories sat in the store. Collapsed to what a reader would call one note, because
+        # the store itself holds duplicates.
+        remembered = [note["content"] for note in _unique_notes(state.get("semantic_context"))]
 
         def _details() -> list[str]:
-            """The grounded facts, in a stable order."""
+            """The grounded facts, in a stable order.
+
+            The stored notes are deliberately absent: they are rendered as their own content block
+            rather than recited here.
+            """
             facts: list[str] = []
             if prefs:
                 facts.append(f"preferences: {prefs}")
             if events:
                 facts.append(f"upcoming events: {events}")
-            if remembered:
-                facts.append(f"on file: {'; '.join(remembered)}")
             if tags:
                 facts.append(f"tags: {', '.join(tags)}")
             return facts
@@ -496,28 +544,37 @@ class CustomerMemoryAgent:
         if intent_type == "event_query":
             if events:
                 return f"Upcoming events for {display_name}: {events}."
-            # The absence of a dated event stays the headline answer; anything else on file is
-            # added because it is usually what the staff member actually wanted to know.
+            # The absence of a dated event stays the headline answer; what else is on file follows
+            # as its own block, because it is usually what the staff member actually wanted to know.
             if remembered:
-                return (
-                    f"No upcoming events on file for {display_name}. "
-                    f"On file: {'; '.join(remembered)}."
-                )
+                return f"No upcoming events on file for {display_name}. {_notes_sentence(remembered)}"
             return f"No upcoming events on file for {display_name}."
 
-        # General staff query: give the staff a readable, grounded summary.
+        # General staff query: a readable, grounded summary. The notes themselves are NOT recited
+        # here - the publisher renders them as their own block (see `memories_on_file`), because
+        # joining them into the sentence produced "on file: X; X; X" for every near-duplicate the
+        # store had accumulated, which reads as a malfunction rather than as an answer.
+        facts = _details()
+        notes = _notes_sentence(remembered)
+
         if status == "new":
-            facts = _details()
-            if not facts:
+            if not facts and not remembered:
                 return f"{display_name} is a new customer - nothing on file yet."
             # Announcing "new" stays useful for onboarding even when some memory exists, so the
             # framing is kept and the facts are appended rather than replacing it.
-            return f"{display_name} is a new customer - {'; '.join(facts)}."
+            sentence = f"{display_name} is a new customer"
+            if facts:
+                sentence += f" - {'; '.join(facts)}"
+            sentence += "."
+            return f"{sentence} {notes}" if notes else sentence
 
-        facts = _details()
-        if not facts:
+        if not facts and not remembered:
             return f"{display_name} ({status}) has no preferences or events on file yet."
-        return f"{display_name} ({status}) - {'; '.join(facts)}."
+        sentence = f"{display_name} ({status})"
+        if facts:
+            sentence += f" - {'; '.join(facts)}"
+        sentence += "."
+        return f"{sentence} {notes}" if notes else sentence
 
     async def _generate_draft(
         self,
@@ -549,7 +606,17 @@ class CustomerMemoryAgent:
             "Do not auto-send; it is reviewed by a human associate."
         )
 
-        system = assemble_system_prompt("memory", self.org_context)
+        # The bounded conversation window (ADR-023), rendered here rather than added to
+        # `context_lines` so it reaches the model as a system-layer fragment: conversation context
+        # is data the model is given, not part of the current turn's instruction.
+        dialogue_context = render_context_block(
+            history=state.get("history"),
+            thread_summary=state.get("thread_summary"),
+            pinned_slots=state.get("pinned_slots"),
+        )
+        system = assemble_system_prompt(
+            "memory", self.org_context, dialogue_context=dialogue_context
+        )
         try:
             result = await self.llm.ainvoke(
                 [SystemMessage(content=system), HumanMessage(content="\n".join(context_lines))]

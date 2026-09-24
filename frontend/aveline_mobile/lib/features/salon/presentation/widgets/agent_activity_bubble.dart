@@ -23,7 +23,9 @@ class AgentActivityBubble extends StatelessWidget {
           width: 32,
           height: 32,
           alignment: Alignment.center,
-          child: const Blossom(size: 22),
+          // `Blossom` falls back to the ambient icon colour and then to black, so the
+          // mark states its own ink rather than drawing a black blob.
+          child: Blossom(size: 22, color: scheme.primary),
         ),
         const SizedBox(width: 8),
         Flexible(

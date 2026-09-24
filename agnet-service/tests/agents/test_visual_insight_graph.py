@@ -373,3 +373,66 @@ async def test_analyze_image_node_surfaces_a_failed_analysis_distinctly():
     assert update["image_attributes"] is None
     assert update["reason"] == "image_analysis_failed"
 
+
+
+# ---------------------------------------------------------------------------
+# Conversation-context transport (ADR-023) — the window must reach the styling prompt.
+# ---------------------------------------------------------------------------
+
+
+class _CapturingVisualLlm:
+    """A chat-model double that records the message list it was invoked with."""
+
+    def __init__(self) -> None:
+        self.calls: list[list] = []
+
+    async def ainvoke(self, messages):
+        self.calls.append(messages)
+        response = MagicMock()
+        response.content = "Custom editorial look curated by AI stylist."
+        response.usage_metadata = {"input_tokens": 120, "output_tokens": 45}
+        return response
+
+    def prompt_text(self) -> str:
+        return "\n".join(str(part) for part in self.calls[0])
+
+
+@pytest.mark.asyncio
+async def test_visual_history_reaches_the_styling_prompt():
+    """The bounded window is rendered into the styling system prompt, not only the supervisor's."""
+    registry = MagicMock()
+    registry.search_inventory = AsyncMock(
+        return_value={
+            "items": [
+                {
+                    "itemId": "item-101",
+                    "name": "Peach Raw-Silk Drape Gown",
+                    "price": 1250.0,
+                    "stock": 2,
+                    "imageUrl": "https://images.aveline.luxury/gown.jpg",
+                }
+            ]
+        }
+    )
+    llm = _CapturingVisualLlm()
+    graph = build_visual_graph(registry, llm=llm)
+
+    state = {
+        "org_id": REAL_ORG,
+        "message": "the pink one",
+        "history": [
+            {"authorKind": "Customer", "text": "Any pinkish gowns?"},
+            {"authorKind": "Agent", "text": "We have three."},
+        ],
+        "thread_summary": "She is shopping for a December wedding.",
+        "pinned_slots": {"budget": "50k"},
+    }
+
+    result = await graph.ainvoke(state)
+
+    assert result["output"]["status"] == "success"
+    assert llm.calls, "the LLM was never invoked, so there is no prompt to inspect"
+    prompt = llm.prompt_text()
+    assert "Any pinkish gowns?" in prompt
+    assert "December wedding" in prompt
+    assert "budget: 50k" in prompt

@@ -87,6 +87,9 @@ class _ThreadRouteScreenState extends State<ThreadRouteScreen> {
       return ClientThreadScreen(
         conversation: conversation,
         repository: widget.threadRepository,
+        // The inbox the row was resolved from, so a forward can offer the other
+        // client threads.
+        conversationRepository: widget.conversationRepository,
         aroundMessageId: widget.messageId,
       );
     }

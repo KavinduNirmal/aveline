@@ -28,6 +28,15 @@ public interface ICustomerTenantService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// The book at a glance: its size, and the few clients active most recently.
+    /// </summary>
+    Task<CustomerBookSummaryDto> GetBookSummaryAsync(
+        Guid organizationId,
+        int limit,
+        DateTime? activitySince,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Creates a counter walk-in, or reports the existing client it duplicates.
     /// </summary>
     Task<CustomerCreatedDto> CreateWalkInAsync(
@@ -104,6 +113,12 @@ public sealed class CustomerTenantService : ICustomerTenantService
 {
     private const string NicknameKey = "nickname";
 
+    /// <summary>
+    /// How far back a client must have acted to appear as a highlight. One definition, because
+    /// Home's client row and the agent's book summary both order by it.
+    /// </summary>
+    private static readonly TimeSpan HighlightActivityWindow = TimeSpan.FromDays(14);
+
     private readonly AppDbContext _context;
     private readonly IConversationService _conversations;
 
@@ -158,6 +173,29 @@ public sealed class CustomerTenantService : ICustomerTenantService
             pageSize);
     }
 
+    public async Task<CustomerBookSummaryDto> GetBookSummaryAsync(
+        Guid organizationId,
+        int limit,
+        DateTime? activitySince,
+        CancellationToken cancellationToken = default)
+    {
+        // Resolved once here and handed to the highlights read, so the window has one definition
+        // even though two surfaces now ask for it.
+        var since = activitySince ?? DateTime.UtcNow - HighlightActivityWindow;
+
+        // Reused rather than reimplemented: "which clients count as recently active, and what is
+        // the sentence describing them" is one rule, and Home already reads it from here.
+        var highlights = await GetHighlightsAsync(organizationId, limit, since, cancellationToken);
+
+        var total = await _context.Customers
+            .AsNoTracking()
+            .CountAsync(
+                customer => customer.OrganizationId == organizationId && customer.DeletedAt == null,
+                cancellationToken);
+
+        return new CustomerBookSummaryDto(total, since, highlights.Items);
+    }
+
     public async Task<CustomerHighlightsResponseDto> GetHighlightsAsync(
         Guid organizationId,
         int limit,
@@ -165,7 +203,7 @@ public sealed class CustomerTenantService : ICustomerTenantService
         CancellationToken cancellationToken = default)
     {
         limit = Math.Clamp(limit, 1, 100);
-        var since = activitySince ?? DateTime.UtcNow.AddDays(-14);
+        var since = activitySince ?? DateTime.UtcNow - HighlightActivityWindow;
 
         var customers = await _context.Customers
             .AsNoTracking()

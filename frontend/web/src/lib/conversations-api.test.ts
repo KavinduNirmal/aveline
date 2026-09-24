@@ -12,10 +12,13 @@ vi.mock('@/lib/api', () => ({
 
 import {
   decideSignOff,
+  DeliveryRefusedError,
+  deliverBlockToCustomer,
   fetchConversation,
   fetchConversations,
   fetchMessages,
   getOrCreateConversation,
+  regenerateMessage,
   sendMessage,
   uploadConversationAttachment,
 } from './conversations-api'
@@ -205,6 +208,77 @@ describe('conversations API client', () => {
     expect(postMock).toHaveBeenCalledWith(
       `/api/v1/orgs/${ORG}/conversations/${CONV}/messages/msg-1/sign-off`,
       { approved: true, contentHash: 'abc123' },
+    )
+  })
+
+  it('deliverBlockToCustomer posts to the deliver route, not the messages route', async () => {
+    postMock.mockResolvedValue({
+      data: {
+        delivered: true,
+        channel: 'WhatsApp',
+        providerMessageId: 'wamid.1',
+        message: { id: 'msg-9' },
+      },
+    })
+
+    const receipt = await deliverBlockToCustomer(ORG, CONV, 'Silk Slip Dress · LKR 24,000')
+
+    // A note on the messages route reaches nobody, so delivery must never be posted there.
+    expect(postMock).toHaveBeenCalledWith(
+      `/api/v1/orgs/${ORG}/conversations/${CONV}/deliver`,
+      { text: 'Silk Slip Dress · LKR 24,000' },
+    )
+    expect(receipt.channel).toBe('WhatsApp')
+    expect(receipt.message).toMatchObject({ id: 'msg-9' })
+  })
+
+  it('deliverBlockToCustomer carries the idempotency key only when one is given', async () => {
+    postMock.mockResolvedValue({ data: { delivered: true } })
+
+    await deliverBlockToCustomer(ORG, CONV, 'hello', 'key-1')
+    expect(postMock.mock.calls[0][1]).toEqual({ text: 'hello', clientMessageId: 'key-1' })
+
+    postMock.mockClear()
+    await deliverBlockToCustomer(ORG, CONV, 'hello')
+    expect(postMock.mock.calls[0][1]).toEqual({ text: 'hello' })
+  })
+
+  it('deliverBlockToCustomer throws the server\'s refusal sentence, not a generic failure', async () => {
+    // "You have not connected WhatsApp" and "that client has no number" are different things for
+    // the associate to do next, so the server's own sentence has to survive the trip.
+    postMock.mockRejectedValue({
+      response: {
+        data: {
+          refusal: 'channel_not_connected',
+          detail: 'This boutique has not connected WhatsApp yet.',
+        },
+      },
+    })
+
+    await expect(deliverBlockToCustomer(ORG, CONV, 'hello')).rejects.toMatchObject({
+      name: 'DeliveryRefusedError',
+      refusal: 'channel_not_connected',
+      message: 'This boutique has not connected WhatsApp yet.',
+    })
+  })
+
+  it('deliverBlockToCustomer still refuses readably when the body carries no sentence', async () => {
+    postMock.mockRejectedValue(new Error('network down'))
+
+    const error = await deliverBlockToCustomer(ORG, CONV, 'hello').catch((e: unknown) => e)
+
+    expect(error).toBeInstanceOf(DeliveryRefusedError)
+    expect((error as DeliveryRefusedError).message).toBe('That could not be delivered.')
+    expect((error as DeliveryRefusedError).refusal).toBeNull()
+  })
+
+  it('regenerateMessage posts to the regenerate route with no body', async () => {
+    postMock.mockResolvedValue({ status: 202 })
+
+    await regenerateMessage(ORG, CONV, 'msg-7')
+
+    expect(postMock).toHaveBeenCalledWith(
+      `/api/v1/orgs/${ORG}/conversations/${CONV}/messages/msg-7/regenerate`,
     )
   })
 })

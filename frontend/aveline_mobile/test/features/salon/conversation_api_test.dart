@@ -36,6 +36,33 @@ class _RecordingAdapter implements HttpClientAdapter {
   void close({bool force = false}) {}
 }
 
+/// Serves canned bytes and records every request that reached it.
+class _BytesAdapter implements HttpClientAdapter {
+  _BytesAdapter(this.bytes);
+
+  final List<int> bytes;
+  final List<RequestOptions> requests = [];
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    requests.add(options);
+    return ResponseBody.fromBytes(
+      bytes,
+      200,
+      headers: {
+        Headers.contentTypeHeader: ['image/png'],
+      },
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
 void main() {
   group('ConversationApi attachments', () {
     test('stores a file against the Salon and returns its id', () async {
@@ -105,6 +132,97 @@ void main() {
         (adapter.requests.single.data as Map).containsKey('attachmentIds'),
         isFalse,
       );
+    });
+
+    test('reads an attachment through the authenticated route, not an image URL',
+        () async {
+      final adapter = _BytesAdapter([1, 2, 3, 4]);
+      final api = ConversationApi(Dio()..httpClientAdapter = adapter);
+
+      final bytes = await api.fetchAttachmentBytes(
+        organizationId: _orgId,
+        conversationId: _conversationId,
+        attachmentId: _attachmentId,
+      );
+
+      expect(bytes, [1, 2, 3, 4]);
+      final request = adapter.requests.single;
+      // The stored route cannot be an `<Image.network>` source: an image element
+      // cannot carry the bearer token, so the bytes come through the shared client.
+      expect(
+        request.path,
+        '/api/v1/orgs/$_orgId/conversations/$_conversationId/attachments/$_attachmentId',
+      );
+      expect(request.responseType, ResponseType.bytes);
+    });
+
+    test('records a decision against the content hash it was shown', () async {
+      final adapter = _RecordingAdapter(
+        jsonEncode({'id': 'm1', 'status': 'Published'}),
+      );
+      final api = ConversationApi(Dio()..httpClientAdapter = adapter);
+
+      final decided = await api.decideSignOff(
+        organizationId: _orgId,
+        conversationId: _conversationId,
+        messageId: _attachmentId,
+        contentHash: 'hash-1',
+        approved: true,
+      );
+
+      expect(decided.status, 'Published');
+      final request = adapter.requests.single;
+      expect(
+        request.path,
+        '/api/v1/orgs/$_orgId/conversations/$_conversationId'
+        '/messages/$_attachmentId/sign-off',
+      );
+      // The hash is what the API binds the decision to; a decision sent without it
+      // would be a decision on content nobody can prove was shown.
+      expect((request.data as Map)['approved'], isTrue);
+      expect((request.data as Map)['contentHash'], 'hash-1');
+    });
+
+    test('caches an attachment, because a row is immutable once written', () async {
+      final adapter = _BytesAdapter([1, 2, 3]);
+      final api = ConversationApi(Dio()..httpClientAdapter = adapter);
+
+      await api.fetchAttachmentBytes(
+        organizationId: _orgId,
+        conversationId: _conversationId,
+        attachmentId: _attachmentId,
+      );
+      await api.fetchAttachmentBytes(
+        organizationId: _orgId,
+        conversationId: _conversationId,
+        attachmentId: _attachmentId,
+      );
+
+      // Scrolling a thumbnail out of view and back must not refetch it.
+      expect(adapter.requests, hasLength(1));
+    });
+  });
+
+  group('ConversationApi regenerate', () {
+    test('asks the agent for a fresh reply to the turn behind a message', () async {
+      final adapter = _RecordingAdapter('');
+      final api = ConversationApi(Dio()..httpClientAdapter = adapter);
+
+      await api.regenerate(
+        organizationId: _orgId,
+        conversationId: _conversationId,
+        messageId: _attachmentId,
+      );
+
+      final request = adapter.requests.single;
+      expect(request.method, 'POST');
+      expect(
+        request.path,
+        '/api/v1/orgs/$_orgId/conversations/$_conversationId'
+        '/messages/$_attachmentId/regenerate',
+      );
+      // The endpoint is accepted rather than answered, so there is no body to send.
+      expect(request.data, isNull);
     });
   });
 }

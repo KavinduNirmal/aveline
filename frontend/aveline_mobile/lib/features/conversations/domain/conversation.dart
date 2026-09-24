@@ -186,6 +186,15 @@ class Conversation {
 
   bool get isAveline => kind == ConversationKind.aveline;
 
+  /// Whether a delivery could land in this thread.
+  ///
+  /// The same test as [ConversationKind.customer] — a client is bound, or the thread
+  /// carries a channel handle for a client who is not identified yet — because those are
+  /// exactly the two shapes that have somewhere for a message to go. The concierge Salon
+  /// and a shop-wide notice have neither, so a "forward to another thread" picker built
+  /// on this never offers the client-less Salon as a destination.
+  bool get isDeliveryTarget => kind == ConversationKind.customer;
+
   /// Whether the thread is waiting on the associate for a decision.
   bool get needsSignOff => status == ConversationStatus.awaitingSignOff;
 

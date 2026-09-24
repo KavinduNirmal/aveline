@@ -3,6 +3,7 @@ import { MessageSquarePlus } from 'lucide-react'
 import { AvelineAvatar } from '@/components/conversation/AvelineAvatar'
 import { Composer } from '@/components/conversation/Composer'
 import { MessageThread } from '@/components/conversation/MessageThread'
+import { useBlockActions } from '@/components/conversation/useBlockActions'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -10,6 +11,7 @@ import { useConversations } from '@/contexts/ConversationsContext'
 import { cn } from '@/lib/utils'
 import type { ConversationDto } from '@/types/conversation'
 import { avelineStateConfig } from './avelineStates'
+import { isDeliverable } from './blockActions'
 import { isGeneralSalon, salonLabel, sortSalons } from './salonLabel'
 
 /**
@@ -55,11 +57,14 @@ export function SalonPanel() {
     sending,
     agentState,
     agentActivity,
+    waiting,
     openConversation,
     openOrCreateSalon,
     send,
     decide,
     selectCustomer,
+    deliverToClient,
+    regenerate,
     pendingAttachments,
     attach,
     retryAttachment,
@@ -67,6 +72,20 @@ export function SalonPanel() {
   } = useConversations()
 
   const activeConversation = conversations.find((c) => c.id === activeConversationId)
+
+  // The rail acts on the thread the associate is looking at. Both delivery actions leave the
+  // boutique — the endpoint resolves the client's channel and sends on it — so the Salon's own
+  // `send` is deliberately NOT wired into it: a note in the room reaches nobody.
+  const { bridge: blockActions, dialogs: blockActionDialogs } = useBlockActions({
+    conversationId: activeConversationId,
+    customerName: activeConversation?.customerName ?? null,
+    customerReachable: Boolean(activeConversation && isDeliverable(activeConversation)),
+    conversations,
+    deliver: deliverToClient,
+    regenerate,
+    agentBusy: waiting,
+  })
+
   // The tray is keyed by conversation in the context, so a section switch does not orphan it.
   const pendingForActive = activeConversationId
     ? (pendingAttachments[activeConversationId] ?? [])
@@ -171,6 +190,7 @@ export function SalonPanel() {
               messages={messages}
               loading={loading && !activeConversationId}
               agentActivity={agentActivity}
+              blockActions={blockActions}
               onSignOff={(messageId, approved) => void decide(messageId, approved)}
               onSelectCustomer={(customerId) => void selectCustomer(customerId)}
             />
@@ -192,6 +212,9 @@ export function SalonPanel() {
           />
         </Card>
       </section>
+
+      {/* The forward picker and the send confirmation, driven by the rail above. */}
+      {blockActionDialogs}
     </div>
   )
 }

@@ -11,20 +11,7 @@ silent (its message is simply omitted by the publisher).
 
 from typing import Any
 
-#: Concierge intent type -> short, human-readable phrase for Aveline's summary.
-_INTENT_LABELS: dict[str, str] = {
-    "item_search": "a product search",
-    "pricing_query": "a pricing question",
-    "customer_preference": "a preference lookup",
-    "event_query": "an event request",
-    "general_inquiry": "a general inquiry",
-}
-
-
-def _intent_label(intent: Any) -> str:
-    if isinstance(intent, str):
-        return _INTENT_LABELS.get(intent, intent.replace("_", " "))
-    return "a general inquiry"
+from app.schemas.customer_memory import normalise_memory_content
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -42,7 +29,9 @@ def build_ava_blocks(memory_output: Any) -> list[dict[str, Any]]:
 
     Blocks (in order):
       1. ``text`` - the interaction brief for the customer (if present).
-      2. ``at_a_glance`` - extracted memories as a Category/Content table (if any).
+      2. ``at_a_glance`` - the notes on file, then anything extracted this turn, as a
+         Category/Content table (if any). One table rather than two: they are the same kind of fact
+         to a reader, and the store's own rows come first because that is what "on file" means.
       3. ``suggestion`` - the drafted, customer-facing response (if present).
     """
     memory = _as_dict(memory_output)
@@ -55,11 +44,23 @@ def build_ava_blocks(memory_output: Any) -> list[dict[str, Any]]:
     if brief:
         blocks.append({"type": "text", "text": str(brief)})
 
+    # On file first, then what this turn learned. Duplicates are collapsed: the brief no longer
+    # recites them, so a repeated row would otherwise be the only place the repetition showed - and
+    # it showed because the store has no write-time de-duplication.
     rows: list[list[str]] = []
-    for item in memory.get("extracted_memories") or []:
-        content = (item or {}).get("content")
-        if content:
-            rows.append([str((item or {}).get("category") or "memory"), str(content)])
+    seen: set[str] = set()
+    for source in ("memories_on_file", "extracted_memories"):
+        for item in memory.get(source) or []:
+            if not isinstance(item, dict):
+                continue
+            content = str(item.get("content") or "").strip()
+            if not content:
+                continue
+            key = normalise_memory_content(content)
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append([str(item.get("category") or "memory"), content])
     if rows:
         blocks.append({"type": "at_a_glance", "columns": ["Category", "Content"], "rows": rows})
 
@@ -170,16 +171,30 @@ def build_lina_blocks(commerce_output: Any) -> list[dict[str, Any]]:
     return blocks
 
 
-# ----------------------------------------------------------------------- Aveline (summary)
+# ------------------------------------------------------------------- Aveline (entry point)
 
 
-def build_aveline_blocks(output: Any) -> list[dict[str, Any]]:
-    """Map the concierge outcome into Aveline's summary ``Note`` text block.
+def build_aveline_blocks(
+    output: Any,
+    *,
+    specialist_spoke: bool = False,
+) -> list[dict[str, Any]]:
+    """Map the concierge outcome into Aveline's content blocks.
 
-    The summary is intent-aware and names the customer when the memory agent resolved one,
-    but it deliberately does not duplicate Ava's rich blocks (brief/memories/draft live in
-    Ava's own message). When the orchestrator could not resolve a customer it carries a
-    ``clarification`` (ambiguous candidates or not-found) which is rendered instead.
+    Aveline is the entry point, and she speaks only when nobody else does:
+
+    - A **clarification** she asked is rendered verbatim and takes precedence over everything.
+    - Her own **reply** is rendered when no specialist produced content. The reply comes from the
+      supervisor, which writes one for a conversational message that has nothing to route, and
+      which grounds a platform answer in retrieved handbook excerpts (ADR-025).
+    - Otherwise she is **silent**. A routing summary ("Treated this as a product search.") is not
+      content: it describes what the orchestrator did instead of answering the person, and it read
+      as a bug when it was the only thing a customer ever saw.
+
+    Args:
+        output: The concierge ``AgentResponse.output``.
+        specialist_spoke: True when at least one specialist emitted content this run. A
+            specialist's answer and Aveline's fallback reply must not both land in one thread.
     """
     out = _as_dict(output)
 
@@ -189,20 +204,54 @@ def build_aveline_blocks(output: Any) -> list[dict[str, Any]]:
         if blocks:
             return blocks
 
-    label = _intent_label(out.get("intent"))
+    if specialist_spoke:
+        return []
 
-    customer_name: str | None = None
-    memory = _as_dict(out.get("memory"))
-    if memory.get("status") != "skipped":
-        customer = _as_dict(memory.get("customer"))
-        customer_name = customer.get("full_name") or customer.get("customer_id")
+    reply = out.get("reply")
+    if isinstance(reply, str) and reply.strip():
+        blocks: list[dict[str, Any]] = [{"type": "text", "text": reply.strip()}]
+        # The citation is a block of its own, not a line appended to the prose: a frontend can make
+        # a block into links, and cannot reliably find links inside model-written text (ADR-025).
+        sources = _handbook_sources(out.get("handbook_sources"))
+        if sources:
+            blocks.append({"type": "sources", "items": sources})
+        return blocks
 
-    if customer_name:
-        text = f"Treated this as {label}. I have pulled up what we know on {customer_name} - the details are below."
-    else:
-        text = f"Treated this as {label}."
+    return []
 
-    return [{"type": "text", "text": text}]
+
+def _handbook_sources(sources: Any) -> list[dict[str, str]]:
+    """A handbook-grounded answer's citations, as structured items (ADR-025).
+
+    Built from the chunks that were actually retrieved, never from the model's text: a model asked
+    to cite will sometimes cite something it did not use, and a fabricated source is worse than no
+    source. One entry per page, because five chunks from one page are one source.
+    """
+    if not isinstance(sources, list):
+        return []
+
+    items: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+
+        title = str(source.get("title") or "").strip()
+        if not title or title in seen:
+            continue
+        seen.add(title)
+
+        item: dict[str, str] = {"title": title}
+        url = str(source.get("url") or "").strip()
+        if url:
+            item["url"] = url
+        heading = str(source.get("heading") or "").strip()
+        if heading:
+            item["heading"] = heading
+        items.append(item)
+
+    return items
 
 
 def build_clarification_blocks(clarification: Any) -> list[dict[str, Any]]:

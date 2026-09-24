@@ -71,6 +71,25 @@ public static class ConversationEndpoints
             .Produces(StatusCodes.Status404NotFound)
             .Produces(StatusCodes.Status401Unauthorized);
 
+        // Deliberately NOT the messages route: sending a note writes into the Salon and reaches no
+        // customer, whereas delivering to a customer leaves over their channel. Two promises, two
+        // endpoints — see `ICustomerDeliveryService`.
+        group.MapPost("/{conversationId:guid}/deliver", DeliverToCustomerAsync)
+            .WithName("DeliverConversationBlockToCustomer")
+            .WithSummary("Send a block's words to the thread's customer on their own channel.")
+            .Produces<DeliveryResultDto>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status409Conflict)
+            .Produces(StatusCodes.Status502BadGateway)
+            .Produces(StatusCodes.Status401Unauthorized);
+
+        group.MapPost("/{conversationId:guid}/messages/{messageId:guid}/regenerate", RegenerateAsync)
+            .WithName("RegenerateConversationMessage")
+            .WithSummary("Re-run the agent for the turn behind a message; the reply arrives on the hub.")
+            .Produces(StatusCodes.Status202Accepted)
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status401Unauthorized);
+
         // The release gate is narrowed: the group's `conversations:view` is not enough to
         // release an above-limit commitment, so the approval policy is required on top of it.
         group.MapPost("/{conversationId:guid}/messages/{messageId:guid}/sign-off", DecideSignOffAsync)
@@ -677,12 +696,103 @@ public static class ConversationEndpoints
     }
 
     /// <summary>
+    /// Sends a block's words to the thread's customer on their own channel.
+    /// </summary>
+    /// <remarks>
+    /// The status codes are the refusal taxonomy, because each one is a different thing for the
+    /// associate to do next: <c>404</c> the thread moved on, <c>409</c> this thread or this tenant
+    /// cannot deliver at all, <c>502</c> the provider was reached and said no. Every refusal body
+    /// carries the sentence to show, so the client never has to invent wording for a state the
+    /// server understands better than it does.
+    /// </remarks>
+    private static async Task<IResult> DeliverToCustomerAsync(
+        Guid organizationId,
+        Guid conversationId,
+        DeliverToCustomerRequest request,
+        ClaimsPrincipal user,
+        ICustomerDeliveryService delivery,
+        IUserRepository users,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.Text))
+        {
+            return Results.BadRequest(new { message = "There was nothing to send." });
+        }
+
+        var userId = await ResolveUserIdAsync(user, users, cancellationToken);
+        if (userId is null)
+        {
+            return Results.Unauthorized();
+        }
+
+        var outcome = await delivery.DeliverAsync(
+            organizationId, userId.Value, conversationId, request.Text,
+            request.ClientMessageId, cancellationToken);
+
+        if (outcome.Delivered)
+        {
+            return Results.Ok(new DeliveryResultDto(
+                true, outcome.Channel, outcome.ProviderMessageId, outcome.Message));
+        }
+
+        var body = new DeliveryResultDto(
+            false, Refusal: ToWireRefusal(outcome.Refusal), Detail: outcome.Detail);
+
+        return outcome.Refusal switch
+        {
+            DeliveryRefusal.ConversationNotFound => Results.NotFound(body),
+            DeliveryRefusal.ProviderRefused => Results.Json(body, statusCode: StatusCodes.Status502BadGateway),
+            _ => Results.Json(body, statusCode: StatusCodes.Status409Conflict),
+        };
+    }
+
+    /// <summary>Re-runs the agent for the turn behind a message. The fresh blocks arrive on the hub.</summary>
+    private static async Task<IResult> RegenerateAsync(
+        Guid organizationId,
+        Guid conversationId,
+        Guid messageId,
+        ClaimsPrincipal user,
+        IConversationService conversations,
+        IUserRepository users,
+        CancellationToken cancellationToken = default)
+    {
+        var userId = await ResolveUserIdAsync(user, users, cancellationToken);
+        if (userId is null)
+        {
+            return Results.Unauthorized();
+        }
+
+        var started = await conversations.RegenerateAsync(
+            organizationId, userId.Value, conversationId, messageId, cancellationToken);
+
+        if (!started)
+        {
+            return Results.NotFound(new { message = "That message is not in this conversation." });
+        }
+
+        // 202, not 200: the run is accepted and the content does not exist yet. It arrives as
+        // message events on the Salon hub, exactly like every other agent reply.
+        return Results.Accepted();
+    }
+
+    /// <summary>The refusal's wire name, so a client can branch on a state instead of on prose.</summary>
+    private static string? ToWireRefusal(DeliveryRefusal? refusal) => refusal switch
+    {
+        DeliveryRefusal.ConversationNotFound => "conversation_not_found",
+        DeliveryRefusal.NoCustomer => "no_customer",
+        DeliveryRefusal.NoChannelHandle => "no_channel_handle",
+        DeliveryRefusal.ChannelNotConnected => "channel_not_connected",
+        DeliveryRefusal.ChannelUnsupported => "channel_unsupported",
+        DeliveryRefusal.ProviderRefused => "provider_refused",
+        _ => null,
+    };
+
+    /// <summary>
     /// Sends a conversation's inbox tile to the clients watching its list. A tile this instance
     /// cannot resolve is skipped rather than failing the request that changed the row.
     /// </summary>
     private static async Task BroadcastTileAsync(
-        IConversationService conversations,
-        IMessageBroadcaster broadcaster,
+        IConversationService conversations,        IMessageBroadcaster broadcaster,
         Guid conversationId,
         CancellationToken cancellationToken)
     {

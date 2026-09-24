@@ -17,7 +17,7 @@ Open it from the sidebar at `/app/b/<your-boutique>/integrations`. The section i
 
 | Integration | State |
 |---|---|
-| **WhatsApp Business** | Inbound customer messages are received and shown in the Salon and in the activity list. |
+| **WhatsApp Business** | Inbound customer messages are received and shown in the Salon and in the activity list. Text a staff member **sends or forwards** from the Salon goes out to the client over WhatsApp. |
 | **Instagram** | Credentials are stored and validated. **Instagram messaging is wired in a later release.** |
 | **Payment Gateway** | Credentials are stored and validated. **Live payment processing is wired in a later release.** |
 
@@ -117,4 +117,6 @@ See [Privacy & Security](/docs/privacy-security) for the wider picture.
 - Only these three integrations exist. There is no generic webhook or custom-API connection.
 - Instagram messaging and live payment processing are not implemented yet, even when the
   credentials validate.
-- Nothing in Aveline sends WhatsApp messages. Only inbound customer messages are received.
+- Aveline sends as well as receives. **Send** and **Forward** in the [Salon](/docs/salon) deliver a
+  card's words to the client over the connected WhatsApp channel, and the thread then records what
+  went out.

@@ -133,6 +133,33 @@ public sealed record UploadAttachmentRequest(
 public sealed record MarkConversationReadRequest(Guid LastReadMessageId);
 
 /// <summary>
+/// Request to deliver a block to the thread's customer on their own channel.
+/// </summary>
+/// <param name="Text">
+/// The words to send, already rendered by the client from the block (a draft's sentence, a
+/// piece's line, a look's name and note). Required and non-blank.
+/// </param>
+/// <param name="ClientMessageId">
+/// Optional client-generated idempotency key (UUIDv4), stable for one delivery across retries.
+/// A replay whose stored row already went out is answered from that row rather than sending the
+/// same words to the customer a second time.
+/// </param>
+public sealed record DeliverToCustomerRequest(string Text, Guid? ClientMessageId = null);
+
+/// <summary>
+/// The result of a delivery attempt. <see cref="Delivered"/> is the whole answer: when it is
+/// false nothing reached the customer, <see cref="Refusal"/> names the state in machine terms and
+/// <see cref="Detail"/> is the sentence to show the associate.
+/// </summary>
+public sealed record DeliveryResultDto(
+    bool Delivered,
+    string? Channel = null,
+    string? ProviderMessageId = null,
+    MessageDto? Message = null,
+    string? Refusal = null,
+    string? Detail = null);
+
+/// <summary>
 /// Request to decide a human-in-the-loop SignOff message. <see cref="ContentHash"/> is the
 /// canonical hash of the content blocks the human saw; the server rejects the decision if the
 /// message content no longer hashes to this value (i.e. it changed after display).

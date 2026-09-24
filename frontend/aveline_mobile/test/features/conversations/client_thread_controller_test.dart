@@ -1,6 +1,8 @@
 import 'dart:typed_data';
 
+import 'package:aveline_mobile/features/conversations/data/conversation_repository.dart';
 import 'package:aveline_mobile/features/conversations/data/thread_repository.dart';
+import 'package:aveline_mobile/features/conversations/domain/block_actions.dart';
 import 'package:aveline_mobile/features/conversations/domain/thread_attachment.dart';
 import 'package:aveline_mobile/features/conversations/domain/conversation.dart';
 import 'package:aveline_mobile/features/conversations/domain/thread_message.dart';
@@ -48,6 +50,18 @@ class _FakeThread implements ThreadRepository {
   bool failRevoke = false;
   final List<int> requestedPages = [];
   final List<int> requestedPageSizes = [];
+
+  /// The deliveries the action bar asked for, by conversation.
+  final List<({String conversationId, String text})> delivered = [];
+
+  /// The regenerations the action bar asked for.
+  final List<({String conversationId, String messageId})> regenerated = [];
+
+  bool failDeliver = false;
+  bool failRegenerate = false;
+
+  /// A refusal the next delivery throws instead of a generic failure.
+  DeliveryRefused? deliverRefusal;
 
   @override
   Future<ThreadPage> fetchMessages(
@@ -192,6 +206,42 @@ class _FakeThread implements ThreadRepository {
   ) async => Uint8List.fromList([1, 2, 3]);
 
   @override
+  Future<ThreadDelivery> deliver(
+    String conversationId,
+    String text, {
+    String? clientMessageId,
+  }) async {
+    if (deliverRefusal != null) {
+      throw deliverRefusal!;
+    }
+    if (failDeliver) {
+      throw Exception('The delivery was refused.');
+    }
+    delivered.add((conversationId: conversationId, text: text));
+    final stored = ThreadMessage(
+      id: 'stored_deliver_${delivered.length}',
+      author: MessageAuthor.staff,
+      status: MessageStatus.sent,
+      text: text,
+      createdAt: _now,
+    );
+    items = [...items, stored];
+    return ThreadDelivery(
+      delivered: true,
+      channel: 'WhatsApp',
+      message: stored,
+    );
+  }
+
+  @override
+  Future<void> regenerate(String conversationId, String messageId) async {
+    if (failRegenerate) {
+      throw Exception('The regenerate was refused.');
+    }
+    regenerated.add((conversationId: conversationId, messageId: messageId));
+  }
+
+  @override
   Future<ThreadMessage> revokeSignOff(
     String conversationId,
     String messageId, {
@@ -209,6 +259,37 @@ class _FakeThread implements ThreadRepository {
         if (item.id == messageId) stored else item,
     ];
     return stored;
+  }
+}
+
+/// The inbox, as the controller reads it for the forward picker's destinations.
+class _FakeInbox implements ConversationRepository {
+  _FakeInbox(this.items);
+
+  List<Conversation> items;
+  bool fail = false;
+
+  @override
+  Future<ConversationPage> fetchConversations({int page = 1}) async {
+    if (fail) {
+      throw Exception('The inbox is unavailable.');
+    }
+    return ConversationPage(
+      items: items,
+      total: items.length,
+      page: page,
+      pageSize: 50,
+    );
+  }
+
+  @override
+  Future<Conversation?> fetchConversation(String id) async {
+    for (final conversation in items) {
+      if (conversation.id == id) {
+        return conversation;
+      }
+    }
+    return null;
   }
 }
 
@@ -1117,6 +1198,227 @@ void main() {
       expect(controller.actionError, isNull);
       expect(controller.errorMessage, isNull);
       expect(thread.markedRead, isEmpty);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // The per-block action bar
+  // ---------------------------------------------------------------------------
+  group('ClientThreadController block actions', () {
+    ThreadBlock suggestion([String text = 'Draft body']) =>
+        ThreadBlock('suggestion', {'type': 'suggestion', 'text': text});
+    ThreadBlock piece([String name = 'Silk Slip']) =>
+        ThreadBlock('piece', {'type': 'piece', 'name': name});
+
+    test('a delivery hands over the block, not the message it sits in', () async {
+      final thread = _FakeThread([
+        ThreadMessage(
+          id: 'msg_1',
+          author: MessageAuthor.agent,
+          kind: MessageKind.suggestion,
+          text: 'The message prose',
+          createdAt: _now,
+          blocks: [suggestion('Draft body')],
+        ),
+      ]);
+      final controller = _controller(thread);
+      await controller.load();
+
+      await controller.deliverBlock('msg_1', suggestion('Draft body'), 0);
+
+      expect(thread.delivered.single.conversationId, 'cnv_nadeesha');
+      expect(thread.delivered.single.text, 'Draft body');
+      expect(controller.actionNotice, 'Sent to Nadeesha Perera.');
+      expect(controller.actionError, isNull);
+    });
+
+    test('a piece is delivered as a one-line card', () async {
+      final thread = _FakeThread(_five());
+      final controller = _controller(thread);
+      await controller.load();
+
+      await controller.deliverBlock(
+        'msg_1',
+        ThreadBlock('piece', {'name': 'Silk Wrap', 'size': 'M', 'price': 18500}),
+        0,
+      );
+
+      expect(
+        thread.delivered.single.text,
+        'Silk Wrap · Size M · LKR 18,500',
+      );
+    });
+
+    test('a refusal says nothing was sent', () async {
+      final thread = _FakeThread(_five())..failDeliver = true;
+      final controller = _controller(thread);
+      await controller.load();
+
+      await controller.deliverBlock('msg_1', suggestion(), 0);
+
+      expect(controller.actionError, 'That could not be sent. Nothing was sent.');
+      expect(controller.actionNotice, isNull);
+      expect(controller.pendingBlockAction('msg_1', 0), isNull);
+    });
+
+    test('each server refusal code gets its own sentence', () async {
+      final thread = _FakeThread(_five())
+        ..deliverRefusal = const DeliveryRefused('no_customer');
+      final controller = _controller(thread);
+      await controller.load();
+
+      await controller.deliverBlock('msg_1', suggestion(), 0);
+
+      expect(controller.actionError, contains("isn't linked to a client"));
+      expect(controller.actionError, contains('Nothing was sent.'));
+    });
+
+    test('forwarding delivers into the picked thread and names it', () async {
+      final thread = _FakeThread(_five());
+      final controller = _controller(thread);
+      await controller.load();
+
+      await controller.forwardBlock(
+        'msg_1',
+        piece(),
+        0,
+        targetConversationId: 'cnv_menaka',
+        targetLabel: 'Menaka Rathnayake',
+      );
+
+      expect(thread.delivered.single.conversationId, 'cnv_menaka');
+      expect(thread.delivered.single.text, 'Silk Slip');
+      expect(controller.actionNotice, 'Forwarded to Menaka Rathnayake.');
+    });
+
+    test('a refused forward says nothing was sent', () async {
+      final thread = _FakeThread(_five())..failDeliver = true;
+      final controller = _controller(thread);
+      await controller.load();
+
+      await controller.forwardBlock(
+        'msg_1',
+        piece(),
+        0,
+        targetConversationId: 'cnv_menaka',
+        targetLabel: 'Menaka Rathnayake',
+      );
+
+      expect(
+        controller.actionError,
+        'That could not be forwarded. Nothing was sent.',
+      );
+    });
+
+    test('regenerate runs for the block message and clears when it resolves', () async {
+      final thread = _FakeThread(_five());
+      final controller = _controller(thread);
+      await controller.load();
+
+      final running = controller.regenerateBlock('msg_3', suggestion(), 0);
+      // The segment shows its own busy state while the call is in flight.
+      expect(
+        controller.pendingBlockAction('msg_3', 0),
+        BlockActionId.regenerate,
+      );
+
+      await running;
+
+      expect(controller.pendingBlockAction('msg_3', 0), isNull);
+      expect(thread.regenerated.single.conversationId, 'cnv_nadeesha');
+      expect(thread.regenerated.single.messageId, 'msg_3');
+      expect(controller.actionNotice, 'Asking Aveline for a fresh take.');
+    });
+
+    test('a refused regenerate names the block and clears', () async {
+      final thread = _FakeThread(_five())..failRegenerate = true;
+      final controller = _controller(thread);
+      await controller.load();
+
+      await controller.regenerateBlock('msg_3', suggestion(), 0);
+
+      expect(
+        controller.actionError,
+        'Could not regenerate that draft reply.',
+      );
+      expect(controller.pendingBlockAction('msg_3', 0), isNull);
+    });
+
+    test('one action at a time on a block, but blocks do not block each other',
+        () async {
+      final thread = _FakeThread(_five());
+      final controller = _controller(thread);
+      await controller.load();
+
+      final first = controller.regenerateBlock('msg_3', suggestion(), 0);
+      // A second press on the same block is refused outright.
+      await controller.regenerateBlock('msg_3', suggestion(), 0);
+      expect(thread.regenerated, hasLength(1));
+
+      // A different block of the same message is still free.
+      final second = controller.regenerateBlock('msg_3', piece(), 1);
+      await Future.wait([first, second]);
+
+      expect(thread.regenerated, hasLength(2));
+      expect(controller.pendingBlockAction('msg_3', 0), isNull);
+      expect(controller.pendingBlockAction('msg_3', 1), isNull);
+    });
+
+    test('forward targets are the other threads that can receive a delivery',
+        () async {
+      final inbox = _FakeInbox([
+        _nadeesha,
+        const Conversation(
+          id: 'cnv_menaka',
+          kind: ConversationKind.customer,
+          customerId: 'cus_311',
+          customerName: 'Menaka Rathnayake',
+        ),
+        // The client-less concierge Salon is not a delivery target.
+        const Conversation(id: 'cnv_salon', kind: ConversationKind.aveline),
+      ]);
+      final controller = ClientThreadController(
+        _nadeesha,
+        _FakeThread(_five()),
+        conversationRepository: inbox,
+      );
+
+      await controller.loadForwardTargets();
+
+      expect(controller.hasForwardDestination, isTrue);
+      expect(
+        controller.forwardTargets.map((target) => target.id),
+        ['cnv_menaka'],
+      );
+      expect(
+        controller.forwardTargets.map((target) => target.label),
+        ['Menaka Rathnayake'],
+      );
+    });
+
+    test('with no inbox, Forward has nowhere to go', () async {
+      final controller = _controller(_FakeThread(_five()));
+
+      await controller.loadForwardTargets();
+
+      expect(controller.hasForwardDestination, isFalse);
+      expect(controller.forwardTargets, isEmpty);
+    });
+
+    test('a refused inbox read leaves Forward unavailable, not the thread broken',
+        () async {
+      final inbox = _FakeInbox([])..fail = true;
+      final controller = ClientThreadController(
+        _nadeesha,
+        _FakeThread(_five()),
+        conversationRepository: inbox,
+      );
+
+      await controller.loadForwardTargets();
+
+      expect(controller.hasForwardDestination, isFalse);
+      expect(controller.errorMessage, isNull);
+      expect(controller.actionError, isNull);
     });
   });
 }

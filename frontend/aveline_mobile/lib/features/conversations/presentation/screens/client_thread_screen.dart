@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../core/auth/permissions.dart';
@@ -12,12 +13,15 @@ import '../../../../shared/utils/date_formatter.dart';
 import '../../../../shared/widgets/app_toast.dart';
 import '../../../../shared/widgets/aurora_field.dart';
 import '../../../salon/domain/agent_state.dart';
+import '../../data/conversation_repository.dart';
 import '../../data/thread_repository.dart';
+import '../../domain/block_actions.dart';
 import '../../domain/conversation.dart';
 import '../../domain/thread_message.dart';
 import '../attachment_opener.dart';
 import '../attachment_picker.dart';
 import '../client_thread_controller.dart';
+import '../widgets/block_action_rail.dart';
 import '../widgets/conversation_avatar.dart';
 import '../widgets/thread_composer.dart';
 import '../widgets/thread_message_bubble.dart';
@@ -36,6 +40,7 @@ class ClientThreadScreen extends StatefulWidget {
     super.key,
     required this.conversation,
     required this.repository,
+    this.conversationRepository,
     this.pageSize = 50,
     this.onOpenClient,
     this.realtimeService,
@@ -54,6 +59,13 @@ class ClientThreadScreen extends StatefulWidget {
   /// repository, which meant a wiring mistake rendered invented messages instead
   /// of an error.
   final ThreadRepository repository;
+
+  /// The inbox, when the caller has one.
+  ///
+  /// A forward can only be offered when there is another client thread to send to, and
+  /// the inbox is the only honest source for that list. `null` leaves Forward drawn
+  /// disabled with its reason rather than opening a picker that could not be filled.
+  final ConversationRepository? conversationRepository;
 
   /// How many messages a page holds. Injectable so a test can reach the history
   /// above the window without seeding a hundred messages.
@@ -104,12 +116,16 @@ class _ClientThreadScreenState extends State<ClientThreadScreen> {
       widget.conversation,
       widget.repository,
       pageSize: widget.pageSize,
+      conversationRepository: widget.conversationRepository,
     );
 
     // Started before the listener is attached: `load` notifies synchronously, and
     // that must not reach `setState` from `initState`. Nothing is lost, because
     // the first build already reads the loading state.
     _controller.load(around: widget.aroundMessageId);
+    // The forward picker's destinations, read once so the rail knows before a tap
+    // whether Forward has anywhere to go.
+    _controller.loadForwardTargets();
     _controller.addListener(_onControllerChanged);
     _agentProvider.addListener(_onControllerChanged);
 
@@ -211,13 +227,116 @@ class _ClientThreadScreenState extends State<ClientThreadScreen> {
     }
     setState(() {});
 
-    // A refused send or decision is worth saying out loud: the message is still
-    // there, marked, and the toast says what happened to it.
+    // A refused send, decision or delivery is worth saying out loud: the message is
+    // still there, marked, and the toast says what happened to it.
     final error = _controller.actionError;
     if (error != null) {
       _controller.clearActionError();
       AppToast.show(context, error, error: true);
+      return;
     }
+
+    // A delivery or a forward happens in another thread the associate cannot see from
+    // here, so its success is spoken rather than left to be inferred.
+    final notice = _controller.actionNotice;
+    if (notice != null) {
+      _controller.clearActionNotice();
+      AppToast.show(context, notice);
+    }
+  }
+
+  /// The action rail's wiring, rebuilt with the thread.
+  ///
+  /// Whether the agent is busy is read here rather than stored, because it belongs to
+  /// the live provider above the screen; everything else comes from the controller.
+  BlockActionBridge get _blockActions => BlockActionBridge(
+    hasCustomerDestination: _controller.hasCustomerDestination,
+    hasForwardDestination: _controller.hasForwardDestination,
+    agentBusy: _agentProvider.isWorking,
+    pendingAction: _controller.pendingBlockAction,
+    onAction: _onBlockAction,
+  );
+
+  /// Runs one segment of a block's rail.
+  ///
+  /// Copy and the two confirmations are the screen's business because they are about
+  /// this device and this conversation; the network calls belong to the controller.
+  void _onBlockAction(
+    ThreadBlock block,
+    String messageId,
+    int blockIndex,
+    BlockActionId action,
+  ) {
+    switch (action) {
+      case BlockActionId.copy:
+        _copyBlock(block);
+      case BlockActionId.sendToCustomer:
+        _confirmSendToCustomer(block, messageId, blockIndex);
+      case BlockActionId.forward:
+        _pickForwardTarget(block, messageId, blockIndex);
+      case BlockActionId.regenerate:
+        _controller.regenerateBlock(messageId, block, blockIndex);
+    }
+  }
+
+  /// Copies the **block's** words, not the message's.
+  ///
+  /// A message can carry several cards, and Copy belongs to the one the associate
+  /// tapped, so the payload is [blockToText] of that block alone.
+  Future<void> _copyBlock(ThreadBlock block) async {
+    final text = blockToText(block);
+    if (text.isEmpty) {
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: text));
+    if (mounted) {
+      AppToast.show(context, '${blockTitle(block)} copied');
+    }
+  }
+
+  /// Confirms before words leave the app for the customer's channel.
+  ///
+  /// This cannot be unsent, so the dialog names the customer and shows the exact text
+  /// that will go — the block's own words, not the message's.
+  Future<void> _confirmSendToCustomer(
+    ThreadBlock block,
+    String messageId,
+    int blockIndex,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => _SendToCustomerDialog(
+        customer: widget.conversation.title,
+        text: blockToText(block),
+      ),
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+    await _controller.deliverBlock(messageId, block, blockIndex);
+  }
+
+  /// Opens the picker of other client threads and forwards into the chosen one.
+  Future<void> _pickForwardTarget(
+    ThreadBlock block,
+    String messageId,
+    int blockIndex,
+  ) async {
+    final target = await showModalBottomSheet<ForwardTarget>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => _ForwardPicker(targets: _controller.forwardTargets),
+    );
+    if (target == null || !mounted) {
+      return;
+    }
+    await _controller.forwardBlock(
+      messageId,
+      block,
+      blockIndex,
+      targetConversationId: target.id,
+      targetLabel: target.label,
+    );
   }
 
   /// The thread as a list of rows: each day opens with the day it was.
@@ -353,6 +472,8 @@ class _ClientThreadScreenState extends State<ClientThreadScreen> {
           // The API is authoritative; this is only about not offering a decision the caller
           // cannot make.
           onRevoke: _canApprove ? () => _controller.revokeSignOff(message) : null,
+          // The per-block action rail's wiring, drawn by the blocks inside the bubble.
+          bridge: _blockActions,
         );
       },
     );
@@ -397,6 +518,128 @@ class _ClientThreadScreenState extends State<ClientThreadScreen> {
       return;
     }
     _controller.selectCustomer(customerId);
+  }
+}
+
+/// The confirmation that stands between a tap and a message reaching the customer.
+///
+/// It names who will receive it and prints the exact text, because a channel delivery
+/// cannot be unsent. The destructive weight is deliberate: this is the one action on the
+/// rail that leaves the app.
+class _SendToCustomerDialog extends StatelessWidget {
+  const _SendToCustomerDialog({required this.customer, required this.text});
+
+  final String customer;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return AlertDialog(
+      key: const Key('block_send_confirm'),
+      title: Text('Send to $customer?'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHigh,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(text, style: theme.textTheme.bodyMedium),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'This goes to $customer\u2019s channel now, and it cannot be unsent.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          key: const Key('block_send_cancel'),
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const Key('block_send_confirm_send'),
+          onPressed: () => Navigator.of(context).pop(true),
+          child: const Text('Send'),
+        ),
+      ],
+    );
+  }
+}
+
+/// The picker of other client threads a block can be forwarded into.
+///
+/// The list is the controller's already-filtered targets: only threads that can actually
+/// receive a delivery, which is what keeps the client-less concierge Salon off it.
+class _ForwardPicker extends StatelessWidget {
+  const _ForwardPicker({required this.targets});
+
+  final List<ForwardTarget> targets;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return SafeArea(
+      key: const Key('block_forward_picker'),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 10),
+            child: Text(
+              'Forward to',
+              style: theme.textTheme.titleMedium?.copyWith(
+                color: scheme.onSurface,
+              ),
+            ),
+          ),
+          if (targets.isEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+              child: Text(
+                BlockActionReasons.noForwardTarget,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            )
+          else
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: targets.length,
+                itemBuilder: (context, index) {
+                  final target = targets[index];
+                  return ListTile(
+                    key: ValueKey('block_forward_target_${target.id}'),
+                    leading: ConversationAvatar.client(name: target.label),
+                    title: Text(
+                      target.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    onTap: () => Navigator.of(context).pop(target),
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
+    );
   }
 }
 

@@ -76,6 +76,37 @@ An inbound customer message — for example one that arrived on WhatsApp — is 
 label, the WhatsApp badge and the customer's own words. It is recorded in the thread; it is not a
 message your team wrote.
 
+### Acting on a card
+
+Each card carries its own row of actions along its bottom edge, and the row only offers what that
+kind of card can do:
+
+| Card | What you can do with it |
+|---|---|
+| A **suggestion** (a draft reply) | **Copy**, **Send to customer**, **Regenerate** |
+| A **piece** | **Forward** |
+| A **look** | **Copy**, **Forward**, **Regenerate** |
+
+Other cards — the at-a-glance table, a payment, a delivery update, an attachment — carry no actions.
+
+- **Copy** puts the card's words on your clipboard, ready to paste.
+- **Send to customer** delivers the card to the client whose Salon is open. It asks you to confirm
+  first, naming the client and showing the exact words, because a message on a client's phone cannot
+  be taken back.
+- **Forward** asks which client to send it to, then delivers it to that client. Only clients the
+  boutique can actually reach are listed; the shared concierge thread is not one of them, because it
+  has no client to deliver to.
+- **Regenerate** asks Aveline for a fresh answer to the question behind the card. The card shows it is
+  working, and the new answer arrives as a new message in the thread.
+
+**Send and Forward send to the client, not to this thread.** They go out over the channel the
+boutique has connected (WhatsApp), and the thread then records what went out. If a delivery cannot
+be made, the card says exactly why — for example that the boutique has not connected WhatsApp yet, or
+that the client has no number on file — and nothing is sent.
+
+An action that does not apply is greyed out and tells you why when you rest on it or reach it with
+the keyboard. While one action on a card is running, the card's other actions wait.
+
 ## Decisions Aveline asks you for
 
 ### Approval needed
@@ -121,9 +152,14 @@ thread open while you ask Aveline something else.
 
 ## Limits
 
-- **You cannot reply to a customer on WhatsApp from the Salon.** Inbound customer messages appear
-  here; Aveline does not send WhatsApp replies, and there is no outbound send log.
-- **Instagram messaging is not connected yet.**
+- **Sending to a client needs a connected channel.** Delivery goes out over WhatsApp. A boutique that
+  has not connected it is told so, and nothing is sent.
+- **Instagram messaging is not connected yet.** A boutique with only Instagram connected is told that
+  rather than shown a send that would not arrive.
+- **A delivery cannot be recalled.** The confirmation before **Send to customer** names the client and
+  shows the words for that reason.
+- **Regenerate adds a new answer; it does not erase the old one.** The card you regenerated stays in
+  the thread, and Aveline's fresh answer arrives below it.
 - **Only the most recent messages are loaded.** There is no "load older" control and no search
   across history.
 - **Salons are not created by hand.** A client Salon is created with the client; the shared

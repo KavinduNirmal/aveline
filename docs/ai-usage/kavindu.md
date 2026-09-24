@@ -6745,3 +6745,236 @@ machine's restart behaviour the owner described — and `docker compose up -d` r
   run is left alone.
 - The bridge fixture and `MetricsNamingTests` were updated for the new series — both correctly failed
   first, which is how the two sinks stay in step.
+
+## Session 2026-09-24 (e) — Tenant dashboard: in-card sparklines and monospaced numerals
+
+**Task:** "Begin implementation of `.agents/plans/tenant-dashboard-inline-card-charts-implementation-plan.md`
+and read the context `.agents/plans/tenant-dashboard-inline-card-charts-investigation-report.md`".
+
+The two documents were written in an earlier session and were **not** in git (untracked): an
+investigation report that establishes what data actually exists per card, and a five-slice
+implementation plan derived from it. The work was to execute the plan.
+
+### What the plan constrained, and why it mattered
+
+The feature is a reference-image idiom (a KPI tile with a value and a sparkline). The report's job was
+to say which parts of that idiom have an honest data source here, and the answer is **two cards, not
+eleven**: `revenue-series` is the only time-series read on the tenant surface, and only
+`Gross order value` and `Collected` read a metric it carries. The Takings card is refused by
+**contract**, not style — a field-enumeration test on the reduced read forbids `points`/`series`.
+
+Two gates ran over everything: `tenant-truthfulness` (no raw `recharts` import; no `?? 0` on a
+metric) and `tenant-conformance` (no bare hex, no raw palette utility, no raw control elements). Both
+were satisfied by importing chart primitives from `@/components/ui/chart` and colouring through
+`var(--chart-N)`.
+
+### The five slices
+
+- **T1 — monospaced numerals.** `KpiCard`'s measured branch, `TakingsCard`'s two figures and the
+  Blossoms balance moved from `font-serif` to `font-mono tabular-nums`. The `!measured` branch was
+  left exactly as it was, and a test now pins that: if "not measured" also read as mono, the
+  distinction the component exists to make would be lost. The measured-value test failed first
+  (`font-serif text-3xl font-medium`), as it should have.
+- **T2 — a tenant `CONNECT_NULLS`.** The report found the tenant tree had **no** shared constant:
+  `BlossomBurnChart` hardcoded `connectNulls={false}` while the admin tree enforced the constant
+  mechanically. Added `lib/dashboard-chart-rules.ts`, switched the chart to it, and added the mirror
+  of `admin-conformance`'s rule 5. The new gate was run **before** the fix and correctly failed on
+  `BlossomBurnChart.tsx` — otherwise the gate would have been theatre.
+- **T3 — `KpiSparkline`.** A fixed-size (`h-10 w-24`) glyph with a gradient area, no axes, no grid, no
+  tooltip, an `aria-label` describing direction and period, `connectNulls` from the shared constant,
+  and an explicit empty state rendered **outside** `ChartContainer` (recharts measures a `0×0` box and
+  would wrap prose one character per line). The gradient id is per-instance via `useId`, because a
+  data-key-derived id collides the moment two sparklines plot the same key.
+- **T4 — the wiring.** One `fetchRevenueSeries` call inside `Overview`'s existing load path, gated on
+  `reports:view`, feeding both cards. The client `fetchRevenueSeries` already existed and was called
+  by nothing but its own unit test. The range is **passed down from the shell** rather than recomputed
+  in `Overview`, so the glyph and the figure cannot describe different periods.
+- **T5 — the capped window.** Under `ytd` the server clamps the series to 92 days while the figures
+  cover the year, so both cards state that the trend is shorter than the figure. The caption names
+  **no day count**: the API docs describe that cap as a configuration setting that does not exist, so
+  the client encodes neither number.
+
+### Corrections made while implementing
+
+- **My own dead branch.** I first wrote an `if (!first || !last) return label` guard in the summary
+  helper that could never fire, and coverage showed it. Rather than ship untestable code I kept the
+  guard that *can* fire — `Intl.DateTimeFormat.format` **throws** on a non-finite date, verified, so
+  the unparseable-bucket fallback is load-bearing — and added a test for it.
+- **A test-only prop access.** `ORGANIZATION.id` is `as never` in the existing fixture, so asserting on
+  it after I added the new tests was a `TS2339`. Hoisted the id to its own constant rather than
+  loosening the fixture.
+- **Two over-broad assertions.** `getByText('Collected')` and `getByText(/18,500\.00/)` each matched
+  twice, because the same words appear on the reduced Takings card and the KPI strip. Scoped both.
+
+### The coverage ratchet
+
+`test:coverage:dashboard` measures `components/dashboard/**`, and the config's own rule is that the
+floor never exceeds the achieved value. Two consecutive runs over the final tree measured the glob at
+**53.01 % lines / 46.15 % branches / 42.70 % functions / 51.26 % statements** (was 45.05 / 42.75 /
+31.87 / 43.42). The floor was raised to 52 / 45 / 41 / 50 — just below the achieved value, so rounding
+noise cannot block a slice. `KpiSparkline.tsx` and `KpiCard.tsx` are at 100 %.
+
+### Verification
+
+- `bun run test` — **153 files, 1223 tests, all passing** (baseline before the work: 151 files, 1203).
+- `bun run test:coverage:dashboard` — exit 0, twice, at the raised floor.
+- `bun run build` (`tsc -b && vite build`) — clean.
+- `bun run lint` — 0 errors, 77 pre-existing warnings.
+- `docs/frontend/tenant-dashboard.md` corrected: it said `E-2`/`E-3` had no caller. `E-2` now has one,
+  and the page gained an *In-card sparklines* section stating the five honesty rules and the
+  knowingly accepted partial trailing bucket.
+
+### Not done, deliberately
+
+No backend change. Per-KPI series for the other nine cards, a previous-period delta chip, the
+`isPartial` trailing-edge defect and the inaccurate cap documentation all stay in §8 of the plan: they
+are backend work that would widen this feature's blast radius for no user-facing gain here.
+
+## Session 2026-09-24 (f) — "I don't see any graphs", and the tiles were bland
+
+**Task:** the owner reviewed the shipped Overview screenshot and reported two things: **"I dont see any
+graphs though"**, and that the cards were bland — asking for icons and colours, "theme adjacent,
+reference blossom aurora".
+
+### The graph was genuinely broken, and there were two causes
+
+Neither was visible to the test suite, because **jsdom reports every element as `0×0`**. The fix was to
+mount the real component in Chromium at 1122px with fixture data and measure it. That is how both
+causes were found rather than guessed, and it is the part of this session worth remembering.
+
+**Cause 1 — the glyph was squeezed to zero and clipped.** The strip is `lg:grid-cols-4`, so at 1122px a
+tile's text column is ~207px. `LKR 162,550.00` at `text-3xl` in a monospace face is *wider* than that,
+so the value filled the row and the shrunk-to-zero sparkline was clipped by the card's `overflow`. My
+first implementation had put the glyph beside the value because the reference image does; the reference
+image's tiles are wider than this grid's. Fixed by stacking the glyph under the value at full tile
+width and dropping the value to `text-2xl`. Measured after: `svg` 207×36, `.recharts-area` present,
+`scrollWidth - clientWidth` back to 0.
+
+**Cause 2 — a sparse series paints nothing, which is what the owner actually hit.** Even with the
+layout fixed, their data would have shown no line. With `connectNulls` false, recharts breaks the area
+at every gap, so a measured bucket whose neighbours are both `null` is a run of **one** point. Dumping
+the live SVG gave the proof:
+
+```
+d="M5,22.789L5,31ZM25.379,20.942L25.379,31Z…"   stroke="none"
+```
+
+A zero-length segment, and the stroke is drawn by a *second* curve that also has no length. Their
+boutique had **3 orders in 30 buckets**, so nearly every measurement was isolated: `grossOrderValue` is
+`null` in any bucket with no orders, and that is the server's documented rule, not a bug. The glyph
+occupied its box and painted nothing.
+
+Fixed with `canDrawSparkline`: **two measured buckets is the floor**. Below it the tile draws no glyph
+and says nothing about a trend. The honest reading, since an empty box is the same lie as an empty
+axis. This also means the real product shows the trend only for a boutique with enough daily order
+volume to have two populated days in the window — a real limitation of the current backend series, and
+it is now stated in the docs rather than discovered by the owner as a blank.
+
+### Blandness
+
+`KpiCard` gained optional `icon` and `accent` props. The eleven strip tiles now carry a Lucide mark in
+a tinted square plus a soft wash at the top of the card, grouped into **families** rather than eleven
+colours — billed/margin `--chart-1`, money that moves `--chart-2`, clients `--chart-3`, catalogue
+`--chart-4`, queues/refunds `--chart-5` — with `--primary` for the Takings and Blossoms cards. The
+"blossom aurora" reference resolved to the tokens already in `index.css`: the theme carries
+`--aveline-lavender`, `--aveline-coral`, `--aveline-blush` and a five-step chart ramp, so nothing new
+was invented and the animated `AuroraField` was not dragged onto a dashboard (it would have been a
+poster, not a card).
+
+Two constraints decided the implementation: `tenant-conformance` forbids a bare hex and a raw palette
+utility, so every accent is a **theme token passed as a string** (`var(--chart-2)`), never a literal —
+which is also why the reference image's orange was not adopted. `KpiCard` itself knows no palette: it
+publishes `--kpi-accent` on its own root, and the icon tint and the wash both read that one property,
+so "how strong is the brand here" is a single decision in a single place.
+
+### Verification
+
+- Chromium at 1122×900 with fixture data: 2 sparkline `svg`s at 207×36, `.recharts-area` on both
+  revenue tiles, no horizontal overflow on any card. Screenshot reviewed.
+- `bun run test` — **153 files, 1226 tests passing** (3 new: the sparse tile, the sparse sparkline,
+  and the `canDrawSparkline` threshold).
+- `bun run test:coverage:dashboard` — exit 0; the glob now measures 53.19 / 46.59 / 43.08 / 51.47
+  against the 52 / 45 / 41 / 50 floor raised earlier in the session. `KpiSparkline.tsx` at 100 %.
+- `bun run build` clean; `bunx tsc -b` clean; `bun run lint` 0 errors (78 warnings, one of which is
+  this work's `only-export-components` on `canDrawSparkline` — the same warning class the admin tree
+  already carries on `RangePresets.tsx`, so it matches precedent rather than setting one).
+
+### A process note worth keeping
+
+The one-shot probe (`layout-probe.html`, a Clerk stub aliased in by a `layout-probe` Vite mode, an
+axios adapter answering the API, and a Playwright measuring script) took about fifteen minutes and
+found a defect that the whole 1226-test suite could not see. It found the *second* cause too, which no
+amount of reading the code would have produced — I had already reasoned the sparse case "should" render
+a dot. It was **removed afterwards**, including the mode alias, and `vite.config.ts` is byte-identical
+to its committed state. The lesson is not "add a probe file to the repo"; it is that a claim about
+what a user *sees* has to be checked in a browser, and that a temporary harness is cheaper than
+shipping a blank chart twice.
+
+## Session 2026-09-24 (g) — Monospaced, accented figures on Income and Overview
+
+**Task:** "please update the income tab values to use monospaced fonts, and give it and the overview
+tab values a primary accented colour, plain black feels too dark".
+
+### What was actually being asked
+
+Two edits, and the second was the interesting one. The Income tab's money figures were still
+`font-serif text-2xl font-medium` (the reconciliation banner) and `font-serif text-xl font-medium` (the
+per-kind totals) — the Overview KPI tiles had already been moved to mono earlier in the session, but
+Income had not, so the two tabs disagreed about what a number looks like.
+
+The colour request is a design judgement I agreed with: a figure that inherits `text-card-foreground`
+is `#1e1b1b`, effectively black, and a screen of black numerals on white cards reads as a spreadsheet.
+The theme already has the answer — `--primary` is `#8b2e42`, the wine-rose the brand docs assign to
+Lina/commerce, at 5.4:1 on white, so it is a real accent rather than a decoration that costs
+readability.
+
+### One treatment, one place
+
+Rather than adding `font-mono tabular-nums text-primary` to five call sites, I added
+`components/dashboard/Money.tsx` and rendered every figure through it: `KpiCard`'s value, the Income
+reconciliation's three figures, the per-kind totals, and each register row. Three decisions are then
+made once — the figure set, the tabular digits, and the accent — and a caller can still change the
+*size* through `className`. A figure cannot now disagree with the figure beside it.
+
+The accent is `FIGURE_ACCENT_CLASS = 'text-primary'`, and that is a Tailwind **class**, not a token
+name, deliberately. Tailwind compiles classes statically, so a name assembled at runtime
+(`` `text-${token}` ``) would never be generated and the figure would silently lose its colour — the
+worst kind of failure, because it looks like a styling choice. `text-primary` resolves to `--primary`,
+which `index.css` defines for light and remaps in `.dark`, so the same code is correct in both themes.
+It also satisfies the tenant conformance gate, which forbids a raw palette utility (`text-rose-800`)
+and a bare hex.
+
+I folded the `--kpi-accent` custom-property name and its `style` into the same module
+(`KPI_ACCENT_VAR`, `accentStyle`), so the name is written once rather than in three components.
+
+### Deliberate exceptions
+
+`not measured` keeps its muted `italic font-sans` and takes **no** accent: it is the absence of a
+figure, and accenting it would make the two states read alike — the exact failure `KpiCard` exists to
+prevent. That is now asserted, not just commented.
+
+### Verification
+
+- Two tests added to `IncomePanel.dom.test.tsx`, both written first and **both failed for the stated
+  reason** (the register's `<td>` and the per-kind `<p>` carried `font-serif` and no accent). One test
+  asserts the mono/tabular treatment, the other walks every place a money figure appears — a register
+  row, a per-kind total and each reconciliation figure — because a single un-tinted figure is what
+  makes a screen look half-finished.
+- Two assertions added to `KpiCard.dom.test.tsx`: the value carries `text-primary`, and the
+  `not measured` branch carries neither the mono face nor the accent.
+- My first attempt at the income assertion targeted the *container* (`td`, `p`, `dd`) rather than the
+  figure; the treatment lives on the `Money` span, so it correctly failed. The helper now locates the
+  span through its container, which also stops an assertion drifting onto another amount with the same
+  text.
+- `bun run test` — **153 files, 1229 tests passing** (3 more than before this change).
+- `bun run test:coverage:dashboard` — exit 0; `Money.tsx` at 100 %, the glob at 53.22 / 46.49 / 43.20 /
+  51.50 against the 52 / 45 / 41 / 50 floor.
+- `bun run build` clean, and the compiled CSS checked directly rather than assumed:
+  `.text-primary{color:var(--primary)}`, with `font-mono` and `tabular-nums` present.
+- `bunx tsc -b` clean; `bun run lint` 0 errors, 78 warnings (unchanged).
+- `docs/frontend/tenant-dashboard.md` gained *The figure treatment, in one place*.
+
+**Not done, deliberately:** the Usage tab's `UsageBalanceCard` still has the one remaining
+`font-serif text-5xl` value in the tenant tree. It has the same problem, but it is a different tab
+from the two asked about, and the user has already pushed back once on scope — so it is recorded here
+as a known inconsistency rather than silently changed.

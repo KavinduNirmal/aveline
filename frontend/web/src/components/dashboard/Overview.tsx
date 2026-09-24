@@ -1,6 +1,21 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useUser } from '@clerk/react'
-import { CheckCircle2, Eye, EyeOff } from 'lucide-react'
+import {
+  BadgeCheck,
+  Box,
+  ChartLine,
+  CheckCircle2,
+  Coins,
+  Eye,
+  EyeOff,
+  Hourglass,
+  MessageCircle,
+  Percent,
+  TrendingUp,
+  Undo2,
+  UserRound,
+  Wallet,
+} from 'lucide-react'
 
 import { Blossom } from '@/components/auth/Blossom'
 import { Badge } from '@/components/ui/badge'
@@ -10,21 +25,26 @@ import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   fetchDashboardSummary,
+  fetchRevenueSeries,
   fetchTenantTakings,
   type DashboardWindow,
   type TenantDashboardSummary,
+  type TenantRevenueSeries,
   type TenantTakings,
 } from '@/lib/dashboard-api'
 import { isCanceledError } from '@/lib/api-error'
+import { FIGURE_ACCENT_CLASS } from '@/lib/dashboard-chart-rules'
 import { usePanelLoad } from '@/hooks/usePanelLoad'
 import { formatCount } from '@/lib/format-money'
 import { hasPermission } from '@/lib/permissions'
+import { cn } from '@/lib/utils'
 import type {
   OrganizationProfileDto,
   OrganizationUsageSummary,
 } from '@/types/organization'
 
 import { KpiCard } from './kpi/KpiCard'
+import type { KpiSparklinePoint } from './kpi/KpiSparkline'
 import { TakingsCard } from './kpi/TakingsCard'
 
 interface OverviewProps {
@@ -32,6 +52,41 @@ interface OverviewProps {
   usage: OrganizationUsageSummary | null
   role: string
   window: DashboardWindow
+  /**
+   * The ISO range the shell's window resolves to. **Passed in rather than recomputed here**, so the
+   * series and the KPI figures describe one period: a local `resolveWindowRange(window)` call would
+   * read a fresh clock and could disagree with the shell about where the window starts.
+   */
+  range: { from: string; to: string }
+}
+
+/** Stated on a revenue card when the server's series covers a shorter period than the figure. */
+const CAPPED_SERIES_CAPTION =
+  'The trend covers a shorter period than the figure above: the server capped the series.'
+
+/**
+ * The strip's accents, drawn from the theme rather than a second palette.
+ *
+ * A metric family keeps one colour so the strip reads as a set of families — money, clients,
+ * catalogue, operations — instead of eleven differently-coloured tiles. The tokens are the ones
+ * `index.css` already defines and re-maps for dark mode, and they reach the components as tokens
+ * (`var(--chart-2)`), never as literals: `tenant-conformance` rule 1b fails the build on a bare hex.
+ */
+const ACCENT = {
+  billed: 'var(--chart-1)', // wine-rose — billed value and margin
+  cash: 'var(--chart-2)', // gold — money actually moving
+  clients: 'var(--chart-3)', // rose — the client book
+  catalogue: 'var(--chart-4)', // blush — things on the shelf
+  operations: 'var(--chart-5)', // ink — queue depth and refunds
+} as const
+
+/** The two revenue series, drawn from the one `revenue-series` response the strip already has. */
+function revenueSparkline(
+  series: TenantRevenueSeries | null,
+  pick: (bucket: TenantRevenueSeries['points'][number]) => number | null,
+): KpiSparklinePoint[] | undefined {
+  if (series === null) return undefined
+  return series.points.map((point) => ({ bucketStart: point.bucketStart, value: pick(point) }))
 }
 
 /**
@@ -46,11 +101,12 @@ interface OverviewProps {
  * Every absent figure is `null` and renders "not measured". The section never states a number the
  * server did not produce.
  */
-export function Overview({ organization, usage, role, window }: OverviewProps) {
+export function Overview({ organization, usage, role, window, range }: OverviewProps) {
   const { user } = useUser()
   const canSeeStrip = hasPermission(role, 'reports:view')
 
   const [summary, setSummary] = useState<TenantDashboardSummary | null>(null)
+  const [series, setSeries] = useState<TenantRevenueSeries | null>(null)
   const [takings, setTakings] = useState<TenantTakings | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [failed, setFailed] = useState(false)
@@ -74,6 +130,7 @@ export function Overview({ organization, usage, role, window }: OverviewProps) {
       }
 
       let nextSummary: TenantDashboardSummary | null = null
+      let nextSeries: TenantRevenueSeries | null = null
       if (canSeeStrip) {
         try {
           nextSummary = await fetchDashboardSummary(organization.id, window, signal)
@@ -81,13 +138,29 @@ export function Overview({ organization, usage, role, window }: OverviewProps) {
           if (isCanceledError(caught)) throw caught
           nextSummary = null
         }
+
+        // One series request feeds both revenue sparklines. It is issued here, inside the strip's
+        // own load path, rather than from the sparkline itself: a sparkline-local fetch would
+        // re-issue on the owner's staff-view preview, which is a client-side toggle that must not
+        // produce a request. A failure degrades to "no sparkline" and never blanks the tiles.
+        try {
+          nextSeries = await fetchRevenueSeries(
+            organization.id,
+            { from: range.from, to: range.to, bucket: 'day' },
+            signal,
+          )
+        } catch (caught) {
+          if (isCanceledError(caught)) throw caught
+          nextSeries = null
+        }
       }
 
-      return { reduced, nextSummary }
+      return { reduced, nextSummary, nextSeries }
     },
-    ({ reduced, nextSummary }) => {
+    ({ reduced, nextSummary, nextSeries }) => {
       setTakings(reduced)
       setSummary(nextSummary)
+      setSeries(nextSeries)
       // Only the reduced read decides the failure flag: that card exists for every role, and the
       // strip is an addition on top of it.
       setFailed(reduced === null)
@@ -95,9 +168,10 @@ export function Overview({ organization, usage, role, window }: OverviewProps) {
     () => {
       setTakings(null)
       setSummary(null)
+      setSeries(null)
       setFailed(true)
     },
-    [organization.id, window, canSeeStrip],
+    [organization.id, window, canSeeStrip, range.from, range.to],
   )
 
   const runLoad = useCallback(
@@ -117,6 +191,14 @@ export function Overview({ organization, usage, role, window }: OverviewProps) {
   }, [runLoad])
 
   const showStrip = canSeeStrip && !previewingStaffView
+
+  // Both money sparklines come from the one series response. `windowCapped` is the server saying the
+  // series covers less than the window the figures were computed for, so the caption states the
+  // mismatch rather than naming a day count: the cap is server configuration and the client must not
+  // encode either the number or a promise about it.
+  const grossSparkline = revenueSparkline(series, (point) => point.grossOrderValue)
+  const collectedSparkline = revenueSparkline(series, (point) => point.collected)
+  const seriesCaption = series?.windowCapped ? CAPPED_SERIES_CAPTION : undefined
 
   return (
     <div className="flex flex-col gap-6">
@@ -206,18 +288,28 @@ export function Overview({ organization, usage, role, window }: OverviewProps) {
                     ? 'No orders were placed in this window.'
                     : `${formatCount(summary.sales.orderCount)} orders`
                 }
+                icon={TrendingUp}
+                accent={ACCENT.billed}
+                sparkline={grossSparkline}
+                sparklineCaption={seriesCaption}
               />
               <KpiCard
                 label="Average order"
                 value={summary.sales.averageOrderValue}
                 currency={summary.currency}
                 note="Not measured when there are no orders to average."
+                icon={Percent}
+                accent={ACCENT.billed}
               />
               <KpiCard
                 label="Collected"
                 value={summary.cash.collected}
                 currency={summary.currency}
                 description="Confirmed money, excluding refunds and outstanding requests."
+                icon={Wallet}
+                accent={ACCENT.cash}
+                sparkline={collectedSparkline}
+                sparklineCaption={seriesCaption}
               />
               <KpiCard
                 label="Margin"
@@ -229,6 +321,8 @@ export function Overview({ organization, usage, role, window }: OverviewProps) {
                     ? 'Total minus recorded cost.'
                     : 'At least one order carries no wholesale cost, so this may be overstated.'
                 }
+                icon={ChartLine}
+                accent={ACCENT.billed}
               />
             </div>
 
@@ -238,24 +332,32 @@ export function Overview({ organization, usage, role, window }: OverviewProps) {
                 value={summary.cash.outstanding}
                 currency={summary.currency}
                 description="Requested and not yet confirmed. Not a receivable."
+                icon={Hourglass}
+                accent={ACCENT.cash}
               />
               <KpiCard
                 label="Refunded"
                 value={summary.cash.refunded}
                 currency={summary.currency}
                 note={`${formatCount(summary.cash.refundCount)} refunds`}
+                icon={Undo2}
+                accent={ACCENT.operations}
               />
               <KpiCard
                 label="Clients on file"
                 value={summary.customers.totalCount}
                 format="count"
                 note={`${formatCount(summary.customers.repeatCount)} have visited twice or more`}
+                icon={UserRound}
+                accent={ACCENT.clients}
               />
               <KpiCard
                 label="Items listed"
                 value={summary.catalog.itemCount}
                 format="count"
                 note={`${formatCount(summary.catalog.lowStockCount)} low on stock`}
+                icon={Box}
+                accent={ACCENT.catalogue}
               />
             </div>
 
@@ -265,17 +367,23 @@ export function Overview({ organization, usage, role, window }: OverviewProps) {
                 value={summary.operations.pendingApprovals}
                 format="count"
                 note="Orders waiting on a decision."
+                icon={BadgeCheck}
+                accent={ACCENT.operations}
               />
               <KpiCard
                 label="Open conversations"
                 value={summary.operations.openConversations}
                 format="count"
+                icon={MessageCircle}
+                accent={ACCENT.operations}
               />
               <KpiCard
                 label="Stock value at cost"
                 value={summary.catalog.stockValueAtCost}
                 currency={summary.currency}
                 description="At cost, never retail value."
+                icon={Coins}
+                accent={ACCENT.catalogue}
               />
             </div>
 
@@ -319,20 +427,32 @@ export function Overview({ organization, usage, role, window }: OverviewProps) {
       <Separator />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <Card className="shadow-[0_4px_20px_rgba(122,48,63,0.06)]">
-          <CardHeader>
+        <Card className="relative overflow-hidden shadow-[0_4px_20px_rgba(122,48,63,0.06)]">
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-primary/12 to-transparent"
+          />
+          <CardHeader className="relative">
             <div className="flex items-center justify-between gap-4">
-              <CardTitle className="font-serif text-lg font-medium">Blossoms</CardTitle>
-              <Badge variant="outline" className="gap-1">
-                <Blossom className="size-3 text-primary" /> {organization.planTier}
-              </Badge>
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/12 text-primary">
+                  <Blossom className="size-4" aria-hidden />
+                </span>
+                <CardTitle className="font-serif text-lg font-medium">Blossoms</CardTitle>
+              </div>
+              <Badge variant="outline">{organization.planTier}</Badge>
             </div>
             <CardDescription>Remaining this billing period.</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="relative">
             {usage ? (
               <div className="flex items-baseline gap-2">
-                <span className="font-serif text-4xl font-medium">
+                <span
+                  className={cn(
+                    'font-mono text-4xl font-medium tabular-nums',
+                    FIGURE_ACCENT_CLASS,
+                  )}
+                >
                   {usage.blossomRemaining.toLocaleString()}
                 </span>
                 <span className="text-sm text-muted-foreground">

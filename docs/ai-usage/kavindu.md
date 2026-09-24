@@ -6978,3 +6978,91 @@ prevent. That is now asserted, not just commented.
 `font-serif text-5xl` value in the tenant tree. It has the same problem, but it is a different tab
 from the two asked about, and the user has already pushed back once on scope — so it is recorded here
 as a known inconsistency rather than silently changed.
+
+## Session 2026-09-24 (h) — A discount question nobody answered, and the agent that was never asked
+
+**Task:** a screenshot of a Salon thread. Staff asked *"How much of a discount can we give this
+customer for +Champagne Rose satin midi dress?"* and the only reply was Ava's brief. "That's not
+supposed to happen right? what happened to elle? why isnt she replying?" — then the correction that
+matters: **"OH F, I mistyped the name IT SHOULD BE LINA, WHY DIDNT LINA REPLY"**.
+
+### The correction, first, because it changed what the answer was about
+
+I answered the literal word. "Elle is not broken, she was never dispatched" is true, and it was not
+the question: **Lina was dispatched** — the message classified `pricing_query` → `["memory",
+"commerce"]` — and she returned `skipped` in **56 ms** on her first branch. Elle's absence was a
+separate fact about the product half of the message, and leading with it named the wrong agent.
+
+The evidence was one query plus one replay, and it separated the two cleanly:
+
+```
+AgentWorkflowRuns  AgentsInvolved = {commerce, customer_memory, orchestrator}   -- no visual
+AgentStepRuns      no `visual_agent` step; `commerce_agent` 56 ms               -- an instant skip
+```
+
+### Three causes, in the order they are hit
+
+1. **The plan never included the piece.** `discount` is a pricing word and the keyword table is
+   first-match-wins with pricing above item search, so the message is `pricing_query`, which routed
+   `["memory", "commerce"]`. Measured on the running gate, not inferred.
+2. **Lina's only verb was "evaluate this deal".** A question carries no purchase signal, so
+   `OrderContextBuilder` resolved no line items — correctly, ADR-024's A1 — and `evaluate_deal`
+   short-circuited before reading a single rule. A skip meant silence.
+3. **So Ava's brief was the answer.** `build_aveline_blocks` stays silent once a specialist has
+   spoken, and the one specialist that produced content produced a customer recap.
+
+Cause 2 is the one worth remembering: the refusal was right and the *consequence* was never designed.
+Nothing errored, the run closed `Succeeded`, and the person's question sat in the thread.
+
+### What changed
+
+`agents_for(intent_type, message)` inserts `visual` when a pricing question names a garment, defined
+once so the rule path and the supervisor's fallback cannot disagree. Two read-only terminals answer
+the discount question: `explain_discount_ceiling` from the tier cap and the house rules with no basket
+(reading the policy cannot trip it — zero total, full margin, no requested discount), and
+`present_quote` for the pieces a pricing question named.
+
+A question can now be *priced* without being *bought*: the order context carries a `purpose`, always
+sent so a missing field reads as the conservative `"order"`, and `ConversationOrderBridge` refuses an
+order from a quote even if one arrives (new invariant **A7**). The quote is staff-only, and it states
+the discount the floor allows rather than the margin it computed — the Salon is used by roles without
+`pricing:view`.
+
+### The test found a real bug in the thing it was testing
+
+The property test beside the ceiling caught my own arithmetic: the exact algebraic bound sits **one
+ulp inside** the margin floor, so quoting it verbatim promised `73.33333333333334%` off a LKR 500
+piece whose margin then computed to `24.999999999999983%`. A ceiling disagreeing with the very check
+it exists to describe. Ceilings are now whole percent, rounded down, and the test asserts the claim
+holds and that one percent more does not. I fixed the arithmetic rather than loosening the assertion.
+
+### Verified against the running stack
+
+The reported message, replayed at the live agent with the images rebuilt:
+
+| Persona | Reply |
+| --- | --- |
+| Ava | "Kasha Vivian Perera is a new customer. 2 notes are on file." |
+| Elle | 3 pieces, including the dress at LKR 10,000 |
+| Lina | "…has no whole-percent room under the 25% margin floor, so any reduction on it needs the owner." |
+
+`Orders` 3→3, `ApprovalQueue` 3→3, `CustomerMemory` 7→7 — the quote committed nothing.
+
+Gates: 904 Python (43 new), 3123 .NET, ruff clean, six pre-commit checks.
+
+### Two things found along the way
+
+**A live trap.** This shell exports `VISION_BASE_URL=$LLM_BASE_URL` *unexpanded*, and compose gives
+shell env precedence over `.env`, so recreating the API container baked the literal string into
+`Vision__BaseUrl`. `new Uri()` throws at DI time and **every catalog GET answers 500** — Elle silently
+finds nothing. `.env` already warns about exactly this; I recreated with the literal values and the
+search returned 3 pieces again.
+
+**The API→agent hop was proven by test, not by HTTP.** Minting a Clerk token was not available here,
+so the live proof starts at `/agents/query` with the exact payload the new API sends. The payload
+shape itself is pinned per call site (`EveryTriggerSite_DeclaresThePurposeOfItsLineItems`), which is
+what the audience flag already does — stated plainly rather than implied.
+
+**Left deliberately:** Lina says "This customer" where Ava names Kasha, because `resolve_customer`
+returns no profile when the customer id is supplied explicitly, and a name is not worth an extra read
+per quote.

@@ -10,6 +10,10 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }))
 
+vi.mock('@/contexts/NotificationsContext', () => ({
+  useNotifications: () => ({ connectionState: 'Disconnected', lastNotification: null }),
+}))
+
 vi.mock('@/lib/approvals-api', async () => {
   const actual = await vi.importActual<typeof import('@/lib/approvals-api')>('@/lib/approvals-api')
   return {

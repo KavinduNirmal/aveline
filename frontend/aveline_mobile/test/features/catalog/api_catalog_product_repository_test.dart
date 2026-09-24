@@ -97,7 +97,6 @@ void main() {
               );
               return;
             }
-
             if (options.path.contains('/catalog/items/prod-1')) {
               handler.resolve(
                 Response(
@@ -220,7 +219,6 @@ void main() {
       expect(product.name, 'Banarasi Silk Saree');
       expect(product.status, CatalogItemStatus.available);
     });
-
     test('updateStatus patches the status route and returns the server row', () async {
       final repo = ApiCatalogProductRepository(
         dio,

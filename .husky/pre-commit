@@ -175,10 +175,16 @@ print_separator
 print_check_start 5 "Checking Python syntax on staged .py files"
 STAGED_PY=$(git diff --cached --name-only --diff-filter=ACM | grep '\.py$' || true)
 if [ -n "$STAGED_PY" ]; then
-    if command -v python3 >/dev/null 2>&1; then
+    PYTHON_CMD=""
+    if command -v python3 >/dev/null 2>&1 && python3 -c "import sys" >/dev/null 2>&1; then
+        PYTHON_CMD="python3"
+    elif command -v python >/dev/null 2>&1 && python -c "import sys" >/dev/null 2>&1; then
+        PYTHON_CMD="python"
+    fi
+    if [ -n "$PYTHON_CMD" ]; then
         PYTHON_ERRORS=""
         for pyfile in $STAGED_PY; do
-            if ! python3 -m py_compile "$pyfile" 2>/dev/null; then
+            if ! "$PYTHON_CMD" -m py_compile "$pyfile" 2>/dev/null; then
                 PYTHON_ERRORS="$PYTHON_ERRORS $pyfile"
             fi
         done
@@ -191,7 +197,7 @@ if [ -n "$STAGED_PY" ]; then
         fi
         print_check_pass "Python syntax OK"
     else
-        print_check_warn "python3 not found — skipping Python syntax check"
+        print_check_warn "python/python3 not found — skipping Python syntax check"
     fi
 else
     print_check_pass "No .py files staged"

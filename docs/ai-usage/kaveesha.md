@@ -69,8 +69,6 @@
 
 ### Remaining Work
 - Ready for staging and commit to PR branch.
-
-<<<<<<< HEAD
 ---
 
 ## Session 2026-09-10 (Feature 2: Dynamic Business Rules Engine)
@@ -389,10 +387,6 @@ The multi-file merge conflict was resolved without regressing any Commerce funct
 - `python -m pytest tests/test_commerce_graph.py tests/test_commerce_agent.py tests/test_commerce_tools.py tests/test_tool_registry.py`: **Passed! 39/39 tests passed**.
 - Git diff inspection confirmed changes are clean, focused on Slice 3 findings, and introduce no credentials or breaking changes.
 
----
-
-## Session 2026-09-18 / 2026-09-19 (Branch Synchronization & Integration)
-<<<<<<< HEAD
 ---
 
 ## Session 2026-09-10 (Feature 2: Dynamic Business Rules Engine)
@@ -925,5 +919,156 @@ None. Feature implementation, documentation, and device verification are complet
 
 ### Remaining Work
 None. Feature implementation, documentation, contract reconciliation, and automated tests are complete.
+---
 
+## Session 2026-09-22 (Feature 8: Web Owner Commerce Dashboard)
 
+**Tool used:** Antigravity AI Assistant  
+**Task:** Implement Feature 8: Web Owner Commerce Dashboard (`frontend/web`), providing the store owner and managers with real-time commerce visibility:
+1. Live Orders & Revenue Metrics view with status filtering and itemized margin details.
+2. Real-time Approval Queue Inbox integrating with the Notifications SignalR hub for live `ApprovalNeeded` updates.
+3. Dynamic Business Rules Management panel with dynamic threshold toggling and editing (high-value orders, minimum profit margins, loyalty tier discount caps).
+
+### Work Performed
+- **API Services (`frontend/web/src/lib/`)**:
+  - Implemented `orders-api.ts`: typed client for fetching paged orders (`fetchOrders`), order details (`fetchOrderById`), status transitions (`updateOrderStatus`), cancellations (`cancelOrder`), and order margin recalculations (`recalculateOrder`).
+  - Implemented `business-rules-api.ts`: typed client for dynamic business rules CRUD (`fetchBusinessRules`, `fetchBusinessRuleById`, `createBusinessRule`, `updateBusinessRule`, `deleteBusinessRule`) and evaluation (`evaluateBusinessRules`).
+- **Owner Dashboard Components (`frontend/web/src/components/dashboard/`)**:
+  - Implemented `OrdersPanel.tsx`: full live orders dashboard featuring:
+    - Real-time revenue & margin summary cards (Order count, gross revenue, average margin percentage, pending count).
+    - Status filtering (`all`, `pending_approval`, `confirmed`, `processing`, `delivered`, `cancelled`).
+    - Order register table with customer name, wholesale cost, total, margin, and status badges.
+    - Itemized order details modal displaying line items with unit price, wholesale cost, subtotal, discount, net total, and profit margin.
+    - Order management actions: `Mark Processing`, `Mark Delivered`, `Recalculate`, and `Cancel Order` dialog (strictly gated by `orders:manage`).
+  - Enhanced `ApprovalsPanel.tsx`:
+    - Subscribed to incoming `ApprovalNeeded` SignalR notifications via `useNotifications()` from `NotificationsContext.tsx` to automatically re-fetch pending queue entries and notify store operators.
+    - Structured tabbed navigation between "Approval Queue" (with badge for pending count) and "Rules & Thresholds".
+    - Preserved granular verb permission gating (`approvals:approve` for approval; `approvals:approve` + `orders:manage` for reject and revise).
+  - Implemented `BusinessRulesTable.tsx` under `src/components/dashboard/rules/`:
+    - Reactive table listing active business rules and thresholds (HighValueThreshold, MinimumProfitMargin, DiscountLimit).
+    - Instant active/inactive switch toggle backed by optimistic notifications and API update.
+    - Edit dialog for modifying threshold values and descriptions.
+    - Add rule modal for configuring new policy thresholds.
+  - Integrated navigation in `DashboardShell.tsx`:
+    - Added `orders` to `SectionId` and `SECTIONS` with `ShoppingBag` icon.
+    - Mounted `<OrdersPanel />` under `orders` section.
+- **Testing & Verification**:
+  - Created `orders-api.test.ts` (5 unit tests covering query parameter serialization, order by id, status updates, cancel and recalculation).
+  - Created `business-rules-api.test.ts` (6 unit tests covering activeOnly filtering, rule creation, updating, deletion, and rule evaluation).
+  - Ran Bun unit tests: 11/11 tests passed.
+  - Ran Commerce backend test suite: 85/85 tests passed.
+
+### Files Created or Modified
+- **Created**:
+  - `frontend/web/src/lib/orders-api.ts`
+  - `frontend/web/src/lib/orders-api.test.ts`
+  - `frontend/web/src/lib/business-rules-api.ts`
+  - `frontend/web/src/lib/business-rules-api.test.ts`
+  - `frontend/web/src/components/dashboard/OrdersPanel.tsx`
+  - `frontend/web/src/components/dashboard/rules/BusinessRulesTable.tsx`
+- **Modified**:
+  - `frontend/web/src/components/dashboard/ApprovalsPanel.tsx`
+  - `frontend/web/src/components/dashboard/DashboardShell.tsx`
+  - `docs/ai-usage/kaveesha.md`
+
+### Important Architectural Decisions
+- **Layered Clean Architecture**: Kept API networking and DTO transformations isolated in `lib/` while keeping presentation purely focused on reactive UI, state management, and user interaction.
+- **Consistent Permission Gating**: Honored the project's permission model where staff with `approvals:approve` can view and approve orders, while lifecycle transitions and threshold changes strictly require `orders:manage`.
+- **SignalR Real-Time Invalidation**: Injected real-time updates through `useNotifications()`, invalidating and refetching the approval queue without requiring manual page polling or reload.
+- **Design System Consistency**: Composed all components using shadcn/ui primitives (`Card`, `Dialog`, `Table`, `Badge`, `Switch`, `Input`, `Select`, `Button`, `Tabs`) and semantic color tokens (`text-destructive`, `text-emerald-600`, `text-muted-foreground`, `bg-muted`).
+
+### Verification Performed
+- `bun test src/lib/orders-api.test.ts src/lib/business-rules-api.test.ts`: 11/11 tests passed.
+- `bunx oxlint src/lib/orders-api.ts src/lib/business-rules-api.ts src/components/dashboard/rules/BusinessRulesTable.tsx src/components/dashboard/ApprovalsPanel.tsx src/components/dashboard/OrdersPanel.tsx src/components/dashboard/DashboardShell.tsx`: 0 errors.
+- `dotnet test Aveline.Api/Aveline.Api.sln --filter "FullyQualifiedName~Commerce"`: 85/85 passed.
+
+### Remaining Work
+None. Feature 8 implementation, UI components, real-time integration, and unit tests are complete.
+
+---
+
+## Session 2026-09-23
+
+**Task:** Debug and fix the "No access" / 403 Forbidden error blocking access to the commerce dashboard.
+**Tool used:** Antigravity AI Assistant
+
+### Intended Work
+Diagnose why the user with `kaveeshatharindi333@gmail.com` was seeing the "No access" ForbiddenPage even though their boutique (`aveline-boutique`) and `org:boutique_owner` membership were set up correctly.
+
+### Work Performed
+- Queried the Aveline PostgreSQL database via Docker (`aveline_postgres` container) to verify the user's `AccountState` (value `1` = `Active`, `HasCompletedOnboarding = true`) and membership (org `aveline-boutique`, role `org:boutique_owner`, status `1`).
+- Traced the routing: `DashboardRedirect` calls `GET /api/v1/orgs/my`, checks `m.status === 'Active'` — and if no active membership is found, redirects to `/forbidden`.
+- **Root cause found**: `GET /api/v1/orgs/my` in [`OrganizationEndpoints.cs`](../../Aveline.Api/Endpoints/OrganizationEndpoints.cs) was serializing `membership.Status` (a `MembershipStatus` enum) as a **raw integer** (`1`) instead of its string name (`"Active"`). The C# anonymous object property `membership.Status` serialized by default as an integer via System.Text.Json, while the frontend check was `m.status === 'Active'` (a string comparison). This mismatch meant the status never matched `'Active'` for any user, so `DashboardRedirect` always set state `missing` and redirected to `/forbidden`.
+- The companion `GET /api/v1/orgs/by-slug/{slug}` endpoint correctly used `.ToString()` via the `MapMembership` helper — only the `/my` endpoint had this defect.
+
+### Files Modified
+- `Aveline.Api/Endpoints/OrganizationEndpoints.cs` — Changed `membership.Status` to `Status = membership.Status.ToString()` in the `/my` endpoint anonymous object so the JSON response contains the string `"Active"` instead of the integer `1`.
+
+### Verification Performed
+- Database queries confirmed user account and membership states are correct (`AccountState = 1`, `HasCompletedOnboarding = true`).
+- Restored `UserRole = 'admin'` in the `Users` table and purged the Redis cache for `user_kaveeshatharindi333` so the user retains full Administrator access to the console (`/admin`).
+- Stopped running `Aveline.Api` background processes that held file locks on binaries.
+- Successfully built `Aveline.Api.sln` with 0 warnings and 0 errors.
+- Successfully launched the updated API server on `http://localhost:5091` listening and serving requests.
+- Verified Vite frontend running on `http://localhost:5173` returning HTTP 200.
+
+### Remaining Work
+None — the updated API is now running and both the Administrator Console (`/admin`) and Boutique Dashboard (`/app/b/aveline-boutique`) are accessible.
+
+### Merge Conflict Resolution (git pull origin development)
+- Resolved conflict in `frontend/aveline_mobile/android/gradle.properties`: removed obsolete `# org.gradle.java.home` line to adhere to portable Gradle configuration.
+- Resolved conflict in `Aveline.Api.Tests/CatalogEndpointsIntegrationTests.cs`: merged both the query/facet integration tests from `HEAD` and the lookbook/sales integration tests from `development` with proper scoping and assertion attributes.
+- Fixed Python syntax check in `.husky/pre-commit` to resolve working `python` executable when `python3` alias is an uninstalled Microsoft Store stub on Windows.
+- Successfully executed merge commit `8afb4c2` with all pre-commit quality gates passing.
+
+### Second Merge Conflict Resolution (git pull origin development - 0a1bd18..882da8f)
+- Reconciled `Aveline.Api.Tests/OrganizationSettingsTests.cs` and `Aveline.Api/Endpoints/OrganizationEndpoints.cs`:
+  - Adopted `{ settings, entitlements }` response envelope matching both `settings-api.ts` frontend consumer expectations and API test specifications.
+  - Included the `GetSettings_ReturnsForbidden_ForTeamAdminWithoutOwnerMembership` test case.
+- Reconciled mobile catalog repository in `frontend/aveline_mobile/lib/features/catalog/data/api_catalog_product_repository.dart` and its test `api_catalog_product_repository_test.dart`:
+  - Preserved multi-select catalog filtering, facets, and price band query capabilities from `HEAD`.
+  - Integrated `updateStatus()`, `requestSupply()`, and `_requireOrganizationId()` mutation methods and tests from `development`.
+- Cleaned up git conflict markers across all repository files.
+- Deduplicated `QueryItems_MultiSelectAndPriceBands_ReturnsEnvelope` and `GetFacets_ReturnsGroupsWithCounts` in `Aveline.Api.Tests/CatalogEndpointsIntegrationTests.cs`.
+- Fixed syntax error in `frontend/aveline_mobile/lib/features/conversations/presentation/widgets/thread_composer.dart` caused by duplicate unclosed `Container`/`Row` children and removed unreferenced dead `_AttachmentTray`. Verified with `flutter analyze` passing with 0 errors.
+
+## Session 2026-09-23
+
+**Task:** Fix 5 failing CI tests in `bun run test:coverage` without changing other passing tests.
+**Tool used:** Antigravity AI Assistant
+
+### Intended Work
+Fix exactly 5 test failures identified from the GitHub Actions CI run:
+- 2 failures in `ApprovalsPanel.dom.test.tsx` (`useNotifications must be used within a NotificationsProvider`)
+- 3 failures in `tenant-conformance.test.ts` (rule 1a palette, rule 2 raw-control, rule 4 space-utility)
+
+### Work Performed
+
+**Fix 1 — `ApprovalsPanel.dom.test.tsx`:**
+- Added `vi.mock('@/contexts/NotificationsContext', () => ({ useNotifications: () => ({ connectionState: 'Disconnected', lastNotification: null }) }))` after the existing `sonner` mock.
+- This mirrors the pattern used in `AdminLogs.dom.test.tsx` and prevents the provider-context throw when the component renders in isolation.
+
+**Fix 2 — `OrdersPanel.tsx` (tenant conformance rules 1a and 4):**
+- Replaced `text-emerald-600 dark:text-emerald-400` on the Average Margin KPI card icon and value with `text-primary`.
+- Replaced `text-amber-500` icon and `text-amber-600 dark:text-amber-500` value on the Pending Approval KPI card with `text-muted-foreground` and `text-foreground`.
+- Replaced `text-emerald-600 dark:text-emerald-400` on the margin column `TableCell` with `text-primary`.
+- Replaced `text-emerald-600` in the order detail modal margin row with `text-primary`.
+- Replaced `space-y-1.5` on the financial summary `div` with `flex flex-col gap-1.5`.
+- Replaced all four `space-y-0` on `CardHeader` elements in the KPI grid with `gap-0`.
+
+**Fix 3 — `BusinessRulesTable.tsx` (tenant conformance rule 2):**
+- Added shadcn `Select`, `SelectContent`, `SelectItem`, `SelectTrigger`, `SelectValue` imports.
+- Replaced the raw `<select>` and `<option>` elements in the Create Rule dialog with the shadcn `<Select>` primitive, bound via `onValueChange`.
+
+### Files Modified
+- `frontend/web/src/components/dashboard/ApprovalsPanel.dom.test.tsx`
+- `frontend/web/src/components/dashboard/OrdersPanel.tsx`
+- `frontend/web/src/components/dashboard/rules/BusinessRulesTable.tsx`
+
+### Verification
+- `vitest run src/test/tenant-conformance.test.ts` — **7/7 passed**
+- `vitest run src/components/dashboard/ApprovalsPanel.dom.test.tsx` — **2/2 passed**
+- No other tests modified. Fix is surgical and does not touch any passing test or unrelated production code.
+
+### Remaining Work
+- Create branch `feature/web-owner-commerce-dashboard` and commit these fixes to open a new PR.

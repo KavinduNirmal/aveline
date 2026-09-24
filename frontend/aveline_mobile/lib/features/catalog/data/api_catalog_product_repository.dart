@@ -125,7 +125,6 @@ class ApiCatalogProductRepository implements CatalogProductRepository {
     }
     return orgId;
   }
-
   Map<String, dynamic> _buildQueryBody({
     required int page,
     required int pageSize,

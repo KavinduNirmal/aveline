@@ -1030,6 +1030,10 @@ public class ConversationService : IConversationService
                     // (ADR-024, Decision 1). Empty for a question, and empty when nothing resolves;
                     // the commerce agent then skips, which is not the same as approving a deal.
                     items = orderContext.Items.Select(ToWireItem).ToList(),
+                    // ...and why they are there. A price question resolves the pieces so a discount
+                    // ceiling can be computed for them, and declares itself a quote so the agent may
+                    // answer without pausing and this API may not write an order (ADR-028).
+                    purpose = ToWirePurpose(orderContext),
                 },
             };
             using var content = JsonContent.Create(payload);
@@ -1090,6 +1094,17 @@ public class ConversationService : IConversationService
     };
 
     /// <summary>
+    /// Whether the items travel as something to price or something to buy (ADR-028).
+    /// </summary>
+    /// <remarks>
+    /// Always sent, including on the buy path, so the agent never has to infer the purpose from the
+    /// absence of a field: a missing <c>purpose</c> reads here as the conservative "order", which is
+    /// the pre-ADR-028 behaviour exactly.
+    /// </remarks>
+    private static string ToWirePurpose(OrderContext context)
+        => context.IsQuote ? "quote" : "order";
+
+    /// <summary>
     /// React to what the agent did with the message: when it stopped for approval, create the order
     /// the pause needs and bind the conversation to the customer it belongs to (ADR-024,
     /// Decision 2).
@@ -1136,7 +1151,7 @@ public class ConversationService : IConversationService
                 conversation.CustomerId,
                 phoneNumber,
                 customerName,
-                orderContext.Items,
+                orderContext,
                 cancellationToken);
 
             if (outcome is null)
@@ -1208,6 +1223,9 @@ public class ConversationService : IConversationService
                     // See TriggerInboundDraftAsync: staff can place an order through the agent too,
                     // and it must pause on exactly the same rules (ADR-024, Decision 1).
                     items = orderContext.Items.Select(ToWireItem).ToList(),
+                    // ...and whether they are there to be bought or only to be priced (ADR-028). A
+                    // staff price question is a quote: Lina answers the ceiling and nothing commits.
+                    purpose = ToWirePurpose(orderContext),
                 },
             };
             using var content = JsonContent.Create(payload);

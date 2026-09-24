@@ -534,6 +534,15 @@ async def run_commerce_agent(state: ConciergeState) -> dict[str, Any]:
         "delivery_address": delivery_address,
         "channel": channel,
         "message": state.get("message", ""),
+        # Why the items are here. "quote" is a pricing question the API resolved without a purchase
+        # signal; the items are real and so are their costs, but the run may answer and not commit
+        # (ADR-028).
+        "purpose": org_context.get("purpose"),
+        # Declared by the API on both paths and required by the quote arm, which quotes the house's
+        # own margin policy to staff and must stay silent for a customer. `direction` travels beside
+        # it because the state has always declared the pair and until now neither was populated.
+        "direction": org_context.get("direction"),
+        "staff_query": org_context.get("staff_query"),
         **_context_fields(state),
     }
     result = await graph.ainvoke(commerce_state)

@@ -22,6 +22,7 @@ import {
   type BoutiqueIncomeLedgerPage,
 } from '@/lib/income-api'
 
+import { Money } from './Money'
 import { IncomeLedgerTable } from './income/IncomeLedgerTable'
 import { IncomeReconciliationBanner } from './income/IncomeReconciliationBanner'
 
@@ -165,8 +166,8 @@ export function IncomePanel({ organizationId, organizationName }: IncomePanelPro
                       <p className="text-xs uppercase tracking-wide text-muted-foreground">
                         {item.kind}
                       </p>
-                      <p className="font-serif text-xl font-medium">
-                        {formatMoney(item.total, currency)}
+                      <p className="text-xl">
+                        <Money value={item.total} currency={currency} />
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {item.count} {item.count === 1 ? 'entry' : 'entries'}

@@ -251,6 +251,26 @@ public class AgentContextAttachmentTests
     }
 
     // =======================================================================================
+    // ADR-028 — the purpose of the line items, declared at every site
+    // =======================================================================================
+
+    [Fact]
+    public async Task EveryTriggerSite_DeclaresThePurposeOfItsLineItems()
+    {
+        // A missing purpose reads in the agent as the conservative "order", so an omission here would
+        // not lose an answer — it would let a pricing question commit a sale. Asserted per site for
+        // the same reason the audience flag is: "wired at one site and not the others" is the failure
+        // mode that only a per-site assertion catches.
+        foreach (var context in await AllThreeContextsAsync())
+        {
+            Assert.True(
+                context.TryGetProperty("purpose", out var purpose),
+                "every agent trigger must declare the purpose of its line items");
+            Assert.Contains(purpose.GetString(), new[] { "order", "quote" });
+        }
+    }
+
+    // =======================================================================================
     // Helpers
     // =======================================================================================
 

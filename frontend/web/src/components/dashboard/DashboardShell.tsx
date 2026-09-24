@@ -437,6 +437,7 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
               usage={usage}
               role={role}
               window={dashboardWindow.window}
+              range={dashboardWindow.range}
             />
           ) : activeSection === 'salon' ? (
             <SalonPanel />

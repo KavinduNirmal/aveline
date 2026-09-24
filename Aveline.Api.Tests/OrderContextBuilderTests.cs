@@ -10,10 +10,11 @@ namespace Aveline.Api.Tests;
 /// customer explicitly asked to buy and resolved against real inventory.
 /// </summary>
 /// <remarks>
-/// Two refusals carry the weight here, and both are about the number the approval rules gate on:
-/// a message with no purchase signal produces nothing (a price question must never become an order),
-/// and a message that cannot be resolved to a specific piece produces nothing (a guess about which
-/// piece is a guess about the total).
+/// Two refusals carry the weight here, and both are about the number the approval rules gate on: a
+/// message that neither buys nor prices produces nothing, and a message that cannot be resolved to a
+/// specific piece produces nothing (a guess about which piece is a guess about the total). What a
+/// message *does* produce carries its purpose: a price question resolves the same pieces an order
+/// does and declares itself a quote, which is what stops a question becoming a sale (ADR-028).
 /// </remarks>
 public class OrderContextBuilderTests
 {
@@ -103,16 +104,69 @@ public class OrderContextBuilderTests
     }
 
     [Theory]
-    // A question about a piece is not an order for it. `pricing_query` routes to commerce, so without
-    // this refusal a price question would evaluate a deal and pause on the low margin.
-    [InlineData("How much is the pink dress?")]
+    // Neither buying nor pricing: a question about availability, or a preference. There is nothing
+    // for the rules to evaluate, so nothing is sent.
     [InlineData("Do you have the emerald green saree?")]
     [InlineData("Is the pink dress available in a size 8?")]
     [InlineData("I love the emerald saree")]
-    public async Task AMessageWithNoPurchaseSignal_ProducesNoItems(string message)
+    public async Task AMessageThatNeitherBuysNorPrices_ProducesNoItems(string message)
     {
         var context = await Builder(EmeraldSaree, FuchsiaDress)
             .BuildAsync(Guid.NewGuid(), message);
+
+        Assert.Empty(context.Items);
+        Assert.Equal(OrderContextPurpose.Order, context.Purpose);
+    }
+
+    [Fact]
+    public async Task APricingQuestion_ResolvesItsPiecesAsAQuote()
+    {
+        // ADR-028. "How much is the pink dress?" is a question, so it must not become an order - but
+        // a discount ceiling needs a price, and the price is only in the catalog. The piece is
+        // resolved and the *purpose* is what keeps it from being bought.
+        var context = await Builder(EmeraldSaree, FuchsiaDress)
+            .BuildAsync(Guid.NewGuid(), "How much is the pink dress?");
+
+        Assert.True(context.IsQuote);
+        Assert.Equal(FuchsiaDress.Id, Assert.Single(context.Items).ItemId);
+        Assert.Equal(FuchsiaDress.Price, context.Items[0].UnitPrice);
+    }
+
+    [Fact]
+    public async Task TheDiscountQuestionFromTheThread_ResolvesTheDressItNames()
+    {
+        // The message that produced the defect, verbatim: a discount question about one named piece,
+        // which resolved a quote and then had nothing to price it with.
+        var context = await Builder(EmeraldSaree, FuchsiaDress, ChampagneDress)
+            .BuildAsync(
+                Guid.NewGuid(),
+                "How much of a discount can we give this customer for +Champagne Rose satin midi dress?");
+
+        Assert.True(context.IsQuote);
+        var item = Assert.Single(context.Items);
+        Assert.Equal(ChampagneDress.Id, item.ItemId);
+        Assert.Equal(ChampagneDress.Cost, item.WholesaleCost);
+    }
+
+    [Fact]
+    public async Task ABuyIsStillAnOrder_EvenWhenItNamesAPiece()
+    {
+        // The purpose is decided by the purchase signal, not by the presence of a price word: "how
+        // much" appears here too, and it must not demote a real order to a quote.
+        var context = await Builder(FuchsiaDress)
+            .BuildAsync(Guid.NewGuid(), "I'll take the pink dress - how much is it?");
+
+        Assert.False(context.IsQuote);
+        Assert.Single(context.Items);
+    }
+
+    [Fact]
+    public async Task APricingQuestionThatNamesNothingSpecific_ProducesNoItems()
+    {
+        // One token is not a piece: matching "dress" alone would price whichever dress came back
+        // first, and the total it produced would be a guess.
+        var context = await Builder(EmeraldSaree, FuchsiaDress)
+            .BuildAsync(Guid.NewGuid(), "how much is a dress?");
 
         Assert.Empty(context.Items);
     }

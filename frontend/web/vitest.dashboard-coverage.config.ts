@@ -53,6 +53,14 @@ export default defineConfig({
         //   components/dashboard (recursive)  45.05% lines / 42.75% branches / 31.87% functions / 43.42% statements
         //   hooks/useDashboardWindow          100% lines / 100% branches / 100% functions / 100% statements
         //   lib aggregate                     90.47% lines / 85.39% branches / 83.54% functions / 90.90% statements
+        // Raised again with the in-card sparkline slice (monospaced numerals, the tenant
+        // `CONNECT_NULLS` gate, `KpiSparkline`, and the one `revenue-series` read behind the two
+        // revenue tiles). Measured **twice** over the final tree, identical both times:
+        //   components/dashboard (recursive)  53.01% lines / 46.15% branches / 42.70% functions / 51.26% statements
+        // The new files land at 100% (`KpiSparkline.tsx`, `KpiCard.tsx`, `TakingsCard.tsx` functions
+        // aside), and `Overview.tsx` rose on the three tests the series read added, so the aggregate
+        // moved rather than being propped up by a smaller denominator.
+        //
         // The dashboard glob's percentage is **not** the text reporter's `...ents/dashboard` row: that
         // row rolls up direct children only, while this glob matches every subdirectory. Six
         // direct-child components are still at 0 — the shell (`DashboardShell`, `BrandIcons`,
@@ -63,7 +71,7 @@ export default defineConfig({
         // `useDashboardWindow.ts` was at 25% functions until it gained a DOM test; both are now at
         // 100. Each floor is set just below the achieved value — or at it, where it is 100%, which is
         // the only floor that still gates — so the gate never blocks on rounding noise.
-        'src/components/dashboard/**': { lines: 44, functions: 31, branches: 42, statements: 42 },
+        'src/components/dashboard/**': { lines: 52, functions: 41, branches: 45, statements: 50 },
         // No file has ever landed here: T4 kept the shared primitives in `components/dashboard/**`
         // instead of promoting them, so this glob currently matches nothing. The floor stays at 0
         // rather than being deleted, so the directory is measured from the moment it first exists.

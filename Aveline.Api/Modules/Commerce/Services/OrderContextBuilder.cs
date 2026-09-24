@@ -25,15 +25,39 @@ public sealed record OrderContextItem(
 }
 
 /// <summary>
-/// The order context a conversation contributes to an agent run: the resolvable line items, and
-/// nothing else. Deliberately not a draft order — the API owns persistence (ADR-024, Decision 2).
+/// Why a conversation's line items exist (ADR-028).
 /// </summary>
-public sealed record OrderContext(IReadOnlyList<OrderContextItem> Items)
+/// <remarks>
+/// The line items a pricing question resolves are real, and so are their prices and costs - but the
+/// message asked what they would cost, not that they be bought. Carrying the reason alongside the
+/// items is what lets the agent price them without ever pausing for approval, and lets this API
+/// refuse to turn the answer into an order.
+/// </remarks>
+public enum OrderContextPurpose
+{
+    /// <summary>The message asked to buy. A pause may create an order.</summary>
+    Order,
+
+    /// <summary>The message asked what something would cost. Nothing may be committed.</summary>
+    Quote
+}
+
+/// <summary>
+/// The order context a conversation contributes to an agent run: the resolvable line items, and
+/// why they are there. Deliberately not a draft order — the API owns persistence (ADR-024,
+/// Decision 2).
+/// </summary>
+public sealed record OrderContext(
+    IReadOnlyList<OrderContextItem> Items,
+    OrderContextPurpose Purpose = OrderContextPurpose.Order)
 {
     /// <summary>The context of a message that named no resolvable item.</summary>
     public static readonly OrderContext Empty = new(Array.Empty<OrderContextItem>());
 
     public bool HasItems => Items.Count > 0;
+
+    /// <summary>True when the message named pieces to price rather than pieces to buy.</summary>
+    public bool IsQuote => Purpose == OrderContextPurpose.Quote;
 }
 
 /// <summary>Derives candidate line items from a customer message (ADR-024, Decision 1).</summary>
@@ -54,11 +78,19 @@ public interface IOrderContextBuilder
 /// </summary>
 /// <remarks>
 /// <para>
-/// Two deliberate refusals shape this class. First, a message with no purchase signal produces no
-/// items at all: "how much is the pink dress?" routes to commerce and must not be turned into an
-/// order. Second, a match must be specific. A message that matches several distinct pieces equally
-/// well produces <em>nothing</em>, because choosing one would be a guess, and a guess about which
-/// piece is a guess about the total — the number the approval rules gate on.
+/// Two deliberate refusals shape this class. First, a message that neither asks to buy nor asks what
+/// something costs produces no items at all: a stock question routes to the visual agent, and there
+/// is nothing for the rules to evaluate. Second, a match must be specific. A message that matches
+/// several distinct pieces equally well produces <em>nothing</em>, because choosing one would be a
+/// guess, and a guess about which piece is a guess about the total — the number the approval rules
+/// gate on.
+/// </para>
+/// <para>
+/// A price question is the case in between, and it is resolved as a <see cref="OrderContextPurpose.Quote"/>
+/// (ADR-028): the pieces are real and so are their costs, so a discount ceiling can be computed for
+/// them, but the context says "quote" and the agent is forbidden to pause on it. Without that
+/// distinction the honest refusal above — no items for a question — left "how much of a discount can
+/// we give on this dress?" with no answer at all, because a discount ceiling needs a price.
 /// </para>
 /// <para>
 /// Quantity parsing is intentionally shallow: the first standalone number in the message, unless it
@@ -110,6 +142,18 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
         "like to buy", "want to buy", "want to order", "going to buy", "proceed with"
     };
 
+    /// <summary>
+    /// Words that mean "what would this cost?" rather than "I am buying this". Copied from the
+    /// agent's own pricing vocabulary (<c>app/gate.py</c>, <c>_RULE_KEYWORDS</c>), because a message
+    /// the agent routes to commerce must carry the figures commerce needs — the two ends disagreeing
+    /// about what a pricing question is would put a question in a lane with nothing to answer it.
+    /// </summary>
+    private static readonly string[] PricingSignals =
+    {
+        "price", "priced", "pricing", "cost", "discount", "budget", "margin", "how much", "charge",
+        "quote"
+    };
+
     /// <inheritdoc />
     public async Task<OrderContext> BuildAsync(
         Guid organizationId,
@@ -122,7 +166,9 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
         }
 
         var normalized = Normalize(message);
-        if (!HasPurchaseSignal(normalized))
+        var isOrder = HasPurchaseSignal(normalized);
+        var isQuote = !isOrder && IsPricingQuestion(normalized);
+        if (!isOrder && !isQuote)
         {
             return OrderContext.Empty;
         }
@@ -167,7 +213,14 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
                 match.Item.Cost))
             .ToList();
 
-        return items.Count == 0 ? OrderContext.Empty : new OrderContext(items);
+        if (items.Count == 0)
+        {
+            return OrderContext.Empty;
+        }
+
+        return new OrderContext(
+            items,
+            isOrder ? OrderContextPurpose.Order : OrderContextPurpose.Quote);
     }
 
     private async Task<IReadOnlyList<InventoryItemDto>> LoadCatalogAsync(
@@ -311,6 +364,13 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
     /// <summary>True when the message asks to buy something rather than asking about it.</summary>
     internal static bool HasPurchaseSignal(string normalizedMessage)
         => PurchaseSignals.Any(signal => normalizedMessage.Contains(signal, StringComparison.Ordinal));
+
+    /// <summary>
+    /// True when the message asks what something would cost, so its pieces may be priced but not
+    /// bought (ADR-028).
+    /// </summary>
+    internal static bool IsPricingQuestion(string normalizedMessage)
+        => PricingSignals.Any(signal => normalizedMessage.Contains(signal, StringComparison.Ordinal));
 
     /// <summary>
     /// Lower-case, punctuation-free, whitespace-collapsed text. Digits survive because a quantity

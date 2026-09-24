@@ -34,6 +34,13 @@ public interface IConversationOrderBridge
     /// <summary>
     /// Create the order a paused run needs, or return <c>null</c> when there is nothing to create.
     /// </summary>
+    /// <remarks>
+    /// Takes the whole <see cref="OrderContext"/> rather than its items because the context carries
+    /// the reason the items exist, and the reason is what decides whether an order may be written at
+    /// all: a paused run holding a <see cref="OrderContextPurpose.Quote"/> is a contradiction — a
+    /// quote answers a question rather than pausing on one — and it is refused here rather than
+    /// trusted not to happen (ADR-028, invariant A7).
+    /// </remarks>
     Task<PausedOrderOutcome?> CreateForPausedRunAsync(
         Guid organizationId,
         string? threadId,
@@ -41,7 +48,7 @@ public interface IConversationOrderBridge
         Guid? customerId,
         string? phoneNumber,
         string? customerName,
-        IReadOnlyList<OrderContextItem> items,
+        OrderContext context,
         CancellationToken cancellationToken = default);
 }
 
@@ -88,9 +95,23 @@ public sealed class ConversationOrderBridge : IConversationOrderBridge
         Guid? customerId,
         string? phoneNumber,
         string? customerName,
-        IReadOnlyList<OrderContextItem> items,
+        OrderContext context,
         CancellationToken cancellationToken = default)
     {
+        // Invariant A7 (ADR-028): a quote is an answer, not a commitment. Reaching here with one
+        // means the agent paused on a message that only asked what something would cost, and writing
+        // an order would turn a question into a sale - the exact failure the quote purpose exists to
+        // prevent. Refused here, at the write, rather than only in the caller that decides to ask.
+        if (context.IsQuote)
+        {
+            _logger.LogWarning(
+                "Agent paused for thread {ThreadId} on a quote context; no order was created.",
+                threadId);
+            return null;
+        }
+
+        var items = context.Items;
+
         // Invariant A6: a pause nobody can reach is not an approval. Without a thread there is no
         // checkpoint to resume and no way to link the decision back to the run, so the pause is left
         // as telemetry only.

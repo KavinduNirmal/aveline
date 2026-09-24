@@ -114,6 +114,24 @@ describe('tenant conformance rules', () => {
     expect(offenders(SPACE_UTILITY, 'space-utilities')).toEqual([])
   })
 
+  it('rule 5: every chart series sets connectNulls from the shared CONNECT_NULLS constant', () => {
+    // A `null` bucket means "the server measured nothing here", so `connectNulls: true` would draw
+    // a line straight through a measurement that was never produced and report a value nobody
+    // established. The admin tree has enforced this over its own files since C6
+    // (`admin-conformance.test.ts`); this is the same rule over the tenant tree, which until now
+    // had no shared constant and hardcoded the literal.
+    const found: string[] = []
+    for (const file of tenantFiles) {
+      for (const match of source(file).matchAll(/<(?:Line|Area)\b[\s\S]*?\/>/g)) {
+        const element = match[0]
+        if (!element.includes('connectNulls={CONNECT_NULLS}')) {
+          found.push(`${file.replace(srcRoot, 'src')}: ${element.slice(0, 60)}…`)
+        }
+      }
+    }
+    expect(found).toEqual([])
+  })
+
   it('keeps the allow-list empty: an exception is argued in code', () => {
     const markers: string[] = []
     for (const file of tenantFiles) {

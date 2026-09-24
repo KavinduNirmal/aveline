@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/chart'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
+import { CONNECT_NULLS } from '@/lib/dashboard-chart-rules'
 import { formatCount } from '@/lib/format-money'
 import type { BlossomUsage } from '@/lib/billing-api'
 
@@ -75,7 +76,7 @@ export function BlossomBurnChart({ usage, allowance }: BlossomBurnChartProps) {
                 stroke="var(--color-blossoms)"
                 fill="var(--color-blossoms)"
                 fillOpacity={0.2}
-                connectNulls={false}
+                connectNulls={CONNECT_NULLS}
                 isAnimationActive={!reduceMotion}
               />
             </AreaChart>

@@ -78,4 +78,36 @@ describe('KpiCard', () => {
 
     expect(screen.getByText(/1,200/)).toBeInTheDocument()
   })
+
+  it('renders a measured value in a monospaced, tabular font', () => {
+    render(<KpiCard label="Gross order value" value={42000} />)
+
+    // Monospaced so a column of figures lines up, and `tabular-nums` so the digits are the same
+    // width — a proportional zero is what makes a dashboard column wobble as it updates.
+    const value = screen.getByText(/42,000\.00/)
+    expect(value.className).toContain('font-mono')
+    expect(value.className).toContain('tabular-nums')
+    expect(value.className).not.toContain('font-serif')
+  })
+
+  it('accents a measured value with the theme primary rather than near-black', () => {
+    render(<KpiCard label="Gross order value" value={42000} />)
+
+    // These are the customer's own numbers, so they carry the brand instead of inheriting the
+    // near-black a paragraph gets. `text-primary` is a theme utility, not a raw palette class.
+    expect(screen.getByText(/42,000\.00/).className).toContain('text-primary')
+  })
+
+  it('keeps "not measured" visually distinct from a figure', () => {
+    render(<KpiCard label="Average order value" value={null} />)
+
+    // The mono swap must touch only the measured branch. If "not measured" also read as mono, the
+    // two states would start to look alike and a missing measurement would read as a figure.
+    const missing = screen.getByText(/not measured/i)
+    expect(missing.className).toContain('italic')
+    expect(missing.className).toContain('font-sans')
+    expect(missing.className).not.toContain('font-mono')
+    // There is no figure to accent, so it must not wear the accent either.
+    expect(missing.className).not.toContain('text-primary')
+  })
 })

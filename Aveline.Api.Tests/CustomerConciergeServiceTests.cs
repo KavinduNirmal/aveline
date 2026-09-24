@@ -1,5 +1,6 @@
 using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Modules.CustomerConcierge.DTOs;
+using Aveline.Api.Modules.CustomerConcierge.Models;
 using Aveline.Api.Modules.CustomerConcierge.Repositories;
 using Aveline.Api.Modules.CustomerConcierge.Services;
 using Microsoft.EntityFrameworkCore;
@@ -40,16 +41,18 @@ public class CustomerConciergeServiceTests
             new CustomerTagRepository(_context),
             new TestDistributedCache(),
             NullLogger<CustomerService>.Instance);
+        var gate = new ConsentGateService(
+            new CustomerConsentRepository(_context), NullLogger<ConsentGateService>.Instance);
         var memories = new CustomerMemoryService(
             new CustomerMemoryRepository(_context),
             new CustomerRepository(_context),
             new CustomerEventRepository(_context),
-            new CustomerConsentRepository(_context),
+            gate,
             new CustomerTagRepository(_context),
             StubEmbeddings(embeddingVector ?? DummyVector()));
         var consent = new CustomerConsentService(new CustomerConsentRepository(_context));
-        var interactions = new CustomerInteractionService(new CustomerInteractionRepository(_context));
-        var events = new CustomerEventService(new CustomerEventRepository(_context));
+        var interactions = new CustomerInteractionService(new CustomerInteractionRepository(_context), gate);
+        var events = new CustomerEventService(new CustomerEventRepository(_context), gate);
         return (customers, memories, consent, interactions, events);
     }
 
@@ -127,13 +130,15 @@ public class CustomerConciergeServiceTests
     }
 
     [Fact]
-    public async Task ConsentUpdate_RejectsUnknownStatus()
+    public async Task ConsentUpdate_RejectsUnknownStatusWithTheTypedError()
     {
         var (customers, _, consent, _, _) = BuildServices();
         var profile = await customers.IdentifyOrCreateAsync(_orgA, "+94771234567");
 
-        await Assert.ThrowsAsync<ArgumentException>(
+        var exception = await Assert.ThrowsAsync<InvalidConsentStatusException>(
             () => consent.UpdateAsync(_orgA, profile.CustomerId, "maybe"));
+
+        Assert.Equal("maybe", exception.Status);
     }
 
     [Fact]

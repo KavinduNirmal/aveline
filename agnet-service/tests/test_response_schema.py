@@ -15,6 +15,8 @@ def test_status_enum_values():
         "success",
         "pending_approval",
         "out_of_scope",
+        # A consent skip is its own terminal status, not `success` (plan §11 Phase 1 item 1.6).
+        "skipped",
         "error",
     }
 

@@ -55,6 +55,12 @@ public class IntegrationServiceTests
         public Task<WhatsAppSendResult> SendMessageAsync(
             string accessToken, string phoneNumberId, string to, string text, CancellationToken cancellationToken = default)
             => Task.FromResult(new WhatsAppSendResult(IsSuccess: true, MessageId: "wamid.test"));
+
+        public Task<WhatsAppSendResult> SendTemplateAsync(
+            string accessToken, string phoneNumberId, string to, string templateName,
+            string languageCode, IReadOnlyList<object>? components,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("This test double does not send templates.");
     }
 
     private static SaveIntegrationRequest WhatsApp(string token = "wa-access-token") =>
@@ -283,6 +289,23 @@ public class IntegrationServiceTests
 
         Assert.True(result.IsValid);
         Assert.Equal(IntegrationStatus.Connected, result.Status.Status);
+    }
+
+    [Fact]
+    public async Task TestConnectionAsync_Instagram_DoesNotReportConnectedWithoutAProvider()
+    {
+        var orgId = Guid.NewGuid();
+        await _sut.SaveAsync(orgId, IntegrationType.Instagram, Instagram());
+
+        var result = await _sut.TestConnectionAsync(orgId, IntegrationType.Instagram);
+
+        // Instagram has no provider client, no webhook and no send method (plan §6.3). Storing
+        // credentials must not paint a green badge for an integration Aveline cannot use.
+        Assert.False(result.IsValid);
+        Assert.NotEqual(IntegrationStatus.Connected, result.Status.Status);
+        Assert.False(result.Status.Connected);
+        Assert.NotNull(result.Status.LastError);
+        Assert.NotNull(result.Error);
     }
 
     [Fact]

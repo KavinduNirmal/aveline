@@ -1,10 +1,11 @@
 """The HITL approval loop end to end (ADR-024).
 
 These tests exercise the whole conversation-initiated order path with **no backend**: the commerce
-agent's rule engine, loyalty lookup and payment gateway all fall back to deterministic local
-implementations, so a purchase that breaches a threshold pauses and a decision settles it without a
-single network call. The checkpointer is an ``InMemorySaver`` shared across the two legs of a run,
-which is what makes "pause, then resume" testable in one process.
+agent's rule engine and loyalty lookup fall back to deterministic local implementations, so a
+purchase that breaches a threshold pauses and a decision settles it without a single network call.
+The payment gateway is the one exception - it may not invent a checkout link (plan §9.8), so the
+registry that mints one is replaced by a double that answers. The checkpointer is an ``InMemorySaver``
+shared across the two legs of a run, which is what makes "pause, then resume" testable in one process.
 
 The defects these pin, all measured before the fix:
 
@@ -18,6 +19,7 @@ The defects these pin, all measured before the fix:
 from contextlib import asynccontextmanager
 
 import pytest
+from _payment_fakes import AnsweringPaymentRegistry
 from fastapi.testclient import TestClient
 from langgraph.checkpoint.memory import InMemorySaver
 
@@ -59,11 +61,16 @@ def _hermetic_agent(monkeypatch):
     real - they are what these tests are about. Only the nodes that would reach the backend over HTTP
     for *context* are replaced, and ``API_BASE_URL`` points at a closed local port so the two tools
     that do call out (the transcript window and the business-rules endpoint) fail instantly and take
-    their documented fallbacks. The commerce agent's rule engine and payment gateway both have
-    deterministic local fallbacks, which is what makes a full pause-and-settle loop testable.
+    their documented fallbacks. The rule engine still falls back locally. The payment gateway no
+    longer does: it must never invent a checkout link (plan §9.8), so the registry that mints one is
+    replaced with a double that actually answers.
     """
     monkeypatch.setenv("API_BASE_URL", "http://127.0.0.1:1")
     get_settings.cache_clear()
+
+    monkeypatch.setattr(
+        concierge_workflow, "ToolRegistry", lambda *a, **k: AnsweringPaymentRegistry()
+    )
 
     async def load_context(state):
         return {"history": [], "thread_summary": None, "pinned_slots": {}}
@@ -191,7 +198,8 @@ async def test_an_approval_settles_the_deal(shared_saver):
     await _pause(shared_saver)
 
     response = await resume_concierge(
-        THREAD_ID, {"decision": "approved", "comment": "Go ahead."}
+        THREAD_ID,
+        {"decision": "approved", "comment": "Go ahead.", "order_id": "ord-hitl-001"},
     )
 
     assert response.status == AgentStatus.success
@@ -278,7 +286,9 @@ async def test_the_settlement_quotes_the_order_and_customer_the_api_supplied(sha
 async def test_a_revised_decision_re_prices_the_deal(shared_saver):
     await _pause(shared_saver)
 
-    response = await resume_concierge(THREAD_ID, {"decision": "revised", "revised_discount": 0.1})
+    response = await resume_concierge(
+        THREAD_ID, {"decision": "revised", "revised_discount": 0.1, "order_id": "ord-revised-1"}
+    )
 
     assert response.status == AgentStatus.success
     commerce = response.output["commerce"]
@@ -400,6 +410,7 @@ def test_resume_settles_a_paused_run_over_http(shared_saver):
             "thread_id": THREAD_ID,
             "decision": "approved",
             "organization_id": ORG_ID,
+            "order_id": "ord-http-001",
             "comment": "Approved by the owner.",
         },
     )

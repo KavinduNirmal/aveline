@@ -20,7 +20,6 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { toast } from 'sonner'
 
 import { Blossom } from '@/components/auth/Blossom'
 import { AvelineChatDrawer } from '@/components/conversation/AvelineChatDrawer'
@@ -32,6 +31,7 @@ import { OrdersPanel } from '@/components/dashboard/OrdersPanel'
 import { CustomersPanel } from '@/components/dashboard/CustomersPanel'
 import { IncomePanel } from '@/components/dashboard/IncomePanel'
 import { BillingPanel } from '@/components/dashboard/billing/BillingPanel'
+import { TopUpDialog } from '@/components/dashboard/billing/TopUpDialog'
 import { SettingsPanel } from '@/components/dashboard/settings/SettingsPanel'
 import { SectionPlaceholder } from '@/components/dashboard/SectionPlaceholder'
 import { TeamManagement } from '@/components/dashboard/TeamManagement'
@@ -119,6 +119,11 @@ interface DashboardShellProps {
   usage: OrganizationUsageSummary | null
   /** The caller's boutique role, used to gate nav sections by permission. */
   role: string
+  /**
+   * Called after the server reports a settled top-up, so the shell's owner can refetch the Blossom
+   * balance. Optional: without it the header chip keeps the value it last read.
+   */
+  onBalanceChanged?: () => void
 }
 
 /** Initials helper for avatar fallbacks (org or user). */
@@ -138,7 +143,12 @@ function initialsOf(...parts: Array<string | null | undefined>): string {
  * bottom user card with sign-out) and a top bar carrying the plan and Blossom balance.
  * The Overview section is functional; the remaining sections render placeholders.
  */
-export function DashboardShell({ organization, usage, role }: DashboardShellProps) {
+export function DashboardShell({
+  organization,
+  usage,
+  role,
+  onBalanceChanged,
+}: DashboardShellProps) {
   const navigate = useNavigate()
   const { user } = useUser()
   const { signOut } = useClerk()
@@ -391,21 +401,32 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
               </span>
             )}
 
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5 rounded-full"
-              onClick={() => {
-                goToSection('billing')
-                toast('Choose a Blossom top-up pack', {
-                  description:
-                    'Top-ups are recorded grants until a payment provider is connected.',
-                })
-              }}
-            >
-              <Plus className="size-4" aria-hidden />
-              Top up
-            </Button>
+            {/* The placeholder toast ("top-ups are recorded grants until a payment provider is
+                connected") was a claim about the product that stopped being true when the checkout
+                route shipped. A caller who may purchase now gets the real dialog; a caller who may
+                not is sent to Billing, where the statement lives. */}
+            {hasPermission(role, 'billing:manage') ? (
+              <TopUpDialog
+                organizationId={organization.id}
+                onSettled={() => onBalanceChanged?.()}
+                trigger={
+                  <Button variant="outline" size="sm" className="gap-1.5 rounded-full">
+                    <Plus className="size-4" aria-hidden />
+                    Top up
+                  </Button>
+                }
+              />
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 rounded-full"
+                onClick={() => goToSection('billing')}
+              >
+                <Plus className="size-4" aria-hidden />
+                Top up
+              </Button>
+            )}
 
             <Select
               value={dashboardWindow.window}

@@ -6,13 +6,17 @@ rejection handling, and resumption states. Compatible with unittest and pytest.
 
 import unittest
 
+from _payment_fakes import AnsweringPaymentRegistry
+
 from app.agents.commerce.graph import build_commerce_graph
 from app.agents.commerce.state import CommerceAgentState
 
 
 class TestCommerceGraph(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.graph = build_commerce_graph(registry=None)
+        # A settled deal needs a backend that actually answers, because the agent no longer invents
+        # a checkout link (plan §9.8).
+        self.graph = build_commerce_graph(registry=AnsweringPaymentRegistry())
         self.org_id = "org-test-100"
 
     async def test_auto_approved_deal_flow(self):

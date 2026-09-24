@@ -29,6 +29,10 @@ SKIPPED = "skipped"
 SUCCESS = "success"
 OUT_OF_SCOPE = "out_of_scope"
 
+#: Reported when the consent store could not be read. It is not a persisted consent value; it is
+#: the fail-closed outcome, and it tells the orchestrator to stop the whole ordered pipeline.
+CONSENT_UNAVAILABLE = "unavailable"
+
 
 def coerce_output(output: dict[str, Any]) -> MemoryAgentOutput | None:
     """Validate an assembled ``MemoryAgentOutput``-shaped dict in the running path.
@@ -259,13 +263,33 @@ class CustomerMemoryAgent:
         return "Updated this customer's " + " and ".join(changed) + "."
 
     async def check_consent(self, state: MemoryAgentState) -> dict[str, Any]:
-        """Refuse to process customers who have revoked consent."""
+        """Refuse to process customers who have revoked consent.
+
+        A backend failure **fails closed**: personalization does not run for a customer whose
+        consent could not be read, and the node reports a skip. It must never raise - an earlier
+        version let a consent-store outage propagate through the graph and 500 the whole query
+        (plan §8.2 defect 4 / Phase 1 item 1.4).
+
+        The returned ``consent_status`` is what the orchestrator routes on, so a revoked or
+        unverifiable customer is not merely skipped inside this sub-graph: it stops the visual and
+        commerce agents too (item 1.3).
+        """
         org_id = state.get("org_id")
         customer_id = state.get("customer_id")
-        consent = await self.registry.get_customer_consent(str(org_id), str(customer_id))
+
+        try:
+            consent = await self.registry.get_customer_consent(str(org_id), str(customer_id))
+        except Exception:  # noqa: BLE001 - a privacy control must fail closed, never 500
+            logger.warning(
+                "Consent check failed; refusing to personalize (fail closed). customer_id=%s",
+                customer_id,
+                exc_info=True,
+            )
+            return {**self._skip("consent check unavailable"), "consent_status": CONSENT_UNAVAILABLE}
+
         status = (consent or {}).get("consentStatus") or "pending"
         if status == "revoked":
-            return self._skip("customer has revoked consent")
+            return {**self._skip("customer has revoked consent"), "consent_status": "revoked"}
         return {"consent_status": status}
 
     async def parse(self, state: MemoryAgentState) -> dict[str, Any]:

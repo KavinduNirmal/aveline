@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Aveline.Api.Authorization;
 using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Infrastructure.Integrations;
 using Aveline.Api.Infrastructure.RateLimiting;
 using Aveline.Api.Modules.Integrations.Models;
 using Aveline.Api.Modules.Integrations.Services;
@@ -43,6 +44,32 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
     private readonly RecordingBroadcaster _broadcaster = new();
 
     private readonly StubWhatsAppService _whatsApp = new();
+
+    /// <summary>
+    /// Records the agent dispatches an inbound message triggers. The webhook's contract is that a
+    /// revoked customer's message is recorded and acknowledged but never handed to the agent
+    /// (plan §5.5, §8.4), and this is the seam that proves it: a real HTTP call cannot be asserted
+    /// on, and a connection failure would look the same as a deliberate skip.
+    /// </summary>
+    private readonly RecordingAgentClient _agentClient = new();
+
+    private sealed class RecordingAgentClient : IAgentServiceClient
+    {
+        private int _postCount;
+
+        public int PostCount => Volatile.Read(ref _postCount);
+
+        public Task<HttpResponseMessage> PostAsync(
+            string path, HttpContent content, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _postCount);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        }
+
+        public Task<HttpResponseMessage> GetAsync(
+            string path, CancellationToken cancellationToken = default)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+    }
 
     private sealed class RecordingRateLimiter : IRateLimiter
     {
@@ -95,6 +122,12 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
             string accessToken, string phoneNumberId, string to, string text,
             CancellationToken cancellationToken = default)
             => Task.FromResult(new WhatsAppSendResult(IsSuccess: true));
+
+        public Task<WhatsAppSendResult> SendTemplateAsync(
+            string accessToken, string phoneNumberId, string to, string templateName,
+            string languageCode, IReadOnlyList<object>? components,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("This test double does not send templates.");
     }
 
     private sealed class RecordingBroadcaster : IMessageBroadcaster
@@ -146,6 +179,10 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
                     // media fetch is stubbed and made configurable per test.
                     services.RemoveAll<IWhatsAppService>();
                     services.AddSingleton<IWhatsAppService>(_whatsApp);
+                    // Stub the agent transport so a test can assert whether the agent was called
+                    // at all (consent enforcement), and so no test depends on a live agent.
+                    services.RemoveAll<IAgentServiceClient>();
+                    services.AddSingleton<IAgentServiceClient>(_agentClient);
                 });
             });
         _client = _factory.CreateClient();
@@ -712,6 +749,67 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
         context.Customers.Add(customer);
         await context.SaveChangesAsync();
         return customer.Id;
+    }
+
+    private static async Task SeedConsentAsync(Guid orgId, Guid customerId, string status)
+    {
+        await using var context = CreateContext();
+        context.CustomerConsents.Add(new CustomerConsent
+        {
+            Id = Guid.CreateVersion7(),
+            OrganizationId = orgId,
+            CustomerId = customerId,
+            ConsentStatus = status,
+        });
+        await context.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task Post_FromARevokedCustomer_RecordsTheMessageButDispatchesNoAgent()
+    {
+        // Plan §5.5's load-bearing row: the inbound message row is deliberately still written
+        // (§8.4 - it is the evidence the customer contacted us and that we honoured the choice),
+        // while the whole agent run is skipped.
+        var orgId = await SeedOrgWithWhatsAppAsync("wh_owner_revoked", "webhook-revoked");
+        var customerId = await SeedCustomerAsync(orgId, "+94771999001", "Revoked Rita");
+        await SeedConsentAsync(orgId, customerId, ConsentStatuses.Revoked);
+
+        var response = await PostAsync(orgId, MetaMessagePayload(
+            messageId: "wamid.REV1", from: "+94771999001"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var context = CreateContext();
+        Assert.True(await context.InboundMessageLogs.AnyAsync(
+            log => log.OrganizationId == orgId && log.ExternalId == "wamid.REV1"));
+
+        var conversation = await context.Conversations.FirstOrDefaultAsync(
+            c => c.OrganizationId == orgId && c.ExternalRef == "+94771999001");
+        Assert.NotNull(conversation);
+        Assert.Equal(customerId, conversation!.CustomerId);
+
+        var message = await context.Messages.FirstOrDefaultAsync(
+            m => m.ConversationId == conversation.Id);
+        Assert.NotNull(message);
+
+        // The point of the test: no `POST /agents/query` was issued for a revoked customer.
+        Assert.Equal(0, _agentClient.PostCount);
+    }
+
+    [Fact]
+    public async Task Post_FromAConsentingCustomer_StillDispatchesTheAgent()
+    {
+        // The positive control for the test above: without it, a broken transport would make the
+        // "zero dispatches" assertion pass vacuously.
+        var orgId = await SeedOrgWithWhatsAppAsync("wh_owner_granted", "webhook-granted");
+        var customerId = await SeedCustomerAsync(orgId, "+94771999002", "Consenting Chani");
+        await SeedConsentAsync(orgId, customerId, ConsentStatuses.Granted);
+
+        var response = await PostAsync(orgId, MetaMessagePayload(
+            messageId: "wamid.GRANT1", from: "+94771999002"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, _agentClient.PostCount);
     }
 
     [Fact]

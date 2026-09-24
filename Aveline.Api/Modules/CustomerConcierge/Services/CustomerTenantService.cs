@@ -304,12 +304,21 @@ public sealed class CustomerTenantService : ICustomerTenantService
 
         if (existing is not null)
         {
+            // D-6: the response reports the client's actual consent row. A client created before
+            // the consent row existed still reads as `pending`, the one absent-row value.
+            var existingConsent = await _context.CustomerConsents
+                .AsNoTracking()
+                .FirstOrDefaultAsync(
+                    candidate => candidate.OrganizationId == organizationId
+                                 && candidate.CustomerId == existing.Id,
+                    cancellationToken);
+
             return new CustomerCreatedDto(
                 existing.Id,
                 existing.FullName,
                 existing.Level,
                 existing.Status,
-                "pending",
+                existingConsent?.ConsentStatus ?? ConsentStatuses.AbsentRow,
                 existing.CreatedAt,
                 existing.Id);
         }
@@ -327,6 +336,18 @@ public sealed class CustomerTenantService : ICustomerTenantService
             UpdatedAt = now,
         };
         _context.Customers.Add(customer);
+
+        // D-6: the consent row is created with the client, so the DTO reports a state that
+        // actually exists in the database and the consent metrics have a row to count.
+        var consent = new CustomerConsent
+        {
+            OrganizationId = organizationId,
+            CustomerId = customer.Id,
+            ConsentStatus = ConsentStatuses.Pending,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        _context.CustomerConsents.Add(consent);
 
         if (!string.IsNullOrWhiteSpace(request.Nickname))
         {
@@ -351,7 +372,7 @@ public sealed class CustomerTenantService : ICustomerTenantService
             customer.FullName,
             customer.Level,
             customer.Status,
-            "pending",
+            consent.ConsentStatus,
             customer.CreatedAt,
             null);
     }

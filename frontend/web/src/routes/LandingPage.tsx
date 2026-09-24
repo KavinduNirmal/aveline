@@ -31,6 +31,7 @@ import { PhoneMockup } from '@/components/site/PhoneMockup'
 import { HeroSlideshow } from '@/components/site/HeroSlideshow'
 import { SocialProofBar } from '@/components/site/SocialProofBar'
 import { ProblemSection } from '@/components/site/ProblemSection'
+import { PrivacySection } from '@/components/site/PrivacySection'
 import { TestimonialsSection } from '@/components/site/TestimonialsSection'
 import { AppleIcon, CurvedArrow, PlayStoreIcon } from '@/components/site/Icons'
 import { cn } from '@/lib/utils'
@@ -608,6 +609,10 @@ export function LandingPage() {
 
       {/* ------------------------------------------------ 5. Problem Section (2 by 2 Whimsical Cards) */}
       <ProblemSection />
+
+      {/* ------------------------------------------------ 5b. Privacy & Transparency — the
+          commitment that answers the problem, placed immediately after it (plan §8.5.5 item 2). */}
+      <PrivacySection />
 
       {/* ------------------------------------------------ Persona Quote */}
       <section className="relative overflow-hidden border-y-2 border-dashed border-neutral-200 bg-white">

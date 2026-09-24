@@ -835,10 +835,10 @@ collected?*
 
 ### The two entry classes (D4), and why the ledger has two
 
-**There is no payment-provider client in this repository.** The provider columns on
-`OrganizationSubscriptions` and `BlossomPriceEntries` exist and nothing writes them;
-`docs/api/README.md` records the position: *"Phase 3 attaches a payment provider; until then a
-top-up is a recorded grant, not a charge."*
+**The provider abstraction and its adapters exist** (`Aveline.Api/Modules/Payments`, plan §6), and
+the configured provider defaults to `manual`, which settles nothing by itself: an operator
+confirms receipt out of band. An external provider client is Phase 8. The console reads that fact
+from `revenueProviderSettlementAvailable` rather than assuming it.
 
 Booking income at the top-up or rollover site without that distinction would invent money, so the
 ledger carries two classes and the console always says which it is showing:
@@ -846,11 +846,12 @@ ledger carries two classes and the console always says which it is showing:
 | `chargeBasis` | Meaning | Writer |
 |---|---|---|
 | `Derived` | what the list price says *should* be billed — an expectation | the top-up route when a `paymentReference` is supplied, and `BillingPeriodRolloverJob` |
-| `Verified` | money an operator confirmed was received, or a refund | `POST /admin/revenue/ledger/verify` and `/refund` |
+| `Verified` | money an operator confirmed was received, a refund, or a charge a provider settled | `POST /admin/revenue/ledger/verify` and `/refund`, `PaymentSettlementService` (a provider-settled top-up), and `SubscriptionRenewalService` (a settled subscription renewal) |
 
 A top-up with **no** `paymentReference` writes no income row at all. A subscription with
-`PriceLkr = 0` writes no charge at all, which is the production case today: that is why
-`subscriptionPricesConfigured` is `false` and MRR is `null` rather than `0`.
+`PriceLkr = 0` writes no charge at all, which is the production case today for subscriptions that
+predate P1: that is why `subscriptionPricesConfigured` is `false` and MRR is `null` rather than
+`0`.
 
 ### The permission family
 
@@ -897,7 +898,9 @@ imported view is mounted somewhere.
 backfill say nothing about whether a price was configured or whether a receipt was verified. Its
 three load-bearing facts:
 
-- `revenueProviderSettlementAvailable: false` — no figure in this family is settled money.
+- `revenueProviderSettlementAvailable` — `false` while the configured provider is `manual`, so no
+  figure in this family is settled money; `true` once a provider client that settles charges is
+  configured. The renderer prints the matching line in either state.
 - `subscriptionPricesConfigured: false` — a derived charge of `0` means *no list price is
   configured*, not "free".
 - `derivedEntriesUnverified` — the count of `Derived` rows with no `Verified` counterpart. That gap

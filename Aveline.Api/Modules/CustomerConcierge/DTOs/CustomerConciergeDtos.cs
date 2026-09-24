@@ -57,10 +57,27 @@ public sealed record CustomerPreferenceDto(
 /// <summary>A single tag on a customer.</summary>
 public sealed record CustomerTagDto(string Tag);
 
-/// <summary>A customer's consent status.</summary>
-public sealed record CustomerConsentDto(Guid Id, string ConsentStatus)
+/// <summary>
+/// A customer's consent state. The property names serialise to camelCase, and the Python agent
+/// reads <c>consentStatus</c> from this payload (<c>agnet-service/app/agents/customer_memory/nodes.py</c>);
+/// do not rename or re-case them.
+/// </summary>
+public sealed record CustomerConsentDto(
+    Guid Id,
+    string ConsentStatus,
+    DateTime? ConsentGrantedAt,
+    DateTime? ConsentRevokedAt,
+    DateTime? DisclosureShownAt)
 {
-    public static CustomerConsentDto From(CustomerConsent c) => new(c.Id, c.ConsentStatus);
+    public static CustomerConsentDto From(CustomerConsent c) => new(
+        c.Id, c.ConsentStatus, c.ConsentGrantedAt, c.ConsentRevokedAt, c.DisclosureShownAt);
+
+    /// <summary>
+    /// The answer for a customer who has no consent row yet. One value for both call sites
+    /// (defect D-2): the consent endpoint and the customer profile must agree.
+    /// </summary>
+    public static CustomerConsentDto Absent => new(
+        Guid.Empty, ConsentStatuses.AbsentRow, null, null, null);
 }
 
 /// <summary>The customer profile assembled for an interaction brief or lookup.</summary>

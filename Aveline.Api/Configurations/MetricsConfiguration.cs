@@ -21,6 +21,30 @@ internal enum ExportedMetricFamily
 
     /// <summary>The notification metric family (NotificationMetrics, Slice 7).</summary>
     Notification,
+
+    /// <summary>The consent-processing counter (ConsentMetrics, privacy plan Phase 1).</summary>
+    Consent,
+
+    /// <summary>The outbound-delivery counter (OutboundMetrics, privacy plan Phase 2).</summary>
+    Outbound,
+
+    /// <summary>The consent-state snapshot gauge (ConsentMetrics, privacy plan Phase 6).</summary>
+    ConsentState,
+
+    /// <summary>The OTP and privacy rate-limit counters (OtpMetrics, privacy plan Phase 4/6).</summary>
+    PrivacyOtp,
+
+    /// <summary>The disclosure counters (DisclosureMetrics, privacy plan Phase 3/6).</summary>
+    PrivacyDisclosure,
+
+    /// <summary>The privacy delivery counters (PrivacyDeliveryMetrics, privacy plan Phase 4/6).</summary>
+    PrivacyDelivery,
+
+    /// <summary>The data-subject-rights counters and duration histogram (RightsMetrics, privacy plan Phase 6).</summary>
+    PrivacyRights,
+
+    /// <summary>The payment family's counters, histogram and gauges (PaymentMetrics, payments plan §12.1).</summary>
+    Payment,
 }
 
 /// <summary>
@@ -114,6 +138,42 @@ internal static class MetricsCatalog
         Notification("aveline.notification.push_dispatch_failures", "aveline_notification_push_dispatch_failures", string.Empty, ExportedMetricKind.Gauge),
         Notification("aveline.notification.failure_reasons", "aveline_notification_failure_reasons", string.Empty, ExportedMetricKind.Gauge),
         Notification("aveline.notification.time_to_read_p50_minutes", "aveline_notification_time_to_read_p50_minutes", string.Empty, ExportedMetricKind.Gauge),
+
+        // --- The consent-processing counter (ConsentMetrics, privacy plan §9.1 / Phase 1).
+        Consent("aveline.message.skip", "aveline_message_skip_total"),
+
+        // --- The outbound-delivery counter (OutboundMetrics, privacy plan §9.1 / Phase 2).
+        OutboundMetric("aveline.outbound_message.result", "aveline_outbound_message_result_total"),
+
+        // --- The privacy metric families (plan §9.1 / Phase 6 item 6.3). Three of them existed
+        // before this phase and are registered here for the first time, because the catalogue is
+        // what makes a name single-authored; the rights family and the consent-state gauge are new.
+        ConsentState("aveline.consent.state", "aveline_consent_state"),
+        PrivacyOtp("aveline.otp.issued", "aveline_otp_issued_total"),
+        PrivacyOtp("aveline.otp.verified", "aveline_otp_verified_total"),
+        PrivacyOtp("aveline.otp.failed", "aveline_otp_failed_total"),
+        PrivacyOtp("aveline.privacy.endpoint_rate_limited", "aveline_privacy_endpoint_rate_limited_total"),
+        PrivacyDisclosure("aveline.disclosure.shown", "aveline_disclosure_shown_total"),
+        PrivacyDisclosure("aveline.disclosure.unshown", "aveline_disclosure_unshown_total"),
+        PrivacyDelivery("aveline.privacy.delivery.delivered", "aveline_privacy_delivery_delivered_total"),
+        PrivacyDelivery("aveline.privacy.delivery.failed", "aveline_privacy_delivery_failed_total"),
+        Rights("aveline.data.export_requests", "aveline_data_export_requests_total"),
+        Rights("aveline.data.delete_requests", "aveline_data_delete_requests_total"),
+        RightsHistogram("aveline.data.delete_time_to_complete", "aveline_data_delete_time_to_complete_seconds"),
+
+        // --- The payment metric family (PaymentMetrics, payments plan §12.1). Authored here so the
+        // names have one home and MetricsNamingTests asserts them against a live scrape; P7's
+        // reconciliation gauges sit at the end of the family.
+        Payment("aveline.payment.intent.created", "aveline_payment_intent_created_intents_total", "intents", ExportedMetricKind.Counter),
+        Payment("aveline.payment.settlement", "aveline_payment_settlement_settlements_total", "settlements", ExportedMetricKind.Counter),
+        Payment("aveline.payment.settlement_latency_ms", "aveline_payment_settlement_latency_ms_milliseconds", "ms", ExportedMetricKind.Histogram),
+        Payment("aveline.payment.webhook.received", "aveline_payment_webhook_received_events_total", "events", ExportedMetricKind.Counter),
+        Payment("aveline.payment.webhook.verification_failures", "aveline_payment_webhook_verification_failures_events_total", "events", ExportedMetricKind.Counter),
+        Payment("aveline.payment.webhook.unprocessed_backlog", "aveline_payment_webhook_unprocessed_backlog_events", "events", ExportedMetricKind.Gauge),
+        Payment("aveline.payment.refund", "aveline_payment_refund_refunds_total", "refunds", ExportedMetricKind.Counter),
+        Payment("aveline.payment.provider.errors", "aveline_payment_provider_errors_calls_total", "calls", ExportedMetricKind.Counter),
+        Payment("aveline.payment.mock_provider_active", "aveline_payment_mock_provider_active", string.Empty, ExportedMetricKind.Gauge),
+        Payment("aveline.payment.unreconciled_intents", "aveline_payment_unreconciled_intents", "intents", ExportedMetricKind.Gauge),
     ];
 
     /// <summary>The bridged business metrics, in the order the collector produces them.</summary>
@@ -172,6 +232,48 @@ internal static class MetricsCatalog
 
     private static ExportedMetric Notification(string dottedName, string prometheusName, string unit, ExportedMetricKind kind)
         => new(dottedName, prometheusName, unit, kind, ExportedMetricFamily.Notification);
+
+    private static ExportedMetric Consent(string dottedName, string prometheusName)
+        => new(dottedName, prometheusName, string.Empty, ExportedMetricKind.Counter, ExportedMetricFamily.Consent);
+
+    private static ExportedMetric OutboundMetric(string dottedName, string prometheusName)
+        => new(dottedName, prometheusName, string.Empty, ExportedMetricKind.Counter, ExportedMetricFamily.Outbound);
+
+    /// <summary>
+    /// The consent-state snapshot gauge. A gauge rather than a counter because it is republished
+    /// each collector pass: a Prometheus counter must be monotonic, and a table-derived count is not
+    /// (see <c>ConsentMetrics.PublishByStatus</c> and the notification family's recorded deviation).
+    /// </summary>
+    private static ExportedMetric ConsentState(string dottedName, string prometheusName)
+        => new(dottedName, prometheusName, string.Empty, ExportedMetricKind.Gauge, ExportedMetricFamily.ConsentState);
+
+    private static ExportedMetric PrivacyOtp(string dottedName, string prometheusName)
+        => new(dottedName, prometheusName, string.Empty, ExportedMetricKind.Counter, ExportedMetricFamily.PrivacyOtp);
+
+    private static ExportedMetric PrivacyDisclosure(string dottedName, string prometheusName)
+        => new(dottedName, prometheusName, string.Empty, ExportedMetricKind.Counter, ExportedMetricFamily.PrivacyDisclosure);
+
+    private static ExportedMetric PrivacyDelivery(string dottedName, string prometheusName)
+        => new(dottedName, prometheusName, string.Empty, ExportedMetricKind.Counter, ExportedMetricFamily.PrivacyDelivery);
+
+    private static ExportedMetric Rights(string dottedName, string prometheusName)
+        => new(dottedName, prometheusName, string.Empty, ExportedMetricKind.Counter, ExportedMetricFamily.PrivacyRights);
+
+    /// <summary>
+    /// The erasure duration histogram. Unit <c>s</c> so the exporter appends the idiomatic
+    /// <c>_seconds</c> suffix the plan's §9.1 table names, rather than the metric being authored as
+    /// <c>..._seconds</c> and gaining a second suffix.
+    /// </summary>
+    private static ExportedMetric RightsHistogram(string dottedName, string prometheusName)
+        => new(dottedName, prometheusName, "s", ExportedMetricKind.Histogram, ExportedMetricFamily.PrivacyRights);
+
+    /// <summary>
+    /// A payment instrument. The family carries mixed kinds (counters, one histogram and gauges), so
+    /// the shape is a parameter rather than baked into the helper as it is for the privacy families.
+    /// </summary>
+    private static ExportedMetric Payment(
+        string dottedName, string prometheusName, string unit, ExportedMetricKind kind)
+        => new(dottedName, prometheusName, unit, kind, ExportedMetricFamily.Payment);
 }
 
 /// <summary>

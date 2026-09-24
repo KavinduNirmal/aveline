@@ -326,12 +326,90 @@ public class IncomeLedgerServiceTests
         Assert.Equal("income-entry-not-voidable", exception.Code);
     }
 
+    // ── VerifyAsync: the shared Derived -> Verified supersede path (plan §9.9, gap G12) ──────
+
+    /// <summary>
+    /// The extraction's contract: a verification names the charge by its <c>(SourceKind, SourceRef)</c>
+    /// identity, and the service — not the endpoint — finds the live <c>Derived</c> expectation,
+    /// carries its period onto the receipt and voids it through the one supersede path.
+    /// </summary>
+    [Fact]
+    public async Task VerifyAsync_SupersedesTheDerivedExpectation_CarryingItsPeriod()
+    {
+        var orgId = await SeedOrganizationAsync();
+        var sourceRef = "period-2026-09";
+        var derived = await _service.RecordAsync(Command(orgId, sourceRef: sourceRef));
+
+        var receipt = await _service.VerifyAsync(new VerifyIncomeCommand(
+            orgId,
+            5000m,
+            "Payment received against the September charge.",
+            IncomeEntryKind.SubscriptionCharge,
+            IncomeSourceKind.SubscriptionBilling,
+            sourceRef,
+            DateTime.UtcNow,
+            Guid.CreateVersion7()));
+
+        Assert.Equal(IncomeChargeBasis.Verified, receipt.ChargeBasis);
+        Assert.Equal(IncomeSourceKind.SubscriptionBilling, receipt.SourceKind);
+        Assert.Equal(derived.Id, receipt.SupersedesEntryId);
+        // The receipt is for the charge the expectation described, not a second, independently
+        // derived period.
+        Assert.Equal(derived.PeriodStart, receipt.PeriodStart);
+        Assert.Equal(derived.PeriodEnd, receipt.PeriodEnd);
+
+        var voided = await _context.IncomeLedgerEntries.SingleAsync(entry => entry.Id == derived.Id);
+        Assert.Equal(IncomeEntryStatus.Voided, voided.Status);
+        Assert.Null(voided.SourceRef);
+    }
+
+    /// <summary>
+    /// With no expectation to take over, a verification is simply a receipt: it must still validate
+    /// and append exactly as <see cref="IncomeLedgerService.RecordAsync"/> does.
+    /// </summary>
+    [Fact]
+    public async Task VerifyAsync_WithNoDerivedExpectation_AppendsAReceipt()
+    {
+        var orgId = await SeedOrganizationAsync();
+
+        var receipt = await _service.VerifyAsync(new VerifyIncomeCommand(
+            orgId,
+            5000m,
+            "Payment received against a charge the journal never derived.",
+            IncomeEntryKind.SubscriptionCharge,
+            IncomeSourceKind.SubscriptionBilling,
+            "period-2026-09",
+            DateTime.UtcNow,
+            Guid.CreateVersion7()));
+
+        Assert.Equal(IncomeChargeBasis.Verified, receipt.ChargeBasis);
+        Assert.Null(receipt.SupersedesEntryId);
+    }
+
+    /// <summary>
+    /// The verification validates its command exactly as a record does, because both write the same
+    /// row through the same path.
+    /// </summary>
+    [Fact]
+    public async Task VerifyAsync_WithAnInvalidCommand_IsRejected()
+    {
+        var orgId = await SeedOrganizationAsync();
+
+        await Assert.ThrowsAsync<RevenueValidationException>(() => _service.VerifyAsync(
+            new VerifyIncomeCommand(
+                orgId, 0m, "Payment received.", IncomeEntryKind.SubscriptionCharge,
+                IncomeSourceKind.SubscriptionBilling, "period-2026-09", DateTime.UtcNow,
+                Guid.CreateVersion7())));
+    }
+
     // ── Append-only, structurally ────────────────────────────────────────────────────────────
 
     /// <summary>
     /// The append-only rule is structural rather than a convention: the service exposes no way to
     /// mutate an existing row, and the only state transition is a nulling that leaves the original
-    /// on disk. This asserts the complete public surface, so adding an update method is a failure
+    /// on disk. <see cref="IncomeLedgerService.VerifyAsync"/> is the P6 addition and is append-only
+    /// too — it takes over an expectation by appending a receipt and voiding the target, never by
+    /// editing it. This asserts the complete public surface, so adding an update method is a failure
     /// here rather than a quiet erosion of the rule.
     /// </summary>
     [Fact]
@@ -339,7 +417,7 @@ public class IncomeLedgerServiceTests
     {
         var methods = typeof(IIncomeLedgerService).GetMethods().Select(m => m.Name).Order().ToArray();
 
-        Assert.Equal(new[] { "RecordAsync" }, methods);
+        Assert.Equal(new[] { "RecordAsync", "VerifyAsync" }, methods);
     }
 
     [Fact]

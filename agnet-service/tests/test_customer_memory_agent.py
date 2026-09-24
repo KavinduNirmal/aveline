@@ -32,12 +32,15 @@ class FakeRegistry:
         self.search_calls = 0
         self.brief_calls = 0
         self.memories_raise = False
+        self.consent_error: Exception | None = None
 
     async def identify_customer(self, org_id, phone_number, full_name=None):
         self.identify_calls += 1
         return self.profile
 
     async def get_customer_consent(self, org_id, customer_id):
+        if self.consent_error is not None:
+            raise self.consent_error
         return {"consentStatus": self.consent_status}
 
     async def get_customer_memories(self, org_id, customer_id, query, top_k=5):
@@ -149,6 +152,36 @@ async def test_revoked_consent_short_circuits():
     # Nothing persisted, nothing retrieved, no draft.
     assert registry.saved_memories == []
     assert registry.search_calls == 0
+    assert result["output"].get("draft_response") is None
+
+
+async def test_revoked_consent_is_surfaced_on_the_sub_graph_state():
+    """1.3: the orchestrator can only block downstream agents if the status escapes the sub-graph."""
+    registry = FakeRegistry()
+    registry.consent_status = "revoked"
+
+    result = await _run(registry)
+
+    assert result["consent_status"] == "revoked"
+
+
+async def test_consent_check_failure_fails_closed_without_raising():
+    """1.4: a backend failure used to raise through the node and 500 the whole query.
+
+    Fail closed: personalization (retrieval + writes + draft) must not happen for a customer
+    whose consent could not be read, and the node must report a skip rather than an exception.
+    """
+    registry = FakeRegistry()
+    registry.consent_error = RuntimeError("consent backend unavailable")
+
+    result = await _run(registry)
+
+    assert result["status"] == "skipped"
+    assert "unavailable" in result["reason"].lower()
+    assert result["consent_status"] == "unavailable"
+    assert registry.saved_memories == []
+    assert registry.search_calls == 0
+    assert registry.recorded_interactions == []
     assert result["output"].get("draft_response") is None
 
 

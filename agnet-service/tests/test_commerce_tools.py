@@ -6,6 +6,8 @@ business rules evaluation, payment generation, and courier bookings.
 
 import unittest
 
+from _payment_fakes import AnsweringPaymentRegistry
+
 from app.tools.commerce.delivery_tools import book_courier
 from app.tools.commerce.loyalty_tools import get_customer_loyalty_tier
 from app.tools.commerce.payment_tools import generate_payment_request, validate_payment
@@ -98,15 +100,24 @@ class TestCommerceTools(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(check_approval_threshold(order_total=20000.0, margin=0.15))
 
     async def test_generate_payment_request(self):
-        result = await generate_payment_request(org_id="org-1", order_id="ord-123456", amount=35000.0)
+        """The link is the backend's, never a locally invented one (plan §9.8)."""
+        registry = AnsweringPaymentRegistry(checkout_url="https://checkout.provider.example/pi_777")
+        result = await generate_payment_request(
+            org_id="org-1", order_id="ord-123456", amount=35000.0, registry=registry
+        )
         self.assertEqual(result["amount"], 35000.0)
         self.assertEqual(result["status"], "pending")
-        self.assertIn("https://pay.aveline.boutique/checkout/", result["url"])
+        self.assertEqual(result["url"], "https://checkout.provider.example/pi_777")
+        self.assertNotIn("pay.aveline.boutique", result["url"])
+        self.assertEqual(registry.create_calls, [("org-1", "ord-123456", 35000.0)])
 
     async def test_validate_payment(self):
-        result = await validate_payment(org_id="org-1", payment_id="pay-777")
+        """A settlement is reported only when the server reports one (plan §9.8)."""
+        registry = AnsweringPaymentRegistry(status="confirmed")
+        result = await validate_payment(org_id="org-1", payment_id="pay-777", registry=registry)
         self.assertEqual(result["status"], "confirmed")
         self.assertTrue(result["is_settled"])
+        self.assertEqual(registry.validate_calls, [("org-1", "pay-777")])
 
     async def test_book_courier(self):
         result_with_addr = await book_courier(org_id="org-1", order_id="ord-123456", delivery_address="12 Flower Road, Colombo 07")

@@ -160,7 +160,9 @@ public sealed class BillingPeriodRolloverJob(
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var entitlements = scope.ServiceProvider.GetRequiredService<IEntitlementResolver>();
 
-        var now = DateTime.UtcNow;
+        // The injected clock, so the dunning schedule (§9.4 F4) is testable without waiting days.
+        var clock = scope.ServiceProvider.GetService<TimeProvider>() ?? TimeProvider.System;
+        var now = clock.GetUtcNow().UtcDateTime;
         var due = await db.UsageAccounts
             .Where(account => !account.IsClosed && account.PeriodEnd <= now)
             .ToListAsync(cancellationToken);
@@ -241,11 +243,27 @@ public sealed class BillingPeriodRolloverJob(
 
         // The revenue journal's derived charges ride the same unit of work as the allowance
         // rows, so a rollback cannot leave one without the other (Revenue Ledger R2, S-50).
-        await WriteDerivedRevenueChargesAsync(db, now, cancellationToken);
+        var derived = await WriteDerivedRevenueChargesAsync(db, now, cancellationToken);
 
-        if (processed > 0)
+        if (processed > 0 || derived > 0)
         {
             await db.SaveChangesAsync(cancellationToken);
+        }
+
+        // Plan §9.4 F4. The renewing half is resolved from the scope rather than constructed, and
+        // is optional on purpose: a host without the payment module still rolls periods over and
+        // still writes the derived charges. The derived rows are committed first, because the
+        // renewal receipt supersedes the derived charge for the same period.
+        var renewals = scope.ServiceProvider.GetService<ISubscriptionRenewalService>();
+        if (renewals is not null)
+        {
+            processed += await renewals.RunAsync(now, cancellationToken);
+        }
+        else
+        {
+            logger.LogDebug(
+                "No subscription renewal service is registered; the rollover wrote derived charges "
+                + "only.");
         }
 
         return processed;
@@ -255,14 +273,16 @@ public sealed class BillingPeriodRolloverJob(
     /// Records what each period's list price says *should* be billed.
     /// </summary>
     /// <remarks>
-    /// This writes <c>IncomeChargeBasis.Derived</c> and **never** `Verified`. There is no
-    /// payment-provider client in this repository, so a period boundary is not a receipt; booking
-    /// it as collected money would invent revenue. `docs/api/README.md` §C.2 records the position.
+    /// This writes <c>IncomeChargeBasis.Derived</c> and **never** <c>Verified</c>: a period
+    /// boundary is not a receipt, and booking it as collected money would invent revenue. The
+    /// <c>Verified</c> half is the renewal charge's — <see cref="ISubscriptionRenewalService"/>
+    /// creates the intent and, when the provider settles it, writes the receipt that supersedes
+    /// this row (plan §9.4 F4). <c>docs/api/README.md</c> §C.2 records the position.
     ///
-    /// A subscription with `PriceLkr = 0` writes nothing at all. That is the production case today,
-    /// because `SubscriptionService.UpsertSubscriptionAsync` never assigns the price, and it is why
-    /// the read surface reports `subscriptionPricesConfigured: false` with a `null` MRR rather than
-    /// a zero that would read as free.
+    /// A subscription with `PriceLkr = 0` writes nothing at all. That was the production case
+    /// before P1; a subscription the price resolver has not priced still reports
+    /// `subscriptionPricesConfigured: false` with a `null` MRR rather than a zero that would read
+    /// as free.
     ///
     /// The dedup reference is the period start in ISO-8601, so a re-run over the same period
     /// collides on the ledger's own identity instead of double-booking it.
@@ -274,7 +294,12 @@ public sealed class BillingPeriodRolloverJob(
             .Where(subscription =>
                 subscription.Status == SubscriptionStatus.Active
                 && subscription.PriceLkr > 0m
-                && subscription.CurrentPeriodEnd <= now)
+                && subscription.CurrentPeriodEnd <= now
+                // Plan §9.5(b): a subscription that scheduled cancellation at this boundary is not
+                // renewed, and the period it is ending on is not billed. The status transition is
+                // the renewal service's, and it runs after this write, so the exclusion is stated
+                // here rather than relying on the status.
+                && !subscription.CancelAtPeriodEnd)
             .Select(subscription => new
             {
                 subscription.OrganizationId,

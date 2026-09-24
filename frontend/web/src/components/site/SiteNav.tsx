@@ -13,6 +13,7 @@ const TABS = [
   { label: 'Features', to: '/#features' },
   { label: 'Contact', to: '/contact' },
   { label: 'Plans', to: '/plans' },
+  { label: 'Privacy', to: '/privacy' },
   { label: 'Docs', to: '/docs/getting-started' },
 ]
 
@@ -47,10 +48,15 @@ export function SiteNav() {
 
         <nav className="hidden items-center gap-1 md:flex">
           {TABS.map((tab) => {
+            // `Docs` and `Privacy` own a subtree (`/docs/*`, `/privacy/*`), so the tab stays lit on
+            // every page under it rather than only on the index.
             const isDocsTab = tab.label === 'Docs'
+            const isPrivacyTab = tab.label === 'Privacy'
             const isTabActive = isDocsTab
               ? location.pathname.startsWith('/docs')
-              : location.pathname === tab.to && tab.to !== '/#features'
+              : isPrivacyTab
+                ? location.pathname.startsWith('/privacy')
+                : location.pathname === tab.to && tab.to !== '/#features'
 
             return (
               <NavLink

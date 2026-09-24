@@ -4,9 +4,11 @@ using Aveline.Api.Modules.Commerce.Models;
 using Aveline.Api.Modules.Commerce.Repositories;
 using Aveline.Api.Modules.Commerce.Services;
 using Aveline.Api.Modules.Organizations.Models;
+using Aveline.Api.Modules.Payments;
 using Aveline.Api.Modules.Shared.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace Aveline.Api.Tests;
 
@@ -30,10 +32,20 @@ public class PaymentLedgerBridgeTests
             .UseInMemoryDatabase(databaseName: $"PaymentBridge_{Guid.NewGuid()}")
             .Options);
         _ledger = new BoutiqueSaleLedgerService(_context, NullLogger<BoutiqueSaleLedgerService>.Instance);
+        // These cases cover the counter path: a payment with no provider intent is a confirmation
+        // an operator recorded, which Phase 9 keeps (plan §9.7 leaves the manual provider as the
+        // honest adapter). The provider-backed path, where the intent is the only settlement
+        // authority, is asserted in CommercePaymentsTests.
         _payments = new PaymentService(
             new PaymentRepository(_context),
             new OrderRepository(_context),
-            _ledger);
+            _ledger,
+            new FakePaymentIntentService(),
+            Options.Create(new PaymentsOptions
+            {
+                Commerce = new CommercePaymentOptions { UseProviderIntents = true },
+            }),
+            _context);
     }
 
     /// <summary>The person the refund route attributed the refund to.</summary>

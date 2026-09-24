@@ -144,6 +144,7 @@ public class CustomerService : ICustomerService
     {
         var tags = await _tags.ListByCustomerAsync(orgId, customer.Id, cancellationToken);
         var consent = await _consent.GetForCustomerAsync(orgId, customer.Id, cancellationToken);
-        return CustomerProfileDto.From(customer, tags, consent?.ConsentStatus ?? "unknown");
+        // D-2: the absent row has one value across every call site.
+        return CustomerProfileDto.From(customer, tags, consent?.ConsentStatus ?? ConsentStatuses.AbsentRow);
     }
 }

@@ -51,19 +51,54 @@ public class TenantBillingReadsTests
     /// <summary>
     /// The catalogue must offer **exactly** what the purchase accepts. Both sides call
     /// <c>IPricingService.ListPriceEntriesAsync(TopUpPack, planTier: null, organizationId: null)</c>
-    /// with the same predicate, so a SKU the catalogue shows cannot be rejected at purchase and a
-    /// SKU the purchase accepts cannot be missing from the list.
+    /// and then resolve the SKU through the one shared selector,
+    /// <c>PriceBookSelection.SelectActiveSku</c> — the purchase for the code it was asked for, the
+    /// catalogue for every code it lists — so a SKU the catalogue shows cannot be rejected at
+    /// purchase and a SKU the purchase accepts cannot be missing from the list. The active-only,
+    /// effective-window rule the lookup needs lives in that selector, applied once, rather than
+    /// being re-spelled at each call site.
     /// </summary>
     [Fact]
     public void TheCatalogueAndThePurchaseUseTheSameLookup()
     {
         var source = File.ReadAllText(Path.Combine(
             RepositoryRoot, "Aveline.Api", "Modules", "Billing", "Endpoints", "BlossomEndpoints.cs"));
+        var selection = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "Aveline.Api", "Modules", "Billing", "Domain", "PriceResolution.cs"));
 
-        // One call shape, spelled the same way on both routes.
-        Assert.Contains("BlossomSkuKind.TopUpPack, planTier: null, organizationId: null", source);
-        Assert.Contains("SkuCode == ", source);
-        Assert.Contains("BlossomRuleStatus.Active", source);
+        // Read each route on its own, so "both use it" is proven per route rather than by a literal
+        // that happens to appear somewhere in the file.
+        var purchase = RouteBody(source, "MapPost(\"/top-ups\"", "MapGet(\"/top-up-packs\"");
+        var catalogue = RouteBody(source, "MapGet(\"/top-up-packs\"", "private static void MapAdminEndpoints");
+
+        // One call shape, spelled the same way on both routes...
+        Assert.Contains("BlossomSkuKind.TopUpPack, planTier: null, organizationId: null", purchase);
+        Assert.Contains("BlossomSkuKind.TopUpPack, planTier: null, organizationId: null", catalogue);
+
+        // ...resolving through the shared selector, never through a comparison a route re-spells for
+        // itself. Inlining the lookup back into either route drops that route's call and fails here.
+        Assert.Contains("PriceBookSelection.SelectActiveSku(", purchase);
+        Assert.Contains("PriceBookSelection.SelectActiveSku(", catalogue);
+        Assert.DoesNotContain("SkuCode ==", source);
+
+        // The active-only, effective-window predicate the old inline comparison carried is now the
+        // selector's own rule, shared by both routes instead of copied into each.
+        Assert.Contains("BlossomRuleStatus.Active", selection);
+    }
+
+    /// <summary>
+    /// The source between two markers, so an assertion can be scoped to one route's body. Both
+    /// markers must still exist: a rename is a change to the contract this test guards.
+    /// </summary>
+    private static string RouteBody(string source, string start, string end)
+    {
+        var from = source.IndexOf(start, StringComparison.Ordinal);
+        Assert.True(from >= 0, $"the source no longer contains '{start}'");
+
+        var to = source.IndexOf(end, from + start.Length, StringComparison.Ordinal);
+        Assert.True(to >= 0, $"the source no longer contains '{end}' after '{start}'");
+
+        return source[from..to];
     }
 
     private static string RepositoryRoot

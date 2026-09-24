@@ -17,6 +17,10 @@ class AgentStatus(StrEnum):
     success = "success"
     pending_approval = "pending_approval"
     out_of_scope = "out_of_scope"
+    #: The run was deliberately not performed (e.g. the customer revoked consent, or their consent
+    #: could not be read). Distinct from ``success`` so run reporting and analytics do not count a
+    #: privacy skip as a completed answer (plan §11 Phase 1 item 1.6).
+    skipped = "skipped"
     error = "error"
 
 

@@ -11,12 +11,10 @@ import {
   fetchBlossomStatement,
   fetchEntitlements,
   fetchSubscription,
-  fetchTopUpPacks,
   type BillingPeriod,
   type BlossomStatement,
   type EntitlementItem,
   type SubscriptionView,
-  type TopUpPack,
 } from '@/lib/billing-api'
 import type { OrganizationProfileDto } from '@/types/organization'
 
@@ -38,7 +36,6 @@ interface BillingData {
   entitlements: EntitlementItem[]
   periods: BillingPeriod[]
   statement: BlossomStatement | null
-  packs: TopUpPack[]
 }
 
 const EMPTY_DATA: BillingData = {
@@ -46,7 +43,6 @@ const EMPTY_DATA: BillingData = {
   entitlements: [],
   periods: [],
   statement: null,
-  packs: [],
 }
 
 /**
@@ -54,9 +50,9 @@ const EMPTY_DATA: BillingData = {
  * **statement of account**, and — for a caller holding `billing:manage` — the top-up dialog.
  *
  * There is no invoice anywhere in this panel and no invoice number can be rendered, because the
- * repository has no invoice entity, no payment-provider client and no currency column (D8/Q2). The
- * top-up catalogue is fetched only when the caller may actually purchase, so the section does not
- * issue a request that would 403.
+ * repository has no invoice entity (D8/Q2). Plan prices are list prices. A Blossom top-up is a
+ * real charge through the configured payment provider, so the dialog owns the catalogue read: it
+ * is issued when the dialog opens and never for a caller who may not purchase.
  */
 export function BillingPanel({ organization, role, onUpgrade }: BillingPanelProps) {
   const canManage = hasPermission(role, 'billing:manage')
@@ -75,16 +71,15 @@ export function BillingPanel({ organization, role, onUpgrade }: BillingPanelProp
         fetchEntitlements(organization.id, signal),
         fetchBillingPeriods(organization.id, 12, signal),
         fetchBlossomStatement(organization.id, { page: statementPage }, signal),
-        canManage ? fetchTopUpPacks(organization.id, signal) : Promise.resolve([]),
       ]),
-    ([subscription, entitlements, periods, statement, packs]) => {
-      setData({ subscription, entitlements, periods, statement, packs })
+    ([subscription, entitlements, periods, statement]) => {
+      setData({ subscription, entitlements, periods, statement })
     },
     () => {
       setData(EMPTY_DATA)
       setError('Could not load the billing data.')
     },
-    [canManage, organization.id, statementPage],
+    [organization.id, statementPage],
   )
 
   const runLoad = useCallback(
@@ -112,8 +107,8 @@ export function BillingPanel({ organization, role, onUpgrade }: BillingPanelProp
           </p>
           <h1 className="mt-2 font-serif text-4xl font-medium tracking-tight">Billing</h1>
           <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            The plan, what each period consumed, and a statement of account. On LKR list prices only:
-            no payment provider is connected, so nothing here is a demand for payment.
+            The plan, what each period consumed, and a statement of account. Plan prices are LKR
+            list prices; a Blossom top-up is charged through the configured payment provider.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -125,8 +120,7 @@ export function BillingPanel({ organization, role, onUpgrade }: BillingPanelProp
           {canManage ? (
             <TopUpDialog
               organizationId={organization.id}
-              packs={data.packs}
-              onPurchased={() => void runLoad()}
+              onSettled={() => void runLoad()}
             />
           ) : null}
         </div>

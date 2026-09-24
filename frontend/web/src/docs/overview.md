@@ -40,7 +40,7 @@ At the bottom sits your own account card, with **Settings** (Owner), **Billing &
 |---|---|
 | **Switch boutique** | Appears when you belong to more than one active boutique. Choose one to move to it. |
 | **Blossom balance** | How many Blossoms remain this period. Hovering shows *n of m Blossoms left*. If the server did not report a balance it reads **Balance unavailable** — never a zero. |
-| **Top up** | Takes you to Billing to choose a top-up pack. Useful to an Owner, who is the only role that can buy one. |
+| **Top up** | Opens the top-up dialog for an Owner: choose a pack, pay through the payment provider's own checkout, and the balance moves only once the server confirms the payment. A role that cannot buy Blossoms is sent to Billing instead. |
 | **Reporting window** | One window for the whole dashboard: **Last 7 days**, **Last 30 days**, **Last 90 days**, **This month** or **This year**. Every panel on the page follows it, so two figures on one screen can never describe different periods. |
 | **Notifications** | See below. |
 | **Aveline chat** | The blossom button opens the concierge chat without leaving the section you are in. See [Salon](/docs/salon). |

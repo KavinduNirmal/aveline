@@ -400,9 +400,21 @@ Recorded so the plan is falsifiable.
 | The deployment is multi-region | Period boundaries must move to UTC-aligned and the quota counters must be region-scoped; `Organization.TimeZone` becomes load-bearing |
 | `btree_gist` is unavailable | M2 uses the application-level overlap check and a detection alert (OQ-8) |
 | Enforcement of Blossom exhaustion is required | A new Phase 7 is inserted; this plan's ledger is the prerequisite and nothing is rework |
-| A payment provider is chosen | `OrganizationSubscriptions` already carries `ExternalProvider`/`ExternalSubscriptionId`; the provider client is additive but webhook signature verification and reconciliation become new work |
+| An external payment provider is chosen for production | The provider-neutral abstraction has shipped under its own plan ([ADR-029](../ADR/ADR-029-payment-gateway-abstraction.md)): a persisted intent, the `IPaymentProvider` SPI, a webhook inbox and the `manual`/`mock` adapters. Attaching a real gateway is a registration + configuration swap, not new plumbing. Public webhook ingress, hosted checkout and LKR settlement remain the new work — see the payment-plan assumptions below |
 | `NULLS NOT DISTINCT` is unavailable (PostgreSQL < 15) | Every unique index in §3/§6/§7 of the domain model is rewritten with `coalesce` sentinels |
 | The 30 % backend coverage gate is considered a grading requirement rather than a floor | Coverage becomes a Phase 0 blocker and the phasing is re-sequenced |
+
+### Payment-provider plan assumptions (recorded at P10)
+
+The payment-gateway plan (`.agents/plans/payment-gateway-abstraction-implementation.ignore.md` §5.2)
+recorded three assumptions of its own, numbered **A1–A3 in that plan**. They are recorded here so the
+deployment condition above is falsifiable; they do not replace A1–A11 of this document.
+
+| # (payment plan) | Assumption | Status at P10 |
+| --- | --- | --- |
+| A1 | A webhook endpoint can be publicly reachable at a stable URL | **Unverified.** `docs/deployment.md` was not audited for ingress. Confirm with the deployment owner before an external adapter is enabled. The poll route and the reconciliation read are the degradation path, so a webhook outage is "slower settlement", not "lost money" |
+| A2 | The chosen provider supports hosted checkout or a redirect flow, so no card data reaches Aveline | **Confirmed at the abstraction level.** `PaymentProviderCapabilities.SupportsHostedCheckout` exists, the mock renders a Development-only page, and no card/PAN/CVC/expiry field exists on the wire (C11). Unverified for any *specific* external provider |
+| A3 | LKR is acceptable to the chosen provider | **Unverified.** The intent stores `Currency` and the settlement guard refuses a mismatch rather than reconciling it, so an LKR-hostile provider fails loudly rather than silently |
 
 ---
 

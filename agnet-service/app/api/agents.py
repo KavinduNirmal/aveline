@@ -19,6 +19,7 @@ from app.schemas.response import AgentResponse
 from app.schemas.state import AgentState
 from app.services.usage_reporter import report_agent_run, report_usage
 from app.telemetry.agent_telemetry import NODE_STEP_KIND, AgentRunTelemetry, TelemetryCollector
+from app.tools.registry import ToolRegistry
 from app.workflows.concierge_workflow import (
     WORKFLOW_NAME,
     NoPausedRunError,
@@ -378,11 +379,16 @@ def _record_run_outcome(
 
 
 def _run_status_from_response(response: AgentResponse) -> str:
-    """Map the public response status onto the backend's bounded run-status enum."""
+    """Map the public response status onto the backend's bounded run-status enum.
+
+    A consent skip is ``Skipped``, not ``Succeeded``: the run was deliberately not performed, and
+    counting it as a completed answer corrupts both the run metric and the usage record (item 1.6).
+    """
     status_map = {
         "success": "Succeeded",
         "pending_approval": "PausedForApproval",
         "out_of_scope": "Succeeded",
+        "skipped": "Skipped",
         "error": "Failed",
     }
     return status_map.get(str(response.status), "Succeeded")
@@ -593,6 +599,10 @@ async def agents_query_stream(payload: AgentQueryRequest) -> StreamingResponse:
     Relays LangGraph ``astream_events`` output. The ``X-Accel-Buffering: no``
     header prevents Nginx/Traefik from buffering the stream and breaking
     real-time token delivery.
+
+    The route does not call :func:`run_concierge`; it builds the graph itself, so it needs its own
+    consent guard (plan §8.2, Phase 1 item 1.5). The guard is checked before the graph is built:
+    a revoked customer produces a single ``consent_skipped`` frame and no agent runs at all.
     """
     logger.info(
         "Agent query stream started: thread_id=%s",
@@ -603,6 +613,11 @@ async def agents_query_stream(payload: AgentQueryRequest) -> StreamingResponse:
     get_agent_metrics().record_stream_run()
 
     async def event_source():
+        skip_reason = await _stream_consent_skip_reason(payload)
+        if skip_reason is not None:
+            yield f"data: {json.dumps({'event': 'consent_skipped', 'reason': skip_reason})}\n\n"
+            return
+
         compiled = build_concierge_graph()
         async for event in compiled.astream_events(
             {
@@ -613,6 +628,7 @@ async def agents_query_stream(payload: AgentQueryRequest) -> StreamingResponse:
                 "memory_output": None,
                 "visual_output": None,
                 "commerce_output": None,
+                "consent_status": None,
                 "response": None,
             },
             version="v2",
@@ -626,4 +642,35 @@ async def agents_query_stream(payload: AgentQueryRequest) -> StreamingResponse:
         media_type="text/event-stream",
         headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
     )
+
+
+async def _stream_consent_skip_reason(payload: AgentQueryRequest) -> str | None:
+    """The reason the streaming route must not run the graph for this request, else ``None``.
+
+    Mirrors the API-side ingress gate: no bound customer cannot be consent-gated (the message is
+    processed), ``revoked`` skips, and a read failure **fails closed** with
+    ``consent_check_unavailable`` rather than raising - a streaming request must not 500 because
+    the consent store is down.
+    """
+    org_context = payload.org_context or {}
+    customer_id = org_context.get("customer_id")
+    if not customer_id:
+        return None
+
+    org_id = org_context.get("organization_id") or org_context.get("org_id")
+    if not org_id:
+        return None
+
+    try:
+        consent = await ToolRegistry().get_customer_consent(str(org_id), str(customer_id))
+    except Exception:  # noqa: BLE001 - a privacy control fails closed, it never 500s the stream
+        logger.warning(
+            "Consent check failed for streamed run; refusing to process (fail closed). customer_id=%s",
+            customer_id,
+            exc_info=True,
+        )
+        return "consent_check_unavailable"
+
+    status = (consent or {}).get("consentStatus") or "pending"
+    return "revoked" if status == "revoked" else None
 

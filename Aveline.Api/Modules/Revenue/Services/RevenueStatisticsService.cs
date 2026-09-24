@@ -1,5 +1,6 @@
 using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Modules.Billing.Models;
+using Aveline.Api.Modules.Payments;
 using Aveline.Api.Modules.Revenue.Domain;
 using Aveline.Api.Modules.Revenue.DTOs;
 using Aveline.Api.Modules.Revenue.Models;
@@ -17,12 +18,19 @@ namespace Aveline.Api.Modules.Revenue.Services;
 public sealed class RevenueStatisticsService(
     AppDbContext db,
     IOptions<RevenueOptions> options,
+    IOptions<PaymentsOptions> payments,
     ILogger<RevenueStatisticsService> logger) : IRevenueStatisticsService
 {
     private const int DefaultPageSize = 50;
     private const int MaxPageSize = 100;
 
     private readonly RevenueOptions _options = options.Value;
+
+    /// <summary>
+    /// The payment configuration is what decides <c>revenueProviderSettlementAvailable</c>: a
+    /// <c>manual</c> provider settles nothing by itself, so no figure is collected money.
+    /// </summary>
+    private readonly PaymentsOptions _payments = payments.Value;
 
     // ── S-50: the ledger register ───────────────────────────────────────────────────────────
 
@@ -149,7 +157,7 @@ public sealed class RevenueStatisticsService(
             paying,
             subscriptions.Count,
             new IncomeDataQualityDto(
-                RevenueProviderSettlementAvailable: false,
+                RevenueProviderSettlementAvailable: _payments.ProviderSettlesMoney,
                 SubscriptionPricesConfigured: configured,
                 DerivedEntriesUnverified: 0,
                 CheckedAt: DateTime.UtcNow,
@@ -287,8 +295,16 @@ public sealed class RevenueStatisticsService(
 
     // ── Shared plumbing ─────────────────────────────────────────────────────────────────────
 
-    private const string ProviderNote =
-        "No payment provider is wired in this deployment, so no figure here is settled money: an "
+    /// <summary>
+    /// The prose behind <c>revenueProviderSettlementAvailable</c>, and it has to move with the flag:
+    /// a console that still read "no payment provider" while a provider settled money would be
+    /// lying in the opposite direction.
+    /// </summary>
+    private string ProviderNote => _payments.ProviderSettlesMoney
+        ? $"A payment provider is configured ({_payments.Provider}) and settles charges, so a "
+        + "Verified amount is collected money rather than an expectation. A Derived amount is still "
+        + "only what a list price says should be billed."
+        : "No payment provider is wired in this deployment, so no figure here is settled money: an "
         + "amount is either an expectation derived from a list price or a receipt an operator "
         + "confirmed.";
 
@@ -406,7 +422,7 @@ public sealed class RevenueStatisticsService(
             unverified, configured);
 
         return new IncomeDataQualityDto(
-            RevenueProviderSettlementAvailable: false,
+            RevenueProviderSettlementAvailable: _payments.ProviderSettlesMoney,
             SubscriptionPricesConfigured: configured,
             DerivedEntriesUnverified: unverified,
             CheckedAt: DateTime.UtcNow,

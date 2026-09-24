@@ -23,7 +23,10 @@ from app.schemas.commerce import (
 )
 from app.tools.commerce.delivery_tools import book_courier
 from app.tools.commerce.loyalty_tools import get_customer_loyalty_tier
-from app.tools.commerce.payment_tools import generate_payment_request
+from app.tools.commerce.payment_tools import (
+    PaymentGatewayUnavailableError,
+    generate_payment_request,
+)
 from app.tools.commerce.pricing_tools import apply_discount, calculate_margin
 from app.tools.commerce.rules_tools import validate_business_rules
 
@@ -615,13 +618,53 @@ class CommerceAgent:
         customer_name = state.get("customer_name") or "Customer"
         delivery_address = state.get("delivery_address")
 
-        # 1. Generate payment request
-        payment_dict = await generate_payment_request(
-            org_id=org_id,
-            order_id=order_id,
-            amount=total,
-            registry=self.registry,
-        )
+        # 1. Generate payment request. There is no fabricated fallback: a deal that cannot obtain a
+        # real link is reported as an error rather than settled with a URL that leads nowhere
+        # (plan §9.8). The courier is not booked either, because nothing was sold.
+        try:
+            payment_dict = await generate_payment_request(
+                org_id=org_id,
+                order_id=order_id,
+                amount=total,
+                registry=self.registry,
+            )
+        except PaymentGatewayUnavailableError as ex:
+            summary = (
+                f"The deal for {customer_name} could not be settled: no payment link could be "
+                f"created. Total: LKR {total:,.2f}."
+            )
+            logger.warning("Commerce settlement aborted; no payment link: %s", ex)
+            output = CommerceAgentOutput(
+                status=ERROR,
+                summary=summary,
+                needs_approval=False,
+                deal=DealEvaluation(
+                    subtotal=state.get("subtotal", total),
+                    discount_amount=state.get("discount_amount", 0.0),
+                    total=total,
+                    total_cost=state.get("total_cost", 0.0),
+                    margin=state.get("margin", 0.0),
+                    loyalty_tier=state.get("loyalty_tier"),
+                    applied_discount_percent=float(state.get("proposed_discount") or 0.0),
+                    is_auto_approved=state.get("is_auto_approved", True),
+                    requires_approval=False,
+                    triggered_rules=state.get("triggered_rules") or [],
+                    flags=state.get("flags") or [],
+                ),
+                payment=None,
+                courier=None,
+                action_required="Retry once the payment provider is reachable; do not share a link.",
+                reason=str(ex),
+            )
+
+            return {
+                "status": ERROR,
+                "payment_details": None,
+                "courier_details": None,
+                "summary": summary,
+                "output": output.model_dump(),
+            }
+
         payment_details = PaymentDetails.model_validate(payment_dict)
 
         # 2. Plan the courier only when there is somewhere to deliver.

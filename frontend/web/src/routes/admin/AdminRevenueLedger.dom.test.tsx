@@ -246,7 +246,7 @@ describe('AdminRevenueLedgerView data quality', () => {
   it('states that no provider settles money', async () => {
     renderAt('/admin/u1/revenue/ledger')
 
-    expect(await screen.findByText(/no payment provider/i)).toBeInTheDocument()
+    expect(await screen.findByText(/no payment provider settles money/i)).toBeInTheDocument()
   })
 
   it('names the unverified count when anything is billed but uncollected', async () => {

@@ -76,6 +76,13 @@ public class AppDbContext : DbContext
 
     public DbSet<OrganizationSubscription> OrganizationSubscriptions => Set<OrganizationSubscription>();
 
+    // Payments module (plan §6.3): the provider-neutral charge record and the webhook inbox.
+    public DbSet<Modules.Payments.Models.PaymentIntent> PaymentIntents =>
+        Set<Modules.Payments.Models.PaymentIntent>();
+
+    public DbSet<Modules.Payments.Models.PaymentProviderEvent> PaymentProviderEvents =>
+        Set<Modules.Payments.Models.PaymentProviderEvent>();
+
     /// <summary>Daily per-organization subscription snapshot backing the S-47 trend.</summary>
     public DbSet<Aveline.Api.Modules.Analytics.Models.OrganizationSubscriptionSnapshot>
         OrganizationSubscriptionSnapshots =>
@@ -151,6 +158,17 @@ public class AppDbContext : DbContext
     public DbSet<CustomerInteraction> CustomerInteractions => Set<CustomerInteraction>();
     public DbSet<CustomerConsent> CustomerConsents => Set<CustomerConsent>();
     public DbSet<CustomerTag> CustomerTags => Set<CustomerTag>();
+
+    /// <summary>Append-only consent history (plan §3.2).</summary>
+    public DbSet<ConsentAuditEntry> ConsentAuditEntries => Set<ConsentAuditEntry>();
+
+    // Privacy module (plan §3.3, §7.3): the durable data-subject-request log and the consent
+    // tombstone that survives erasure (Q-4).
+    public DbSet<Modules.Privacy.Models.DataSubjectRequest> DataSubjectRequests =>
+        Set<Modules.Privacy.Models.DataSubjectRequest>();
+
+    public DbSet<Modules.Privacy.Models.PrivacyErasureTombstone> PrivacyErasureTombstones =>
+        Set<Modules.Privacy.Models.PrivacyErasureTombstone>();
 
     // Home module: the persisted half of the derived focus feed.
     public DbSet<FocusDismissal> FocusDismissals => Set<FocusDismissal>();

@@ -225,22 +225,104 @@ public sealed class WhatsAppService : IWhatsAppService
                 _logger.LogInformation(
                     "WhatsApp message sent. phoneNumberId={PhoneNumberId} to={To} messageId={MessageId}",
                     phoneNumberId, Mask(to), messageId);
-                return new WhatsAppSendResult(IsSuccess: true, MessageId: messageId);
+                return new WhatsAppSendResult(
+                    IsSuccess: true, MessageId: messageId, HttpStatus: (int)response.StatusCode);
             }
 
             var error = await ReadErrorAsync(response, cancellationToken);
             _logger.LogWarning(
                 "WhatsApp message send failed. phoneNumberId={PhoneNumberId} to={To} status={Status} error={Error}",
                 phoneNumberId, Mask(to), (int)response.StatusCode, error);
-            return new WhatsAppSendResult(IsSuccess: false, Error: error);
+            return new WhatsAppSendResult(
+                IsSuccess: false, Error: error, HttpStatus: (int)response.StatusCode);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "WhatsApp message send threw. phoneNumberId={PhoneNumberId} to={To}",
                 phoneNumberId, Mask(to));
+            // No status: the failure happened before Meta answered, which is the retryable
+            // transport shape the outbound layer classifies on (plan §6.2).
             return new WhatsAppSendResult(IsSuccess: false, Error: ex.Message);
         }
     }
+
+    /// <inheritdoc/>
+    public async Task<WhatsAppSendResult> SendTemplateAsync(
+        string accessToken,
+        string phoneNumberId,
+        string to,
+        string templateName,
+        string languageCode,
+        IReadOnlyList<object>? components,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(accessToken);
+        ArgumentException.ThrowIfNullOrWhiteSpace(phoneNumberId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(to);
+        ArgumentException.ThrowIfNullOrWhiteSpace(templateName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(languageCode);
+
+        // An anonymous type is built rather than a dictionary so the JSON is exactly the payload
+        // the interface documents and an empty component list can be omitted with `null`.
+        var payload = new
+        {
+            messaging_product = "whatsapp",
+            recipient_type = "individual",
+            to,
+            type = "template",
+            template = new
+            {
+                name = templateName,
+                language = new { code = languageCode },
+                components = components is { Count: > 0 } ? components : null,
+            },
+        };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{phoneNumberId}/messages")
+        {
+            Content = JsonContent.Create(payload, options: TemplateJsonOptions),
+        };
+        request.Headers.Authorization = new("Bearer", accessToken);
+
+        try
+        {
+            using var response = await _http.SendAsync(request, cancellationToken);
+            if (response.IsSuccessStatusCode)
+            {
+                var body = await response.Content.ReadAsStringAsync(cancellationToken);
+                var messageId = ExtractMessageId(body);
+                // The template name is safe to log; the component *values* are not, because they
+                // are the message's content. The name is enough to diagnose a bad-template 400.
+                _logger.LogInformation(
+                    "WhatsApp template sent. phoneNumberId={PhoneNumberId} to={To} template={Template} messageId={MessageId}",
+                    phoneNumberId, Mask(to), templateName, messageId);
+                return new WhatsAppSendResult(
+                    IsSuccess: true, MessageId: messageId, HttpStatus: (int)response.StatusCode);
+            }
+
+            var error = await ReadErrorAsync(response, cancellationToken);
+            _logger.LogWarning(
+                "WhatsApp template send failed. phoneNumberId={PhoneNumberId} to={To} template={Template} status={Status} error={Error}",
+                phoneNumberId, Mask(to), templateName, (int)response.StatusCode, error);
+            return new WhatsAppSendResult(
+                IsSuccess: false, Error: error, HttpStatus: (int)response.StatusCode);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "WhatsApp template send threw. phoneNumberId={PhoneNumberId} to={To}",
+                phoneNumberId, Mask(to));
+            return new WhatsAppSendResult(IsSuccess: false, Error: ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Serialises the template payload with a null-valued <c>components</c> omitted. The default
+    /// <see cref="JsonContent"/> options would write <c>"components":null</c>, which Meta rejects.
+    /// </summary>
+    private static readonly JsonSerializerOptions TemplateJsonOptions = new()
+    {
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+    };
 
     /// <summary>Meta's media metadata; the JSON is snake_case.</summary>
     private sealed record MediaMetadata(

@@ -6,9 +6,11 @@ using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Infrastructure.Eventing;
 using Aveline.Api.Infrastructure.RateLimiting;
 using Aveline.Api.Modules.Conversations.Attachments;
+using Aveline.Api.Modules.CustomerConcierge.Services;
 using Aveline.Api.Modules.Integrations.Models;
 using Aveline.Api.Modules.Integrations.Services;
 using Aveline.Api.Modules.Media;
+using Aveline.Api.Modules.Privacy.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -72,7 +74,9 @@ public static class WebhookEndpoints
             Aveline.Api.Modules.Conversations.Services.IConversationService conversations,
             Aveline.Api.Modules.Conversations.Services.IMessageBroadcaster broadcaster,
             Aveline.Api.Modules.CustomerConcierge.Repositories.ICustomerRepository customers,
+            Aveline.Api.Modules.CustomerConcierge.Services.IConsentGateService consentGate,
             Aveline.Api.Modules.Integrations.Services.Providers.IWhatsAppService whatsApp,
+            Aveline.Api.Modules.Privacy.Services.IDisclosureDispatchQueue disclosureQueue,
             CancellationToken ct) =>
         {
             var logger = loggerFactory.CreateLogger("Aveline.Webhooks.WhatsApp");
@@ -205,6 +209,14 @@ public static class WebhookEndpoints
                         organizationId, message.From, message.From, message.Text ?? string.Empty,
                         customer?.Id, attachmentId, ct);
 
+                    // The first-contact disclosure (privacy plan §4.4). Enqueue-only and
+                    // best-effort: the webhook must not be held open for a Meta round-trip, so the
+                    // background worker sends it. A revoked customer is never disclosed to (Pr1's
+                    // gate); an unknown number has no consent row to stamp, so it is retried once
+                    // the number is identified and messages again.
+                    await TryEnqueueDisclosureAsync(
+                        organizationId, customer?.Id, message.From, consentGate, disclosureQueue, logger, ct);
+
                     // An inbound message may have created the thread, and `message.created` alone
                     // cannot deliver that: it carries a message for a conversation the client may
                     // never have seen. So the tile is broadcast from the creation site itself.
@@ -254,6 +266,60 @@ public static class WebhookEndpoints
         }).AllowAnonymous();
 
         return endpoints;
+    }
+
+    /// <summary>
+    /// Queues the first-contact disclosure for an identified, non-revoked customer (privacy plan
+    /// §4.4, §15 Q-1). Every failure path is a log-and-continue: the webhook's contract is to return
+    /// 200 and record what it can, and a disclosure that is not queued is retried by the customer's
+    /// next inbound message because the consent row was never stamped.
+    /// </summary>
+    private static async Task TryEnqueueDisclosureAsync(
+        Guid organizationId,
+        Guid? customerId,
+        string from,
+        IConsentGateService consentGate,
+        IDisclosureDispatchQueue disclosureQueue,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        // An unknown number has no consent row, so there is nothing to stamp and nothing to retry
+        // against. The disclosure follows once the agent identifies the customer.
+        if (customerId is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var decision = await consentGate.CheckAsync(organizationId, customerId, ct);
+            if (!decision.ShouldProcess)
+            {
+                // Revoked, or the consent store is unavailable (fail closed). Either way, do not
+                // message the customer.
+                logger.LogInformation(
+                    "First-contact disclosure skipped. organizationId={OrganizationId} reason={Reason}",
+                    organizationId, decision.Reason);
+                return;
+            }
+
+            var queued = await disclosureQueue.EnqueueAsync(
+                new DisclosureIntent(organizationId, customerId.Value, from), ct);
+            if (!queued)
+            {
+                logger.LogWarning(
+                    "First-contact disclosure was not queued because the queue is full; the next "
+                    + "inbound message retries. organizationId={OrganizationId}",
+                    organizationId);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to queue the first-contact disclosure. organizationId={OrganizationId}",
+                organizationId);
+        }
     }
 
     /// <summary>

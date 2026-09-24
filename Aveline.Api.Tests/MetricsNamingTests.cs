@@ -1,8 +1,15 @@
 using System.Diagnostics.Metrics;
 using Aveline.Api.Configurations;
 using Aveline.Api.Infrastructure.Eventing;
+using Aveline.Api.Modules.CustomerConcierge.Metrics;
+using Aveline.Api.Modules.CustomerConcierge.Models;
+using Aveline.Api.Modules.CustomerConcierge.Services;
+using Aveline.Api.Modules.Integrations.Metrics;
+using Aveline.Api.Modules.Integrations.Services;
 using Aveline.Api.Modules.Notifications.Metrics;
 using Aveline.Api.Modules.Notifications.Models;
+using Aveline.Api.Modules.Payments.Services;
+using Aveline.Api.Modules.Privacy.Metrics;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
@@ -141,6 +148,55 @@ public class MetricsNamingTests
                 InboxBacklog: 2,
                 PushDispatchFailuresByPlatform: new Dictionary<string, long> { ["Android"] = 1 }));
             notificationMetrics.RecordDelivery(NotificationChannel.Push, DeliveryStatus.Delivered);
+
+            // The consent family (privacy plan Phase 1): one counter, labelled by skip reason.
+            using var consentMetrics = new ConsentMetrics();
+            consentMetrics.RecordSkip(ConsentGateReasons.ConsentRevoked);
+            // Phase 6's consent-state snapshot gauge, published by ConsentMetricCollector.
+            consentMetrics.PublishByStatus(new Dictionary<string, long> { [ConsentStatuses.Pending] = 1 });
+
+            // The outbound family (privacy plan Phase 2): one counter, labelled by channel+result.
+            using var outboundMetrics = new OutboundMetrics();
+            outboundMetrics.RecordResult("whatsapp", OutboundOutcomes.Sent);
+            outboundMetrics.RecordResult("whatsapp", OutboundOutcomes.Skipped);
+            outboundMetrics.RecordResult("whatsapp", OutboundOutcomes.Failed);
+
+            // The privacy families (privacy plan Phase 6 item 6.3). Every declared metric must be
+            // exercised here, or its `# TYPE` line never reaches the scrape and the naming
+            // assertion below would pass vacuously.
+            using var otpMetrics = new OtpMetrics();
+            otpMetrics.RecordIssued();
+            otpMetrics.RecordVerified();
+            otpMetrics.RecordFailed("invalid_code");
+            otpMetrics.RecordRateLimited(PrivacyRateLimitReasons.IpBudget);
+
+            using var disclosureMetrics = new DisclosureMetrics();
+            disclosureMetrics.RecordShown();
+            disclosureMetrics.RecordUnshown();
+
+            using var privacyDeliveryMetrics = new PrivacyDeliveryMetrics();
+            privacyDeliveryMetrics.RecordDelivered(PrivacyDeliveryKinds.Otp);
+            privacyDeliveryMetrics.RecordFailed(PrivacyDeliveryKinds.Otp, "provider");
+
+            using var rightsMetrics = new RightsMetrics();
+            rightsMetrics.RecordExportRequest(DataSubjectOutcomes.Completed);
+            rightsMetrics.RecordDeleteRequest(DataSubjectOutcomes.Completed);
+            rightsMetrics.RecordTimeToComplete(TimeSpan.FromSeconds(1));
+
+            // The payment family (payments plan §12.1; catalogued alongside P7's reconciliation
+            // gauges). Every declared instrument is exercised, so its `# TYPE` line reaches the
+            // scrape and the naming assertion below cannot pass vacuously.
+            using var paymentMetrics = new PaymentMetrics();
+            paymentMetrics.RecordIntentCreated("mock", "BlossomTopUp");
+            paymentMetrics.RecordSettlement("mock", "BlossomTopUp", "succeeded");
+            paymentMetrics.RecordSettlementLatency("mock", "BlossomTopUp", 12.5);
+            paymentMetrics.RecordWebhookReceived("mock", "IntentSucceeded");
+            paymentMetrics.RecordWebhookVerificationFailure("mock", "signature");
+            paymentMetrics.RecordRefund("mock", "succeeded");
+            paymentMetrics.RecordProviderError("mock", "create", "timeout");
+            paymentMetrics.SetWebhookUnprocessedBacklog("mock", 1);
+            paymentMetrics.SetUnreconciledIntents("mock", 1);
+            paymentMetrics.SetMockProviderActive("mock", true);
 
             var client = app.GetTestClient();
             return await client.GetStringAsync("/metrics");

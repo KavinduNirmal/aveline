@@ -161,6 +161,22 @@ data, so the deterministic reply in `_tenant_reply` answers the question with no
 order, or a profile update), not over all customers. `customerCountBasis` carries that wording into
 the prompt so an answer cannot report the count as "your customers".
 
+### 8. The client book is the same lane, answered from the clients
+"Who are our customers?" is a question about the boutique's own clients, so it shares this lane's
+audience gate and numeral guard — but not its data. It is answered from
+`GET /internal/customers/book-summary`, which reuses the highlights read the dashboard's Home rows
+already use (an earlier attempt reported it as a seventh thing to build; it is not) plus a count of
+the book.
+
+**The two are never fetched together.** The allowance answers from a count against the plan and the
+book answers from the clients themselves, so one `"customers"` number in one prompt is how the
+plan's active-customer allowance would get reported as the size of the book. `load_tenant_usage`
+reads one or the other, chosen by `is_customer_book_question`, and its comment says why.
+
+`limit` bounds the *names*, not the book. This is a chat answer, not a listing surface — the
+Customers screen already pages the whole book — and the service clamps the value so a question
+cannot become an enumeration.
+
 ## Consequences
 
 - **No client change.** Both frontends already send staff messages through the staff path, and the
@@ -174,6 +190,11 @@ the prompt so an answer cannot report the count as "your customers".
   phrasing as `tenant_account` when the rules did not, no fetch happened, so the reply is the
   "couldn't reach your figures" admission rather than a guess. That is the intended trade: an
   occasional unhelpful answer in exchange for no invented balance.
+- **Client names are instructed, not guarded.** The book block lists the clients by name and the
+  prompt requires them to be quoted from it, but the code guard is numeral-shaped: it cannot prove a
+  name was not invented, only that a number was not. A name-fidelity guard needs name detection the
+  prompt cannot make reliable, so the residual risk is accepted and recorded here rather than
+  papered over. Money is guarded; names are instructed.
 - **`direction` remains an identity signal, and its two readers still disagree.** The workflow's
   memory node reads `staff_query` as "no direction", while the visual node reads it as "no direction,
   or `outbound`/`internal`". They therefore differ for `direction="outbound"`. That predates this

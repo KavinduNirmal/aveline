@@ -11,6 +11,8 @@ silent (its message is simply omitted by the publisher).
 
 from typing import Any
 
+from app.schemas.customer_memory import normalise_memory_content
+
 
 def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
@@ -27,7 +29,9 @@ def build_ava_blocks(memory_output: Any) -> list[dict[str, Any]]:
 
     Blocks (in order):
       1. ``text`` - the interaction brief for the customer (if present).
-      2. ``at_a_glance`` - extracted memories as a Category/Content table (if any).
+      2. ``at_a_glance`` - the notes on file, then anything extracted this turn, as a
+         Category/Content table (if any). One table rather than two: they are the same kind of fact
+         to a reader, and the store's own rows come first because that is what "on file" means.
       3. ``suggestion`` - the drafted, customer-facing response (if present).
     """
     memory = _as_dict(memory_output)
@@ -40,11 +44,23 @@ def build_ava_blocks(memory_output: Any) -> list[dict[str, Any]]:
     if brief:
         blocks.append({"type": "text", "text": str(brief)})
 
+    # On file first, then what this turn learned. Duplicates are collapsed: the brief no longer
+    # recites them, so a repeated row would otherwise be the only place the repetition showed - and
+    # it showed because the store has no write-time de-duplication.
     rows: list[list[str]] = []
-    for item in memory.get("extracted_memories") or []:
-        content = (item or {}).get("content")
-        if content:
-            rows.append([str((item or {}).get("category") or "memory"), str(content)])
+    seen: set[str] = set()
+    for source in ("memories_on_file", "extracted_memories"):
+        for item in memory.get(source) or []:
+            if not isinstance(item, dict):
+                continue
+            content = str(item.get("content") or "").strip()
+            if not content:
+                continue
+            key = normalise_memory_content(content)
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append([str(item.get("category") or "memory"), content])
     if rows:
         blocks.append({"type": "at_a_glance", "columns": ["Category", "Content"], "rows": rows})
 

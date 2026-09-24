@@ -306,6 +306,16 @@ export function ConversationsProvider({
   >({})
   const [agentState, setAgentState] = useState<AvelineState>('idle')
   const [agentActivity, setAgentActivity] = useState<AgentActivity | null>(null)
+  // The last state each thread slot observed. A send claims the "Aveline is working" indicator
+  // optimistically, and the API **awaits the whole agent run** before the send resolves - so by
+  // then the run's states, terminal one included, have usually already arrived. Setting the
+  // indicator unconditionally would place it *after* that terminal state, with nothing left to
+  // clear it: the bubble hangs. That is not theoretical - a run that produced no message (see
+  // `_fallback_reply` in the agent's gate) left it hanging every time, because the incoming message
+  // is the other thing that clears it. Track the slot's last state so a send can decline to claim
+  // an indicator for a run that has already finished.
+  const lastAgentStateRef = useRef<AvelineState>('idle')
+  const lastAvelineStateRef = useRef<AvelineState>('idle')
   const [connectionState, setConnectionState] = useState<HubConnectionState>(
     HubConnectionState.Disconnected,
   )
@@ -450,6 +460,7 @@ export function ConversationsProvider({
         if (!forPanel && !forAveline) return
         const state = payload.state as AvelineState
         if (forPanel) {
+          lastAgentStateRef.current = state
           applyAgentState(state)
           // Terminal states (success/error/response) mean the workflow finished: collapse the
           // live activity bubble so it can't hang as a stale 'Done' card. In-progress states
@@ -465,6 +476,7 @@ export function ConversationsProvider({
           }
         }
         if (forAveline) {
+          lastAvelineStateRef.current = state
           applyAvelineAgentState(state)
           if (isTerminalState(state)) {
             setAvelineAgentActivity(null)
@@ -595,8 +607,13 @@ export function ConversationsProvider({
         // The message is bound: clear the drawer's tray so a chip cannot linger pending after its
         // row is attached. Only a confirmed send reaches here, exactly as the Salon's `send` does.
         setPendingAttachments((prev) => ({ ...prev, [conversationId]: [] }))
-        setAvelineAgentActivity({ startedAt: Date.now(), currentState: 'thinking' })
-        applyAvelineAgentState('thinking')
+        // Only claim the indicator if this run has not already settled. The API awaited the agent,
+        // so a run that finished has already sent its terminal state, and claiming 'thinking' now
+        // would leave nothing able to clear it.
+        if (!isTerminalState(lastAvelineStateRef.current)) {
+          setAvelineAgentActivity({ startedAt: Date.now(), currentState: 'thinking' })
+          applyAvelineAgentState('thinking')
+        }
       } catch (error) {
         setAvelineMessages((prev) =>
           prev.map((m) => (m.id === optimistic.id ? { ...m, pending: 'failed' } : m)),
@@ -917,8 +934,10 @@ export function ConversationsProvider({
     async (messageId: string) => {
       if (!activeConversationId) return
       await requestRegeneration(organizationId, activeConversationId, messageId)
-      setAgentActivity({ startedAt: Date.now(), currentState: 'thinking' })
-      applyAgentState('thinking')
+      if (!isTerminalState(lastAgentStateRef.current)) {
+        setAgentActivity({ startedAt: Date.now(), currentState: 'thinking' })
+        applyAgentState('thinking')
+      }
     },
     [activeConversationId, applyAgentState, organizationId],
   )
@@ -929,8 +948,10 @@ export function ConversationsProvider({
       const conversationId = avelineIdRef.current
       if (!conversationId) return
       await requestRegeneration(organizationId, conversationId, messageId)
-      setAvelineAgentActivity({ startedAt: Date.now(), currentState: 'thinking' })
-      applyAvelineAgentState('thinking')
+      if (!isTerminalState(lastAvelineStateRef.current)) {
+        setAvelineAgentActivity({ startedAt: Date.now(), currentState: 'thinking' })
+        applyAvelineAgentState('thinking')
+      }
     },
     [applyAvelineAgentState, organizationId],
   )

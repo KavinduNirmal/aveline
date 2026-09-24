@@ -6550,3 +6550,100 @@ are now pinned in both directions.
   `customerCountBasis` travels into the prompt and an answer cannot call it "your customers".
 - Like `load_handbook`, a model-first classification of a novel phrasing fails **safe**: no fetch
   happened, so the reply is the "couldn't reach your figures" admission rather than a guess.
+## Session 2026-09-24 (c) — Why Aveline went silent, and what "on file" was actually saying
+
+**Task, in three parts:** "does ava not have customer awareness?" (after "Who are our customers?"
+twice produced no reply at all), "also the dangling thinking bubble is back", and then "instead of
+whats on file: blah blah blah, ava should summarize it and then a content block of whats on file".
+
+### The silence was reproducible, and the database proved it
+
+The screenshot showed two identical questions and no answer. The thread in Postgres settled it:
+both turns wrote a **User** message and **no agent message at all**. The run itself succeeded
+(`AgentWorkflowRuns` `Succeeded`, 9 steps, `AgentsInvolved = {customer_memory, orchestrator}`), so
+nothing errored — nobody simply spoke.
+
+The path: "Who are our customers?" was classified `customer_preference` by the supervisor (the
+rules had said `general_inquiry`, and the memory agent has no tenant-wide read at all), so the plan
+routed `memory` only. Memory then skipped — a staff Salon message carries no customer to work on —
+`build_ava_blocks` returns `[]` for a skipped memory, and `_with_a_bounded_reply` had a fallback
+reply for `general_inquiry` and `aveline_help` but **not** for the other memory-only intents. No
+reply, no specialist content, no message.
+
+Two fixes, because the hole had two mouths:
+
+- `_fallback_reply` gives every plan that routes **no content specialist** a reply —
+  `_NO_CUSTOMER_REPLY` ("give me a name or a number") for the client-scoped intents,
+  `_HANDBOOK_MISS_REPLY` for a platform question, and `None` for `out_of_scope`, which carries its
+  own reason on the response status.
+- `supervise` returned a confident **rule** plan *unbounded*, so the same hole existed with an LLM
+  configured. It is now bounded too.
+
+Pinned by a property test over **every** `IntentType`: a resolved turn must publish at least one
+message. It immediately found that `out_of_scope` is answered by its status rather than a reply,
+which is now asserted separately.
+
+### The dangling bubble was a race that silence made deterministic
+
+The client sets "Aveline is working" optimistically on send, and clears it on an agent message or a
+terminal `agent.status`. The bug is the order: `ConversationEndpoints` **awaits** the whole agent
+run before returning, so the send promise resolves *after* the run's terminal state has already
+arrived. The optimistic set therefore lands last, with nothing left to clear it — and when the run
+produced no message, the other clearing condition never fires either. The two symptoms were one
+bug.
+
+`ConversationsContext` now tracks each thread slot's last observed state and declines to claim the
+indicator for a run that has already settled (`send`, `regenerate`, and their drawer twins).
+
+### "On file: X; X; X" was not a hallucination
+
+Ava's sentence looked fabricated. It was not: it came from `_staff_text`, a deterministic template
+that joined every retrieved memory into one line, and the store held:
+
+```
+The customer has a party   (22:06)
+The customer has a party   (22:16)
+Kasha vivian has a party   (22:19)
+The customer has a party   (2026-09-23 20:00)
+```
+
+Four rows, four repetitions, matching the screenshot exactly. **Nothing de-duplicates on write** —
+neither `_try_save_memory` in the agent nor `SaveMemoryAsync` in the API checks for an existing row —
+so the same fact was re-extracted and re-stored on four separate turns, once with the name lowercased.
+
+The shape is now split the way it was asked for: the sentence **summarises** ("One note is on file"),
+and the notes travel as their own `at_a_glance` block, collapsed by `normalise_memory_content` —
+one definition, living beside the memory models in `app/schemas/customer_memory.py`, because the
+agent that retrieves notes and the publisher that renders them must collapse the same pairs.
+That collapses three of the four rows; the reworded one still survives, which is the write-path gap
+recorded below rather than hidden here.
+
+### Customer awareness, as chosen
+
+"Who are our customers?" is now answered from the client **book**: `GET
+/internal/customers/book-summary` reuses the highlights read Home already uses (the earlier plan
+called this "a seventh thing to build" — it was not) plus a count of the book.
+
+It shares the account lane's audience gate and numeral guard but **never its data**: the allowance
+answers from a count against the plan and the book answers from the clients themselves, so
+`load_tenant_usage` fetches one or the other, never both. Two `"customers"` numbers in one prompt is
+exactly how the plan's active-customer allowance gets reported as the size of the book. `limit`
+bounds the named clients, not the book.
+
+### Verification
+
+- Python: **855 passed**, 2 skipped, 2 xfailed; `ruff check` clean.
+- `.NET`: 26 tests across the internal customer endpoints and the tenant snapshot pass, including
+  the book's size, ordering, limit, and cross-tenant exclusion.
+- Web: `tsc -b` clean, **1183** tests, `oxlint` 0 errors.
+
+### Left on the table, deliberately
+
+- **Write-time de-duplication is still missing**, so a reworded fact can still be stored twice. The
+  read path collapses what a reader would call one note; the write path needs a near-duplicate check
+  (the embedding is already computed at `SaveMemoryAsync`, so a cosine threshold against the
+  customer's existing rows is the obvious mechanism). That threshold is a judgement call, so it is
+  recorded rather than guessed.
+- **Client names are instructed, not guarded.** The guard is numeral-shaped: it proves a number came
+  from the data, not that a name did.
+- The four duplicate rows already in the local store are still there.

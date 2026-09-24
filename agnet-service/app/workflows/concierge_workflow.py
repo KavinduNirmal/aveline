@@ -33,7 +33,12 @@ from app.agents.visual_insight.routing import route_after_visual
 from app.context import compact
 from app.core.config import get_settings
 from app.customer_resolution import resolve_customer
-from app.gate import classify_by_rules, may_read_tenant_account, supervise
+from app.gate import (
+    classify_by_rules,
+    is_customer_book_question,
+    may_read_tenant_account,
+    supervise,
+)
 from app.llm.runtime import (
     memory_llm_or_none,
     supervisor_llm_or_none,
@@ -78,6 +83,11 @@ class ConciergeState(TypedDict, total=False):
     # account question, and only when the request was allowed to see them (ADR-026). Absent means
     # "not fetched or not permitted", and the reply says so rather than guessing.
     tenant_usage: dict[str, Any] | None
+    # The boutique's client book - its size and a few recently active clients - for a "who are our
+    # customers?" question, under exactly the same audience gate (ADR-026). Only one of the two is
+    # ever fetched: the allowance and the book answer from different numbers, and putting both in
+    # one prompt invites the model to confuse "active customers against the plan" with "the book".
+    customer_book: dict[str, Any] | None
     intent: dict[str, Any] | None
     # True when the run is backed by a checkpoint thread. A real pause needs one: `interrupt()`
     # writes the pause into the checkpoint, and without a thread there is nothing to resume.
@@ -216,26 +226,46 @@ async def run_load_tenant_usage(state: ConciergeState) -> dict[str, Any]:
     """
     settings = get_settings()
     if not settings.tenant_awareness_enabled:
-        return {"tenant_usage": None}
+        return {"tenant_usage": None, "customer_book": None}
 
     if not may_read_tenant_account(state.get("org_context")):
-        return {"tenant_usage": None}
+        return {"tenant_usage": None, "customer_book": None}
 
-    if classify_by_rules(state.get("message", "")).intent_type != "tenant_account":
-        return {"tenant_usage": None}
+    message = state.get("message", "")
+    if classify_by_rules(message).intent_type != "tenant_account":
+        return {"tenant_usage": None, "customer_book": None}
 
     org_context = state.get("org_context") or {}
     org_id = org_context.get("organization_id") or org_context.get("org_id")
     if not org_id:
-        return {"tenant_usage": None}
+        return {"tenant_usage": None, "customer_book": None}
+
+    registry = ToolRegistry()
+
+    # One read, chosen by what was asked. The two answer from different numbers - the book's size
+    # versus the plan's active-customer allowance - so handing the model both is how it would come
+    # to report one as the other.
+    if is_customer_book_question(message):
+        try:
+            book = await registry.get_customer_book_summary(str(org_id))
+        except Exception:  # noqa: BLE001 - the book is an enhancement, never a precondition
+            logger.exception("Customer book fetch failed; continuing without it.")
+            return {"tenant_usage": None, "customer_book": None}
+        return {
+            "tenant_usage": None,
+            "customer_book": book if isinstance(book, dict) else None,
+        }
 
     try:
-        snapshot = await ToolRegistry().get_tenant_usage(str(org_id))
+        snapshot = await registry.get_tenant_usage(str(org_id))
     except Exception:  # noqa: BLE001 - account figures are an enhancement, never a precondition
         logger.exception("Tenant account fetch failed; continuing without the figures.")
-        return {"tenant_usage": None}
+        return {"tenant_usage": None, "customer_book": None}
 
-    return {"tenant_usage": snapshot if isinstance(snapshot, dict) else None}
+    return {
+        "tenant_usage": snapshot if isinstance(snapshot, dict) else None,
+        "customer_book": None,
+    }
 
 
 def _context_fields(state: ConciergeState) -> dict[str, Any]:
@@ -283,6 +313,7 @@ async def run_supervisor(state: ConciergeState) -> dict[str, Any]:
         pinned_slots=state.get("pinned_slots"),
         handbook_hits=state.get("handbook_hits"),
         tenant_usage=state.get("tenant_usage"),
+        customer_book=state.get("customer_book"),
     )
     logger.debug(
         "Supervisor decided %s -> agents=%s clarification=%s",
@@ -1067,6 +1098,7 @@ async def run_concierge(
         "pinned_slots": {},
         "handbook_hits": [],
         "tenant_usage": None,
+        "customer_book": None,
         "intent": None,
         "checkpointing": thread_id is not None,
         "resolution": None,

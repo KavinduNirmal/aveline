@@ -810,7 +810,12 @@ async def test_staff_query_surfaces_what_is_actually_on_file():
 
     The interaction brief carries preferences, dated events and tags - not semantic memories. So
     "what do we have on file for her?" answered "nothing on file yet" while memories sat in the
-    store. The retrieved context is now part of the staff answer.
+    store.
+
+    They now travel in their own field rather than inside the sentence. Reciting them inline is what
+    produced "on file: The customer has a party; The customer has a party; Kasha vivian has a party"
+    in a real thread: a list in a sentence, repeating every near-duplicate the store had
+    accumulated. The sentence summarises; the publisher renders the notes as a content block.
     """
     registry = FakeRegistry()
 
@@ -842,7 +847,11 @@ async def test_staff_query_surfaces_what_is_actually_on_file():
 
     brief_text = result["output"]["interaction_brief"]
     # FakeRegistry.get_customer_memories returns "Prefers emerald silk".
-    assert "emerald silk" in brief_text
+    assert "emerald silk" not in brief_text, "the brief must summarise, not recite"
+    assert "One note is on file." in brief_text
+    assert result["output"]["memories_on_file"] == [
+        {"content": "Prefers emerald silk", "category": "preference"}
+    ]
     assert "nothing on file yet" not in brief_text
 
 
@@ -976,3 +985,94 @@ async def test_dialogue_context_is_not_rendered_without_an_llm(monkeypatch):
     await graph.ainvoke(state)
 
     assert calls == []
+
+
+async def test_stored_notes_are_collapsed_in_the_staff_answer():
+    """The repetition in a real thread: the store held the same fact four times.
+
+    "Kasha Vivian Pera is a new customer - on file: The customer has a party; The customer has a
+    party; The customer has a party; Kasha vivian has a party." The store has no write-time
+    de-duplication, so the answer repeated every row. The duplicates are collapsed, and the count
+    in the sentence matches the notes the block shows.
+    """
+    registry = FakeRegistry()
+
+    async def memories(org_id, customer_id, query, top_k=5):
+        return [
+            {"content": "The customer has a party", "category": "event"},
+            {"content": "The customer has a party", "category": "event"},
+            {"content": "The customer has a party", "category": "event"},
+            {"content": "  the customer has a party.  ", "category": "event"},
+        ]
+
+    registry.get_customer_memories = memories
+
+    async def brief(org_id, customer_id):
+        return {
+            "customerName": "Kasha Vivian Pera",
+            "status": "new",
+            "upcomingEvents": None,
+            "preferenceSummary": None,
+            "tags": [],
+        }
+
+    registry.generate_interaction_brief = brief
+    graph = build_memory_graph(registry)
+
+    result = await graph.ainvoke(
+        {
+            "org_id": "org-1",
+            "customer_id": "cust-kasha",
+            "message": "what do we know about this customer",
+            "intent_type": "general_inquiry",
+            "channel": "whatsapp",
+            "direction": None,
+            "staff_query": True,
+        }
+    )
+
+    assert result["output"]["interaction_brief"] == (
+        "Kasha Vivian Pera is a new customer. One note is on file."
+    )
+    assert result["output"]["memories_on_file"] == [
+        {"content": "The customer has a party", "category": "event"}
+    ]
+
+
+async def test_the_staff_answer_counts_the_notes_it_is_about_to_show():
+    registry = FakeRegistry()
+
+    async def memories(org_id, customer_id, query, top_k=5):
+        return [
+            {"content": "Prefers emerald silk", "category": "preference"},
+            {"content": "Has a party on 2026-12-01", "category": "event"},
+        ]
+
+    registry.get_customer_memories = memories
+
+    async def brief(org_id, customer_id):
+        return {
+            "customerName": "Nadia",
+            "status": "returning",
+            "upcomingEvents": None,
+            "preferenceSummary": None,
+            "tags": [],
+        }
+
+    registry.generate_interaction_brief = brief
+    graph = build_memory_graph(registry)
+
+    result = await graph.ainvoke(
+        {
+            "org_id": "org-1",
+            "customer_id": "cust-nadia",
+            "message": "what do we know about this customer",
+            "intent_type": "general_inquiry",
+            "channel": "whatsapp",
+            "direction": None,
+            "staff_query": True,
+        }
+    )
+
+    assert result["output"]["interaction_brief"] == "Nadia (returning). 2 notes are on file."
+    assert len(result["output"]["memories_on_file"]) == 2

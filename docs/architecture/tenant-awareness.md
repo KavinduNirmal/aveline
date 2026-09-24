@@ -138,6 +138,7 @@ mention of the word. The discriminator is the shape of the ask, not the noun:
 | "How many Blossoms do I have left?" | `tenant_account` | Asks for the asker's own position |
 | "How many seats have I got?" | `tenant_account` | Same |
 | "How many customers can I add?" | `tenant_account` | Same |
+| "Who are our customers?" | `tenant_account` | The book, not an allowance (see §5.1) |
 | "What is a Blossom?" | `aveline_help` | Documentation; the handbook answers it |
 | "How much does a Blossom cost?" | `aveline_help` | Published pricing is the handbook's, and it does not publish it |
 | "How many seats does the Orchid plan include?" | `aveline_help` | A plan fact, not this account |
@@ -146,6 +147,21 @@ mention of the word. The discriminator is the shape of the ask, not the noun:
 `_is_interface_location_question` encodes that last row. Without it the possessive patterns claim
 both readings, and `tests/test_handbook_retrieval.py` — which already asserted the locating case —
 caught the first version of the pattern doing exactly that.
+
+### 5.1 Two reads, one lane
+
+The lane holds two kinds of question, and they are answered from different numbers:
+
+| Question | Read | Answers from |
+|---|---|---|
+| An allowance ("how many do I have left?") | `GET /internal/usage/tenant/{orgId}` | `customers.active.max` against the plan, Blossom balance, seats |
+| The book ("who are our customers?") | `GET /internal/customers/book-summary` | The book's size and its most recently active clients |
+
+`load_tenant_usage` fetches **one or the other**, chosen by `is_customer_book_question`. It
+deliberately does not fetch both: the prompt would then carry two different `"customers"` numbers,
+and the plan's active-customer allowance would get reported as the size of the book. The book reads
+the same highlights the dashboard's Home rows do, so a client cannot be named who is not in the book,
+and its `limit` bounds the names rather than the book.
 
 ---
 
@@ -172,6 +188,10 @@ caught the first version of the pattern doing exactly that.
   an account question, no fetch happened, so the reply is the "couldn't reach your figures"
   admission. The alternative — fetching on every staff turn to cover the case — pays for a query the
   model usually will not use.
+- **Client names are instructed, not guarded.** The guard is numeral-shaped: it proves a number came
+  from the data, not that a *name* did. The prompt requires names to be quoted from the block, and
+  the residual risk is accepted rather than papered over — detecting an invented name reliably is not
+  something a prompt-level check can do. Money is guarded; names are instructed.
 - **The low-balance rule now exists in three places** (mobile, this DTO, the alerting metrics).
   Consolidating it is a follow-up.
 - **Extension is a field, not a lane.** Plan, renewal date, top-up packs and the statement each add a

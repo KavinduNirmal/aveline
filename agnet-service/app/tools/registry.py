@@ -297,6 +297,31 @@ class ToolRegistry:
         """
         return await self._client.request("GET", f"/internal/usage/tenant/{org_id}")
 
+    async def get_customer_book_summary(
+        self,
+        org_id: str,
+        limit: int = 5,
+    ) -> dict[str, Any]:
+        """Read the boutique's client book at a glance (ADR-026).
+
+        How many clients there are, plus the few most recently active, taken from the same read the
+        tenant dashboard's Home rows use - so a client cannot be named here who is not in the book.
+        Same audience rule as :meth:`get_tenant_usage`: the caller decides who may see it.
+
+        Args:
+            org_id: The organisation (tenant scope).
+            limit: How many named clients to return. Clamped by the backend.
+
+        Returns:
+            The backend envelope ``{total, activitySince, highlights}``, where each highlight is
+            ``{customerId, name, level, activity, lastActivityAtUtc}``.
+        """
+        return await self._client.request(
+            "GET",
+            "/internal/customers/book-summary",
+            params={"organizationId": org_id, "limit": limit},
+        )
+
     # ============================== VISUAL AGENT ==============================
 
     async def search_inventory(self, criteria: dict[str, Any]) -> dict[str, Any]:

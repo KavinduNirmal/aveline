@@ -42,6 +42,13 @@ public static class CustomerConciergeEndpoints
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized);
 
+        group.MapGet("/book-summary", GetBookSummaryAsync)
+            .WithName("GetCustomerBookSummary")
+            .WithSummary(
+                "How many clients this boutique has, and the few most recently active (ADR-026).")
+            .Produces<CustomerBookSummaryDto>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status401Unauthorized);
+
         group.MapPatch("/{customerId:guid}", UpdateCustomerAsync)
             .WithName("UpdateCustomerInternal")
             .WithSummary("Apply an explicit staff instruction to a customer's name or phone.")
@@ -129,6 +136,27 @@ public static class CustomerConciergeEndpoints
         var profile = await customers.IdentifyOrCreateAsync(
             request.OrganizationId, request.PhoneNumber, request.FullName, cancellationToken);
         return Results.Ok(profile);
+    }
+
+    /// <summary>
+    /// The book at a glance, for Aveline (ADR-026). Read by the agent service only, and only when
+    /// the request that reached it declared itself staff, so a customer message never causes this
+    /// route to be called.
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="limit"/> bounds the named highlights rather than the book: this is a chat
+    /// answer, not a listing surface, and the Customers screen already pages the whole book. The
+    /// service clamps it, so an over-large value cannot turn one question into an enumeration.
+    /// </remarks>
+    private static async Task<IResult> GetBookSummaryAsync(
+        [FromQuery] Guid organizationId,
+        [FromQuery] int? limit,
+        ICustomerTenantService customers,
+        CancellationToken cancellationToken)
+    {
+        var summary = await customers.GetBookSummaryAsync(
+            organizationId, limit ?? 5, activitySince: null, cancellationToken);
+        return Results.Ok(summary);
     }
 
     private static async Task<IResult> GetProfileAsync(

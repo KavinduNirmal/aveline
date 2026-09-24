@@ -58,6 +58,31 @@ class DetectedEvent(BaseModel):
     description: str | None = None
 
 
+class OnFileMemory(BaseModel):
+    """A memory already stored against the customer, as a staff answer shows it.
+
+    Distinct from :class:`ExtractedMemory`, which is what the agent decided to persist *this* turn:
+    these are what the boutique already had, and they are the ones a "what do we know about this
+    customer?" answer is actually about.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    content: str = Field(..., min_length=1, max_length=2000)
+    category: str = "memory"
+
+
+def normalise_memory_content(content: str) -> str:
+    """Reduce memory content to what makes two notes the same note.
+
+    Case, surrounding whitespace and trailing punctuation are not distinctions a reader makes, and
+    they are exactly how the same fact ends up stored twice. Lives here, beside the memory models,
+    because both the agent that retrieves notes and the publisher that renders them must collapse
+    the same pairs - two normalisers would eventually disagree about a duplicate.
+    """
+    return " ".join(content.strip().lower().rstrip(".!?").split())
+
+
 class CustomerProfileSummary(BaseModel):
     """The customer profile the agent loads before drafting a response."""
 
@@ -86,6 +111,10 @@ class MemoryAgentOutput(BaseModel):
     parsed_intent: ParsedIntent | None = None
     customer: CustomerProfileSummary | None = None
     extracted_memories: list[ExtractedMemory] = Field(default_factory=list)
+    #: What was already on file, de-duplicated. Carried separately from `extracted_memories` so a
+    #: staff answer can show the notes as their own block instead of reciting them inside the brief
+    #: sentence - reciting them produced "on file: X; X; X" whenever the store held near-duplicates.
+    memories_on_file: list[OnFileMemory] = Field(default_factory=list)
     detected_events: list[DetectedEvent] = Field(default_factory=list)
     interaction_brief: str | None = None
     draft_response: str | None = None

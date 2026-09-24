@@ -147,8 +147,13 @@ produces real content (no placeholder text).
   built from the chunks that were actually retrieved, so a citation cannot be invented. Both
   frontends render it as links, opening the documentation in a new tab.
 - **Ava / memory** (`build_ava_blocks`), in order:
-  1. `text` - the `interaction_brief`.
-  2. `at_a_glance` - one `Category`/`Content` row per `extracted_memories` entry.
+  1. `text` - the `interaction_brief`. It **summarises**; it does not recite the notes. Reciting
+     them inline produced "on file: The customer has a party; The customer has a party; Kasha vivian
+     has a party" in a real thread, because the store has no write-time de-duplication.
+  2. `at_a_glance` - one `Category`/`Content` row per note **on file** (`memories_on_file`), then
+     any extracted this turn, de-duplicated across both. One table rather than two: they are the
+     same kind of fact to a reader, and the stored rows come first because that is what "on file"
+     means.
   3. `suggestion` - the customer-facing `draft_response`.
   When the memory agent skipped (no customer context), no Ava message is emitted.
 - **Elle / visual** (`build_elle_blocks`): emits `suggestion`, `piece` (per `items`), and

@@ -839,6 +839,33 @@ balance read creates the period account on demand, so it validates the tenant be
 written. `blossoms.planTier` is the billing period's snapshot (written by the rollover job, not by a
 mid-period plan change) and is deliberately **not** shown to the model.
 
+#### `GET /internal/customers/book-summary?organizationId={guid}&limit={int}`
+
+Internal read. **Not callable by frontends.** The other half of ADR-026's lane: the client **book**,
+for "who are our customers?". The agent service reads this instead of the allowance snapshot when
+the question is about the clients themselves, never both.
+
+**Response `200`:**
+
+```json
+{
+  "total": 214,
+  "activitySince": "2026-09-10T00:00:00Z",
+  "highlights": [
+    { "customerId": "…", "name": "Kasha Vivian Perera", "level": "level2",
+      "activity": "The customer has a party", "lastActivityAtUtc": "2026-09-23T20:00:09Z" }
+  ]
+}
+```
+
+**Errors:** `401` empty.
+
+`total` counts the book (soft-deleted excluded) and is a **larger number** than the
+`customers.active.max` allowance the tenant endpoint reports — they measure different things and are
+deliberately not reconciled. `highlights` is verbatim what `GetHighlightsAsync` returns for Home
+(newest activity first, within a 14-day window), so a client cannot be named here who is not in the
+book. `limit` bounds the *named* clients, not the book, and is clamped by the service.
+
 ### B.10 Webhooks
 
 | Method | Path | Auth | Notes |

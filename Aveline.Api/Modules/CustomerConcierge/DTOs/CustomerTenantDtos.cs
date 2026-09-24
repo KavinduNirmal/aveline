@@ -38,6 +38,26 @@ public sealed record CustomerHighlightDto(
 
 public sealed record CustomerHighlightsResponseDto(IReadOnlyList<CustomerHighlightDto> Items);
 
+/// <summary>
+/// The client book at a glance: how many clients there are, and which few have been active most
+/// recently.
+/// </summary>
+/// <remarks>
+/// Built for the agent service, so Aveline can answer "who are our customers?" from the same reads
+/// the tenant dashboard already uses - <see cref="Highlights"/> is verbatim what
+/// <c>GetHighlightsAsync</c> returns for Home, including the sentence describing each client's
+/// activity. <c>Total</c> counts the book, which is a larger number than the active count the
+/// plan's <c>customers.active.max</c> allowance is measured against; the two are deliberately not
+/// conflated here.
+/// </remarks>
+/// <param name="Total">Clients in the book (soft-deleted excluded).</param>
+/// <param name="ActivitySince">The start of the window <paramref name="Highlights"/> was drawn from.</param>
+/// <param name="Highlights">The most recently active clients, newest first.</param>
+public sealed record CustomerBookSummaryDto(
+    int Total,
+    DateTime ActivitySince,
+    IReadOnlyList<CustomerHighlightDto> Highlights);
+
 /// <summary>A walk-in created at the counter. A name is enough to start.</summary>
 public sealed record CreateWalkInCustomerRequest(
     string FullName,

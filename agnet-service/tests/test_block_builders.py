@@ -427,3 +427,75 @@ def test_a_source_without_a_url_still_renders_as_a_citation():
     output = {"intent": "aveline_help", "reply": "x", "handbook_sources": [{"title": "Team"}]}
 
     assert build_aveline_blocks(output)[1]["items"] == [{"title": "Team"}]
+
+
+# ------------------------------------------------- the notes on file, as their own block
+
+
+def _memory_with_notes_on_file() -> dict:
+    """A staff question about a customer who already has notes, and nothing new this turn.
+
+    Reproduces the real thread: the store held the same fact four times, and the brief recited all
+    four into one sentence.
+    """
+    return {
+        "agent": "memory",
+        "ran": True,
+        "status": "success",
+        "customer": {"customer_id": "c1", "full_name": "Kasha Vivian Pera", "status": "new"},
+        "interaction_brief": "Kasha Vivian Pera is a new customer. One note is on file.",
+        "memories_on_file": [
+            {"content": "The customer has a party", "category": "event"},
+            {"content": "The customer has a party", "category": "event"},
+            {"content": "the customer has a party.", "category": "event"},
+        ],
+        "extracted_memories": [],
+    }
+
+
+def test_notes_on_file_become_their_own_block():
+    blocks = build_ava_blocks(_memory_with_notes_on_file())
+
+    table = next(b for b in blocks if b["type"] == "at_a_glance")
+    assert table["columns"] == ["Category", "Content"]
+    assert table["rows"] == [["event", "The customer has a party"]]
+
+
+def test_the_brief_does_not_recite_the_notes():
+    # The sentence summarises; the block carries the detail. Reciting produced a list in a sentence.
+    blocks = build_ava_blocks(_memory_with_notes_on_file())
+
+    brief = blocks[0]["text"]
+    assert brief == "Kasha Vivian Pera is a new customer. One note is on file."
+    assert "The customer has a party" not in brief
+
+
+def test_a_note_extracted_this_turn_is_not_duplicated_by_the_block():
+    # One table, not two: the same fact learned this turn and already on file appears once.
+    memory = _memory_with_notes_on_file()
+    memory["extracted_memories"] = [
+        {"content": "The customer has a party", "category": "event", "confidence": 0.9}
+    ]
+
+    blocks = build_ava_blocks(memory)
+
+    tables = [b for b in blocks if b["type"] == "at_a_glance"]
+    assert len(tables) == 1
+    assert tables[0]["rows"] == [["event", "The customer has a party"]]
+
+
+def test_newly_extracted_memories_still_reach_the_block_alongside_on_file_notes():
+    memory = _memory_with_notes_on_file()
+    memory["memories_on_file"] = [{"content": "Prefers emerald silk", "category": "preference"}]
+    memory["extracted_memories"] = [
+        {"content": "Has a party on 2026-12-01", "category": "event", "confidence": 0.9}
+    ]
+
+    blocks = build_ava_blocks(memory)
+
+    table = next(b for b in blocks if b["type"] == "at_a_glance")
+    # On file first, then what this turn learned.
+    assert table["rows"] == [
+        ["preference", "Prefers emerald silk"],
+        ["event", "Has a party on 2026-12-01"],
+    ]

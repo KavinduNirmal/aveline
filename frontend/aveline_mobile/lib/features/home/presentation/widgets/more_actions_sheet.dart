@@ -21,13 +21,11 @@ class _MoreAction {
     this.label,
     this.icon, {
     this.route,
-    this.unavailableMessage,
   });
 
   final String label;
   final IconData icon;
   final String? route;
-  final String? unavailableMessage;
 }
 
 class _MoreActionsSheet extends StatelessWidget {
@@ -47,7 +45,12 @@ class _MoreActionsSheet extends StatelessWidget {
     _MoreAction(
       'New order',
       Icons.receipt_long_outlined,
-      unavailableMessage: 'Order taking is not on mobile yet.',
+      route: AppRoutes.createOrder,
+    ),
+    _MoreAction(
+      'Orders',
+      Icons.receipt_outlined,
+      route: AppRoutes.orders,
     ),
     _MoreAction(
       'Settings',
@@ -117,7 +120,7 @@ class _MoreActionTile extends StatelessWidget {
       return;
     }
 
-    AppToast.show(context, action.unavailableMessage ?? 'Not on mobile yet.');
+    AppToast.show(context, 'Not on mobile yet.');
     Navigator.of(context).pop();
   }
 

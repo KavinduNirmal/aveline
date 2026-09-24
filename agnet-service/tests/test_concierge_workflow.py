@@ -696,7 +696,7 @@ async def test_commerce_agent_forwards_the_conversation_context(monkeypatch):
     captured: dict = {}
     monkeypatch.setattr(
         "app.workflows.concierge_workflow.build_commerce_graph",
-        lambda registry, org_context=None: _CapturingSubgraph(captured),
+        lambda registry, llm=None, org_context=None: _CapturingSubgraph(captured),
     )
     monkeypatch.setattr("app.workflows.concierge_workflow.ToolRegistry", lambda *a, **k: None)
 
@@ -719,7 +719,7 @@ async def test_the_commerce_resume_leg_forwards_the_conversation_context(monkeyp
     captured: dict = {}
     monkeypatch.setattr(
         "app.workflows.concierge_workflow.build_commerce_graph",
-        lambda registry, org_context=None: _CapturingSubgraph(captured),
+        lambda registry, llm=None, org_context=None: _CapturingSubgraph(captured),
     )
     monkeypatch.setattr("app.workflows.concierge_workflow.ToolRegistry", lambda *a, **k: None)
     monkeypatch.setattr(

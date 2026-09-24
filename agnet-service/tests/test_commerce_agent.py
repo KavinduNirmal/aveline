@@ -125,6 +125,120 @@ class TestCommerceAgentE2E(unittest.IsolatedAsyncioTestCase):
         # A paused deal must not hand out a payment link.
         self.assertIsNone(output["payment"])
 
+    async def test_llm_produces_deal_narrative_and_usage_when_injected(self):
+        fake_llm = FakeCommerceChatModel(reply="Lina has prepared the private order confirmation.")
+        graph = build_commerce_graph(registry=None, llm=fake_llm)
+        state: CommerceAgentState = {
+            "org_id": self.org_id,
+            "order_id": "ord-llm-1",
+            "customer_name": "Eleanor",
+            "items": [
+                {
+                    "item_id": "item-101",
+                    "item_name": "Cashmere Scarf",
+                    "quantity": 1,
+                    "unit_price": 10000.0,
+                    "wholesale_cost": 4000.0,
+                    "total_price": 10000.0,
+                }
+            ],
+            "proposed_discount": 0.0,
+            "delivery_address": "45 Ward Place, Colombo 07",
+            "channel": "whatsapp",
+            "message": "Order 1 scarf please",
+        }
+
+        result = await graph.ainvoke(state)
+        output = result.get("output") or {}
+
+        self.assertEqual(output["status"], "success")
+        self.assertEqual(output["summary"], "Lina has prepared the private order confirmation.")
+        self.assertEqual(result.get("usage"), {"input_tokens": 15, "output_tokens": 8})
+        self.assertEqual(len(fake_llm.invoked_messages), 1)
+        # Verify Lina prompt was assembled and passed as SystemMessage
+        system_msg = fake_llm.invoked_messages[0][0]
+        self.assertIn("Lina", system_msg.content)
+        self.assertIn("commercially astute", system_msg.content)
+
+    async def test_llm_failure_falls_back_to_template_without_crashing(self):
+        fake_llm = FakeCommerceChatModel(fail=True)
+        graph = build_commerce_graph(registry=None, llm=fake_llm)
+        state: CommerceAgentState = {
+            "org_id": self.org_id,
+            "order_id": "ord-llm-fail",
+            "customer_name": "Eleanor",
+            "items": [
+                {
+                    "item_id": "item-101",
+                    "item_name": "Cashmere Scarf",
+                    "quantity": 1,
+                    "unit_price": 10000.0,
+                    "wholesale_cost": 4000.0,
+                    "total_price": 10000.0,
+                }
+            ],
+            "proposed_discount": 0.0,
+            "delivery_address": "45 Ward Place, Colombo 07",
+            "channel": "whatsapp",
+            "message": "Order 1 scarf please",
+        }
+
+        result = await graph.ainvoke(state)
+        output = result.get("output") or {}
+
+        self.assertEqual(output["status"], "success")
+        self.assertTrue(output["summary"].startswith("Deal finalized for Eleanor"))
+        self.assertIsNone(result.get("usage"))
+
+    async def test_llm_json_envelope_is_unwrapped_to_plain_text(self):
+        fake_llm = FakeCommerceChatModel(reply='{"reply": "Unwrapped bespoke order summary for VIP."}')
+        graph = build_commerce_graph(registry=None, llm=fake_llm)
+        state: CommerceAgentState = {
+            "org_id": self.org_id,
+            "order_id": "ord-llm-json",
+            "customer_name": "Eleanor",
+            "items": [
+                {
+                    "item_id": "item-101",
+                    "item_name": "Cashmere Scarf",
+                    "quantity": 1,
+                    "unit_price": 10000.0,
+                    "wholesale_cost": 4000.0,
+                    "total_price": 10000.0,
+                }
+            ],
+            "proposed_discount": 0.0,
+            "delivery_address": "45 Ward Place, Colombo 07",
+            "channel": "whatsapp",
+            "message": "Order 1 scarf please",
+        }
+
+        result = await graph.ainvoke(state)
+        output = result.get("output") or {}
+
+        self.assertEqual(output["summary"], "Unwrapped bespoke order summary for VIP.")
+
+
+class _Msg:
+    def __init__(self, content: str, input_tokens: int = 15, output_tokens: int = 8):
+        self.content = content
+        self.usage_metadata = {"input_tokens": input_tokens, "output_tokens": output_tokens}
+
+
+class FakeCommerceChatModel:
+    """Minimal chat-model double exposing only ainvoke."""
+
+    def __init__(self, reply: str = "Lina's bespoke deal narrative.", fail: bool = False):
+        self.reply = reply
+        self.fail = fail
+        self.invoked_messages = []
+
+    async def ainvoke(self, messages):
+        self.invoked_messages.append(messages)
+        if self.fail:
+            raise RuntimeError("provider unavailable")
+        return _Msg(self.reply)
+
 
 if __name__ == "__main__":
     unittest.main()

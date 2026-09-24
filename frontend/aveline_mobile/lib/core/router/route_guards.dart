@@ -66,6 +66,18 @@ abstract final class AppRoutes {
   /// the router forwards it rather than answering with nothing.
   static const String profile = '/profile';
   static const String notifications = '/notifications';
+
+  /// Boutique commerce orders register.
+  static const String orders = '/orders';
+
+  /// Floor associate on-the-fly order creation.
+  static const String createOrder = '/orders/create';
+
+  /// Route pattern for a single order details screen.
+  static const String orderDetailPattern = '/orders/:orderId';
+
+  /// A single order, addressed by its own id.
+  static String orderDetail(String orderId) => '/orders/$orderId';
 }
 
 /// Pure auth/account-state redirect rules for the [GoRouter].

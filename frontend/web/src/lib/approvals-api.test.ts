@@ -23,7 +23,7 @@ const APPROVAL = '33333333-3333-3333-3333-333333333333'
 
 describe('approvals-api', () => {
   beforeEach(() => {
-    getMock.mockReset().mockResolvedValue({ data: { items: [], page: 1, pageSize: 20, total: 0 } })
+    getMock.mockReset().mockResolvedValue({ data: { items: [], page: 1, pageSize: 20, totalCount: 0 } })
     postMock.mockReset().mockResolvedValue({ data: {} })
   })
 

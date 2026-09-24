@@ -46,11 +46,25 @@ async def test_item_search_routes_through_memory_and_visual():
     assert result["response"]["status"] == AgentStatus.success
 
 
-async def test_pricing_query_routes_through_memory_and_commerce():
-    result = await _invoke("How much is this dress?")
+async def test_pricing_query_without_a_piece_routes_through_memory_and_commerce():
+    result = await _invoke("Can you give me a discount?")
     assert result["intent"]["intent_type"] == "pricing_query"
     assert result["memory_output"] is not None
     assert result["visual_output"] is None
+    assert result["commerce_output"] is not None
+
+
+async def test_pricing_query_that_names_a_piece_routes_through_all_three():
+    """ADR-028. The piece has to be looked up or the price has nothing to be about.
+
+    The graph walks the plan in order, so a pricing plan that names a piece reaches Elle on the way
+    to commerce rather than instead of her.
+    """
+    result = await _invoke("How much is this dress?")
+    assert result["intent"]["intent_type"] == "pricing_query"
+    assert result["intent"]["suggested_agents"] == ["memory", "visual", "commerce"]
+    assert result["memory_output"] is not None
+    assert result["visual_output"] is not None
     assert result["commerce_output"] is not None
 
 
@@ -708,6 +722,40 @@ async def test_commerce_agent_forwards_the_conversation_context(monkeypatch):
     })
 
     _assert_context_reached(captured)
+
+
+@pytest.mark.asyncio
+async def test_commerce_receives_the_purpose_and_the_audience(monkeypatch):
+    """ADR-028's transport, pinned because the behaviour alone would not prove it.
+
+    ``purpose`` and ``staff_query`` are both read by the commerce sub-graph and both are new to this
+    call site. A sub-graph test passes while the orchestrator forgets to send them, and the real run
+    then evaluates a question as an order - which is the defect, one layer up.
+    """
+    from app.workflows.concierge_workflow import run_commerce_agent
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        "app.workflows.concierge_workflow.build_commerce_graph",
+        lambda registry, llm=None, org_context=None: _CapturingSubgraph(captured),
+    )
+    monkeypatch.setattr("app.workflows.concierge_workflow.ToolRegistry", lambda *a, **k: None)
+
+    await run_commerce_agent({
+        "message": "how much of a discount on the champagne dress?",
+        "org_context": {
+            "organization_id": REAL_ORG,
+            "direction": "inbound",
+            "staff_query": True,
+            "purpose": "quote",
+        },
+        "intent": {"intent_type": "pricing_query"},
+        **_CONTEXT,
+    })
+
+    assert captured["purpose"] == "quote"
+    assert captured["staff_query"] is True
+    assert captured["direction"] == "inbound"
 
 
 @pytest.mark.asyncio

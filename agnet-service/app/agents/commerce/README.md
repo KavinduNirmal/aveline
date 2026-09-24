@@ -13,6 +13,8 @@ core responsibilities:
 3. Generate and validate payment requests
 4. Check approval thresholds — trigger a **human-in-the-loop interrupt** if exceeded
 5. Plan delivery routes and book couriers
+6. Answer what a discount may be, with or without a basket: the tier/rule ceiling, and a quote for the
+   pieces a pricing question named (ADR-028). Both are read-only: they never pause, settle or write.
 
 ## Tools available to this agent
 
@@ -30,29 +32,39 @@ Defined in `app/tools/commerce/`:
 
 ## Human-in-the-Loop
 
-This agent contains the **mandatory approval interrupt**. When `check_approval_threshold`
-returns `True`, the graph must call `pause_for_approval`, which issues a LangGraph
-`interrupt()`. The ASP.NET Core backend stores the checkpoint thread ID. The React
-dashboard calls the resume endpoint when the owner decides.
+This agent contains the **mandatory approval gate**. When the business rules breach,
+`evaluate_deal` routes to `pause_for_approval`, which reports `pending_approval` with the reason and
+the triggered rules — and writes nothing. The pause is owned one layer up: the concierge node
+`commerce_approval` calls `interrupt()`, the API turns the pause into an `Order` plus an
+`ApprovalQueueEntry`, and the owner's decision resumes the checkpoint (ADR-024).
 
 ## Input / Output contract
 
 Defined in `app/schemas/commerce.py`.
 
-## Current stub state (Issue #151)
+## Current state
 
-No `graph.py` exists yet; this folder is owned by **Student 3**. The top-level concierge
-workflow (`app/workflows/concierge_workflow.py`) runs a **stub** `run_commerce_agent` node
-that declares the structured output shape with `status: "stub"`, `needs_approval: False`,
-and empty `summary`/`payment`/`courier`, so the Salon never shows fabricated payment or
-approval data.
+The real sub-graph is implemented. `evaluate_deal` is the entry, and it has four terminals:
 
-The block mapping for this agent is already implemented and tested in
-`app/events/block_builders.py::build_lina_blocks`: when the real graph emits a `summary`
-(with `status != "stub"`), the Salon renders `text`, `payment`, and `courier` blocks
-attributed to the `lina` persona. A SignOff is deliberately not emitted by the generic
-builder - it is a first-class human-in-the-loop message (`kind == SignOff`) created by the
-commerce approval flow (see "Human-in-the-Loop" above).
+| Terminal | Reached when | Writes |
+|---|---|---|
+| `prepare_settlement` | the deal passes the rules, or the owner approved/revised it | payment link, courier booking |
+| `pause_for_approval` | a rule was breached — the run stops for a decision | nothing; the *concierge* node `commerce_approval` owns the `interrupt()`, and the API writes the Order |
+| `explain_discount_ceiling` | no basket, and the message asks what a discount may be (ADR-028) | nothing |
+| `present_quote` | the message named pieces to price rather than to buy (ADR-028) | nothing |
+
+The last two are the read-only arms. They exist because every other verb here is a deal verb, so a
+question about a discount had nothing to answer with: `evaluate_deal` skipped for want of line items
+and the run went silent, leaving the memory agent's customer brief as the only reply to a question
+about money. A quote is priced by the same rules and still never pauses or settles — the API resolves
+the pieces it names and marks the context `purpose: "quote"`, and
+`ConversationOrderBridge` refuses to create an order from one.
+
+The block mapping for this agent is in `app/events/block_builders.py::build_lina_blocks`: a `summary`
+(with `status != "stub"`) becomes `text`, `payment` and `courier` blocks attributed to the `lina`
+persona. A SignOff is deliberately not emitted by the generic builder - it is a first-class
+human-in-the-loop message (`kind == SignOff`) created by the commerce approval flow (see
+"Human-in-the-Loop" above).
 
 ## What belongs in this folder
 

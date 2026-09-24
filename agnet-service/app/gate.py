@@ -54,6 +54,51 @@ _RULE_KEYWORDS: list[tuple[IntentType, tuple[str, ...]]] = [
     ("event_query", ("event", "wedding", "birthday", "anniversary", "occasion")),
 ]
 
+#: Words that name a *piece* rather than a property of one. Deliberately narrower than the
+#: ``item_search`` keyword tuple, which also carries search-shaped words ("stock", "size", "photo")
+#: and the occasion words that make a styling request. This set answers one question only: does the
+#: message point at something Elle can look up?
+#:
+#: Kept beside the table rather than imported from the memory agent's own noun list
+#: (``app/agents/customer_memory/parsing.py``), because the two answer different questions - that
+#: one decides an intent, this one decides a lane - and the gate must stay importable without the
+#: agent package. The overlap is pointed at from both ends by tests instead.
+_PIECE_NOUNS: tuple[str, ...] = (
+    "dress",
+    "saree",
+    "sari",
+    "blouse",
+    "gown",
+    "frock",
+    "skirt",
+    "lehenga",
+    "kurta",
+    "outfit",
+    "dupatta",
+    "shawl",
+    "jumpsuit",
+    "trousers",
+    "shirt",
+    "jacket",
+)
+
+#: One pattern per noun, allowing a plural. Built once: this runs on every inbound message.
+_PIECE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(rf"\b{noun}s?\b", re.IGNORECASE) for noun in _PIECE_NOUNS
+)
+
+
+def names_a_piece(message: str) -> bool:
+    """Whether ``message`` names a garment Elle could look up.
+
+    Used to widen the pricing lane rather than to change the intent: "how much is the pink dress?"
+    is a pricing question *about a piece*, and the price and stock of that piece live in the visual
+    agent's lane. The rule table can only record one intent per message, so the keyword table alone
+    would hand commerce a total it has no way to compute.
+    """
+    return any(pattern.search(message) for pattern in _PIECE_PATTERNS)
+
+
 # Phrases that clearly fall outside the boutique domain.
 _OUT_OF_SCOPE_KEYWORDS = (
     "write code",
@@ -220,6 +265,9 @@ def may_read_tenant_account(org_context: dict[str, Any] | None) -> bool:
 
 
 # Which agents handle each intent.
+#
+# This is the *default* set per intent, not the last word on routing: :func:`agents_for` applies the
+# one refinement the vocabulary cannot express (a price question that names a piece needs the piece).
 _AGENT_ROUTING: dict[IntentType, list[AgentName]] = {
     "order_placement": ["memory", "visual", "commerce"],
     "item_search": ["memory", "visual"],
@@ -235,6 +283,28 @@ _AGENT_ROUTING: dict[IntentType, list[AgentName]] = {
     "tenant_account": [],
     "out_of_scope": [],
 }
+
+
+def agents_for(intent_type: IntentType, message: str) -> list[AgentName]:
+    """The agents this intent dispatches for *this* message.
+
+    One refinement on top of :data:`_AGENT_ROUTING`, and the reason the table alone was not enough:
+    ``pricing_query`` means "what does this cost", and a cost is only computable from the piece.
+    "Can you give me a discount?" needs commerce alone, but "how much is the pink dress?" needs Elle
+    to find the pink dress first - and the table can only record one intent per message, with pricing
+    deliberately outranking item search ("how much is this dress?" *is* a price question).
+
+    The consequence of getting this wrong was visible in a real thread: a staff message asking what
+    discount could be given on a named dress was routed to memory and commerce, Elle never ran, Lina
+    found no line items and skipped, and the only reply was Ava's customer brief - an answer to a
+    question nobody had asked. What the person noticed was Lina's silence, and this refinement is
+    only half of that fix; the other half is commerce answering a question it has no basket for
+    (ADR-028).
+    """
+    agents = list(_AGENT_ROUTING[intent_type])
+    if intent_type == "pricing_query" and names_a_piece(message):
+        agents.insert(1, "visual")
+    return agents
 
 
 class IntentGateOutput(BaseModel):
@@ -288,7 +358,7 @@ def classify_by_rules(message: str) -> IntentGateOutput:
         if any(keyword in lowered for keyword in keywords):
             return IntentGateOutput(
                 intent_type=intent_type,
-                suggested_agents=_AGENT_ROUTING[intent_type],
+                suggested_agents=agents_for(intent_type, message),
             )
 
     return IntentGateOutput(
@@ -590,7 +660,7 @@ async def supervise(
             org_context=org_context,
         )
 
-    refined = _parse_plan(getattr(response, "content", None))
+    refined = _parse_plan(getattr(response, "content", None), message)
     if refined is None:
         logger.warning("Supervisor returned no usable plan; keeping the rule-based decision.")
         return _with_a_bounded_reply(
@@ -812,12 +882,16 @@ def _build_supervisor_messages(
     ]
 
 
-def _parse_plan(content: Any) -> SupervisorPlan | None:
+def _parse_plan(content: Any, message: str = "") -> SupervisorPlan | None:
     """Parse the supervisor's JSON reply, tolerating a code fence around it.
 
     Validates leniently rather than strictly: an unexpected key or an unknown agent name is
     dropped instead of discarding an otherwise usable decision. The plan's *content* is what
     matters here, and the driver re-validates the agent set anyway.
+
+    ``message`` is carried only so the fallback agent set can apply the same per-message refinement
+    the rules do (:func:`agents_for`): a model that names an intent but no agents must land on the
+    set that intent means *for this message*, not on the bare default.
     """
     if not isinstance(content, str) or not content.strip():
         return None
@@ -866,7 +940,7 @@ def _parse_plan(content: Any) -> SupervisorPlan | None:
         intent_type=intent,
         # An intent the rules know implies a set; trust the model's ordering when it named one,
         # otherwise fall back to the table so a plan is never empty by omission.
-        suggested_agents=agents or list(_AGENT_ROUTING[intent]),
+        suggested_agents=agents or agents_for(intent, message),
         requires_approval=bool(parsed.get("requires_approval", False)),
         is_relevant=True,
         clarification=clarification,

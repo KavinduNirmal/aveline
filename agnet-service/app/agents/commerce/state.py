@@ -26,6 +26,11 @@ class CommerceAgentState(TypedDict, total=False):
     delivery_address: str | None
     channel: str
     message: str
+    #: Why the line items are here: ``"order"`` when the message asks to buy, ``"quote"`` when it asks
+    #: what something would cost (ADR-028). A quote is evaluated by exactly the same rules and must
+    #: never pause for approval or settle: a question is not an order, and a run that paused would
+    #: create one.
+    purpose: str | None
     # Conversation context (ADR-023), forwarded verbatim by the orchestrator for uniformity with
     # the other specialists. Commerce makes no LLM call, so nothing here renders it yet; it is
     # declared so the transport is complete and a future prompt has the window available.
@@ -50,6 +55,10 @@ class CommerceAgentState(TypedDict, total=False):
     approval_reason: str | None
     triggered_rules: list[str]
     flags: list[str]
+    #: The house rules as the evaluation read them, kept so a quote can apply the same ceiling the
+    #: deal evaluation just applied instead of calling for the thresholds twice (ADR-028).
+    max_allowed_discount: float
+    min_required_margin: float
 
     # Human-in-the-loop resolution state (when resumed from an approval decision)
     approval_decision: str | None  # "approved", "rejected", "revised"

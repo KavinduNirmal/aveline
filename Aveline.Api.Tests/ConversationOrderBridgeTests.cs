@@ -77,7 +77,7 @@ public class ConversationOrderBridgeTests
         Guid? customerId = null,
         string? phoneNumber = "+94763475058",
         string? customerName = "Kasha Vivian Perera",
-        IReadOnlyList<OrderContextItem>? items = null)
+        OrderContext? context = null)
         => harness.Bridge.CreateForPausedRunAsync(
             OrgId,
             threadId,
@@ -85,7 +85,7 @@ public class ConversationOrderBridgeTests
             customerId,
             phoneNumber,
             customerName,
-            items ?? new[] { Saree });
+            context ?? new OrderContext(new[] { Saree }));
 
     [Fact]
     public async Task APausedRun_CreatesAnOrderWithTheItemsTheConversationDerived()
@@ -187,11 +187,36 @@ public class ConversationOrderBridgeTests
         var harness = BuildHarness();
 
         var outcome = await CreateAsync(
-            harness, customerId: Guid.CreateVersion7(), items: Array.Empty<OrderContextItem>());
+            harness,
+            customerId: Guid.CreateVersion7(),
+            context: new OrderContext(Array.Empty<OrderContextItem>()));
 
         Assert.Null(outcome);
         harness.Orders.Verify(service => service.CreateOrderAsync(
             It.IsAny<Guid>(), It.IsAny<CreateOrderDto>(), It.IsAny<Guid?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task AQuoteContext_NeverBecomesAnOrder()
+    {
+        // Invariant A7 (ADR-028). A pricing question resolves the same pieces an order does, so the
+        // only thing standing between "what would 5% off cost?" and a sale is this purpose. A pause
+        // carrying a quote is a contradiction, and the refusal has to live at the write rather than
+        // in a caller's good behaviour.
+        var harness = BuildHarness();
+
+        var outcome = await CreateAsync(
+            harness,
+            customerId: Guid.CreateVersion7(),
+            context: new OrderContext(new[] { Saree }, OrderContextPurpose.Quote));
+
+        Assert.Null(outcome);
+        harness.Orders.Verify(service => service.CreateOrderAsync(
+            It.IsAny<Guid>(), It.IsAny<CreateOrderDto>(), It.IsAny<Guid?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        harness.Customers.Verify(service => service.IdentifyOrCreateAsync(
+            It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 

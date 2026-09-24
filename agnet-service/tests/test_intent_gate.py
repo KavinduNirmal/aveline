@@ -7,7 +7,13 @@ input. The gate is shared infra and must not execute slice business logic.
 
 import pytest
 
-from app.gate import IntentGateOutput, classify_by_rules, infer_intent
+from app.gate import (
+    IntentGateOutput,
+    agents_for,
+    classify_by_rules,
+    infer_intent,
+    names_a_piece,
+)
 
 # ---------------------------------------------------------------------------
 # classify_by_rules (deterministic)
@@ -51,9 +57,58 @@ def test_classify_by_rules_item_search_suggests_memory_and_visual():
     assert set(result.suggested_agents) == {"memory", "visual"}
 
 
-def test_classify_by_rules_pricing_suggests_memory_and_commerce():
-    result = classify_by_rules("How much is this dress?")
+def test_classify_by_rules_pricing_without_a_piece_suggests_memory_and_commerce():
+    result = classify_by_rules("Can you give me a discount?")
     assert set(result.suggested_agents) == {"memory", "commerce"}
+
+
+def test_classify_by_rules_pricing_that_names_a_piece_also_suggests_visual():
+    """A price is only computable from the piece, and the piece is Elle's to look up (ADR-028).
+
+    The table can only record one intent per message, and pricing deliberately outranks item search -
+    "how much is this dress?" *is* a price question - so without this the plan handed commerce a
+    question it had no way to price.
+    """
+    result = classify_by_rules("How much is this dress?")
+    assert result.intent_type == "pricing_query"
+    assert result.suggested_agents == ["memory", "visual", "commerce"]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "How much of a discount can we give this customer for +Champagne Rose satin midi dress?",
+        "What is the cost of the blouse?",
+        "give me a price on the emerald saree",
+    ],
+)
+def test_names_a_piece_is_true_for_the_pieces_pricing_questions_name(message):
+    assert names_a_piece(message) is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Can you give me a discount?",
+        "How much do I have left to spend?",
+        "What is the price of the Orchid plan?",
+        "who are our customers?",
+    ],
+)
+def test_names_a_piece_is_false_when_no_garment_is_named(message):
+    """The narrowing matters: a false positive would dispatch Elle to search for nothing."""
+    assert names_a_piece(message) is False
+
+
+def test_agents_for_keeps_the_table_order_of_the_lanes():
+    """Order is the plan's execution order, so the refinement must insert, not rebuild."""
+    assert agents_for("pricing_query", "how much is the dress?") == [
+        "memory",
+        "visual",
+        "commerce",
+    ]
+    assert agents_for("item_search", "do you have a blue saree?") == ["memory", "visual"]
+    assert agents_for("aveline_help", "what is a Blossom?") == []
 
 
 def test_classify_by_rules_out_of_scope_has_no_agents():

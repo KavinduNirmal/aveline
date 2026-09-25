@@ -1,5 +1,26 @@
 # Aveline — Azure Deployment Plan (Demo Phase)
 
+> **Status:** **DEPLOYED — see [`deploy/README.md`](../deploy/README.md) for what is actually live.**
+> This document is retained as the original 2026-09-01 plan. Several of its claims were disproven
+> during the deployment; the corrections are listed below and at each affected line.
+>
+> ### Corrections (verified 2026-09-25)
+>
+> | This document says | Reality |
+> |---|---|
+> | Redis is "nice-to-have; not yet used in code"; "Skip Redis" | **Redis is load-bearing.** 15 API files use it for the distributed cache, the ADR-014 pub/sub event bus, distributed job locks, idempotency, quota counters, rate limiting and a health check. Azure Managed Redis is deployed. |
+> | Azure Static Web Apps hosts the dashboard | **SWA cannot be created** — it exists in none of the five regions this subscription permits. The SPA is on Vercel. |
+> | `minReplicas: 0` on both apps | **Wrong for this application.** The API registers 26 in-process `PeriodicTimer` jobs and holds the `PSUBSCRIBE` subscriptions; asleep means the jobs never tick and agent→API events are dropped. Both apps run `minReplicas: 1`. |
+> | `GET /openapi/v1.json` is a production warm-up target | **It does not exist in Production** — `Program.cs` maps OpenAPI only in Development. Warm up on `/health` instead. |
+> | Migrations run "in a CI step" | **There is no CI migration step and no deploy job at all.** `Program.cs` applies migrations only when `IsDevelopment()`, so schema is applied out of band with `dotnet ef migrations bundle`. |
+> | Azure Cache for Redis | Classic Redis is unavailable in all five permitted regions; **Azure Managed Redis** (`redisEnterprise`) is used, with `NoEviction` rather than the `VolatileLRU` default. |
+>
+> **Known defect in the plan's assumptions:** the default eviction policy matters here. `VolatileLRU`
+> makes the TTL-bearing job lock and idempotency mutex evictable, which is a money-path correctness
+> risk; the deployed instance pins `NoEviction`.
+>
+> Original status line follows.
+>
 > **Status:** Plan — to be implemented. See [ADR-006](ADR/ADR-006-deployment-platform.md) for the architectural decision.
 >
 > This document is the working implementation plan for deploying Aveline to Azure for the SE3090 demo phase (budget < $100) with fully automated CI/CD.
@@ -69,7 +90,7 @@ All communication between clients and the agent service goes through the API —
 | `Aveline.Api` | Azure Container Apps | Consumption, min 0 replicas | $0 (in grant) | 180k vCPU-sec, 360k GiB-sec, 2M req/mo |
 | `agent-service` | Azure Container Apps | Consumption, min 0 replicas | $0 (in grant) | same grant |
 | Database | PostgreSQL Flexible Server | Burstable **B1ms**, 32 GB | $0 | 750 h/mo + 32 GB (12-mo offer) |
-| Web dashboard | Azure Static Web Apps | Free tier | $0 | 100 GB bandwidth/mo |
+| Web dashboard | ~~Azure Static Web Apps~~ **Vercel** | Free tier | $0 | SWA is unavailable in every permitted region (corrected 2026-09-25) |
 | Container images | Azure Container Registry | Standard | $0 | 12-mo offer (100 GB) — *fallback: GHCR* |
 | Secrets | Azure Key Vault | Free | $0 | always free |
 | Observability | Application Insights + Log Analytics | Free tier | $0 | 5 GB logs/mo |
@@ -100,7 +121,7 @@ All communication between clients and the agent service goes through the API —
 
 ### Phase 1 — Infrastructure as Code (Bicep)
 Create `deploy/main.bicep` (+ `main.parameters.json`) that declares:
-- Container Apps environment (consumption) + two container apps (`api`, `agent`), each with `minReplicas: 0`, HTTP scaling.
+- Container Apps environment (consumption) + two container apps (`aveline-api`, `aveline-agent`), each with `minReplicas: 1` (**corrected 2026-09-25** — `0` silently stops the 26 `PeriodicTimer` jobs and drops agent→API events), HTTP scaling.
 - PostgreSQL Flexible Server (B1ms) with `CREATE EXTENSION vector` available; firewall locked to the ACA environment.
 - Key Vault (access policies / RBAC) + initial secrets.
 - Static Web Apps (free tier).
@@ -211,7 +232,10 @@ jobs:
 
 1. **Scale-to-zero** on both Container Apps.
 2. **Stop** PostgreSQL Flexible Server when not demoing (start/stop supported).
-3. **Skip Redis** (nice-to-have; not yet used in code).
+3. **Redis is required, not optional** (corrected 2026-09-25). It is used by 15 API files for the
+   distributed cache, the pub/sub event bus, job locks, idempotency, quota counters and rate
+   limiting, plus the agent's event bus. Azure Managed Redis is deployed; the instance pins
+   `NoEviction` because the plan's assumed default would evict the job lock and idempotency keys.
 4. Use **Burstable B1ms**, never General Purpose.
 5. Keep LLM calls minimal; prefer cheaper models for demo scripts.
 6. **Cost Management budget + alerts** at $10/mo.
@@ -224,7 +248,7 @@ jobs:
 
 - [ ] `docker compose config` and both `Dockerfile`s build locally.
 - [ ] `az deployment group create` succeeds idempotently (run twice, no drift).
-- [ ] `GET /openapi/v1.json` and `GET /health` respond from the deployed Container Apps.
+- [ ] `GET /health` responds from the deployed Container Apps. (**Corrected 2026-09-25:** the original item also listed `/openapi/v1.json`, which does not exist in Production — OpenAPI is mapped only when `IsDevelopment()`.)
 - [ ] A database migration + `CREATE EXTENSION vector` run via CI.
 - [ ] A sample customer-memory semantic search returns results (pgvector path).
 - [ ] A LangGraph workflow pauses for approval and resumes from the PostgreSQL checkpointer.

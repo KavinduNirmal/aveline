@@ -1,0 +1,256 @@
+# =============================================================================
+# Aveline — Azure deployment
+#
+# Deliberately SEPARATE from ci.yml: ci.yml validates every push and pull request
+# and must stay fast and secret-free; this workflow ships, so it runs only when
+# asked and only where the OIDC trust exists.
+#
+# NOTE: no deployment job existed before this file. Every deployment of the beta
+# was performed by hand from a workstation, which is why the environment drifted
+# from docs/deployment.md. This workflow is the first codified path.
+#
+# -----------------------------------------------------------------------------
+# ONE-TIME SETUP (required before this can run)
+# -----------------------------------------------------------------------------
+# 1. An Entra ID app registration with a federated credential for this repository,
+#    trusting GitHub's OIDC issuer. No client secret is stored.
+#
+# 2. Repository variables   (Settings > Secrets and variables > Actions > Variables)
+#      AZURE_CLIENT_ID        the app registration's application (client) id
+#      AZURE_TENANT_ID        the directory (tenant) id
+#      AZURE_SUBSCRIPTION_ID  the subscription id
+#      ACR_NAME               avelineacr
+#      RESOURCE_GROUP         rg-aveline
+#      CONTAINER_APP_ENV      cae-aveline
+#
+# 3. Role assignments for that identity:
+#      AcrPush                        on avelineacr        (push images)
+#      Key Vault Secrets User         on kv-aveline-mw     (read the connection string for migrations)
+#      Contributor                    on rg-aveline         (update the container apps)
+#
+# 4. Repository secret
+#      POSTGRES_ADMIN_PASSWORD  only if you intend to re-run the Bicep template.
+#                               Migrations read the connection string from Key Vault
+#                               and do not need it.
+# =============================================================================
+
+name: Aveline Deploy
+
+on:
+  # Manual by default. Nothing ships without a human choosing to ship it.
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy. Defaults to the commit SHA of the selected ref."
+        required: false
+        type: string
+      run_migrations:
+        description: "Apply EF Core migrations before rolling the apps."
+        required: false
+        type: boolean
+        default: false
+      skip_build:
+        description: "Skip build+push and deploy an already-published tag."
+        required: false
+        type: boolean
+        default: false
+
+# Only ever one deployment at a time, and never cancel one mid-flight: a cancelled
+# roll can leave the API on a half-applied revision.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # Required for OIDC. Without it azure/login cannot exchange a token.
+  id-token: write
+
+env:
+  ACR_NAME: ${{ vars.ACR_NAME }}
+  RESOURCE_GROUP: ${{ vars.RESOURCE_GROUP }}
+  CONTAINER_APP_ENV: ${{ vars.CONTAINER_APP_ENV }}
+  KEY_VAULT_NAME: kv-aveline-mw
+  API_APP: aveline-api
+  AGENT_APP: aveline-agent
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Build and push both images
+  # ---------------------------------------------------------------------------
+  build-and-push:
+    name: Build and push images
+    if: ${{ !inputs.skip_build }}
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image tag
+        id: tag
+        run: |
+          TAG="${{ inputs.image_tag }}"
+          if [ -z "$TAG" ]; then TAG="${GITHUB_SHA::7}"; fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Deploying tag: $TAG"
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to the registry
+        run: az acr login --name "$ACR_NAME"
+
+      - name: Build and push the API image
+        run: |
+          REG="${ACR_NAME}.azurecr.io"
+          TAG="${{ steps.tag.outputs.tag }}"
+          docker build -f Aveline.Api/Dockerfile -t "$REG/aveline-api:$TAG" -t "$REG/aveline-api:latest" Aveline.Api
+          docker push "$REG/aveline-api:$TAG"
+          docker push "$REG/aveline-api:latest"
+
+      - name: Build and push the agent image
+        run: |
+          REG="${ACR_NAME}.azurecr.io"
+          TAG="${{ steps.tag.outputs.tag }}"
+          docker build -f agent-service/Dockerfile -t "$REG/aveline-agent:$TAG" -t "$REG/aveline-agent:latest" agent-service
+          docker push "$REG/aveline-agent:$TAG"
+          docker push "$REG/aveline-agent:latest"
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Migrations
+  #
+  # Opt-in, because migrations are the only irreversible step here. They must run
+  # BEFORE the new revision starts: Program.cs applies migrations only when
+  # IsDevelopment(), so a Production deployment has no startup migration path at
+  # all and nothing else in the repository applies them.
+  #
+  # Ordering caveat: the previous revision keeps serving during the migration, so
+  # every migration must be backward compatible with the code still running.
+  # ---------------------------------------------------------------------------
+  migrate:
+    name: Apply EF Core migrations
+    needs: build-and-push
+    if: ${{ inputs.run_migrations }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build the migration bundle
+        run: |
+          dotnet tool restore
+          dotnet ef migrations bundle \
+            --project Aveline.Api --startup-project Aveline.Api \
+            --configuration Release --output efbundle --force
+
+      # Read from Key Vault rather than a GitHub secret: the vault is already the
+      # source of truth, and this keeps the connection string out of Actions.
+      #
+      # NOTE: the *local* ambient environment must not be allowed to select the
+      # in-memory provider. The API now refuses that in Production, but the
+      # migration bundle reads ConnectionStrings__DefaultConnection directly.
+      - name: Apply migrations
+        run: |
+          CONN=$(az keyvault secret show \
+            --vault-name "$KEY_VAULT_NAME" \
+            --name postgres-connection-string \
+            --query value -o tsv)
+          # Fail loudly on an empty string rather than migrating something local.
+          if [ -z "$CONN" ]; then
+            echo "::error::Empty connection string from Key Vault; refusing to migrate."
+            exit 1
+          fi
+          ./efbundle --connection "$CONN"
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Roll the applications
+  #
+  # `az containerapp update --image` creates a new revision and waits for it to
+  # become ready. The agent is rolled FIRST so that when the API revision starts,
+  # its dependency is already serving the matching code.
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Roll Container Apps revisions
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve image tag
+        id: tag
+        run: |
+          TAG="${{ inputs.image_tag }}"
+          if [ -z "$TAG" ]; then TAG="${GITHUB_SHA::7}"; fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Roll the agent
+        run: |
+          REG="${ACR_NAME}.azurecr.io"
+          az containerapp update \
+            --name "$AGENT_APP" --resource-group "$RESOURCE_GROUP" \
+            --image "$REG/aveline-agent:${{ steps.tag.outputs.tag }}"
+
+      - name: Roll the API
+        run: |
+          REG="${ACR_NAME}.azurecr.io"
+          az containerapp update \
+            --name "$API_APP" --resource-group "$RESOURCE_GROUP" \
+            --image "$REG/aveline-api:${{ steps.tag.outputs.tag }}"
+
+      # A revision reporting "Healthy" is NOT evidence the application works: an
+      # Express environment once ran the placeholder quickstart image against a
+      # healthy revision. Assert the two things that actually distinguish a live
+      # deployment.
+      - name: Verify the deployment
+        run: |
+          API_FQDN=$(az containerapp show \
+            --name "$API_APP" --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn -o tsv)
+
+          # 1. The revision must be running the image we just pushed.
+          RUNNING=$(az containerapp show \
+            --name "$API_APP" --resource-group "$RESOURCE_GROUP" \
+            --query "properties.template.containers[0].image" -o tsv)
+          echo "API is configured to run: $RUNNING"
+          case "$RUNNING" in
+            *"aveline-api:${{ steps.tag.outputs.tag }}"*) ;;
+            *) echo "::error::API is not running the expected tag"; exit 1 ;;
+          esac
+
+          # 2. The application must actually answer, with its dependencies healthy.
+          echo "Polling https://${API_FQDN}/health ..."
+          for i in $(seq 1 30); do
+            CODE=$(curl -s -o /tmp/health.json -w '%{http_code}' -m 15 "https://${API_FQDN}/health" || true)
+            if [ "$CODE" = "200" ]; then
+              cat /tmp/health.json
+              STATUS=$(python3 -c "import json;print(json.load(open('/tmp/health.json'))['status'])")
+              if [ "$STATUS" = "Healthy" ]; then
+                echo "Deployment verified: /health is Healthy."
+                exit 0
+              fi
+            fi
+            echo "  attempt $i: HTTP $CODE"
+            sleep 20
+          done
+          echo "::error::API did not report Healthy within the timeout."
+          exit 1

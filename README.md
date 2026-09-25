@@ -37,7 +37,7 @@ graph TD
     end
 
     subgraph "Agentic Subsystem"
-        AgentSvc["FastAPI + LangGraph Service<br/><code>agnet-service</code>"]
+        AgentSvc["FastAPI + LangGraph Service<br/><code>agent-service</code>"]
         Agent1["Customer Memory Agent<br/><i>(pgvector semantic search)</i>"]
         Agent2["Visual Insight Agent<br/><i>(Photo analysis & sourcing)</i>"]
         Agent3["Commerce Agent<br/><i>(Margins, approvals, courier)</i>"]
@@ -129,7 +129,7 @@ aveline/
 │   ├── Infrastructure/          # AppDbContext, pgvector config, event bus, external clients
 │   └── Migrations/              # EF Core migrations
 ├── Aveline.Api.Tests/           # xUnit suite for the API (unit + integration)
-├── agnet-service/               # Python 3.12 Agent Service (FastAPI + LangGraph)
+├── agent-service/               # Python 3.12 Agent Service (FastAPI + LangGraph)
 │   ├── app/
 │   │   ├── agents/              # customer_memory, visual_insight, and commerce agents
 │   │   ├── api/                 # Internal HTTP surface (agents, health)
@@ -205,7 +205,7 @@ schedule.
 - [Developer Setup & Onboarding Guide](GET_STARTED.md)
 - [Running Aveline Locally with Authentication](docs/guides/local-auth-development.md)
 - [Granting a Team Owner Role Locally](docs/guides/grant-team-owner-local.md)
-- Component READMEs: [Aveline.Api](Aveline.Api/README.md) · [agnet-service](agnet-service/README.md) · [handbook](handbook/README.md)
+- Component READMEs: [Aveline.Api](Aveline.Api/README.md) · [agent-service](agent-service/README.md) · [handbook](handbook/README.md)
 
 ### Architecture
 - [Authentication Architecture](docs/architecture/authentication.md)

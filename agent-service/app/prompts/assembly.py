@@ -2,7 +2,7 @@
 
 Composes the prompt layers in order:
 
-1. Universal system prompt (loaded from ``agnet-service/app/prompts/SYSTEM_PROMPT.md``).
+1. Universal system prompt (loaded from ``agent-service/app/prompts/SYSTEM_PROMPT.md``).
 2. Agent-specific role & tone (from ``agent_prompts.AGENT_PROMPTS``).
 3. Dynamic customer/subscription context (from ``context.build_customer_prompt``).
 4. Optional dialogue context: the bounded conversation window (ADR-023), rendered by

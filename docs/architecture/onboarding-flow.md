@@ -284,7 +284,7 @@ After the organization is finalized, `OnboardingService` calls
 
 - The call is **resilient / non-fatal** — a warm-up failure logs a warning but does not fail
   onboarding.
-- The Agent Service endpoint (`agnet-service/app/api/agents.py`) is protected by
+- The Agent Service endpoint (`agent-service/app/api/agents.py`) is protected by
   `require_internal_token` and logs a structured `agent_warmup` event, returning
   `{ "status": "warmed", "ready": true, ... }`.
 
@@ -367,7 +367,7 @@ link land on `routes/InvitePage.tsx` (`/invite?code=…`).
   slice by `OrganizationInvitationLifecycleTests`, `InvitationManagementEndpointsIntegrationTests`,
   `EmailServiceTests`, `DistributedInvitationCodeStoreTests`, `DistributedRateLimiterTests`, and
   `InvitationAcceptRateLimitIntegrationTests`. `dotnet test Aveline.Api.Tests` passes (206 tests).
-- **Agent Service:** `agnet-service/tests/test_agents_warmup.py` covers warmup auth and payload.
+- **Agent Service:** `agent-service/tests/test_agents_warmup.py` covers warmup auth and payload.
 - **Frontend:** `vitest run` (onboarding/integration/invitation contracts), `tsc -b`, `oxlint`, and `vite build`.
   `PlanSelectionStep.dom.test.tsx` asserts the step renders the server price, and
   `lib/onboarding.test.ts` asserts `selectPlan` returns the widened subscription fields.

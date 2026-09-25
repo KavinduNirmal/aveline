@@ -22,7 +22,7 @@ tests/
 ## Running tests
 
 ```bash
-# From agnet-service/ root:
+# From agent-service/ root:
 pytest tests/ -v
 ```
 

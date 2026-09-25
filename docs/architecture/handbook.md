@@ -73,14 +73,14 @@ handbook/company/*.md  ─────┴─▶ chunker ─▶ embed ─▶ upse
                                            (seeder → API)
 ```
 
-A CLI (`agnet-service/scripts/seed_handbook.py`) reads markdown from a repository checkout with
+A CLI (`agent-service/scripts/seed_handbook.py`) reads markdown from a repository checkout with
 ordinary filesystem access and POSTs each chunk to the `.NET` API, which embeds the content and
 upserts it. **No frontend is involved at any point** — the frontend directory is only where the
 product documentation is authored. Re-running the seeder against unchanged sources writes nothing,
 because a chunk whose content hash is unchanged is a true no-op.
 
 ```bash
-cd agnet-service
+cd agent-service
 python scripts/seed_handbook.py --dry-run                      # no HTTP at all
 python scripts/seed_handbook.py --token "$INTERNAL_API_TOKEN"  # upsert everything
 python scripts/seed_handbook.py --source web-docs/salon --prune

@@ -9,7 +9,9 @@ using Aveline.Api.Modules.Organizations.Services;
 using Aveline.Api.Modules.Shared.DTOs;
 using Aveline.Api.Modules.Shared.Models;
 using Aveline.Api.Modules.Shared.Repositories;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 namespace Aveline.Api.Modules.Shared.Services;
 
 public class UserService : IUserService
@@ -123,10 +125,29 @@ public class UserService : IUserService
                 UpdatedAt = DateTime.UtcNow
             };
 
-            await _userRepository.CreateAsync(user, cancellationToken);
-            _logger.LogInformation("Created new Aveline DB stub user for ClerkId={ClerkId}, Email={Email}", clerkId, email);
+            try
+            {
+                await _userRepository.CreateAsync(user, cancellationToken);
+                _logger.LogInformation("Created new Aveline DB stub user for ClerkId={ClerkId}, Email={Email}", clerkId, email);
+                dbUser = user;
+            }
+            catch (DbUpdateException ex) when (IsDuplicateClerkId(ex))
+            {
+                // A first page load fires several requests at once (the notifications hub
+                // negotiate and /users/me among them). Each finds no row and each runs this
+                // insert, so all but one lose the race against the unique index on ClerkId.
+                // The loser adopts the winner's row instead of surfacing an unhandled 500.
+                var winner = await _userRepository.GetByClerkIdAsync(clerkId, cancellationToken);
+                if (winner == null)
+                {
+                    throw;
+                }
 
-            dbUser = user;
+                _logger.LogInformation(
+                    "Concurrent first-login for ClerkId={ClerkId}; adopting the row created by the winning request.",
+                    clerkId);
+                dbUser = winner;
+            }
         }
         else
         {
@@ -564,6 +585,15 @@ public class UserService : IUserService
 
         return changed;
     }
+
+    /// <summary>
+    /// True when the failure is the unique-index violation raised by two concurrent first
+    /// requests racing to create the same Clerk user row. The constraint is named explicitly so
+    /// an unrelated unique violation is never swallowed.
+    /// </summary>
+    private static bool IsDuplicateClerkId(DbUpdateException ex)
+        => ex.InnerException is PostgresException { SqlState: "23505" } postgres
+           && string.Equals(postgres.ConstraintName, "IX_Users_ClerkId", StringComparison.Ordinal);
 
     private static bool ClaimsContextDiffers(UserOnboardingCacheItem cached, ClaimsPrincipal principal)
     {

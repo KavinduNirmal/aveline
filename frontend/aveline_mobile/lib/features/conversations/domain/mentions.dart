@@ -5,7 +5,7 @@
 /// number. This library finds those tokens so the Salon can draw them as pills.
 ///
 /// **It is a mirror of the web's `lib/mentions.ts`, which is itself a mirror of the
-/// resolver's own grammar** (`agnet-service/app/customer_resolution/mentions.py`),
+/// resolver's own grammar** (`agent-service/app/customer_resolution/mentions.py`),
 /// and it has to stay one: the pill claims "this is the entity the lookup read", so
 /// a span wider or narrower than the resolver's would be a lie about what was
 /// resolved. The word list below is copied from that module, and `mentions_test.dart`

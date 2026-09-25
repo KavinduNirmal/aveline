@@ -2,6 +2,7 @@ using Aveline.Api.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Npgsql;
 
 namespace Aveline.Api.Configurations;
@@ -16,9 +17,18 @@ public static class DatabaseConfiguration
     /// </summary>
     public const string PoolName = "aveline";
 
+    /// <summary>
+    /// The documented escape hatch that lets a Production host keep the in-memory provider. It
+    /// exists for test and demo hosts only, and mirrors
+    /// <c>Media:AllowDatabaseProviderInProduction</c>: the safe default is refused loudly rather
+    /// than accepted silently.
+    /// </summary>
+    public const string AllowInMemoryInProductionKey = "Database:AllowInMemoryInProduction";
+
     public static IServiceCollection AddAvelineDatabase(
         this IServiceCollection services,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IHostEnvironment environment)
     {
         // Reads Npgsql's pool instruments for the collector's saturation emission (Slice 5).
         services.AddSingleton<NpgsqlPoolMetricsListener>();
@@ -28,7 +38,12 @@ public static class DatabaseConfiguration
 
         if (string.IsNullOrWhiteSpace(connectionString))
         {
-            // For environments where PostgreSQL isn't configured, e.g. tests or local dev without PostgreSQL
+            // For environments where PostgreSQL isn't configured, e.g. tests or local dev without
+            // PostgreSQL. Production must opt in explicitly first: without a connection string the
+            // API boots cleanly, answers every request, returns empty results and loses every write
+            // on restart, which is indistinguishable from a data bug.
+            EnsureInMemoryIsAllowed(environment, configuration);
+
             services.AddDbContext<AppDbContext>(options =>
             {
                 options.UseInMemoryDatabase("AvelineInMemoryDb");
@@ -57,4 +72,33 @@ public static class DatabaseConfiguration
     /// </summary>
     internal static NpgsqlDataSource CreateDataSource(string connectionString)
         => new NpgsqlDataSourceBuilder(connectionString) { Name = PoolName }.Build();
+
+    /// <summary>
+    /// Fails fast when Production would run with no connection string. Other environments stay
+    /// permissive so local development and tests need no database.
+    /// </summary>
+    private static void EnsureInMemoryIsAllowed(
+        IHostEnvironment environment, IConfiguration configuration)
+    {
+        var isProduction = string.Equals(
+            environment.EnvironmentName, Environments.Production, StringComparison.OrdinalIgnoreCase);
+
+        if (!isProduction)
+        {
+            return;
+        }
+
+        if (bool.TryParse(configuration[AllowInMemoryInProductionKey], out var allowed) && allowed)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            "ConnectionStrings:DefaultConnection must be configured in Production. Without it the "
+            + "API would boot against an EF Core in-memory database, serve empty results and lose "
+            + "every write on restart without reporting an error. Set the "
+            + "ConnectionStrings__DefaultConnection environment variable, or set "
+            + "Database:AllowInMemoryInProduction=true to accept a non-persistent database "
+            + "(test and demo hosts only).");
+    }
 }

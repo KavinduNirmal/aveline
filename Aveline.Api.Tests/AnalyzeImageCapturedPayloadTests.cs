@@ -314,8 +314,8 @@ public class AnalyzeImageCapturedPayloadTests : IAsyncLifetime
 
     /// <summary>
     /// A C# mirror of the shipped Python reader
-    /// (<c>agnet-service/app/tools/inventory/image_tools.py:54-75</c>) and of
-    /// <c>ImageAttributes</c> (<c>agnet-service/app/schemas/visual_insight.py:12-24</c>). The
+    /// (<c>agent-service/app/tools/inventory/image_tools.py:54-75</c>) and of
+    /// <c>ImageAttributes</c> (<c>agent-service/app/schemas/visual_insight.py:12-24</c>). The
     /// defaults are the Python defaults on purpose: a value that falls back here is a value the
     /// boundary lost.
     /// </summary>

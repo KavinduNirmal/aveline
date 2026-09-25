@@ -63,7 +63,7 @@ resolver read — the marker plus the captured name or number, and not the prose
 greedy capture dropped and then trimmed back off.
 
 `domain/mentions.dart` is a mirror of the resolver's own parser
-(`agnet-service/app/customer_resolution/mentions.py`), and it has to stay one: the
+(`agent-service/app/customer_resolution/mentions.py`), and it has to stay one: the
 pill claims "this is the entity the lookup read", so a span wider or narrower than
 the resolver's would be a lie about what was resolved. The word list is copied from
 that module, and the cases in `mentions_test.dart` are the web's

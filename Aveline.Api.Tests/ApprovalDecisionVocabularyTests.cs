@@ -9,7 +9,7 @@ using Aveline.Api.Modules.Commerce.Models;
 /// </summary>
 /// <remarks>
 /// The graph's values are the source of truth. These tests pin the literals on the C# side;
-/// <c>agnet-service/tests/test_hitl_resume.py</c> pins the same three on the Python side, and the two
+/// <c>agent-service/tests/test_hitl_resume.py</c> pins the same three on the Python side, and the two
 /// are the only place the languages meet.
 /// </remarks>
 public class ApprovalDecisionVocabularyTests

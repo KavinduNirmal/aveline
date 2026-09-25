@@ -1461,7 +1461,7 @@ the agent (`AgentStatus.skipped`, `app/schemas/response.py`), mapped to the back
 `_run_status_from_response` (`app/api/agents.py`), and persisted as `AgentRunStatus.Skipped`
 (`AgentRunIngestService`). It is therefore **not** `Succeeded`, and S-14 excludes it from the success
 rate. Verified on both sides of the wire:
-`agnet-service/tests/test_consent_enforcement.py::test_a_skip_maps_to_the_backend_skipped_run_status`
+`agent-service/tests/test_consent_enforcement.py::test_a_skip_maps_to_the_backend_skipped_run_status`
 and `::test_run_concierge_reports_a_consent_skip_as_skipped`,
 `Aveline.Api.Tests/AgentRunIngestTests.cs::Report_WithSkippedStatus_IsPersistedAsSkipped`.
 

@@ -243,7 +243,7 @@ services:
   # ---------------------------------------------------------------------------
   agent:
     build:
-      context: ./agnet-service
+      context: ./agent-service
       dockerfile: Dockerfile
     container_name: aveline_agent
     restart: unless-stopped

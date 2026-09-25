@@ -10,6 +10,7 @@ import {
   Plus,
   Settings,
   Share2,
+  Shield,
   Shirt,
   ShoppingBag,
   Sparkles,
@@ -22,6 +23,8 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 
 import { Blossom } from '@/components/auth/Blossom'
+import { useUserContext } from '@/contexts/UserContext'
+import { hasConsoleRole } from '@/lib/admin-signup'
 import { AvelineChatDrawer } from '@/components/conversation/AvelineChatDrawer'
 import { AvelineChatLauncher } from '@/components/conversation/AvelineChatLauncher'
 import { SalonPanel } from '@/components/conversation/SalonPanel'
@@ -151,6 +154,7 @@ export function DashboardShell({
 }: DashboardShellProps) {
   const navigate = useNavigate()
   const { user } = useUser()
+  const { user: appUser } = useUserContext()
   const { signOut } = useClerk()
   // The section is part of the URL (`/app/b/:slug/:section`), not component state, so a section
   // is linkable and survives a refresh. The bare slug route redirects here with `overview`.
@@ -343,6 +347,15 @@ export function DashboardShell({
                 <CreditCard className="size-4" aria-hidden />
                 Billing &amp; plan
               </DropdownMenuItem>
+
+              {/* A boutique owner can also hold a console role. The dashboard redirect no longer
+                  sends them to the console automatically, so give them an explicit way in. */}
+              {hasConsoleRole(appUser?.userRole ? [appUser.userRole] : []) && (
+                <DropdownMenuItem onClick={() => navigate('/admin')}>
+                  <Shield className="size-4" aria-hidden />
+                  Platform Admin Console
+                </DropdownMenuItem>
+              )}
 
               <DropdownMenuSeparator />
 

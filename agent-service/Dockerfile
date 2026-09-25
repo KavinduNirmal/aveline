@@ -19,10 +19,18 @@ FROM python:3.12-alpine
 # libpq is required at runtime by psycopg2 / asyncpg.
 RUN apk add --no-cache libpq
 
+# Run as an unprivileged user, mirroring the API image (which already runs as
+# `app`). The agent only reads its bundled prompt files and talks to PostgreSQL
+# and Redis over the network — it never writes to disk — so it never needs root.
+RUN addgroup -S app && adduser -S -G app app \
+    && mkdir -p /app && chown app:app /app
+
 WORKDIR /app
 
-COPY --from=builder /install /usr/local
-COPY app ./app
+COPY --from=builder --chown=app:app /install /usr/local
+COPY --chown=app:app app ./app
+
+USER app
 
 EXPOSE 8000
 

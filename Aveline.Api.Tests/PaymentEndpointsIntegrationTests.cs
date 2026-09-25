@@ -77,6 +77,9 @@ public class PaymentEndpointsIntegrationTests : IAsyncLifetime
         builder.UseSetting("Telemetry:IpHashSalt", "test-production-ip-salt");
         builder.UseSetting("Metrics:ScrapeToken", "test-production-scrape-token");
         builder.UseSetting("Media:AllowDatabaseProviderInProduction", "true");
+        // Required by the Production database guard: this host deliberately runs on the
+        // in-memory provider.
+        builder.UseSetting("Database:AllowInMemoryInProduction", "true");
         // Required by the agent client's startup guard (AddAgentServiceClient).
         builder.UseSetting("AgentService:BaseUrl", "http://127.0.0.1:1");
         builder.UseSetting("AgentService:InternalToken", "test-internal-token");

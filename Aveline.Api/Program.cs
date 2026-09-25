@@ -61,7 +61,7 @@ builder.Services.AddAvelineObservability(builder.Configuration);
 // The bridged business-metric gauges; the collector publishes its snapshot here before the
 // database write so a database outage does not blind the operator dashboard.
 builder.Services.AddAvelineMetrics();
-builder.Services.AddAvelineDatabase(builder.Configuration);
+builder.Services.AddAvelineDatabase(builder.Configuration, builder.Environment);
 builder.Services.AddAvelineCache(builder.Configuration);
 builder.Services.AddAvelineJobs(builder.Configuration);
 builder.Services.AddAvelineEventing(builder.Configuration);

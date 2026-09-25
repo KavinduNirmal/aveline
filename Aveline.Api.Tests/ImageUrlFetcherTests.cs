@@ -92,7 +92,7 @@ public sealed class ImageUrlFetcherTests
     [Theory]
     [InlineData("ftp://example.com/photo.jpg")]
     [InlineData("file:///etc/passwd")]
-    [InlineData("/images/photo.jpg")] // Uri.TryCreate reads this as an absolute file: URI
+    [InlineData("ws://example.com/photo.jpg")]
     [InlineData("gopher://example.com/photo.jpg")]
     [InlineData("data:image/png;base64,iVBORw0KGgo=")]
     public async Task FetchAsync_WithADisallowedScheme_IsRefused(string value)

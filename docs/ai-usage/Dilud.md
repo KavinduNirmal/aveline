@@ -3428,8 +3428,11 @@
 
 ### Verification Performed
 - `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj --filter "FullyQualifiedName~CatalogTagEndpointsTests|FullyQualifiedName~CatalogEndpointsIntegrationTests"`: 33/33 passed (0 failed).
+- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj --filter "FullyQualifiedName~CatalogWriteAuthorizationTests|FullyQualifiedName~ImageUrlFetcherTests"`: 148/148 passed (0 failed).
+- `dotnet ef dbcontext info`: DbContext model loaded cleanly with 0 pending model changes.
 - `flutter analyze`: 0 errors / 0 warnings.
 - `flutter test`: 1,336/1,336 unit/widget tests passed (0 failed).
+
 
 
 

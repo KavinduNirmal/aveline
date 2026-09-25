@@ -50,7 +50,6 @@ import 'features/conversations/presentation/screens/conversations_screen.dart';
 import 'features/conversations/presentation/screens/thread_route_screen.dart';
 import 'features/customers/data/api_customer_repository.dart';
 import 'features/customers/data/customer_repository.dart';
-import 'features/customers/data/demo_customer_repository.dart';
 import 'features/customers/presentation/screens/customer_screen.dart';
 import 'features/customers/presentation/screens/customers_screen.dart';
 import 'features/home/data/api_home_repository.dart';

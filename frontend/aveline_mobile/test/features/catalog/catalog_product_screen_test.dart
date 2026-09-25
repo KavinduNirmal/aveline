@@ -3,6 +3,7 @@ import 'package:aveline_mobile/core/theme/app_theme.dart';
 import 'package:aveline_mobile/features/catalog/data/catalog_product_repository.dart';
 import 'package:aveline_mobile/features/catalog/data/demo_catalog_product_repository.dart';
 import 'package:aveline_mobile/features/catalog/domain/catalog_product.dart';
+import 'package:aveline_mobile/features/catalog/domain/catalog_tag.dart';
 import 'package:aveline_mobile/features/catalog/domain/customer_match.dart';
 import 'package:aveline_mobile/features/catalog/domain/outfit_composition.dart';
 import 'package:aveline_mobile/features/catalog/domain/outfit_payloads.dart';
@@ -254,6 +255,9 @@ class _StubRepository implements CatalogProductRepository {
     pool[index] = updated;
     return updated;
   }
+
+  @override
+  Future<List<CatalogTag>> fetchTags() => Future.value(const []);
 }
 
 /// A tall phone viewport, so the whole stack of cards is laid out and every

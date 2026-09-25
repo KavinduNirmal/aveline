@@ -1,4 +1,12 @@
 
+## Session 2026-09-25 (Standalone CatalogTag Table, Join Table & Full-Stack Tagging Pipeline)
+
+**Task:** Design and implement the standalone `CatalogTag` database entity, `InventoryItemTag` join table, EF Core migrations, repository querying methods, tenant-isolated REST API endpoints (`/api/v1/orgs/{orgId}/catalog/tags`), and Flutter mobile dynamic tag integration.
+**Tool used:** Antigravity AI Assistant
+**Status:** In Progress
+
+---
+
 ## Session 2026-09-24 (Development Branch Merge & Catalog Feature Parity Branching)
 
 **Task:** Fetch and merge latest 74 commits from `origin/development`, resolve merge conflicts in test suites, verify test and static analysis suites, structure the full mobile catalog feature parity implementation into 6 logical conventional commits, and publish to branch `flutter-feature/catalog`.
@@ -3330,18 +3338,98 @@
 ### Files Modified
 - `docs/ai-usage/Dilud.md`
 
----
+## Session 2026-09-25 (Catalog Tag System & Mobile Tag Filtering Integration)
 
-## Session 2026-09-24 (Mobile Catalog - Step 1 Implementation Plan: Add / Edit Piece with Native Camera & Vision AI)
-
-**Task:** Design and outline the architectural implementation plan for Step 1 of mobile catalog feature parity: "Add / Edit Piece with Native Camera & Vision AI".
+**Task:** Design and implement first-class `CatalogTag` system, join table `InventoryItemTag`, REST API endpoints, and dynamic tag loading/filtering pipeline in Flutter mobile app (`aveline_mobile`).
 **Tool used:** Antigravity AI Assistant
-**Status:** In Progress / Planning
+**Status:** Completed
 
-### Intended Work
-1. Define domain and data layer extensions for image upload, multimodal Vision AI analysis, and catalog item creation/mutation in `aveline_mobile`.
-2. Map mobile presentation components (Floating Action Button, `AddProductScreen`/`AddProductBottomSheet`, image picker camera/gallery integration, Vision AI analysis feedback, and form validation).
-3. Specify testing strategies (unit tests for repository, DTO normalization, and widget tests for the form flow).
+### Work Performed
+
+1. **Database Schema & Entity Layer (.NET / EF Core)**:
+   - Created `CatalogTag` entity (`Aveline.Api/Modules/VisualIntelligence/Models/CatalogTag.cs`) with multi-tenant index `(OrgId, Slug)` and `(OrgId, IsArchived, SortOrder)`.
+   - Created `InventoryItemTag` join entity (`Aveline.Api/Modules/VisualIntelligence/Models/InventoryItemTag.cs`) with composite PK `(ItemId, TagId)` and cascade deletes.
+   - Updated `InventoryItem` with `ItemTags` navigation collection.
+   - Created EF Core fluent configurations: `CatalogTagConfiguration.cs` and `InventoryItemTagConfiguration.cs`.
+   - Registered `DbSet<CatalogTag>` and `DbSet<InventoryItemTag>` in `AppDbContext.cs`.
+   - Generated and applied EF Core migration `20260925033132_AddCatalogTagsAndItemTags`.
+
+2. **DTO & Repository Layer (.NET / EF Core)**:
+   - Created DTOs: `CatalogTagDto`, `CreateCatalogTagDto`, `UpdateCatalogTagDto`, `AssignItemTagsDto`.
+   - Updated `InventoryItemDto`, `CreateInventoryItemDto`, `UpdateInventoryItemDto` to include `Tags`.
+   - Implemented `ICatalogTagRepository` and `CatalogTagRepository` with support for tenant-isolated CRUD, piece tag assignment, and default tag seeding (`bridal`, `festive`, `formal`, `casual`).
+   - Updated `InventoryRepository` (`BuildBaseQuery`, `GetByIdAsync`, `GetBySkuAsync`, `SearchAsync`, `QueryAsync`) to eager-load `ItemTags` and support tag filtering (`request.TagIds`).
+   - Updated `InventoryService` to inject `ICatalogTagRepository` and synchronize piece tags on item creation/update.
+   - Registered `ICatalogTagRepository` in `VisualIntelligenceModule.cs`.
+
+3. **REST API Endpoints (.NET Minimal APIs)**:
+   - Added endpoints to `Aveline.Api/Endpoints/CatalogEndpoints.cs`:
+     - `GET /api/v1/orgs/{orgId}/catalog/tags`: List boutique tags ordered by `SortOrder`.
+     - `POST /api/v1/orgs/{orgId}/catalog/tags`: Create tag with slug uniqueness per tenant (`BoutiqueCatalogManagePolicy`).
+     - `PUT /api/v1/orgs/{orgId}/catalog/tags/{tagId}`: Update tag fields.
+     - `DELETE /api/v1/orgs/{orgId}/catalog/tags/{tagId}`: Delete tag.
+     - `GET /api/v1/orgs/{orgId}/catalog/items/{itemId}/tags`: Retrieve tags for piece.
+     - `PUT /api/v1/orgs/{orgId}/catalog/items/{itemId}/tags`: Replace tags for piece.
+
+4. **Mobile Domain & Data Layer (Flutter / `aveline_mobile`)**:
+   - Enhanced `CatalogTag` domain model (`catalog_tag.dart`) with `fromJson`, `toJson`, `colorHex`, `sortOrder`, `isArchived`, `itemCount`.
+   - Updated `CatalogProductRepository` interface with `Future<List<CatalogTag>> fetchTags()`.
+   - Implemented `fetchTags()` in `DemoCatalogProductRepository` and `ApiCatalogProductRepository` (`GET /api/v1/orgs/{orgId}/catalog/tags`).
+
+5. **Mobile Presentation Layer (Flutter / `aveline_mobile`)**:
+   - Updated `CatalogScreen` (`catalog_screen.dart`) to load tags dynamically from repository upon `initState()`, pull-to-refresh, and boutique change.
+   - Bound `CatalogTagRow` to dynamic tags with fallback to demo tags.
+
+6. **Testing & Verification**:
+   - Created `CatalogTagEndpointsTests.cs` (4/4 passed).
+   - Ran all backend catalog endpoint tests in `Aveline.Api.Tests` (33/33 passed).
+   - Updated test fakes/stubs and added tests for tag fetching/filtering in `api_catalog_product_repository_test.dart`.
+   - Ran `flutter analyze` (0 issues).
+   - Ran complete `flutter test` test suite (1,336/1,336 passed).
+
+### Files Created
+- `Aveline.Api/Modules/VisualIntelligence/Models/CatalogTag.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Models/InventoryItemTag.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/CatalogTagConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/InventoryItemTagConfiguration.cs`
+- `Aveline.Api/Migrations/20260925033132_AddCatalogTagsAndItemTags.cs`
+- `Aveline.Api/Migrations/20260925033132_AddCatalogTagsAndItemTags.Designer.cs`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/CatalogTagDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/CreateCatalogTagDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/UpdateCatalogTagDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/AssignItemTagsDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/ICatalogTagRepository.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/CatalogTagRepository.cs`
+- `Aveline.Api.Tests/CatalogTagEndpointsTests.cs`
+
+### Files Modified
+- `Aveline.Api/Infrastructure/Data/AppDbContext.cs`
+- `Aveline.Api/Migrations/AppDbContextModelSnapshot.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Models/InventoryItem.cs`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/InventoryItemDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/CreateInventoryItemDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/UpdateInventoryItemDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/InventoryRepository.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/InventoryService.cs`
+- `Aveline.Api/Modules/VisualIntelligence/VisualIntelligenceModule.cs`
+- `Aveline.Api/Endpoints/CatalogEndpoints.cs`
+- `frontend/aveline_mobile/lib/features/catalog/domain/catalog_tag.dart`
+- `frontend/aveline_mobile/lib/features/catalog/data/catalog_product_repository.dart`
+- `frontend/aveline_mobile/lib/features/catalog/data/demo_catalog_product_repository.dart`
+- `frontend/aveline_mobile/lib/features/catalog/data/api_catalog_product_repository.dart`
+- `frontend/aveline_mobile/lib/features/catalog/presentation/screens/catalog_screen.dart`
+- `frontend/aveline_mobile/test/features/catalog/api_catalog_product_repository_test.dart`
+- `frontend/aveline_mobile/test/features/catalog/adjust_stock_sheet_test.dart`
+- `frontend/aveline_mobile/test/features/catalog/catalog_product_screen_test.dart`
+- `frontend/aveline_mobile/test/features/catalog/catalog_products_controller_test.dart`
+- `frontend/aveline_mobile/test/features/catalog/catalog_screen_test.dart`
+- `frontend/aveline_mobile/test/features/catalog/record_sale_sheet_test.dart`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj --filter "FullyQualifiedName~CatalogTagEndpointsTests|FullyQualifiedName~CatalogEndpointsIntegrationTests"`: 33/33 passed (0 failed).
+- `flutter analyze`: 0 errors / 0 warnings.
+- `flutter test`: 1,336/1,336 unit/widget tests passed (0 failed).
 
 
 

@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import '../domain/catalog_filters.dart';
 import '../domain/catalog_product.dart';
+import '../domain/catalog_tag.dart';
 import '../domain/customer_match.dart';
 import '../domain/outfit_composition.dart';
 import '../domain/outfit_item.dart';
@@ -15,6 +16,7 @@ import '../domain/sourcing_status.dart';
 import '../domain/supplier.dart';
 import '../domain/vision_analysis.dart';
 import 'catalog_product_repository.dart';
+import 'demo_catalog_tags.dart';
 
 /// A boutique's worth of pieces, paged in memory.
 ///
@@ -632,6 +634,14 @@ class DemoCatalogProductRepository implements CatalogProductRepository {
       orElse: () => suppliers.first,
     );
     return match.catalogItems;
+  }
+
+  @override
+  Future<List<CatalogTag>> fetchTags() async {
+    if (pageDelay > Duration.zero) {
+      await Future<void>.delayed(pageDelay);
+    }
+    return demoCatalogTags();
   }
 
   List<CustomerMatch> _buildDefaultMatches(String itemId) {

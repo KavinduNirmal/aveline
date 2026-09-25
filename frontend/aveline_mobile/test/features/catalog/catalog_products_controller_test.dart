@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:aveline_mobile/features/catalog/data/catalog_product_repository.dart';
 import 'package:aveline_mobile/features/catalog/domain/catalog_product.dart';
+import 'package:aveline_mobile/features/catalog/domain/catalog_tag.dart';
 import 'package:aveline_mobile/features/catalog/domain/customer_match.dart';
 import 'package:aveline_mobile/features/catalog/domain/outfit_composition.dart';
 import 'package:aveline_mobile/features/catalog/domain/outfit_payloads.dart';
@@ -171,7 +172,11 @@ class _ListRepository implements CatalogProductRepository {
     }
     return null;
   }
+
+  @override
+  Future<List<CatalogTag>> fetchTags() => Future.value(const []);
 }
+
 
 /// A repository whose pages are completed by the test, so a reply can be landed
 /// after a newer query has already started.
@@ -293,7 +298,11 @@ class _ManualRepository implements CatalogProductRepository {
 
   @override
   Future<CatalogProduct?> fetchProduct(String id) async => null;
+
+  @override
+  Future<List<CatalogTag>> fetchTags() => Future.value(const []);
 }
+
 
 /// Fails the first page and serves the second, for the retry path.
 class _FlakyRepository implements CatalogProductRepository {
@@ -414,7 +423,11 @@ class _FlakyRepository implements CatalogProductRepository {
     CatalogItemStatus? status,
   }) =>
       throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<List<CatalogTag>> fetchTags() => Future.value(const []);
 }
+
 
 void main() {
   group('CatalogProductsController', () {

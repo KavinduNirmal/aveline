@@ -1,5 +1,6 @@
 import 'package:aveline_mobile/features/catalog/data/catalog_product_repository.dart';
 import 'package:aveline_mobile/features/catalog/domain/catalog_product.dart';
+import 'package:aveline_mobile/features/catalog/domain/catalog_tag.dart';
 import 'package:aveline_mobile/features/catalog/domain/customer_match.dart';
 import 'package:aveline_mobile/features/catalog/domain/outfit_composition.dart';
 import 'package:aveline_mobile/features/catalog/domain/outfit_payloads.dart';
@@ -134,6 +135,9 @@ class _FakeAdjustStockRepository implements CatalogProductRepository {
     required String itemId,
     required RecordSalePayload payload,
   }) => throw UnimplementedError();
+
+  @override
+  Future<List<CatalogTag>> fetchTags() => Future.value(const []);
 }
 
 CatalogProduct _buildTestProduct({int quantity = 6}) {

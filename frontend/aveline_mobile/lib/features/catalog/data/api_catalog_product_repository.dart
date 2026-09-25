@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 
 import '../domain/catalog_filters.dart';
 import '../domain/catalog_product.dart';
+import '../domain/catalog_tag.dart';
 import '../domain/customer_match.dart';
 import '../domain/outfit_composition.dart';
 import '../domain/outfit_payloads.dart';
@@ -452,6 +453,21 @@ class ApiCatalogProductRepository implements CatalogProductRepository {
     final rawList = response.data ?? const [];
     return rawList
         .map((item) => SupplierCatalogItem.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  @override
+  Future<List<CatalogTag>> fetchTags() async {
+    final orgId = organizationId();
+    if (orgId == null || orgId.isEmpty) return const [];
+
+    final response = await _dio.get<List<dynamic>>(
+      '/api/v1/orgs/$orgId/catalog/tags',
+    );
+
+    final rawList = response.data ?? const [];
+    return rawList
+        .map((item) => CatalogTag.fromJson(item as Map<String, dynamic>))
         .toList();
   }
 

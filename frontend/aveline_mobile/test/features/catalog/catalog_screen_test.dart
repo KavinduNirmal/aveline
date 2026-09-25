@@ -195,6 +195,9 @@ class _StubProductRepository implements CatalogProductRepository {
     }
     return null;
   }
+
+  @override
+  Future<List<CatalogTag>> fetchTags() => Future.value(_tags);
 }
 
 CatalogProduct _piece(

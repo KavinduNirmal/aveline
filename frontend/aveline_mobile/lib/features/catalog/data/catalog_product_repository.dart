@@ -1,5 +1,6 @@
 import '../domain/catalog_filters.dart';
 import '../domain/catalog_product.dart';
+import '../domain/catalog_tag.dart';
 import '../domain/customer_match.dart';
 import '../domain/outfit_composition.dart';
 import '../domain/outfit_payloads.dart';
@@ -152,4 +153,7 @@ abstract interface class CatalogProductRepository {
 
   /// Marks a VIP match as acted upon (concierge outreach started).
   Future<void> markMatchActed(String matchId);
+
+  /// Fetches the curated catalog tags for the active boutique organization.
+  Future<List<CatalogTag>> fetchTags();
 }

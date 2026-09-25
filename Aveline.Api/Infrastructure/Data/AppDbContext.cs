@@ -26,6 +26,8 @@ public class AppDbContext : DbContext
     // Visual Intelligence Module (Slice 2)
     public DbSet<InventoryItem> InventoryItems => Set<InventoryItem>();
     public DbSet<InventoryImage> InventoryImages => Set<InventoryImage>();
+    public DbSet<CatalogTag> CatalogTags => Set<CatalogTag>();
+    public DbSet<InventoryItemTag> InventoryItemTags => Set<InventoryItemTag>();
     public DbSet<CustomerMatch> CustomerMatches => Set<CustomerMatch>();
     public DbSet<OutfitComposition> OutfitCompositions => Set<OutfitComposition>();
     public DbSet<OutfitItem> OutfitItems => Set<OutfitItem>();

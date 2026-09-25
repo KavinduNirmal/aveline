@@ -77,6 +77,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
   /// The shop tags currently narrowing the catalog.
   final Set<String> _selectedTagIds = {};
 
+  List<CatalogTag>? _dynamicTags;
   CatalogDockTab _selectedTab = CatalogDockTab.pieces;
   String? _seededOrganizationId;
 
@@ -87,16 +88,33 @@ class _CatalogScreenState extends State<CatalogScreen> {
     _products = CatalogProductsController(repo);
     _sourcingController = SourcingController(repo);
 
+    _loadTags();
     _products.loadFirstPage(query: _productQuery);
     _products.addListener(_onProductsChanged);
     _sourcingController.loadData();
     _scrollController.addListener(_onScroll);
   }
 
+  Future<void> _loadTags() async {
+    if (widget.tags != null) return;
+    try {
+      final repo = widget.repository ?? DemoCatalogProductRepository();
+      final tags = await repo.fetchTags();
+      if (mounted) {
+        setState(() {
+          _dynamicTags = tags;
+        });
+      }
+    } catch (_) {
+      // Non-fatal, fallback to defaults
+    }
+  }
+
   Future<void> _handleRefresh() async {
     await Future.wait([
       _products.loadFirstPage(query: _productQuery),
       _sourcingController.loadData(),
+      _loadTags(),
     ]);
   }
 
@@ -254,13 +272,14 @@ class _CatalogScreenState extends State<CatalogScreen> {
         if (mounted) {
           _products.loadFirstPage(query: _productQuery);
           _sourcingController.loadData();
+          _loadTags();
         }
       });
     }
 
     final boutiqueName =
         widget.boutiqueName ?? boutique?.name ?? _fallbackName;
-    final tags = widget.tags ?? demoCatalogTags();
+    final tags = widget.tags ?? _dynamicTags ?? demoCatalogTags();
     final activeNarrowingCount = _filters.activeCount + _selectedTagIds.length;
 
     return Stack(

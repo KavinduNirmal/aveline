@@ -64,6 +64,36 @@ void main() {
               return;
             }
 
+            if (options.path.endsWith('/catalog/tags') && options.method == 'GET') {
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: [
+                    {
+                      'id': 'tag-1',
+                      'orgId': 'org-123',
+                      'slug': 'bridal',
+                      'label': 'Bridal',
+                      'colorHex': '#D4AF37',
+                      'sortOrder': 0,
+                      'itemCount': 5,
+                    },
+                    {
+                      'id': 'tag-2',
+                      'orgId': 'org-123',
+                      'slug': 'festive',
+                      'label': 'Festive',
+                      'colorHex': '#9E2A2B',
+                      'sortOrder': 1,
+                      'itemCount': 3,
+                    }
+                  ],
+                ),
+              );
+              return;
+            }
+
             if (options.path.endsWith('/catalog/items/prod-1/status')) {
               final body = options.data as Map<String, dynamic>;
               handler.resolve(
@@ -913,6 +943,33 @@ void main() {
       expect(req['method'], 'PUT');
       expect(req['data'], containsPair('quantity', 0));
       expect(req['data'], containsPair('status', 'sold_out'));
+    });
+
+    test('fetchTags retrieves and deserializes boutique tags', () async {
+      final repo = ApiCatalogProductRepository(dio, organizationId: () => 'org-123');
+
+      final tags = await repo.fetchTags();
+      expect(tags, hasLength(2));
+      expect(tags[0].slug, 'bridal');
+      expect(tags[0].label, 'Bridal');
+      expect(tags[0].colorHex, '#D4AF37');
+      expect(tags[1].slug, 'festive');
+
+      expect(recordedRequests, hasLength(1));
+      final req = recordedRequests.single;
+      expect(req['path'], '/api/v1/orgs/org-123/catalog/tags');
+      expect(req['method'], 'GET');
+    });
+
+    test('fetchPage sends tagIds in query body', () async {
+      final repo = ApiCatalogProductRepository(dio, organizationId: () => 'org-123');
+
+      const query = CatalogProductQuery(tagIds: {'bridal', 'festive'});
+      await repo.fetchPage(page: 0, pageSize: 8, query: query);
+
+      expect(recordedRequests, hasLength(1));
+      final req = recordedRequests.single;
+      expect(req['data'], containsPair('tagIds', containsAll(['bridal', 'festive'])));
     });
   });
 }

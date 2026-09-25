@@ -91,8 +91,8 @@ jobs:
       # fragile.
       - name: Preflight
         env:
-          API_BASE_URL: ${{ vars.APK_API_BASE_URL }}
-          CLERK_KEY: ${{ vars.APK_CLERK_PUBLISHABLE_KEY }}
+          API_BASE_URL: ${{ vars.APK_API_BASE_URL || secrets.APK_API_BASE_URL }}
+          CLERK_KEY: ${{ vars.APK_CLERK_PUBLISHABLE_KEY || secrets.APK_CLERK_PUBLISHABLE_KEY }}
           KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           fail=0
@@ -195,9 +195,9 @@ jobs:
         working-directory: frontend/aveline_mobile
         env:
           DEFINES: >-
-            --dart-define=API_BASE_URL=${{ vars.APK_API_BASE_URL }}
-            --dart-define=CLERK_PUBLISHABLE_KEY=${{ vars.APK_CLERK_PUBLISHABLE_KEY }}
-            --dart-define=AVELINE_WEB_BASE_URL=${{ vars.APK_WEB_BASE_URL }}
+            --dart-define=API_BASE_URL=${{ vars.APK_API_BASE_URL || secrets.APK_API_BASE_URL }}
+            --dart-define=CLERK_PUBLISHABLE_KEY=${{ vars.APK_CLERK_PUBLISHABLE_KEY || secrets.APK_CLERK_PUBLISHABLE_KEY }}
+            --dart-define=AVELINE_WEB_BASE_URL=${{ vars.APK_WEB_BASE_URL || secrets.APK_WEB_BASE_URL }}
         run: |
           set -euo pipefail
           OUT="$RUNNER_TEMP/apk"
@@ -292,8 +292,8 @@ jobs:
           AWS_DEFAULT_REGION: auto
         run: |
           set -euo pipefail
-          ENDPOINT="https://${{ vars.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
-          BUCKET="${{ vars.R2_BUCKET }}"
+          ENDPOINT="https://${{ vars.R2_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
+          BUCKET="${{ vars.R2_BUCKET || secrets.R2_BUCKET }}"
           PREFIX="aveline-android-apk"
           NAME="${{ steps.v.outputs.version_name }}"
           CODE="${{ steps.v.outputs.version_code }}"
@@ -327,9 +327,9 @@ jobs:
           AWS_DEFAULT_REGION: auto
         run: |
           set -euo pipefail
-          ENDPOINT="https://${{ vars.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
-          BUCKET="${{ vars.R2_BUCKET }}"
-          BASE="${{ vars.R2_PUBLIC_BASE_URL }}/aveline-android-apk"
+          ENDPOINT="https://${{ vars.R2_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
+          BUCKET="${{ vars.R2_BUCKET || secrets.R2_BUCKET }}"
+          BASE="${{ vars.R2_PUBLIC_BASE_URL || secrets.R2_PUBLIC_BASE_URL }}/aveline-android-apk"
 
           # Built with python, not an interpolated heredoc: if the arm64 split is
           # absent its sha/bytes outputs are empty, and a heredoc would emit

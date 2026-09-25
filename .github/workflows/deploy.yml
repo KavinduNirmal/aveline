@@ -93,9 +93,9 @@ permissions:
   id-token: write
 
 env:
-  ACR_NAME: ${{ vars.ACR_NAME }}
-  RESOURCE_GROUP: ${{ vars.RESOURCE_GROUP }}
-  CONTAINER_APP_ENV: ${{ vars.CONTAINER_APP_ENV }}
+  ACR_NAME: ${{ vars.ACR_NAME || secrets.ACR_NAME }}
+  RESOURCE_GROUP: ${{ vars.RESOURCE_GROUP || secrets.RESOURCE_GROUP }}
+  CONTAINER_APP_ENV: ${{ vars.CONTAINER_APP_ENV || secrets.CONTAINER_APP_ENV }}
   KEY_VAULT_NAME: kv-aveline-mw
   API_APP: aveline-api
   AGENT_APP: aveline-agent
@@ -124,9 +124,9 @@ jobs:
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Log in to the registry
         run: az acr login --name "$ACR_NAME"
@@ -173,9 +173,9 @@ jobs:
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Build the migration bundle
         run: |
@@ -218,9 +218,9 @@ jobs:
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Resolve image tag
         id: tag

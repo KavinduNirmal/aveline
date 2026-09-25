@@ -309,7 +309,25 @@ jobs:
           echo "Wrote $(wc -c < google-services.json) bytes of Firebase config."
 
       - name: Build release APK
-        run: flutter build apk --release
+        # The --dart-define values are not optional. AppConfig reads every setting
+        # from String.fromEnvironment at COMPILE time, so a build without them
+        # bakes in the fallbacks: API_BASE_URL=http://10.0.2.2:5091 (the Android
+        # EMULATOR's loopback alias, unreachable from a real device) and the
+        # DEVELOPMENT Clerk instance. Every APK this job published before 0.2.0
+        # was therefore inert - it installed, then could not reach any backend.
+        # Read from Variables or Secrets so either location works.
+        #
+        # --build-number comes from the run number, so versionCode increases on every
+        # release. pubspec pins it at 1, which means Android cannot tell build 200
+        # from build 152 and will happily install the older one over the newer one.
+        # This also keeps versionCode aligned with the `build.<run_number>` suffix
+        # the release tag already carries.
+        run: |
+          flutter build apk --release \
+            --build-number="${{ github.run_number }}" \
+            --dart-define=API_BASE_URL="${{ vars.APK_API_BASE_URL || secrets.APK_API_BASE_URL }}" \
+            --dart-define=CLERK_PUBLISHABLE_KEY="${{ vars.APK_CLERK_PUBLISHABLE_KEY || secrets.APK_CLERK_PUBLISHABLE_KEY }}" \
+            --dart-define=AVELINE_WEB_BASE_URL="${{ vars.APK_WEB_BASE_URL || secrets.APK_WEB_BASE_URL }}"
         working-directory: frontend/aveline_mobile
 
       - name: Upload APK artifact
@@ -552,7 +570,14 @@ jobs:
       # builds and archives the app but skips the export step, so the step below packages
       # the .ipa from the archive itself.
       - name: Build iOS archive
-        run: flutter build ipa --release --no-codesign
+        # Same compile-time configuration as the APK. Without these the IPA carries
+        # the emulator loopback API URL and the development Clerk instance, exactly
+        # as the APK did before 0.2.0.
+        run: |
+          flutter build ipa --release --no-codesign \
+            --dart-define=API_BASE_URL="${{ vars.APK_API_BASE_URL || secrets.APK_API_BASE_URL }}" \
+            --dart-define=CLERK_PUBLISHABLE_KEY="${{ vars.APK_CLERK_PUBLISHABLE_KEY || secrets.APK_CLERK_PUBLISHABLE_KEY }}" \
+            --dart-define=AVELINE_WEB_BASE_URL="${{ vars.APK_WEB_BASE_URL || secrets.APK_WEB_BASE_URL }}"
         working-directory: frontend/aveline_mobile
 
       - name: Package unsigned IPA

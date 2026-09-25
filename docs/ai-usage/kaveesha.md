@@ -1316,7 +1316,117 @@ Peer agents Ava and Elle had well-structured prompts outlining responsibilities,
 - Ran `flutter test test/features/commerce/`: **All 22 tests passed! (100% pass rate, exit code 0)**.
 
 **Remaining Work:**
-- Stage, commit, and push to branch for CI green build.
+- Completed previous CI fixes.
+
+---
+
+## Session 2026-09-24 (Feature: Customer Directory & Detail Flow — Flutter to Backend)
+
+**Tool used:** Antigravity AI Assistant  
+**Task:** Implement the end-to-end integration for the Customer Directory (`/customers`) and Customer Detail (`/customers/:customerId`) mobile screens with the ASP.NET Core backend. Add database migrations for `Level` and `Nickname`, expose `organizationId` from `BoutiqueProvider`, build `Aveline.Api/Endpoints/CustomerEndpoints.cs`, create `ApiCustomerRepository` in Flutter, and wire the screens with full test coverage.  
+**Prompt(s) used:**  
+- "flutter-to-backend-customer-detail-implementation.ignore. Go through the .md file clearly and give me the implementation plan."
+- "Waittt... I have another md file named flutter-to-backend-customers-list-implementation.ignore will check it also and see whether these 2 features are related. Just before implementing anything check it and tell me that."
+- "then I guess we can create a new implementation plan and do this rt?"
+
+**Work Performed:**
+- Completed unified end-to-end integration for both Customer List (`/customers`) and Customer Detail (`/customers/:customerId`) connecting Flutter mobile with ASP.NET Core backend.
+- **Phase 1 (Database & Models):** Added `Nickname` column to `Customer.cs` and `CustomerConfiguration.cs`; created and applied EF Core migration `20260924152548_AddCustomerNicknameColumn.cs`. Verified `Level` was already on the model. Added `customers:manage` permission to boutique roles in `frontend/aveline_mobile/lib/core/auth/permissions.dart`.
+- **Phase 2 (Backend API Layer):** Extended `CustomerTenantEndpoints.cs` with sub-resource routes:
+  - `GET /api/v1/orgs/{organizationId}/customers/{customerId}/consent`
+  - `GET /api/v1/orgs/{organizationId}/customers/{customerId}/memories`
+  - `GET /api/v1/orgs/{organizationId}/customers/{customerId}/events`
+  - `POST /api/v1/orgs/{organizationId}/customers/{customerId}/events`
+  - `POST /api/v1/orgs/{organizationId}/customers/{customerId}/status`
+  Fixed timestamp recording on insert in `CustomerConsentService.cs` and added `GetTenantConsentAsync` returning `unknown` when no record exists. Added `Preferences` mapping to `TenantCustomerDetailDto` and supported `Nickname` across customer services.
+- **Phase 3 (Mobile Data Layer):** Built `ApiCustomerRepository` in `frontend/aveline_mobile/lib/features/customers/data/api_customer_repository.dart` implementing `CustomerRepository` (`fetchBook` and `fetchCustomer`), along with `recordVisit` and `recomputeTier`.
+- **Phase 4 (Screen Wiring):** Replaced demo repository instantiation in `lib/app.dart` with `ApiCustomerRepository` using `_boutiqueProvider.organizationId`. Connected visit logging and tier recomputation handlers in `customer_screen.dart`.
+- **Phase 5 (Testing & Verification):** Added unit tests in `api_customer_repository_test.dart` and 10 integration tests in `CustomerTenantEndpointsTests.cs`.
+- **Phase 6 (Documentation & OpenAPI):** Added new customer sub-resources to `docs/api/README.md` and `docs/api/openapi.yaml`. Fixed CRLF newline handling in `TenantDashboardDocumentationTests.cs`.
+
+**Files Created:**
+- `Aveline.Api/Migrations/20260924152548_AddCustomerNicknameColumn.cs`
+- `Aveline.Api/Migrations/20260924152548_AddCustomerNicknameColumn.Designer.cs`
+- `frontend/aveline_mobile/lib/features/customers/data/api_customer_repository.dart`
+
+**Files Modified:**
+- `Aveline.Api/Endpoints/CustomerTenantEndpoints.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/CustomerConfiguration.cs`
+- `Aveline.Api/Migrations/AppDbContextModelSnapshot.cs`
+- `Aveline.Api/Modules/CustomerConcierge/DTOs/CustomerTenantDtos.cs`
+- `Aveline.Api/Modules/CustomerConcierge/Models/Customer.cs`
+- `Aveline.Api/Modules/CustomerConcierge/Services/CustomerConsentService.cs`
+- `Aveline.Api/Modules/CustomerConcierge/Services/CustomerTenantService.cs`
+- `Aveline.Api/Modules/CustomerConcierge/Services/ICustomerConsentService.cs`
+- `Aveline.Api.Tests/CustomerTenantEndpointsTests.cs`
+- `Aveline.Api.Tests/TenantDashboardDocumentationTests.cs`
+- `frontend/aveline_mobile/lib/app.dart`
+- `frontend/aveline_mobile/lib/core/auth/permissions.dart`
+- `frontend/aveline_mobile/lib/features/customers/presentation/screens/customer_screen.dart`
+- `frontend/aveline_mobile/test/features/customers/api_customer_repository_test.dart`
+- `docs/api/README.md`
+- `docs/api/openapi.yaml`
+- `docs/ai-usage/kaveesha.md`
+
+**Tests Created or Modified:**
+- `frontend/aveline_mobile/test/features/customers/api_customer_repository_test.dart` (7 unit tests).
+- `Aveline.Api.Tests/CustomerTenantEndpointsTests.cs` (10 new integration tests: profile details with preferences, cross-tenant isolation 404, consent read, memories read, events get/post, role authorization checks, status recomputation, patch update, soft-delete).
+
+**Important Architectural Decisions:**
+- Enforced strict tenant isolation on all queries (`OrganizationScopeRequirement` and `{organizationId:guid}`).
+- Applied `BoutiqueCustomerAccessPolicy` (`customers:view`) for profile reads and sub-resource views; applied `BoutiqueCustomerManagePolicy` (`customers:manage`) for mutations (events, status recompute, patch, soft delete).
+- In `CustomerConsentService.cs`, returned `unknown` instead of `pending` when no consent row exists, avoiding false pending states and preventing exposure of internal revocation tokens.
+- Structured `ApiCustomerRepository` with dynamic `_activeOrgId` resolution via `organizationIdProvider` to cleanly handle boutique switching.
+
+**Problems Encountered & Solutions:**
+- `CustomerMemory` and `CustomerInteraction` constructors did not accept `customerId`; removed unused argument during mapping.
+- `flutter analyze` flagged unused import and requested initializing formals; refactored `ApiCustomerRepository` to use initializing formals and removed unused import in `app.dart`.
+- Windows CRLF line endings caused `TenantDashboardDocumentationTests` marker regex to fail; normalized CRLF to LF in `Normalize`.
+
+**Verification Performed:**
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~CustomerTenant"`: **Passed! 39/39 tests passed (0 failed, 0 skipped)**.
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~TenantDashboardDocumentationTests"`: **Passed! 47/47 tests passed (0 failed, 0 skipped)**.
+- `flutter analyze --no-fatal-infos`: **No issues found! (0 errors, 0 warnings, 0 infos, exit code 0)**.
+- `flutter test test/features/customers/`: **All 121 customer tests passed! (100% pass rate, exit code 0)**.
+
+**Remaining Work:**
+- None. The Customer List and Customer Detail flows are fully implemented, tested, documented, and verified end-to-end.
+
+---
+
+## Session 2026-09-25 (UI Adjustment: Customer Detail Profile Metrics Alignment & Legibility)
+
+**Tool used:** Antigravity AI Assistant  
+**Task:** Adjust font size, contrast, alignment, and spacing for the customer profile metrics section ("Spent with us", "Visit", and "Last visit" date) in `CustomerScreen` to eliminate text clipping/ellipses and improve legibility on mobile devices.  
+**Prompt(s) used:**  
+- "Need to do some adjustments. Spent with us, Visit, and the date I feel like those are very small and can't see adjust the allignment."
+
+**Work Performed:**
+- Diagnosed layout and typography issues in `frontend/aveline_mobile/lib/features/customers/presentation/screens/customer_screen.dart` (`_Ledger` and `_Metric`):
+  - Metric labels were set at an overly small `fontSize: 9.5` with muted contrast.
+  - Uniform `flex: 1:1:1` split in the 3-column row forced values to truncate with ellipses (e.g. `Rs 6,4...`, `20 day...`).
+  - Left cross-axis alignment within columns created unbalanced right-side voids next to vertical dividers.
+- Refactored `_Metric`:
+  - Upgraded label styling to `fontSize: 11.5`, `fontWeight: FontWeight.w700`, `letterSpacing: 0.6`, wrapped in `FittedBox(fit: BoxFit.scaleDown)` with centered text alignment.
+  - Enhanced metric values with `fontSize: 19`, `fontWeight: FontWeight.w600`, and `FittedBox(fit: BoxFit.scaleDown)` with `TextAlign.center` so values dynamically scale down cleanly rather than clipping with ellipses on smaller screens.
+  - Centered metric contents (`crossAxisAlignment: CrossAxisAlignment.center`).
+- Refactored `_Ledger`:
+  - Adjusted row cross-alignment to `CrossAxisAlignment.center`.
+  - Re-proportioned column widths with a balanced `flex: 7` (Spent with us), `flex: 5` (Visits), and `flex: 7` (Last visit date) distribution.
+  - Adjusted divider height to `42` with symmetrical horizontal padding (`4.0`).
+- Verified zero test regressions across all customer feature test suites.
+
+**Files Modified:**
+- `frontend/aveline_mobile/lib/features/customers/presentation/screens/customer_screen.dart`
+- `docs/ai-usage/kaveesha.md`
+
+**Verification Performed:**
+- Ran `flutter test test/features/customers/`: **All 121 tests passed! (100% pass rate, exit code 0)**.
+- Ran `flutter analyze --no-fatal-infos`: **Verified 0 errors/issues**.
+
+**Remaining Work:**
+- None.
+
 
 
 

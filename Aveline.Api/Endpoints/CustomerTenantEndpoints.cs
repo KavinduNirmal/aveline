@@ -3,6 +3,7 @@ using Aveline.Api.Authorization;
 using Aveline.Api.Configurations;
 using Aveline.Api.Modules.Billing.Endpoints;
 using Aveline.Api.Modules.CustomerConcierge.DTOs;
+using Aveline.Api.Modules.CustomerConcierge.Repositories;
 using Aveline.Api.Modules.CustomerConcierge.Services;
 using Aveline.Api.Modules.Shared.Repositories;
 
@@ -154,6 +155,97 @@ public static class CustomerTenantEndpoints
                 ? Results.NotFound(new { message = "That client is not in this boutique." })
                 : Results.Ok(history);
         });
+
+        group.MapGet("/{customerId:guid}/consent", async (
+            Guid organizationId,
+            Guid customerId,
+            ICustomerTenantService customers,
+            ICustomerConsentService consent,
+            CancellationToken ct) =>
+        {
+            var detail = await customers.GetDetailAsync(organizationId, customerId, ct);
+            if (detail is null)
+            {
+                return Results.NotFound(new { message = "That client is not in this boutique." });
+            }
+
+            var dto = await consent.GetTenantConsentAsync(organizationId, customerId, ct);
+            return Results.Ok(dto);
+        });
+
+        group.MapGet("/{customerId:guid}/memories", async (
+            Guid organizationId,
+            Guid customerId,
+            ICustomerTenantService customers,
+            ICustomerMemoryRepository memoryRepo,
+            CancellationToken ct) =>
+        {
+            var detail = await customers.GetDetailAsync(organizationId, customerId, ct);
+            if (detail is null)
+            {
+                return Results.NotFound(new { message = "That client is not in this boutique." });
+            }
+
+            var memories = await memoryRepo.ListByCustomerAsync(organizationId, customerId, ct);
+            var dtos = memories.Select(m => new TenantCustomerMemoryDto(
+                m.Id, m.CustomerId, m.Content, m.Category, m.Source, m.IsExplicit, m.Confidence, m.CreatedAt)).ToList();
+            return Results.Ok(dtos);
+        });
+
+        group.MapGet("/{customerId:guid}/events", async (
+            Guid organizationId,
+            Guid customerId,
+            ICustomerTenantService customers,
+            ICustomerEventService events,
+            CancellationToken ct) =>
+        {
+            var detail = await customers.GetDetailAsync(organizationId, customerId, ct);
+            if (detail is null)
+            {
+                return Results.NotFound(new { message = "That client is not in this boutique." });
+            }
+
+            var list = await events.ListAsync(organizationId, customerId, ct);
+            return Results.Ok(list);
+        });
+
+        group.MapPost("/{customerId:guid}/events", async (
+            Guid organizationId,
+            Guid customerId,
+            AddEventRequest request,
+            ICustomerTenantService customers,
+            ICustomerEventService events,
+            CancellationToken ct) =>
+        {
+            var detail = await customers.GetDetailAsync(organizationId, customerId, ct);
+            if (detail is null)
+            {
+                return Results.NotFound(new { message = "That client is not in this boutique." });
+            }
+
+            var req = request with { OrganizationId = organizationId };
+            var customerEvent = await events.AddAsync(customerId, req, ct);
+            return Results.Created($"/api/v1/orgs/{organizationId}/customers/{customerId}/events/{customerEvent.Id}", customerEvent);
+        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueCustomerManagePolicy);
+
+        group.MapPost("/{customerId:guid}/status", async (
+            Guid organizationId,
+            Guid customerId,
+            ICustomerTenantService customers,
+            ICustomerLoyaltyService loyalty,
+            CancellationToken ct) =>
+        {
+            var detail = await customers.GetDetailAsync(organizationId, customerId, ct);
+            if (detail is null)
+            {
+                return Results.NotFound(new { message = "That client is not in this boutique." });
+            }
+
+            var status = await loyalty.RecomputeAsync(organizationId, customerId, null, ct);
+            return status is null
+                ? Results.NotFound(new { message = "That client is not in this boutique." })
+                : Results.Ok(status);
+        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueCustomerManagePolicy);
 
         // E-7. The write half needs `customers:manage`: `customers:view` is held by every role, so
         // there was nothing correct to gate an edit on.

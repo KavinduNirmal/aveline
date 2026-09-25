@@ -22,6 +22,8 @@ public class Customer : ITenantEntity
 
     public string? FullName { get; set; }
 
+    public string? Nickname { get; set; }
+
     /// <summary>new | returning | vip | dormant | deleted</summary>
     public string Status { get; set; } = "new";
 

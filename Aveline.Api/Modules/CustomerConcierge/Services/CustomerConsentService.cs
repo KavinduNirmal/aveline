@@ -18,6 +18,14 @@ public class CustomerConsentService : ICustomerConsentService
             : CustomerConsentDto.From(row);
     }
 
+    public async Task<TenantCustomerConsentDto> GetTenantConsentAsync(Guid orgId, Guid customerId, CancellationToken cancellationToken = default)
+    {
+        var row = await _consent.GetForCustomerAsync(orgId, customerId, cancellationToken);
+        return row is null
+            ? new TenantCustomerConsentDto(Guid.Empty, "unknown", null, null)
+            : new TenantCustomerConsentDto(row.Id, row.ConsentStatus, row.ConsentGrantedAt, row.ConsentRevokedAt);
+    }
+
     public async Task<CustomerConsentDto> UpdateAsync(
         Guid orgId,
         Guid customerId,
@@ -39,6 +47,8 @@ public class CustomerConsentService : ICustomerConsentService
                 OrganizationId = orgId,
                 CustomerId = customerId,
                 ConsentStatus = normalized,
+                ConsentGrantedAt = normalized == "granted" ? DateTime.UtcNow : null,
+                ConsentRevokedAt = normalized == "revoked" ? DateTime.UtcNow : null,
             };
             row = await _consent.AddAsync(row, cancellationToken);
         }

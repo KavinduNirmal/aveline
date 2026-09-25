@@ -129,7 +129,30 @@ public sealed record TenantCustomerDetailDto(
     DateTime CreatedAtUtc,
     DateTime? UpdatedAtUtc,
     int InteractionCount,
-    IReadOnlyList<string> Tags);
+    IReadOnlyList<string> Tags,
+    IReadOnlyList<CustomerPreferenceDto> Preferences);
+
+/// <summary>
+/// A customer's consent status on the tenant surface.
+/// </summary>
+public sealed record TenantCustomerConsentDto(
+    Guid Id,
+    string Status,
+    DateTime? GrantedAtUtc,
+    DateTime? RevokedAtUtc);
+
+/// <summary>
+/// A saved memory as returned to tenant callers.
+/// </summary>
+public sealed record TenantCustomerMemoryDto(
+    Guid Id,
+    Guid CustomerId,
+    string Content,
+    string Category,
+    string Source,
+    bool IsExplicit,
+    decimal Confidence,
+    DateTime CreatedAtUtc);
 
 /// <summary>
 /// The writable subset of a client's record. <c>Status</c> is deliberately absent: it is derived,

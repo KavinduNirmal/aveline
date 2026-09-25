@@ -6,6 +6,7 @@ abstract final class Permissions {
   // Catalog & customers
   static const String catalogView = 'catalog:view';
   static const String customersView = 'customers:view';
+  static const String customersManage = 'customers:manage';
   static const String catalogManage = 'catalog:manage';
   static const String approvalsApprove = 'approvals:approve';
   static const String paymentsRefund = 'payments:refund';
@@ -45,6 +46,7 @@ abstract final class Permissions {
   static const Set<String> all = {
     catalogView,
     customersView,
+    customersManage,
     catalogManage,
     approvalsApprove,
     paymentsRefund,
@@ -101,6 +103,7 @@ abstract final class Permissions {
     AppRoles.boutiqueManager: {
       catalogView,
       customersView,
+      customersManage,
       catalogManage,
       reportsView,
       conversationsView,
@@ -112,6 +115,7 @@ abstract final class Permissions {
     AppRoles.boutiqueSupervisor: {
       catalogView,
       customersView,
+      customersManage,
       catalogManage,
       approvalsApprove,
       reportsView,
@@ -122,6 +126,7 @@ abstract final class Permissions {
     AppRoles.boutiqueOwner: {
       catalogView,
       customersView,
+      customersManage,
       catalogManage,
       approvalsApprove,
       paymentsRefund,

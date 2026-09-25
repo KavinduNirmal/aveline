@@ -319,6 +319,7 @@ public sealed class CustomerTenantService : ICustomerTenantService
         {
             OrganizationId = organizationId,
             FullName = name,
+            Nickname = string.IsNullOrWhiteSpace(request.Nickname) ? null : request.Nickname.Trim(),
             PhoneNumber = phone,
             Status = "new",
             Level = null,
@@ -476,6 +477,7 @@ public sealed class CustomerTenantService : ICustomerTenantService
         if (request.Nickname is not null)
         {
             var nickname = request.Nickname.Trim();
+            customer.Nickname = nickname.Length == 0 ? null : nickname;
             var preference = customer.Preferences
                 .FirstOrDefault(candidate => candidate.PreferenceKey == NicknameKey);
             if (preference is null)
@@ -616,7 +618,7 @@ public sealed class CustomerTenantService : ICustomerTenantService
     private static TenantCustomerDetailDto ToDetail(Customer customer, int interactionCount) => new(
         customer.Id,
         customer.FullName,
-        customer.Preferences.FirstOrDefault(preference => preference.PreferenceKey == NicknameKey)?.PreferenceValue,
+        customer.Nickname ?? customer.Preferences.FirstOrDefault(preference => preference.PreferenceKey == NicknameKey)?.PreferenceValue,
         customer.PhoneNumber,
         customer.Email,
         customer.Level,
@@ -630,12 +632,13 @@ public sealed class CustomerTenantService : ICustomerTenantService
         customer.CreatedAt,
         customer.UpdatedAt,
         interactionCount,
-        customer.Tags.Select(tag => tag.Tag).OrderBy(tag => tag).ToList());
+        customer.Tags.Select(tag => tag.Tag).OrderBy(tag => tag).ToList(),
+        customer.Preferences.Where(p => p.PreferenceKey != NicknameKey).Select(CustomerPreferenceDto.From).ToList());
 
     private static CustomerBookItemDto ToBookItem(Customer customer) => new(
         customer.Id,
         customer.FullName,
-        customer.Preferences.FirstOrDefault(preference => preference.PreferenceKey == NicknameKey)?.PreferenceValue,
+        customer.Nickname ?? customer.Preferences.FirstOrDefault(preference => preference.PreferenceKey == NicknameKey)?.PreferenceValue,
         customer.Level,
         customer.Status,
         customer.PhoneNumber,
@@ -645,6 +648,7 @@ public sealed class CustomerTenantService : ICustomerTenantService
 
     private static string DisplayName(Customer customer) =>
         FirstPresent(customer.FullName)
+        ?? FirstPresent(customer.Nickname)
         ?? FirstPresent(customer.Preferences.FirstOrDefault(p => p.PreferenceKey == NicknameKey)?.PreferenceValue)
         ?? FirstPresent(customer.PhoneNumber)
         ?? "A client";

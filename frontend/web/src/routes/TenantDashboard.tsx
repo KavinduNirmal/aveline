@@ -87,6 +87,22 @@ export function TenantDashboard() {
     }
   }, [slug])
 
+  /**
+   * Refetch the header's Blossom balance after the server reports a settled top-up. The usage read
+   * is best-effort everywhere else on this route, so a refused re-read leaves the last measured
+   * value in place rather than replacing it with a zero the API never sent.
+   */
+  function refreshUsage() {
+    if (state.kind !== 'ready') return
+    fetchOrganizationUsage(state.organization.id)
+      .then((usage) => {
+        setState((current) => (current.kind === 'ready' ? { ...current, usage } : current))
+      })
+      .catch(() => {
+        /* keep the last measured balance */
+      })
+  }
+
   switch (state.kind) {
     case 'loading':
       return <PageLoader />
@@ -118,6 +134,7 @@ export function TenantDashboard() {
           organization={state.organization}
           usage={state.usage}
           role={state.role}
+          onBalanceChanged={refreshUsage}
         />
       )
   }

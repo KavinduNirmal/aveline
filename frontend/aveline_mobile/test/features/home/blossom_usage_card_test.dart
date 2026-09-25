@@ -104,20 +104,40 @@ void main() {
       expect(figure.style?.fontFamily, startsWith('PlayfairDisplay'));
     });
 
-    testWidgets('offers the request the owner has to approve', (tester) async {
-      await tester.pumpWidget(_bed(_usage));
+    testWidgets('offers the real purchase path to the owner', (tester) async {
+      // The card no longer sends a toast claiming an approval request: the button opens the
+      // top-up sheet, which lists the server's packs and creates a checkout.
+      var opened = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.light,
+          home: Scaffold(
+            body: BlossomUsageCard(
+              usage: _usage,
+              onRequestMore: () => opened += 1,
+            ),
+          ),
+        ),
+      );
 
       expect(find.text('Request additional blossoms'), findsOneWidget);
 
       await tester.tap(find.text('Request additional blossoms'));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
 
-      // UI only: the card says what would happen, and sends nothing.
-      expect(
-        find.text('Request sent to the owner for approval.'),
-        findsOneWidget,
+      expect(opened, 1);
+    });
+
+    testWidgets('disables the request when the caller may not purchase', (
+      tester,
+    ) async {
+      await tester.pumpWidget(_bed(_usage));
+
+      final button = tester.widget<OutlinedButton>(
+        find.widgetWithText(OutlinedButton, 'Request additional blossoms'),
       );
+
+      expect(button.onPressed, isNull);
     });
 
     testWidgets('shows a spinner while the balance is on its way', (

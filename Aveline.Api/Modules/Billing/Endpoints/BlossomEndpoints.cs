@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Aveline.Api.Authorization;
 using Aveline.Api.Configurations;
 using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Modules.Billing.Domain;
 using Aveline.Api.Modules.Billing.DTOs;
 using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Billing.Services;
@@ -105,10 +106,12 @@ public static class BlossomEndpoints
         {
             try
             {
-                var priceEntry = (await pricing.ListPriceEntriesAsync(
-                        BlossomSkuKind.TopUpPack, planTier: null, organizationId: null, ct))
-                    .FirstOrDefault(entry => entry.SkuCode == request.SkuCode
-                        && entry.Status == BlossomRuleStatus.Active);
+                var now = DateTime.UtcNow;
+                var priceEntry = PriceBookSelection.SelectActiveSku(
+                    await pricing.ListPriceEntriesAsync(
+                        BlossomSkuKind.TopUpPack, planTier: null, organizationId: null, ct),
+                    request.SkuCode,
+                    now);
 
                 if (priceEntry is null)
                 {
@@ -122,7 +125,6 @@ public static class BlossomEndpoints
                 }
 
                 var allowCrossPeriod = configuration.GetValue("Billing:AllowCrossPeriodTopUps", false);
-                var now = DateTime.UtcNow;
                 var periodStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
                 var periodEnd = periodStart.AddMonths(1);
                 var expiresAt = allowCrossPeriod ? (DateTime?)null : periodEnd;
@@ -171,19 +173,24 @@ public static class BlossomEndpoints
 
         // E-11. The catalogue the top-up dialog offers, on the **same** policy as the purchase it
         // feeds: a caller who may buy a pack is exactly a caller who may see what is for sale, and
-        // nobody else needs either. The lookup is deliberately identical to the purchase route's
-        // (`BlossomSkuKind.TopUpPack, planTier: null, organizationId: null`, filtered to
-        // `BlossomRuleStatus.Active`), so a SKU shown here cannot be rejected there and a SKU
-        // accepted there cannot be missing here (B-4 / TD9).
+        // nobody else needs either. The selection is deliberately the purchase route's own
+        // (`PriceBookSelection.SelectActiveSku` with `BlossomSkuKind.TopUpPack, planTier: null,
+        // organizationId: null`), so a SKU shown here cannot be rejected there and a SKU accepted
+        // there cannot be missing here (B-4 / TD9). Effective-dating is applied on both sides: a
+        // re-priced SKU appears once, at the price its effective window carries (G7).
         group.MapGet("/top-up-packs", async (
             Guid organizationId, IPricingService pricing, CancellationToken ct) =>
         {
             var entries = await pricing.ListPriceEntriesAsync(
                 BlossomSkuKind.TopUpPack, planTier: null, organizationId: null, ct);
 
+            var now = DateTime.UtcNow;
             var packs = entries
-                .Where(entry => entry.Status == BlossomRuleStatus.Active
-                                && !string.IsNullOrWhiteSpace(entry.SkuCode))
+                .Where(entry => !string.IsNullOrWhiteSpace(entry.SkuCode))
+                .Select(entry => entry.SkuCode!)
+                .Distinct(StringComparer.Ordinal)
+                .Select(skuCode => PriceBookSelection.SelectActiveSku(entries, skuCode, now))
+                .OfType<BlossomPriceEntry>()
                 .OrderBy(entry => entry.BlossomQuantity)
                 .Select(entry => new TopUpPackDto(
                     entry.SkuCode!, entry.BlossomQuantity, entry.PriceLkr, PriceBookCurrency))

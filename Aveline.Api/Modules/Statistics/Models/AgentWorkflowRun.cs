@@ -158,6 +158,13 @@ public enum AgentRunStatus
     Cancelled,
     TimedOut,
     PausedForApproval,
+    /// <summary>
+    /// The run was deliberately not performed - today, only a consent skip. Distinct from
+    /// <see cref="Succeeded"/> so run statistics do not count a privacy skip as a completed answer
+    /// (privacy/consent plan §11 Phase 1 item 1.6). Terminal, and stored as a bounded string, so
+    /// adding it needs no schema change.
+    /// </summary>
+    Skipped,
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter))]

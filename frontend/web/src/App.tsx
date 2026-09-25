@@ -19,8 +19,11 @@ import { ForbiddenPage } from './routes/ForbiddenPage'
 import { InvitePage } from './routes/InvitePage'
 import { LandingPage } from './routes/LandingPage'
 import { OnboardingPage } from './routes/OnboardingPage'
+import { OptOutPage } from './routes/OptOutPage'
 import { OrgSetupPage } from './routes/OrgSetupPage'
 import { PlansPage } from './routes/PlansPage'
+import { PrivacyPage } from './routes/PrivacyPage'
+import { ConsentFlowPage } from './routes/ConsentFlowPage'
 import { RootLayout } from './routes/RootLayout'
 import { SignInPage } from './routes/SignInPage'
 import { SignUpPage } from './routes/SignUpPage'
@@ -63,6 +66,11 @@ export default function App() {
           <Route path="/docs" element={<Navigate to="/docs/getting-started" replace />} />
           <Route path="/docs/:slug" element={<DocsPage />} />
           <Route path="/download" element={<DownloadPage />} />
+          {/* The transparency surface the WhatsApp disclosure links to. Public and anonymous by
+              design: the opt-out page authenticates with a one-time code, not an account. */}
+          <Route path="/privacy" element={<PrivacyPage />} />
+          <Route path="/privacy/consent-flow" element={<ConsentFlowPage />} />
+          <Route path="/privacy/opt-out" element={<OptOutPage />} />
 
           <Route element={<ProtectedRoute />}>
             {/* Administrator sign-ups wait here for review instead of onboarding. */}

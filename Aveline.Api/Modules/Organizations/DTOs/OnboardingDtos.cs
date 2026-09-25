@@ -45,6 +45,21 @@ public record SaveAiCustomizationRequest(
     string? CustomerPreferences = null
 );
 
+/// <summary>
+/// The onboarding organization, widened by plan §9.1 F1 (G8) with the subscription the plan
+/// selection created. The five new members are optional so existing positional constructions keep
+/// compiling; the endpoint always serialises them.
+/// </summary>
+/// <param name="PriceLkr">
+/// The list price the price book resolved for the tier, or <c>null</c> when no row was effective.
+/// A missing price is deliberately not reported as zero (P1).
+/// </param>
+/// <param name="SubscriptionStatus">The subscription lifecycle state, or <c>null</c> before one exists.</param>
+/// <param name="PaymentIntentId">
+/// Always <c>null</c> in defer mode (plan §14 Q1). It exists so a require-settlement deployment can
+/// report the first intent without changing the contract again.
+/// </param>
+/// <param name="CheckoutUrl">Always <c>null</c> in defer mode (plan §14 Q1).</param>
 public record OnboardingOrganizationDto(
     Guid Id,
     string Name,
@@ -59,7 +74,12 @@ public record OnboardingOrganizationDto(
     string? PreferredColorsFabrics,
     string? CustomerPreferences,
     int OnboardingStep,
-    bool HasCompletedOnboarding
+    bool HasCompletedOnboarding,
+    decimal? PriceLkr = null,
+    string Currency = "LKR",
+    string? SubscriptionStatus = null,
+    Guid? PaymentIntentId = null,
+    string? CheckoutUrl = null
 );
 
 public record OnboardingStatusResponse(

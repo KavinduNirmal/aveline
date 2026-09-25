@@ -249,14 +249,16 @@ in-memory EF Core DB seeded per test, external HTTP via stub servers or
 ## 7. End-to-End Tests (`tests/e2e/`)
 
 Playwright walks the two authenticated UI trees in a real browser, from the repository-level
-`tests/e2e/` tree rather than inside the web package. Each spec covers the **signed-out** path — the
-one walk buildable without a Clerk test session — and asserts both the redirect and the absence of
-that tree's own API traffic.
+`tests/e2e/` tree rather than inside the web package. All but one spec cover the **signed-out**
+path — the one walk buildable without a Clerk test session — and assert both the redirect and the
+absence of that tree's own API traffic. The payments walk is the exception: it needs a signed-in
+tenant session and is skipped until one is supplied.
 
 | Spec | Asserts |
 |---|---|
 | `admin-console/console-access.spec.ts` | signed out, `/admin/{userId}` reaches `/sign-in`, renders no console chrome, and issues **zero** `/api/v1/admin/` requests |
 | `tenant-dashboard/signed-out.spec.ts` | signed out, `/app/b/{slug}` and `/app/b/{slug}/{section}` reach `/sign-in`, render no dashboard chrome (`Switch boutique`, `Reporting window`, `Top up`), and issue **zero** `/api/v1/orgs/` requests |
+| `payments/top-up.spec.ts` | **needs `E2E_TENANT_STORAGE_STATE`** (a signed-in boutique-owner session) and `E2E_TENANT_SLUG`; buys a pack through the dashboard dialog against the **mock** provider, completes the mock's hosted page, and asserts the balance rises only after the polled intent is terminal. See the spec's header for the full run command. |
 
 ### Run
 

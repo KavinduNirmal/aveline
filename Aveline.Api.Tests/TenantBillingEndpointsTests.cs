@@ -242,6 +242,59 @@ public class TenantBillingEndpointsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task GetTopUpPacks_ForARepricedSku_OffersTheEffectiveRowOnce()
+    {
+        // G7: before this slice the catalogue listed every Active row, so a re-priced SKU appeared
+        // twice, and an expired row stayed on sale. The catalogue now selects the newest row whose
+        // effective window contains now — the same row the purchase route picks.
+        const string suffix = "repriced";
+        var seeded = await SeedAsync(suffix);
+        var token = CreateToken(seeded.OwnerClerk, orgRole: Roles.BoutiqueOwner);
+        var repriced = $"pack-repriced-{suffix}";
+        var expired = $"pack-expired-{suffix}";
+
+        await using (var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+                         .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+                         .Options))
+        {
+            context.BlossomPriceEntries.AddRange(
+                new BlossomPriceEntry
+                {
+                    SkuKind = BlossomSkuKind.TopUpPack, SkuCode = repriced,
+                    BlossomQuantity = 500m, PriceLkr = 2000m, Status = BlossomRuleStatus.Active,
+                    EffectiveFrom = DateTime.UtcNow.AddMonths(-6),
+                    EffectiveTo = DateTime.UtcNow.AddMonths(-1),
+                },
+                new BlossomPriceEntry
+                {
+                    SkuKind = BlossomSkuKind.TopUpPack, SkuCode = repriced,
+                    BlossomQuantity = 500m, PriceLkr = 2500m, Status = BlossomRuleStatus.Active,
+                    EffectiveFrom = DateTime.UtcNow.AddMonths(-1),
+                },
+                new BlossomPriceEntry
+                {
+                    SkuKind = BlossomSkuKind.TopUpPack, SkuCode = expired,
+                    BlossomQuantity = 100m, PriceLkr = 100m, Status = BlossomRuleStatus.Active,
+                    EffectiveFrom = DateTime.UtcNow.AddMonths(-6),
+                    EffectiveTo = DateTime.UtcNow.AddMonths(-1),
+                });
+            await context.SaveChangesAsync();
+        }
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Get, $"/api/v1/orgs/{seeded.OrgId}/blossoms/top-up-packs", token));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var packs = body.EnumerateArray().ToList();
+
+        var pack = Assert.Single(packs, item => item.GetProperty("skuCode").GetString() == repriced);
+        Assert.Equal(2500m, pack.GetProperty("priceLkr").GetDecimal());
+        Assert.DoesNotContain(expired, packs.Select(
+            item => item.GetProperty("skuCode").GetString()));
+    }
+
+    [Fact]
     public async Task GetTopUpPacks_AsAManager_Returns403()
     {
         // A manager holds `billing:view` but not `billing:manage`, and the catalogue carries the

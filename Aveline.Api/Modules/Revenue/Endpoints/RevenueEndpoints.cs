@@ -135,33 +135,23 @@ public static class RevenueEndpoints
             return Results.NotFound(new { message = $"Organization '{request.OrganizationId}' was not found." });
         }
 
-        // The verified receipt takes over the derived expectation's identity, which is why the
-        // operator names the charge rather than inventing a reference.
-        var derived = await db.IncomeLedgerEntries.FirstOrDefaultAsync(
-            entry => entry.OrganizationId == request.OrganizationId
-                && entry.SourceKind == request.SourceKind
-                && entry.SourceRef == request.SourceRef
-                && entry.ChargeBasis == IncomeChargeBasis.Derived
-                && entry.Status == IncomeEntryStatus.Recorded,
-            ct);
-
         try
         {
-            var entry = await ledger.RecordAsync(new RecordIncomeCommand(
+            // The verified receipt takes over the derived expectation's identity, which is why the
+            // operator names the charge rather than inventing a reference. The supersede lookup lives
+            // in `IIncomeLedgerService.VerifyAsync` so this route and the provider settlement share
+            // one implementation (plan §9.9 item 1, gap G12).
+            var entry = await ledger.VerifyAsync(new VerifyIncomeCommand(
                 request.OrganizationId,
                 request.Amount,
                 request.Reason,
                 IncomeEntryKind.SubscriptionCharge,
-                IncomeChargeBasis.Verified,
                 request.SourceKind,
                 request.SourceRef,
-                derived?.PeriodStart,
-                derived?.PeriodEnd,
                 DateTime.UtcNow,
                 actor,
-                derived?.Id,
-                IdempotencyKey(http),
-                "admin.revenue.verify"), ct);
+                IdempotencyKey: IdempotencyKey(http),
+                IdempotencyScope: "admin.revenue.verify"), ct);
 
             await AuditAsync(audit, entry, ct);
             return Results.Created("/api/v1/admin/revenue/ledger", IncomeLedgerEntryDto.From(entry));

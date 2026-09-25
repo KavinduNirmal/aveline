@@ -4,7 +4,10 @@ Tests full deal workflows, Salon block translations via build_lina_blocks,
 and concierge envelope outputs. Compatible with unittest and pytest.
 """
 
+import json
 import unittest
+
+from _payment_fakes import AnsweringPaymentRegistry
 
 from app.agents.commerce.graph import build_commerce_graph
 from app.agents.commerce.state import CommerceAgentState
@@ -13,7 +16,7 @@ from app.events.block_builders import build_lina_blocks
 
 class TestCommerceAgentE2E(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.graph = build_commerce_graph(registry=None)
+        self.graph = build_commerce_graph(registry=AnsweringPaymentRegistry())
         self.org_id = "org-boutique-colombo"
 
     async def test_commerce_deal_execution_and_salon_block_generation(self):
@@ -93,6 +96,46 @@ class TestCommerceAgentE2E(unittest.IsolatedAsyncioTestCase):
         # No address means no courier plan - not a courier in an invented "skipped" state.
         self.assertIsNone(output["courier"])
 
+    async def test_an_unreachable_payment_backend_errors_instead_of_handing_out_a_link(self):
+        """The removed fabrication, asserted end to end (plan §9.8).
+
+        A provider that cannot be reached must abort the settlement: an error the associate can see
+        beats a checkout URL that leads nowhere. The courier is not booked either, because no sale
+        happened.
+        """
+        graph = build_commerce_graph(
+            registry=AnsweringPaymentRegistry(create_error=RuntimeError("connection refused"))
+        )
+        state: CommerceAgentState = {
+            "org_id": self.org_id,
+            "order_id": "ord-provider-down",
+            "customer_name": "Eleanor",
+            "items": [
+                {
+                    "item_id": "item-101",
+                    "item_name": "Cashmere Scarf",
+                    "quantity": 1,
+                    "unit_price": 20000.0,
+                    "wholesale_cost": 5000.0,
+                    "total_price": 20000.0,
+                }
+            ],
+            "proposed_discount": 0.0,
+            "delivery_address": "45 Ward Place, Colombo 07",
+            "channel": "whatsapp",
+            "message": "Please confirm this order",
+        }
+
+        result = await graph.ainvoke(state)
+        output = result.get("output") or {}
+
+        self.assertEqual(output["status"], "error")
+        self.assertIsNone(output["payment"])
+        self.assertIsNone(output["courier"])
+        self.assertIsNone(result.get("payment_details"))
+        self.assertIn("could not be reached", output["reason"])
+        self.assertNotIn("pay.aveline.boutique", json.dumps(output))
+
     async def test_high_value_order_pauses_for_human_approval(self):
         """The HITL trigger: a breach returns pending_approval rather than settling."""
         state: CommerceAgentState = {
@@ -127,7 +170,7 @@ class TestCommerceAgentE2E(unittest.IsolatedAsyncioTestCase):
 
     async def test_llm_produces_deal_narrative_and_usage_when_injected(self):
         fake_llm = FakeCommerceChatModel(reply="Lina has prepared the private order confirmation.")
-        graph = build_commerce_graph(registry=None, llm=fake_llm)
+        graph = build_commerce_graph(registry=AnsweringPaymentRegistry(), llm=fake_llm)
         state: CommerceAgentState = {
             "org_id": self.org_id,
             "order_id": "ord-llm-1",
@@ -162,7 +205,7 @@ class TestCommerceAgentE2E(unittest.IsolatedAsyncioTestCase):
 
     async def test_llm_failure_falls_back_to_template_without_crashing(self):
         fake_llm = FakeCommerceChatModel(fail=True)
-        graph = build_commerce_graph(registry=None, llm=fake_llm)
+        graph = build_commerce_graph(registry=AnsweringPaymentRegistry(), llm=fake_llm)
         state: CommerceAgentState = {
             "org_id": self.org_id,
             "order_id": "ord-llm-fail",
@@ -192,7 +235,7 @@ class TestCommerceAgentE2E(unittest.IsolatedAsyncioTestCase):
 
     async def test_llm_json_envelope_is_unwrapped_to_plain_text(self):
         fake_llm = FakeCommerceChatModel(reply='{"reply": "Unwrapped bespoke order summary for VIP."}')
-        graph = build_commerce_graph(registry=None, llm=fake_llm)
+        graph = build_commerce_graph(registry=AnsweringPaymentRegistry(), llm=fake_llm)
         state: CommerceAgentState = {
             "org_id": self.org_id,
             "order_id": "ord-llm-json",

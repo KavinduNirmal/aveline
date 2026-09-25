@@ -111,6 +111,9 @@ public class ConversationHubTests
         public Task<OrganizationMembership?> GetMembershipAsync(Guid organizationId, Guid userId, CancellationToken cancellationToken = default)
             => Task.FromResult(memberships.FirstOrDefault(m => m.OrganizationId == organizationId && m.UserId == userId));
 
+        // Subscriptions are irrelevant to the hub group-joining behaviour under test.
+        public Task<Aveline.Api.Modules.Billing.Models.OrganizationSubscription?> GetSubscriptionAsync(Guid organizationId, CancellationToken cancellationToken = default) => Task.FromResult<Aveline.Api.Modules.Billing.Models.OrganizationSubscription?>(null);
+
         public Task<Organization?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult<Organization?>(null);
         public Task<Organization?> GetByOwnerUserIdAsync(Guid ownerUserId, CancellationToken cancellationToken = default) => Task.FromResult<Organization?>(null);
         public Task<Organization?> GetBySlugAsync(string slug, CancellationToken cancellationToken = default) => Task.FromResult<Organization?>(null);

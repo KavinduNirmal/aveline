@@ -17,7 +17,17 @@ export type BlossomVerb = 'credit' | 'debit' | 'revoke'
  */
 export type RevenueVerb = 'verify' | 'refund' | 'adjust'
 
-export type OperationVerb = BlossomVerb | RevenueVerb
+/**
+ * The tenant purchase verbs (plan §9.2, decision D8).
+ *
+ * A top-up checkout is a *different* operation from a credit or a verify, but the rule that keeps
+ * a retry safe is the same rule, so it shares this module rather than growing a second key
+ * lifecycle beside it. `reason` carries the SKU for the checkout and the intent id for the cancel,
+ * which is exactly the identity each operation has.
+ */
+export type TopUpVerb = 'top-up-checkout' | 'top-up-cancel'
+
+export type OperationVerb = BlossomVerb | RevenueVerb | TopUpVerb
 
 export interface OperationSnapshot {
   verb: OperationVerb

@@ -43,9 +43,15 @@ public sealed class BlossomLedgerRepository(AppDbContext db) : IBlossomLedgerRep
     public async Task AddEntryAndUpdateAccountAsync(
         BlossomLedgerEntry entry, UsageAccount account, CancellationToken cancellationToken = default)
     {
-        var isRelational = db.Database.IsRelational();
+        // The insert and the projection update are one unit of work. If a caller already opened a
+        // transaction (the top-up route, and payment settlement's grant+receipt write), that
+        // transaction owns the commit and this one must join it: EF Core throws
+        // "The connection is already in a transaction and cannot participate in another
+        // transaction" when a second BeginTransaction runs on the same context, so a nested call
+        // would fail the whole operation instead of joining it.
+        var ownsTransaction = db.Database.IsRelational() && db.Database.CurrentTransaction is null;
         Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? transaction = null;
-        if (isRelational)
+        if (ownsTransaction)
         {
             transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         }

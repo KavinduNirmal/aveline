@@ -22,6 +22,29 @@ if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
   })
 }
 
+// jsdom implements no `IntersectionObserver`, and `motion`'s `whileInView` reaches for it on mount.
+// The landing page's `Reveal` wrapper uses exactly that, so without this stub a render test dies on
+// a missing browser API rather than on the thing it is testing. The observer never fires, which is
+// fine: the element and its children are still committed to the DOM.
+if (typeof window !== 'undefined' && typeof window.IntersectionObserver !== 'function') {
+  class MockIntersectionObserver {
+    readonly root = null
+    readonly rootMargin = ''
+    readonly thresholds: ReadonlyArray<number> = []
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords(): IntersectionObserverEntry[] {
+      return []
+    }
+  }
+
+  Object.defineProperty(window, 'IntersectionObserver', {
+    writable: true,
+    value: MockIntersectionObserver,
+  })
+}
+
 // Testing Library does not auto-clean in Vitest; without this a second render in the same
 // file sees the first file's DOM.
 afterEach(() => {

@@ -1,13 +1,18 @@
 using Aveline.Api.Modules.Commerce.Repositories;
 using Aveline.Api.Modules.Commerce.Services;
+using Aveline.Api.Modules.Payments;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace Aveline.Api.Modules.Commerce;
 
 public static class CommerceModule
 {
-    public static IServiceCollection AddCommerceModule(this IServiceCollection services)
+    public static IServiceCollection AddCommerceModule(
+        this IServiceCollection services,
+        IConfiguration configuration)
     {
+        ArgumentNullException.ThrowIfNull(configuration);
         // Business Rules
         services.AddScoped<IBusinessRulesRepository, BusinessRulesRepository>();
         services.AddScoped<IBusinessRulesService, BusinessRulesService>();
@@ -29,7 +34,13 @@ public static class CommerceModule
         services.AddScoped<IApprovalRepository, ApprovalRepository>();
         services.AddScoped<IApprovalService, ApprovalService>();
 
-        // Payments (Feature 5)
+        // Payments (Feature 5). Phase 9's checkout reads `Payments:Commerce:UseProviderIntents`, its
+        // one-release rollback switch (plan §8.4 S8). Binding here rather than relying on
+        // `AddPaymentsModule` keeps the Commerce module self-sufficient for its own tests and makes the
+        // switch's home the place a reader of `PaymentService` looks. `AddOptions` is idempotent, so the
+        // sibling registration in `AddPaymentsModule` is unaffected.
+        services.AddOptions<PaymentsOptions>()
+            .BindConfiguration(PaymentsOptions.SectionName);
         services.AddScoped<IPaymentRepository, PaymentRepository>();
         services.AddScoped<IPaymentService, PaymentService>();
 

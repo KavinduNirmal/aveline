@@ -232,10 +232,14 @@ and the truthful alternative is to say so rather than to allow-list the file.
 
 - A missing balance renders **"Balance unavailable"**, not "Demo mode".
 - The Billing surface says **statement**, never invoice. Invoices are deferred (TD8): there is no
-  `Invoice` entity, no payment-provider client and no currency column, so a document priced from
-  `OrganizationSubscription.PriceLkr` (which is never assigned) would be a fabricated charge.
-- The top-up flow says top-ups are **recorded grants until a payment provider is connected**. The
-  demo-mode toast is gone; the button now opens the Billing section.
+  `Invoice` entity and no currency column, so a document priced from `OrganizationSubscription.PriceLkr`
+  (which is never assigned) would be a fabricated charge.
+- The top-up flow **no longer claims to be a recorded grant**. The demo-mode toast is gone, and as of
+  the payment-gateway Phase 3 the button opens the checkout dialog: the packs come from the server's
+  price book, the checkout carries an `Idempotency-Key`, and the terminal state is read back from
+  `GET …/payment-intents/{id}` rather than inferred from the provider redirect. The old operator
+  grant route (`POST …/blossoms/top-ups`) still exists for the `manual` provider, but the dashboard
+  no longer renders copy that calls a top-up a non-charge.
 
 ## The permission family (T0a)
 

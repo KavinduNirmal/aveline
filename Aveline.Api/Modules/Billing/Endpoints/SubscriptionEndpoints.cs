@@ -3,6 +3,8 @@ using Aveline.Api.Authorization;
 using Aveline.Api.Configurations;
 using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Billing.Services;
+using Aveline.Api.Modules.Payments.Domain;
+using Aveline.Api.Modules.Payments.Endpoints;
 using Aveline.Api.Modules.Shared.Services;
 
 namespace Aveline.Api.Modules.Billing.Endpoints;
@@ -81,6 +83,37 @@ public static class SubscriptionEndpoints
             }
         }).RequireAuthorization(AuthorizationConfiguration.BillingManagePolicy);
 
+        // Plan §9.5(c): the un-cancel path is only meaningful where the provider supports it, so a
+        // provider without `SupportsCancelAtPeriodEnd` answers `501 payment-provider-capability-missing`.
+        subscription.MapPost("/resume", async (
+            Guid organizationId,
+            ISubscriptionService subscriptions,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                return Results.Ok(await subscriptions.ResumeAsync(organizationId, ct));
+            }
+            catch (Exception exception)
+            {
+                return MapProblem(exception);
+            }
+        })
+        .RequireAuthorization(AuthorizationConfiguration.BillingManagePolicy)
+        .WithName("resumeSubscription")
+        .WithSummary("Withdraw a scheduled subscription cancellation")
+        .WithDescription(
+            "Clears `cancelAtPeriodEnd` and asks the provider to restore its recurring agreement. "
+            + "Only meaningful where the provider's capabilities include cancellation-at-period-end; "
+            + "otherwise the provider cannot be asked, and the response is "
+            + "`501 payment-provider-capability-missing`.")
+        .Produces(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status409Conflict)
+        .Produces(StatusCodes.Status501NotImplemented);
+
         var entitlements = endpoints.MapGroup("/orgs/{organizationId:guid}/entitlements")
             .WithTags("Entitlements");
 
@@ -150,6 +183,10 @@ public static class SubscriptionEndpoints
             code = "period-closed",
             message = periodClosed.Message,
         }),
+        // Plan §9.3 F3 lets the provider price an upgrade's proration charge, so this route can now
+        // surface the payment family's documented failures (for example
+        // 501 payment-provider-capability-missing). One mapping, shared with the payment routes.
+        PaymentDomainException payment => PaymentEndpoints.MapProblem(payment),
         _ => throw exception,
     };
 

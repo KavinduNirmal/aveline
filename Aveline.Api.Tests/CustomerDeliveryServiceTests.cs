@@ -150,6 +150,11 @@ public class CustomerDeliveryServiceTests
             return Task.FromResult(Next);
         }
 
+        public Task<WhatsAppSendResult> SendTemplateAsync(
+            string accessToken, string phoneNumberId, string to, string templateName,
+            string languageCode, IReadOnlyList<object>? components, CancellationToken ct)
+            => throw new NotSupportedException("This test double does not send templates.");
+
         public Task<WhatsAppTestResult> TestConnectionAsync(string accessToken, string phoneNumberId, CancellationToken ct)
             => throw new NotImplementedException();
 

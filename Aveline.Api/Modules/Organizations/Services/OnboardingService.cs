@@ -24,6 +24,7 @@ public partial class OnboardingService : IOnboardingService
     private readonly IUserCacheService _userCacheService;
     private readonly IAgentServiceClient _agentServiceClient;
     private readonly IEntitlementResolver? _entitlementResolver;
+    private readonly ISubscriptionProvisioner? _subscriptionProvisioner;
     private readonly ILogger<OnboardingService> _logger;
 
     public OnboardingService(
@@ -33,7 +34,8 @@ public partial class OnboardingService : IOnboardingService
         IUserCacheService userCacheService,
         IAgentServiceClient agentServiceClient,
         ILogger<OnboardingService> logger,
-        IEntitlementResolver? entitlementResolver = null)
+        IEntitlementResolver? entitlementResolver = null,
+        ISubscriptionProvisioner? subscriptionProvisioner = null)
     {
         _organizationRepository = organizationRepository;
         _userRepository = userRepository;
@@ -41,6 +43,7 @@ public partial class OnboardingService : IOnboardingService
         _userCacheService = userCacheService;
         _agentServiceClient = agentServiceClient;
         _entitlementResolver = entitlementResolver;
+        _subscriptionProvisioner = subscriptionProvisioner;
         _logger = logger;
     }
 
@@ -63,7 +66,7 @@ public partial class OnboardingService : IOnboardingService
         return new OnboardingStatusResponse(
             HasCompletedOnboarding: org.HasCompletedOnboarding && user.HasCompletedOnboarding,
             CurrentStep: org.HasCompletedOnboarding ? 6 : org.OnboardingStep,
-            Organization: MapToDto(org));
+            Organization: await MapToDtoAsync(org, cancellationToken));
     }
 
     public async Task<OnboardingOrganizationDto> SaveBoutiqueDetailsAsync(
@@ -146,7 +149,7 @@ public partial class OnboardingService : IOnboardingService
 
         await _organizationRepository.UpdateAsync(existingOrg, cancellationToken);
         _logger.LogInformation("Draft boutique details updated. orgId={OrgId}", existingOrg.Id);
-        return MapToDto(existingOrg);
+        return await MapToDtoAsync(existingOrg, cancellationToken);
     }
 
     public async Task<OnboardingOrganizationDto> SelectPlanAsync(
@@ -167,8 +170,25 @@ public partial class OnboardingService : IOnboardingService
         org.UpdatedAt = DateTime.UtcNow;
 
         await _organizationRepository.UpdateAsync(org, cancellationToken);
-        _logger.LogInformation("Plan selected for onboarding boutique. orgId={OrgId} tier={Tier}", org.Id, org.PlanTier);
-        return MapToDto(org);
+
+        // Plan §9.1 F1 (G8): the tier change and the subscription it implies are one call from the
+        // client. The provisioner is optional so a deployment (or a unit test) that has not wired the
+        // Billing price book still selects a plan; the response then reports no subscription.
+        //
+        // Defer mode (plan §14 Q1) is the accepted answer: this creates **no** payment intent, asks
+        // for **no** settlement, and returns no checkout URL. Payment is collected later, out of band.
+        var provisioned = _subscriptionProvisioner is null
+            ? null
+            : await _subscriptionProvisioner.ProvisionFromTierAsync(
+                org.Id, request.PlanTier, at: null, cancellationToken);
+
+        _logger.LogInformation(
+            "Plan selected for onboarding boutique. orgId={OrgId} tier={Tier} priceLkr={PriceLkr} status={Status}",
+            org.Id, org.PlanTier, provisioned?.PriceLkr, provisioned?.Status);
+
+        return provisioned is not null
+            ? MapToDto(org, provisioned.PriceLkr, provisioned.Currency, provisioned.Status)
+            : MapToDto(org);
     }
 
     public async Task<OnboardingOrganizationDto> SaveAiCustomizationAsync(
@@ -220,7 +240,7 @@ public partial class OnboardingService : IOnboardingService
 
         await _organizationRepository.UpdateAsync(org, cancellationToken);
         _logger.LogInformation("AI context saved for onboarding boutique. orgId={OrgId}", org.Id);
-        return MapToDto(org);
+        return await MapToDtoAsync(org, cancellationToken);
     }
 
     public async Task<CompleteOnboardingResponse> CompleteOnboardingAsync(
@@ -319,7 +339,7 @@ public partial class OnboardingService : IOnboardingService
         _logger.LogInformation("Owner onboarding completed successfully. orgId={OrgId} userId={UserId} tier={Tier}", org.Id, userId, org.PlanTier);
 
         return new CompleteOnboardingResponse(
-            Organization: MapToDto(org),
+            Organization: await MapToDtoAsync(org, cancellationToken),
             UserRole: user.UserRole,
             OrganizationRole: user.OrganizationRole,
             AccountState: user.AccountState.ToString(),
@@ -327,7 +347,17 @@ public partial class OnboardingService : IOnboardingService
             AgentWarmedUp: agentWarmedUp);
     }
 
-    private static OnboardingOrganizationDto MapToDto(Organization org) => new(
+    /// <summary>
+    /// Maps the organization plus the subscription facts the response now reports (plan §9.1 F1).
+    /// The payment members are always null in defer mode (§14 Q1): plan selection creates no intent
+    /// and returns no checkout URL. A <c>null</c> price means "no effective price row", which is not
+    /// the same as the zero price of the free Seed plan (P1).
+    /// </summary>
+    private static OnboardingOrganizationDto MapToDto(
+        Organization org,
+        decimal? priceLkr = null,
+        string currency = "LKR",
+        string? subscriptionStatus = null) => new(
         Id: org.Id,
         Name: org.Name,
         Slug: org.Slug,
@@ -341,5 +371,25 @@ public partial class OnboardingService : IOnboardingService
         PreferredColorsFabrics: org.PreferredColorsFabrics,
         CustomerPreferences: org.CustomerPreferences,
         OnboardingStep: org.OnboardingStep,
-        HasCompletedOnboarding: org.HasCompletedOnboarding);
+        HasCompletedOnboarding: org.HasCompletedOnboarding,
+        PriceLkr: priceLkr,
+        Currency: currency,
+        SubscriptionStatus: subscriptionStatus,
+        PaymentIntentId: null,
+        CheckoutUrl: null);
+
+    /// <summary>
+    /// The projection for the reads that have to report what the plan selection recorded, so a
+    /// reload of the wizard keeps the server's price rather than falling back to client copy. The
+    /// Billing module owns <see cref="OrganizationSubscription"/>; the repository exposes the one
+    /// row for an organization so this stays a read the module can make without a DbContext.
+    /// </summary>
+    private async Task<OnboardingOrganizationDto> MapToDtoAsync(
+        Organization org, CancellationToken cancellationToken)
+    {
+        var subscription = await _organizationRepository.GetSubscriptionAsync(org.Id, cancellationToken);
+        return subscription is null
+            ? MapToDto(org)
+            : MapToDto(org, subscription.PriceLkr, "LKR", subscription.Status.ToString());
+    }
 }

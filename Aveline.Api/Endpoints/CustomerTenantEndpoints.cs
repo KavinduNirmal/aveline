@@ -3,8 +3,12 @@ using Aveline.Api.Authorization;
 using Aveline.Api.Configurations;
 using Aveline.Api.Modules.Billing.Endpoints;
 using Aveline.Api.Modules.CustomerConcierge.DTOs;
+using Aveline.Api.Modules.CustomerConcierge.Models;
 using Aveline.Api.Modules.CustomerConcierge.Services;
+using Aveline.Api.Modules.Privacy.Services;
 using Aveline.Api.Modules.Shared.Repositories;
+using Aveline.Api.Modules.Statistics.Telemetry;
+using Microsoft.Extensions.Configuration;
 
 namespace Aveline.Api.Endpoints;
 
@@ -138,6 +142,74 @@ public static class CustomerTenantEndpoints
                 ? Results.NotFound(new { message = "That client is not in this boutique." })
                 : Results.Ok(detail);
         });
+
+        // Plan §11 item 4.4. The staff consent surface lives on the tenant customer group under the
+        // same policy as the rest of the client book. It is deliberately NOT the anonymous
+        // /privacy/opt-out/verify route: the two must be distinguishable in the audit by ActorKind,
+        // and only the customer route may carry `scope`.
+        group.MapGet("/{customerId:guid}/consent", async (
+            Guid organizationId,
+            Guid customerId,
+            ICustomerConsentService consent,
+            ICustomerTenantService customers,
+            CancellationToken ct) =>
+        {
+            // Reuse the tenant service's scoping so a consent read cannot see another boutique's
+            // client: an id that is not in this organisation is a 404, indistinguishable from a
+            // missing one.
+            var detail = await customers.GetDetailAsync(organizationId, customerId, ct);
+            if (detail is null)
+            {
+                return Results.NotFound(new { message = "That client is not in this boutique." });
+            }
+
+            return Results.Ok(await consent.GetAsync(organizationId, customerId, ct));
+        });
+
+        group.MapPost("/{customerId:guid}/consent", async (
+            Guid organizationId,
+            Guid customerId,
+            StaffConsentUpdateRequest request,
+            ClaimsPrincipal principal,
+            HttpContext http,
+            ICustomerConsentService consent,
+            ICustomerTenantService customers,
+            IUserRepository users,
+            CancellationToken ct) =>
+        {
+            var detail = await customers.GetDetailAsync(organizationId, customerId, ct);
+            if (detail is null)
+            {
+                return Results.NotFound(new { message = "That client is not in this boutique." });
+            }
+
+            var actorUserId = await ResolveUserIdAsync(principal, users, ct);
+
+            try
+            {
+                var actor = new ConsentActor(
+                    Kind: ConsentActorKinds.User,
+                    Source: ConsentSources.Staff,
+                    UserId: actorUserId == Guid.Empty ? null : actorUserId,
+                    ActorRef: principal.FindFirstValue(ClaimTypes.NameIdentifier)
+                              ?? principal.FindFirstValue("sub"),
+                    IpHash: MetricDimensionHasher.HashIp(
+                        http.Connection.RemoteIpAddress?.ToString(),
+                        http.RequestServices.GetService<IConfiguration>()?["Telemetry:IpHashSalt"]),
+                    UserAgent: http.Request.Headers.UserAgent.ToString());
+
+                var dto = await consent.UpdateAsync(
+                    organizationId, customerId, request.ConsentStatus, actor, ct);
+
+                return Results.Ok(dto);
+            }
+            catch (InvalidConsentStatusException ex)
+            {
+                // The typed domain error the internal route also maps, deliberately a 400 rather
+                // than a 500 through the global handler.
+                return Results.BadRequest(new { code = ex.Code, message = ex.Message });
+            }
+        }).RequireAuthorization(AuthorizationConfiguration.BoutiqueCustomerManagePolicy);
 
         // E-9. Without a history read, a detail page shows a visit count with nothing behind it.
         group.MapGet("/{customerId:guid}/interactions", async (

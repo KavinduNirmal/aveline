@@ -100,6 +100,10 @@ class ConciergeState(TypedDict, total=False):
     memory_output: dict[str, Any] | None
     visual_output: dict[str, Any] | None
     commerce_output: dict[str, Any] | None
+    # The consent status the memory agent resolved (`granted`/`pending`), or the blocking outcome
+    # (`revoked`/`unavailable`). It is promoted from the memory sub-graph so `_route_after_memory`
+    # can stop the whole ordered pipeline for a customer who opted out (plan §8.3 Layer 2).
+    consent_status: str | None
     # LLM token usage captured by the memory agent when the LLM generated the draft.
     usage: dict[str, Any] | None
     response: dict[str, Any] | None
@@ -412,9 +416,15 @@ async def run_memory_agent(state: ConciergeState) -> dict[str, Any]:
         "extracted_memories": [],
         "detected_events": [],
     }
-    # Surface LLM token usage (when the draft was LLM-generated) for billing (ADR-010).
+    # Surface LLM token usage (when the draft was LLM-generated) for billing (ADR-010), and the
+    # consent status the sub-graph resolved: the orchestrator's routing guard reads it, and a
+    # revoked or unverifiable customer must stop the whole pipeline, not just this sub-graph.
     usage = result.get("usage")
-    return {"memory_output": {"agent": "memory", "ran": True, **output}, "usage": usage}
+    return {
+        "memory_output": {"agent": "memory", "ran": True, **output},
+        "usage": usage,
+        "consent_status": result.get("consent_status"),
+    }
 
 
 def _first_attachment_reference(
@@ -722,7 +732,22 @@ def formulate_response(state: ConciergeState) -> dict[str, Any]:
     metadata = _build_usage_metadata(state.get("usage"))
     intent = state.get("intent") or {}
     commerce = state.get("commerce_output") or {}
-    if intent.get("intent_type") == "out_of_scope":
+    if _consent_blocks_processing(state):
+        # A consent skip is its own terminal status, not `success` with a nested flag (item 1.6).
+        # Reporting it as success is what made the run metric (`aveline_agent_run_status_total`)
+        # count a privacy skip as a completed answer.
+        response = AgentResponse(
+            status=AgentStatus.skipped,
+            output={
+                "intent": intent.get("intent_type", "general_inquiry"),
+                "reason": (state.get("memory_output") or {}).get("reason")
+                or "Consent blocks processing for this customer.",
+                "consent_status": state.get("consent_status"),
+                "memory": state.get("memory_output"),
+            },
+            metadata=metadata,
+        )
+    elif intent.get("intent_type") == "out_of_scope":
         response = AgentResponse(
             status=AgentStatus.out_of_scope,
             output={"reason": "Request is outside the boutique domain."},
@@ -910,7 +935,25 @@ def _clarification_for(state: ConciergeState) -> dict[str, Any] | None:
     return None
 
 
+#: Consent outcomes that must stop the whole ordered pipeline. `unavailable` is the fail-closed
+#: read failure (item 1.4); it is not a revocation, but processing without a readable consent
+#: decision is exactly what failing open would mean (plan §8.3).
+_CONSENT_BLOCKED_STATUSES = frozenset({"revoked", "unavailable"})
+
+
+def _consent_blocks_processing(state: ConciergeState) -> bool:
+    """Whether the run's resolved consent outcome forbids further specialist work."""
+    return str(state.get("consent_status") or "").lower() in _CONSENT_BLOCKED_STATUSES
+
+
 def _route_after_memory(state: ConciergeState) -> str:
+    # A revoked (or unverifiable) customer must not reach any downstream specialist. The memory
+    # agent's own skip closes only its sub-graph - `_route_after_memory` used to read the intent,
+    # so `run_visual_agent` and `run_commerce_agent` still ran for a revoked customer
+    # (plan §8.2 defect 1 / Phase 1 item 1.3).
+    if _consent_blocks_processing(state):
+        return "formulate_response"
+
     intent = state.get("intent") or {}
     agents = intent.get("suggested_agents", [])
     org_context = state.get("org_context") or {}
@@ -1140,6 +1183,7 @@ async def run_concierge(
         "memory_output": None,
         "visual_output": None,
         "commerce_output": None,
+        "consent_status": None,
         "usage": None,
         "response": None,
     }

@@ -701,7 +701,7 @@ service must make for the statistics to be real.
 | FR-5.7 | Success rate, failure rate, p50/p95/p99 latency, token usage, and cost must be computable for each of those dimensions. |
 | FR-5.8 | Runs that fail before the org is resolvable must still be recorded, attributed to organisation `NULL`, and flagged `unattributed`. |
 | FR-5.9 | No prompt text, tool arguments, tool results, or customer PII may be stored in telemetry. Only hashes and byte counts. |
-| FR-5.10 | The run-record state machine must be `Running -> Succeeded | Failed | Cancelled | TimedOut | PausedForApproval`, and `PausedForApproval -> Running -> terminal`. Once terminal, a run is immutable. |
+| FR-5.10 | The run-record state machine must be `Running -> Succeeded | Failed | Cancelled | TimedOut | Skipped | PausedForApproval`, and `PausedForApproval -> Running -> terminal`. Once terminal, a run is immutable. `Skipped` is a deliberate non-run (a consent skip), never reported as `Succeeded`. |
 | FR-5.11 | A run paused for human approval must record `PausedAt`, `ResumedAt`, and `ApprovalWaitMs` so approval latency is measurable. |
 | FR-5.12 | Ingestion must be idempotent on `(OrganizationId, WorkflowId)`; a re-report updates a non-terminal run, or is rejected if terminal and byte-identical. |
 

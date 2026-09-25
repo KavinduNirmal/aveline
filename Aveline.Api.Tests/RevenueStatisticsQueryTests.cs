@@ -2,6 +2,7 @@ using Aveline.Api.Authorization;
 using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Organizations.Models;
+using Aveline.Api.Modules.Payments;
 using Aveline.Api.Modules.Revenue;
 using Aveline.Api.Modules.Revenue.DTOs;
 using Aveline.Api.Modules.Revenue.Models;
@@ -45,9 +46,11 @@ public class RevenueStatisticsQueryTests
     private static readonly DateTime WindowFrom = new(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc);
     private static readonly DateTime WindowTo = new(2026, 9, 5, 0, 0, 0, DateTimeKind.Utc);
 
-    private static RevenueStatisticsService CreateService(AppDbContext context, int maxWindowDays = 400) =>
+    private static RevenueStatisticsService CreateService(
+        AppDbContext context, int maxWindowDays = 400, string providerKey = PaymentsOptions.ManualProviderKey) =>
         new(context,
             Options.Create(new RevenueOptions { MaxWindowDays = maxWindowDays, CacheSeconds = 60 }),
+            Options.Create(new PaymentsOptions { Provider = providerKey }),
             NullLogger<RevenueStatisticsService>.Instance);
 
     /// <summary>
@@ -495,5 +498,45 @@ public class RevenueStatisticsQueryTests
             quality.Notes,
             note => note.Contains("provider", StringComparison.OrdinalIgnoreCase));
         Assert.NotEqual(default, quality.CheckedAt);
+    }
+
+    /// <summary>
+    /// Plan §9.4's read surface: the flag is a property of the configured provider, not a constant.
+    /// `manual` settles nothing by itself, so the false branch and its prose survive for the
+    /// default deployment; a provider client flips both.
+    /// </summary>
+    [Theory]
+    [InlineData("manual", false)]
+    [InlineData("mock", true)]
+    [InlineData("stripe", true)]
+    public async Task TheQualityBlock_TracksWhetherTheConfiguredProviderSettlesMoney(
+        string providerKey, bool settlesMoney)
+    {
+        using var store = new Store();
+        await using var context = store.Context();
+
+        var result = await CreateService(context, providerKey: providerKey).GetOverviewAsync(
+            new RevenueWindow(WindowFrom, WindowTo), default);
+
+        var quality = result.Value!.DataQuality;
+        Assert.Equal(settlesMoney, quality.RevenueProviderSettlementAvailable);
+        Assert.Contains(
+            quality.Notes,
+            note => note.Contains("provider", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// The factory and the live read have to answer the same question the same way; asserting both
+    /// is what stops one from being "fixed" while the other keeps the old constant.
+    /// </summary>
+    [Theory]
+    [InlineData("manual", false)]
+    [InlineData("mock", true)]
+    public void TheCleanFactory_UsesTheSameProviderRuleAsTheLiveRead(string providerKey, bool settlesMoney)
+    {
+        var quality = IncomeDataQualityDto.Clean(
+            DateTime.UtcNow, new PaymentsOptions { Provider = providerKey });
+
+        Assert.Equal(settlesMoney, quality.RevenueProviderSettlementAvailable);
     }
 }

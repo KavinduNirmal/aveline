@@ -195,8 +195,29 @@ services:
       WhatsApp__ApiVersion: ${WHATSAPP_API_VERSION:-v21.0}
       # Optional Meta webhook IP allow-list (comma-separated). Empty = any IP (HMAC still enforced).
       Webhook__AllowedIps: ${WEBHOOK_ALLOWED_IPS:-}
+      # Payment provider abstraction (PaymentsOptions, plan §6.5). `manual` is the safe default: it
+      # is the honest representation of today (an operator confirms receipt) and cannot invent
+      # settled money. The mock is Development-only; Validate refuses to start with it outside
+      # Development unless PAYMENTS_MOCK_ALLOW_IN_NON_DEVELOPMENT is deliberately true.
+      Payments__Provider: ${PAYMENTS_PROVIDER:-manual}
+      Payments__Mock__Enabled: ${PAYMENTS_MOCK_ENABLED:-false}
+      Payments__Mock__WebhookSigningSecret: ${PAYMENTS_MOCK_WEBHOOK_SIGNING_SECRET:-}
+      Payments__Mock__AllowInNonDevelopment: ${PAYMENTS_MOCK_ALLOW_IN_NON_DEVELOPMENT:-false}
+      # OnePay, the external adapter (plan Phase 8, Q5). Only the AppId and HashSalt are required,
+      # and only when PAYMENTS_PROVIDER=onepay: PaymentsOptions.Validate fails startup without them.
+      # HASH_SALT and APP_TOKEN are secrets - supply them from the deployment's secret store, never
+      # from a committed file. The paths default to the published API and are overridable so a
+      # confirmed sandbox path needs no code change.
+      Payments__OnePay__AppId: ${PAYMENTS_ONEPAY_APP_ID:-}
+      Payments__OnePay__HashSalt: ${PAYMENTS_ONEPAY_HASH_SALT:-}
+      Payments__OnePay__AppToken: ${PAYMENTS_ONEPAY_APP_TOKEN:-}
+      Payments__OnePay__BaseUrl: ${PAYMENTS_ONEPAY_BASE_URL:-https://api.onepay.lk}
       # Public base URL used to build staff-invitation links.
       App__BaseUrl: ${APP_BASE_URL:-http://localhost:5173}
+      # HMAC key for the permanent opt-out link in the first-contact disclosure (privacy plan §5.1).
+      # Optional here: omission only warns and the disclosure is retried on the next inbound
+      # message; a value that is set but unusable refuses to start the API.
+      Privacy__LinkSigningKey: ${PRIVACY_LINK_SIGNING_KEY:-}
       # Browser origin allowed to call the API. Defaults to the Vite dev server.
       Cors__AllowedOrigins__0: ${CORS_ORIGIN:-http://localhost:5173}
       # Firebase Cloud Messaging (push). ProjectId is also in appsettings.json; the

@@ -95,6 +95,25 @@ public class AgentRunIngestTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Report_WithSkippedStatus_IsPersistedAsSkipped()
+    {
+        // Item 1.6: a consent skip is reported by the agent as `Skipped`. It is terminal (it needs
+        // CompletedAt) but must not be accepted as, or coerced to, Succeeded.
+        var workflowId = $"wf-skip-{Guid.NewGuid():N}";
+        var organizationId = Guid.CreateVersion7();
+        var body = RunBody(
+            organizationId, workflowId, "Skipped",
+            DateTime.UtcNow.AddMinutes(-5), completedAt: DateTime.UtcNow);
+
+        var response = await _client.SendAsync(Request(HttpMethod.Post, "/internal/agent-runs", body));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        await using var context = Context();
+        var run = await context.AgentWorkflowRuns.SingleAsync(r => r.WorkflowId == workflowId);
+        Assert.Equal(AgentRunStatus.Skipped, run.Status);
+    }
+
+    [Fact]
     public async Task Report_ThenIdenticalRepeat_IsIdempotent()
     {
         var workflowId = $"wf-idem-{Guid.NewGuid():N}";

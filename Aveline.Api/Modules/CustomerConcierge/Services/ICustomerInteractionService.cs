@@ -5,8 +5,9 @@ namespace Aveline.Api.Modules.CustomerConcierge.Services;
 /// <summary>Records customer interactions (inbound/outbound messages).</summary>
 public interface ICustomerInteractionService
 {
-    /// <summary>Records an interaction for a customer and returns it.</summary>
-    Task<CustomerInteractionDto> RecordAsync(
+    /// <summary>Records an interaction for a customer and returns it.
+    /// Returns null and writes nothing when the customer's consent is revoked (or unreadable).</summary>
+    Task<CustomerInteractionDto?> RecordAsync(
         Guid orgId,
         Guid customerId,
         string channel,

@@ -313,5 +313,11 @@ public class IntegrationEndpointsIntegrationTests : IAsyncLifetime
         public Task<WhatsAppSendResult> SendMessageAsync(
             string accessToken, string phoneNumberId, string to, string text, CancellationToken cancellationToken = default)
             => Task.FromResult(new WhatsAppSendResult(IsSuccess: true, MessageId: "wamid.test"));
+
+        public Task<WhatsAppSendResult> SendTemplateAsync(
+            string accessToken, string phoneNumberId, string to, string templateName,
+            string languageCode, IReadOnlyList<object>? components,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("This test double does not send templates.");
     }
 }

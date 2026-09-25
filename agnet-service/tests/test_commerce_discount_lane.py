@@ -16,6 +16,7 @@ whole risk here is a ceiling that disagrees with the margin check it is supposed
 """
 
 import pytest
+from _payment_fakes import AnsweringPaymentRegistry
 
 from app.agents.commerce.graph import build_commerce_graph
 from app.agents.commerce.nodes import (
@@ -63,7 +64,9 @@ CAP = 0.05
 
 
 def _graph():
-    return build_commerce_graph(registry=None)
+    # The settlement arm needs a backend that answers; the read-only arms never call payment, so the
+    # same double is harmless for them (plan §9.8).
+    return build_commerce_graph(registry=AnsweringPaymentRegistry())
 
 
 # --------------------------------------------------------------------------- the question

@@ -439,6 +439,15 @@ class ToolRegistry:
         payload = {"orderId": order_id, "amount": amount} if org_id else {"amount": amount}
         return await self._client.request("POST", path, json=payload)
 
+    async def validate_payment(self, payment_id: str, org_id: str | None = None) -> dict[str, Any]:
+        """Read the backend's settlement status for one payment (never invents one)."""
+        path = (
+            f"/api/v1/orgs/{org_id}/payments/{payment_id}"
+            if org_id
+            else f"/api/internal/payments/{payment_id}"
+        )
+        return await self._client.request("GET", path)
+
     async def check_approval_threshold(self, order_id: str, org_id: str | None = None) -> dict[str, Any]:
         """Evaluate an order against approval thresholds."""
         path = f"/api/v1/orgs/{org_id}/approvals" if org_id else f"/api/internal/orders/{order_id}/approval-check"

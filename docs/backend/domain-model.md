@@ -381,6 +381,9 @@ row per organisation.
 | `CreatedAt` | `timestamptz` | no | |
 | `UpdatedAt` | `timestamptz` | no | |
 | `CancelledAt` | `timestamptz` | yes | |
+| `RenewalAttemptCount` | `integer` | no | Dunning attempts made, the rollover's own attempt included. Default `0` |
+| `NextRenewalAttemptAt` | `timestamptz` | yes | The next retry; `NULL` once the day 1/3/7 schedule is spent (payment plan §9.4, Q3) |
+| `DunningStartedAt` | `timestamptz` | yes | The failed period boundary the window is anchored to; day 14 is `Expired` |
 | `ConcurrencyToken` | `xid` | no | system |
 
 ```sql
@@ -543,7 +546,7 @@ deterministically.
 | `ConversationId` | `uuid` | yes | FK → `Conversations.Id` |
 | `CustomerId` | `uuid` | yes | FK → `Customers.Id` |
 | `InitiatedByUserId` | `uuid` | yes | FK → `Users.Id` |
-| `Status` | `varchar(24)` | no | `Running`, `Succeeded`, `Failed`, `Cancelled`, `TimedOut`, `PausedForApproval` |
+| `Status` | `varchar(24)` | no | `Running`, `Succeeded`, `Failed`, `Cancelled`, `TimedOut`, `PausedForApproval`, `Skipped` |
 | `AgentsInvolved` | `text[]` | no | `[]`; distinct `AgentKey`s observed |
 | `StartedAt` | `timestamptz` | no | |
 | `CompletedAt` | `timestamptz` | yes | |
@@ -1164,6 +1167,273 @@ catalog image can name a CDN asset instead of holding its bytes. Migration
 
 ---
 
+### 8.15 Consent foundation: `CustomerConsent` (changed) and `ConsentAuditEntry` → `ConsentAuditEntries` (new, append-only)
+
+The consent row holds the *effective* state; the audit table is the source of truth for how that
+state was reached. The two timestamp scalars on the row are lossy by construction (a revoke, a
+re-grant and a second revoke leave one `ConsentGrantedAt` and one `ConsentRevokedAt`), so history is
+never reconstructed from them.
+
+`CustomerConsent` changes (migration `AddConsentAuditAndPrivacyColumns`, additive except for the
+drop of a column that no code ever wrote):
+
+| Column | Type | Null | Notes |
+| --- | --- | --- | --- |
+| `ConsentStatus` | `varchar(16)` | no | `pending` \| `granted` \| `revoked`. Default `pending`. An **absent row also means `pending`** — one wire value for one database state |
+| `ConsentGrantedAt` | `timestamptz` | yes | Stamped on grant, on insert and on update |
+| `ConsentRevokedAt` | `timestamptz` | yes | Stamped on revoke; **cleared** on a re-grant (or a return to `pending`) |
+| `ConsentSource` | `varchar(16)` | yes | `otp_link` \| `staff` \| `api` \| `system` |
+| `GlobalSubjectId` | `uuid` | yes | The customer's identity across organisations, so a global opt-out is one subject rather than one row per boutique |
+| `DisclosureShownAt` | `timestamptz` | yes | When the welcome disclosure was last shown |
+| `DisclosureVersion` | `varchar(32)` | yes | Which disclosure text was shown |
+| ~~`RevokeToken`~~ | — | — | **Dropped.** Declared and EF-configured but never read or written. The permanent opt-out link is a stateless HMAC (decision DR-2), so no `RevokeTokenHash` replaces it |
+
+- **Indexes:** the existing unique `(OrganizationId, CustomerId)` is the lookup path and is kept;
+  the migration adds a non-unique `(OrganizationId, ConsentStatus)` for the "count by status within
+  an org" metrics.
+
+`ConsentAuditEntries`:
+
+| Column | Type | Null | Notes |
+| --- | --- | --- | --- |
+| `Id` | `uuid` | no | PK, `Guid.CreateVersion7()` |
+| `OrganizationId` | `uuid` | no | FK → `Organizations.Id`, **ON DELETE RESTRICT** |
+| `CustomerId` | `uuid` | no | FK → `Customers.Id`, **ON DELETE CASCADE** (the history is *about* the customer) |
+| `Action` | `varchar(32)` | no | A consent/privacy constant from `Modules/Audit/Models/AuditAction.cs`, e.g. `consent.granted` |
+| `PreviousStatus` | `varchar(16)` | yes | `null` when the row was created |
+| `NewStatus` | `varchar(16)` | no | |
+| `Source` | `varchar(16)` | no | `otp_link` \| `staff` \| `api` \| `system` \| `welcome_message` |
+| `ActorKind` | `varchar(16)` | no | `customer` \| `user` \| `system` \| `internal_service` |
+| `ActorUserId` | `uuid` | yes | FK → `Users.Id`, **ON DELETE RESTRICT** |
+| `ActorRef` | `varchar(128)` | yes | A hashed phone or a clerk id; never a raw identifier |
+| `EvidenceJson` | `jsonb` | no | Default `'{}'`. Identifiers only — **no message content, ever** |
+| `IpHash` | `varchar(64)` | yes | SHA-256, never the raw address (matches `AuditLogEntries`) |
+| `UserAgent` | `varchar(256)` | yes | |
+| `CreatedAt` | `timestamptz` | no | |
+
+```sql
+CREATE INDEX "IX_ConsentAuditEntries_OrganizationId_CustomerId_CreatedAt"
+  ON "ConsentAuditEntries" ("OrganizationId", "CustomerId", "CreatedAt" DESC);
+CREATE INDEX "IX_ConsentAuditEntries_CustomerId_CreatedAt"
+  ON "ConsentAuditEntries" ("CustomerId", "CreatedAt" DESC);
+```
+
+- **Append-only.** Entries are never updated or deleted by application code; erasure is the one
+  deletion path, and it is the customer cascade (open question Q-4 covers whether erasure should
+  instead anonymise a tombstone).
+- **Content policy.** `EvidenceJson` carries an OTP attempt id, a link id or a disclosure version.
+  The existing `AuditRedactor` key-name filter is applied at write time on the generic audit table;
+  this table's writers must pass identifiers only, and the column has no free-text field at all.
+- **Consumers.** Written by the consent service, the OTP opt-out flow and the disclosure
+  dispatcher (later phases); read by the staff consent timeline and the erasure report.
+- **Migration** `AddConsentAuditAndPrivacyColumns`.
+
+---
+
+### 8.16 Payment intents and the provider event inbox (P2-B2)
+
+Two new tables. Both were created by the P2-A migration (`AddPaymentIntentsAndProviderEvents`);
+P2-B2 adds no schema. They are the persistence of the payment-provider abstraction: Aveline models
+the *intent* it needs and treats the provider as a dependency of it, rather than mirroring a
+provider's own object model.
+
+#### `PaymentIntent` → `PaymentIntents`
+
+The provider-neutral record of one charge attempt. `ITenantEntity`-shaped, so tenant isolation is
+enforced at the repository and covered by the isolation regime.
+
+| Column | Type | Null | Notes |
+| --- | --- | --- | --- |
+| `Id` | `uuid` | no | PK, `Guid.CreateVersion7()` |
+| `OrganizationId` | `uuid` | no | FK → `Organizations.Id`, **ON DELETE RESTRICT** |
+| `Provider` | `varchar(32)` | no | The adapter key that created it (`manual` \| `mock` \| `stripe`). Indexed |
+| `ProviderIntentId` | `varchar(128)` | yes | The provider's own id; unique per provider under a filtered index |
+| `Purpose` | `varchar(32)` | no | `PaymentPurpose` as a string; drives the settlement effect, never the provider call |
+| `Status` | `varchar(24)` | no | `PaymentProviderStatus` as a string. `Refunded` is *derived* from `RefundedAt`, and `Expired` from `ExpiresAt`, rather than stored |
+| `AmountMinor` | `bigint` | no | Integer minor units (decision D3); check `> 0` |
+| `Currency` | `varchar(3)` | no | `LKR`; checked against the event at settlement, not at creation |
+| `PriceLkr` | `numeric(18,2)` | no | The list price it was created from, so a later price change does not retro-explain the charge |
+| `SkuCode` | `varchar(64)` | yes | Set for `BlossomTopUp` |
+| `BlossomQuantity` | `numeric(18,4)` | yes | Set for `BlossomTopUp`; exactly what settlement grants |
+| `PlanTier` | `varchar(32)` | yes | Set for subscription purposes |
+| `BillingPeriodStart` / `BillingPeriodEnd` | `timestamp` | yes | For a top-up these are the period cap resolved **before** payment (BR-2.6); a null end means the purchase was deliberately uncapped. For a subscription they are the billing period |
+| `ProviderSubscriptionId` | `varchar(128)` | yes | |
+| `IdempotencyKey` | `varchar(128)` | yes | Client-supplied; unique filtered on `(OrganizationId, Purpose, IdempotencyKey)` |
+| `Description` | `varchar(200)` | no | Sent to the provider |
+| `FailureCode` / `FailureMessage` | `varchar(64)` / `varchar(500)` | yes | |
+| `CreatedByUserId` | `uuid` | yes | Null for a system-created intent (a renewal, later phases) |
+| `CreatedAt` / `UpdatedAt` / `SettledAt` / `RefundedAt` | `timestamp` | `SettledAt`/`RefundedAt` yes | `SettledAt` is the settlement identity guard |
+| `ExpiresAt` | `timestamp` | yes | The read derives `Expired` from it; no sweep exists in this phase |
+| `ConcurrencyToken` | `uint` | no | `.IsRowVersion()` mapped to `xmin` |
+| `ExternalRef` | `varchar(128)` | yes | The `SourceRef` written into both ledgers (`= ProviderIntentId`), kept for reconciliation |
+
+**Deliberately absent:** card number, CVC, expiry, PAN and token. There is no column a client could
+use to send card data to Aveline (constraint C11).
+
+```sql
+CREATE UNIQUE INDEX "IX_PaymentIntents_Provider_IntentId"
+  ON "PaymentIntents" ("Provider", "ProviderIntentId") WHERE "ProviderIntentId" IS NOT NULL;
+CREATE UNIQUE INDEX "IX_PaymentIntents_Org_Purpose_IdempotencyKey"
+  ON "PaymentIntents" ("OrganizationId", "Purpose", "IdempotencyKey") WHERE "IdempotencyKey" IS NOT NULL;
+CREATE INDEX "IX_PaymentIntents_Org" ON "PaymentIntents" ("OrganizationId");
+ALTER TABLE "PaymentIntents" ADD CONSTRAINT "CK_PaymentIntents_Amount" CHECK ("AmountMinor" > 0);
+ALTER TABLE "PaymentIntents" ADD CONSTRAINT "CK_PaymentIntents_TopUpShape"
+  CHECK ("Purpose" <> 'BlossomTopUp' OR ("SkuCode" IS NOT NULL AND "BlossomQuantity" IS NOT NULL));
+ALTER TABLE "PaymentIntents" ADD CONSTRAINT "CK_PaymentIntents_Settled"
+  CHECK ("Status" <> 'Succeeded' OR "SettledAt" IS NOT NULL);
+```
+
+- **`CK_PaymentIntents_Settled` is the point of the table.** An intent that says it succeeded with
+  no settlement timestamp is the Commerce `Status = "confirmed"` defect expressed as a schema rule.
+- **Writers.** `PaymentIntentService` creates, cancels and refunds; `PaymentSettlementService`
+  moves the row to `Succeeded` in the same transaction as the Blossom grant and the income receipt.
+- **Settlement identity.** The Blossom grant dedups on
+  `(OrganizationId, "payments.topup", ProviderIntentId)` and the income receipt on
+  `(BlossomTopUp, ProviderIntentId)`; the intent state is the third belt.
+- **A dispute reversal is a fourth identity (P10).** A `DisputeOpened` event appends a `Verified`
+  `Refund` row to the income ledger with `SourceKind = System` and
+  `SourceRef = "payment-dispute:{ProviderIntentId}"`. The settled receipt and the Blossom grant are
+  left untouched — the journal is append-only — and the intent stays `Succeeded`, because the charge
+  did succeed and the dispute is a separate movement of money. The ledger's filtered unique
+  `(SourceKind, SourceRef)` index is what refuses a second reversal for the same charge.
+
+#### `PaymentProviderEvent` → `PaymentProviderEvents`
+
+The webhook inbox. The inbox is not an optimisation: providers retry, and the unique
+`(Provider, ProviderEventId)` index is what distinguishes a *duplicate* from a *retry of a failed
+dispatch*, which an idempotency-only design cannot tell apart.
+
+| Column | Type | Null | Notes |
+| --- | --- | --- | --- |
+| `Id` | `uuid` | no | PK, `Guid.CreateVersion7()` |
+| `Provider` | `varchar(32)` | no | |
+| `ProviderEventId` | `varchar(128)` | no | **Unique with `Provider`**: the replay guard |
+| `EventType` | `varchar(32)` | no | `PaymentWebhookEventType` as a string. `DisputeOpened` is explicit since P10; only a type with **no** handler is `Unknown` |
+| `ProviderIntentId` | `varchar(128)` | yes | Indexed |
+| `AmountMinor` | `bigint` | yes | Check `>= 0` |
+| `Currency` | `varchar(3)` | yes | |
+| `OccurredAt` | `timestamp` | no | Provider-reported time |
+| `ReceivedAt` | `timestamp` | no | Server time |
+| `RawPayload` | `jsonb` | no | Kept verbatim for forensics |
+| `ProcessedAt` | `timestamp` | yes | **Null means unprocessed**, which is what makes a failed dispatch visible and retryable |
+| `ProcessingError` | `varchar(500)` | yes | Set on an amount/currency mismatch, with `ProcessedAt` left null |
+
+```sql
+CREATE UNIQUE INDEX "IX_PaymentProviderEvents_Provider_EventId"
+  ON "PaymentProviderEvents" ("Provider", "ProviderEventId");
+CREATE INDEX "IX_PaymentProviderEvents_ProviderIntentId"
+  ON "PaymentProviderEvents" ("ProviderIntentId");
+CREATE INDEX "IX_PaymentProviderEvents_Unprocessed"
+  ON "PaymentProviderEvents" ("ReceivedAt") WHERE "ProcessedAt" IS NULL;
+```
+
+- **Mismatch is visible, not reconciled.** An event whose amount or currency does not match the
+  intent is stored unprocessed with a `ProcessingError` and moves the critical
+  `aveline.payment.settlement{outcome="mismatch"}` series. Nothing is granted.
+- **The backlog is the queue.** The partial `ProcessedAt IS NULL` index backs
+  `aveline.payment.webhook.unprocessed_backlog`; re-driving an unprocessed event is Phase 7, not
+  this phase — an inbound duplicate is answered `200 already seen`.
+- **Migration** `AddPaymentIntentsAndProviderEvents` (P2-A; no P2-B2 migration).
+
+---
+
+### 8.17 Data-subject requests and the erasure tombstone (Phase 5)
+
+Two tables carry Objective 4: the durable idempotency/audit log for the anonymous export and delete
+routes, and the anonymised tombstone that lets consent survive an erasure.
+
+#### `DataSubjectRequest` → `DataSubjectRequests` (new)
+
+`IdempotencyRecord` covers 24-hour HTTP replay; an erasure request needs a durable record well beyond
+that window, and the brief requires idempotency plus audit. One table serves both.
+
+| Column | Type | Null | Notes |
+| --- | --- | --- | --- |
+| `Id` | `uuid` | no | PK, `Guid.CreateVersion7()` |
+| `OrganizationId` | `uuid` | no | FK → `Organizations.Id`, **ON DELETE RESTRICT** |
+| `CustomerId` | `uuid` | yes | FK → `Customers.Id`, **ON DELETE SET NULL** — the record survives the customer |
+| `Kind` | `varchar(16)` | no | `export` \| `delete` |
+| `Status` | `varchar(16)` | no | `received` \| `verified` \| `completed` \| `failed` \| `expired` |
+| `PhoneHash` | `varchar(64)` | no | The deterministic `PhoneFingerprint.Of` value. **Never the number** |
+| `RequestedAt` | `timestamptz` | no | |
+| `VerifiedAt` | `timestamptz` | yes | When the code was proven |
+| `CompletedAt` | `timestamptz` | yes | |
+| `ResultJson` | `jsonb` | yes | **Counts only** — `{ "memories": 41, "messages": 12, … }`. Never content |
+| `FailureReason` | `varchar(512)` | yes | A bounded, non-personal reason |
+| `IdempotencyKey` | `varchar(64)` | no | Caller-supplied for `delete`; server-generated `auto:*` for `export` |
+
+```sql
+CREATE UNIQUE INDEX "IX_DataSubjectRequests_OrganizationId_Kind_IdempotencyKey"
+  ON "DataSubjectRequests" ("OrganizationId", "Kind", "IdempotencyKey");
+CREATE INDEX "IX_DataSubjectRequests_CustomerId" ON "DataSubjectRequests" ("CustomerId");
+CREATE INDEX "IX_DataSubjectRequests_OrganizationId_PhoneHash"
+  ON "DataSubjectRequests" ("OrganizationId", "PhoneHash");
+```
+
+- The unique index is the idempotency contract: a repeat key returns the stored `ResultJson` instead
+  of deleting twice. A distributed lease (`IDistributedJobLock`) additionally stops two concurrent
+  erasures racing, and answers `409 erasure-in-progress`.
+- **`ResultJson` is counts, never content.** A result that quoted the erased data would put PII back
+  into the table the erasure is supposed to leave clean, and back into the scope of the next erasure.
+
+#### `PrivacyErasureTombstone` → `PrivacyErasureTombstones` (new)
+
+The Q-4 decision, implemented. The erasure hard-deletes `Customers`, and `CustomerConsent` cascades
+with it; the inbound path treats "no customer" as `pending` and would re-create both on the next
+message, silently lapsing the opt-out (risk R-3). This row preserves the *decision* without
+preserving the person.
+
+| Column | Type | Null | Notes |
+| --- | --- | --- | --- |
+| `Id` | `uuid` | no | PK, `Guid.CreateVersion7()` |
+| `OrganizationId` | `uuid` | no | FK → `Organizations.Id`, **ON DELETE RESTRICT** |
+| `PhoneHash` | `varchar(64)` | no | `PhoneFingerprint.Of(E.164)` — a fingerprint, never a number |
+| `Status` | `varchar(16)` | no | The terminal status, `revoked` |
+| `ErasedAt` | `timestamptz` | no | |
+
+```sql
+CREATE UNIQUE INDEX "IX_PrivacyErasureTombstones_OrganizationId_PhoneHash"
+  ON "PrivacyErasureTombstones" ("OrganizationId", "PhoneHash");
+```
+
+- **One per (organisation, number).** An org-scoped erasure writes one row; a global (`scope = all`)
+  erasure writes one per organisation it touched. A tombstone never crosses a tenant boundary on its
+  own.
+- **How the gate reads it.** `ConsentGateService` treats a tombstone as a revocation whenever the
+  live status is not an explicit `granted`, so a customer who later re-consents is not locked out
+  forever. The phone is passed at the inbound dispatch site, where the conversation may have no
+  customer binding left (`ConversationService.TriggerInboundDraftAsync`).
+- **What it does not store.** No name, email, message, or number — only the salted-in-convention
+  fingerprint and the terminal status.
+- **Migration** `AddDataSubjectRequestsAndErasureTombstones` (§10.4).
+
+#### Retention policy — Q-6 is **open**
+
+Phase 5 makes erasure reachable, but it does not answer how long the surviving rows live, and that
+question (plan §15 Q-6) must not be answered by an implementer. **Q-6 is recorded here as open,
+awaiting legal confirmation.** The proposed defaults from the plan are:
+
+| Data | Proposed window |
+| --- | --- |
+| `Customer*` rows | 24 months of inactivity |
+| Interaction logs (`InboundMessageLogs`, `CustomerInteractions`) | 12 months |
+| Consent audit (`ConsentAuditEntries`) | 7 years (typical evidentiary horizon) |
+
+What Phase 5 ships, and what a retention policy will have to account for:
+
+- **`InboundMessageLogs` outlive the customer by design.** Erasure nulls `From`/`Content` but keeps
+  the row, because it is the evidence that the message arrived and the opt-out was honoured
+  (DR-3). Without a retention job those rows accumulate indefinitely (risk R-13).
+- **`DataSubjectRequests` and `PrivacyErasureTombstones` are retained with no expiry.** The request
+  log is the proof a deletion happened and holds counts plus a phone fingerprint; the tombstone is
+  what keeps the opt-out effective (Q-4). Neither has a scheduled purge.
+- **`ConsentAuditEntries` cascade with the customer.** Erasure removes them; the terminal decision
+  survives only in the tombstone.
+- **No `PrivacyRetentionJob` exists yet.** A job mirroring `NotificationRetentionJob` is Phase 6
+  scope, and it cannot be written before Q-6 is answered.
+
+---
+
 ## 9. Audit (shared, all feature areas)
 
 ### 9.1 `AuditLogEntry` → `AuditLogEntries` (new, append-only)
@@ -1290,6 +1560,15 @@ dotnet ef migrations add AddBlossomPricingRules \
 `dotnet-ef` is pinned to `10.0.11` in `dotnet-tools.json` and the file names use
 the `yyyyMMddHHmmss_PascalCase` convention already present in
 `Aveline.Api/Migrations/`.
+
+### 10.4 Phase 5 migration: `AddDataSubjectRequestsAndErasureTombstones`
+
+Purely additive: it creates `DataSubjectRequests` and `PrivacyErasureTombstones` with their foreign
+keys and indexes (§8.17), and touches no existing table. Because migrations share one
+`AppDbContextModelSnapshot`, it was generated with a **full build** (never `--no-build`) and
+immediately verified with
+`dotnet ef migrations has-pending-model-changes --project Aveline.Api --startup-project Aveline.Api`,
+which reported *"No changes have been made to the model since the last migration."*
 
 ---
 

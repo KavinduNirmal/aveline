@@ -37,7 +37,10 @@ export function DownloadPage() {
                   The Aveline app for iPhone — coming soon to the App Store.
                 </p>
               </div>
-              <Button asChild size="lg" variant="outline" className="mt-6 h-11 w-full" disabled>
+              {/* No `asChild` here: this button has no link to compose with, and
+                  Radix's Slot throws "Expected a single React element child" on a
+                  bare text child, which unmounts the entire route. */}
+              <Button size="lg" variant="outline" className="mt-6 h-11 w-full" disabled>
                 Coming soon
               </Button>
             </div>

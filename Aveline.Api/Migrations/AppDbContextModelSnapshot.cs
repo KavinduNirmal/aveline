@@ -834,6 +834,9 @@ namespace Aveline.Api.Migrations
                     b.Property<DateTime>("CurrentPeriodStart")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTime?>("DunningStartedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("ExternalProvider")
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");
@@ -841,6 +844,9 @@ namespace Aveline.Api.Migrations
                     b.Property<string>("ExternalSubscriptionId")
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
+
+                    b.Property<DateTime?>("NextRenewalAttemptAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<Guid>("OrganizationId")
                         .HasColumnType("uuid");
@@ -853,6 +859,11 @@ namespace Aveline.Api.Migrations
                     b.Property<decimal>("PriceLkr")
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
+
+                    b.Property<int>("RenewalAttemptCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
 
                     b.Property<int>("SeatsIncluded")
                         .HasColumnType("integer");
@@ -1495,6 +1506,9 @@ namespace Aveline.Api.Migrations
                     b.Property<Guid>("OrganizationId")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("PaymentIntentId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("PaymentLink")
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
@@ -1516,11 +1530,14 @@ namespace Aveline.Api.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("GatewayTransactionId");
+                    b.HasIndex("GatewayTransactionId")
+                        .IsUnique();
 
                     b.HasIndex("OrderId");
 
                     b.HasIndex("OrganizationId");
+
+                    b.HasIndex("PaymentIntentId");
 
                     b.HasIndex("Status");
 
@@ -1803,6 +1820,79 @@ namespace Aveline.Api.Migrations
                     b.ToTable("SignOffDecisions", (string)null);
                 });
 
+            modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.ConsentAuditEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("ActorKind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("ActorRef")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<Guid?>("ActorUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("EvidenceJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("{}");
+
+                    b.Property<string>("IpHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("NewStatus")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PreviousStatus")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("UserAgent")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ActorUserId");
+
+                    b.HasIndex("CustomerId", "CreatedAt")
+                        .IsDescending(false, true);
+
+                    b.HasIndex("OrganizationId", "CustomerId", "CreatedAt")
+                        .IsDescending(false, false, true);
+
+                    b.ToTable("ConsentAuditEntries", (string)null);
+                });
+
             modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.Customer", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1892,6 +1982,10 @@ namespace Aveline.Api.Migrations
                     b.Property<DateTime?>("ConsentRevokedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("ConsentSource")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
                     b.Property<string>("ConsentStatus")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -1905,12 +1999,18 @@ namespace Aveline.Api.Migrations
                     b.Property<Guid>("CustomerId")
                         .HasColumnType("uuid");
 
-                    b.Property<Guid>("OrganizationId")
+                    b.Property<DateTime?>("DisclosureShownAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DisclosureVersion")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<Guid?>("GlobalSubjectId")
                         .HasColumnType("uuid");
 
-                    b.Property<string>("RevokeToken")
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -1918,6 +2018,8 @@ namespace Aveline.Api.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("CustomerId");
+
+                    b.HasIndex("OrganizationId", "ConsentStatus");
 
                     b.HasIndex("OrganizationId", "CustomerId")
                         .IsUnique();
@@ -2783,6 +2885,296 @@ namespace Aveline.Api.Migrations
                         .IsUnique();
 
                     b.ToTable("OrganizationMemberships", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Payments.Models.PaymentIntent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("AmountMinor")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("BillingPeriodEnd")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("BillingPeriodStart")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal?>("BlossomQuantity")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<uint>("ConcurrencyToken")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTime?>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ExternalRef")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("FailureCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("FailureMessage")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PlanTier")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<decimal>("PriceLkr")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("ProviderIntentId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("ProviderSubscriptionId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTime?>("RefundedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("SettledAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("SkuCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId")
+                        .HasDatabaseName("IX_PaymentIntents_Org");
+
+                    b.HasIndex("Provider", "ProviderIntentId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_PaymentIntents_Provider_IntentId")
+                        .HasFilter("\"ProviderIntentId\" IS NOT NULL");
+
+                    b.HasIndex("OrganizationId", "Purpose", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("IX_PaymentIntents_Org_Purpose_IdempotencyKey")
+                        .HasFilter("\"IdempotencyKey\" IS NOT NULL");
+
+                    b.ToTable("PaymentIntents", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_PaymentIntents_Amount", "\"AmountMinor\" > 0");
+
+                            t.HasCheckConstraint("CK_PaymentIntents_Settled", "(\"Status\" <> 'Succeeded' OR \"SettledAt\" IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_PaymentIntents_TopUpShape", "(\"Purpose\" <> 'BlossomTopUp' OR (\"SkuCode\" IS NOT NULL AND \"BlossomQuantity\" IS NOT NULL))");
+                        });
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Payments.Models.PaymentProviderEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<long?>("AmountMinor")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Currency")
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTime>("OccurredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ProcessedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ProcessingError")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("ProviderEventId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("ProviderIntentId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("RawPayload")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTime>("ReceivedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProviderIntentId")
+                        .HasDatabaseName("IX_PaymentProviderEvents_ProviderIntentId");
+
+                    b.HasIndex("ReceivedAt")
+                        .HasDatabaseName("IX_PaymentProviderEvents_Unprocessed")
+                        .HasFilter("\"ProcessedAt\" IS NULL");
+
+                    b.HasIndex("Provider", "ProviderEventId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_PaymentProviderEvents_Provider_EventId");
+
+                    b.ToTable("PaymentProviderEvents", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_PaymentProviderEvents_Amount", "(\"AmountMinor\" IS NULL OR \"AmountMinor\" >= 0)");
+                        });
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Privacy.Models.DataSubjectRequest", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CustomerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PhoneHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime>("RequestedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ResultJson")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<DateTime?>("VerifiedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CustomerId");
+
+                    b.HasIndex("OrganizationId", "PhoneHash");
+
+                    b.HasIndex("OrganizationId", "Kind", "IdempotencyKey")
+                        .IsUnique();
+
+                    b.ToTable("DataSubjectRequests", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Privacy.Models.PrivacyErasureTombstone", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("ErasedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PhoneHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "PhoneHash")
+                        .IsUnique();
+
+                    b.ToTable("PrivacyErasureTombstones", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Revenue.Models.IncomeLedgerEntry", b =>
@@ -4473,9 +4865,16 @@ namespace Aveline.Api.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("Aveline.Api.Modules.Payments.Models.PaymentIntent", "PaymentIntent")
+                        .WithMany()
+                        .HasForeignKey("PaymentIntentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.Navigation("Order");
 
                     b.Navigation("Organization");
+
+                    b.Navigation("PaymentIntent");
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Conversations.Models.Conversation", b =>
@@ -4532,6 +4931,26 @@ namespace Aveline.Api.Migrations
                         .WithMany()
                         .HasForeignKey("OrganizationId")
                         .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.CustomerConcierge.Models.ConsentAuditEntry", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.Shared.Models.User", null)
+                        .WithMany()
+                        .HasForeignKey("ActorUserId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Aveline.Api.Modules.CustomerConcierge.Models.Customer", null)
+                        .WithMany()
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 
@@ -4778,6 +5197,38 @@ namespace Aveline.Api.Migrations
                     b.Navigation("Organization");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Payments.Models.PaymentIntent", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Privacy.Models.DataSubjectRequest", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.CustomerConcierge.Models.Customer", null)
+                        .WithMany()
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.Privacy.Models.PrivacyErasureTombstone", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.Organizations.Models.Organization", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.Revenue.Models.IncomeLedgerEntry", b =>

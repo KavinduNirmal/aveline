@@ -266,7 +266,7 @@ unless it appears in this catalog **and** in
 | Field | Value |
 | --- | --- |
 | Description | Share of runs that completed successfully |
-| Formula | `success_rate = count(status='Succeeded') / count(status IN ('Succeeded','Failed','TimedOut','Cancelled'))`. Runs still `Running` or `PausedForApproval` are **excluded** from the denominator |
+| Formula | `success_rate = count(status='Succeeded') / count(status IN ('Succeeded','Failed','TimedOut','Cancelled'))`. Runs still `Running` or `PausedForApproval` are **excluded** from the denominator, and so is `Skipped` — a deliberate non-run (a consent skip) must neither inflate nor dilute the rate |
 | Dimensions | `organizationId`, `agentKey`, `triggerKind`, `nodeName`, `day` |
 | Granularity | hour |
 | Freshness | `≤ 1 h` |
@@ -861,7 +861,7 @@ the trailing bucket the window's `to` falls inside.
 | Storage | on-the-fly |
 | Endpoint | `GET /api/v1/admin/statistics/business/plan-mix` |
 | Access | `analytics:business:read` |
-| Notes | **Free = `PlanTier.Seed`; premium = `Bloom`, `Orchid`, `Rose`, `Enterprise`.** The response returns the per-tier rows **and** the two rolled-up sides so the definition is stated once, server-side. **`OrganizationCount` and `BilledSubscriptionCount` are deliberately two different fields**, because they are two different numbers: `OrganizationSubscriptions` holds one current row per organization, created only when a plan changes or is cancelled, so an organization that never changed plan has **no** row. The response exposes `organizationsTotal` and `organizationsWithBillingRow`, making the gap a visible subtraction. `TotalMonthlyPriceLkr` is a *list-price sum over billed rows only*, not recognised revenue: the provider columns exist but no provider client is written. |
+| Notes | **Free = `PlanTier.Seed`; premium = `Bloom`, `Orchid`, `Rose`, `Enterprise`.** The response returns the per-tier rows **and** the two rolled-up sides so the definition is stated once, server-side. **`OrganizationCount` and `BilledSubscriptionCount` are deliberately two different fields**, because they are two different numbers: `OrganizationSubscriptions` holds one current row per organization, created only when a plan changes or is cancelled, so an organization that never changed plan has **no** row. The response exposes `organizationsTotal` and `organizationsWithBillingRow`, making the gap a visible subtraction. `TotalMonthlyPriceLkr` is a *list-price sum over billed rows only*, not recognised revenue: the provider column exists on each row, but a list price is an expectation, and `revenueProviderSettlementAvailable` says whether the configured provider can settle one at all. |
 
 ### S-47 · `businessSubscriptionTrend`
 
@@ -924,10 +924,13 @@ by `Revenue:MaxWindowDays` (default **400**), and results are cached in `IDistri
 
 ### The two entry classes, stated once for the family
 
-There is **no payment-provider client in this repository**. The provider columns on
-`OrganizationSubscriptions` and `BlossomPriceEntries` exist and nothing writes them; the API
-catalog records the position at `docs/api/README.md` (§C.2): *"Phase 3 attaches a payment
-provider; until then a top-up is a recorded grant, not a charge."*
+The provider abstraction and its adapters exist (`Aveline.Api/Modules/Payments`, plan §6). The
+**configured** provider defaults to `manual`, which settles nothing by itself: an operator
+confirms receipt out of band. A provider that does settle money (the Development-only mock, or an
+external adapter added by a registration + configuration swap) reports so through its own
+`ProviderSettlesMoney`, and that is what `revenueProviderSettlementAvailable` returns — the flag is
+**computed at read time from the configuration, not a hardcoded constant**, so a `Derived` entry is
+never described as collected under any provider.
 
 Money therefore arrives in the ledger in one of two classes, and **no response in this family
 may conflate them**:
@@ -935,10 +938,20 @@ may conflate them**:
 | `chargeBasis` | Meaning | Writer |
 | --- | --- | --- |
 | `Derived` | What the list price says *should* be billed. An expectation, not a receipt. | the top-up route (only when a `paymentReference` is supplied) and `BillingPeriodRolloverJob` |
-| `Verified` | Money an Aveline operator confirmed was received, or a refund. | `POST /admin/revenue/ledger/verify` and `/refund` |
+| `Verified` | Money an Aveline operator confirmed was received, a refund, or a charge a provider settled. | `POST /admin/revenue/ledger/verify` and `/refund`, `PaymentSettlementService` (a provider-settled top-up), and `SubscriptionRenewalService` (a settled subscription renewal) |
 
-`revenueProviderSettlementAvailable` is `false` until a provider client settles money, so a
-`Derived` entry is never described as collected.
+`revenueProviderSettlementAvailable` is the configured provider's own `ProviderSettlesMoney`, read at
+request time: it is `false` while the configured provider is `manual` (the default) and `true` for a
+provider that settles charges itself (the Development-only mock, or an external adapter). While it is
+`false`, a `Derived` entry is never described as collected.
+
+**Subscription renewal (P4).** At each period rollover `BillingPeriodRolloverJob` writes the
+`Derived` `SubscriptionCharge` and creates a `SubscriptionRenewal` intent. When the provider
+settles it, `SubscriptionRenewalService` writes the `Verified` receipt that supersedes the
+derived row, so the two agree on amount and period. A charge that does not settle moves the
+subscription to `PastDue` (retries on days 1, 3 and 7 after the failed boundary) and to
+`Expired` on day 14. Because the MRR formula counts only `Active` and `Trialing`, a `PastDue`
+subscription leaves the MRR population until it settles or expires; expiry deletes nothing.
 
 ### The `IncomeDataQualityDto` vocabulary
 
@@ -948,16 +961,18 @@ whether a receipt was verified.
 
 | Field | Meaning |
 | --- | --- |
-| `revenueProviderSettlementAvailable` | `false` until a provider client settles money. Every figure is then an expectation or an operator's confirmation |
+| `revenueProviderSettlementAvailable` | The configured provider's own `ProviderSettlesMoney`, read at request time: `false` while `Payments:Provider` is `manual` (the default), `true` for a provider that settles charges itself. While `false`, every figure is an expectation or an operator's confirmation |
 | `subscriptionPricesConfigured` | `false` when every subscription's `PriceLkr` is `0`. A derived charge of `0` then means **no list price is configured** — not "free" — and MRR is `null`, never `0` |
 | `derivedEntriesUnverified` | Count of `Derived` entries with no `Verified` counterpart. **This gap is the surface's most important number, and it is not an error** |
 | `checkedAt` | When the flags were evaluated, distinct from the window's `to` |
 | `notes` | Free-text, including the shared-cache-degradation note |
 
-> **`PriceLkr` is never assigned today.** `SubscriptionService.UpsertSubscriptionAsync`
-> (`:299-340`) sets tier, seats, status and period and leaves the price at `0m`. Until the price
-> book populates it, `subscriptionPricesConfigured` is `false` and every MRR reading is `null`
-> with that reason stated. A `0` MRR is a defect, not a measurement.
+> **`PriceLkr` is now assigned by the upsert (Payments P1).** `SubscriptionService.UpsertSubscriptionAsync`
+> resolves the plan-allowance price through `ISubscriptionPriceResolver` and assigns it for a new or
+> changed non-Seed subscription. Subscriptions that predate the slice keep `0m` (no backfill ships in
+> this phase), so a mixed population still reports `subscriptionPricesConfigured` accurately and every
+> MRR reading stays `null` while nothing is priced, with that reason stated. A `0` MRR is a defect,
+> not a measurement.
 
 ### S-50 · `revenueLedger`
 
@@ -1005,7 +1020,7 @@ whether a receipt was verified.
 | Storage | on-the-fly |
 | Endpoint | `GET /api/v1/admin/statistics/revenue/overview` |
 | Access | `revenue:read` |
-| Notes | **`null` is not `0` here.** When `PayingOrganizations = 0`, `Arpu` is `null` rather than a division by zero, and when every `PriceLkr` is `0`, `Mrr` and `Arr` are `null` with `subscriptionPricesConfigured = false`. This is **list-price scheduled revenue**, not recognised or collected revenue — the response states `revenueProviderSettlementAvailable = false` and the console must not label it "collected" |
+| Notes | **`null` is not `0` here.** When `PayingOrganizations = 0`, `Arpu` is `null` rather than a division by zero, and when every `PriceLkr` is `0`, `Mrr` and `Arr` are `null` with `subscriptionPricesConfigured = false`. This is **list-price scheduled revenue**, not recognised or collected revenue — the response states `revenueProviderSettlementAvailable`, and while it is `false` (the `manual` default) the console must not label it "collected" |
 
 ### S-53 · `revenueTimeseries`
 
@@ -1210,7 +1225,7 @@ another.
 | Storage | on-the-fly |
 | Endpoint | `GET /api/v1/orgs/{organizationId}/billing/periods` |
 | Access | `billing:view` |
-| Notes | **`PlanListPriceLkr` is `null` whenever the stored `PriceLkr` is zero**, with `SubscriptionPricesConfigured` saying whether a price was configured. The column is never assigned anywhere in the product, so "no row ⇒ null, else the column" would print `LKR 0` as a plan price for every subscription (C-4). `PlanTier`/`HasSubscriptionRow` come from the snapshot, not from `Organization.PlanTier`, because a tier exists even for an organization that never had a billing row. **A statement of account, not an invoice** |
+| Notes | **`PlanListPriceLkr` is `null` whenever the stored `PriceLkr` is zero**, with `SubscriptionPricesConfigured` saying whether a price was configured. The column is assigned by the upsert from the plan-allowance book (Payments P1), but a subscription that predates the slice or resolves to no book row stores `0`, so "no row ⇒ null, else the column" would still print `LKR 0` as its plan price (C-4). `PlanTier`/`HasSubscriptionRow` come from the snapshot, not from `Organization.PlanTier`, because a tier exists even for an organization that never had a billing row. **A statement of account, not an invoice** |
 
 ### S-63 · `blossomTopUpPacks` — **live**
 
@@ -1219,7 +1234,7 @@ another.
 | Field | Value |
 | --- | --- |
 | Description | The active Blossom top-up packs a boutique may purchase |
-| Formula | Effective price-book rows with `SkuKind = TopUpPack` and `Status = Active`, ordered by `BlossomQuantity` |
+| Formula | Effective price-book rows with `SkuKind = TopUpPack` and `Status = Active`, one per SKU (the newest whose effective window contains now), ordered by `BlossomQuantity` |
 | Dimensions | none |
 | Granularity | configuration |
 | Freshness | `≤ 60 s` |
@@ -1229,6 +1244,22 @@ another.
 | Endpoint | `GET /api/v1/orgs/{organizationId}/blossoms/top-up-packs` |
 | Access | `billing:manage` |
 | Notes | The lookup is **identical** to the one `POST …/blossoms/top-ups` performs (`BlossomSkuKind.TopUpPack, planTier: null, organizationId: null`, filtered to `Active`), so a pack the catalogue offers cannot be rejected at purchase and a pack the purchase accepts cannot be missing (B-4/TD9). A draft price-book row is not for sale and is not listed. No payment provider is connected, so a purchase records a grant rather than a charge |
+
+### S-64 · `paymentReconciliation` — **live**
+
+| Field | Value |
+| --- | --- |
+| Description | The payment intents in a window whose provider state disagrees with the stored row, plus the inbound provider events still unprocessed |
+| Formula | For each `PaymentIntents` row created in the window: read `IPaymentProvider.GetPaymentIntentAsync` for its `ProviderIntentId` and report a divergence when the provider settled a charge the row still calls `RequiresAction`/`Processing`, the statuses differ, the amount or currency differs, the provider does not know the charge, the row has no provider intent id, the adapter cannot be resolved, the row is past `ExpiresAt` unsettled, or a full refund exists at the provider with no `RefundedAt` (or vice versa). Independently, `PaymentProviderEvents WHERE ProcessedAt IS NULL` counted by provider |
+| Dimensions | `organizationId`, `provider`, `from`, `to` |
+| Granularity | caller-selected window (default: last 24 h), capped at 200 intents per pass with `truncated` reported |
+| Freshness | on demand; the alert's own pass runs every 60 s |
+| Retention | not stored |
+| Source | `PaymentIntents` ∪ `PaymentProviderEvents` ∪ the resolved adapter (mock/manual today) |
+| Storage | on-the-fly |
+| Endpoint | `GET /api/v1/admin/statistics/payments/reconciliation` |
+| Access | `stats:system` |
+| Notes | **Uses `IPaymentReconciliationService.ReconcileAsync` unchanged**, because that same derivation publishes `aveline.payment.unreconciled_intents` and `aveline.payment.webhook.unprocessed_backlog`; a second derivation here would let the console and the alarm disagree about the same intent (the S-56 rule). An adapter that cannot be resolved is reported as `provider-unavailable`, never treated as an all-clear. The backlog is provider-wide, not organisation-scoped, because a provider event carries no tenant |
 
 ---
 
@@ -1373,6 +1404,75 @@ than a route that exists. Nothing is exposed until it appears here **and** in
 - `notificationInboxBacklog` growing for 7 days with `notificationInboxReadRate < 10 %` →
   **Warning**;
 - `fcmCredentialConfigured == 0` in production → **Critical** (push is a silent no-op).
+
+---
+
+### Privacy and consent metrics (live — no `S-n` allocated here)
+
+Recorded by **name and formula only**; identifiers are allocated centrally at merge, per the same
+series decision as the Home, Conversations and Notification blocks above. These are the privacy
+plan's §9.1 families, registered in the one catalog that authors a Prometheus name
+(`MetricsCatalog.All`, plan §6.1) by **Phase 6 item 6.3**. They are **live**: the series are produced
+today, and `MetricsNamingTests` exercises every one of them against a real scrape, so none is a name
+that no instrument emits.
+
+There is **no statistics route** for this family, and deliberately so: the plan's §9.2 security
+controls keep the consent tables off every read surface except the staff console, and a per-tenant
+Prometheus label is forbidden (`MetricsCatalog.ForbiddenLabelKeys`). The `Endpoint` column therefore
+does not exist for these rows - the exposure is the authenticated `/metrics` scrape only.
+
+| Metric | Description | Formula | Labels | Kind | Produced by |
+| --- | --- | --- | --- | --- | --- |
+| `aveline_consent_state_total` | Customer consent rows by status, the transparency-efficacy gauge. One series where the plan listed `consent_customers_total` and `consent_state_distribution` separately: the same count with a `status` label **is** the distribution, and authoring a second name for it would be a second derivation of one figure. | `COUNT(*) FROM CustomerConsents GROUP BY ConsentStatus` | `status` (`pending`/`granted`/`revoked`) | snapshot gauge | `ConsentMetricCollector` (60 s pass), published through `ConsentMetrics.PublishByStatus` |
+| `aveline_message_skip_total` | Inbound messages not cleared unconditionally by the consent gate. | `COUNT(*)` of gate outcomes that were not an unconditional grant | `reason` (`consent_revoked`/`no_customer_context`/`consent_check_unavailable`) | counter | `ConsentGateService` via `ConversationService` (Phase 1) |
+| `aveline_otp_issued_total` | OTP codes minted. | `COUNT(*)` of `OtpService.IssueAsync` successes | - | counter | `PrivacyEndpoints` opt-out start |
+| `aveline_otp_verified_total` | OTP codes verified. | `COUNT(*)` of successful `VerifyAsync` calls | - | counter | `PrivacyEndpoints` opt-out verify |
+| `aveline_otp_failed_total` | Verifications that did not succeed. | `COUNT(*)` by bounded failure reason | `reason` (`InvalidCode`/`ExpiredOrUnknown`/`TooManyAttempts`) | counter | `PrivacyEndpoints` opt-out verify |
+| `aveline_privacy_endpoint_rate_limited_total` | Privacy endpoint requests refused by a budget **before** any work. The instrument replaces `aveline.otp.start_refused`, so the start, verification and data-rights budgets are one series rather than three. It is the counter that has to keep working during a Redis outage, which is why the fail-closed path records it. | `COUNT(*)` by bounded refusal reason | `reason` (`ip_budget`/`phone_budget`/`verify_ip_budget`/`rights_ip_budget`/`store_unavailable`) | counter | `OtpService.TryStartAsync` (fail closed) and `PrivacyEndpoints` for the verify and rights budgets |
+| `aveline_disclosure_shown_total` | First-contact disclosures sent. | `COUNT(*)` of successful disclosure sends | - | counter | `DisclosureDispatchService` |
+| `aveline_disclosure_unshown_total` | First contacts that ended without a disclosure. **The compliance alarm.** | `COUNT(*)` of `SigningKeyMissing`/`NotConfigured`/`Failed` outcomes | - | counter | `DisclosureDispatchService` |
+| `aveline_privacy_delivery_delivered_total` | OTPs and opt-out acknowledgements handed to the provider. | `COUNT(*)` by message kind | `kind` (`otp`/`opt_out_ack`) | counter | `PrivacyEndpoints`, `OptOutAcknowledgementService` |
+| `aveline_privacy_delivery_failed_total` | Privacy messages that did not reach the provider. | `COUNT(*)` by kind and bounded reason | `kind`, `reason` (`not_configured`/`provider`) | counter | `PrivacyEndpoints`, `OptOutAcknowledgementService` |
+| `aveline_data_export_requests_total` | Data-export requests by terminal status. | `COUNT(*) FROM DataSubjectRequests WHERE Kind='export' GROUP BY Status`, plus the pre-verification refusals the request log never sees | `status` (`completed`/`not_found`/`verification_failed`/`unavailable`) | counter | `PrivacyEndpoints` export route |
+| `aveline_data_delete_requests_total` | Data-deletion requests by terminal status. A replayed idempotent request counts as `completed`; the deletion is not re-run. | `COUNT(*) FROM DataSubjectRequests WHERE Kind='delete' GROUP BY Status`, plus `conflict` for a held lease and the pre-verification refusals | `status` (`completed`/`conflict`/`verification_failed`/`unavailable`) | counter | `PrivacyEndpoints` delete route |
+| `aveline_data_delete_time_to_complete_seconds` | Wall-clock seconds from a deletion request to its completion. Recorded **once**, on the first execution: a replay did not complete again. | `CompletedAt - RequestedAt`, histogram | - | histogram (unit `s`) | `ErasureService`, after the commit |
+| `aveline_outbound_message_result_total` | Outbound attempts by channel and outcome. Phase 2's counter; the phase-6 note only confirms it is catalogued. | `COUNT(*)` by channel and result | `channel`, `result` (`sent`/`skipped`/`failed`) | counter | `IOutboundMessagingService` (Phase 2) |
+| `aveline_notification_delivery_total` | Notification delivery attempts by channel and terminal status. Slice 7's counter, listed here because the plan's delivery family names it as the fourth member. | `COUNT(*)` by channel and status | `channel`, `status` | counter | `NotificationDispatcher` (Slice 7) |
+
+**Derived, not authored - do not add a second name.** The plan's §9.1 table lists several ratios and
+one counter that are deliberately **not** authored as instruments, because a second derivation of an
+existing figure is exactly what item 6.3 forbids:
+
+- `consent_pending_ratio`, `consent_optout_rate`, `consent_regrant_rate`, `otp_success_rate` and
+  `outbound_message_retry_total` are **PromQL**, not instruments:
+  `pending / sum(aveline_consent_state_total)`, an `increase()` over the consent-audit-derived
+  series, `verified / issued`, and a `retry`-labelled outcome on the existing outbound counter. An
+  instrument that recomputed them would be a second source of truth for the same figure.
+- `disclosure_delivery_failed_total` is `aveline_privacy_delivery_failed_total{kind="disclosure"}`.
+- `notification_delivery_total{type,channel,status}` already exists as
+  `aveline_notification_delivery_total`; `type` is not a label on it, and adding one now would be a
+  schema change to a Slice 7 series rather than a phase-6 metric.
+- `agent_run_status_total{status}` is **not** added. Runs are already counted by
+  `aveline.agent.runs_total` and reported per status by S-13 `agentRunCount`; a consent skip is
+  excluded from S-14's denominator and persisted as `AgentRunStatus.Skipped` (see the note below).
+
+**Item 6.4 - the `agent_run` skip mapping, verified.** A consent skip is reported as `skipped` by
+the agent (`AgentStatus.skipped`, `app/schemas/response.py`), mapped to the backend's `Skipped` by
+`_run_status_from_response` (`app/api/agents.py`), and persisted as `AgentRunStatus.Skipped`
+(`AgentRunIngestService`). It is therefore **not** `Succeeded`, and S-14 excludes it from the success
+rate. Verified on both sides of the wire:
+`agent-service/tests/test_consent_enforcement.py::test_a_skip_maps_to_the_backend_skipped_run_status`
+and `::test_run_concierge_reports_a_consent_skip_as_skipped`,
+`Aveline.Api.Tests/AgentRunIngestTests.cs::Report_WithSkippedStatus_IsPersistedAsSkipped`.
+
+**`dpia_retention_breach_total` is not implemented - open question Q-6.** Plan §15 Q-6 asks what the
+retention window for `Customer*` data, `InboundMessageLogs` and the consent audit should be. The plan
+*proposes* 24 months of inactivity, 12 months for interaction logs and 7 years for consent audit, but
+explicitly notes that this needs legal confirmation. Until a window is decided there is no threshold
+to compare a row against, so no breach counter is authored, no retention sweep is scheduled, and no
+retention window is claimed anywhere in this catalog. `AuditLogEntries`' 400-day default (§10) is the
+audit store's own retention, not the consent-audit policy Q-6 asks for. The counter is recorded here
+as **open**, not as a gap to be filled by guessing a number.
 
 ---
 

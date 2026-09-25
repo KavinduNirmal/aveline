@@ -32,7 +32,9 @@ export function TakingsCard({ takings }: TakingsCardProps) {
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <Coins className="size-4 text-primary" aria-hidden />
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/12 text-primary">
+              <Coins className="size-4" aria-hidden />
+            </span>
             <CardTitle className="font-serif text-lg font-medium">Takings</CardTitle>
           </div>
           <Badge variant="outline">{takings.window}</Badge>
@@ -51,7 +53,7 @@ export function TakingsCard({ takings }: TakingsCardProps) {
           <dl className="grid gap-4 sm:grid-cols-2">
             <div>
               <dt className="text-xs uppercase tracking-wide text-muted-foreground">Collected</dt>
-              <dd className="font-serif text-2xl font-medium">
+              <dd className="font-mono text-2xl font-medium tabular-nums">
                 {formatMoney(collected, takings.currency)}
               </dd>
               <p className="mt-1 text-xs text-muted-foreground">
@@ -62,7 +64,7 @@ export function TakingsCard({ takings }: TakingsCardProps) {
               <dt className="text-xs uppercase tracking-wide text-muted-foreground">
                 Billed, unconfirmed
               </dt>
-              <dd className="font-serif text-2xl font-medium">
+              <dd className="font-mono text-2xl font-medium tabular-nums">
                 {formatMoney(billed, takings.currency)}
               </dd>
               <p className="mt-1 text-xs text-muted-foreground">

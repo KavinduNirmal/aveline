@@ -38,7 +38,7 @@ persona, or the system.
 
 Persona mapping to the agent service:
 
-| Persona | Agent graph (`agnet-service/app/agents/`) | Role |
+| Persona | Agent graph (`agent-service/app/agents/`) | Role |
 |---|---|---|
 | `aveline` | supervisor (orchestrator) | routes intent, summarizes, introduces |
 | `ava` | `customer_memory` | understands the customer |
@@ -129,7 +129,7 @@ Block types: `text`, `piece`, `look`, `at_a_glance`, `sign_off`, `payment`, `cou
 ### 5.1 Emitted blocks from real agent output
 
 The agent service maps the concierge `AgentResponse.output` into blocks in
-`agnet-service/app/events/block_builders.py`. A persona posts a message only when it
+`agent-service/app/events/block_builders.py`. A persona posts a message only when it
 produces real content (no placeholder text).
 
 - **Aveline reply** (`build_aveline_blocks`): the entry point speaks only when no specialist
@@ -194,7 +194,7 @@ actionable `markers` set. The derivation lives in one server-side place
 re-read returns.
 
 **The row's category is a content block, not the message kind.** Agent output is published
-as `kind: Note` for every persona (`agnet-service/app/events/message_publisher.py`), so
+as `kind: Note` for every persona (`agent-service/app/events/message_publisher.py`), so
 `lastMessageBlock` is what the row switches on. The preview is derived per block type -
 notably `client_message -> its text`, because an inbound message is a block whose *type* is
 `client_message`, not `text`. A rule that looked for a block of type `text` would render the
@@ -228,7 +228,7 @@ only what is loaded, and the copy says so.
 
 ### 6.1 Staff triggers a query
 Staff opens the Salon → sends a `Note`. API calls the agent service (`/agents/query` or
-`/agents/query/stream`, `agnet-service/app/api/agents.py`) with the conversation's
+`/agents/query/stream`, `agent-service/app/api/agents.py`) with the conversation's
 `threadId`. Agents reply with attributed messages; streaming tokens are bridged to the
 client so the reply types in live. `WorkflowRunId`/`TraceId` are recorded for audit.
 
@@ -258,7 +258,7 @@ recorded and the webhook still answers `200`, because Meta's retry would fix non
 Every step is best-effort and never delays the webhook `200`.
 
 ### 6.3 Human-in-the-loop sign-off
-Commerce agent issues an interrupt (`pause_for_approval`, `agnet-service/app/agents/commerce/README.md`)
+Commerce agent issues an interrupt (`pause_for_approval`, `agent-service/app/agents/commerce/README.md`)
 → agent emits a `SignOff` content event → API persists a `Message` of kind `SignOff` and
 stages it: the message is written `AwaitingSignOff` and the conversation is set
 `AwaitingSignOff`, which is what lights the row's `approval` marker and makes the thread's

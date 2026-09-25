@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../../../shared/widgets/app_toast.dart';
 import '../../../../shared/widgets/aurora_field.dart';
 import '../../../../shared/widgets/section_overline.dart';
 import '../../domain/blossom_usage.dart';
@@ -15,11 +14,12 @@ import '../../domain/blossom_usage.dart';
 /// There is no "0" state. A balance that could not be read says so and offers a
 /// retry, because `0` is a different and false statement about the shop.
 ///
-/// The request action is UI only: it states what would happen and sends nothing.
-/// Wiring it needs an approval record the owner can act on, which does not exist
-/// yet.
+/// The request action is the real purchase path: [onRequestMore] opens the
+/// top-up sheet, which lists the server's packs, creates a checkout and hands
+/// the customer to the provider. The card renders nothing about the outcome; the
+/// sheet owns that, because only the server's polled intent knows it.
 class BlossomUsageCard extends StatelessWidget {
-  const BlossomUsageCard({super.key, required this.usage})
+  const BlossomUsageCard({super.key, required this.usage, this.onRequestMore})
       : isLoading = false,
         errorMessage = null,
         onRetry = null;
@@ -29,7 +29,8 @@ class BlossomUsageCard extends StatelessWidget {
       : usage = null,
         isLoading = true,
         errorMessage = null,
-        onRetry = null;
+        onRetry = null,
+        onRequestMore = null;
 
   /// The balance could not be read.
   const BlossomUsageCard.unavailable({
@@ -37,7 +38,8 @@ class BlossomUsageCard extends StatelessWidget {
     required this.errorMessage,
     required this.onRetry,
   })  : usage = null,
-        isLoading = false;
+        isLoading = false,
+        onRequestMore = null;
 
   /// The loaded balance, or `null` while loading or after a failure.
   final BlossomUsage? usage;
@@ -45,6 +47,10 @@ class BlossomUsageCard extends StatelessWidget {
   final bool isLoading;
   final String? errorMessage;
   final VoidCallback? onRetry;
+
+  /// Opens the purchase flow. `null` disables the button — a caller who may not
+  /// purchase is not shown an action the server would refuse.
+  final VoidCallback? onRequestMore;
 
   @override
   Widget build(BuildContext context) {
@@ -153,7 +159,7 @@ class BlossomUsageCard extends StatelessWidget {
         ],
         const SizedBox(height: 16),
         OutlinedButton.icon(
-          onPressed: () => _requestMore(context),
+          onPressed: onRequestMore,
           icon: const Icon(Icons.add_rounded, size: 18),
           label: const Text('Request additional blossoms'),
         ),
@@ -216,10 +222,6 @@ class BlossomUsageCard extends StatelessWidget {
         ),
       ],
     );
-  }
-
-  void _requestMore(BuildContext context) {
-    AppToast.show(context, 'Request sent to the owner for approval.');
   }
 
   /// `32`, or `31.5` when the decimal is real: a fractional Blossom is normal

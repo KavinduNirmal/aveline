@@ -9,9 +9,9 @@ Overview if the address is typed by hand.
 
 ---
 
-> **This is a statement of account.** No payment provider is connected to Aveline, so nothing on
-> this page is a demand for payment. There is no invoice document and no invoice number, and plan
-> list prices are shown as *LKR list prices only*.
+> **This is a statement of account.** Plan prices on this page are LKR list prices, not a demand for
+> payment, and there is no invoice document and no invoice number. A Blossom top-up *is* a charge:
+> it is collected through the configured payment provider.
 
 ## Your plan
 
@@ -29,7 +29,7 @@ Beside the plan name is a status badge. Each one means something specific:
 |---|---|
 | **Active** | This boutique has a billing record for the current period. |
 | **Trial** | A trial period is running; no charge is recorded during it. |
-| **Past due** | A period payment is outstanding. No payment provider is connected, so nothing is collected automatically. |
+| **Past due** | A period payment is outstanding. Recurring charges are not taken automatically yet, so nothing is collected by itself. |
 | **Cancelled** | The subscription is cancelled and will not renew at the period end. |
 | **Expired** | The subscription period ended without a renewal. |
 | **No billing record** | No subscription row exists for this boutique yet. The plan and its limits come from the assigned tier, and nothing is charged. |
@@ -77,18 +77,23 @@ a page.
 
 Requires the **Owner** role.
 
-1. Click **Top up Blossoms**.
+1. Click **Top up** in the dashboard header, or **Top up Blossoms** here.
 2. Choose a **Pack**. Each option shows its Blossoms and its price, read from your boutique's price
    book, so a pack you are offered is a pack you can buy.
-3. Optionally add a **Payment reference** — for example a transfer or provider reference. Without
-   one the grant writes no revenue row, because a free grant is not revenue.
-4. Click **Record the top-up**.
+3. Click **Continue to payment**. Aveline creates the charge with the payment provider and opens the
+   provider's own checkout page in a new tab.
+4. Complete the payment there. The dialog keeps checking with Aveline's server and shows the result.
 
-> **A top-up is a recorded grant, not a charge.** No payment provider is connected, so the
-> reference you enter is the only evidence of payment Aveline stores.
+> **The checkout page is not the receipt.** A page that says the payment went through, or a tab you
+> close, does not by itself move your balance: the result shown here is the state the server read
+> back from the payment provider. Until that read is final the dialog says it is waiting, and it
+> says nothing else.
 
-The **Top up** button in the dashboard header takes you to this section as well. It is only useful
-to a role that can open Billing.
+If the provider declines, the dialog says so and your balance is unchanged. A retry of the same
+purchase reuses the same operation, so a retry cannot charge you twice.
+
+The **Top up** button in the dashboard header opens the same dialog, so an Owner does not have to
+open Billing first. A role that cannot buy Blossoms sees no dialog.
 
 ## Change your plan
 
@@ -131,13 +136,17 @@ dashboard header.
 | **No billing periods are recorded yet.** | No period history exists for this boutique. |
 | **No ledger entries in this window.** | No Blossom movement in the selected window. |
 | **No top-up packs are configured in the price book, so nothing can be purchased.** | No pack is on file, so the dialog cannot offer one. |
-| **The top-up could not be recorded. Nothing was granted.** | The grant did not write. Nothing changed. |
+| **Could not load the top-up packs. Try again in a moment.** | The catalogue read failed; nothing was offered and nothing was charged. Press **Try again**. |
+| **The payment provider is temporarily unavailable. Nothing was charged.** | The provider did not take the charge. Retrying is safe. |
+| **Payment failed** | The provider declined the charge. Nothing was granted, and the reason it gives is shown with it. |
+| **Checkout expired** / **Payment cancelled** | The checkout was not completed. No money moved and your balance is unchanged. |
 
 ## What billing does not do
 
-- **It does not take payment.** No payment provider is connected, no checkout exists, and no card
-  is collected.
-- **It does not produce an invoice document**, because there is no payment to bill.
+- **It does not charge your plan.** A Blossom top-up is a real charge through the configured payment
+  provider; nothing else on this page collects money, and plan changes stay a conversation with the
+  Aveline team.
+- **It does not produce an invoice document.**
 - **It does not show who spent the Blossoms.** Aveline does not record which person or client an
   AI action belongs to, so the statement has no per-user column.
 - **It does not change your plan by itself.** Plan changes are arranged with the Aveline team.

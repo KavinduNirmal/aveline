@@ -13,7 +13,7 @@ Image analysis must satisfy three core constraints:
 
 ## Options Considered
 
-### 1. Direct vision API calls from Python LangGraph sub-graph (`agnet-service`)
+### 1. Direct vision API calls from Python LangGraph sub-graph (`agent-service`)
 - **Pros**: Direct integration in the Python agent graph.
 - **Cons**: Duplicates external credential management across services; bypasses the central .NET API client architecture; complicates integration tests and mocking across platforms.
 
@@ -22,8 +22,8 @@ Image analysis must satisfy three core constraints:
   - Single point of outbound multimodal HTTP client configuration (`Vision:ApiKey`, `Vision:BaseUrl`, `Vision:Model`).
   - Native integration with `IUsageTrackerService.RecordWorkflowUsageAsync` for ADR-010 Blossom credit accounting.
   - Consistent with the architecture of `EmbeddingService` (ADR-017) and `WhatsAppService` (ADR-015).
-  - Clean internal HTTP interface (`POST /internal/visual/analyze-image`, ADR-009) consumed by `agnet-service` tool registry.
-- **Cons**: One internal HTTP hop between `agnet-service` and `Aveline.Api`.
+  - Clean internal HTTP interface (`POST /internal/visual/analyze-image`, ADR-009) consumed by `agent-service` tool registry.
+- **Cons**: One internal HTTP hop between `agent-service` and `Aveline.Api`.
 
 ## Decision
 

@@ -10,6 +10,7 @@ import {
   Plus,
   Settings,
   Share2,
+  Shield,
   Shirt,
   ShoppingBag,
   Sparkles,
@@ -20,9 +21,10 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { toast } from 'sonner'
 
 import { Blossom } from '@/components/auth/Blossom'
+import { useUserContext } from '@/contexts/UserContext'
+import { hasConsoleRole } from '@/lib/admin-signup'
 import { AvelineChatDrawer } from '@/components/conversation/AvelineChatDrawer'
 import { AvelineChatLauncher } from '@/components/conversation/AvelineChatLauncher'
 import { SalonPanel } from '@/components/conversation/SalonPanel'
@@ -32,6 +34,7 @@ import { OrdersPanel } from '@/components/dashboard/OrdersPanel'
 import { CustomersPanel } from '@/components/dashboard/CustomersPanel'
 import { IncomePanel } from '@/components/dashboard/IncomePanel'
 import { BillingPanel } from '@/components/dashboard/billing/BillingPanel'
+import { TopUpDialog } from '@/components/dashboard/billing/TopUpDialog'
 import { SettingsPanel } from '@/components/dashboard/settings/SettingsPanel'
 import { SectionPlaceholder } from '@/components/dashboard/SectionPlaceholder'
 import { TeamManagement } from '@/components/dashboard/TeamManagement'
@@ -119,6 +122,11 @@ interface DashboardShellProps {
   usage: OrganizationUsageSummary | null
   /** The caller's boutique role, used to gate nav sections by permission. */
   role: string
+  /**
+   * Called after the server reports a settled top-up, so the shell's owner can refetch the Blossom
+   * balance. Optional: without it the header chip keeps the value it last read.
+   */
+  onBalanceChanged?: () => void
 }
 
 /** Initials helper for avatar fallbacks (org or user). */
@@ -138,9 +146,15 @@ function initialsOf(...parts: Array<string | null | undefined>): string {
  * bottom user card with sign-out) and a top bar carrying the plan and Blossom balance.
  * The Overview section is functional; the remaining sections render placeholders.
  */
-export function DashboardShell({ organization, usage, role }: DashboardShellProps) {
+export function DashboardShell({
+  organization,
+  usage,
+  role,
+  onBalanceChanged,
+}: DashboardShellProps) {
   const navigate = useNavigate()
   const { user } = useUser()
+  const { user: appUser } = useUserContext()
   const { signOut } = useClerk()
   // The section is part of the URL (`/app/b/:slug/:section`), not component state, so a section
   // is linkable and survives a refresh. The bare slug route redirects here with `overview`.
@@ -334,6 +348,15 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
                 Billing &amp; plan
               </DropdownMenuItem>
 
+              {/* A boutique owner can also hold a console role. The dashboard redirect no longer
+                  sends them to the console automatically, so give them an explicit way in. */}
+              {hasConsoleRole(appUser?.userRole ? [appUser.userRole] : []) && (
+                <DropdownMenuItem onClick={() => navigate('/admin')}>
+                  <Shield className="size-4" aria-hidden />
+                  Platform Admin Console
+                </DropdownMenuItem>
+              )}
+
               <DropdownMenuSeparator />
 
               <DropdownMenuItem variant="destructive" onClick={handleSignOut}>
@@ -391,21 +414,32 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
               </span>
             )}
 
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5 rounded-full"
-              onClick={() => {
-                goToSection('billing')
-                toast('Choose a Blossom top-up pack', {
-                  description:
-                    'Top-ups are recorded grants until a payment provider is connected.',
-                })
-              }}
-            >
-              <Plus className="size-4" aria-hidden />
-              Top up
-            </Button>
+            {/* The placeholder toast ("top-ups are recorded grants until a payment provider is
+                connected") was a claim about the product that stopped being true when the checkout
+                route shipped. A caller who may purchase now gets the real dialog; a caller who may
+                not is sent to Billing, where the statement lives. */}
+            {hasPermission(role, 'billing:manage') ? (
+              <TopUpDialog
+                organizationId={organization.id}
+                onSettled={() => onBalanceChanged?.()}
+                trigger={
+                  <Button variant="outline" size="sm" className="gap-1.5 rounded-full">
+                    <Plus className="size-4" aria-hidden />
+                    Top up
+                  </Button>
+                }
+              />
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 rounded-full"
+                onClick={() => goToSection('billing')}
+              >
+                <Plus className="size-4" aria-hidden />
+                Top up
+              </Button>
+            )}
 
             <Select
               value={dashboardWindow.window}
@@ -437,6 +471,7 @@ export function DashboardShell({ organization, usage, role }: DashboardShellProp
               usage={usage}
               role={role}
               window={dashboardWindow.window}
+              range={dashboardWindow.range}
             />
           ) : activeSection === 'salon' ? (
             <SalonPanel />

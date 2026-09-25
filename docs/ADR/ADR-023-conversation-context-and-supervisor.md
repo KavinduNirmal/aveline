@@ -12,7 +12,7 @@ Accepted
 
 ### What the current design does
 
-The concierge workflow (`agnet-service/app/workflows/concierge_workflow.py`) routes every
+The concierge workflow (`agent-service/app/workflows/concierge_workflow.py`) routes every
 inbound message through a fixed pipeline:
 
 ```

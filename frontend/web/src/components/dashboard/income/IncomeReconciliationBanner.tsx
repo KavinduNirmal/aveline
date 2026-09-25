@@ -4,7 +4,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { AlertTriangle, CheckCircle2, HelpCircle } from 'lucide-react'
 
 import type { BoutiqueIncomeReconciliation } from '@/lib/income-api'
-import { formatMoney } from '@/lib/format-money'
+
+import { Money } from '../Money'
 
 interface IncomeReconciliationBannerProps {
   reconciliation: BoutiqueIncomeReconciliation
@@ -83,8 +84,8 @@ export function IncomeReconciliationBanner({
             <dl className="grid gap-4 sm:grid-cols-3">
               <div>
                 <dt className="text-xs uppercase tracking-wide text-muted-foreground">Collected</dt>
-                <dd className="font-serif text-2xl font-medium">
-                  {formatMoney(verified, currency)}
+                <dd className="text-2xl">
+                  <Money value={verified} currency={currency} />
                 </dd>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Money a person or the payment flow confirmed was taken.
@@ -94,8 +95,8 @@ export function IncomeReconciliationBanner({
                 <dt className="text-xs uppercase tracking-wide text-muted-foreground">
                   Billed, unconfirmed
                 </dt>
-                <dd className="font-serif text-2xl font-medium">
-                  {formatMoney(derived, currency)}
+                <dd className="text-2xl">
+                  <Money value={derived} currency={currency} />
                 </dd>
                 <p className="mt-1 text-xs text-muted-foreground">
                   What the orders say was sold. Not evidence that money moved.
@@ -103,8 +104,8 @@ export function IncomeReconciliationBanner({
               </div>
               <div>
                 <dt className="text-xs uppercase tracking-wide text-muted-foreground">Refunded</dt>
-                <dd className="font-serif text-2xl font-medium">
-                  {formatMoney(refunds, currency)}
+                <dd className="text-2xl">
+                  <Money value={refunds} currency={currency} />
                 </dd>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Already subtracted from Collected, and stated here so it is never invisible.
@@ -114,9 +115,9 @@ export function IncomeReconciliationBanner({
 
             {gap !== null && gap > 0 ? (
               <p className="text-xs text-muted-foreground">
-                {formatMoney(gap, currency)} of the billed value has no confirmation yet. This is the
-                gap between what the orders say and what the shop has evidence of collecting — it is
-                a number to act on, not an error.
+                <Money value={gap} currency={currency} /> of the billed value has no confirmation
+                yet. This is the gap between what the orders say and what the shop has evidence of
+                collecting — it is a number to act on, not an error.
               </p>
             ) : null}
           </>

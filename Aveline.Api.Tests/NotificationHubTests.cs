@@ -82,6 +82,9 @@ public class NotificationHubTests
         public Task<IReadOnlyList<OrganizationMembership>> ListMembershipsForUserAsync(Guid userId, CancellationToken cancellationToken = default)
             => Task.FromResult(memberships);
 
+        // Subscriptions are irrelevant to the hub group-joining behaviour under test.
+        public Task<Aveline.Api.Modules.Billing.Models.OrganizationSubscription?> GetSubscriptionAsync(Guid organizationId, CancellationToken cancellationToken = default) => Task.FromResult<Aveline.Api.Modules.Billing.Models.OrganizationSubscription?>(null);
+
         public Task<Organization?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult<Organization?>(null);
         public Task<Organization?> GetByOwnerUserIdAsync(Guid ownerUserId, CancellationToken cancellationToken = default) => Task.FromResult<Organization?>(null);
         public Task<Organization?> GetBySlugAsync(string slug, CancellationToken cancellationToken = default) => Task.FromResult<Organization?>(null);

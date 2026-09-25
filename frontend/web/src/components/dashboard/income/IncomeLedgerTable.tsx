@@ -10,8 +10,9 @@ import {
 } from '@/components/ui/table'
 
 import type { BoutiqueIncomeEntry } from '@/lib/income-api'
-import { formatMoney } from '@/lib/format-money'
 import { cn } from '@/lib/utils'
+
+import { Money } from '../Money'
 
 interface IncomeLedgerTableProps {
   items: BoutiqueIncomeEntry[]
@@ -62,7 +63,7 @@ export function IncomeLedgerTable({ items }: IncomeLedgerTableProps) {
                   <TableCell className="max-w-md text-xs">{entry.reason}</TableCell>
                   <TableCell className="whitespace-nowrap text-right text-xs font-medium">
                     {isRefund ? '− ' : '+ '}
-                    {formatMoney(entry.amount, entry.currency)}
+                    <Money value={entry.amount} currency={entry.currency} />
                   </TableCell>
                 </TableRow>
               )

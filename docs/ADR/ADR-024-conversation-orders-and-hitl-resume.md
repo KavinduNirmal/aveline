@@ -123,6 +123,12 @@ A message that names no resolvable item continues to produce no line items, and 
 continues to skip. That is the correct outcome and must stay distinguishable from "evaluated and
 approved": `skipped` is not `is_auto_approved`.
 
+**Amended by ADR-028.** A *pricing* question is now the case in between. The pieces it names are
+resolved exactly as an order's are, and the context declares itself a `quote`; the refusal above was
+always about commitment rather than about reading the catalog, and a discount ceiling needs a price.
+So a question is priced and still never becomes an order — the purpose travels on the wire
+(`org_context.purpose`) and is enforced again at the write (`ConversationOrderBridge`, invariant A7).
+
 ### Decision 2 — The API creates the Order when a run pauses, not before
 
 On a `pending_approval` result the API creates the `Order` (status `pending_approval`) and then the

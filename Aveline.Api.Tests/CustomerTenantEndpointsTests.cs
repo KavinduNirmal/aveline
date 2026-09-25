@@ -284,6 +284,70 @@ public class CustomerTenantEndpointsTests : IAsyncLifetime
         Assert.Equal(seeded.CustomerId, body.GetProperty("duplicateOfCustomerId").GetGuid());
     }
 
+    [Fact]
+    public async Task CreateWalkIn_PersistsAPendingConsentRowAndReportsIt()
+    {
+        // D-6 / 0.1c: walk-in creation wrote no CustomerConsent row at all while the response
+        // hardcoded "pending", so the staff UI was shown a consent that did not exist.
+        var seeded = await SeedAsync("walkin_consent");
+        var token = CreateToken(seeded.ClerkId, orgRole: Roles.BoutiqueStaff);
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Post,
+            $"/api/v1/orgs/{seeded.OrgId}/customers",
+            token,
+            new { fullName = "Walkin Consent Client", source = "counter_walkin" },
+            idempotencyKey: Guid.NewGuid().ToString()));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        var customerId = body.GetProperty("customerId").GetGuid();
+        Assert.Equal("pending", body.GetProperty("consentStatus").GetString());
+
+        await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .Options);
+        var row = await context.CustomerConsents.SingleOrDefaultAsync(
+            candidate => candidate.OrganizationId == seeded.OrgId && candidate.CustomerId == customerId);
+
+        Assert.NotNull(row);
+        Assert.Equal("pending", row!.ConsentStatus);
+    }
+
+    [Fact]
+    public async Task CreateWalkIn_OnADuplicate_ReportsThePersistedConsentNotALiteral()
+    {
+        // D-6 / 0.1c: the duplicate branch also hardcoded "pending". It must report the row the
+        // client actually has, so a revoked duplicate is not shown as pending.
+        var seeded = await SeedAsync("duplicate_consent");
+        await using (var seedContext = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .Options))
+        {
+            seedContext.CustomerConsents.Add(new CustomerConsent
+            {
+                OrganizationId = seeded.OrgId,
+                CustomerId = seeded.CustomerId,
+                ConsentStatus = "revoked",
+                ConsentRevokedAt = DateTime.UtcNow,
+            });
+            await seedContext.SaveChangesAsync();
+        }
+
+        var token = CreateToken(seeded.ClerkId, orgRole: Roles.BoutiqueStaff);
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Post,
+            $"/api/v1/orgs/{seeded.OrgId}/customers",
+            token,
+            new { fullName = "Nadia Client duplicate_consent", source = "counter_walkin" },
+            idempotencyKey: Guid.NewGuid().ToString()));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal(seeded.CustomerId, body.GetProperty("duplicateOfCustomerId").GetGuid());
+        Assert.Equal("revoked", body.GetProperty("consentStatus").GetString());
+    }
+
     private async Task<JsonElement> RecordVisitAsync(
         Guid orgId, Guid customerId, string token, string channel = "in_person",
         decimal? purchaseTotal = null)

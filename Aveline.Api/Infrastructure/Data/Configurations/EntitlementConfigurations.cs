@@ -130,6 +130,15 @@ public class OrganizationSubscriptionConfiguration : IEntityTypeConfiguration<Or
         builder.Property(s => s.UpdatedAt)
             .IsRequired();
 
+        // Plan §9.4 F4 dunning state. The nullable columns mean "no window running"; the count is
+        // non-nullable so a current subscription reads 0 rather than null.
+        builder.Property(s => s.RenewalAttemptCount)
+            .HasDefaultValue(0);
+
+        builder.Property(s => s.NextRenewalAttemptAt);
+
+        builder.Property(s => s.DunningStartedAt);
+
         builder.Property(s => s.ConcurrencyToken)
             .IsRowVersion();
 

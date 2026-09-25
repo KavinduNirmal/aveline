@@ -196,11 +196,12 @@ describe('BillingPanel', () => {
     expect(screen.queryByText('reconciled')).toBeNull()
   })
 
-  it('offers the top-up dialog to an owner and fetches the catalogue', async () => {
+  it('offers the top-up dialog to an owner and reads the catalogue only when it opens', async () => {
     render(<BillingPanel organization={ORGANIZATION} role="org:boutique_owner" onUpgrade={() => {}} />)
 
     expect(await screen.findByText('Top up Blossoms')).toBeTruthy()
-    expect(fetchTopUpPacks).toHaveBeenCalled()
+    // The dialog owns the catalogue read; a closed dialog issues no request.
+    expect(fetchTopUpPacks).not.toHaveBeenCalled()
   })
 
   it('does not fetch the catalogue for a manager who may not purchase', async () => {
@@ -210,6 +211,7 @@ describe('BillingPanel', () => {
     expect(fetchTopUpPacks).not.toHaveBeenCalled()
     expect(screen.queryByText('Top up Blossoms')).toBeNull()
   })
+
   it('offers the upgrade path on the plan page and reports the click to the shell', async () => {
     // The plan is this page's subject, so the route to a larger one belongs here. Routing is the
     // shell's job; the panel only reports the intent.

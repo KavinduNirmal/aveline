@@ -177,4 +177,51 @@ describe('IncomePanel', () => {
       ),
     )
   })
+
+  /**
+   * The `Money` span itself, not the container around it: the treatment lives on the figure. Located
+   * by the container the figure belongs to, so an assertion cannot drift onto a different amount
+   * that happens to share the same text.
+   */
+  function moneyIn(container: 'td' | 'p' | 'dd', text: string) {
+    return screen
+      .getAllByText(text)
+      .find((el) => el.closest(container) !== null)
+      ?.closest('span')
+  }
+
+  it('states every money figure in a monospaced, tabular figure set', async () => {
+    render(<IncomePanel organizationId={ORG} organizationName="House of Fashions" />)
+    await screen.findByText('Reconciliation')
+
+    // The register's amounts, the per-kind totals and the reconciliation figures all share one
+    // treatment, so a reader can line up a column of money without the digits shifting width.
+    for (const figure of [moneyIn('td', 'LKR 18,500.00'), moneyIn('p', 'LKR 48,500.00')]) {
+      expect(figure).toBeDefined()
+      expect(figure?.className).toContain('font-mono')
+      expect(figure?.className).toContain('tabular-nums')
+    }
+  })
+
+  it('tints every money figure with the theme primary rather than near-black', async () => {
+    render(<IncomePanel organizationId={ORG} organizationName="House of Fashions" />)
+    await screen.findByText('Reconciliation')
+
+    // One accent for the section, from the theme, so the figures read as this product's figures.
+    // Every place a money figure appears is asserted, because a single un-tinted one is what makes a
+    // screen look half-finished: a register row, a per-kind total, and each reconciliation figure.
+    const figures = [
+      moneyIn('td', 'LKR 18,500.00'),
+      moneyIn('p', 'LKR 48,500.00'),
+      moneyIn('dd', 'LKR 18,500.00'),
+      moneyIn('dd', 'LKR 30,000.00'),
+      moneyIn('dd', 'LKR 0.00'),
+    ]
+
+    for (const figure of figures) {
+      expect(figure).toBeDefined()
+      expect(figure?.className).toContain('text-primary')
+      expect(figure?.className).not.toContain('font-serif')
+    }
+  })
 })

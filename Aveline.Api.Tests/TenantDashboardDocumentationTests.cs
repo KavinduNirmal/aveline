@@ -76,6 +76,13 @@ public class TenantDashboardDocumentationTests
         // E-11/E-12 — the top-up catalogue and the billing-period history.
         { "GET", $"{ApiPrefix}/blossoms/top-up-packs", "Aveline.Api/Modules/Billing/Endpoints/BlossomEndpoints.cs", "\"/top-up-packs\"" },
         { "GET", $"{ApiPrefix}/billing/periods", "Aveline.Api/Modules/Billing/Endpoints/OrgUsageEndpoints.cs", "\"/{organizationId:guid}/billing/periods\"" },
+        // B.24 — the provider-neutral payment surface (P2-B2): checkout, poll, cancel and webhook.
+        { "POST", $"{ApiPrefix}/blossoms/top-ups/checkout", "Aveline.Api/Modules/Payments/Endpoints/PaymentEndpoints.cs", "\"/blossoms/top-ups/checkout\"" },
+        { "GET", $"{ApiPrefix}/payment-intents/{{paymentIntentId}}", "Aveline.Api/Modules/Payments/Endpoints/PaymentEndpoints.cs", "\"/payment-intents/{paymentIntentId:guid}\"" },
+        { "POST", $"{ApiPrefix}/payment-intents/{{paymentIntentId}}/cancel", "Aveline.Api/Modules/Payments/Endpoints/PaymentEndpoints.cs", "\"/payment-intents/{paymentIntentId:guid}/cancel\"" },
+        { "POST", "/api/v1/webhooks/payments/{provider}", "Aveline.Api/Modules/Payments/Endpoints/PaymentWebhookEndpoints.cs", "\"/webhooks/payments/{provider:alpha}\"" },
+        // B.27 — the P7 admin payment reconciliation read (S-64), mapped at the app root.
+        { "GET", "/api/v1/admin/statistics/payments/reconciliation", "Aveline.Api/Modules/Payments/Endpoints/PaymentReconciliationEndpoints.cs", "\"/reconciliation\"" },
     };
 
     [Theory]

@@ -7,6 +7,8 @@ using Aveline.Api.Modules.Conversations.Attachments;
 using Aveline.Api.Modules.Conversations.DTOs;
 using Aveline.Api.Modules.Conversations.Models;
 using Aveline.Api.Modules.Conversations.Repositories;
+using Aveline.Api.Modules.CustomerConcierge.Metrics;
+using Aveline.Api.Modules.CustomerConcierge.Services;
 using Aveline.Api.Modules.Media;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -26,6 +28,8 @@ public class ConversationService : IConversationService
     private readonly MediaTokenMintService? _mediaTokens;
     private readonly IOrderContextBuilder? _orderContext;
     private readonly IConversationOrderBridge? _orderBridge;
+    private readonly IConsentGateService? _consentGate;
+    private readonly ConsentMetrics? _consentMetrics;
 
     /// <summary>
     /// <paramref name="mediaTokens"/> mints the bridge's absolute <c>image_url</c>. It is optional
@@ -39,6 +43,14 @@ public class ConversationService : IConversationService
     /// are optional for the same direct-construction reason as <paramref name="mediaTokens"/>. With
     /// them absent a conversation behaves exactly as it did before ADR-024 - the agent still pauses,
     /// but no order is drafted.
+    /// <para>
+    /// <paramref name="consentGate"/> and <paramref name="consentMetrics"/> are the consent
+    /// enforcement seam (plan §8.3 Layer 1). The container always supplies both
+    /// (<c>CustomerConciergeModule</c> registers them); they are optional only so a fixture that
+    /// constructs this service directly keeps its existing arity. A null gate means "no gate
+    /// configured", which is the pre-enforcement behaviour, and no code path other than a test can
+    /// reach it.
+    /// </para>
     /// </remarks>
     public ConversationService(
         IConversationRepository conversations,
@@ -51,7 +63,9 @@ public class ConversationService : IConversationService
         ILogger<ConversationService> logger,
         MediaTokenMintService? mediaTokens = null,
         IOrderContextBuilder? orderContext = null,
-        IConversationOrderBridge? orderBridge = null)
+        IConversationOrderBridge? orderBridge = null,
+        IConsentGateService? consentGate = null,
+        ConsentMetrics? consentMetrics = null)
     {
         _conversations = conversations;
         _messages = messages;
@@ -64,6 +78,8 @@ public class ConversationService : IConversationService
         _mediaTokens = mediaTokens;
         _orderContext = orderContext;
         _orderBridge = orderBridge;
+        _consentGate = consentGate;
+        _consentMetrics = consentMetrics;
     }
 
     public async Task<ConversationDto> GetOrCreateSalonAsync(
@@ -994,6 +1010,36 @@ public class ConversationService : IConversationService
     {
         try
         {
+            // The consent gate (plan §8.3 Layer 1). This is the ingress check: a revoked customer's
+            // message is recorded by the caller and acknowledged by the webhook, but no agent run is
+            // dispatched at all - so no memory is read, no brief is built, and no specialist answers.
+            //
+            // The channel reference is passed too: an erased customer has no row left to bind, so
+            // the erasure tombstone is the only thing that still refuses the message (plan §15 Q-4,
+            // risk R-3).
+            if (_consentGate is not null)
+            {
+                var decision = await _consentGate.CheckAsync(
+                    conversation.OrganizationId, conversation.CustomerId, from, cancellationToken);
+
+                // Every outcome that was not an unconditional grant is counted, including
+                // no_customer_context: those messages proceed (plan §8.4) but were never
+                // consent-cleared, and that must stay observable.
+                if (decision.Reason is not null)
+                {
+                    _consentMetrics?.RecordSkip(decision.Reason);
+                }
+
+                if (!decision.ShouldProcess)
+                {
+                    _logger.LogInformation(
+                        "Skipping inbound agent dispatch for conversation {ConversationId}: {Reason}.",
+                        conversation.Id,
+                        decision.Reason);
+                    return;
+                }
+            }
+
             var (attachments, imageUrl) = DescribeAttachments(
                 conversation.OrganizationId,
                 attachment is null ? Array.Empty<MessageAttachment>() : new[] { attachment });
@@ -1030,6 +1076,10 @@ public class ConversationService : IConversationService
                     // (ADR-024, Decision 1). Empty for a question, and empty when nothing resolves;
                     // the commerce agent then skips, which is not the same as approving a deal.
                     items = orderContext.Items.Select(ToWireItem).ToList(),
+                    // ...and why they are there. A price question resolves the pieces so a discount
+                    // ceiling can be computed for them, and declares itself a quote so the agent may
+                    // answer without pausing and this API may not write an order (ADR-028).
+                    purpose = ToWirePurpose(orderContext),
                 },
             };
             using var content = JsonContent.Create(payload);
@@ -1090,6 +1140,17 @@ public class ConversationService : IConversationService
     };
 
     /// <summary>
+    /// Whether the items travel as something to price or something to buy (ADR-028).
+    /// </summary>
+    /// <remarks>
+    /// Always sent, including on the buy path, so the agent never has to infer the purpose from the
+    /// absence of a field: a missing <c>purpose</c> reads here as the conservative "order", which is
+    /// the pre-ADR-028 behaviour exactly.
+    /// </remarks>
+    private static string ToWirePurpose(OrderContext context)
+        => context.IsQuote ? "quote" : "order";
+
+    /// <summary>
     /// React to what the agent did with the message: when it stopped for approval, create the order
     /// the pause needs and bind the conversation to the customer it belongs to (ADR-024,
     /// Decision 2).
@@ -1136,7 +1197,7 @@ public class ConversationService : IConversationService
                 conversation.CustomerId,
                 phoneNumber,
                 customerName,
-                orderContext.Items,
+                orderContext,
                 cancellationToken);
 
             if (outcome is null)
@@ -1208,6 +1269,9 @@ public class ConversationService : IConversationService
                     // See TriggerInboundDraftAsync: staff can place an order through the agent too,
                     // and it must pause on exactly the same rules (ADR-024, Decision 1).
                     items = orderContext.Items.Select(ToWireItem).ToList(),
+                    // ...and whether they are there to be bought or only to be priced (ADR-028). A
+                    // staff price question is a quote: Lina answers the ceiling and nothing commits.
+                    purpose = ToWirePurpose(orderContext),
                 },
             };
             using var content = JsonContent.Create(payload);

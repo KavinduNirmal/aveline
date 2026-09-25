@@ -321,3 +321,34 @@ docs/final_document/
 # because tracked files are unaffected by these patterns.
 .vercel/
 .env*
+
+# =============================================================================
+# DEPLOYMENT-ORCHESTRATION SCRATCH — credentials and CLI caches, never tracked
+# `.azcfg/` holds the Azure CLI token cache and `.vhome/` the Vercel CLI token
+# cache, both relocated here because the sandbox home is read-only. Committing
+# either would leak a live credential.
+# =============================================================================
+.azcfg/
+.vhome/
+.vercel-cache/
+
+# =============================================================================
+# ANDROID RELEASE SIGNING MATERIAL — never tracked, at ANY path
+# The instructions in .github/workflows/release-apk.yml tell you to create
+# `aveline-release.jks` in the repository ROOT, which the narrower Android
+# patterns above (frontend/aveline_mobile/android/...) do NOT cover. An Android
+# signing key cannot be revoked, so these match by extension everywhere rather
+# than by directory.
+# =============================================================================
+*.jks
+*.keystore
+key.properties
+aveline-release.jks
+
+# =============================================================================
+# LOCAL BUILD BYPRODUCTS — large or noisy, never tracked
+# `.docker-tmp/` held a 1.2 GB image build context and broke `vercel deploy`
+# with "Request body too large. Limit: 10mb".
+# =============================================================================
+.docker-tmp/
+texput.log

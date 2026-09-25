@@ -37,6 +37,19 @@ export interface OnboardingOrganizationDto {
   customerPreferences: string | null
   onboardingStep: number
   hasCompletedOnboarding: boolean
+  /**
+   * The list price the server's price book resolved for the tier (LKR), or `null` when no price row
+   * was effective. A missing price is not zero: the free Seed plan is `0`, an unpriced paid tier is
+   * `null`.
+   */
+  priceLkr?: number | null
+  currency?: string
+  /** The subscription lifecycle state, e.g. `Trialing` once a paid tier is selected. */
+  subscriptionStatus?: string | null
+  /** Always `null` in defer mode: onboarding never creates a payment intent (plan §14 Q1). */
+  paymentIntentId?: string | null
+  /** Always `null` in defer mode: onboarding never shows a checkout. */
+  checkoutUrl?: string | null
 }
 
 export interface OnboardingStatusResponse {
@@ -76,7 +89,9 @@ export async function saveBoutiqueDetails(
 }
 
 /**
- * Step 4: Updates the selected plan tier (in demo mode).
+ * Step 4: selects the plan tier. The response carries the server-priced subscription the backend
+ * provisioned (`priceLkr`, `currency`, `subscriptionStatus`); onboarding defers payment, so
+ * `paymentIntentId` and `checkoutUrl` are always `null`.
  */
 export async function selectPlan(
   planTier: PlanTier,

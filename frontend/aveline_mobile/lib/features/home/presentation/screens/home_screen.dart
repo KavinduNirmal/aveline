@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -8,13 +9,18 @@ import 'package:provider/provider.dart';
 import '../../../../core/auth/app_roles.dart';
 import '../../../../core/auth/permission_guard.dart';
 import '../../../../core/auth/permissions.dart';
+import '../../../../core/config/app_config.dart';
 import '../../../../core/providers/boutique_provider.dart';
+import '../../../../core/providers/user_provider.dart';
 import '../../../../core/router/route_guards.dart';
 import '../../../../shared/utils/greeting.dart';
 import '../../../../shared/widgets/app_toast.dart';
 import '../../../../shared/widgets/aurora_field.dart';
 import '../../../../shared/widgets/blossom_refresh.dart';
 import '../../../auth/domain/auth_repository.dart';
+import '../../../billing/data/api_payment_repository.dart';
+import '../../../billing/data/payment_repository.dart';
+import '../../../billing/presentation/top_up_sheet.dart';
 import '../../../customers/data/customer_repository.dart';
 import '../../../customers/data/demo_customer_repository.dart';
 import '../../domain/client_highlight.dart';
@@ -42,6 +48,7 @@ class HomeScreen extends StatefulWidget {
     this.focusTasks,
     this.clients,
     this.customerRepository,
+    this.paymentRepository,
   });
 
   /// Optional clock override so tests can pin the time-of-day salutation.
@@ -63,6 +70,12 @@ class HomeScreen extends StatefulWidget {
   /// back is what the profile screen is addressed by: a client this screen can
   /// name has to be a client the profile can open.
   final CustomerBookSource? customerRepository;
+
+  /// The purchase path behind "Request additional blossoms".
+  ///
+  /// An explicit injection for tests; production passes nothing and the screen
+  /// reads the shared `Dio` the rest of the app is built on.
+  final PaymentRepository? paymentRepository;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -217,6 +230,18 @@ class _HomeScreenState extends State<HomeScreen> {
         widget.clients ?? controller?.clients ?? const <ClientHighlight>[];
     final balance = controller?.balance;
 
+    // The top-up action: the same shared Dio the rest of the app uses in production, and an
+    // explicit injection for a test. Absent either, the card's button stays disabled.
+    final payments = widget.paymentRepository ?? _providedPayments(context);
+    String? apiBaseUrl;
+    try {
+      apiBaseUrl = context.read<AppConfig>().apiBaseUrl;
+    } catch (_) {
+      apiBaseUrl = null;
+    }
+    final canBuyBlossoms =
+        payments != null && organizationId != null && _canBuyBlossoms(context);
+
     final showLoading =
         !injected && controller != null && !controller.hasLoadedOnce;
     final errorMessage = injected ? null : controller?.errorMessage;
@@ -278,12 +303,80 @@ class _HomeScreenState extends State<HomeScreen> {
               if (balance != null)
                 PermissionGuard(
                   permission: Permissions.billingViewSelf,
-                  child: BlossomUsageCard(usage: balance),
+                  child: BlossomUsageCard(
+                    usage: balance,
+                    // Only a role that may actually buy gets the action: the
+                    // catalogue read behind it requires `billing:manage`, and a
+                    // button that can only produce a 403 is worse than none.
+                    onRequestMore: canBuyBlossoms
+                        ? () => _openTopUp(
+                              context,
+                              organizationId,
+                              payments,
+                              apiBaseUrl,
+                            )
+                        : null,
+                  ),
                 ),
             ],
           ],
         ),
       ],
+    );
+  }
+
+  /// The shared client, when this screen is mounted under the app's provider tree. A bare Home in
+  /// a test has no provider, and then the caller must inject a repository or the button stays
+  /// disabled.
+  PaymentRepository? _providedPayments(BuildContext context) {
+    try {
+      return ApiPaymentRepository(context.read<Dio>());
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// True when the signed-in role may buy Blossoms (`billing:manage`).
+  bool _canBuyBlossoms(BuildContext context) {
+    try {
+      final user = context.read<UserProvider>().user;
+      if (user == null) {
+        return false;
+      }
+      return Permissions.anyGranted(
+        [user.userRole, user.organizationRole],
+        Permissions.billingManage,
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Opens the purchase sheet and refreshes the meter when the server reports a settled top-up.
+  void _openTopUp(
+    BuildContext context,
+    String organizationId,
+    PaymentRepository repository,
+    String? apiBaseUrl,
+  ) {
+    unawaited(
+      showTopUpSheet(
+        context,
+        repository: repository,
+        organizationId: organizationId,
+        checkoutBaseUrl: apiBaseUrl,
+        // The grant lands on the server, so the meter is re-read: showing the balance the server
+        // reported before the purchase would understate what the shop now owns.
+        onSettled: () {
+          try {
+            context.read<HomeController>().refresh(
+              ownerDeck: AppRoles.isOwnerRole(_seededRole),
+            );
+          } catch (_) {
+            /* the meter keeps its last measured value */
+          }
+        },
+      ),
     );
   }
 

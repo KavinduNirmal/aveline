@@ -70,6 +70,49 @@ describe('the revenue verb set', () => {
   })
 })
 
+/**
+ * The tenant purchase verbs. A purchase is not a credit, but the rule is the same one, so it lives
+ * in the same module: same pack -> same key across a retry; a different pack -> a different key.
+ */
+describe('the top-up verb set', () => {
+  const CHECKOUT: OperationSnapshot = {
+    verb: 'top-up-checkout',
+    organizationId: 'org-1',
+    reason: 'blossom_pack_500',
+    amount: 2000,
+  }
+
+  it('keeps one key across a retry of the same pack', () => {
+    const state = beginOperation({ snapshot: CHECKOUT, previous: null, mintKey: () => 'key-1' })
+
+    const retried = beginOperation({
+      snapshot: { ...CHECKOUT },
+      previous: state,
+      mintKey: () => 'key-2',
+    })
+
+    expect(retried.key).toBe('key-1')
+  })
+
+  it('mints a new key when the chosen pack changes, because that is a different purchase', () => {
+    const state = beginOperation({ snapshot: CHECKOUT, previous: null, mintKey: () => 'key-1' })
+
+    const other = beginOperation({
+      snapshot: { ...CHECKOUT, reason: 'blossom_pack_100', amount: 500 },
+      previous: state,
+      mintKey: () => 'key-2',
+    })
+
+    expect(other.key).toBe('key-2')
+  })
+
+  it('fingerprints a checkout distinctly from the cancel of its own intent', () => {
+    const cancel: OperationSnapshot = { ...CHECKOUT, verb: 'top-up-cancel', reason: 'intent-1' }
+
+    expect(operationFingerprint(CHECKOUT)).not.toBe(operationFingerprint(cancel))
+  })
+})
+
 describe('operationFingerprint', () => {
   it('is stable for the same payload and different for a changed one', () => {
     expect(operationFingerprint(CREDIT)).toBe(operationFingerprint({ ...CREDIT }))

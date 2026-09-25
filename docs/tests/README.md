@@ -12,7 +12,7 @@ Aveline tests four independent codebases, one per technology stack:
 | Layer | Stack | Tools | Location |
 |---|---|---|---|
 | **Backend API** | ASP.NET Core 10 (C#) | xUnit + Moq + `WebApplicationFactory` + Coverlet | `Aveline.Api.Tests/` |
-| **Agent Service** | Python 3.12 + FastAPI + LangGraph | pytest + `pytest-asyncio` + `pytest-cov` + respx + fakeredis | `agnet-service/tests/` |
+| **Agent Service** | Python 3.12 + FastAPI + LangGraph | pytest + `pytest-asyncio` + `pytest-cov` + respx + fakeredis | `agent-service/tests/` |
 | **Web Dashboard** | React 19 + TypeScript (Vite) | Vitest + `@vitest/coverage-v8` | `frontend/web/src/**/*.test.ts(x)` |
 | **Mobile App** | Flutter (Dart) | `flutter_test` | `frontend/aveline_mobile/test/` |
 
@@ -77,7 +77,7 @@ Reports are written to `Aveline.Api.Tests/TestResults/` (gitignored).
 
 ---
 
-## 3. Python Tests (`agnet-service/tests/`)
+## 3. Python Tests (`agent-service/tests/`)
 
 381 test functions across agent graphs, tool registries, orchestrators, and schemas.
 
@@ -93,10 +93,10 @@ Approach:
 ### Run
 
 ```bash
-pytest agnet-service/tests/ -v
+pytest agent-service/tests/ -v
 ```
 
-Configuration lives in `agnet-service/pyproject.toml` (`[tool.pytest.ini_options]`:
+Configuration lives in `agent-service/pyproject.toml` (`[tool.pytest.ini_options]`:
 `testpaths = ["tests"]`, `pythonpath = ["."]`, `asyncio_mode = "auto"`).
 
 ### Files
@@ -227,7 +227,7 @@ Clerk-style JWT  →  Aveline.Api (real JwtBearer + JWKS pipeline)
   document + a test JWKS, so `AddJwtBearer` runs its full discovery → signature →
   issuer → lifetime pipeline offline.
 - A **stub agent server** records the `X-Internal-Token` header and echoes the payload,
-  mirroring `agnet-service/app/api/agents.py`.
+  mirroring `agent-service/app/api/agents.py`.
 - The API is booted via `WebApplicationFactory<Program>` with `Clerk:Authority`,
   `AgentService:BaseUrl`, and `AgentService:InternalToken` overridden.
 
@@ -249,14 +249,16 @@ in-memory EF Core DB seeded per test, external HTTP via stub servers or
 ## 7. End-to-End Tests (`tests/e2e/`)
 
 Playwright walks the two authenticated UI trees in a real browser, from the repository-level
-`tests/e2e/` tree rather than inside the web package. Each spec covers the **signed-out** path — the
-one walk buildable without a Clerk test session — and asserts both the redirect and the absence of
-that tree's own API traffic.
+`tests/e2e/` tree rather than inside the web package. All but one spec cover the **signed-out**
+path — the one walk buildable without a Clerk test session — and assert both the redirect and the
+absence of that tree's own API traffic. The payments walk is the exception: it needs a signed-in
+tenant session and is skipped until one is supplied.
 
 | Spec | Asserts |
 |---|---|
 | `admin-console/console-access.spec.ts` | signed out, `/admin/{userId}` reaches `/sign-in`, renders no console chrome, and issues **zero** `/api/v1/admin/` requests |
 | `tenant-dashboard/signed-out.spec.ts` | signed out, `/app/b/{slug}` and `/app/b/{slug}/{section}` reach `/sign-in`, render no dashboard chrome (`Switch boutique`, `Reporting window`, `Top up`), and issue **zero** `/api/v1/orgs/` requests |
+| `payments/top-up.spec.ts` | **needs `E2E_TENANT_STORAGE_STATE`** (a signed-in boutique-owner session) and `E2E_TENANT_SLUG`; buys a pack through the dashboard dialog against the **mock** provider, completes the mock's hosted page, and asserts the balance rises only after the polled intent is terminal. See the spec's header for the full run command. |
 
 ### Run
 
@@ -296,7 +298,7 @@ Each stack instruments coverage with its own tooling and enforces a threshold in
 Local coverage reports:
 
 - **Backend**: `Aveline.Api.Tests/TestResults/` (gitignored).
-- **Agent Service**: `agnet-service/coverage.xml` (XML) + terminal summary.
+- **Agent Service**: `agent-service/coverage.xml` (XML) + terminal summary.
 - **Web**: `frontend/web/coverage/` (text, JSON summary, and HTML reporters).
 - **Mobile**: `frontend/aveline_mobile/coverage/lcov.info`.
 

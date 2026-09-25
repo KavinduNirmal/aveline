@@ -115,6 +115,18 @@ tags:
       Protected media: the streaming token proxy and the two mint routes. The token was minted
       for either `attachment.view` or `vision.analyze`; `asset.public` (catalog imagery) is
       deliberately not tokenised.
+  - name: Payments
+    description: >
+      Provider-neutral payment intents and the anonymous provider webhook (P2-B2): hosted-checkout
+      top-ups, the poll that reads terminal state, abandonment, and settlement. The
+      Development-only mock checkout routes are mapped only when the host environment is
+      Development. No card, CVC, expiry, PAN or token field exists on the wire.
+  - name: Privacy
+    description: >
+      The anonymous, OTP-verified opt-out flow (privacy plan Phase 4). Both routes are unauthenticated
+      by design: the customer has no Aveline account and the one-time code is the authentication.
+      The staff-side consent write lives on the tenant customer surface under `customers:manage` and
+      is distinguishable in the audit by `ActorKind`.
 
 security:
   - bearerAuth: []
@@ -293,6 +305,39 @@ paths:
                                 type: integer
                               available:
                                 type: boolean
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Catalog]
+      summary: Get active facet options and item counts under currently selected filter state
+      operationId: catalogPostFacets
+      parameters:
+        - name: organizationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: >
+                The selected filter state. The same shape `POST …/catalog/search` accepts; the
+                response intersects every other facet against it (`docs/api/README.md` B.19).
+              additionalProperties: true
+      responses:
+        "200":
+          description: Facet groups and option counts constrained by the supplied selection
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -2899,6 +2944,75 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
 
+  # ---------------------------------------------------------------------------
+  # Internal: customer consent (consumed by the Python agent service)
+  # ---------------------------------------------------------------------------
+  /internal/customers/{customerId}/consent:
+    parameters:
+      - name: customerId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: organizationId
+        in: query
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Customer Concierge]
+      summary: Read a customer's consent state
+      operationId: getCustomerConsent
+      security:
+        - internalToken: []
+      description: |
+        The read the Python agent uses before it processes a customer's message
+        (`agent-service/app/agents/customer_memory/nodes.py` parses the camelCase `consentStatus`).
+        A customer with no consent row reads as `pending` — the same value the customer profile
+        reports for that state (defect D-2).
+      responses:
+        "200":
+          description: The consent state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerConsent" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Customer Concierge]
+      summary: Set a customer's consent state
+      operationId: updateCustomerConsent
+      security:
+        - internalToken: []
+      description: |
+        Accepts `pending`, `granted` or `revoked`. Any other value is
+        `400 { "code": "invalid-consent-status", "message": "…" }` — a typed domain error, never a
+        `500`. Re-granting clears `consentRevokedAt`; the first update for a customer with no row
+        inserts one and stamps `consentGrantedAt`/`consentRevokedAt` to match the requested status.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [organizationId, consentStatus]
+              properties:
+                organizationId: { type: string, format: uuid }
+                consentStatus:
+                  type: string
+                  enum: [pending, granted, revoked]
+      responses:
+        "200":
+          description: The updated consent state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerConsent" }
+        "400":
+          description: The status is not one of `pending`, `granted` or `revoked`
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/v1/orgs/{organizationId}/conversations/{conversationId}/attachments/{attachmentId}/media-token:
     parameters:
       - $ref: "#/components/parameters/OrganizationId"
@@ -4047,9 +4161,10 @@ paths:
         top-ups that landed in it.
 
         **`planListPriceLkr` is `null` whenever the stored `PriceLkr` is zero**, never `0`, with
-        `subscriptionPricesConfigured` saying whether a price was configured. `PriceLkr` is never
-        assigned anywhere in the product, so reading the column directly would print `LKR 0` as the
-        plan price of every subscription.
+        `subscriptionPricesConfigured` saying whether a price was configured. Payments P1 assigns
+        `PriceLkr` from the plan-allowance book when a subscription is created or changed, but a
+        subscription that predates it (or resolves to no book row) stores `0`, so reading the column
+        directly would print `LKR 0` as its plan price.
 
         `planTier`/`hasSubscriptionRow` come from the day's `OrganizationSubscriptionSnapshot`, not from
         `Organization.PlanTier`: a tier exists even for an organization that never had a billing row.
@@ -4085,9 +4200,11 @@ paths:
         SHIPPED (E-11 / S-63). `BillingManage` (`billing:manage`) — deliberately the **same permission
         as the purchase it feeds**: whoever may not buy may not see what is for sale either.
 
-        The active `TopUpPack` price-book rows, ordered by size. The lookup is identical to the one
-        `POST …/blossoms/top-ups` performs, so a pack offered here cannot be rejected at purchase and a
-        pack accepted there cannot be missing. A draft row is not listed.
+        The purchasable `TopUpPack` price-book rows, ordered by size. The selection is identical to the
+        one `POST …/blossoms/top-ups` performs: per SKU the newest `Active` row whose effective window
+        contains now, so a pack offered here cannot be rejected at purchase and a pack accepted there
+        cannot be missing, and a re-priced SKU appears once at its current price. A draft or expired row
+        is not listed. The packs stay global (no tier or organization scope).
 
         No payment provider is connected, so a purchase records a grant rather than a charge.
       operationId: getBlossomTopUpPacks
@@ -4852,6 +4969,16 @@ paths:
         An upgrade takes effect immediately and writes a `PlanUpgradeProration`
         ledger entry. A downgrade defaults to the next period and is blocked with
         `409 plan-limit-violation` when current usage exceeds any target limit.
+
+        Phase 5: an immediate upgrade that raises the resolved price also creates a
+        `SubscriptionProration` payment obligation for the remainder of the period,
+        reported as `prorationPaymentIntentId` and `prorationAmountLkr`. The
+        provider computes it when its `SupportsProration` capability is true;
+        otherwise Aveline uses the documented local formula
+        (`docs/architecture/pricing_plan.md` §10). The higher allowance is granted
+        immediately (decision Q2), so a provider that cannot be reached leaves the
+        charge outstanding and the call still returns `200`, with a null intent id
+        and a non-null `prorationAmountLkr`.
       operationId: changePlan
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -4882,6 +5009,14 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PlanLimitViolationError" }
+        "501":
+          description: >-
+            The configured payment provider advertises SupportsProration without
+            implementing the proration calculation
+            (`payment-provider-capability-missing`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
 
   /api/v1/orgs/{organizationId}/subscription/cancel:
     parameters:
@@ -4889,7 +5024,14 @@ paths:
     post:
       tags: [Billing]
       summary: Cancel at the end of the current period
-      description: Phase 2. Requires `billing:manage`.
+      description: |
+        Phase 2. Requires `billing:manage`.
+
+        Phase 6: where the subscription carries a provider-side agreement
+        (`ExternalSubscriptionId`), the provider is asked for a period-end cancellation **before**
+        anything is persisted. A provider refusal is a hard failure: `502 payment-provider-error`,
+        and no cancellation is written. At the period boundary the rollover transitions the
+        subscription to `Cancelled`, stops the closed period's `Derived` charge, and does not renew.
       operationId: cancelSubscription
       requestBody:
         required: false
@@ -4916,6 +5058,45 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "502":
+          description: 502 `payment-provider-error`; the provider refused the cancellation and nothing was persisted.
+
+  /api/v1/orgs/{organizationId}/subscription/resume:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    post:
+      tags: [Billing]
+      summary: Withdraw a scheduled subscription cancellation
+      description: |
+        SHIPPED (Phase 6). Requires `billing:manage`.
+
+        Clears `cancelAtPeriodEnd` and asks the provider to restore its recurring agreement. The
+        route is gated on the provider's `SupportsCancelAtPeriodEnd` capability: a provider without
+        it cannot be asked to withdraw its own scheduled cancellation, so the response is
+        `501 payment-provider-capability-missing` rather than a cleared local flag the provider
+        would still act on.
+      operationId: resumeSubscription
+      responses:
+        "200":
+          description: The subscription with its cancellation withdrawn
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Subscription" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The subscription is not scheduled for cancellation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "501":
+          description: |
+            501 `payment-provider-capability-missing`. The configured provider cannot withdraw a
+            scheduled cancellation, so there is nothing meaningful to resume.
 
   /api/v1/orgs/{organizationId}/entitlements:
     parameters:
@@ -6173,6 +6354,52 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /api/v1/admin/statistics/payments/reconciliation:
+    parameters:
+      - name: organizationId
+        in: query
+        description: Scope the intent half to one organization. The backlog is provider-wide.
+        schema: { type: string, format: uuid }
+      - name: provider
+        in: query
+        description: Scope to one adapter key (`manual`, `mock`, `stripe`).
+        schema: { type: string }
+      - name: from
+        in: query
+        description: Inclusive lower bound on `CreatedAt`. Defaults to 24 hours before `to`.
+        schema: { type: string, format: date-time }
+      - name: to
+        in: query
+        description: Inclusive upper bound on `CreatedAt`. Defaults to now.
+        schema: { type: string, format: date-time }
+    get:
+      tags: [Admin Payment Statistics]
+      summary: Read the payment intents whose provider state is unconfirmed
+      description: |
+        S-64. Every payment intent in the window whose provider state disagrees with the stored row
+        -- a charge the provider settled that the webhook never moved, a differing status, amount or
+        currency, an unknown charge, a refund recorded on one side only -- plus the inbound provider
+        events still unprocessed, by provider. Uses the same derivation the
+        `aveline.payment.unreconciled_intents` and `aveline.payment.webhook.unprocessed_backlog`
+        gauges are published from, so the console and the alarm cannot disagree. Requires
+        `stats:system`.
+      operationId: getPaymentReconciliation
+      responses:
+        "200":
+          description: The reconciliation report
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaymentReconciliationResponse" }
+        "400":
+          description: "`400 invalid-window`: `from` is after `to`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   # ---------------------------------------------------------------------------
   # Admin revenue (Aveline's own income ledger, S-50..S-55)
   # ---------------------------------------------------------------------------
@@ -6367,8 +6594,9 @@ paths:
       summary: Read MRR, ARR, ARPU and the paying-organization count
       description: |
         S-52. List-price **scheduled** revenue, not recognised or collected revenue. Every measure
-        is `null` rather than `0` when it cannot be computed: `PriceLkr` is unassigned today, so
-        MRR is not measured, and an unassigned price is not a free plan. Requires `revenue:read`.
+        is `null` rather than `0` when it cannot be computed: a subscription that predates Payments P1,
+        or whose plan-allowance book row resolves to nothing, has no `PriceLkr`, so MRR is not measured,
+        and an unassigned price is not a free plan. Requires `revenue:read`.
       operationId: getRevenueOverview
       parameters:
         - $ref: "#/components/parameters/From"
@@ -6808,6 +7036,1476 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v1/orgs/{organizationId}/blossoms/top-ups/checkout:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    post:
+      tags: [Payments]
+      summary: Create a payment intent for a Blossom top-up pack
+      description: |
+        SHIPPED (P2-B2). `BillingManage` (`billing:manage`) and a required `Idempotency-Key`.
+
+        Resolves the active `TopUpPack` price-book row exactly as the catalogue and the operator
+        top-up route do, so the price and the Blossom quantity are the server's: a pack offered by
+        `GET …/blossoms/top-up-packs` cannot be rejected here, and a pack accepted here cannot be
+        missing there.
+
+        `Billing:AllowCrossPeriodTopUps` (default `false`, BR-2.6) resolves the grant's period cap
+        **before** payment and persists it on the intent, so a settlement arriving after a period
+        boundary applies the cap that was in force when the customer paid rather than silently
+        extending or truncating the grant.
+
+        The redirect back from a hosted page is not proof of settlement — a customer can close the
+        tab — so poll `GET …/payment-intents/{paymentIntentId}` for the terminal state.
+
+        A provider transport failure is a `502` and commits **no** intent row: an intent with no
+        provider intent behind it is unactionable.
+      operationId: createBlossomTopUpCheckout
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateTopUpCheckoutRequest" }
+      responses:
+        "201":
+          description: The intent and the provider handoff
+          headers:
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TopUpCheckoutResponse" }
+        "400":
+          description: |
+            400. `idempotency-key-required` when the header is missing; `unknown-sku` for a SKU the
+            price book does not offer; `unpurchasable-sku` for a pack with no positive price.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          description: |
+            502 `payment-provider-error`. The provider could not be reached; no intent row was
+            committed, so the same `Idempotency-Key` may be retried safely.
+        "503":
+          description: 503 `payment-provider-unavailable`. No usable provider is configured.
+
+  /api/v1/orgs/{organizationId}/payment-intents/{paymentIntentId}:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: paymentIntentId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Payments]
+      summary: Poll one payment intent
+      description: |
+        SHIPPED (P2-B2). `BillingView` (`billing:view`).
+
+        The intent's current state for its organisation. The read filters on `OrganizationId`
+        explicitly, so an id belonging to another organisation is a `404` and cannot be probed for.
+
+        `status` reports the derived `Expired` state when an unsettled intent is past its
+        `expiresAt`, and `Refunded` when a full refund has been applied. Both are derivations from
+        stored state rather than stored enum values, so the client never has to infer them from a
+        timestamp.
+      operationId: getPaymentIntent
+      responses:
+        "200":
+          description: The intent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaymentIntent" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/payment-intents/{paymentIntentId}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: paymentIntentId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Payments]
+      summary: Cancel an unpaid payment intent
+      description: |
+        SHIPPED (P2-B2). `BillingManage` (`billing:manage`) and a required `Idempotency-Key`.
+
+        Asks the provider to void the charge and moves the intent to `Cancelled`. An intent that is
+        not unsettled is a `409 payment-intent-state`; a provider whose capabilities do not include
+        cancellation is a `501 payment-provider-capability-missing`.
+      operationId: cancelPaymentIntent
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, maxLength: 128 }
+        - name: reason
+          in: query
+          required: false
+          schema: { type: string, maxLength: 200 }
+          description: Defaults to `Customer abandoned the checkout.`
+      responses:
+        "200":
+          description: The cancelled intent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaymentIntent" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "501":
+          description: 501 `payment-provider-capability-missing`; the adapter cannot cancel.
+        "502":
+          description: 502 `payment-provider-error`; the provider could not be reached.
+
+  /api/v1/orgs/{organizationId}/payment-intents/{paymentIntentId}/refund:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: paymentIntentId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Payments]
+      summary: Refund a settled payment intent
+      description: |
+        SHIPPED (Phase 6). `revenue:refund` and a required `Idempotency-Key`.
+
+        Returns money the journal recorded collecting. The provider is asked **before** the ledger
+        is written (decision D8), so the journal never records a refund the provider refused. The
+        shipped revenue rule is kept: a refund requires a live `Verified` receipt for the same
+        `(SourceKind, SourceRef)` the settlement wrote, and a charge the journal never recorded
+        collecting is `409 refund-not-allowed`. Only a `Succeeded` intent can be refunded.
+
+        The refund window is configuration and the policy is unresolved:
+        `Payments:RefundWindowDays` defaults to absent, which means no automatic window and the
+        operator decides. When configured, a refund struck outside the window is
+        `409 payment-intent-state` and the provider is not asked.
+
+        The response names both the provider's refund id and the ledger entry the receipt was
+        written to.
+      operationId: refundPaymentIntent
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefundPaymentIntentRequest" }
+      responses:
+        "200":
+          description: The refund, with the provider reference and the ledger entry
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaymentRefundResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: |
+            403. The caller does not hold `revenue:refund` (it is deliberately denied to `admin`),
+            or the intent belongs to another organisation.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            409. `payment-intent-state` for a non-settled intent, an already-refunded intent, an
+            over-sized partial refund, or a refund outside a configured `Payments:RefundWindowDays`;
+            `refund-not-allowed` when no verified receipt exists for the charge.
+        "501":
+          description: 501 `payment-provider-capability-missing`; the adapter cannot refund.
+        "502":
+          description: 502 `payment-provider-error`; the provider refused or could not be reached, and no ledger row was written.
+
+  /api/v1/webhooks/payments/{provider}:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema: { type: string, pattern: "^[A-Za-z]+$" }
+        description: The adapter key stored on the intent (`mock`, or `stripe` once Phase 8 lands).
+    post:
+      tags: [Payments]
+      summary: Receive a payment provider callback
+      description: |
+        SHIPPED (P2-B2). **Anonymous** and signature-verified. The raw body is read before any JSON
+        binding, because the signature is computed over the bytes as they arrived.
+
+        - Invalid signature, wrong secret, or a timestamp outside the configured tolerance: `403`
+          with an **empty body** (the WhatsApp webhook convention) and a
+          `aveline.payment.webhook.verification_failures` increment. The response never says which
+          part failed.
+        - A duplicate `(Provider, ProviderEventId)`: `200` with `duplicate: true` and no second
+          settlement.
+        - The first delivery settles the intent in one database transaction: one Blossom grant
+          (`IdempotencyKey = ProviderIntentId`, `IdempotencyScope = "payments.topup"`), one
+          `Verified` income receipt, one `Succeeded` intent.
+        - An amount or currency that does not match the intent: `409 payment-intent-mismatch`. The
+          event is stored with a `ProcessingError` and no `ProcessedAt`, the critical
+          `aveline.payment.settlement{outcome="mismatch"}` series moves, and nothing is granted.
+      operationId: receivePaymentProviderWebhook
+      security: []
+      responses:
+        "200":
+          description: Accepted (a first delivery settles; a duplicate is a no-op)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  received: { type: boolean }
+                  duplicate: { type: boolean }
+                  processed: { type: boolean }
+        "403":
+          description: Verification failed; the body is empty
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          description: 503 `payment-provider-unavailable`; the named key has no usable adapter.
+
+  # ---------------------------------------------------------------------------
+  # Privacy — the anonymous OTP-verified opt-out flow (privacy plan Phase 4).
+  #
+  # Both routes are ANONYMOUS BY DESIGN: the caller is a customer with no Aveline
+  # account, and the OTP is the authentication. They are never reachable through a
+  # boutique-scoped route, and the staff equivalent is
+  # POST /api/v1/orgs/{organizationId}/customers/{customerId}/consent below.
+  # ---------------------------------------------------------------------------
+  /api/v1/privacy/opt-out/start:
+    post:
+      tags: [Privacy]
+      summary: Request an opt-out code for a phone number
+      description: |
+        SHIPPED (privacy plan §5.2, item 4.2). **Anonymous.**
+
+        The body carries the `v` and `s` values of the signed opt-out link the customer opened. The
+        signature is re-verified server-side (`Privacy:LinkSigningKey`, HMAC-SHA256 over
+        `v1|{organizationId}`), so a caller cannot point the flow at an arbitrary boutique; an
+        invalid or missing signature is answered with the same `202` the success path returns and
+        nothing is sent.
+
+        **The `202` field set is identical** whether the number belongs to a customer or not, whether
+        the boutique has WhatsApp configured or not, and whether the send succeeded or failed: the
+        constant `status`, the constant `expiresInSeconds`, and a fresh opaque `handle` on every
+        call. A handle with no stored code behind it is indistinguishable from one that has, and an
+        unknown number's handle simply leads to no stored code. Any variation in the shape would make
+        this endpoint an oracle for "does this boutique know this number?". The only observable
+        differences are server-side (`AuditLogEntry` action `privacy.otp.issued`, and the logs).
+
+        The counters are **fail closed** (decision DR-6): they are read straight from
+        `IDistributedCache`, never through `IRateLimiter`, which deliberately fails open.
+      operationId: startPrivacyOptOut
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OptOutStartRequest" }
+      responses:
+        "202":
+          description: |
+            Accepted. The field set is constant and carries the opaque `handle` the client returns on
+            `verify`; it does not report whether a customer matched or whether a message was sent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OptOutAccepted" }
+        "400":
+          description: |
+            `invalid-phone-number` when the number is not a recognised Sri Lankan form (checked
+            before any customer lookup), or `invalid-scope` when `scope` is neither `org` nor `all`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429":
+          description: |
+            `otp-rate-limited`. The per-number budget (3 sends / 15 min) or the per-address budget
+            (10 starts / hour) is spent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "503":
+          description: |
+            `otp-unavailable`. The OTP store is unreachable, so no code could be stored and none was
+            issued. Fails closed rather than degrading into an unmetered flow.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/privacy/opt-out/verify:
+    post:
+      tags: [Privacy]
+      summary: Verify the opt-out code and revoke consent
+      description: |
+        SHIPPED (privacy plan §5.2, §5.4, item 4.3). **Anonymous.**
+
+        There is **no phone number in the request body**. The `handle` identifies the pending code and
+        the code is bound to the number inside its digest
+        (`base64(SHA-256(otp + ":" + handle + ":" + phone))`), so the revocation acts on the number
+        the OTP proved, never on one the caller supplied.
+
+        `scope`:
+        - `org` (default when omitted) revokes exactly the issuing organisation's row.
+        - `all` revokes **every** organisation's row whose stored number equals the proven phone
+          (plan §5.4, Option 1 — identity by phone). It is the only cross-tenant read in the flow and
+          it is additionally covered by the link signature.
+
+        Each affected organisation gets an append-only `ConsentAuditEntry` (`consent.revoked`,
+        `ActorKind = Customer`, `Source = otp_link`) **and** an `AuditLogEntry`; the verification is a
+        separate `AuditLogEntry` (`privacy.otp.verified`). A successful revocation queues one
+        non-personalised acknowledgement, sent at most once per (boutique, number) per 24 hours and
+        never through the agent path.
+
+        The code is single-use: a success deletes it. Five attempts are allowed per code and the
+        sixth is refused even with the correct value.
+      operationId: verifyPrivacyOptOut
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OptOutVerifyRequest" }
+      responses:
+        "200":
+          description: Consent revoked.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OptOutVerifyResponse" }
+        "400":
+          description: |
+            Always `otp-invalid`, with the same body for every failure: unknown handle, expired code,
+            replayed code, wrong code, spent attempt budget, invalid signature, or invalid scope.
+            Deliberately one answer, so the endpoint cannot be used to probe which numbers have a
+            pending code.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429":
+          description: |
+            `otp-rate-limited`. More than 30 verification attempts from one address in an hour.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "503":
+          description: |
+            `otp-unavailable`. The store is unreachable, or the per-address counter cannot be read.
+            A refused verification does not consume the code.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/privacy/data/export:
+    post:
+      tags: [Privacy]
+      summary: Return the caller's full record inline, after verifying an OTP
+      description: |
+        SHIPPED (privacy plan §7.2, §7.4, item 5.2). **Anonymous.**
+
+        The code is verified **inside this request**: there is no session to carry a verified state
+        between calls (plan §7.1), so the body carries the `handle` the code was minted under
+        alongside `phoneNumber` and `otp`. The export acts on the number the OTP proved, never on the
+        one the body supplied.
+
+        **The document is returned inline (DR-4).** The only email channel currently logs its
+        payload, and there is no object store for a short-lived link, so the response *is* the
+        delivery: `Content-Disposition: attachment; filename="aveline-data-{orgSlug}-{yyyyMMdd}.json"`
+        and `Cache-Control: no-store`.
+
+        `format`:
+        - `json` (default) returns the document described below.
+        - `csv` returns a **ZIP** containing one CSV per collection plus a `MANIFEST.json` — never a
+          single flattened file (plan §7.4).
+
+        Every collection is scoped to the verified number **within the named organisation**; there is
+        no EF global tenant filter, so the isolation is an explicit predicate (plan §13 R-17).
+      operationId: exportDataSubjectData
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DataExportRequest" }
+      responses:
+        "200":
+          description: |
+            The assembled document, or an `application/zip` body when `format` is `csv`. Always with
+            `Cache-Control: no-store`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DataExportDocument" }
+            application/zip:
+              schema: { type: string, format: binary }
+        "400":
+          description: |
+            `invalid-phone-number`, `invalid-format`, or `otp-invalid` for a wrong, expired, replayed
+            or mismatched code.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: |
+            `no-data`. The number was proved, so this is not an enumeration probe.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429":
+          description: The per-number or per-address download budget is spent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "503":
+          description: >-
+            `otp-unavailable`. The code store is unreachable, so the request fails closed (DR-6).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/privacy/data/delete:
+    post:
+      tags: [Privacy]
+      summary: Erase the caller's data after a verified OTP and an explicit confirmation word
+      description: |
+        SHIPPED (privacy plan §7.2, §7.3, §7.5, items 5.3-5.7). **Anonymous.**
+
+        `confirm` must be the literal `DELETE`; it is checked **before** any OTP work, so a
+        misdirected request cannot reach the code path. `idempotencyKey` is required and unique per
+        `(organizationId, "delete")`: a repeat returns the stored result rather than deleting twice.
+        The replay is resolved **before** the code is re-verified, because the OTP is single-use and a
+        network retry carries a spent code; it performs no deletion and returns counts only.
+
+        The scope (plan §7.3):
+        - `Customers` and `CustomerMemory` are **hard-deleted**, including rows hidden by the
+          soft-delete query filters (`IgnoreQueryFilters`), which also removes the pgvector
+          `embedding` column the EF model cannot see.
+        - `Customer_Preferences`, `Customer_Events`, `Customer_Interactions`, `Customer_Tags` and
+          `CustomerMatches` are hard-deleted.
+        - `SourcingRequests.CustomerId` is set to `NULL` (anonymise; the business record survives).
+        - `InboundMessageLogs` keeps the row — it is the evidence the opt-out was honoured — with
+          `From`/`Content` nulled.
+        - `Conversations.ExternalRef` is nulled; the thread skeleton stays.
+        - **Q-3**: the customer's own `ClientMessage` blocks and attachment bytes are deleted, with an
+          anonymised `from` in the retained skeleton. Staff and agent messages are the boutique's
+          operational record and are kept.
+        - **Q-4**: an anonymised tombstone keyed by the phone fingerprint with the terminal
+          `revoked` status survives, so the next inbound message is **not** re-processed as a fresh
+          `pending` customer (risk R-3).
+
+        The whole scope runs in one transaction. The response carries **counts only**, never content.
+      operationId: deleteDataSubjectData
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DataDeleteRequest" }
+      responses:
+        "200":
+          description: The erasure completed, or was replayed from an earlier request with the same key.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DataDeleteResponse" }
+        "400":
+          description: |
+            `confirm-required`, `idempotency-key-required`, `invalid-idempotency-key`,
+            `invalid-phone-number`, `invalid-scope`, or `otp-invalid`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "409":
+          description: |
+            `erasure-in-progress`. Another erasure holds the distributed lease for this
+            (organisation, number); retry shortly. The lease prevents two concurrent deletions racing.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "503":
+          description: >-
+            `otp-unavailable`. The code store is unreachable, so the request fails closed (DR-6).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/orgs/{organizationId}/customers/{customerId}/consent:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: customerId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Customers]
+      summary: Read one client's consent status
+      description: |
+        SHIPPED (privacy plan Phase 4). `BoutiqueCustomerAccess` (`customers:view`).
+
+        `404` means "not in this boutique, or deleted" — the same indistinguishable answer every
+        other tenant customer route gives, so an id from another boutique cannot be probed.
+      operationId: getTenantCustomerConsent
+      responses:
+        "200":
+          description: The consent status (an absent row reads as `pending`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerConsent" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [Customers]
+      summary: Set one client's consent status (staff surface)
+      description: |
+        SHIPPED (privacy plan §9.2, item 4.4). **`BoutiqueCustomerManage` (`customers:manage`)** —
+        `customers:view` is held by every role, so there was nothing correct to gate a write on.
+
+        This is the **staff** surface, and the audit records `ActorKind = User` with `Source = staff`.
+        That is exactly what distinguishes it from the anonymous customer OTP path
+        (`/api/v1/privacy/opt-out/verify`, which writes `ActorKind = Customer`, `Source = otp_link`),
+        and it is the only reason two routes exist.
+
+        There is deliberately **no `scope` field**: a staff member acts inside one tenant, so a staff
+        write always revokes this boutique's row. A global opt-out is a customer decision and belongs
+        to the OTP flow.
+      operationId: setTenantCustomerConsent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StaffConsentUpdateRequest" }
+      responses:
+        "200":
+          description: The updated consent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerConsent" }
+        "400":
+          description: |
+            `invalid-consent-status` when the status is not `pending`, `granted` or `revoked`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------------------
+  # Shipped routes reconciled in P10 against the generated /openapi/v1.json.
+  # These path items are compact by design: the full prose contract (params,
+  # errors, examples) is in docs/api/README.md, and the response bodies are
+  # documented there until a slice promotes them in full here.
+  # ---------------------------------------------------------------------------
+
+  /api/v1/admin/statistics/agents/overview:
+    get:
+      tags: [Agent Statistics]
+      summary: Agentic workflow overview statistics
+      operationId: adminAgentStatisticsOverview
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - name: agentKey
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: triggerKind
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Agent run counts, success rates and latency percentiles
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/agents/reliability:
+    get:
+      tags: [Agent Statistics]
+      summary: Agentic workflow reliability statistics
+      operationId: adminAgentStatisticsReliability
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - name: agentKey
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: triggerKind
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Failure and retry breakdown per agent
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/agents/runs:
+    get:
+      tags: [Agent Statistics]
+      summary: Paginated agent workflow runs
+      operationId: adminAgentStatisticsRuns
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - name: agentKey
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: triggerKind
+          in: query
+          schema: { type: string }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: A page of agent runs
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/api-keys:
+    get:
+      tags: [API Statistics]
+      summary: API consumption statistics grouped by API key
+      operationId: adminApiKeyStatistics
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - name: routeTemplate
+          in: query
+          schema: { type: string }
+        - name: httpMethod
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: integer }
+        - name: statusClass
+          in: query
+          schema: { type: string }
+        - name: apiKeyId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: userId
+          in: query
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: groupBy
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Per-key request counts and billable classification
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/api/endpoints:
+    get:
+      tags: [API Statistics]
+      summary: API consumption statistics grouped by route template
+      operationId: adminApiStatisticsEndpoints
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - name: routeTemplate
+          in: query
+          schema: { type: string }
+        - name: httpMethod
+          in: query
+          schema: { type: string }
+        - name: statusClass
+          in: query
+          schema: { type: string }
+        - name: apiKeyId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: userId
+          in: query
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: groupBy
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Per-endpoint request counts and latency
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/api/errors:
+    get:
+      tags: [API Statistics]
+      summary: API error statistics
+      operationId: adminApiStatisticsErrors
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - name: routeTemplate
+          in: query
+          schema: { type: string }
+        - name: statusClass
+          in: query
+          schema: { type: string }
+        - name: groupBy
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Error counts by status class and route
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/api/latency:
+    get:
+      tags: [API Statistics]
+      summary: API latency statistics
+      operationId: adminApiStatisticsLatency
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - name: routeTemplate
+          in: query
+          schema: { type: string }
+        - name: httpMethod
+          in: query
+          schema: { type: string }
+        - name: groupBy
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Latency percentiles by route
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/statistics/api/requests:
+    get:
+      tags: [API Statistics]
+      summary: API request log
+      operationId: adminApiStatisticsRequests
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - name: routeTemplate
+          in: query
+          schema: { type: string }
+        - name: httpMethod
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: integer }
+        - name: apiKeyId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: userId
+          in: query
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: A page of recorded API requests
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/agents/ping:
+    post:
+      tags: [Agent Statistics]
+      summary: Proxy a ping to the internal agent service
+      description: >
+        Attaches the internal service token and forwards the authenticated user and roles to
+        `POST /agents/ping` on the Python agent service. Requires the associates policy.
+      operationId: agentPing
+      responses:
+        "200":
+          description: The agent service's own response body, relayed verbatim
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/dev/mock-checkout/{intentId}:
+    get:
+      tags: [Payments]
+      summary: "The mock provider's hosted checkout page (Development only)"
+      description: >
+        Mapped only when the host environment is Development. Renders the hosted page whose form
+        posts a documented `tok_aveline_*` scenario token (or a Stripe-compatible test card) to
+        `POST …/settle`. Anonymous by design: it stands in for a provider's own hosted page.
+      operationId: getMockCheckoutPage
+      security: []
+      parameters:
+        - name: intentId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: An HTML checkout page
+          content:
+            text/html:
+              schema: { type: string }
+
+  /api/v1/dev/mock-checkout/{intentId}/settle:
+    post:
+      tags: [Payments]
+      summary: Complete a mock checkout with a test credential (Development only)
+      description: >
+        Applies the credential to the provider-side charge and then delivers the mock's signed
+        webhook through the real webhook path, so a demonstration exercises verification, the inbox
+        and settlement rather than a shortcut. Mapped only in Development. The token is a
+        query-string value from a closed test table; no card, CVC, expiry, PAN or token field exists
+        on any request DTO. Anonymous by design.
+      operationId: settleMockCheckout
+      security: []
+      parameters:
+        - name: intentId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: token
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The charge was completed and its webhook delivered
+        "400":
+          description: An unknown or missing test credential (`unknown-test-credential`)
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/orgs/{organizationId}/approvals/{id}:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Approvals]
+      summary: Read one approval request (Commerce)
+      operationId: getCommerceApproval
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The approval request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalQueueResponseDto" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/deliveries:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Deliveries]
+      summary: List delivery plans (Commerce)
+      operationId: listCommerceDeliveries
+      parameters:
+        - name: OrderId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: Status
+          in: query
+          schema: { type: string }
+        - name: CourierService
+          in: query
+          schema: { type: string }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: A page of delivery plans
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Deliveries]
+      summary: Plan a delivery for an order (Commerce)
+      operationId: planCommerceDelivery
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: The created delivery plan
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/deliveries/order/{orderId}:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Deliveries]
+      summary: Read the delivery plan for an order (Commerce)
+      operationId: getCommerceDeliveryByOrder
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The delivery plan
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/deliveries/{id}:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Deliveries]
+      summary: Read one delivery plan (Commerce)
+      operationId: getCommerceDelivery
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The delivery plan
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/deliveries/{id}/status:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    put:
+      tags: [Deliveries]
+      summary: Advance a delivery plan's status (Commerce)
+      operationId: updateCommerceDeliveryStatus
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: The updated delivery plan
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/integrations/messages:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Integrations]
+      summary: Read the integration message log
+      operationId: getIntegrationMessages
+      responses:
+        "200":
+          description: Recorded outbound and inbound integration messages
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/payments:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Payments]
+      summary: List Commerce order payments
+      description: >
+        The tenant-scoped Commerce payment reads (`docs/api/README.md` B.19). Distinct from the
+        provider-neutral payment-intent surface above: these rows are the shop's order payments.
+        `Status` is one of `pending` | `confirmed` | `failed` | `refunded`, derived from the linked
+        intent's provider state after Phase 9 (`pending` and `confirmed` are the shipped strings).
+      operationId: listCommercePayments
+      parameters:
+        - name: OrderId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: Status
+          in: query
+          schema: { type: string }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: A page of Commerce payments
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Payments]
+      summary: Create a payment request for an order (Commerce)
+      description: >
+        Phase 9. Creates a `CommerceOrder` payment **intent** through `IPaymentIntentService` and
+        returns the provider's own hosted checkout URL as `paymentLink`, or `null` when the provider
+        settles in place. The URL is tenant-scoped because it is minted from the intent, which the
+        poll route is keyed by. Previously the route returned
+        `https://pay.aveline.boutique/checkout/{shortRef}`, a URL no provider issued and no gateway
+        could settle (`docs/reports/PR-290-slice3-review.md:269`).
+        Set `Payments:Commerce:UseProviderIntents=false` to restore that pre-Phase-9 path for one
+        release (plan §8.4 S8).
+      operationId: createCommercePayment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [orderId, amount]
+              properties:
+                orderId: { type: string, format: uuid }
+                amount: { type: number, minimum: 0, exclusiveMinimum: true }
+                paymentType: { type: string }
+                paymentMethod: { type: string }
+      responses:
+        "201":
+          description: >
+            The created payment. `paymentLink` is the provider's URL or null; `paymentIntentId`
+            names the provider resource behind the charge.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/payments/order/{orderId}:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Payments]
+      summary: Read an order's payment (Commerce)
+      operationId: getCommercePaymentByOrder
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The payment for the order
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/payments/{id}:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Payments]
+      summary: Read one Commerce payment
+      operationId: getCommercePayment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The payment
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/payments/{id}/confirm:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    post:
+      tags: [Payments]
+      summary: Poll a Commerce order payment for settlement
+      description: >
+        Phase 9: **a poll, not a settlement.** The route reads the linked payment intent's provider
+        state and maps it onto `status` (`Succeeded` → `confirmed`, `Failed`/`Cancelled`/`Expired` →
+        `failed`, `Refunded` → `refunded`, otherwise `pending`), then writes a `Verified`
+        `PaymentReceived` row into the boutique sale ledger when the provider reports settlement.
+        A body `gatewayTransactionId` has **no settlement power** and is never stored from the
+        request; before Phase 9 any non-empty value confirmed the payment
+        (`docs/reports/PR-290-slice3-review.md:269`). A `200` with `status: "pending"` is the honest
+        answer for an unsettled charge. Idempotent: a second call on a confirmed payment writes no
+        second ledger row. A payment with no `paymentIntentId` is a counter payment, and keeps the
+        `manual` adapter's behaviour of recording the operator's reference.
+      operationId: confirmCommercePayment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                gatewayTransactionId:
+                  type: string
+                  maxLength: 100
+                  description: >
+                    Advisory. The provider's reference, used only for a counter payment with no
+                    linked intent; ignored for a provider-backed charge.
+                paymentMethod: { type: string, maxLength: 50 }
+      responses:
+        "200":
+          description: >
+            The payment in its provider-reported state. `pending` means the provider has not
+            settled it; the route does not fabricate a settlement.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/payments/{id}/refund:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    post:
+      tags: [Payments]
+      summary: Refund a Commerce order payment
+      description: >
+        Requires the boutique payment-refund policy. Only a confirmed payment can be refunded, and
+        the refund writes an append-only `Refund` row into the boutique sale ledger.
+      operationId: refundCommercePayment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, maxLength: 500 }
+      responses:
+        "200":
+          description: The refunded payment
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/statistics/billing/burn-rate:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Billing]
+      summary: Get Blossom burn rate and projected balance exhaustion date
+      operationId: getOrganizationBurnRate
+      parameters:
+        - name: window
+          in: query
+          schema: { type: string, enum: [7d, 14d, 30d] }
+      responses:
+        "200":
+          description: The burn rate and projection
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlossomBurnRateResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/statistics/customers/active:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Billing]
+      summary: Get active customer count within the 90-day activity window
+      operationId: getOrganizationActiveCustomers
+      responses:
+        "200":
+          description: The active customer count
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActiveCustomersResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/orgs/{organizationId}/statistics/staff/seats:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+    get:
+      tags: [Billing]
+      summary: Get staff seat allocation and active boutique role distribution
+      operationId: getOrganizationStaffSeats
+      responses:
+        "200":
+          description: Seat allocation and role distribution
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StaffSeatsResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/users/onboarding:
+    post:
+      tags: [Onboarding]
+      summary: Complete owner onboarding
+      description: >
+        Creates or updates the caller's organization from the onboarding payload. See
+        `docs/architecture/onboarding-flow.md` for the plan-selection step.
+      operationId: completeOnboarding
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: The onboarded organization
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CompleteOnboardingResponse" }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/webhooks/clerk:
+    post:
+      tags: [Auth]
+      summary: Clerk webhook (signature-verified)
+      description: >
+        Anonymous and signature-verified. The raw body is read before any JSON binding, exactly as
+        the payment webhook verifier does. See `docs/api/README.md` B.5.
+      operationId: clerkWebhook
+      security: []
+      responses:
+        "200":
+          description: Accepted (including a duplicate delivery)
+
+  /api/v1/webhooks/whatsapp/{organizationId}:
+    get:
+      tags: [Integrations]
+      summary: WhatsApp webhook verification handshake
+      operationId: verifyWhatsAppWebhook
+      security: []
+      parameters:
+        - name: organizationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The challenge echoed back to Meta when the verify token matches
+          content:
+            text/plain:
+              schema: { type: string }
+        "403":
+          description: The verify token did not match. The body is empty.
+    post:
+      tags: [Integrations]
+      summary: WhatsApp webhook (signature-verified)
+      description: >
+        Anonymous and signature-verified with the organization's app secret. The raw body is read
+        before any JSON binding. See `docs/api/README.md` B.11.
+      operationId: receiveWhatsAppWebhook
+      security: []
+      parameters:
+        - name: organizationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Accepted (including a duplicate delivery)
+        "403":
+          description: Signature verification failed. The body is empty.
+
 components:
 
   securitySchemes:
@@ -6984,6 +8682,197 @@ components:
 
   schemas:
 
+    OptOutStartRequest:
+      type: object
+      required: [organizationId, phoneNumber]
+      properties:
+        organizationId: { type: string, format: uuid }
+        phoneNumber:
+          type: string
+          description: |
+            The customer's number as they typed it. Normalised server-side with
+            `PhoneNormalizer.ToE164`; a form that is not a recognised Sri Lankan number is a `400`
+            `invalid-phone-number`.
+        scope: { type: string, enum: [org, all], default: org, description: Carried to the verify call; defaults to `org`. }
+        version:
+          type: string
+          description: The `v` query value of the signed opt-out link.
+        signature:
+          type: string
+          description: |
+            The `s` query value of the signed opt-out link: base64url HMAC-SHA256 over
+            `v1|{organizationId}`. An invalid or missing value answers the constant `202` and sends
+            nothing.
+
+    OptOutAccepted:
+      type: object
+      required: [status, handle, expiresInSeconds]
+      properties:
+        status:
+          type: string
+          enum: [accepted]
+          description: |
+            Constant. The same status is returned whether a customer matched, whether the boutique
+            has WhatsApp configured, and whether the send succeeded (anti-enumeration).
+        handle:
+          type: string
+          description: |
+            A fresh opaque 32-byte base64url reference, returned to the client on **every** path and
+            sent back on `verify`. It is random and unguessable, and a handle with no stored code
+            behind it (unknown number, unconfigured boutique, unsigned link) is indistinguishable
+            from one that has - so it never reveals whether a number is on file. It is never the
+            phone number.
+        expiresInSeconds:
+          type: integer
+          example: 300
+          description: |
+            The code lifetime (`OtpService.CodeTtl`). Constant on every path, so it too carries no
+            information about whether a customer matched.
+
+    OptOutVerifyRequest:
+      type: object
+      required: [organizationId, handle, otp]
+      properties:
+        organizationId: { type: string, format: uuid }
+        handle:
+          type: string
+          description: |
+            The opaque 32-byte base64url handle the `start` call returned. Random and unguessable, so
+            it cannot be used to probe which numbers have a pending code; an unknown handle answers
+            the same `400 otp-invalid` as a wrong code.
+        otp:
+          type: string
+          minLength: 6
+          maxLength: 6
+          pattern: "^[0-9]{6}$"
+          description: The six-digit code.
+        scope: { type: string, enum: [org, all], default: org, description: "org revokes the issuing organisation only; all revokes every organisation whose stored number matches the proven phone." }
+        version: { type: string, description: "The v query value of the signed opt-out link." }
+        signature: { type: string, description: "The s query value of the signed opt-out link; re-verified before any revocation." }
+
+    OptOutVerifyResponse:
+      type: object
+      properties:
+        status: { type: string, enum: [revoked] }
+        scope: { type: string, enum: [org, all] }
+        effectiveAtUtc: { type: string, format: date-time, description: The single instant stamped on every revoked row. }
+
+    DataExportRequest:
+      type: object
+      required: [organizationId, phoneNumber, handle, otp]
+      properties:
+        organizationId: { type: string, format: uuid, description: The boutique the record is held by. }
+        phoneNumber:
+          type: string
+          description: |
+            The customer's number as they typed it. Normalised server-side with
+            `PhoneNormalizer.ToE164`, and it must then match the number the OTP proved.
+        handle:
+          type: string
+          description: |
+            The opaque handle the code was minted under (`IOtpService`). It is required here because
+            the verify half of the OTP contract is keyed by it and there is no session to carry it.
+        otp:
+          type: string
+          minLength: 6
+          maxLength: 6
+          pattern: "^[0-9]{6}$"
+          description: The six-digit code. Single-use and refused after five attempts.
+        format: { type: string, enum: [json, csv], default: json, description: "json returns the document; csv returns a ZIP of one CSV per collection plus MANIFEST.json." }
+
+    DataExportDocument:
+      type: object
+      description: |
+        The assembled record. Every collection is scoped to the verified number within the named
+        organisation. `counts` is the same shape the delete endpoint returns.
+      properties:
+        generatedAtUtc: { type: string, format: date-time }
+        subject:
+          type: object
+          properties:
+            organizationId: { type: string, format: uuid }
+            customerId: { type: string, format: uuid }
+        counts:
+          type: object
+          additionalProperties: { type: integer }
+          description: Per-collection row counts.
+        customer:
+          type: object
+          nullable: true
+          additionalProperties: true
+        consent:
+          type: object
+          nullable: true
+          additionalProperties: true
+        consentHistory: { type: array, items: { type: object, additionalProperties: true } }
+        memories: { type: array, items: { type: object, additionalProperties: true } }
+        preferences: { type: array, items: { type: object, additionalProperties: true } }
+        events: { type: array, items: { type: object, additionalProperties: true } }
+        interactions: { type: array, items: { type: object, additionalProperties: true } }
+        tags: { type: array, items: { type: object, additionalProperties: true } }
+        matches: { type: array, items: { type: object, additionalProperties: true } }
+        sourcingRequests: { type: array, items: { type: object, additionalProperties: true } }
+        conversations: { type: array, items: { type: object, additionalProperties: true } }
+        messages: { type: array, items: { type: object, additionalProperties: true } }
+        attachments: { type: array, items: { type: object, additionalProperties: true } }
+
+    DataDeleteRequest:
+      type: object
+      required: [organizationId, phoneNumber, handle, otp, confirm, idempotencyKey]
+      properties:
+        organizationId: { type: string, format: uuid }
+        phoneNumber: { type: string, description: Normalised server-side; must match the number the OTP proved. }
+        handle: { type: string, description: The opaque handle the code was minted under. }
+        otp: { type: string, minLength: 6, maxLength: 6, pattern: "^[0-9]{6}$" }
+        confirm:
+          type: string
+          enum: [DELETE]
+          description: |
+            The explicit second factor of intent. Any other value (including omission) is a `400`
+            `confirm-required`, checked before the OTP so a misdirected request never reaches it.
+        scope: { type: string, enum: [org, all], default: org, description: "org erases the named organisation only; all erases every organisation whose stored number matches the proven phone." }
+        idempotencyKey:
+          type: string
+          maxLength: 64
+          description: |
+            Required. Unique per (organizationId, "delete"): a repeat returns the stored
+            `DataDeleteResponse` instead of deleting twice.
+
+    DataDeleteResponse:
+      type: object
+      properties:
+        status: { type: string, enum: [completed] }
+        requestId: { type: string, format: uuid, description: The durable `DataSubjectRequest` id. }
+        deletedAtUtc: { type: string, format: date-time }
+        counts:
+          type: object
+          additionalProperties: { type: integer }
+          description: Per-table row counts. Counts only, never content.
+        organizationsAffected: { type: array, items: { type: string, format: uuid } }
+        replayed: { type: boolean, description: True when an earlier request with the same key produced this exact result. }
+
+    StaffConsentUpdateRequest:
+      type: object
+      required: [consentStatus]
+      properties:
+        consentStatus:
+          type: string
+          enum: [pending, granted, revoked]
+          description: An unknown value is a `400` `invalid-consent-status`.
+        reason:
+          type: string
+          nullable: true
+          description: An optional, non-personal note recorded on the audit rows. Never customer content.
+
+    CustomerConsent:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        consentStatus: { type: string, enum: [pending, granted, revoked] }
+        consentGrantedAt: { type: string, format: date-time, nullable: true }
+        consentRevokedAt: { type: string, format: date-time, nullable: true }
+        disclosureShownAt: { type: string, format: date-time, nullable: true }
+
     BlossomLedgerEntryType:
       type: string
       enum:
@@ -7106,6 +8995,112 @@ components:
           type: array
           items: { type: string }
 
+    PaymentReconciliationResponse:
+      type: object
+      description: |
+        S-64. The single derivation behind both this read and the `unreconciled_intents` gauge, so
+        the console and the alarm cannot disagree about the same intent.
+      required:
+        - intentsChecked
+        - truncated
+        - unreconciledIntents
+        - unreconciledByProvider
+        - unprocessedWebhookBacklog
+        - unprocessedBacklogTotal
+        - unreconciledCount
+        - checkedAt
+        - notes
+      properties:
+        organizationId:
+          type: string
+          format: uuid
+          nullable: true
+        provider:
+          type: string
+          nullable: true
+          description: The adapter key this report was scoped to, or `null` for every provider.
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        intentsChecked:
+          type: integer
+          description: How many intents the window held (after the 200-row cap).
+        truncated:
+          type: boolean
+          description: |
+            `true` when the window held more than 200 intents, so only the most recent were
+            inspected. Reported rather than silently dropping rows.
+        unreconciledIntents:
+          type: array
+          items: { $ref: "#/components/schemas/UnreconciledIntent" }
+        unreconciledByProvider:
+          type: object
+          additionalProperties: { type: integer, format: int64 }
+          description: |
+            Per provider, including a `0` for a provider that was checked and is clean, so a
+            repaired series is distinguishable from one that was never read.
+        unprocessedWebhookBacklog:
+          type: array
+          items: { $ref: "#/components/schemas/UnprocessedWebhookBacklog" }
+        unprocessedBacklogTotal: { type: integer, format: int64 }
+        unreconciledCount: { type: integer }
+        checkedAt: { type: string, format: date-time }
+        notes:
+          type: array
+          items: { type: string }
+
+    UnreconciledIntent:
+      type: object
+      description: One intent whose provider state is not the state Aveline holds.
+      required:
+        - paymentIntentId
+        - organizationId
+        - provider
+        - purpose
+        - storedStatus
+        - reason
+        - amountLkr
+        - currency
+        - createdAt
+      properties:
+        paymentIntentId: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        provider: { type: string }
+        purpose:
+          type: string
+          enum: [BlossomTopUp, SubscriptionInitial, SubscriptionRenewal, SubscriptionProration, CommerceOrder]
+        storedStatus:
+          type: string
+          enum: [RequiresAction, Processing, Succeeded, Failed, Cancelled, Expired]
+        providerStatus:
+          type: string
+          nullable: true
+          description: The provider's current view, or `null` when it could not be read.
+        reason:
+          type: string
+          description: |
+            One of `provider-intent-missing`, `provider-unknown-intent`, `provider-unavailable`,
+            `expired-unsettled`, `provider-settled-unconfirmed`, `status-diverged`,
+            `amount-diverged`, `currency-diverged`, `refund-not-recorded`,
+            `refund-recorded-without-provider`.
+        amountLkr: { type: number }
+        currency: { type: string }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        settledAt: { type: string, format: date-time, nullable: true }
+        refundedAt: { type: string, format: date-time, nullable: true }
+
+    UnprocessedWebhookBacklog:
+      type: object
+      required: [provider, unprocessedEvents, reasons]
+      properties:
+        provider: { type: string }
+        unprocessedEvents: { type: integer, format: int64 }
+        oldestReceivedAt: { type: string, format: date-time, nullable: true }
+        reasons:
+          type: array
+          description: Distinct `ProcessingError` values, capped, for the operator's first look.
+          items: { type: string }
+
     IncomeDataQuality:
       type: object
       description: |
@@ -7122,8 +9117,10 @@ components:
         revenueProviderSettlementAvailable:
           type: boolean
           description: |
-            `false` until a payment provider settles money. While false, no figure in this family
-            is settled revenue.
+            Whether the configured payment provider settles charges itself. `false` while
+            `Payments:Provider` is `manual` (the default): an operator confirms receipt, so no
+            figure in this family is settled revenue. `true` once a provider client that settles
+            charges is configured, and only then are `Verified` amounts collected money.
         subscriptionPricesConfigured:
           type: boolean
           description: |
@@ -7758,7 +9755,11 @@ components:
       enum: [WhatsAppInbound, WhatsAppOutbound, ApiRequest, Scheduled, Manual, Webhook]
     AgentRunStatus:
       type: string
-      enum: [Running, Succeeded, Failed, Cancelled, TimedOut, PausedForApproval]
+      description: |
+        Terminal run status. `Skipped` means the run was deliberately not performed (today, only a
+        consent skip): it is not a success, and run statistics exclude it from the success-rate
+        denominator.
+      enum: [Running, Succeeded, Failed, Cancelled, TimedOut, PausedForApproval, Skipped]
     AgentStepKind:
       type: string
       enum: [LlmCall, ToolCall, Decision, HumanInterrupt, Retrieval, Validation]
@@ -8160,6 +10161,33 @@ components:
         customerPreferences: { type: string, nullable: true }
         onboardingStep: { type: integer }
         hasCompletedOnboarding: { type: boolean }
+        priceLkr:
+          type: number
+          nullable: true
+          description: >-
+            The monthly list price the price book resolved for the tier. `0` is the free Seed plan;
+            `null` means no price row was effective and the value was deliberately not coerced to
+            zero (plan §9.1 F1 / P1).
+        currency:
+          type: string
+          description: Always LKR.
+          example: LKR
+        subscriptionStatus:
+          type: string
+          nullable: true
+          description: >-
+            Trialing for a newly provisioned paid tier, Active for the free Seed plan, or null
+            before plan selection has provisioned a subscription.
+          enum: [Trialing, Active, PastDue, Cancelled, Expired]
+        paymentIntentId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Always null on the onboarding paths. Onboarding defers payment (decision Q1).
+        checkoutUrl:
+          type: string
+          nullable: true
+          description: Always null on the onboarding paths. No checkout is shown at onboarding (decision Q1).
     OnboardingStatusResponse:
       type: object
       properties:
@@ -8909,6 +10937,19 @@ components:
         previousPlanTier: { $ref: "#/components/schemas/PlanTier" }
         blossomDelta: { type: number }
         newBalance: { type: number }
+        prorationPaymentIntentId:
+          type: string
+          format: uuid
+          nullable: true
+          description: >-
+            The `SubscriptionProration` intent created for an immediate upgrade, or
+            null when no money moves or the provider could not be reached.
+        prorationAmountLkr:
+          type: number
+          nullable: true
+          description: >-
+            The prorated LKR amount the upgrade owes. Reported even when no intent
+            could be created, because the obligation exists either way (Q2).
     EntitlementListResponse:
       type: object
       properties:
@@ -10043,9 +12084,10 @@ components:
       description: |
         E-12 / S-62. One billing period: the Blossom account, its plan and the top-ups inside it.
 
-        `planListPriceLkr` is `null` — never `0` — whenever no price is configured, because
-        `OrganizationSubscription.PriceLkr` is never assigned in the product and a rendered zero would
-        be a fabricated plan price rather than a free plan.
+        `planListPriceLkr` is `null` — never `0` — whenever no price is configured. Payments P1
+        assigns `OrganizationSubscription.PriceLkr` from the plan-allowance book when a subscription
+        is created or changed, but a subscription that predates it (or resolves to no book row) stores
+        `0`, and a rendered zero would be a fabricated plan price rather than a free plan.
       properties:
         periodStart: { type: string, format: date-time }
         periodEnd: { type: string, format: date-time }
@@ -10066,6 +12108,97 @@ components:
         subscriptionPricesConfigured: { type: boolean }
         topUpBlossoms: { type: number, format: decimal }
         topUpCount: { type: integer }
+
+    CreateTopUpCheckoutRequest:
+      type: object
+      description: P2-B2. The only client input is the SKU; the price and quantity are the server's.
+      required: [skuCode]
+      properties:
+        skuCode:
+          type: string
+          maxLength: 64
+          description: An active `TopUpPack` price-book SKU. Unknown SKUs are a 400 `unknown-sku`.
+
+    TopUpCheckoutResponse:
+      type: object
+      description: P2-B2. The provider handoff a checkout returns.
+      properties:
+        paymentIntentId: { type: string, format: uuid }
+        provider: { type: string, description: The adapter key that created the intent. }
+        status:
+          type: string
+          enum: [RequiresAction, Processing, Succeeded, Failed, Cancelled, Expired]
+          description: The provider's own charge state.
+        skuCode: { type: string }
+        blossomQuantity: { type: number, format: decimal }
+        amountLkr: { type: number, format: decimal }
+        currency: { type: string, description: Always the configured `Payments:Currency`. }
+        checkoutUrl:
+          type: string
+          nullable: true
+          description: Where to send the customer. Null when the provider settles in place.
+        expiresAt: { type: string, format: date-time, nullable: true }
+
+    PaymentIntent:
+      type: object
+      description: |
+        P2-B2. The provider-neutral record of one charge attempt. It deliberately carries no card,
+        CVC, expiry, PAN or token field.
+      properties:
+        paymentIntentId: { type: string, format: uuid }
+        provider: { type: string, description: The adapter key that created the intent. }
+        providerIntentId: { type: string, description: The provider's own id for the charge. }
+        purpose:
+          type: string
+          enum: [BlossomTopUp, SubscriptionInitial, SubscriptionRenewal, SubscriptionProration, CommerceOrder]
+        status:
+          type: string
+          enum: [RequiresAction, Processing, Succeeded, Failed, Cancelled, Expired, Refunded]
+          description: |
+            The stored provider state, plus the two derived states: `Expired` for an unsettled intent
+            past its expiry, and `Refunded` after a full refund.
+        amountLkr: { type: number, format: decimal }
+        currency: { type: string }
+        checkoutUrl: { type: string, nullable: true }
+        failureCode: { type: string, nullable: true }
+        failureMessage: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        settledAt: { type: string, format: date-time, nullable: true }
+        expiresAt: { type: string, format: date-time, nullable: true }
+
+    RefundPaymentIntentRequest:
+      type: object
+      description: |
+        Phase 6. The refund request. It names an amount and a reason, never an instrument: no card,
+        CVC, expiry, PAN or token field exists anywhere on the payment wire surface.
+      required: [reason]
+      properties:
+        amountLkr:
+          type: number
+          format: decimal
+          nullable: true
+          description: The amount to return, or omitted/null for the whole settled charge.
+        reason:
+          type: string
+          maxLength: 500
+          description: The operator's reason; it reaches the provider and the audit entry.
+
+    PaymentRefundResponse:
+      type: object
+      description: |
+        Phase 6. The refund outcome: the provider's own reference and the `Refund` income row, so
+        both sides of the movement are nameable from one response.
+      properties:
+        paymentIntentId: { type: string, format: uuid }
+        provider: { type: string }
+        status:
+          type: string
+          description: The derived `Refunded` state for a full refund, otherwise the stored state.
+        providerRefundId: { type: string, description: The provider's refund id, and the ledger row's SourceRef. }
+        ledgerEntryId: { type: string, format: uuid, description: The `Refund` income ledger entry. }
+        amountLkr: { type: number, format: decimal }
+        currency: { type: string }
+        refundedAt: { type: string, format: date-time, nullable: true }
 
     TopUpPack:
       type: object
@@ -10268,6 +12401,32 @@ components:
         page: { type: integer }
         pageSize: { type: integer }
 
+    CustomerConsent:
+      type: object
+      description: |
+        A customer's data-processing consent, returned by the internal consent route the Python
+        agent calls. Properties serialise in camelCase: the agent reads `consentStatus`.
+        An absent consent row is reported as `pending` (the same value `GET …/profile` uses),
+        with an empty `id` and null timestamps.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Empty when the customer has no consent row yet.
+        consentStatus:
+          type: string
+          enum: [pending, granted, revoked]
+          description: |
+            `pending` means identified but not yet answered (this includes an absent row);
+            `revoked` means the agent must not process the customer's messages.
+        consentGrantedAt: { type: string, format: date-time, nullable: true }
+        consentRevokedAt: { type: string, format: date-time, nullable: true }
+        disclosureShownAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the customer was last shown the disclosure (welcome message).
+
     CustomerCreated:
       type: object
       properties:
@@ -10275,7 +12434,12 @@ components:
         fullName: { type: string, nullable: true }
         level: { type: string, nullable: true, enum: [vip, level3, level2, level1, null] }
         status: { type: string, enum: [new, returning, vip, dormant] }
-        consentStatus: { type: string, enum: [pending, granted, revoked, unknown] }
+        consentStatus:
+          type: string
+          enum: [pending, granted, revoked]
+          description: |
+            The status of the consent row persisted with the client. Walk-in creation inserts a
+            `pending` row, so this is never a literal the database does not hold.
         createdAtUtc: { type: string, format: date-time }
         duplicateOfCustomerId:
           type: string

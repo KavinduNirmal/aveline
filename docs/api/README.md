@@ -584,8 +584,32 @@ Six-step wizard. **Auth:** authenticated.
 A disallowed field on a lower tier returns `400 { "message": "Custom AI context is
 not available on the Seed plan. ..." }`
 (`Modules/Organizations/Services/OnboardingService.cs:188-208`).
+
+**`OnboardingOrganizationDto`** (every onboarding response, including the completed one):
+`{ id, name, slug, address, phoneNumber, description, logoUrl, planTier, brandVoice,
+businessRules, preferredColorsFabrics, customerPreferences, onboardingStep,
+hasCompletedOnboarding, priceLkr, currency, subscriptionStatus, paymentIntentId, checkoutUrl }`.
+
+`POST /onboarding/plan` records the commercial agreement the tier implies (plan §9.1 F1, gap G8):
+it provisions the organization's single `OrganizationSubscription` through
+`ISubscriptionProvisioner`, priced from the plan-allowance book by `ISubscriptionPriceResolver`.
+The last five members report it:
+
+| Field | Meaning |
+| --- | --- |
+| `priceLkr` | The resolved monthly list price. `0` is the free Seed plan; **`null` means no price row was effective** and the value was deliberately not coerced to zero (no charge is written, MRR stays `null`). |
+| `currency` | Always `"LKR"`. |
+| `subscriptionStatus` | `"Trialing"` for a newly provisioned paid tier, `"Active"` for Seed, or `null` before plan selection. |
+| `paymentIntentId` | Always `null`. Onboarding defers payment (decision Q1): no payment intent is created. |
+| `checkoutUrl` | Always `null` for the same reason: no checkout is shown at onboarding. |
+
+Re-selecting the same tier is idempotent (one row, updated) and never re-enters `Trialing` on an
+already-`Active` subscription. `CompleteOnboardingAsync` still activates a paid tier without waiting
+for a settlement.
 **Source:** `Endpoints/OnboardingEndpoints.cs:16-124`,
-DTOs `Modules/Organizations/DTOs/OnboardingDtos.cs`.
+DTOs `Modules/Organizations/DTOs/OnboardingDtos.cs`,
+`Modules/Organizations/Services/OnboardingService.cs`,
+`Modules/Billing/Services/SubscriptionProvisioner.cs`.
 
 ### B.6 Notifications
 
@@ -728,7 +752,7 @@ broadcasts directly from its own creation sites (the WhatsApp webhook, `POST /co
 | Method | Path | Body | Response |
 | --- | --- | --- | --- |
 | `GET` | `/api/v1/orgs/{organizationId:guid}/integrations` | — | integration list with status |
-| `GET` | `/api/v1/orgs/{organizationId:guid}/integrations/messages` | query: paging | inbound message log |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/integrations/messages` | query: paging | message log, inbound **and** outbound (`direction` = `inbound` \| `outbound`) |
 | `PUT` | `/api/v1/orgs/{organizationId:guid}/integrations/{type:alpha}` | credentials | `200` |
 | `POST` | `/api/v1/orgs/{organizationId:guid}/integrations/{type:alpha}/test` | — | health result |
 | `DELETE` | `/api/v1/orgs/{organizationId:guid}/integrations/{type:alpha}` | — | `204` |
@@ -917,6 +941,35 @@ book. `limit` bounds the *named* clients, not the book, and is clamped by the se
 > aliases. They are listed here rather than omitted so the duplication is visible.
 > Frontends never call any of them.
 
+#### B.11.1 Consent (internal)
+
+| Method | Path | Request | Response |
+| --- | --- | --- | --- |
+| `GET` | `/internal/customers/{customerId:guid}/consent?organizationId=` | — | `CustomerConsent` |
+| `POST` | `/internal/customers/{customerId:guid}/consent` | `{ organizationId, consentStatus }` | `CustomerConsent` |
+
+`CustomerConsent` is serialised in **camelCase**:
+`{ id, consentStatus, consentGrantedAt, consentRevokedAt, disclosureShownAt }`. `id` is
+`Guid.Empty` and the three timestamps are `null` when the customer has no consent row yet.
+
+- `consentStatus` is one of `pending | granted | revoked`. **An absent row reads as `pending`**
+  on this route *and* on `GET …/profile` — one value for one database state (defect D-2). The
+  Python agent parses this exact field
+  (`agent-service/app/agents/customer_memory/nodes.py`), so the property name is part of the
+  contract.
+- `POST` accepts `pending`, `granted` and `revoked`. Re-granting clears `consentRevokedAt`, and
+  the first update for a customer with no row inserts a row and stamps
+  `consentGrantedAt`/`consentRevokedAt` to match the requested status.
+- An unrecognised status is `400 { "code": "invalid-consent-status", "message": "…" }` — a typed
+  domain error, never a `500`.
+- Walk-in creation (`POST /api/v1/orgs/{organizationId}/customers`) inserts a `pending` consent
+  row with the client and reports that persisted status in `CustomerCreated.consentStatus`.
+
+**Source:** `Endpoints/CustomerConciergeEndpoints.cs:89-100,296-325`,
+`Modules/CustomerConcierge/Services/CustomerConsentService.cs`,
+`Modules/CustomerConcierge/Models/ConsentStatuses.cs`,
+`Modules/CustomerConcierge/Services/CustomerTenantService.cs:261-380`.
+
 ### B.12 Health
 
 | Method | Path | Auth | Response |
@@ -1050,10 +1103,13 @@ contract.
 > **Status: implemented** (Revenue Ledger R2, issue #343). The three verbs that put
 > money into the append-only income ledger. The reads arrive with R3.
 
-**The two entry classes.** There is no payment-provider client in this repository, so
-the ledger distinguishes what a list price says *should* be billed (`Derived`) from
-money an operator confirmed was received (`Verified`). No response in this family may
-conflate them, and only a `Verified` entry may be described as collected.
+**The two entry classes.** The ledger distinguishes what a list price says *should* be billed
+(`Derived`) from money a provider or an operator confirmed was received (`Verified`). No response in
+this family may conflate them, and only a `Verified` entry may be described as collected. The shipped
+default is the honest `manual` adapter (`Payments:Provider = "manual"`), which records a grant rather
+than a charge; the provider abstraction, the mock adapter and the one route that writes a
+provider-confirmed `Verified` receipt are documented in **B.24 Payment intents and the provider
+webhook**.
 
 | Method | Path | Permission | Body | Response |
 | --- | --- | --- | --- | --- |
@@ -1117,7 +1173,7 @@ because a job is not an operator.
 | Source | Site | Rule |
 | --- | --- | --- |
 | Blossom top-up | `POST /api/v1/orgs/{organizationId}/blossoms/top-ups` | Writes a `TopUpPurchase` row **only** when `paymentReference` is present. A free or unreferenced grant writes nothing, because a grant is not a charge |
-| Subscription period charge | `BillingPeriodRolloverJob` | Writes one `SubscriptionCharge` for an `Active` subscription with `PriceLkr > 0`. A zero price writes nothing, which is why `subscriptionPricesConfigured` is `false` and MRR is `null` rather than `0` today |
+| Subscription period charge | `BillingPeriodRolloverJob` | Writes one `SubscriptionCharge` for an `Active` subscription with `PriceLkr > 0`. A zero or unassigned price writes nothing. Since Payments P1 the upsert prices a new or changed non-Seed subscription from the plan-allowance book (`ISubscriptionPriceResolver`), so subscriptions created after that slice carry their list price; subscriptions that predate it keep `PriceLkr = 0`, because no backfill ships in this phase |
 
 Both dedupe on a natural reference — the provider reference for a top-up, the period
 start in ISO-8601 for a charge — so a retry or a re-run cannot double-book.
@@ -1179,9 +1235,11 @@ boundaries, and `isPartial` marks a bucket the window clips at either edge.
 could not be computed is `null`, never `0`:
 
 - **MRR, ARR and ARPU are `null` while every `PriceLkr` is `0`**, with
-  `subscriptionPricesConfigured: false` and a note. That is the production case today,
-  because `SubscriptionService.UpsertSubscriptionAsync` never assigns the price. A `0` MRR
-  would read as "we earn nothing"; the truth is "no price is configured".
+  `subscriptionPricesConfigured: false` and a note. Payments P1 now prices a new or changed
+  non-Seed subscription from the plan-allowance book, so a subscription created after that slice
+  carries its list price; subscriptions that predate it keep `PriceLkr = 0` and are not
+  backfilled, so a mixed population still reads correctly. A `0` MRR would read as "we earn
+  nothing"; the truth is "no price is configured".
 - **`collectionRate` is `null`, not `0`, when nothing was billed.** `0` would claim that
   something was billed and none of it collected, which is a different and false statement.
 - **`arpu` is `null` rather than a divide-by-zero** when nothing is priced.
@@ -1195,9 +1253,10 @@ is as much a finding as a charge with no receipt. The signed view is
 came in than was billed. `isBalanced` means at least as much was collected as billed.
 
 **MRR is list-price scheduled revenue**, not recognised or collected revenue. The response
-states `revenueProviderSettlementAvailable: false`, and the console must not label it
-"collected". An `Annual` subscription is divided by twelve before it enters MRR, so a single
-annual row does not appear as twelve times its monthly value.
+states whether `revenueProviderSettlementAvailable`: it is `false` while the configured provider
+is `manual` (so the console must not label the figures "collected"), and `true` once a provider
+client that settles charges is configured. An `Annual` subscription is divided by twelve before
+it enters MRR, so a single annual row does not appear as twelve times its monthly value.
 
 **The ledger register is uncached and returns the window's totals**, not the page's: the
 reconciliation describes the period the caller asked about rather than the slice on screen.
@@ -1267,7 +1326,7 @@ discount.
 
 | Method | Path | Policy | Notes |
 | --- | --- | --- | --- |
-| `GET`/`POST`/… | `/api/v1/orgs/{organizationId:guid}/payments/**` | `BoutiqueAccess`, refund additionally `BoutiquePaymentRefund` | generate / confirm / refund |
+| `GET`/`POST`/… | `/api/v1/orgs/{organizationId:guid}/payments/**` | `BoutiqueAccess`, refund additionally `BoutiquePaymentRefund` | generate / confirm / refund (G20: now itemised in the table below) |
 | `GET`/`POST`/… | `/api/v1/orgs/{organizationId:guid}/deliveries/**` | `BoutiqueAccess` | delivery plans |
 | `GET` | `/api/v1/orgs/{organizationId:guid}/approvals` | `BoutiqueAccess` | the pending queue |
 | `POST` | `/api/v1/orgs/{organizationId:guid}/approvals/{id:guid}/decision` | `BoutiqueApprovalDecision`, plus `BoutiqueOrderManage` for a `reject`/`revise` body | `approvals:approve`; `orders:manage` for the cancel/rewrite verbs |
@@ -1275,20 +1334,49 @@ discount.
 | `POST` | `/api/v1/orgs/{organizationId:guid}/approvals/{id:guid}/reject` | `BoutiqueOrderManage` | **cancels the order**; requires `orders:manage` (T6) |
 | `POST` | `/api/v1/orgs/{organizationId:guid}/approvals/{id:guid}/revise` | `BoutiqueOrderManage` | **rewrites discount/total/margin**; requires `orders:manage` (T6) |
 
-**The four decision verbs are split by what they do, and the split is by verb — not only by route
-(T6 / Q14).** `reject` sets `order.Status = "cancelled"` and `revise` rewrites the money fields, so
-granting `org:boutique_staff` `approvals:approve` (Q8) would otherwise hand them exactly the
-abilities Q8 denied. `/approve` stays on `approvals:approve`; `/reject` and `/revise` move to
-`BoutiqueOrderManage` (`orders:manage`, manager/supervisor/owner). **`/decision` carries its verb in
-its body**, so the route policy alone would leave a door open: a `reject` or `revise` decision
-submitted through `/decision` is refused with `403 order-manage-required` unless the caller also
-holds `orders:manage`. The classification is one named function,
-`Modules/Commerce/Models/ApprovalDecisions.cs`, so a future verb cannot be added without being
-classified.
+**Commerce order payments (Phase 9).** The `payments/**` row above was a wildcard, which is exactly
+how the fabricated-URL and caller-trusted-confirmation defects survived
+(`docs/reports/PR-290-slice3-review.md:269`). They are itemised here, and the behaviour they carry
+after Phase 9 is stated per route.
+
+| Method | Path | Policy | Behaviour |
+| --- | --- | --- | --- |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/payments` | `BoutiqueAccess` | Creates a `CommerceOrder` payment **intent** through `IPaymentIntentService` and returns `paymentLink` = **the provider's own checkout URL**, or `null` when the provider settles in place. The URL is tenant-scoped because it is minted from the intent, which the poll route is keyed by (Q7). `201` with the payment; `400` non-positive amount; `404` unknown order |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/payments/{id:guid}` | `BoutiqueAccess` | One payment. The row also carries `paymentIntentId`, the provider resource behind it |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/payments/order/{orderId:guid}` | `BoutiqueAccess` | The order's payment |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/payments` | `BoutiqueAccess` | Page; query `OrderId`, `Status`, `page`, `pageSize`. `Status` is one of `pending` \| `confirmed` \| `failed` \| `refunded` |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/payments/{id:guid}/confirm` | `BoutiqueAccess` | **A poll, not a settlement.** The route reads the linked intent's provider state and maps it onto `status`; a body `gatewayTransactionId` has **no settlement power** and is not stored from the request. A `200` with `status: "pending"` is the honest answer for an unsettled charge. Idempotent: a second call on a confirmed payment writes no second ledger row |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/payments/{id:guid}/refund` | `BoutiquePaymentRefund` (`payments:refund`) | Unchanged: only a `confirmed` payment can be refunded, and the refund writes an append-only `Refund` row into the boutique sale ledger. Body is optional: `{ "reason"?: string }` |
+
+**A counter payment is the one payment with no intent.** A `Payment` row whose `paymentIntentId` is
+`null` was taken at the counter, not through a provider. The confirmation route keeps the operator's
+`gatewayTransactionId` for that case, because an operator asserting receipt is the honest `manual`
+adapter's confirmation step (`Modules/Payments/Providers/ManualPaymentProvider.cs`) and the boutique
+takings ledger still needs the entry.
+
+**`payments.status` is now derived, not free text.** `CommercePaymentStatus` maps the provider's
+verdict (`Succeeded` → `confirmed`, `Failed`/`Cancelled`/`Expired` → `failed`, `Refunded` →
+`refunded`, everything else → `pending`) onto the column's existing strings. The column stays for
+compatibility with the shipped readers (`PaymentQueryParametersDto.Status`,
+`TenantDashboardService`); the `PaymentIntents` row is the source of truth.
+
+**`Payments.GatewayTransactionId` is unique.** The index was non-unique, so "idempotent by
+transaction id" was enforced only as "already-confirmed returns early". A duplicate non-null
+provider reference is now a rejected write.
+
+**One-release rollback (plan §8.4 S8).** `Payments:Commerce:UseProviderIntents=false` restores the
+pre-Phase-9 path verbatim: the operator-supplied checkout URL literal and the confirmation that
+believes the caller's `gatewayTransactionId`. The default is `true` (the provider-backed path), so
+an unconfigured deployment cannot keep taking payments against a URL nothing can settle. The branch
+and the setting are deleted together one release after Phase 9 ships.
 
 **Errors:** `400` invalid body or transition; `401`; `403` (policy or cross-tenant); `404` (missing,
 or not in this organisation — deliberately indistinguishable); `409` where a state conflict applies.
 **Source:** `Modules/Commerce/Controllers/{Orders,BusinessRules,Payments,Deliveries,Approvals}Controller.cs`.
+**Provider intent state:** a client that needs the provider's own view polls
+`GET /api/v1/orgs/{organizationId}/payment-intents/{paymentIntentId}` (§B.24) with the
+`paymentIntentId` the Commerce response now carries.
+
 
 ---
 
@@ -1312,6 +1400,7 @@ nothing correct to gate a write on).
 | `POST` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/interactions` | `customers:view` | Records an interaction; requires `Idempotency-Key` |
 | `POST` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/events` | **`customers:manage`** | Add a customer event |
 | `POST` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/status` | **`customers:manage`** | Recomputes derived loyalty tier from spend/visits |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/consent` | **`customers:manage`** | **Phase 4 (item 4.4).** Sets `pending` \| `granted` \| `revoked`. This is the **staff** surface: the audit records `ActorKind = User` and `Source = staff`, which is what distinguishes it from the anonymous customer OTP path (§B.25). There is deliberately no `scope` field — a staff action always revokes this boutique's row only |
 | `PATCH` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}` | **`customers:manage`** | **E-7.** Partial update of the writable subset |
 | `DELETE` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}` | **`customers:manage`** | **E-8.** Soft delete |
 
@@ -1603,28 +1692,34 @@ plan (`planTier`, `hasSubscriptionRow`), the top-ups that landed in it (`topUpBl
 Two provenance rules the response states rather than implies:
 
 - **`planListPriceLkr` is `null` whenever the stored `PriceLkr` is zero**, never `0`, with
-  `subscriptionPricesConfigured` saying whether a price was configured at all.
-  `OrganizationSubscription.PriceLkr` **is never assigned anywhere** in the product — creation,
-  upsert and the snapshot job all leave the column default — so "no row ⇒ null, else the column"
-  would print `LKR 0` as the plan price of every subscription (C-4/TD8). The same rule the admin
-  revenue read layer uses is applied here; a zero is "not configured", not "free".
+  `subscriptionPricesConfigured` saying whether a price was configured at all. Payments P1 now
+  assigns `PriceLkr` when a subscription is created or changed, from the plan-allowance price
+  book (`ISubscriptionPriceResolver`), so a priced plan reports its list price; a subscription
+  that predates the slice, or one whose book row resolves to nothing, stores `0` and still
+  reports `null` here (C-4/TD8). The same rule the admin revenue read layer uses is applied; a
+  zero is "not configured", not "free".
 - **`planTier` and `hasSubscriptionRow` come from the day's `OrganizationSubscriptionSnapshot`**
   (or the live subscription row for the current period), not from `Organization.PlanTier`. Every
   organization has a tier; only some have ever had a billing row, and reporting the former as the
   latter would invent a subscription.
 
-This is a **statement of account, not an invoice.** No payment provider is connected and no invoice
-entity, numbering rule or currency column exists, so no row here is a demand for payment.
+This is a **statement of account, not an invoice.** No payment provider is connected in the shipped
+default configuration (`Payments:Provider` defaults to the honest `manual` adapter, which records a
+grant rather than a charge), and no invoice entity, numbering rule or currency column exists, so no
+row here is a demand for payment. When a provider *is* configured, a settled charge writes a
+`Verified` receipt through the top-up checkout of **B.24**; nothing else in this response changes.
 
 #### `GET …/blossoms/top-up-packs` (S-63)
 
-Returns the active `BlossomPriceEntry` rows with `SkuKind = TopUpPack`, ordered by size, as
-`{ skuCode, blossomQuantity, priceLkr, currency }`. The lookup is **identical** to the one
-`POST …/blossoms/top-ups` performs (`BlossomSkuKind.TopUpPack, planTier: null, organizationId: null`,
-filtered to `BlossomRuleStatus.Active`), so a pack the catalogue offers cannot be rejected at
-purchase and a pack the purchase accepts cannot be missing (B-4). A draft price-book row is not for
-sale and is not listed. `currency` is `LKR` because the price book is denominated in LKR; no currency
-column exists to read.
+Returns the purchasable `BlossomPriceEntry` rows with `SkuKind = TopUpPack`, ordered by size, as
+`{ skuCode, blossomQuantity, priceLkr, currency }`. The selection is **identical** to the one
+`POST …/blossoms/top-ups` performs (`PriceBookSelection.SelectActiveSku` over
+`BlossomSkuKind.TopUpPack, planTier: null, organizationId: null`): per SKU it takes the newest
+`Active` row whose effective window contains now, so a pack the catalogue offers cannot be rejected
+at purchase and a pack the purchase accepts cannot be missing (B-4). A draft or expired price-book
+row is not for sale and is not listed, and a re-priced SKU appears once, at its current price. The
+top-up packs stay global (`planTier: null, organizationId: null`): a pack is not per-organization.
+`currency` is `LKR` because the price book is denominated in LKR; no currency column exists to read.
 
 #### Errors
 
@@ -1634,6 +1729,524 @@ caller).
 `Modules/Billing/Endpoints/BlossomEndpoints.cs`,
 `Modules/Billing/Services/TenantBillingReadService.cs`,
 `Modules/Billing/DTOs/TenantBillingDtos.cs`.
+
+---
+
+### B.24 Payment intents and the provider webhook (P2-B2)
+
+The provider-neutral payment surface: a hosted-checkout top-up, the poll that reads its terminal
+state, an abandon path, and the anonymous callback the provider settles through. This is the first
+slice in which Aveline can take a payment through an abstraction rather than recording that one
+happened.
+
+| Method | Path | Policy | Idempotency |
+| --- | --- | --- | --- |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/blossoms/top-ups/checkout` | `BillingManage` | required |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/payment-intents/{paymentIntentId:guid}` | `BillingView` | no |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/payment-intents/{paymentIntentId:guid}/cancel` | `BillingManage` | required |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/payment-intents/{paymentIntentId:guid}/refund` | `revenue:refund` | required |
+| `POST` | `/api/v1/webhooks/payments/{provider:alpha}` | anonymous, signature-verified | no (the inbox is the dedup) |
+| `GET` | `/api/v1/dev/mock-checkout/{intentId:guid}` | anonymous, **Development only** | no |
+| `POST` | `/api/v1/dev/mock-checkout/{intentId:guid}/settle` | anonymous, **Development only** | no |
+
+**The existing operator top-up route is untouched.** `POST …/blossoms/top-ups` keeps its shape and
+its `Derived` income row; it stays the `manual` path (decision D7). The checkout route is additive
+because a charge is a multi-step, asynchronous thing and folding it into a route that returns
+`201 Created` with a ledger entry would change the meaning of that response under a caller's feet.
+
+#### `POST …/blossoms/top-ups/checkout`
+
+Body `{ skuCode }`, plus the required `Idempotency-Key`. The SKU is resolved through the same
+`PriceBookSelection.SelectActiveSku` call the catalogue and the operator route use, so a pack shown
+by `GET …/blossoms/top-up-packs` cannot be rejected here and the price is the server's, never the
+client's. A SKU that is unknown is `400 unknown-sku`; one with no positive price is
+`400 unpurchasable-sku`.
+
+`Billing:AllowCrossPeriodTopUps` (default `false`, BR-2.6) resolves the grant's period cap **before
+payment** and the cap is persisted on the intent. A settlement arriving after a period boundary
+therefore applies the cap that was in force when the customer paid, rather than silently extending
+or truncating the grant.
+
+Returns `201 Created` with a `TopUpCheckoutResponse`:
+
+```json
+{
+  "paymentIntentId": "01a0d4a4-dd95-72a4-86fa-14ca40cee3c6",
+  "provider": "mock",
+  "status": "RequiresAction",
+  "skuCode": "pack_500",
+  "blossomQuantity": 500,
+  "amountLkr": 9000,
+  "currency": "LKR",
+  "checkoutUrl": "/api/v1/dev/mock-checkout/01a0d4a4-dd95-72a4-86fa-14ca40cee3c6",
+  "expiresAt": null
+}
+```
+
+`Location` points at the poll route. `status` is the provider's own state
+(`RequiresAction` until the customer completes the charge).
+
+#### `GET …/payment-intents/{paymentIntentId}`
+
+The client's poll. The redirect back from a hosted page is **not** proof of settlement — a customer
+can close the tab — so the terminal state is read from the server, which is also what makes the mock
+and a real provider behave identically from the frontend's point of view.
+
+An intent belonging to another organisation is a `404`: the read filters on `OrganizationId`
+explicitly, so tenant isolation fails closed at the repository and an id cannot be probed for.
+`status` reports the derived `Expired` state when an unsettled intent is past its `expiresAt`
+(plan §6.6 — the state is derivable, so no sweep is needed to make it true) and `Refunded` when a
+full refund has been applied.
+
+#### `POST …/payment-intents/{paymentIntentId}/cancel`
+
+Optional `?reason=` (default `Customer abandoned the checkout.`), plus the required
+`Idempotency-Key`. Asks the provider to void the charge and moves the intent to `Cancelled`. An
+intent that is not unsettled is `409 payment-intent-state`; a provider that cannot cancel is
+`501 payment-provider-capability-missing`.
+
+#### `POST …/payment-intents/{paymentIntentId}/refund`
+
+Body `{ amountLkr?, reason }`, plus the required `Idempotency-Key`. Policy `revenue:refund` — the
+platform-money refund permission, held only by `owner` and deliberately denied to `admin`
+(`Permissions.PermissionsDeniedToAdmin`), because sending money back is irreversible in a way that
+correcting the ledger is not (plan §9.6).
+
+The provider is asked **before** the ledger is written (decision D8), so the journal never records a
+refund the provider refused. The shipped revenue rule is kept: a refund requires a live `Verified`
+receipt for the same `(SourceKind, SourceRef)` the settlement wrote, and a charge the journal never
+recorded collecting is `409 refund-not-allowed`. Only a `Succeeded` intent can be refunded (a
+pending one is `409 payment-intent-state`), a partial refund larger than the settled charge is
+`409 payment-intent-state`, and `amountLkr` omitted means the whole charge.
+
+**The refund window is configuration, and the policy is unresolved.** `Payments:RefundWindowDays`
+defaults to **absent**, which means *no automatic window: the operator decides*.
+`docs/architecture/pricing_plan.md` proposes seven days but says in the same breath that the final
+policy must be reviewed against payment-provider and consumer-protection requirements; hardcoding
+seven days in code would settle that review by accident. When the key is configured, a refund struck
+outside the window is `409 payment-intent-state` and the provider is not asked.
+
+Returns `200` with a `PaymentRefundResponse`:
+
+```json
+{
+  "paymentIntentId": "01a0d4a4-dd95-72a4-86fa-14ca40cee3c6",
+  "provider": "mock",
+  "status": "Refunded",
+  "providerRefundId": "mock_re_01a0d4a4dd9572a486fa14ca40cee3c6",
+  "ledgerEntryId": "01a0d4c1-80c0-7a53-9a1e-4c9a4a1e3b21",
+  "amountLkr": 9000,
+  "currency": "LKR",
+  "refundedAt": "2026-10-02T09:15:00Z"
+}
+```
+
+`status` reports the derived `Refunded` state (the intent model has no `Refunded` enum member, so it
+is derived from `RefundedAt`, exactly as `Expired` is derived from `expiresAt`).
+`providerRefundId` is the provider's own reference and `ledgerEntryId` is the `Refund` income row,
+so both sides of the movement are nameable from one response.
+
+#### `POST /api/v1/webhooks/payments/{provider}`
+
+Anonymous and signature-verified. The raw body is read **before** any JSON binding, exactly as the
+Clerk webhook verifier does, because the signature is computed over the bytes as they arrived.
+
+- Invalid signature, wrong secret, or a timestamp outside `Payments:Webhook:ToleranceSeconds`
+  (default 300): `403` with an **empty body**, matching the WhatsApp webhook convention, and the
+  `aveline.payment.webhook.verification_failures` series moves. The response never says which part
+  failed.
+- A duplicate `(Provider, ProviderEventId)`: `200` with `duplicate: true` and no second settlement.
+  A provider retry is not an error.
+- The first delivery settles the intent: one Blossom grant, one `Verified` income row, one
+  `Succeeded` intent, all in **one database transaction**, after which
+  `IEventBus` publishes `payment.settled` (fire-and-forget; nothing downstream is required for
+  correctness).
+- An event whose amount or currency does not match the intent: `409 payment-intent-mismatch`. The
+  event is stored with `ProcessedAt = null` and a `ProcessingError`, the critical
+  `aveline.payment.settlement{outcome="mismatch"}` series moves, and **nothing is granted**.
+- A provider **dispute or chargeback** is an explicit event type (`DisputeOpened`, P10) with a known
+  effect: it appends a `Verified` **`Refund` reversal** to the income ledger for the disputed amount,
+  through `IIncomeLedgerService`, and only then marks the event processed. The settled charge, its
+  Blossom grant and its receipt are **never mutated** — the journal is append-only — and the intent
+  stays `Succeeded`, because the charge genuinely succeeded and a dispute is a separate movement of
+  money. The ledger's `(SourceKind, SourceRef)` identity (`payment-dispute:{providerIntentId}`) makes
+  a second reversal for the same charge a `409` rather than a double-count, so a refused reversal
+  stays visible in the backlog. A refund confirmation (`RefundSucceeded`/`RefundFailed`) carries no
+  async effect — refunds here are operator-initiated and the provider call is made before the ledger
+  write — and is marked processed.
+- An event type with **still** no handler maps to `PaymentWebhookEventType.Unknown` and is the
+  deliberate fail-safe: it is stored **unprocessed** with a `ProcessingError` and logged at Warning,
+  so the Phase 7 backlog and reconciliation surface it. Marking it processed would forget it.
+
+A settled `SubscriptionProration` intent (P5's open handoff) writes a `Verified`
+`SubscriptionCharge` receipt for the charge, so a settled proration is recorded rather than left
+outstanding. Both that write and the top-up receipt go through the extracted
+`IIncomeLedgerService.VerifyAsync`, the same `Derived -> Verified` supersede path the admin verify
+route uses (plan §9.9 item 1, gap G12).
+
+Settlement is idempotent three times over: the intent's terminal state, the inbox's unique
+`(Provider, ProviderEventId)`, and the ledgers' own tuples — the Blossom grant passes
+`IdempotencyKey = ProviderIntentId` **and** `IdempotencyScope = "payments.topup"` (both halves, or the
+ledger's dedup is silently disabled), and the income receipt dedups on
+`(BlossomTopUp, providerIntentId)`.
+
+#### The mock checkout endpoints (Development only)
+
+Mapped only inside `app.Environment.IsDevelopment()`, so they do not exist in a Production build even
+if the provider is misconfigured. `GET …/dev/mock-checkout/{intentId}` renders the hosted page, whose
+forms post a documented `tok_aveline_*` scenario token (or a Stripe-compatible test card) to
+`POST …/settle?token=…`. The settle endpoint applies the credential to the provider-side charge and
+then delivers the mock's signed webhook through the **real** webhook path, so a demonstration
+exercises verification, the inbox and settlement rather than a shortcut.
+
+The token is a query-string value from a closed test table; it is never a field on a request DTO, and
+no card, CVC, expiry, PAN or token field exists anywhere on the payment wire surface (constraint C11,
+asserted by `PaymentDtosTests`).
+
+#### Errors
+
+`400 idempotency-key-required` / `400 unknown-sku` / `400 unpurchasable-sku`; `401`; `403` (no
+`billing:manage`/`billing:view`, no `revenue:refund` on the refund route, or a cross-tenant caller);
+`403` empty on a webhook verification failure; `404` unknown intent for this organisation; `409
+idempotency-key-reuse`; `409 payment-intent-state`; `409 payment-intent-mismatch`; `409
+refund-not-allowed`; `501 payment-provider-capability-missing`; `502 payment-provider-error`; `503
+payment-provider-unavailable`.
+
+A provider transport failure on checkout is `502` and commits **no** `PaymentIntents` row: an intent
+with no provider intent behind it is unactionable.
+**Source:** `Modules/Payments/Endpoints/PaymentEndpoints.cs`,
+`Modules/Payments/Endpoints/PaymentWebhookEndpoints.cs`,
+`Modules/Payments/Endpoints/MockCheckoutEndpoints.cs`,
+`Modules/Payments/Services/PaymentIntentService.cs`,
+`Modules/Payments/Services/PaymentSettlementService.cs`,
+`Modules/Payments/Services/PaymentProviderEventService.cs`,
+`Modules/Payments/DTOs/PaymentDtos.cs`.
+
+---
+
+### B.25 Privacy — the OTP-verified opt-out flow (Phase 4)
+
+The customer-facing half of the privacy plan's Objective 3. Both routes are **anonymous by design**:
+the caller is a customer who has no Aveline account, and the OTP is the authentication. They are
+mapped on the public `/api/v1/privacy` group (`Endpoints/PrivacyEndpoints.cs`) and are deliberately
+**not** reachable through any boutique-scoped route.
+
+The flow starts from the signed opt-out link the first-contact disclosure carries
+(`{App:BaseUrl}/privacy/opt-out?o={organizationId}&v=1&s={hmac}`): the link proves *which boutique*,
+the OTP proves *which number* (decision DR-2 — there is no phone number in the URL).
+
+| Method | Path | Auth | Notes |
+| --- | --- | --- | --- |
+| `POST` | `/api/v1/privacy/opt-out/start` | anonymous | Requests a six-digit code. **Always** answers the same `202` field set, including the opaque `handle` |
+| `POST` | `/api/v1/privacy/opt-out/verify` | anonymous | Verifies the code and revokes consent, `scope` `org` \| `all` |
+
+#### `POST /api/v1/privacy/opt-out/start`
+
+**Purpose:** mint and deliver the opt-out OTP. **Auth:** none. **Permissions:** none.
+
+**Body:**
+
+```json
+{
+  "organizationId": "9f1c…",
+  "phoneNumber": "0771234567",
+  "scope": "org",
+  "version": "1",
+  "signature": "base64url-hmac"
+}
+```
+
+`version` and `signature` are the `v` and `s` query values of the link the customer opened. The
+signature is re-verified server-side; `scope` is validated here and carried to `verify`.
+
+**Response — always `202`:**
+
+```json
+{
+  "status": "accepted",
+  "handle": "opaque-base64url-handle",
+  "expiresInSeconds": 300
+}
+```
+
+The **field set is identical** whether the phone belongs to a customer or not, whether the boutique
+has WhatsApp configured or not, and whether the send succeeded or failed. That is the
+anti-enumeration contract: anything that varies would make the endpoint an oracle for "does this
+boutique know this number?". `status` is the constant `accepted` and `expiresInSeconds` is the code
+TTL (`OtpService.CodeTtl`, 300 s); `handle` is a fresh opaque 32-byte base64url reference minted on
+**every** call, so it is never a function of the number - a handle with a stored code behind it is
+indistinguishable from one without. The client returns `handle` on `verify` (plan §5.3); for an
+unknown number it simply has no stored code, so verification fails exactly as a wrong code does.
+What actually happened is visible only in `AuditLogEntry` (`privacy.otp.issued`) and the logs.
+
+An invalid or missing link signature also answers the same `202` shape - the handle is minted before
+the signature is checked - and nothing is sent.
+
+**Errors:**
+
+| Status | Code | When |
+| --- | --- | --- |
+| `400` | `invalid-phone-number` | The number is not a recognised Sri Lankan form (checked **before** any customer lookup) |
+| `400` | `invalid-scope` | `scope` is neither `org` nor `all` |
+| `429` | `otp-rate-limited` | The per-number budget (3 sends / 15 min) **or** the per-address budget (10 starts / hour) is spent |
+| `503` | `otp-unavailable` | The OTP store (Redis) is unreachable. The counters **fail closed** (decision DR-6) |
+
+**Rate limit:** per IP and per phone, both enforced against `IDistributedCache` directly — *not*
+`IRateLimiter`, which deliberately fails open. **Idempotency:** an `Idempotency-Key` is neither
+required nor accepted; the OTP send carries a deterministic channel key derived from the opaque
+handle, so a replayed start cannot produce a second provider call.
+**Source:** `Endpoints/PrivacyEndpoints.cs`, `Modules/Privacy/Services/OtpService.cs`,
+`Modules/Privacy/Services/OtpDeliveryService.cs`.
+
+#### `POST /api/v1/privacy/opt-out/verify`
+
+**Purpose:** verify the code and revoke consent. **Auth:** none. **Permissions:** none.
+
+**Body:**
+
+```json
+{
+  "organizationId": "9f1c…",
+  "handle": "opaque-base64url-handle",
+  "otp": "123456",
+  "scope": "org",
+  "version": "1",
+  "signature": "base64url-hmac"
+}
+```
+
+There is no phone number in this body. The handle identifies the pending code and the code is bound
+to the phone inside its digest, so the endpoint revokes the number the OTP **proved**, never one a
+caller supplied.
+
+**`scope`:**
+
+* `org` (the default when omitted) revokes exactly the issuing organisation's `CustomerConsent` row.
+* `all` revokes **every** organisation's row whose stored number equals the proven phone
+  (plan §5.4, Option 1 "identity by phone"). This is the only path that reads more than one tenant,
+  and it does so through a dedicated locator (`IPhoneSubjectLocator`); it is already covered by the
+  link signature, so a caller cannot aim it at an arbitrary boutique.
+
+**Response — `200`:**
+
+```json
+{ "status": "revoked", "scope": "org", "effectiveAtUtc": "2026-09-25T10:15:00Z" }
+```
+
+Each affected organisation gets an append-only `ConsentAuditEntry` (`consent.revoked`,
+`ActorKind = Customer`, `Source = otp_link`, `EvidenceJson` = identifiers only) **and** an
+`AuditLogEntry`; the verification itself is an `AuditLogEntry` (`privacy.otp.verified`).
+
+**Errors:**
+
+| Status | Code | When |
+| --- | --- | --- |
+| `400` | `otp-invalid` | **One** answer for: unknown handle, expired code, replayed code, wrong code, spent attempt budget, invalid signature, invalid scope |
+| `429` | `otp-rate-limited` | More than 30 verification attempts from one address in an hour |
+| `503` | `otp-unavailable` | The store is unreachable, or the per-address counter cannot be read |
+
+**Rate limit:** per address (30 / hour, fail closed) plus a hard five-attempt cap per code held in
+Redis. **Idempotency:** single-use by construction — a successful verification deletes the code, so a
+replay is indistinguishable from an expired one.
+**Related:** §B.20's `POST …/customers/{customerId}/consent` is the staff equivalent and is
+distinguishable by `ActorKind`.
+**Source:** `Endpoints/PrivacyEndpoints.cs`, `Modules/Privacy/Services/ConsentRevoker.cs`.
+
+#### The opt-out acknowledgement
+
+A successful revocation queues one **non-personalised** acknowledgement ("You have opted out of
+messages from {boutique}…"), sent on the reply-path WhatsApp text channel — never
+`SendTemplateAsync`, which is gated on the unresolved policy question Q-2. It is gated by a Redis key
+so **at most one** is sent per (boutique, number) per 24 hours; a failed send releases the key so the
+confirmation is delayed rather than lost. It never re-enters the agent path: the body is fixed copy
+built in `Aveline.Api`, and the dispatch reuses the disclosure worker's scope-per-intent pattern.
+Plan §15 Q-9 records why a revoked customer still receives this one message.
+
+---
+
+### B.26 Privacy — OTP-gated data export and erasure (Phase 5)
+
+Objective 4 of the privacy plan. Both routes are **anonymous** and live on the same public
+`/api/v1/privacy` group as the opt-out flow (`Endpoints/PrivacyEndpoints.cs`). The OTP is the
+authentication, verified **inline in the same request** — there is no session to carry a verified
+state between calls (plan §7.1).
+
+| Method | Path | Auth | Notes |
+| --- | --- | --- | --- |
+| `POST` | `/api/v1/privacy/data/export` | anonymous | Returns the full record inline (`json`) or a ZIP of CSVs (`csv`) |
+| `POST` | `/api/v1/privacy/data/delete` | anonymous | Erases the §7.3 scope; requires `confirm: "DELETE"` and an `idempotencyKey` |
+
+Both bodies carry the `handle` the code was minted under (the shipped `IOtpService` contract keys
+verification by it) together with `phoneNumber` and `otp`. The export/erasure always acts on the
+number the OTP **proved**, never on the one the body supplied, and a mismatch between the two is a
+`400 otp-invalid`.
+
+#### `POST /api/v1/privacy/data/export`
+
+**Purpose:** return the data subject's record. **Auth:** none. **Permissions:** none.
+
+**Body:**
+
+```json
+{
+  "organizationId": "9f1c…",
+  "phoneNumber": "0771234567",
+  "handle": "opaque-handle",
+  "otp": "123456",
+  "format": "json"
+}
+```
+
+**Response — `200`, the document inline (decision DR-4):**
+
+```json
+{
+  "generatedAtUtc": "2026-09-25T00:00:00Z",
+  "subject": { "organizationId": "9f1c…", "customerId": "…" },
+  "counts": { "memories": 41, "messages": 12, "attachments": 4 },
+  "customer": { },
+  "consent": { },
+  "consentHistory": [ ],
+  "memories": [ ],
+  "preferences": [ ],
+  "events": [ ],
+  "interactions": [ ],
+  "tags": [ ],
+  "matches": [ ],
+  "sourcingRequests": [ ],
+  "conversations": [ ],
+  "messages": [ ],
+  "attachments": [ ]
+}
+```
+
+Headers: `Content-Disposition: attachment; filename="aveline-data-{orgSlug}-{yyyyMMdd}.json"` and
+`Cache-Control: no-store`. The document is **not emailed**: the only email channel currently logs its
+payload, and there is no object store for a short-lived link (DR-4).
+
+`format: "csv"` returns `application/zip` instead: one CSV per collection plus a `MANIFEST.json`
+describing the files and their row counts — never one flattened file (plan §7.4).
+
+Every collection is scoped to the verified number **within the named organisation**. There is no EF
+global tenant filter, so each query carries an explicit `OrganizationId` predicate (risk R-17): two
+organisations holding the same phone never see each other's rows. The customer and memory reads use
+`IgnoreQueryFilters()` because a soft-deleted row still holds the subject's PII.
+
+**Errors:** `400 invalid-phone-number`, `400 invalid-format`, `400 otp-invalid`, `404 no-data`
+(the number was proved, so this is not an enumeration probe), `429 rate-limited`,
+`503 otp-unavailable` (the OTP store fails closed, DR-6).
+
+#### `POST /api/v1/privacy/data/delete`
+
+**Purpose:** erase the data subject's record. **Auth:** none. **Permissions:** none.
+
+**Body:**
+
+```json
+{
+  "organizationId": "9f1c…",
+  "phoneNumber": "0771234567",
+  "handle": "opaque-handle",
+  "otp": "123456",
+  "confirm": "DELETE",
+  "scope": "org",
+  "idempotencyKey": "client-generated-key"
+}
+```
+
+`confirm` must be the literal `DELETE`; it is checked **before** any OTP work, so a misdirected
+request cannot reach the code path. `idempotencyKey` is required and unique per
+`(organizationId, "delete")`.
+
+**Response — `200`:**
+
+```json
+{
+  "status": "completed",
+  "requestId": "…",
+  "deletedAtUtc": "2026-09-25T00:00:00Z",
+  "counts": { "customers": 1, "memories": 41, "messages": 12, "attachments": 4 },
+  "organizationsAffected": ["9f1c…"],
+  "replayed": false
+}
+```
+
+**The erasure scope (plan §7.3, decisions DR-3, Q-3, Q-4):**
+
+| Table | Action |
+| --- | --- |
+| `Customers`, `CustomerMemory` | **hard delete**, including rows hidden by the soft-delete query filters (`IgnoreQueryFilters()`, R-16). Deleting the `CustomerMemory` row is what removes the pgvector `embedding` column, which is outside the EF model |
+| `Customer_Preferences`, `Customer_Events`, `Customer_Interactions`, `Customer_Tags`, `CustomerMatches` | **hard delete** |
+| `SourcingRequests` | `CustomerId = NULL` — anonymise, keep the business record |
+| `InboundMessageLogs` | keep the row (it is the evidence the opt-out was honoured); null `From`/`Content` (DR-3) |
+| `Conversations` | `ExternalRef = NULL`; the thread skeleton stays |
+| `Messages` | **Q-3**: the customer's own `ClientMessage` blocks and their attachment bytes are deleted, leaving an anonymised `from`; staff and agent messages are the boutique's operational record and are retained |
+| `DataSubjectRequest` | retained; `CustomerId` is set to `NULL`, and the phone fingerprint is the surviving link |
+| `ConsentAuditEntry` | cascades with the customer; the terminal `revoked` decision survives in the tombstone below |
+| `PrivacyErasureTombstone` | **Q-4**: an anonymised row keyed by the phone fingerprint with the terminal `revoked` status, so the next inbound message is not re-processed as a fresh `pending` customer (risk R-3) |
+
+The whole scope runs in **one transaction** (the in-memory provider used by the test suite has no
+transactions; Postgres is the store that matters). The response carries **counts only**, never
+content — the same rule applies to `DataSubjectRequest.ResultJson` and the audit rows.
+
+A distributed lease (`IDistributedJobLock`) prevents two concurrent erasures racing for the same
+(organisation, number); a second request answers `409 erasure-in-progress`. The same
+`idempotencyKey` twice returns the stored `ResultJson` rather than deleting twice. That replay is
+resolved **before** the code is re-verified, because the OTP is single-use: a network retry carries a
+spent code, and it must return its stored result rather than a `400`. The replay performs no
+deletion and returns counts only.
+
+**Errors:** `400 confirm-required`, `400 idempotency-key-required`, `400 invalid-idempotency-key`,
+`400 invalid-phone-number`, `400 invalid-scope`, `400 otp-invalid`, `409 erasure-in-progress`,
+`503 otp-unavailable`.
+
+**Cache invalidation (item 5.6):** after the commit the profile cache
+(`customer_profile:{customerId}`) and the lookup-cache entries for the erased identity are evicted
+(`CustomerCacheInvalidator`). The agent service's `semantic_cache` is keyed by prompt + model and
+holds no customer key, so it cannot be invalidated per subject; that limitation is recorded in
+[domain-model.md](../backend/domain-model.md).
+
+**Source:** `Endpoints/PrivacyEndpoints.cs`, `Modules/Privacy/Services/DataSubjectExportService.cs`,
+`DataSubjectExportCsv.cs`, `ErasureService.cs`, `CustomerCacheInvalidator.cs`,
+`Modules/Privacy/Models/DataSubjectRequest.cs`.
+
+### B.27 Payment reconciliation read (P7, S-64)
+
+> **Status: implemented** (Payments plan Phase 7). Gated `stats:system`, matching the rest of the
+> `/admin/statistics` family and **not** `revenue:read`: a `moderator` reads revenue and does not read
+> system statistics.
+
+| Method | Path | Returns |
+| --- | --- | --- |
+| `GET` | `/api/v1/admin/statistics/payments/reconciliation` | S-64 `PaymentReconciliationResponse` — optional `organizationId`, `provider`, `from`, `to` |
+
+**Why it exists.** A charge can settle at the provider and never reach Aveline (a webhook that was
+not delivered, risk R7), a provider can return money Aveline never recorded, and an adapter can be
+misconfigured. None of those is visible from the intent row alone. The alert is
+`aveline.payment.unreconciled_intents`; an alarm is only actionable if the operator can find **which**
+intent diverged, and the P6 backlog (`Unknown` dispute events and unsupported settlement purposes,
+stored unprocessed with a `ProcessingError`) is the same class of problem.
+
+**The formula is not reimplemented.** The route calls `IPaymentReconciliationService.ReconcileAsync`,
+the same derivation `PaymentReconciliationMetricCollectorJob` publishes
+`aveline.payment.unreconciled_intents` and `aveline.payment.webhook.unprocessed_backlog` from, because
+a second derivation would let the console and the alarm disagree about the same intent — the one
+outcome this surface must never produce (the Blossom sibling's rule, §B.18).
+
+**Shape.** Only divergent intents appear, each with a stable `reason`: `provider-settled-unconfirmed`
+(the authoritative missed-webhook case), `status-diverged`, `amount-diverged`, `currency-diverged`,
+`provider-unknown-intent`, `provider-intent-missing`, `provider-unavailable` (an adapter that cannot
+be resolved is reported, **never** treated as an all-clear), `expired-unsettled`,
+`refund-not-recorded` (the provider returned the money and no refund was recorded here) and
+`refund-recorded-without-provider`. `unreconciledByProvider` carries a zero for a provider that was
+checked and is clean, so a repaired series is distinguishable from one that was never read.
+`unprocessedWebhookBacklog` is **provider-wide, not organisation-scoped**, because a provider event
+carries no tenant. The scan is capped at 200 intents per window and `truncated` says when the cap bit
+rather than silently dropping rows. The window defaults to the last 24 hours.
+
+**Errors:** `400 invalid-window` (`from` after `to`); `401`; `403`.
+**Source:** `Modules/Payments/Endpoints/PaymentReconciliationEndpoints.cs`,
+`Modules/Payments/Services/PaymentReconciliationService.cs`.
 
 ---
 
@@ -2054,7 +2667,7 @@ balance.
 | --- | --- | --- | --- |
 | `skuCode` | string | ✅ | Must exist in the price book as an `Active` `TopUpPack`, e.g. `blossom_pack_500` |
 | `blossomQuantity` | number | — | Must equal the SKU's quantity; a mismatch is `400` |
-| `paymentReference` | string | — | Max 128; required when `Billing:RequirePaymentReference` is true |
+| `paymentReference` | string | — | Max 128. Optional. When present it is the income row's dedup reference (a `Derived` expectation). The `Billing:RequirePaymentReference` key named by an earlier draft does **not** exist in the shipped configuration |
 
 **Response `201` — the shipped `BlossomLedgerEntryDto`:**
 
@@ -2085,8 +2698,10 @@ balance.
 mismatch; `401`; `403`; `409 { "code": "period-closed" }`;
 `409 { "code": "idempotency-key-reuse" }`.
 **Notes:** expiry is capped at the subscription's `CurrentPeriodEnd` unless
-`Billing:AllowCrossPeriodTopUps` is true. **Phase 3** attaches a payment provider;
-until then a top-up is a recorded grant, not a charge.
+`Billing:AllowCrossPeriodTopUps` is true. This route is the **`manual` path**: it records a grant and,
+when a `paymentReference` is supplied, a `Derived` expectation — it is not a charge, and it never
+calls a provider. The route that takes a payment is the hosted-checkout top-up
+`POST …/blossoms/top-ups/checkout` (**B.24**).
 
 ---
 
@@ -2182,7 +2797,30 @@ frontend never has to handle a 404 for a valid org.
 **Body:** `{ "planTier": "Orchid", "effective": "immediate" | "nextPeriod", "reason": string? }`
 (default `nextPeriod` for a downgrade, `immediate` for an upgrade).
 **Response `200`:** the updated subscription, plus `blossomDelta`, plus the new
-balance.
+balance. An immediate upgrade that raises the resolved price also reports the
+invoice-like proration charge it left behind — `prorationPaymentIntentId` (poll it
+with `GET /orgs/{organizationId}/payment-intents/{paymentIntentId}`) and
+`prorationAmountLkr`:
+
+```json
+{
+  "subscription": { "planTier": "Orchid", "priceLkr": 9000.0 },
+  "blossomDelta": 1250.0,
+  "blossomRemaining": 1400.0,
+  "prorationPaymentIntentId": "0198f3c2-6b1e-7a44-9c3d-2f0a1b7e5d90",
+  "prorationAmountLkr": 3732.14
+}
+```
+
+Both fields are `null` when no money moves: a downgrade, a next-period change, an
+unpriced plan, or a change struck on the period's last day.
+
+The provider that cannot be reached does **not** fail the call
+(`prorationPaymentIntentId` stays `null` and `prorationAmountLkr` still reports the
+obligation), because the higher allowance is granted immediately and the charge
+follows as an obligation (pricing_plan §10, decision Q2). The id and amount are
+resolved from the price book and, where the provider supports it, from the
+provider's own proration calculation.
 **Errors:**
 
 ```json
@@ -2197,7 +2835,9 @@ balance.
 }
 ```
 
-Also `400 { "code": "no-op-plan-change" }`, `403`, `404`.
+Also `400 { "code": "no-op-plan-change" }`, `403`, `404`, and `501
+payment-provider-capability-missing` when the configured provider advertises
+`SupportsProration` without implementing the proration calculation.
 **Related statistics:** [S-8](../backend/statistics-catalog.md), [S-9](../backend/statistics-catalog.md).
 **Client guidance:** on `plan-limit-violation`, render each `violations` entry with
 its `key` mapped to a human label and the observed/allowed pair.
@@ -2207,6 +2847,25 @@ its `key` mapped to a human label and the observed/allowed pair.
 **Auth:** `billing:manage`. **Body:** `{ "reason": string? }`. Sets
 `cancelAtPeriodEnd = true`. **Response `200`.** **Errors:** `403`, `404`, `409` if
 already cancelled.
+
+Phase 6: where the subscription carries a provider-side agreement (`ExternalSubscriptionId`), the
+provider is asked for a period-end cancellation **before** anything is persisted
+(`IPaymentProvider.CancelSubscriptionAsync(id, atPeriodEnd: true)`). A provider refusal is a hard
+failure: `502 payment-provider-error`, and **no cancellation is written**, because a cancellation
+that never reached the provider is the worst outcome — the tenant keeps being charged while Aveline
+believes the subscription is ending. At the period boundary the rollover job transitions the
+subscription to `Cancelled`, stops the closed period's `Derived` charge, and does not renew.
+
+#### `POST /api/v1/orgs/{organizationId:guid}/subscription/resume`
+
+**Auth:** `billing:manage`. Withdraws a scheduled cancellation: clears `cancelAtPeriodEnd` and asks
+the provider to restore its recurring agreement. **Response `200`** with the `SubscriptionView`.
+
+Only meaningful where the provider supports it, so the route is gated on
+`Capabilities.SupportsCancelAtPeriodEnd`. A provider without it cannot be asked to withdraw its own
+scheduled cancellation, so the response is **`501 payment-provider-capability-missing`** rather than
+a cleared local flag the provider would still act on. **Errors:** `403`, `404`, `409` when the
+subscription is not scheduled for cancellation, `501` as above.
 
 #### `GET /api/v1/orgs/{organizationId:guid}/entitlements`
 
@@ -2584,7 +3243,8 @@ cachedTokens, actualCostUsd, argsHash, resultBytes, errorCode }`.
 ```
 
 **Notes:** runs still `Running` or `PausedForApproval` are excluded from
-`totalRuns`. **Related statistics:** [S-14](../backend/statistics-catalog.md), [S-15](../backend/statistics-catalog.md).
+`totalRuns`. A consent skip is recorded as `Skipped` (a terminal status, never `Succeeded`) and is
+excluded from the success-rate denominator. **Related statistics:** [S-14](../backend/statistics-catalog.md), [S-15](../backend/statistics-catalog.md).
 
 #### `GET /latency`
 

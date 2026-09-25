@@ -139,7 +139,12 @@ public sealed record TenantCustomerConsentDto(
     Guid Id,
     string Status,
     DateTime? GrantedAtUtc,
-    DateTime? RevokedAtUtc);
+    DateTime? RevokedAtUtc)
+{
+    public string ConsentStatus => Status;
+    public DateTime? ConsentGrantedAt => GrantedAtUtc;
+    public DateTime? ConsentRevokedAt => RevokedAtUtc;
+}
 
 /// <summary>
 /// A saved memory as returned to tenant callers.
@@ -180,3 +185,12 @@ public sealed record CustomerInteractionPageDto(
     int Total,
     int Page,
     int PageSize);
+
+/// <summary>
+/// The staff consent write (plan §11 item 4.4). <c>Scope</c> is deliberately <b>absent</b>: a staff
+/// action always revokes this boutique's row. A global opt-out is a customer decision and belongs to
+/// the OTP flow, not to a staff member acting inside one tenant.
+/// </summary>
+/// <param name="Status">One of <c>pending</c> | <c>granted</c> | <c>revoked</c>.</param>
+/// <param name="Reason">An optional, non-personal note recorded on the audit rows.</param>
+public sealed record StaffConsentUpdateRequest(string ConsentStatus, string? Reason = null);

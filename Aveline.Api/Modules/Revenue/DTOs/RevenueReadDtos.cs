@@ -1,5 +1,7 @@
 namespace Aveline.Api.Modules.Revenue.DTOs;
 
+using Aveline.Api.Modules.Payments;
+
 /// <summary>The window a revenue read was computed over, echoed so the client never re-derives it.</summary>
 public sealed record RevenueWindowDto(
     DateTime From,
@@ -16,8 +18,9 @@ public sealed record RevenueWindowDto(
 /// nothing about whether a price was configured or whether a receipt was verified. The three facts
 /// this exists to state, so no caller has to infer them:
 ///
-/// - <see cref="RevenueProviderSettlementAvailable"/> is `false`: no payment-provider client is
-///   wired in this repository, so **no figure here is settled money**.
+/// - <see cref="RevenueProviderSettlementAvailable"/> is `false` only while the configured provider
+///   is the `manual` adapter, which settles nothing by itself: **no figure here is settled money**
+///   until an operator confirms it. It becomes `true` for a provider client that settles charges.
 /// - <see cref="SubscriptionPricesConfigured"/> is `false` while `PriceLkr` is unassigned, so MRR is
 ///   `null` rather than a `0` that reads as "we earn nothing".
 /// - <see cref="DerivedEntriesUnverified"/> is the count of billed-but-uncollected entries. That gap
@@ -30,9 +33,12 @@ public sealed record IncomeDataQualityDto(
     DateTime CheckedAt,
     IReadOnlyList<string> Notes)
 {
-    /// <summary>Every source answered and every measure is instrumented.</summary>
-    public static IncomeDataQualityDto Clean(DateTime checkedAt) => new(
-        RevenueProviderSettlementAvailable: false,
+    /// <summary>
+    /// Every source answered and every measure is instrumented. The provider fact is read from the
+    /// payment configuration rather than assumed, so the factory and the live read cannot disagree.
+    /// </summary>
+    public static IncomeDataQualityDto Clean(DateTime checkedAt, PaymentsOptions payments) => new(
+        RevenueProviderSettlementAvailable: payments.ProviderSettlesMoney,
         SubscriptionPricesConfigured: true,
         DerivedEntriesUnverified: 0,
         CheckedAt: checkedAt,
@@ -85,8 +91,8 @@ public sealed record RevenueAccountsDto(
 /// unassigned `PriceLkr` makes all three `null` with `subscriptionPricesConfigured: false`.
 ///
 /// These are **list-price scheduled revenue**, not recognised or collected revenue. The response
-/// states `revenueProviderSettlementAvailable: false` and the console must not label them
-/// "collected".
+/// states `revenueProviderSettlementAvailable`, and while that is `false` the console must not
+/// label them "collected".
 /// </remarks>
 public sealed record RevenueOverviewDto(
     DateTime AsOf,

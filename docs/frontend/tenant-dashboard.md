@@ -1,7 +1,7 @@
 # Aveline tenant dashboard (`/app/b/:slug/:section`)
 
 **Status:** delivered across **T0a–T7**, with the gaps recorded rather than implied: no authenticated
-end-to-end walk (no Clerk test session in this environment), `E-2`/`E-3` have no panel caller yet, and
+end-to-end walk (no Clerk test session in this environment), `E-3` still has no panel caller, and
 six shell components are still at 0 % coverage. Each is stated in place below. This page is the
 general documentation for the tenant dashboard and is authoritative for the shipped behaviour. The
 plans are:
@@ -232,10 +232,14 @@ and the truthful alternative is to say so rather than to allow-list the file.
 
 - A missing balance renders **"Balance unavailable"**, not "Demo mode".
 - The Billing surface says **statement**, never invoice. Invoices are deferred (TD8): there is no
-  `Invoice` entity, no payment-provider client and no currency column, so a document priced from
-  `OrganizationSubscription.PriceLkr` (which is never assigned) would be a fabricated charge.
-- The top-up flow says top-ups are **recorded grants until a payment provider is connected**. The
-  demo-mode toast is gone; the button now opens the Billing section.
+  `Invoice` entity and no currency column, so a document priced from `OrganizationSubscription.PriceLkr`
+  (which is never assigned) would be a fabricated charge.
+- The top-up flow **no longer claims to be a recorded grant**. The demo-mode toast is gone, and as of
+  the payment-gateway Phase 3 the button opens the checkout dialog: the packs come from the server's
+  price book, the checkout carries an `Idempotency-Key`, and the terminal state is read back from
+  `GET …/payment-intents/{id}` rather than inferred from the provider redirect. The old operator
+  grant route (`POST …/blossoms/top-ups`) still exists for the `manual` provider, but the dashboard
+  no longer renders copy that calls a top-up a non-charge.
 
 ## The permission family (T0a)
 
@@ -503,6 +507,87 @@ period the API had not measured, which is the exact failure this component makes
 grants no data** — a test asserts the strip call count does not change — and the reduced card stays
 visible, so an owner sees precisely what their staff see. That answers "what does my staff see?" as a
 support question rather than as a permission.
+
+#### In-card sparklines
+
+`KpiSparkline` draws the **shape** of a series inside a tile; the tile's number remains the
+measurement. It is used on exactly the two cards that have a series behind them — `Gross order value`
+and `Collected` — and both read from **one** `revenue-series` request, issued inside the strip's
+existing load path gated on `reports:view`, so it costs one uncached call per Overview load and issues
+**nothing** on the staff-view preview or for a role without the permission. The window comes from the
+shell (`useDashboardWindow`'s `range`, passed down) rather than being recomputed per card, so the
+glyph and the figure cannot describe different periods.
+
+**The trend sits under the value, not beside it.** Side by side was the first version and it did not
+survive the arithmetic: at `lg` the strip is a four-column grid, so a tile's text column is about
+207px, while `LKR 162,550.00` at `text-3xl` in a monospace face is wider than that — the glyph was
+squeezed to zero and clipped by the card. The value is now `text-2xl` and the glyph gets the full
+width of the tile beneath it.
+
+Five honesty rules hold the component in place, each with a test:
+
+1. **A `null` bucket is a gap.** `connectNulls` comes from `lib/dashboard-chart-rules.ts`'s
+   `CONNECT_NULLS`, and `tenant-conformance` rule 5 scans every tenant `<Line>`/`<Area>` for it, the
+   same rule the admin tree has enforced since C6. The tenant tree previously hardcoded the literal.
+2. **A sparse series draws no glyph at all.** With `connectNulls` false, recharts breaks the area at
+   every gap, so a measured bucket whose neighbours are both `null` is a run of **one** point: the
+   path is a zero-length segment (`M5,22.789L5,31Z`) and the line's `stroke` is `none`, because the
+   stroke is drawn by a second curve that also has no length. A series of isolated measurements
+   therefore paints an empty box, which reads as "nothing happened" — the same lie as an empty axis.
+   `canDrawSparkline` requires **two** measured buckets, and below that the tile draws nothing and
+   says nothing about a trend.
+3. **An all-null or empty series states that nothing was measured**, and renders it **outside**
+   `ChartContainer`, where `ResponsiveContainer`'s `0×0` measurement cannot collapse it.
+4. **A null figure gets no glyph.** `KpiCard` renders the sparkline only on the measured branch, so a
+   tile reading "not measured" never carries a trend line implying a measurement it just denied.
+5. **No axes, grid or tooltip.** The glyph is not a read-out; a tooltip in a small box would cover
+   the thing it annotates. An `aria-label` names the series, the period and the direction instead.
+
+A sixth is about *period*, not measurement: **a capped series says so.** Under `ytd` the server clamps
+the series (its `DefaultSeriesCap`) while the figures still cover the full window, so the cards state
+that the trend covers a shorter period than the figure. The caption deliberately names **no day
+count**: the docs describe that cap as a configuration setting that does not exist, so the client
+encodes neither number.
+
+**Knowingly accepted:** the trailing bucket is the period in progress, so the line can end on a
+partial measurement that reads as a drop. The series' `isPartial` flag cannot fire on that edge
+(a backend defect, tracked separately), so the client cannot detect it honestly and a time-based
+guess would suppress a real drop. The tenant tree already lives with the same artefact in
+`BlossomBurnChart`.
+
+#### Metric marks and colour
+
+Each strip tile carries an `icon` and an `accent` passed in by `Overview`, so a reader finds a metric
+at a glance rather than by re-reading eleven labels, and the strip reads as a few **families** rather
+than eleven colours: billed value and margin share `--chart-1`, money that moves shares `--chart-2`,
+the client book `--chart-3`, the catalogue `--chart-4`, and queues and refunds `--chart-5`. `KpiCard`
+itself knows no palette — it exposes `--kpi-accent` on its own root element through
+`accentStyle`/`KPI_ACCENT_VAR`, and the icon tint and the top wash both read it, so "how strong is the
+brand here" is one decision in one place.
+
+The accents are the **theme's** tokens (`index.css`), not a second palette, and they are passed as
+tokens (`var(--chart-2)`) rather than literals — `tenant-conformance` rule 1b fails the build on a
+bare hex, which is why the reference image's orange is not adopted. They are also the tokens that
+`index.css` re-maps for dark mode, so the tint follows the theme instead of fighting it.
+
+#### The figure treatment, in one place
+
+A **figure** — as opposed to a label or a caption — is `font-mono tabular-nums` and carries the theme
+**primary** as its colour, rather than the near-black a paragraph inherits. A screen of near-black
+numerals read as a spreadsheet; these are the customer's own numbers and the reason the page exists, so
+they carry the brand.
+
+`components/dashboard/Money.tsx` is that treatment, and it is the only place it is written down.
+`KpiCard`'s value, the Income reconciliation's three figures, the per-kind totals and every register
+row all render through it, so a figure cannot acquire a different font, a different digit width or a
+different colour from the one beside it. It also means `formatMoney` stays the single formatter and
+`null` still renders "not measured" rather than `0`. A caller that wants a different **size** passes
+`className`; a caller that wants a different **treatment** has found the wrong component.
+
+Two exceptions are deliberate. `not measured` keeps its muted `italic font-sans` and takes **no**
+accent — there is no figure to accent. And the accent is a Tailwind class from the theme
+(`FIGURE_ACCENT_CLASS`), not a token name assembled at runtime: Tailwind compiles classes statically,
+so a built-up class name would never be generated and the figure would silently lose its colour.
 
 #### Deviation: no TanStack Query, and why
 
@@ -950,12 +1035,13 @@ T7 is not a tidy-up: it is the slice that makes the tenant surface **discoverabl
 - **CI** — `test:coverage:dashboard` is a step in the `test-web` job, so the ratchet above binds in CI
   rather than only on a developer's machine.
 
-**Two reads still have no panel.** `E-2` (`…/dashboard/revenue-series`) and `E-3`
-(`…/dashboard/top-items`) are shipped, cached and documented, and `lib/dashboard-api.ts` carries typed
-clients for both, but **no tenant component calls them**: the Overview rebuild shipped the KPI strip,
-the reduced takings card and the Home focus feed, and stopped there. `Revenue trend` and `Top items`
-in the target-state table earlier in this page are therefore **targets, not shipped panels** —
-recorded here so the gap is a known one rather than a page that overstates the tree.
+**One read still has no panel.** `E-3` (`…/dashboard/top-items`) is shipped, cached and documented,
+and `lib/dashboard-api.ts` carries a typed client for it, but **no tenant component calls it**: the
+Overview rebuild shipped the KPI strip, the reduced takings card and the Home focus feed, and stopped
+there. `Top items` in the target-state table earlier in this page is therefore a **target, not a
+shipped panel** — recorded here so the gap is a known one rather than a page that overstates the
+tree. (`E-2`, `…/dashboard/revenue-series`, **is** now called: the Overview strip's two revenue tiles
+draw an in-card sparkline from it — see *In-card sparklines* below.)
 
 ## Deliberate exclusions
 

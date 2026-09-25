@@ -10,10 +10,11 @@
  * The distinguishing facts a reader would otherwise have to assume, and which this vocabulary
  * exists to state:
  *
- * - **No payment provider is wired.** `OrganizationSubscription` and `BlossomPriceEntry` carry
- *   provider columns that nothing writes, and `docs/api/README.md` records the position:
- *   *"Phase 3 attaches a payment provider; until then a top-up is a recorded grant, not a
- *   charge."* So no figure here is settled money.
+ * - **A payment provider may or may not be settling money.** `revenueProviderSettlementAvailable`
+ *   is the server's answer for *this* deployment: `true` once a provider client can settle a
+ *   charge, `false` while the configured provider is `manual` and every receipt is an operator's
+ *   confirmation. The line this module prints has to move with that flag, or it tells the reader
+ *   the opposite of what the server just said.
  * - **Every subscription currently has `PriceLkr = 0`.** `SubscriptionService` never assigns
  *   the price, so a derived charge of `0` means *no list price is configured* — it does not
  *   mean free, and it must never enter MRR.
@@ -50,13 +51,18 @@ export const INCOME_QUALITY_FIELDS = [
  * (the price exists and nobody is paying). Those are different facts about the business, and one
  * generic "MRR unavailable" would state neither.
  *
- * Always returns at least one line: the provider fact is true of every response today, so it is
- * stated rather than left to inference.
+ * Always returns at least one line: whether a provider settles money is true of every response, so
+ * it is stated rather than left to inference.
  */
 export function describeRevenueQuality(quality: IncomeDataQuality): string[] {
   const lines: string[] = [
-    'No payment provider is wired in this deployment, so no figure here is settled money: an '
-      + 'amount is either an expectation from a list price or a receipt an operator confirmed.',
+    quality.revenueProviderSettlementAvailable
+      ? 'A payment provider is settling money in this deployment, so a Verified amount is a '
+        + 'receipt rather than an expectation. A Derived amount is still only what a list price '
+        + 'says should be billed.'
+      : 'No payment provider settles money in this deployment, so no figure here is collected '
+        + 'automatically: an amount is either an expectation from a list price or a receipt an '
+        + 'operator confirmed.',
   ]
 
   if (!quality.subscriptionPricesConfigured) {

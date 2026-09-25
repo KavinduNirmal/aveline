@@ -6,6 +6,7 @@ using Aveline.Api.Infrastructure.Integrations;
 using Aveline.Api.Modules.Billing.Domain;
 using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Billing.Repositories;
+using Aveline.Api.Modules.Billing.Services;
 using Aveline.Api.Modules.Organizations.DTOs;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Organizations.Repositories;
@@ -49,8 +50,27 @@ public class OnboardingServiceTests
             _cacheService,
             _agentClient,
             NullLogger<OnboardingService>.Instance,
-            new EntitlementResolver(new EntitlementRepository(_context)));
+            new EntitlementResolver(new EntitlementRepository(_context)),
+            new SubscriptionProvisioner(_context, new SubscriptionPriceResolver(new PricingRepository(_context))));
     }
+
+    /// <summary>
+    /// Seeds an active <c>PlanAllowance</c> row into the price book, exactly as the admin console
+    /// would (G9 / FR-1.11). The book is empty in the test host, so an unseeded tier has no price.
+    /// </summary>
+    private void SeedPlanAllowance(PlanTier tier, decimal priceLkr, Guid? organizationId = null) =>
+        _context.BlossomPriceEntries.Add(new BlossomPriceEntry
+        {
+            PlanTier = tier,
+            OrganizationId = organizationId,
+            SkuKind = BlossomSkuKind.PlanAllowance,
+            BlossomQuantity = 750m,
+            PriceLkr = priceLkr,
+            EffectiveFrom = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+            Status = BlossomRuleStatus.Active,
+            ChangeReason = "Seeded by the onboarding plan-selection tests.",
+            CreatedByUserId = Guid.CreateVersion7(),
+        });
 
     /// <summary>
     /// Seeds the entitlement rows the onboarding flow reads, mirroring the M4 seed
@@ -168,6 +188,146 @@ public class OnboardingServiceTests
 
         Assert.Equal(PlanTier.Bloom, result.PlanTier);
         Assert.Equal(4, result.OnboardingStep);
+    }
+
+    /// <summary>
+    /// Plan §9.1 F1 acceptance (2). Selecting a paid tier prices and subscribes in the same call:
+    /// the resolved list price lands on the row, the status is <c>Trialing</c> (defer mode collects
+    /// nothing yet), and exactly one subscription exists.
+    /// </summary>
+    [Fact]
+    public async Task SelectPlanAsync_ForABloomPlan_CreatesExactlyOneTrialingSubscriptionAtTheResolvedPrice()
+    {
+        SeedPlanAllowance(PlanTier.Bloom, priceLkr: 3500m);
+        await _context.SaveChangesAsync();
+
+        var user = await CreateUserAsync();
+        await _sut.SaveBoutiqueDetailsAsync(user.Id, new SaveBoutiqueDetailsRequest(
+            Name: "The Silk Pavilion",
+            Address: "123 Galle Road, Colombo",
+            PhoneNumber: "+94 77 123 4567"));
+
+        var result = await _sut.SelectPlanAsync(user.Id, new SelectPlanRequest(PlanTier.Bloom));
+
+        Assert.Equal(3500m, result.PriceLkr);
+        Assert.Equal("LKR", result.Currency);
+        Assert.Equal("Trialing", result.SubscriptionStatus);
+        // Defer mode (plan §14 Q1): no checkout and no intent is ever raised at plan selection.
+        Assert.Null(result.PaymentIntentId);
+        Assert.Null(result.CheckoutUrl);
+
+        var org = await _context.Organizations.SingleAsync(o => o.OwnerUserId == user.Id);
+        var subscription = await _context.OrganizationSubscriptions
+            .SingleAsync(s => s.OrganizationId == org.Id);
+        Assert.Equal(PlanTier.Bloom, subscription.PlanTier);
+        Assert.Equal(3500m, subscription.PriceLkr);
+        Assert.Equal(SubscriptionStatus.Trialing, subscription.Status);
+        Assert.Null(subscription.ExternalProvider);
+        Assert.Null(subscription.ExternalSubscriptionId);
+    }
+
+    [Fact]
+    public async Task SelectPlanAsync_ForTheFreeSeedTier_CreatesNoPaidSubscription()
+    {
+        var user = await CreateUserAsync();
+        await _sut.SaveBoutiqueDetailsAsync(user.Id, new SaveBoutiqueDetailsRequest(
+            Name: "The Silk Pavilion",
+            Address: "123 Galle Road, Colombo",
+            PhoneNumber: "+94 77 123 4567"));
+
+        var result = await _sut.SelectPlanAsync(user.Id, new SelectPlanRequest(PlanTier.Seed));
+
+        Assert.Equal(0m, result.PriceLkr);
+        Assert.Equal("LKR", result.Currency);
+
+        var org = await _context.Organizations.SingleAsync(o => o.OwnerUserId == user.Id);
+        var subscriptions = await _context.OrganizationSubscriptions
+            .Where(s => s.OrganizationId == org.Id)
+            .ToListAsync();
+
+        // Seed is free by definition: either no row at all, or one explicit zero-price row. Never
+        // a priced one, and never a second row.
+        Assert.True(subscriptions.Count <= 1);
+        Assert.All(subscriptions, s =>
+        {
+            Assert.Equal(0m, s.PriceLkr);
+            Assert.Equal(PlanTier.Seed, s.PlanTier);
+        });
+    }
+
+    /// <summary>
+    /// Idempotency: the wizard can be re-entered and the same card pressed twice. Re-selecting the
+    /// same tier must not create a second subscription row.
+    /// </summary>
+    [Fact]
+    public async Task SelectPlanAsync_SelectingTheSameTierTwice_IsIdempotent()
+    {
+        SeedPlanAllowance(PlanTier.Bloom, priceLkr: 3500m);
+        await _context.SaveChangesAsync();
+
+        var user = await CreateUserAsync();
+        await _sut.SaveBoutiqueDetailsAsync(user.Id, new SaveBoutiqueDetailsRequest(
+            Name: "The Silk Pavilion",
+            Address: "123 Galle Road, Colombo",
+            PhoneNumber: "+94 77 123 4567"));
+
+        await _sut.SelectPlanAsync(user.Id, new SelectPlanRequest(PlanTier.Bloom));
+        var second = await _sut.SelectPlanAsync(user.Id, new SelectPlanRequest(PlanTier.Bloom));
+
+        Assert.Equal(3500m, second.PriceLkr);
+        Assert.Equal("Trialing", second.SubscriptionStatus);
+
+        var org = await _context.Organizations.SingleAsync(o => o.OwnerUserId == user.Id);
+        Assert.Equal(1, await _context.OrganizationSubscriptions
+            .CountAsync(s => s.OrganizationId == org.Id));
+    }
+
+    /// <summary>
+    /// P1's rule: a missing price row is <c>null</c>, never coerced to zero, so the response says
+    /// <c>priceLkr = null</c> and no <c>Derived</c> charge can be written for it later.
+    /// </summary>
+    [Fact]
+    public async Task SelectPlanAsync_WithNoPriceRow_ReportsANullPriceAndStillTrials()
+    {
+        var user = await CreateUserAsync();
+        await _sut.SaveBoutiqueDetailsAsync(user.Id, new SaveBoutiqueDetailsRequest(
+            Name: "The Silk Pavilion",
+            Address: "123 Galle Road, Colombo",
+            PhoneNumber: "+94 77 123 4567"));
+
+        var result = await _sut.SelectPlanAsync(user.Id, new SelectPlanRequest(PlanTier.Bloom));
+
+        Assert.Null(result.PriceLkr);
+        Assert.Equal("Trialing", result.SubscriptionStatus);
+
+        var org = await _context.Organizations.SingleAsync(o => o.OwnerUserId == user.Id);
+        var subscription = await _context.OrganizationSubscriptions
+            .SingleAsync(s => s.OrganizationId == org.Id);
+        Assert.Equal(0m, subscription.PriceLkr);
+    }
+
+    [Fact]
+    public async Task CompleteOnboardingAsync_WithAPaidTier_StillActivatesInDeferMode()
+    {
+        SeedPlanAllowance(PlanTier.Bloom, priceLkr: 3500m);
+        await _context.SaveChangesAsync();
+
+        var user = await CreateUserAsync();
+        await _sut.SaveBoutiqueDetailsAsync(user.Id, new SaveBoutiqueDetailsRequest(
+            Name: "The Silk Pavilion",
+            Address: "123 Galle Road, Colombo",
+            PhoneNumber: "+94 77 123 4567"));
+        await _sut.SelectPlanAsync(user.Id, new SelectPlanRequest(PlanTier.Bloom));
+
+        var response = await _sut.CompleteOnboardingAsync(user.Id);
+
+        // Defer mode (plan §14 Q1): activation never blocks on a settlement.
+        Assert.True(response.Organization.HasCompletedOnboarding);
+        Assert.Equal(6, response.Organization.OnboardingStep);
+        Assert.Equal(3500m, response.Organization.PriceLkr);
+        Assert.Null(response.Organization.CheckoutUrl);
+        Assert.Null(response.Organization.PaymentIntentId);
+        Assert.Empty(await _context.PaymentIntents.ToListAsync());
     }
 
     [Fact]

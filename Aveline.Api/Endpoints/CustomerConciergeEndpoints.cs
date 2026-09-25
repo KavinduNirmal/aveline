@@ -1,5 +1,6 @@
 using Aveline.Api.Configurations;
 using Aveline.Api.Modules.CustomerConcierge.DTOs;
+using Aveline.Api.Modules.CustomerConcierge.Models;
 using Aveline.Api.Modules.CustomerConcierge.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -94,7 +95,7 @@ public static class CustomerConciergeEndpoints
 
         group.MapPost("/{customerId:guid}/consent", UpdateConsentAsync)
             .WithName("UpdateCustomerConsent")
-            .WithSummary("Set a customer's consent status (granted | revoked).")
+            .WithSummary("Set a customer's consent status (pending | granted | revoked).")
             .Produces<CustomerConsentDto>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized);
@@ -271,7 +272,7 @@ public static class CustomerConciergeEndpoints
     {
         var brief = await memories.GenerateBriefAsync(organizationId, customerId, cancellationToken);
         return brief is null
-            ? Results.NotFound(new { message = "Customer not found." })
+            ? Results.NotFound(new { message = "No brief available (customer not found, or consent revoked)." })
             : Results.Ok(brief);
     }
 
@@ -290,7 +291,11 @@ public static class CustomerConciergeEndpoints
             request.ParsedIntentJson,
             request.StaffMemberId,
             cancellationToken);
-        return Results.Created($"/internal/customers/{customerId}/interactions/{interaction.Id}", interaction);
+        // §5.5: a revoked customer's interaction is not written. Mirrors the memory endpoint's
+        // documented 400 rather than silently returning a row that does not exist.
+        return interaction is null
+            ? Results.BadRequest(new { message = "Consent revoked; interaction not recorded." })
+            : Results.Created($"/internal/customers/{customerId}/interactions/{interaction.Id}", interaction);
     }
 
     private static async Task<IResult> GetConsentAsync(
@@ -314,9 +319,11 @@ public static class CustomerConciergeEndpoints
             var dto = await consent.UpdateAsync(request.OrganizationId, customerId, request.ConsentStatus, cancellationToken);
             return Results.Ok(dto);
         }
-        catch (ArgumentException ex)
+        catch (InvalidConsentStatusException ex)
         {
-            return Results.BadRequest(new { message = ex.Message });
+            // D-3: a typed domain error, mapped deliberately to the documented 400 rather than
+            // reaching the global handler as a 500.
+            return Results.BadRequest(new { code = ex.Code, message = ex.Message });
         }
     }
 
@@ -327,7 +334,10 @@ public static class CustomerConciergeEndpoints
         CancellationToken cancellationToken)
     {
         var customerEvent = await events.AddAsync(customerId, request, cancellationToken);
-        return Results.Created($"/internal/customers/{customerId}/events/{customerEvent.Id}", customerEvent);
+        // §5.5: a revoked customer's event is not written (see RecordInteractionAsync).
+        return customerEvent is null
+            ? Results.BadRequest(new { message = "Consent revoked; event not stored." })
+            : Results.Created($"/internal/customers/{customerId}/events/{customerEvent.Id}", customerEvent);
     }
 
     private static async Task<IResult> ListEventsAsync(

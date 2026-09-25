@@ -27,7 +27,7 @@ flowchart LR
     subgraph App["Application tier"]
         API["Aveline.Api :8080"]
         MET["/metrics · MetricsPolicy"]
-        AGT["agnet-service :8000"]
+        AGT["agent-service :8000"]
     end
 
     subgraph Data["Stateful"]
@@ -148,7 +148,35 @@ looks like a missing type but is not.
 
 - the twenty bridged business metrics (Slice 2 plus `aveline.db.pool.saturation` from Slice 5),
 - the four event-bus instruments (`aveline_events_*`),
-- the ten notification series (Slice 7).
+- the ten notification series (Slice 7),
+- **the privacy and consent family** (privacy plan §9.1, catalogued by Phase 6 item 6.3):
+
+  | Series | Kind | Notes |
+  | --- | --- | --- |
+  | `aveline_consent_state_total{status}` | snapshot gauge | Republished every 60 s by `ConsentMetricCollector`; replaces the plan's separate `consent_customers_total`/`consent_state_distribution` names with one keyed series |
+  | `aveline_message_skip_total{reason}` | counter | Phase 1's processing counter |
+  | `aveline_otp_issued_total`, `aveline_otp_verified_total`, `aveline_otp_failed_total{reason}` | counters | The opt-out codes |
+  | `aveline_privacy_endpoint_rate_limited_total{reason}` | counter | **Renamed from `aveline_otp_start_refused`** in Phase 6; now covers the start, verify and data-rights budgets |
+  | `aveline_disclosure_shown_total`, `aveline_disclosure_unshown_total` | counters | The transparency alarm is `unshown` |
+  | `aveline_privacy_delivery_delivered_total{kind}`, `aveline_privacy_delivery_failed_total{kind,reason}` | counters | `disclosure_delivery_failed_total` in the plan is `..._failed_total{kind="disclosure"}` - no second name |
+  | `aveline_data_export_requests_total{status}`, `aveline_data_delete_requests_total{status}` | counters | Terminal status only (`completed`/`not_found`/`conflict`/`verification_failed`/`unavailable`) |
+  | `aveline_data_delete_time_to_complete_seconds_{bucket,sum,count}` | histogram (unit `s`) | Recorded once per first execution; a replayed deletion did not complete again |
+
+  The family deliberately has **no route**: the consent tables stay off every read surface but the
+  authenticated scrape (`docs/backend/statistics-catalog.md`, "Privacy and consent metrics").
+  `dpia_retention_breach_total` is **not** authored - question Q-6 (the retention window) is open,
+  and a breach counter needs a threshold before it can exist.
+
+### 4.3 Payment series (Phase 2)
+
+`Modules/Payments/Services/PaymentMetrics.cs` authors the ten `aveline.payment.*` instruments of the
+payment plan's §12.1 on the same `Aveline.Api` meter, so `AddMeter(InstrumentationName)` exports
+them with no second registration site. The family is deliberately **not** in `MetricsCatalog.All`
+yet: putting it there is what pins each Prometheus name through `MetricsNamingTests`, and that is
+the follow-up once the P2-B2 settlement services are the only producers. Labels are `provider`,
+`purpose`, `outcome`, `type`, `reason`, `operation` and `error_code`; none is in
+`ForbiddenLabelKeys`. `aveline_payment_mock_provider_active` is the alertable one: it reads `1` for
+`provider="mock"` and is Critical outside Development (plan §7.4 guardrail 4).
 
 ## 5. Cardinality and label discipline
 
@@ -309,7 +337,7 @@ selector keeps them out of the variable itself, so "All" means the real database
 
 ## 8. The agent service
 
-`agnet-service` has no inbound metrics port; it pushes OTLP metrics (`MeterProvider` +
+`agent-service` has no inbound metrics port; it pushes OTLP metrics (`MeterProvider` +
 `OTLPMetricExporter`, cumulative temporality) to `otel-collector`, which re-exposes them on
 `:8889` for the `aveline-agent` scrape job. `http://agent:8000/metrics` still 404s by design.
 

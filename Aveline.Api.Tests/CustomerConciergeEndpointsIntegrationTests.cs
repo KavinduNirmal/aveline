@@ -1,11 +1,13 @@
 using System.Net;
 using System.Net.Http.Json;
+using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Infrastructure.Integrations;
 using Aveline.Api.Modules.CustomerConcierge.DTOs;
 using Aveline.Api.Modules.CustomerConcierge.Models;
 using Aveline.Api.Modules.CustomerConcierge.Services;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Aveline.Api.Tests;
@@ -216,6 +218,86 @@ public class CustomerConciergeEndpointsIntegrationTests : IAsyncLifetime
         var get = await InternalGetAsync($"/internal/customers/{profile.CustomerId}/consent?organizationId={orgId}");
         var consent = await get.Content.ReadFromJsonAsync<CustomerConsentDto>();
         Assert.Equal("granted", consent!.ConsentStatus);
+    }
+
+    [Fact]
+    public async Task Consent_AbsentRow_ReportsPendingOnBothCallSites()
+    {
+        // D-2 / 0.2: the consent endpoint said "pending" while the profile said "unknown" for a
+        // customer with no consent row. Both surfaces must report the same value.
+        var orgId = Guid.NewGuid();
+        var customerId = await CreateWalkInAsync(orgId, "No Consent Row", "+94774440001");
+
+        var profileResponse = await InternalGetAsync(
+            $"/internal/customers/{customerId}/profile?organizationId={orgId}");
+        var profile = await profileResponse.Content.ReadFromJsonAsync<CustomerProfileDto>();
+
+        var consentResponse = await InternalGetAsync(
+            $"/internal/customers/{customerId}/consent?organizationId={orgId}");
+        var consent = await consentResponse.Content.ReadFromJsonAsync<CustomerConsentDto>();
+
+        Assert.NotNull(profile);
+        Assert.NotNull(consent);
+        Assert.Equal("pending", profile!.ConsentStatus);
+        Assert.Equal("pending", consent!.ConsentStatus);
+        Assert.Equal(profile.ConsentStatus, consent.ConsentStatus);
+    }
+
+    [Fact]
+    public async Task Consent_Revoked_OnACustomerWithNoRow_StampsConsentRevokedAt()
+    {
+        // D-5 / 0.1b: the insert branch wrote the status with a null revocation timestamp, so a
+        // privacy audit could not answer "when was the objection recorded?".
+        var orgId = Guid.NewGuid();
+        var customerId = await CreateWalkInAsync(orgId, "First Message Revoker", "+94774440002");
+
+        var update = await InternalPostAsync($"/internal/customers/{customerId}/consent",
+            new UpdateConsentRequest { OrganizationId = orgId, ConsentStatus = "revoked" });
+        Assert.Equal(HttpStatusCode.OK, update.StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var row = await context.CustomerConsents.SingleAsync(
+            candidate => candidate.OrganizationId == orgId && candidate.CustomerId == customerId);
+        Assert.Equal("revoked", row.ConsentStatus);
+        Assert.NotNull(row.ConsentRevokedAt);
+    }
+
+    [Fact]
+    public async Task Consent_SerialisesTheWidenedPayloadInCamelCase()
+    {
+        // D-2 / 0.3: the Python agent reads the camelCase `consentStatus` field
+        // (agent-service/app/agents/customer_memory/nodes.py:112) and docs/api/openapi.yaml
+        // documents it. Widening the DTO must not rename or re-case what the agent parses.
+        var orgId = Guid.NewGuid();
+        var identify = await InternalPostAsync("/internal/customers/identify",
+            new IdentifyCustomerRequest { OrganizationId = orgId, PhoneNumber = "+94774440003" });
+        var profile = await identify.Content.ReadFromJsonAsync<CustomerProfileDto>();
+
+        var get = await InternalGetAsync($"/internal/customers/{profile!.CustomerId}/consent?organizationId={orgId}");
+        var json = await get.Content.ReadAsStringAsync();
+
+        Assert.Contains("\"consentStatus\"", json);
+        Assert.Contains("\"consentGrantedAt\"", json);
+        Assert.Contains("\"consentRevokedAt\"", json);
+        Assert.Contains("\"disclosureShownAt\"", json);
+    }
+
+    [Fact]
+    public async Task Consent_UnknownStatus_ReturnsBadRequestNotAnException()
+    {
+        // D-3 / 0.1: an unknown status is a client error, never an unhandled 500.
+        var orgId = Guid.NewGuid();
+        var identify = await InternalPostAsync("/internal/customers/identify",
+            new IdentifyCustomerRequest { OrganizationId = orgId, PhoneNumber = "+94774440004" });
+        var profile = await identify.Content.ReadFromJsonAsync<CustomerProfileDto>();
+
+        var response = await InternalPostAsync($"/internal/customers/{profile!.CustomerId}/consent",
+            new UpdateConsentRequest { OrganizationId = orgId, ConsentStatus = "bogus" });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("invalid-consent-status", body);
     }
 
     [Fact]

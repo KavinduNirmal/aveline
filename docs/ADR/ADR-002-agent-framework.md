@@ -14,11 +14,11 @@ conversation/execution state. It must run behind the ASP.NET Core API.
 3. **Custom state machine** — no framework. Pros: zero deps. Cons: re-implements checkpointing, tooling, and HITL.
 
 ## Decision
-**LangGraph** (FastAPI + LangGraph service, `agnet-service/app/`), with a
+**LangGraph** (FastAPI + LangGraph service, `agent-service/app/`), with a
 PostgreSQL checkpointer so long-running workflows survive restarts and can
 resume after an owner approves or revises a step.
 
 ## Consequences
-- The agent service depends on the LangGraph API; schema/workflow definitions live in `agnet-service`.
+- The agent service depends on the LangGraph API; schema/workflow definitions live in `agent-service`.
 - Checkpoint state is persisted in PostgreSQL (same instance as business data).
 - Human-in-the-loop approvals surface as resumable interrupts, consumed by the React dashboard.

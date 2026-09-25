@@ -48,6 +48,9 @@ public class EnvironmentHardeningIntegrationTests : IAsyncLifetime
                 // default (Media:Provider=database), which Production refuses without the
                 // documented escape hatch.
                 builder.UseSetting("Media:AllowDatabaseProviderInProduction", "true");
+                // Required by the Production database guard: this host deliberately runs on the
+                // in-memory provider, which Production refuses without the documented escape hatch.
+                builder.UseSetting("Database:AllowInMemoryInProduction", "true");
             });
 
         _client = _factory.CreateClient();

@@ -41,7 +41,7 @@ living customer profile and prepares staff for every interaction. The agreed sco
   `consent`, `events`, `status`.
 
 ### 2.3 Customer Memory Agent (Issues #146–#147)
-`agnet-service/app/agents/customer_memory/`, `app/schemas/customer_memory.py`, `app/tools/registry.py`.
+`agent-service/app/agents/customer_memory/`, `app/schemas/customer_memory.py`, `app/tools/registry.py`.
 
 - Typed Pydantic schemas (`extra="forbid"`) and `ToolRegistry` memory methods bound to the real
   internal endpoints.
@@ -49,7 +49,7 @@ living customer profile and prepares staff for every interaction. The agreed sco
   compose_output`, dependency-injected (fully testable without an LLM or live backend).
 
 ### 2.4 Realtime Salon messaging loop (Issues #150–#159)
-`Aveline.Api/Modules/Conversations`, `agnet-service/app/events/`.
+`Aveline.Api/Modules/Conversations`, `agent-service/app/events/`.
 
 - Real agent output mapped to rich Salon content blocks (`block_builders.py`).
 - Specialist stubs (Elle/Lina) emit structured output (real sub-graphs are Slice 2/3).
@@ -57,7 +57,7 @@ living customer profile and prepares staff for every interaction. The agreed sco
 - `message.updated` application; batched content delivery + `agent.status` lifecycle (ADR-018).
 
 ### 2.5 Shared customer resolution (Issues #161–#162, ADR-019)
-`agnet-service/app/customer_resolution/`, `Aveline.Api/Modules/Conversations`.
+`agent-service/app/customer_resolution/`, `Aveline.Api/Modules/Conversations`.
 
 - Deterministic `@name` / `#phone` extraction + `/lookup` resolution (`resolved | ambiguous |
   not_found | no_signal`).

@@ -92,6 +92,46 @@ public sealed class IncomeLedgerService(
     }
 
     /// <summary>
+    /// Records a <c>Verified</c> receipt and takes over the live <c>Derived</c> expectation for the
+    /// same identity (plan §9.9 item 1). The lookup is here rather than at each call site so the
+    /// admin verify route and a provider settlement cannot diverge; the supersede itself is still
+    /// <see cref="RecordAsync"/>, so the append-only rule and the identity release are unchanged.
+    /// </summary>
+    public async Task<IncomeLedgerEntry> VerifyAsync(
+        VerifyIncomeCommand command, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+
+        // The `Status` predicate keeps a row the tracker already holds as voided from coming back as
+        // live, matching `ResolveSupersedeTargetAsync`.
+        var derived = await db.IncomeLedgerEntries.FirstOrDefaultAsync(
+            entry => entry.OrganizationId == command.OrganizationId
+                && entry.SourceKind == command.SourceKind
+                && entry.SourceRef == command.SourceRef
+                && entry.ChargeBasis == IncomeChargeBasis.Derived
+                && entry.Status == IncomeEntryStatus.Recorded,
+            cancellationToken);
+
+        return await RecordAsync(
+            new RecordIncomeCommand(
+                command.OrganizationId,
+                command.Amount,
+                command.Reason,
+                command.Kind,
+                IncomeChargeBasis.Verified,
+                command.SourceKind,
+                command.SourceRef,
+                command.PeriodStart ?? derived?.PeriodStart,
+                command.PeriodEnd ?? derived?.PeriodEnd,
+                command.OccurredAt,
+                command.RecordedByUserId,
+                derived?.Id,
+                command.IdempotencyKey,
+                command.IdempotencyScope),
+            cancellationToken);
+    }
+
+    /// <summary>
     /// The in-memory provider has no transactions, so the supersede's two-phase write is only
     /// wrapped on a relational provider — the same guard `BlossomLedgerRepository` uses for its
     /// insert-plus-update.

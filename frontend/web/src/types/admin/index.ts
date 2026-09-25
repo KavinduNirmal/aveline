@@ -849,9 +849,10 @@ export type BusinessRankingMetric = 'messages' | 'agentRuns' | 'apiRequests' | '
  *
  * The three facts this exists to state, so no caller has to infer them:
  *
- * - `revenueProviderSettlementAvailable: false` — no payment provider is wired in this
- *   repository, so **no figure here is settled money**. Every amount is an expectation or an
- *   operator's confirmation, and the surface must say which.
+ * - `revenueProviderSettlementAvailable` — `false` while the configured provider is `manual`, so
+ *   **no figure here is settled money**: every amount is an expectation or an operator's
+ *   confirmation, and the surface must say which. It is `true` once the deployment configures a
+ *   provider client that settles charges itself.
  * - `subscriptionPricesConfigured: false` — every subscription currently has `PriceLkr = 0`
  *   because `SubscriptionService` never assigns it. A derived charge of `0` therefore means
  *   *no list price is configured*; it does not mean free, and MRR is `null` rather than `0`.
@@ -862,7 +863,7 @@ export type BusinessRankingMetric = 'messages' | 'agentRuns' | 'apiRequests' | '
  * pins the set.
  */
 export interface IncomeDataQuality {
-  /** `false` until a provider client settles money. Never rendered as "collected". */
+  /** `false` while the provider is `manual`; never rendered as "collected" while it is false. */
   revenueProviderSettlementAvailable: boolean
   /** `false` when every subscription's `PriceLkr` is `0`, so MRR is not measurable. */
   subscriptionPricesConfigured: boolean

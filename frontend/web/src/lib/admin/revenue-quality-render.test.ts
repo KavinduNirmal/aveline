@@ -27,11 +27,21 @@ function quality(overrides: Partial<IncomeDataQuality> = {}): IncomeDataQuality 
  * neither.
  */
 describe('describeRevenueQuality', () => {
-  it('states that no provider settles money, on every surface', () => {
-    const described = describeRevenueQuality(quality())
+  it('names whether a provider settles money, in either state', () => {
+    const noProvider = describeRevenueQuality(quality())
 
-    // This is true of every response today, so it is always stated rather than inferred.
-    expect(described.some((line) => /no payment provider/i.test(line))).toBe(true)
+    // `false` is the server's answer for a `manual` deployment, and the line has to say so.
+    expect(noProvider.some((line) => /no payment provider settles money/i.test(line))).toBe(true)
+
+    // Once a provider client settles charges the same line flips rather than leaving a stale
+    // "no payment provider" claim beside settled money.
+    const withProvider = describeRevenueQuality(
+      quality({ revenueProviderSettlementAvailable: true }),
+    )
+    expect(withProvider.some((line) => /a payment provider is settling money/i.test(line))).toBe(
+      true,
+    )
+    expect(withProvider.some((line) => /no payment provider/i.test(line))).toBe(false)
   })
 
   it('says the price is missing when no subscription has one', () => {

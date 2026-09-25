@@ -31,6 +31,10 @@ using Aveline.Api.Modules.Notifications;
 using Aveline.Api.Modules.Notifications.Hubs;
 using Aveline.Api.Modules.Organizations.Repositories;
 using Aveline.Api.Modules.Organizations.Services;
+using Aveline.Api.Modules.Payments;
+using Aveline.Api.Modules.Payments.Endpoints;
+using Aveline.Api.Modules.Privacy;
+using Aveline.Api.Modules.Privacy.Services;
 using Aveline.Api.Modules.Shared.Repositories;
 using Aveline.Api.Modules.Shared.Services;
 using Aveline.Api.Modules.Statistics;
@@ -57,7 +61,7 @@ builder.Services.AddAvelineObservability(builder.Configuration);
 // The bridged business-metric gauges; the collector publishes its snapshot here before the
 // database write so a database outage does not blind the operator dashboard.
 builder.Services.AddAvelineMetrics();
-builder.Services.AddAvelineDatabase(builder.Configuration);
+builder.Services.AddAvelineDatabase(builder.Configuration, builder.Environment);
 builder.Services.AddAvelineCache(builder.Configuration);
 builder.Services.AddAvelineJobs(builder.Configuration);
 builder.Services.AddAvelineEventing(builder.Configuration);
@@ -77,6 +81,9 @@ builder.Services.AddMediaModule(builder.Configuration);
 builder.Services.AddImageUrlFetcher();
 builder.Services.AddBillingModule();
 builder.Services.AddRevenueModule(builder.Configuration);
+// The payment provider abstraction and its adapters. Additive: it maps no endpoints and changes no
+// existing flow, and `Payments:Provider` defaults to the honest `manual` adapter.
+builder.Services.AddPaymentsModule(builder.Configuration, builder.Environment);
 builder.Services.AddApiAccessModule();
 builder.Services.AddAvelineIdempotency();
 builder.Services.AddAuditModule();
@@ -91,6 +98,7 @@ builder.Services.AddSignalR()
 builder.Services.AddNotificationsModule(builder.Configuration);
 builder.Services.AddConversationsModule(builder.Configuration);
 builder.Services.AddCustomerConciergeModule();
+builder.Services.AddPrivacyModule(builder.Configuration);
 builder.Services.AddHandbookModule();
 builder.Services.AddHomeModule();
 builder.Services.AddSystemHealthModule(builder.Configuration);
@@ -119,8 +127,9 @@ builder.Services.AddControllers();
 // Visual Intelligence & Inventory Module (Slice 2)
 builder.Services.AddVisualIntelligenceModule();
 
-// Commerce Module (Slice 3)
-builder.Services.AddCommerceModule();
+// Commerce Module (Slice 3). Carries the Phase 9 rollback switch
+// (`Payments:Commerce:UseProviderIntents`), so it binds the `Payments` section itself.
+builder.Services.AddCommerceModule(builder.Configuration);
 
 var app = builder.Build();
 
@@ -131,6 +140,10 @@ MetricsSecurityGuard.EnsureScrapeTokenForProduction(app.Environment, app.Configu
 // Fail fast when the media provider is half-configured, and warn (never silently accept) when a
 // Production host keeps image bytes in the database via the approved escape hatch (strategy §3.4).
 MediaOptionsValidator.ValidateOrThrow(app.Configuration, app.Environment, app.Logger);
+// Fail fast when Privacy:LinkSigningKey is set but unusable: such a host cannot sign the permanent
+// opt-out link and would message customers without one. An absent key only warns - see
+// PrivacyOptionsValidator for why absence is not a boot failure.
+PrivacyOptionsValidator.ValidateOrThrow(app.Configuration, app.Logger);
 
 // Outermost middleware: it catches every downstream failure, including the security
 // header middleware, and writes the stable error envelope (M-7).
@@ -146,6 +159,9 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.UseAvelineSecurityHeaders();
 app.UseCors(CorsConfiguration.DefaultPolicy);
+// Requests that carry an Idempotency-Key get a rewindable body buffer before minimal-API binding
+// reads it; the idempotency endpoint filter runs after binding and hashes what this preserved.
+app.UseAvelineIdempotencyBodyBuffering();
 // Correlation ids must be established before authentication so 401/403 audit logs
 // and every downstream log line carry the same request id (FR-6.10).
 app.UseMiddleware<CorrelationIdMiddleware>();
@@ -180,6 +196,9 @@ if (app.Environment.IsDevelopment())
 {
     // Demonstration endpoints only; never mapped in Production (M-14).
     v1.MapAuthPolicyDemoEndpoints();
+    // The mock provider's hosted checkout page and settle endpoint (plan §7.4 guardrail 5): mapped
+    // only here, so a Production build does not expose them even if the provider is misconfigured.
+    v1.MapMockCheckoutEndpoints();
 }
 v1.MapAgentEndpoints();
 v1.MapUserEndpoints();
@@ -194,10 +213,18 @@ v1.MapOnboardingEndpoints();
 v1.MapIntegrationEndpoints();
 v1.MapOrgUsageEndpoints();
 v1.MapWebhookEndpoints();
+// The anonymous OTP-verified opt-out flow (privacy plan, Phase 4). It is a public,
+// unauthenticated customer surface: the OTP is the authentication, and there is deliberately no
+// boutique-scoped route that reaches the same code.
+v1.MapPrivacyEndpoints();
 v1.MapClerkWebhookEndpoints();
 v1.MapConversationEndpoints();
 v1.MapPricingEndpoints();
 v1.MapBlossomEndpoints();
+// The payment-intent checkout/poll/cancel routes and the anonymous provider webhook (P2-B2). The
+// existing operator top-up route above keeps its shape (decision D7).
+v1.MapPaymentEndpoints();
+v1.MapPaymentWebhookEndpoints();
 v1.MapSubscriptionEndpoints();
 v1.MapBillingStatisticsEndpoints();
 v1.MapApiAccessEndpoints();
@@ -211,6 +238,9 @@ v1.MapCustomerTenantEndpoints();
         v1.MapDashboardEndpoints();
 
 app.MapBillingEndpoints();
+// The P7 admin payment reconciliation read, mapped at the root for the same reason as the Blossom
+// drift read above (`app.MapBillingEndpoints`): the admin statistics paths carry the full prefix.
+app.MapPaymentModuleEndpoints();
 app.MapCustomerConciergeEndpoints();
 // The handbook knowledge base (ADR-025): chunk ingest, hybrid search and source listing.
 app.MapHandbookEndpoints();

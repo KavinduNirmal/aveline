@@ -103,7 +103,7 @@ describe('AdminRevenueView', () => {
     // `count` formats with the locale, which is the point of the unit.
     expect(screen.getByText('2')).toBeInTheDocument()
     // And the provider fact is stated rather than left to inference.
-    expect(screen.getByText(/no payment provider/i)).toBeInTheDocument()
+    expect(screen.getByText(/no payment provider settles money/i)).toBeInTheDocument()
   })
 
   it('renders a null MRR as "not measured" rather than zero', async () => {
@@ -125,7 +125,7 @@ describe('AdminRevenueView', () => {
     renderAt('/admin/u1/revenue')
 
     // Wait for the notes block, which only renders once the query has settled.
-    expect(await screen.findByText(/no payment provider/i)).toBeInTheDocument()
+    expect(await screen.findByText(/no payment provider settles money/i)).toBeInTheDocument()
 
     // MRR and ARR are both `null` and both render "not measured" — never a formatted zero.
     // `Card` carries `data-slot`, so the tiles are addressable without a bespoke test id.
@@ -162,14 +162,36 @@ describe('AdminRevenueView', () => {
 
     // The provider note proves the query settled; only then is the absence of "not measured"
     // meaningful, because an unresolved tile also renders it.
-    expect(await screen.findByText(/no payment provider/i)).toBeInTheDocument()
+    expect(await screen.findByText(/no payment provider settles money/i)).toBeInTheDocument()
     expect(screen.getByText(/no list price is configured/i)).toBeInTheDocument()
   })
 
   it('states that no provider settles money, so nothing here is collected', async () => {
     renderAt('/admin/u1/revenue')
 
-    expect(await screen.findByText(/no payment provider/i)).toBeInTheDocument()
+    expect(await screen.findByText(/no payment provider settles money/i)).toBeInTheDocument()
+  })
+
+  /**
+   * The other half of the dynamic flag. When the server says a provider client is settling money,
+   * the page must say so and must not keep the "no payment provider" line beside it.
+   */
+  it('states that a provider settles money when the server says one does', async () => {
+    fetchIncomeOverview.mockResolvedValue(
+      overview({
+        dataQuality: {
+          revenueProviderSettlementAvailable: true,
+          subscriptionPricesConfigured: true,
+          derivedEntriesUnverified: 0,
+          checkedAt: '2026-09-20T00:00:00Z',
+          notes: [],
+        },
+      }),
+    )
+    renderAt('/admin/u1/revenue')
+
+    expect(await screen.findByText(/a payment provider is settling money/i)).toBeInTheDocument()
+    expect(screen.queryByText(/no payment provider settles money/i)).not.toBeInTheDocument()
   })
 
   it('links to the register and the statistics surface', async () => {

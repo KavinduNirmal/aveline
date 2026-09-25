@@ -48,6 +48,7 @@ import 'features/conversations/data/conversation_repository.dart';
 import 'features/conversations/data/thread_repository.dart';
 import 'features/conversations/presentation/screens/conversations_screen.dart';
 import 'features/conversations/presentation/screens/thread_route_screen.dart';
+import 'features/customers/data/api_customer_repository.dart';
 import 'features/customers/data/customer_repository.dart';
 import 'features/customers/data/demo_customer_repository.dart';
 import 'features/customers/presentation/screens/customer_screen.dart';
@@ -355,7 +356,10 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
       _dio,
       organizationId: () => _boutiqueProvider.organizationId,
     );
-    _customerRepository = DemoCustomerRepository();
+    _customerRepository = ApiCustomerRepository(
+      _dio,
+      organizationId: () => _boutiqueProvider.organizationId,
+    );
     // The inbox reads the API through one repository, the same way Home does. The
     // organization id is read at call time because it arrives with `/orgs/my`,
     // after this controller is built; until then the screen stays in its loading

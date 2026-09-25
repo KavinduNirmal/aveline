@@ -2244,6 +2244,28 @@ rather than silently dropping rows. The window defaults to the last 24 hours.
 **Source:** `Modules/Payments/Endpoints/PaymentReconciliationEndpoints.cs`,
 `Modules/Payments/Services/PaymentReconciliationService.cs`.
 
+### B.28 Global cross-entity search
+
+> **Status: implemented.** Tenant-scoped cross-entity search aggregating inventory pieces,
+> customer profiles, and conversation threads.
+
+| Method | Path | Policy | Returns |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/search` | `BoutiqueMember` | `GlobalSearchResponseDto` |
+
+**Params:**
+- `q` (string, required, min length 2) — query text matching SKU/name/fabric/color for catalog items, name/phone/email for customers, and externalRef/customer name/message content for conversations.
+- `scope` (string, optional, default `all`) — entity filter scope (`all` \| `catalog` \| `customers` \| `conversations`).
+- `page` (int, optional, default 1, min 1).
+- `pageSize` (int, optional, default 20, 1..100).
+
+**Permission & tenant gating:** Caller must be an active member of `{organizationId}`. Entity results are filtered based on caller's role permissions (`catalog:view` for catalog items, `customers:view` for customer profiles, `conversations:view` for conversation threads). If the caller's role lacks access to an entity type, that entity type is omitted from results rather than returning 403.
+
+**Response `200`:** `GlobalSearchResponseDto` (`{ items: GlobalSearchResultItemDto[], total, page, pageSize }`).
+
+**Errors:** `400` query too short (< 2 chars); `401` unauthenticated; `403` not an active boutique member.
+**Source:** `Endpoints/SearchEndpoints.cs`, `Modules/Shared/DTOs/SearchDtos.cs`.
+
 ---
 
 ## Part C — Planned endpoints

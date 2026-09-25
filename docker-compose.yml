@@ -215,9 +215,7 @@ services:
       # Public base URL used to build staff-invitation links.
       App__BaseUrl: ${APP_BASE_URL:-http://localhost:5173}
       # HMAC key for the permanent opt-out link in the first-contact disclosure (privacy plan §5.1).
-      # Optional here: omission only warns and the disclosure is retried on the next inbound
-      # message; a value that is set but unusable refuses to start the API.
-      Privacy__LinkSigningKey: ${PRIVACY_LINK_SIGNING_KEY:-}
+      Privacy__LinkSigningKey: ${PRIVACY_LINK_SIGNING_KEY:-dGhpcy1pcy1hLTMyLWJ5dGUtc2VjcmV0LWtleS1mb3ItcHJpdmFjeQ==}
       # Browser origin allowed to call the API. Defaults to the Vite dev server.
       Cors__AllowedOrigins__0: ${CORS_ORIGIN:-http://localhost:5173}
       # Firebase Cloud Messaging (push). ProjectId is also in appsettings.json; the

@@ -11,22 +11,48 @@
 #
 # -----------------------------------------------------------------------------
 # ONE-TIME SETUP (required before this can run)
-# -----------------------------------------------------------------------------
-# 1. An Entra ID app registration with a federated credential for this repository,
-#    trusting GitHub's OIDC issuer. No client secret is stored.
 #
-# 2. Repository variables   (Settings > Secrets and variables > Actions > Variables)
-#      AZURE_CLIENT_ID        the app registration's application (client) id
+# Uses a USER-ASSIGNED MANAGED IDENTITY, not an app registration. This tenant has
+# `defaultUserRolePermissions.allowedToCreateApps: false`, so `az ad app create`
+# and `az ad sp create-for-rbac` both fail with
+# "401 Insufficient privileges to complete the operation" - app registration is
+# disabled tenant-wide for ordinary users and only a Global Administrator could
+# change that. A managed identity is created by the *resource provider* rather
+# than the Graph API, so it is unaffected, and it supports GitHub OIDC federated
+# credentials. No client secret exists at any point.
+#
+# 1. Create the identity and trust GitHub's OIDC issuer:
+#
+#      az identity create -g rg-aveline -n id-aveline-github
+#      PRINCIPAL=$(az identity show -g rg-aveline -n id-aveline-github --query principalId -o tsv)
+#
+#      az identity federated-credential create \
+#        --identity-name id-aveline-github -g rg-aveline --name gh-master \
+#        --issuer https://token.actions.githubusercontent.com \
+#        --subject repo:KavinduNirmal/aveline:ref:refs/heads/master \
+#        --audiences api://AzureADTokenExchange
+#
+#    Add one credential per ref that may deploy (master, and the release branch):
+#      --subject repo:KavinduNirmal/aveline:ref:refs/heads/release/version-beta-0.1.0
+#
+#    A workflow triggered from a ref with no matching subject cannot log in. That
+#    is the intended restriction.
+#
+# 2. Grant it exactly what it needs (all three already granted for rg-aveline):
+#      AcrPush                        on avelineacr     push images
+#      Key Vault Secrets User         on kv-aveline-mw  read the connection string for migrations
+#      Container Apps Contributor     on rg-aveline      update the revisions
+#
+#    Container Apps Contributor, not Contributor: the deploy job updates revisions
+#    and has no business writing anything else in the group.
+#
+# 3. Repository variables (Settings > Secrets and variables > Actions > Variables):
+#      AZURE_CLIENT_ID        the identity's clientId (NOT its principalId)
 #      AZURE_TENANT_ID        the directory (tenant) id
 #      AZURE_SUBSCRIPTION_ID  the subscription id
 #      ACR_NAME               avelineacr
 #      RESOURCE_GROUP         rg-aveline
 #      CONTAINER_APP_ENV      cae-aveline
-#
-# 3. Role assignments for that identity:
-#      AcrPush                        on avelineacr        (push images)
-#      Key Vault Secrets User         on kv-aveline-mw     (read the connection string for migrations)
-#      Contributor                    on rg-aveline         (update the container apps)
 #
 # 4. Repository secret
 #      POSTGRES_ADMIN_PASSWORD  only if you intend to re-run the Bicep template.

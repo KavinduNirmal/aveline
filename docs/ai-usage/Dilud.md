@@ -1,4 +1,436 @@
 
+## Session 2026-09-25 (Standalone CatalogTag Table, Join Table & Full-Stack Tagging Pipeline)
+
+**Task:** Design and implement the standalone `CatalogTag` database entity, `InventoryItemTag` join table, EF Core migrations, repository querying methods, tenant-isolated REST API endpoints (`/api/v1/orgs/{orgId}/catalog/tags`), and Flutter mobile dynamic tag integration.
+**Tool used:** Antigravity AI Assistant
+**Status:** In Progress
+
+---
+
+## Session 2026-09-24 (Development Branch Merge & Catalog Feature Parity Branching)
+
+**Task:** Fetch and merge latest 74 commits from `origin/development`, resolve merge conflicts in test suites, verify test and static analysis suites, structure the full mobile catalog feature parity implementation into 6 logical conventional commits, and publish to branch `flutter-feature/catalog`.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Remote Synchronization & Fast-Forward Merge**:
+   - Fetched latest remote changes (`git fetch origin development`).
+   - Stashed local uncommitted catalog feature files with untracked files.
+   - Merged `origin/development` cleanly.
+   - Popped stashed changes and resolved minor upstream diff conflict in `api_catalog_product_repository_test.dart`.
+2. **Branching & Granular Conventional Commits**:
+   - Created branch `flutter-feature/catalog`.
+   - Staged and committed 6 granular commits:
+     - `feat(catalog-mobile): add piece creation and editing with AI vision extraction`
+     - `feat(catalog-mobile): implement lookbooks and Elle AI ensemble studio`
+     - `feat(catalog-mobile): add atelier sourcing pipeline and bespoke requests`
+     - `feat(catalog-mobile): implement POS counter sale and stock adjustment sheets`
+     - `feat(catalog-mobile): complete catalog parity with VIP matches, QR studio, KPI cards, and 4-tab dock`
+     - `docs(ai-usage): log mobile catalog feature parity implementation and test results`
+3. **Verification & Regression Testing**:
+   - Executed `flutter test test/features/catalog/`: 191/191 tests passed across 21 test suites.
+   - Executed `flutter analyze`: 0 issues found.
+
+---
+
+## Session 2026-09-24 (Mobile Catalog Feature Parity - Step 5: Missing Features Full Implementation)
+
+**Task:** Implement the remaining missing catalog features between the Web boutique dashboard and the Flutter Mobile App (`frontend/aveline_mobile`): (1) VIP Client Affinity Matches & Salon Concierge Outreach (`CustomerMatchesSheet`, `CustomerMatch` domain), (2) Garment QR Floor Tag Studio & Share Sheet (`ItemQrSheet`, `ItemQrPayloadBuilder`, vector QR painter), (3) Partner Ateliers & Fabric Mills Dedicated 4th Dock Tab (`ateliers`, `SuppliersView`, `SupplierCatalogSheet`), (4) Main Inventory Valuation & Low-Stock Overview KPI Tiles (`CatalogKpiCards`), and (5) Piece Deletion UI Action & Confirmation Dialog (`DeleteProductSheet`), strictly excluding external image URL text ingestion.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Architecture & Implementation Plan**:
+   - Formulated comprehensive plan in `mobile_catalog_missing_features_implementation_plan.md` artifact covering Clean Architecture layers (`Presentation -> Application -> Domain -> Data`), custom UI design system components, and test-driven development.
+   - User approved the detailed implementation plan.
+
+2. **Domain & Data Layer Models (`frontend/aveline_mobile/lib/features/catalog/domain` & `data`)**:
+   - Created `customer_match.dart`: `CustomerMatch` entity with match scoring, style/color/size compatibility reasons, and concierge outreach state tracking (`employeeActed`).
+   - Created `item_qr_payload.dart`: `QrFormatType` (`json`, `url`, `sku`) and `ItemQrPayloadBuilder` building deep links and JSON payloads.
+   - Enhanced `supplier.dart`: Added `SupplierCatalogItem`, MOQ, lead times, and sample wholesale pieces.
+   - Extended `CatalogProductRepository` interface: `getCustomerMatches`, `generateCustomerMatches`, `markMatchActed`, `getSupplierCatalog`.
+   - Implemented in `ApiCatalogProductRepository` (REST endpoints) and `DemoCatalogProductRepository` (in-memory mock store and AI calculation simulations).
+
+3. **Presentation Layer & Custom Widgets (`frontend/aveline_mobile/lib/features/catalog/presentation`)**:
+   - Built `CustomerMatchesSheet`: Luxury VIP affinity matches modal with live match confidence badges, affinity reasons, and "Initiate Salon Outreach" actions.
+   - Built `ItemQrSheet`: Garment floor tag studio with realistic physical atelier ticket preview, vector QR matrix painter, multi-format switcher, copy to clipboard, and deep links.
+   - Built `CatalogKpiCards`: Boutique valuation tiles displaying Total Pieces, Catalog Valuation (Rs), In-Stock Available, and Low Stock (< 3 units) alerts.
+   - Built `DeleteProductSheet`: Destructive confirmation bottom sheet with piece thumbnail, stock count warning, SKU badge, and loading state.
+   - Built `SuppliersView` & `SupplierCatalogSheet`: Integrated partner craft ateliers feed with lead times, MOQ badges, and sample wholesale catalogs.
+   - Updated `CatalogScreen`: Added 4th dock tab (`CatalogDockTab.ateliers`), mounted `CatalogKpiCards` in the Pieces tab, and mounted `SuppliersView` in the Ateliers tab.
+   - Updated `CatalogProductScreen`: Added VIP Matches, Floor Tag QR, and Delete Piece actions in app bar and detail list.
+   - Updated `AddEditProductScreen`: Added Delete Piece button in app bar and form footer when editing existing items.
+
+4. **Database & API Connection Fixes**:
+   - Diagnosed PostgreSQL database contents in `aveline_postgres` container (`InventoryItems` table with 7 catalog items).
+   - Fixed `AppConfig.fromEnvironment()` to provide a platform-aware default `apiBaseUrl` (`http://localhost:5091` on Windows/Desktop/iOS/Web, and `http://10.0.2.2:5091` on Android emulator) so the app automatically reaches the running backend without connection refusal.
+   - Synchronized `CatalogScreen` with `BoutiqueProvider.organizationId` so when the active boutique resolves from `/orgs/my`, `CatalogProductsController` immediately queries the backend PostgreSQL database.
+   - Added `RefreshIndicator` on `CatalogScreen` for on-demand pull-to-refresh synchronization.
+
+5. **Automated Testing & Static Analysis**:
+   - Authored `customer_match_test.dart` (5 unit tests).
+   - Authored `item_qr_payload_test.dart` (5 unit tests).
+   - Authored `customer_matches_sheet_test.dart` (3 widget tests).
+   - Authored `item_qr_sheet_test.dart` (3 widget tests).
+   - Authored `catalog_kpi_cards_test.dart` (3 widget tests).
+   - Authored `delete_product_sheet_test.dart` (3 widget tests).
+   - Authored `supplier_catalog_sheet_test.dart` (2 widget tests).
+   - Authored `suppliers_view_test.dart` (2 widget tests).
+   - Verified 100% test pass rate across all 21 catalog test suites (191/191 tests passed) and the full mobile test suite (1,146/1,146 tests passed).
+   - Verified `flutter analyze` with 0 warnings or errors.
+
+### Files Created or Modified
+
+- `frontend/aveline_mobile/lib/features/catalog/domain/customer_match.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/domain/item_qr_payload.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/domain/supplier.dart`
+- `frontend/aveline_mobile/lib/features/catalog/data/catalog_product_repository.dart`
+- `frontend/aveline_mobile/lib/features/catalog/data/api_catalog_product_repository.dart`
+- `frontend/aveline_mobile/lib/features/catalog/data/demo_catalog_product_repository.dart`
+- `frontend/aveline_mobile/lib/features/catalog/presentation/widgets/customer_matches_sheet.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/widgets/item_qr_sheet.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/widgets/catalog_kpi_cards.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/widgets/delete_product_sheet.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/widgets/supplier_catalog_sheet.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/widgets/suppliers_view.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/screens/catalog_screen.dart`
+- `frontend/aveline_mobile/lib/features/catalog/presentation/screens/catalog_product_screen.dart`
+- `frontend/aveline_mobile/lib/features/catalog/presentation/screens/add_edit_product_screen.dart`
+- `frontend/aveline_mobile/test/features/catalog/customer_match_test.dart` [NEW]
+- `frontend/aveline_mobile/test/features/catalog/item_qr_payload_test.dart` [NEW]
+- `frontend/aveline_mobile/test/features/catalog/customer_matches_sheet_test.dart` [NEW]
+- `frontend/aveline_mobile/test/features/catalog/item_qr_sheet_test.dart` [NEW]
+- `frontend/aveline_mobile/test/features/catalog/catalog_kpi_cards_test.dart` [NEW]
+- `frontend/aveline_mobile/test/features/catalog/delete_product_sheet_test.dart` [NEW]
+- `frontend/aveline_mobile/test/features/catalog/supplier_catalog_sheet_test.dart` [NEW]
+- `frontend/aveline_mobile/test/features/catalog/suppliers_view_test.dart` [NEW]
+- `frontend/aveline_mobile/test/features/catalog/catalog_screen_test.dart`
+- `frontend/aveline_mobile/test/features/catalog/catalog_product_screen_test.dart`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- Executed `flutter test test/features/catalog/`: 191/191 tests passed across 21 test suites.
+- Executed `flutter test`: 1,146/1,146 tests passed across entire mobile codebase.
+- Executed `flutter analyze`: 0 issues found.
+
+---
+
+## Session 2026-09-24 (Mobile vs Web Catalog Architectural & Feature Parity Analysis)
+
+**Task:** Perform a comprehensive comparative analysis between the Flutter mobile app catalog (`frontend/aveline_mobile/lib/features/catalog`) and the Web boutique catalog (`frontend/web/src/components/catalog`), identifying differences in tab structure, user flows, UI/UX paradigms, hardware capabilities (camera vs QR printing), VIP matching, and domain actions.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Comparative Architecture & Codebase Inspection**:
+   - Inspected Web catalog implementation: `CatalogPanel.tsx`, `InventoryTab.tsx`, `ProductCard.tsx`, `AddProductModal.tsx`, `CustomerMatchesDrawer.tsx`, `ItemQrModal.tsx`, `FloorTagStudio.tsx`, `RecordSaleModal.tsx`, `AdjustStockModal.tsx`, `LookbooksTab.tsx`, `SourcingTab.tsx`, `SuppliersTab.tsx`.
+   - Inspected Flutter mobile catalog implementation: `catalog_screen.dart`, `catalog_product_screen.dart`, `add_edit_product_screen.dart`, `compose_outfit_screen.dart`, `create_sourcing_ticket_screen.dart`, `lookbooks_view.dart`, `sourcing_pipeline_view.dart`, `record_sale_sheet.dart`, `adjust_stock_sheet.dart`, `catalog_product_card.dart`.
+2. **Analysis Documentation**:
+   - Synthesized complete comparative breakdown spanning Tabs & Navigation (4-tab desktop vs 3-tab mobile), VIP Client Affinity Matching & Salon Outreach, QR Floor Tag generation & printing vs native camera vision capture, POS / Counter Sales workflows, UI design paradigms (infinite scroll vs desktop grid & KPIs), and offline demo capabilities.
+
+---
+
+## Session 2026-09-24 (Mobile Catalog Feature Parity - Step 4: POS / Counter Sale & Stock Adjustment Bottom Sheets)
+
+**Task:** Design and implement Step 4 of bringing the Flutter mobile app catalog (`frontend/aveline_mobile`) to full feature parity with the web boutique studio (`RecordSaleModal.tsx` and `AdjustStockModal.tsx`), implementing the Point-of-Sale Counter Sale bottom sheet (`RecordSaleSheet`), Stock Adjustment bottom sheet (`AdjustStockSheet`), strongly-typed domain receipt and payload models, repository REST and demo endpoints (`recordSale`, `adjustStock`), luxury live calculation indicators, quantity steppers, discount chips, out-of-stock derivations, and 100% automated test coverage.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Architecture & Implementation Plan**:
+   - Analyzed web boutique POS modal (`RecordSaleModal.tsx`), stock adjustment modal (`AdjustStockModal.tsx`), and REST endpoints (`POST /api/v1/orgs/{orgId}/catalog/items/{id}/sales`, `PUT /api/v1/orgs/{orgId}/catalog/items/{id}`).
+   - Formulated comprehensive implementation plan in `mobile_catalog_step4_implementation_plan.md` artifact detailing domain entities, repository contracts, presentation sheets, live price/discount calculations, and test suites.
+
+2. **Domain Layer Models (`frontend/aveline_mobile/lib/features/catalog/domain`)**:
+   - Created `stock_adjustment_mode.dart`: Enum `StockAdjustmentMode` (`reduce`, `outOfStock`) with labels, descriptions, and iconography.
+   - Created `sale_payloads.dart`: DTO `RecordSalePayload` (`quantity`, `unitPrice`, `customerId`, `note`).
+   - Created `sale_receipt.dart`: Domain entity `CatalogSaleReceipt` (`saleId`, `productId`, `productTitle`, `quantitySold`, `unitPrice`, `totalAmount`, `remainingStock`, `recordedAt`, `note`, `customerId`) with financial formatting getters (`totalAmountLabel`, `unitPriceLabel`, `recordedAtLabel`, `summary`).
+
+3. **Data Layer & Repository Implementation (`frontend/aveline_mobile/lib/features/catalog/data`)**:
+   - Extended `CatalogProductRepository` interface with `recordSale` and `adjustStock`.
+   - Implemented in `ApiCatalogProductRepository`:
+     - `POST /items/{id}/sales`: Records counter sale, decrements stock, and returns parsed `CatalogSaleReceipt`.
+     - `PUT /items/{id}`: Adjusts stock count (or sets to 0 for out-of-stock) and returns updated `CatalogProduct`.
+   - Implemented in `DemoCatalogProductRepository`:
+     - In-memory stock decrementing, out-of-stock status derivations, and receipt generation.
+
+4. **Presentation Layer & Bottom Sheet Widgets (`frontend/aveline_mobile/lib/features/catalog/presentation`)**:
+   - Built `RecordSaleSheet`:
+     - Piece summary header with thumbnail, sku, tag price, and live available stock badge.
+     - Quantity stepper (bounded by 1 and available stock).
+     - Negotiable unit price input field with quick discount chips (`Tag price`, `-5%`, `-10%`, `-15%`, `Floor`).
+     - Optional notes/customer ID fields.
+     - Live calculation summary box (Sale Total, Stock After).
+     - Prominent "Record Sale" action button with async loading state.
+   - Built `AdjustStockSheet`:
+     - `reduce` mode: Quantity stepper for recording damaged/returned pieces with before/after count preview.
+     - `outOfStock` mode: Warning confirmation card zeroing out piece inventory.
+     - Prominent confirmation action button with loading spinner.
+   - Integrated with `CatalogProductScreen`:
+     - Added "Record counter sale", "Reduce stock", and "Mark out of stock" action buttons with real-time UI state synchronization and toast confirmations.
+
+5. **Automated Testing & Static Analysis**:
+   - Authored `sale_receipt_test.dart` (5 unit tests).
+   - Authored `record_sale_sheet_test.dart` (4 widget tests).
+   - Authored `adjust_stock_sheet_test.dart` (2 widget tests).
+   - Extended `api_catalog_product_repository_test.dart` (22 unit tests).
+   - Extended `catalog_product_screen_test.dart` (21 widget tests).
+   - Verified 100% test pass rate across all 17 catalog test suites (167/167 passing tests) and the entire mobile project test suite (1122/1122 passing tests).
+   - Verified `flutter analyze` with 0 warnings/errors.
+
+### Files Created or Modified
+
+- `frontend/aveline_mobile/lib/features/catalog/domain/stock_adjustment_mode.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/domain/sale_payloads.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/domain/sale_receipt.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/data/catalog_product_repository.dart`
+- `frontend/aveline_mobile/lib/features/catalog/data/api_catalog_product_repository.dart`
+- `frontend/aveline_mobile/lib/features/catalog/data/demo_catalog_product_repository.dart`
+- `frontend/aveline_mobile/lib/features/catalog/presentation/widgets/record_sale_sheet.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/widgets/adjust_stock_sheet.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/screens/catalog_product_screen.dart`
+- `frontend/aveline_mobile/test/features/catalog/sale_receipt_test.dart` [NEW]
+- `frontend/aveline_mobile/test/features/catalog/record_sale_sheet_test.dart` [NEW]
+- `frontend/aveline_mobile/test/features/catalog/adjust_stock_sheet_test.dart` [NEW]
+- `frontend/aveline_mobile/test/features/catalog/api_catalog_product_repository_test.dart`
+- `frontend/aveline_mobile/test/features/catalog/catalog_product_screen_test.dart`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- Executed `flutter test test/features/catalog/`: 167/167 tests passed across 17 test suites.
+- Executed `flutter test`: 1122/1122 tests passed across entire mobile app.
+- Executed `flutter analyze`: 0 issues found.
+
+---
+
+## Session 2026-09-24 (Mobile Catalog Feature Parity - Step 3: Sourcing Pipeline Screen & Bespoke Commissions)
+
+**Task:** Design and implement Step 3 of bringing the Flutter mobile app catalog (`frontend/aveline_mobile`) to full feature parity with the web catalog boutique studio (`SourcingTab.tsx`), implementing the Atelier Sourcing Pipeline View (`SourcingPipelineView`, `SourcingStageChips`, `SourcingTicketCard`, `CreateSourcingTicketScreen`, `ArchivedTicketsSheet`), typed commission and supplier domain models, repository REST and demo endpoints, reactive `SourcingController`, luxury profit margin gauges, card folding states, and automated test coverage.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Architecture & Implementation Plan**:
+   - Analyzed web boutique sourcing studio (`SourcingTab.tsx`, `catalog-api.ts`, `/api/v1/orgs/{orgId}/catalog/sourcing/*`) and mobile requirements.
+   - Formulated comprehensive implementation plan in `mobile_catalog_step3_implementation_plan.md` artifact detailing domain models, repository contracts, presentation widgets, reactive controllers, and test suites.
+
+2. **Domain Layer Models (`frontend/aveline_mobile/lib/features/catalog/domain`)**:
+   - Created `sourcing_status.dart`: Enum `SourcingStatus` (`pending`, `quoted`, `approved`, `ordered`, `fulfilled`, `archived`) with wire mapping, labels, short labels, and luxury badge color tokens.
+   - Created `supplier.dart`: Typed entity `Supplier` parsing partner atelier contacts, specialties, and lead times.
+   - Created `sourcing_request.dart`: Typed entity `SourcingRequest` modeling bespoke commissions with automated profit margin calculations (`marginAmount`, `marginPercentage`), financials, and notes.
+   - Created `sourcing_payloads.dart`: `CreateSourcingRequestPayload` and `UpdateSourcingStatusPayload`.
+
+3. **Data Layer & Repository Implementation (`frontend/aveline_mobile/lib/features/catalog/data`)**:
+   - Extended `CatalogProductRepository` interface with `getSourcingRequests`, `createSourcingRequest`, `updateSourcingStatus`, and `getSuppliers`.
+   - Implemented in `ApiCatalogProductRepository`:
+     - `GET /sourcing` (status and search query filtering).
+     - `POST /sourcing` (commission creation).
+     - `PATCH /sourcing/{id}/status` (stage transition).
+     - `GET /suppliers` (partner atelier list).
+   - Implemented in `DemoCatalogProductRepository`:
+     - Mock partner ateliers (Banarasi Heritage Weavers, Jaipur Royal Gems, Kanchipuram Silks, Kashmiri Pashmina Guild).
+     - Mock bespoke commission tickets across all 6 stages.
+
+4. **Presentation Layer & Reactive State (`frontend/aveline_mobile/lib/features/catalog/presentation`)**:
+   - Built `SourcingController`: `ChangeNotifier` managing stage filtering, search queries, card folding/unfolding, status mutations, creation, and undoable archive lifecycle.
+   - Built `SourcingStageChips`: Horizontally scrollable stage pills with live ticket counts.
+   - Built `SourcingTicketCard`: Luxury commission card with folded/unfolded states, financials breakdown, profit margin pill, and inline stage transition selector.
+   - Built `ArchivedTicketsSheet`: Modal bottom sheet with one-tap restore action.
+   - Built `CreateSourcingTicketScreen`: Commission creation form with real-time margin gauge indicator updating dynamically as retail price/cost are typed.
+   - Built `SourcingPipelineView`: KPI metric summary cards, search filter, fold-all toggle, and refreshable pipeline card feed.
+   - Integrated 3-way segmented switcher (`Pieces`, `Lookbooks`, `Sourcing`) and context-aware FAB in `CatalogScreen`.
+
+5. **Automated Testing & Static Analysis**:
+   - Authored `sourcing_request_test.dart` (8 unit tests).
+   - Authored `sourcing_controller_test.dart` (7 unit tests).
+   - Authored `sourcing_pipeline_test.dart` (4 widget tests).
+   - Authored `create_sourcing_ticket_screen_test.dart` (3 widget tests).
+   - Extended `api_catalog_product_repository_test.dart` (20 unit tests).
+   - Extended `catalog_screen_test.dart`, `catalog_product_screen_test.dart`, and `catalog_products_controller_test.dart`.
+   - Verified 100% test pass rate across all 14 catalog test suites (151/151 passing tests) and the entire mobile project test suite (1106/1106 passing tests).
+   - Verified `flutter analyze` with 0 warnings/errors.
+
+### Files Created or Modified
+
+- `frontend/aveline_mobile/lib/features/catalog/domain/sourcing_status.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/domain/supplier.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/domain/sourcing_request.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/domain/sourcing_payloads.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/data/catalog_product_repository.dart`
+- `frontend/aveline_mobile/lib/features/catalog/data/api_catalog_product_repository.dart`
+- `frontend/aveline_mobile/lib/features/catalog/data/demo_catalog_product_repository.dart`
+- `frontend/aveline_mobile/lib/features/catalog/presentation/sourcing_controller.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/widgets/sourcing_stage_chips.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/widgets/sourcing_ticket_card.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/widgets/archived_tickets_sheet.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/widgets/sourcing_pipeline_view.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/screens/create_sourcing_ticket_screen.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/screens/catalog_screen.dart`
+- `frontend/aveline_mobile/test/features/catalog/sourcing_request_test.dart` [NEW]
+- `frontend/aveline_mobile/test/features/catalog/sourcing_controller_test.dart` [NEW]
+- `frontend/aveline_mobile/test/features/catalog/sourcing_pipeline_test.dart` [NEW]
+- `frontend/aveline_mobile/test/features/catalog/create_sourcing_ticket_screen_test.dart` [NEW]
+- `frontend/aveline_mobile/test/features/catalog/api_catalog_product_repository_test.dart`
+- `frontend/aveline_mobile/test/features/catalog/catalog_screen_test.dart`
+- `frontend/aveline_mobile/test/features/catalog/catalog_product_screen_test.dart`
+- `frontend/aveline_mobile/test/features/catalog/catalog_products_controller_test.dart`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- Executed `flutter test test/features/catalog/`: 151/151 tests passed across 14 test suites.
+- Executed `flutter test`: 1106/1106 tests passed across entire mobile app.
+- Executed `flutter analyze`: 0 issues found.
+
+---
+
+## Session 2026-09-24 (Mobile Catalog Feature Parity - Step 2: Lookbooks & Ensembles Studio with Elle AI)
+
+**Task:** Design and implement Step 2 of bringing the Flutter mobile app catalog (`frontend/aveline_mobile`) to full feature parity with the web catalog, implementing the Lookbooks / Ensembles Tab and the Elle AI Outfit Composition studio (`LookbooksView`, `ComposeOutfitScreen`, `LookbookCard`, `LookbookDetailSheet`, `EditLookbookDialog`, `OccasionFilterChips`), typed ensemble domain models, repository endpoints, reactive controllers, and automated test coverage.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Architecture & Implementation Plan**:
+   - Compared web Lookbooks implementation (`LookbooksTab.tsx`, `ComposeOutfitModal.tsx`, `/api/v1/orgs/{orgId}/catalog/lookbooks/*`) with mobile catalog capabilities.
+   - Formulated comprehensive implementation plan in `mobile_catalog_step2_implementation_plan.md` artifact detailing domain models, repository contracts, UI components, and test scenarios.
+
+2. **Domain Layer Models (`frontend/aveline_mobile/lib/features/catalog/domain`)**:
+   - Created `outfit_item.dart`: Typed entity `OutfitItem` parsing slot, category, position, notes, and price.
+   - Created `outfit_composition.dart`: Typed entity `OutfitComposition` modeling curated ensembles, occasions, total pricing, Elle AI notes, and thumbnail items.
+   - Created `outfit_payloads.dart`: `ComposeOutfitPayload` and `UpdateLookbookPayload`.
+
+3. **Data Layer & Repository Implementation (`frontend/aveline_mobile/lib/features/catalog/data`)**:
+   - Extended `CatalogProductRepository` interface with `getLookbooks`, `composeOutfit`, `updateLookbook`, and `deleteLookbook`.
+   - Implemented in `ApiCatalogProductRepository`:
+     - `GET /lookbooks` (with occasion and search query filtering).
+     - `POST /lookbooks/compose` (Elle AI ensemble generation).
+     - `PUT /lookbooks/{id}` (editorial details updates).
+     - `DELETE /lookbooks/{id}` (lookbook removal).
+   - Implemented in `DemoCatalogProductRepository`:
+     - Built mock collection of ceremonial ensembles (Sangeet & Reception, Bridal Heirloom, Royal Wedding).
+     - Added dynamic Elle AI styling algorithm coordinating jewelry, footwear, and accessories based on primary piece and occasion.
+
+4. **Presentation Layer & Reactive State (`frontend/aveline_mobile/lib/features/catalog/presentation`)**:
+   - Built `LookbooksController`: Orchestrates occasion filtering, search queries, pull-to-refresh, update dialogs, and deletions.
+   - Built `ComposeOutfitController`: Coordinates primary hero piece selection, ceremonial occasion selector, Elle AI composition dispatch, and persistence.
+   - Built `OccasionFilterChips`: Horizontally scrollable capsule filter bar.
+   - Built `LookbookCard`: Luxury lookbook card featuring hero thumbnail strip, occasion badge, Elle quote snippet, and popup menu.
+   - Built `LookbookDetailSheet`: Comprehensive bottom sheet for inspecting coordinated pieces, price breakdown, and styling notes.
+   - Built `EditLookbookDialog`: Form dialog for modifying ensemble titles, occasions, and editorial draping notes.
+   - Built `ComposeOutfitScreen`: Interactive AI ensemble composition studio screen.
+   - Integrated tab switcher (`Pieces` vs `Lookbooks`) and context-aware FAB in `CatalogScreen`.
+
+5. **Automated Testing & Static Analysis**:
+   - Authored `outfit_composition_test.dart` (6 unit tests).
+   - Extended `api_catalog_product_repository_test.dart` (16 unit tests).
+   - Authored `lookbooks_tab_test.dart` (5 widget tests).
+   - Authored `compose_outfit_screen_test.dart` (3 widget tests).
+   - Verified 100% test pass rate across all 11 catalog test suites (119/119 passing tests) and the entire mobile project test suite (1074/1074 passing tests).
+   - Verified `flutter analyze` with 0 warnings/errors.
+
+### Files Created or Modified
+
+- `frontend/aveline_mobile/lib/features/catalog/domain/outfit_item.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/domain/outfit_composition.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/domain/outfit_payloads.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/data/catalog_product_repository.dart`
+- `frontend/aveline_mobile/lib/features/catalog/data/api_catalog_product_repository.dart`
+- `frontend/aveline_mobile/lib/features/catalog/data/demo_catalog_product_repository.dart`
+- `frontend/aveline_mobile/lib/features/catalog/presentation/lookbooks_controller.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/compose_outfit_controller.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/widgets/occasion_filter_chips.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/widgets/lookbook_card.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/widgets/lookbook_detail_sheet.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/widgets/edit_lookbook_dialog.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/widgets/lookbooks_view.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/screens/compose_outfit_screen.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/screens/catalog_screen.dart`
+- `frontend/aveline_mobile/test/features/catalog/outfit_composition_test.dart` [NEW]
+- `frontend/aveline_mobile/test/features/catalog/lookbooks_tab_test.dart` [NEW]
+- `frontend/aveline_mobile/test/features/catalog/compose_outfit_screen_test.dart` [NEW]
+- `frontend/aveline_mobile/test/features/catalog/api_catalog_product_repository_test.dart`
+- `frontend/aveline_mobile/test/features/catalog/catalog_screen_test.dart`
+- `frontend/aveline_mobile/test/features/catalog/catalog_product_screen_test.dart`
+- `frontend/aveline_mobile/test/features/catalog/catalog_products_controller_test.dart`
+- `docs/ai-usage/Dilud.md`
+
+## Session 2026-09-24 (Mobile Catalog Feature Parity - Step 1: Add/Edit Piece with Multimodal Vision AI)
+
+**Task:** Design and implement Step 1 of bringing the Flutter mobile app catalog (`frontend/aveline_mobile`) to full feature parity with the web catalog, implementing the Add & Edit Piece workflows with native camera capture, multipart image upload, AI Vision attribute extraction, reactive form state management, luxury boutique UI styling, and automated test coverage.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Architecture & Implementation Plan**:
+   - Compared web catalog implementation (`AddProductModal.tsx`, `catalog-api.ts`, `/api/v1/orgs/{orgId}/catalog/analyze-image`) with Flutter mobile catalog feature set.
+   - Designed layered architecture (`Presentation -> Application -> Domain -> Data`) honoring existing project conventions.
+   - Formulated detailed implementation plan in `mobile_catalog_step1_implementation_plan.md` artifact with user approval.
+
+2. **Domain Models (`frontend/aveline_mobile/lib/features/catalog/domain`)**:
+   - Created `vision_analysis.dart`: Typed model `VisionAnalysis` parsing multimodal backend responses (category, subcategory, primaryColor, colorHex, accentColors, fabric, pattern, style, embellishments, estimatedPriceRange, description, tags, confidenceScore).
+   - Created `product_payloads.dart`: `CreateProductPayload`, `UpdateProductPayload`, `ImageUploadResult`.
+
+3. **Data Layer & Repositories (`frontend/aveline_mobile/lib/features/catalog/data`)**:
+   - Extended `CatalogProductRepository` interface with `uploadImage`, `analyzeImage`, `createProduct`, `updateProduct`, and `deleteProduct`.
+   - Implemented in `ApiCatalogProductRepository`:
+     - Multipart form-data image uploading (`POST /api/v1/orgs/{orgId}/catalog/images`).
+     - Multimodal AI vision analysis (`POST /api/v1/orgs/{orgId}/catalog/analyze-image`).
+     - RESTful piece CRUD endpoints (`POST /items`, `PUT /items/{id}`, `DELETE /items/{id}`).
+   - Implemented in `DemoCatalogProductRepository` with deterministic mock analysis, synthetic image uploads, and simulated network delays.
+
+4. **Presentation Layer & Reactive State (`frontend/aveline_mobile/lib/features/catalog/presentation`)**:
+   - Built `AddProductController`: `ChangeNotifier`-based form orchestrator handling image picking, AI analysis, autofill, custom size/color selections, payload assembly, and save/update operations.
+   - Built `ImageCaptureSection`: Camera/Gallery bottom sheet triggers, interactive preview, AI scan shimmering badge, and image clearance.
+   - Built `ColorSwatchPicker`: Atelier luxury palette swatch selection with custom hex mapping.
+   - Built `SizeChipSelector`: Boutique size toggle chip matrix.
+   - Built `AddEditProductScreen`: Luxury modal form screen with brand typography, structured form cards, AI storytelling generation button, sticky submit footer, and validation alerts.
+   - Integrated FAB in `CatalogScreen` and Edit action in `CatalogProductScreen`.
+
+5. **Automated Testing & Static Analysis**:
+   - Extended `api_catalog_product_repository_test.dart` verifying payload serialization, multipart upload, vision extraction, and CRUD operations.
+   - Extended `catalog_screen_test.dart` and `catalog_product_screen_test.dart` verifying navigation and interaction hooks.
+   - Authored `add_edit_product_screen_test.dart` covering create form rendering, edit form prefill, validation states, AI copy generation, and submission.
+   - Verified 100% test pass rate across all 9 catalog test suites (94 passing tests).
+   - Verified `flutter analyze` with 0 warnings/errors.
+
+### Files Created or Modified
+
+- `frontend/aveline_mobile/lib/features/catalog/domain/vision_analysis.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/domain/product_payloads.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/data/catalog_product_repository.dart`
+- `frontend/aveline_mobile/lib/features/catalog/data/api_catalog_product_repository.dart`
+- `frontend/aveline_mobile/lib/features/catalog/data/demo_catalog_product_repository.dart`
+- `frontend/aveline_mobile/lib/features/catalog/presentation/add_product_controller.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/widgets/color_swatch_picker.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/widgets/size_chip_selector.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/widgets/image_capture_section.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/screens/add_edit_product_screen.dart` [NEW]
+- `frontend/aveline_mobile/lib/features/catalog/presentation/screens/catalog_screen.dart`
+- `frontend/aveline_mobile/lib/features/catalog/presentation/screens/catalog_product_screen.dart`
+- `frontend/aveline_mobile/test/features/catalog/add_edit_product_screen_test.dart` [NEW]
+- `frontend/aveline_mobile/test/features/catalog/api_catalog_product_repository_test.dart`
+- `frontend/aveline_mobile/test/features/catalog/catalog_screen_test.dart`
+- `frontend/aveline_mobile/test/features/catalog/catalog_product_screen_test.dart`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- Executed `flutter test test/features/catalog/`: 94/94 tests passed across 9 test suites.
+- Executed `flutter analyze`: 0 issues found.
+
+---
+
 ## Session 2026-09-18 (Catalog Item Delete Feature - Frontend & Backend)
 
 **Task:** Design and implement catalog inventory item deletion across ASP.NET Core backend (Soft Delete endpoint, services, integration tests) and React frontend (ProductCard delete button, Edit modal delete action, confirmation dialog, optimistic state updates).
@@ -2882,4 +3314,125 @@
   - Branches: **86.65%** (Threshold: >= 70%)
   - Functions: **86.20%** (Threshold: >= 70%)
 - `bun run build`: `tsc -b && vite build` built clean (0 TypeScript errors, production assets bundled successfully).
+
+---
+
+## Session 2026-09-24 (Boutique Dashboard & Approval Queue Access Resolution)
+
+**Task:** Resolve issue where user was unexpectedly redirected to the internal System Admin Console instead of their Boutique Dashboard and Approval Queue.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Root Cause Identification**:
+   - Setting `Users.UserRole = 'admin'` caused the application's top-level router (`DashboardRedirect.tsx`) to flag the user as an internal platform operator (`isOperator = true`), immediately redirecting them from `/app` to `/admin/${userId}/dashboard`.
+   - The platform admin console is restricted to internal team roles verified via Clerk JWTs, blocking tenant users from reaching their boutique dashboard.
+2. **Database & Cache Remediation**:
+   - Reverted `Users.UserRole` to `'user'` in PostgreSQL.
+   - Verified that the user has an active membership (`Status = 'Active'`) with `BoutiqueRole = 'org:boutique_owner'` linked to organization `slug = 'new'` (and `slug = 'new-32c0af'`).
+   - Flushed Redis cache (`FLUSHALL`).
+3. **Verification**:
+   - `DashboardRedirect` now routes to the tenant boutique dashboard (`/app/b/new/approvals`) where the boutique `ApprovalQueue` is fully accessible.
+
+### Files Modified
+- `docs/ai-usage/Dilud.md`
+
+## Session 2026-09-25 (Catalog Tag System & Mobile Tag Filtering Integration)
+
+**Task:** Design and implement first-class `CatalogTag` system, join table `InventoryItemTag`, REST API endpoints, and dynamic tag loading/filtering pipeline in Flutter mobile app (`aveline_mobile`).
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Database Schema & Entity Layer (.NET / EF Core)**:
+   - Created `CatalogTag` entity (`Aveline.Api/Modules/VisualIntelligence/Models/CatalogTag.cs`) with multi-tenant index `(OrgId, Slug)` and `(OrgId, IsArchived, SortOrder)`.
+   - Created `InventoryItemTag` join entity (`Aveline.Api/Modules/VisualIntelligence/Models/InventoryItemTag.cs`) with composite PK `(ItemId, TagId)` and cascade deletes.
+   - Updated `InventoryItem` with `ItemTags` navigation collection.
+   - Created EF Core fluent configurations: `CatalogTagConfiguration.cs` and `InventoryItemTagConfiguration.cs`.
+   - Registered `DbSet<CatalogTag>` and `DbSet<InventoryItemTag>` in `AppDbContext.cs`.
+   - Generated and applied EF Core migration `20260925033132_AddCatalogTagsAndItemTags`.
+
+2. **DTO & Repository Layer (.NET / EF Core)**:
+   - Created DTOs: `CatalogTagDto`, `CreateCatalogTagDto`, `UpdateCatalogTagDto`, `AssignItemTagsDto`.
+   - Updated `InventoryItemDto`, `CreateInventoryItemDto`, `UpdateInventoryItemDto` to include `Tags`.
+   - Implemented `ICatalogTagRepository` and `CatalogTagRepository` with support for tenant-isolated CRUD, piece tag assignment, and default tag seeding (`bridal`, `festive`, `formal`, `casual`).
+   - Updated `InventoryRepository` (`BuildBaseQuery`, `GetByIdAsync`, `GetBySkuAsync`, `SearchAsync`, `QueryAsync`) to eager-load `ItemTags` and support tag filtering (`request.TagIds`).
+   - Updated `InventoryService` to inject `ICatalogTagRepository` and synchronize piece tags on item creation/update.
+   - Registered `ICatalogTagRepository` in `VisualIntelligenceModule.cs`.
+
+3. **REST API Endpoints (.NET Minimal APIs)**:
+   - Added endpoints to `Aveline.Api/Endpoints/CatalogEndpoints.cs`:
+     - `GET /api/v1/orgs/{orgId}/catalog/tags`: List boutique tags ordered by `SortOrder`.
+     - `POST /api/v1/orgs/{orgId}/catalog/tags`: Create tag with slug uniqueness per tenant (`BoutiqueCatalogManagePolicy`).
+     - `PUT /api/v1/orgs/{orgId}/catalog/tags/{tagId}`: Update tag fields.
+     - `DELETE /api/v1/orgs/{orgId}/catalog/tags/{tagId}`: Delete tag.
+     - `GET /api/v1/orgs/{orgId}/catalog/items/{itemId}/tags`: Retrieve tags for piece.
+     - `PUT /api/v1/orgs/{orgId}/catalog/items/{itemId}/tags`: Replace tags for piece.
+
+4. **Mobile Domain & Data Layer (Flutter / `aveline_mobile`)**:
+   - Enhanced `CatalogTag` domain model (`catalog_tag.dart`) with `fromJson`, `toJson`, `colorHex`, `sortOrder`, `isArchived`, `itemCount`.
+   - Updated `CatalogProductRepository` interface with `Future<List<CatalogTag>> fetchTags()`.
+   - Implemented `fetchTags()` in `DemoCatalogProductRepository` and `ApiCatalogProductRepository` (`GET /api/v1/orgs/{orgId}/catalog/tags`).
+
+5. **Mobile Presentation Layer (Flutter / `aveline_mobile`)**:
+   - Updated `CatalogScreen` (`catalog_screen.dart`) to load tags dynamically from repository upon `initState()`, pull-to-refresh, and boutique change.
+   - Bound `CatalogTagRow` to dynamic tags with fallback to demo tags.
+
+6. **Testing & Verification**:
+   - Created `CatalogTagEndpointsTests.cs` (4/4 passed).
+   - Ran all backend catalog endpoint tests in `Aveline.Api.Tests` (33/33 passed).
+   - Updated test fakes/stubs and added tests for tag fetching/filtering in `api_catalog_product_repository_test.dart`.
+   - Ran `flutter analyze` (0 issues).
+   - Ran complete `flutter test` test suite (1,336/1,336 passed).
+
+### Files Created
+- `Aveline.Api/Modules/VisualIntelligence/Models/CatalogTag.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Models/InventoryItemTag.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/CatalogTagConfiguration.cs`
+- `Aveline.Api/Infrastructure/Data/Configurations/InventoryItemTagConfiguration.cs`
+- `Aveline.Api/Migrations/20260925033132_AddCatalogTagsAndItemTags.cs`
+- `Aveline.Api/Migrations/20260925033132_AddCatalogTagsAndItemTags.Designer.cs`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/CatalogTagDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/CreateCatalogTagDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/UpdateCatalogTagDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/AssignItemTagsDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/ICatalogTagRepository.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/CatalogTagRepository.cs`
+- `Aveline.Api.Tests/CatalogTagEndpointsTests.cs`
+
+### Files Modified
+- `Aveline.Api/Infrastructure/Data/AppDbContext.cs`
+- `Aveline.Api/Migrations/AppDbContextModelSnapshot.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Models/InventoryItem.cs`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/InventoryItemDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/CreateInventoryItemDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/UpdateInventoryItemDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/InventoryRepository.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/InventoryService.cs`
+- `Aveline.Api/Modules/VisualIntelligence/VisualIntelligenceModule.cs`
+- `Aveline.Api/Endpoints/CatalogEndpoints.cs`
+- `frontend/aveline_mobile/lib/features/catalog/domain/catalog_tag.dart`
+- `frontend/aveline_mobile/lib/features/catalog/data/catalog_product_repository.dart`
+- `frontend/aveline_mobile/lib/features/catalog/data/demo_catalog_product_repository.dart`
+- `frontend/aveline_mobile/lib/features/catalog/data/api_catalog_product_repository.dart`
+- `frontend/aveline_mobile/lib/features/catalog/presentation/screens/catalog_screen.dart`
+- `frontend/aveline_mobile/test/features/catalog/api_catalog_product_repository_test.dart`
+- `frontend/aveline_mobile/test/features/catalog/adjust_stock_sheet_test.dart`
+- `frontend/aveline_mobile/test/features/catalog/catalog_product_screen_test.dart`
+- `frontend/aveline_mobile/test/features/catalog/catalog_products_controller_test.dart`
+- `frontend/aveline_mobile/test/features/catalog/catalog_screen_test.dart`
+- `frontend/aveline_mobile/test/features/catalog/record_sale_sheet_test.dart`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj --filter "FullyQualifiedName~CatalogTagEndpointsTests|FullyQualifiedName~CatalogEndpointsIntegrationTests"`: 33/33 passed (0 failed).
+- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj --filter "FullyQualifiedName~CatalogWriteAuthorizationTests|FullyQualifiedName~ImageUrlFetcherTests"`: 148/148 passed (0 failed).
+- `dotnet ef dbcontext info`: DbContext model loaded cleanly with 0 pending model changes.
+- `flutter analyze`: 0 errors / 0 warnings.
+- `flutter test`: 1,336/1,336 unit/widget tests passed (0 failed).
+
+
+
 

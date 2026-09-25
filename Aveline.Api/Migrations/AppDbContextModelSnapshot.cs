@@ -4201,6 +4201,57 @@ namespace Aveline.Api.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Aveline.Api.Modules.VisualIntelligence.Models.CatalogTag", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ColorHex")
+                        .HasMaxLength(9)
+                        .HasColumnType("character varying(9)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsArchived")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<string>("Label")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<Guid>("OrgId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<int>("SortOrder")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrgId", "Slug")
+                        .IsUnique()
+                        .HasDatabaseName("idx_catalog_tags_org_slug");
+
+                    b.HasIndex("OrgId", "IsArchived", "SortOrder")
+                        .HasDatabaseName("idx_catalog_tags_org_active_order");
+
+                    b.ToTable("CatalogTags", (string)null);
+                });
+
             modelBuilder.Entity("Aveline.Api.Modules.VisualIntelligence.Models.CustomerMatch", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4435,6 +4486,30 @@ namespace Aveline.Api.Migrations
                     b.HasIndex("OrgId", "Status", "DeletedAt", "Category", "Color");
 
                     b.ToTable("InventoryItems", (string)null);
+                });
+
+            modelBuilder.Entity("Aveline.Api.Modules.VisualIntelligence.Models.InventoryItemTag", b =>
+                {
+                    b.Property<Guid>("ItemId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TagId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("OrgId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("ItemId", "TagId");
+
+                    b.HasIndex("TagId");
+
+                    b.HasIndex("OrgId", "ItemId")
+                        .HasDatabaseName("idx_inventory_item_tags_org_item");
+
+                    b.HasIndex("OrgId", "TagId")
+                        .HasDatabaseName("idx_inventory_item_tags_org_tag");
+
+                    b.ToTable("InventoryItemTags", (string)null);
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.VisualIntelligence.Models.OutfitComposition", b =>
@@ -5289,6 +5364,25 @@ namespace Aveline.Api.Migrations
                     b.Navigation("Item");
                 });
 
+            modelBuilder.Entity("Aveline.Api.Modules.VisualIntelligence.Models.InventoryItemTag", b =>
+                {
+                    b.HasOne("Aveline.Api.Modules.VisualIntelligence.Models.InventoryItem", "Item")
+                        .WithMany("ItemTags")
+                        .HasForeignKey("ItemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Aveline.Api.Modules.VisualIntelligence.Models.CatalogTag", "Tag")
+                        .WithMany("ItemTags")
+                        .HasForeignKey("TagId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Item");
+
+                    b.Navigation("Tag");
+                });
+
             modelBuilder.Entity("Aveline.Api.Modules.VisualIntelligence.Models.OutfitItem", b =>
                 {
                     b.HasOne("Aveline.Api.Modules.VisualIntelligence.Models.InventoryItem", "Item")
@@ -5361,11 +5455,18 @@ namespace Aveline.Api.Migrations
                     b.Navigation("Steps");
                 });
 
+            modelBuilder.Entity("Aveline.Api.Modules.VisualIntelligence.Models.CatalogTag", b =>
+                {
+                    b.Navigation("ItemTags");
+                });
+
             modelBuilder.Entity("Aveline.Api.Modules.VisualIntelligence.Models.InventoryItem", b =>
                 {
                     b.Navigation("CustomerMatches");
 
                     b.Navigation("Images");
+
+                    b.Navigation("ItemTags");
                 });
 
             modelBuilder.Entity("Aveline.Api.Modules.VisualIntelligence.Models.OutfitComposition", b =>

@@ -58,12 +58,11 @@ public class CatalogWriteAuthorizationTests
     }
 
     [Fact]
-    public void ExactlySixRoutesRequireCatalogManage()
+    public void ExactlyTenRoutesRequireCatalogManage()
     {
-        // Four item routes (create, edit, publish, delete) plus the two lookbook lifecycle routes
-        // (rename, remove). Editing a composed lookbook is an edit of the catalog's published
-        // content, so it takes the same gate a piece edit does.
-        Assert.Equal(6, CountPolicy(nameof(AuthorizationConfiguration.BoutiqueCatalogManagePolicy)));
+        // Four item routes (create, edit, publish, delete), two lookbook lifecycle routes
+        // (rename, remove), and four tag lifecycle routes (create, edit, delete, assign).
+        Assert.Equal(10, CountPolicy(nameof(AuthorizationConfiguration.BoutiqueCatalogManagePolicy)));
     }
 
     [Fact]
@@ -82,6 +81,10 @@ public class CatalogWriteAuthorizationTests
     [InlineData("Delete", "/items/{itemId:guid}")]
     [InlineData("Put", "/lookbooks/{id:guid}")]
     [InlineData("Delete", "/lookbooks/{id:guid}")]
+    [InlineData("Post", "/tags")]
+    [InlineData("Put", "/tags/{tagId:guid}")]
+    [InlineData("Delete", "/tags/{tagId:guid}")]
+    [InlineData("Put", "/items/{itemId:guid}/tags")]
     public void EachManagedRouteNamesTheCatalogManagePolicy(string method, string route)
     {
         Assert.Matches(

@@ -1,4 +1,6 @@
 using Aveline.Api.Modules.Commerce.Models;
+using Aveline.Api.Modules.Organizations.Models;
+using Aveline.Api.Modules.Payments.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -68,10 +70,19 @@ public class PaymentConfiguration : IEntityTypeConfiguration<Payment>
             .HasForeignKey(p => p.PaymentIntentId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        builder.HasOne(p => p.Order)
+            .WithMany(o => o.Payments)
+            .HasForeignKey(p => p.OrderId)
+            .OnDelete(DeleteBehavior.Cascade);
+
         builder.Property(p => p.PaymentLink)
             .HasMaxLength(500);
 
         builder.Property(p => p.CreatedAt)
             .IsRequired();
+
+        builder.Property(p => p.ConfirmedAt);
+
+        builder.Property(p => p.ExpiresAt);
     }
 }

@@ -2,6 +2,18 @@ import 'dart:async';
 
 import 'package:aveline_mobile/features/catalog/data/catalog_product_repository.dart';
 import 'package:aveline_mobile/features/catalog/domain/catalog_product.dart';
+import 'package:aveline_mobile/features/catalog/domain/catalog_tag.dart';
+import 'package:aveline_mobile/features/catalog/domain/customer_match.dart';
+import 'package:aveline_mobile/features/catalog/domain/outfit_composition.dart';
+import 'package:aveline_mobile/features/catalog/domain/outfit_payloads.dart';
+import 'package:aveline_mobile/features/catalog/domain/product_payloads.dart';
+import 'package:aveline_mobile/features/catalog/domain/sale_payloads.dart';
+import 'package:aveline_mobile/features/catalog/domain/sale_receipt.dart';
+import 'package:aveline_mobile/features/catalog/domain/sourcing_payloads.dart';
+import 'package:aveline_mobile/features/catalog/domain/sourcing_request.dart';
+import 'package:aveline_mobile/features/catalog/domain/sourcing_status.dart';
+import 'package:aveline_mobile/features/catalog/domain/supplier.dart';
+import 'package:aveline_mobile/features/catalog/domain/vision_analysis.dart';
 import 'package:aveline_mobile/features/catalog/presentation/catalog_products_controller.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -42,6 +54,95 @@ class _ListRepository implements CatalogProductRepository {
   }) => throw UnimplementedError('this fake only reads');
 
   @override
+  Future<ImageUploadResult> uploadImage({
+    required List<int> bytes,
+    required String fileName,
+    String? contentType,
+  }) => throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<VisionAnalysis> analyzeImage({
+    String? imageRefId,
+    String? imageUrl,
+    String? fileNameHint,
+  }) => throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<CatalogProduct> createProduct(CreateProductPayload payload) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<CatalogProduct> updateProduct(String id, UpdateProductPayload payload) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<void> deleteProduct(String id) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<List<OutfitComposition>> getLookbooks({String? occasion, String? query}) =>
+      Future.value(const []);
+
+  @override
+  Future<OutfitComposition> composeOutfit(ComposeOutfitPayload payload) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<OutfitComposition> updateLookbook(String id, UpdateLookbookPayload payload) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<void> deleteLookbook(String id) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<List<SourcingRequest>> getSourcingRequests({String? status, String? query}) =>
+      Future.value(const []);
+
+  @override
+  Future<SourcingRequest> createSourcingRequest(CreateSourcingRequestPayload payload) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<SourcingRequest> updateSourcingStatus(String id, SourcingStatus status, {String? notes}) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<List<Supplier>> getSuppliers() =>
+      Future.value(const []);
+
+  @override
+  Future<List<SupplierCatalogItem>> getSupplierCatalog(String supplierId) =>
+      Future.value(const []);
+
+  @override
+  Future<List<CustomerMatch>> getCustomerMatches(String productId) =>
+      Future.value(const []);
+
+  @override
+  Future<List<CustomerMatch>> generateCustomerMatches(String productId) =>
+      Future.value(const []);
+
+  @override
+  Future<void> markMatchActed(String matchId) =>
+      Future.value();
+
+  @override
+  Future<CatalogSaleReceipt> recordSale({
+    required String itemId,
+    required RecordSalePayload payload,
+  }) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<CatalogProduct> adjustStock({
+    required String itemId,
+    required int quantity,
+    CatalogItemStatus? status,
+  }) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
   Future<CatalogProductPage> fetchPage({
     required int page,
     required int pageSize,
@@ -71,7 +172,11 @@ class _ListRepository implements CatalogProductRepository {
     }
     return null;
   }
+
+  @override
+  Future<List<CatalogTag>> fetchTags() => Future.value(const []);
 }
+
 
 /// A repository whose pages are completed by the test, so a reply can be landed
 /// after a newer query has already started.
@@ -91,6 +196,95 @@ class _ManualRepository implements CatalogProductRepository {
   }) => throw UnimplementedError('this fake only reads');
 
   @override
+  Future<ImageUploadResult> uploadImage({
+    required List<int> bytes,
+    required String fileName,
+    String? contentType,
+  }) => throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<VisionAnalysis> analyzeImage({
+    String? imageRefId,
+    String? imageUrl,
+    String? fileNameHint,
+  }) => throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<CatalogProduct> createProduct(CreateProductPayload payload) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<CatalogProduct> updateProduct(String id, UpdateProductPayload payload) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<void> deleteProduct(String id) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<List<OutfitComposition>> getLookbooks({String? occasion, String? query}) =>
+      Future.value(const []);
+
+  @override
+  Future<OutfitComposition> composeOutfit(ComposeOutfitPayload payload) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<OutfitComposition> updateLookbook(String id, UpdateLookbookPayload payload) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<void> deleteLookbook(String id) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<List<SourcingRequest>> getSourcingRequests({String? status, String? query}) =>
+      Future.value(const []);
+
+  @override
+  Future<SourcingRequest> createSourcingRequest(CreateSourcingRequestPayload payload) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<SourcingRequest> updateSourcingStatus(String id, SourcingStatus status, {String? notes}) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<List<Supplier>> getSuppliers() =>
+      Future.value(const []);
+
+  @override
+  Future<List<SupplierCatalogItem>> getSupplierCatalog(String supplierId) =>
+      Future.value(const []);
+
+  @override
+  Future<List<CustomerMatch>> getCustomerMatches(String productId) =>
+      Future.value(const []);
+
+  @override
+  Future<List<CustomerMatch>> generateCustomerMatches(String productId) =>
+      Future.value(const []);
+
+  @override
+  Future<void> markMatchActed(String matchId) =>
+      Future.value();
+
+  @override
+  Future<CatalogSaleReceipt> recordSale({
+    required String itemId,
+    required RecordSalePayload payload,
+  }) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<CatalogProduct> adjustStock({
+    required String itemId,
+    required int quantity,
+    CatalogItemStatus? status,
+  }) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
   Future<CatalogProductPage> fetchPage({
     required int page,
     required int pageSize,
@@ -104,7 +298,11 @@ class _ManualRepository implements CatalogProductRepository {
 
   @override
   Future<CatalogProduct?> fetchProduct(String id) async => null;
+
+  @override
+  Future<List<CatalogTag>> fetchTags() => Future.value(const []);
 }
+
 
 /// Fails the first page and serves the second, for the retry path.
 class _FlakyRepository implements CatalogProductRepository {
@@ -136,7 +334,100 @@ class _FlakyRepository implements CatalogProductRepository {
     int quantityNeeded = 1,
     String urgency = 'medium',
   }) => throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<ImageUploadResult> uploadImage({
+    required List<int> bytes,
+    required String fileName,
+    String? contentType,
+  }) => throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<VisionAnalysis> analyzeImage({
+    String? imageRefId,
+    String? imageUrl,
+    String? fileNameHint,
+  }) => throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<CatalogProduct> createProduct(CreateProductPayload payload) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<CatalogProduct> updateProduct(String id, UpdateProductPayload payload) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<void> deleteProduct(String id) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<List<OutfitComposition>> getLookbooks({String? occasion, String? query}) =>
+      Future.value(const []);
+
+  @override
+  Future<OutfitComposition> composeOutfit(ComposeOutfitPayload payload) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<OutfitComposition> updateLookbook(String id, UpdateLookbookPayload payload) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<void> deleteLookbook(String id) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<List<SourcingRequest>> getSourcingRequests({String? status, String? query}) =>
+      Future.value(const []);
+
+  @override
+  Future<SourcingRequest> createSourcingRequest(CreateSourcingRequestPayload payload) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<SourcingRequest> updateSourcingStatus(String id, SourcingStatus status, {String? notes}) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<List<Supplier>> getSuppliers() =>
+      Future.value(const []);
+
+  @override
+  Future<List<SupplierCatalogItem>> getSupplierCatalog(String supplierId) =>
+      Future.value(const []);
+
+  @override
+  Future<List<CustomerMatch>> getCustomerMatches(String productId) =>
+      Future.value(const []);
+
+  @override
+  Future<List<CustomerMatch>> generateCustomerMatches(String productId) =>
+      Future.value(const []);
+
+  @override
+  Future<void> markMatchActed(String matchId) =>
+      Future.value();
+
+  @override
+  Future<CatalogSaleReceipt> recordSale({
+    required String itemId,
+    required RecordSalePayload payload,
+  }) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<CatalogProduct> adjustStock({
+    required String itemId,
+    required int quantity,
+    CatalogItemStatus? status,
+  }) =>
+      throw UnimplementedError('this fake only reads');
+
+  @override
+  Future<List<CatalogTag>> fetchTags() => Future.value(const []);
 }
+
 
 void main() {
   group('CatalogProductsController', () {

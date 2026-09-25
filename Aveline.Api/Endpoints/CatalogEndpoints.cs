@@ -256,6 +256,157 @@ public static class CatalogEndpoints
         .Produces(StatusCodes.Status403Forbidden)
         .RequireAuthorization(AuthorizationConfiguration.BoutiqueCatalogManagePolicy);
 
+        // --- Catalog Tags ---
+
+        group.MapGet("/tags", async (
+            [FromRoute] Guid organizationId,
+            [FromQuery] bool? includeArchived,
+            [FromServices] ICatalogTagRepository tagRepo,
+            CancellationToken cancellationToken) =>
+        {
+            var tags = await tagRepo.GetTagsByOrgAsync(organizationId, includeArchived.GetValueOrDefault(false), cancellationToken);
+            return Results.Ok(tags.Select(t => CatalogTagDto.FromDomain(t)).ToList());
+        })
+        .WithName("CatalogGetTags")
+        .WithSummary("Get all curated catalog tags for the boutique.")
+        .Produces<IReadOnlyList<CatalogTagDto>>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden);
+
+        group.MapPost("/tags", async (
+            [FromRoute] Guid organizationId,
+            [FromBody] CreateCatalogTagDto dto,
+            [FromServices] ICatalogTagRepository tagRepo,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(dto.Slug) || string.IsNullOrWhiteSpace(dto.Label))
+            {
+                return Results.BadRequest(new { error = "Slug and Label are required for creating a catalog tag." });
+            }
+
+            var cleanSlug = dto.Slug.Trim().ToLowerInvariant().Replace(' ', '-');
+            var existing = await tagRepo.GetBySlugAsync(organizationId, cleanSlug, cancellationToken);
+            if (existing is not null)
+            {
+                return Results.Conflict(new { error = $"A tag with slug '{cleanSlug}' already exists for this boutique." });
+            }
+
+            var tag = new CatalogTag
+            {
+                Id = Guid.NewGuid(),
+                OrgId = organizationId,
+                Slug = cleanSlug,
+                Label = dto.Label.Trim(),
+                ColorHex = InventoryService.NormalizeColorHex(dto.ColorHex),
+                SortOrder = dto.SortOrder,
+                IsArchived = false,
+                CreatedAtUtc = DateTime.UtcNow
+            };
+
+            await tagRepo.AddAsync(tag, cancellationToken);
+            return Results.Created($"/api/v1/orgs/{organizationId}/catalog/tags/{tag.Id}", CatalogTagDto.FromDomain(tag, 0));
+        })
+        .WithName("CatalogCreateTag")
+        .WithSummary("Create a new curated catalog tag for the boutique.")
+        .Produces<CatalogTagDto>(StatusCodes.Status201Created)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status409Conflict)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueCatalogManagePolicy);
+
+        group.MapPut("/tags/{tagId:guid}", async (
+            [FromRoute] Guid organizationId,
+            [FromRoute] Guid tagId,
+            [FromBody] UpdateCatalogTagDto dto,
+            [FromServices] ICatalogTagRepository tagRepo,
+            CancellationToken cancellationToken) =>
+        {
+            var tag = await tagRepo.GetByIdAsync(tagId, organizationId, cancellationToken);
+            if (tag is null)
+            {
+                return Results.NotFound(new { error = "Catalog tag not found." });
+            }
+
+            if (!string.IsNullOrWhiteSpace(dto.Label)) tag.Label = dto.Label.Trim();
+            if (dto.ColorHex is not null) tag.ColorHex = InventoryService.NormalizeColorHex(dto.ColorHex);
+            if (dto.SortOrder.HasValue) tag.SortOrder = dto.SortOrder.Value;
+            if (dto.IsArchived.HasValue) tag.IsArchived = dto.IsArchived.Value;
+
+            await tagRepo.UpdateAsync(tag, cancellationToken);
+            return Results.Ok(CatalogTagDto.FromDomain(tag));
+        })
+        .WithName("CatalogUpdateTag")
+        .WithSummary("Update label, color, order, or archived status of a catalog tag.")
+        .Produces<CatalogTagDto>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueCatalogManagePolicy);
+
+        group.MapDelete("/tags/{tagId:guid}", async (
+            [FromRoute] Guid organizationId,
+            [FromRoute] Guid tagId,
+            [FromServices] ICatalogTagRepository tagRepo,
+            CancellationToken cancellationToken) =>
+        {
+            var tag = await tagRepo.GetByIdAsync(tagId, organizationId, cancellationToken);
+            if (tag is null)
+            {
+                return Results.NotFound(new { error = "Catalog tag not found." });
+            }
+
+            await tagRepo.DeleteAsync(tagId, organizationId, cancellationToken);
+            return Results.NoContent();
+        })
+        .WithName("CatalogDeleteTag")
+        .WithSummary("Delete a catalog tag from the boutique.")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueCatalogManagePolicy);
+
+        group.MapGet("/items/{itemId:guid}/tags", async (
+            [FromRoute] Guid organizationId,
+            [FromRoute] Guid itemId,
+            [FromServices] ICatalogTagRepository tagRepo,
+            CancellationToken cancellationToken) =>
+        {
+            var tags = await tagRepo.GetTagsForItemAsync(organizationId, itemId, cancellationToken);
+            return Results.Ok(tags.Select(t => CatalogTagDto.FromDomain(t)).ToList());
+        })
+        .WithName("CatalogGetItemTags")
+        .WithSummary("Get tags assigned to a specific catalog piece.")
+        .Produces<IReadOnlyList<CatalogTagDto>>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden);
+
+        group.MapPut("/items/{itemId:guid}/tags", async (
+            [FromRoute] Guid organizationId,
+            [FromRoute] Guid itemId,
+            [FromBody] AssignItemTagsDto dto,
+            [FromServices] ICatalogTagRepository tagRepo,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                var assignedSlugs = await tagRepo.AssignTagsToItemAsync(organizationId, itemId, dto.Tags ?? new List<string>(), cancellationToken);
+                return Results.Ok(new { itemId, tags = assignedSlugs });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
+        })
+        .WithName("CatalogAssignItemTags")
+        .WithSummary("Assign tags to a catalog piece.")
+        .Produces(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueCatalogManagePolicy);
+
         group.MapPost("/items/{itemId:guid}/sales", async (
             [FromRoute] Guid organizationId,
             [FromRoute] Guid itemId,

@@ -11,6 +11,7 @@ namespace Aveline.Api.Modules.VisualIntelligence.Services;
 public class InventoryService : IInventoryService
 {
     private readonly IInventoryRepository _repository;
+    private readonly ICatalogTagRepository? _tagRepository;
     private readonly MediaOptions _mediaOptions;
     private readonly IInventoryImageStore? _imageStore;
 
@@ -36,11 +37,13 @@ public class InventoryService : IInventoryService
     public InventoryService(
         IInventoryRepository repository,
         IOptions<MediaOptions>? mediaOptions = null,
-        IInventoryImageStore? imageStore = null)
+        IInventoryImageStore? imageStore = null,
+        ICatalogTagRepository? tagRepository = null)
     {
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
         _mediaOptions = mediaOptions?.Value ?? new MediaOptions();
         _imageStore = imageStore;
+        _tagRepository = tagRepository;
     }
 
     public async Task<IReadOnlyList<InventoryItemDto>> SearchInventoryAsync(
@@ -155,6 +158,14 @@ public class InventoryService : IInventoryService
 
         await _repository.AddAsync(item, cancellationToken);
 
+        if (dto.Tags is not null && dto.Tags.Count > 0 && _tagRepository is not null)
+        {
+            var assigned = await _tagRepository.AssignTagsToItemAsync(item.OrgId, item.Id, dto.Tags, cancellationToken);
+            var result = InventoryItemDto.FromDomain(item);
+            result.Tags = assigned.ToList();
+            return result;
+        }
+
         return InventoryItemDto.FromDomain(item);
     }
 
@@ -191,6 +202,14 @@ public class InventoryService : IInventoryService
         if (dto.Metadata is not null) item.Metadata = dto.Metadata;
 
         await _repository.UpdateAsync(item, cancellationToken);
+
+        if (dto.Tags is not null && _tagRepository is not null)
+        {
+            var assigned = await _tagRepository.AssignTagsToItemAsync(item.OrgId, item.Id, dto.Tags, cancellationToken);
+            var result = InventoryItemDto.FromDomain(item);
+            result.Tags = assigned.ToList();
+            return result;
+        }
 
         return InventoryItemDto.FromDomain(item);
     }

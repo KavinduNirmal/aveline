@@ -13,17 +13,24 @@ import '../../data/demo_catalog_tags.dart';
 import '../../domain/catalog_filters.dart';
 import '../../domain/catalog_product.dart';
 import '../../domain/catalog_tag.dart';
+import '../../domain/outfit_composition.dart';
+import '../../domain/sourcing_request.dart';
 import '../catalog_products_controller.dart';
+import '../sourcing_controller.dart';
+import '../widgets/catalog_kpi_cards.dart';
 import '../widgets/catalog_product_card.dart';
 import '../widgets/catalog_tag_row.dart';
+import '../widgets/lookbooks_view.dart';
+import '../widgets/sourcing_pipeline_view.dart';
+import '../widgets/suppliers_view.dart';
+import 'add_edit_product_screen.dart';
+import 'compose_outfit_screen.dart';
+import 'create_sourcing_ticket_screen.dart';
 
-/// Catalog dock tab: the boutique's pieces.
-///
-/// The title names the shop the catalog belongs to, and the field below it
-/// searches this catalog only — the app-wide search in the header is a separate
-/// affordance and is deliberately not what this screen opens. Under the field
-/// sit the shop's own tag row and the filter entry point, then the grid, which
-/// asks for the next page as it approaches its end.
+/// The active tab of the catalog dock screen.
+enum CatalogDockTab { pieces, lookbooks, sourcing, ateliers }
+
+/// Catalog dock tab: the boutique's pieces, lookbooks, and bespoke sourcing pipeline.
 class CatalogScreen extends StatefulWidget {
   const CatalogScreen({
     super.key,
@@ -50,20 +57,15 @@ class CatalogScreen extends StatefulWidget {
 
 class _CatalogScreenState extends State<CatalogScreen> {
   /// What the title reads before a boutique name is known.
-  ///
-  /// A title that vanished or read "Catalog" alone while the name loaded made
-  /// the screen look unfinished on every cold start.
   static const String _fallbackName = 'Aveline';
 
   /// How close to the end of the grid the next page is asked for.
-  ///
-  /// A screen's worth of pieces, so the page is usually in hand before the
-  /// associate reaches the last row.
   static const double _loadMoreThreshold = 400;
 
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   late final CatalogProductsController _products;
+  late final SourcingController _sourcingController;
 
   /// The query the field currently holds, trimmed. Search is scoped to this
   /// screen: it narrows this catalog, not the whole app.
@@ -75,18 +77,45 @@ class _CatalogScreenState extends State<CatalogScreen> {
   /// The shop tags currently narrowing the catalog.
   final Set<String> _selectedTagIds = {};
 
+  List<CatalogTag>? _dynamicTags;
+  CatalogDockTab _selectedTab = CatalogDockTab.pieces;
+  String? _seededOrganizationId;
+
   @override
   void initState() {
     super.initState();
-    _products = CatalogProductsController(
-      widget.repository ?? DemoCatalogProductRepository(),
-    );
-    // Started before the listener is attached: `loadFirstPage` notifies
-    // synchronously, and that must not reach `setState` from `initState`.
-    // Nothing is lost, because the first build already reads the loading state.
+    final repo = widget.repository ?? DemoCatalogProductRepository();
+    _products = CatalogProductsController(repo);
+    _sourcingController = SourcingController(repo);
+
+    _loadTags();
     _products.loadFirstPage(query: _productQuery);
     _products.addListener(_onProductsChanged);
+    _sourcingController.loadData();
     _scrollController.addListener(_onScroll);
+  }
+
+  Future<void> _loadTags() async {
+    if (widget.tags != null) return;
+    try {
+      final repo = widget.repository ?? DemoCatalogProductRepository();
+      final tags = await repo.fetchTags();
+      if (mounted) {
+        setState(() {
+          _dynamicTags = tags;
+        });
+      }
+    } catch (_) {
+      // Non-fatal, fallback to defaults
+    }
+  }
+
+  Future<void> _handleRefresh() async {
+    await Future.wait([
+      _products.loadFirstPage(query: _productQuery),
+      _sourcingController.loadData(),
+      _loadTags(),
+    ]);
   }
 
   @override
@@ -97,6 +126,7 @@ class _CatalogScreenState extends State<CatalogScreen> {
     _products
       ..removeListener(_onProductsChanged)
       ..dispose();
+    _sourcingController.dispose();
     _searchController.dispose();
     super.dispose();
   }
@@ -148,9 +178,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
   }
 
   /// Opens the filter screen and adopts whatever it returns.
-  ///
-  /// The shell always mounts a GoRouter; a bare Catalog in a widget test simply
-  /// does not open the screen.
   Future<void> _openFilters() async {
     final router = GoRouter.maybeOf(context);
     if (router == null) {
@@ -184,96 +211,196 @@ class _CatalogScreenState extends State<CatalogScreen> {
   }
 
   void _openProduct(CatalogProduct product) {
-    // The location carries the id; the detail screen resolves the piece from
-    // it, so nothing has to survive the router re-parsing the route.
     GoRouter.maybeOf(context)?.push(AppRoutes.catalogProduct(product.id));
   }
 
-  /// The boutique name, or `null` when no provider is above the screen.
-  ///
-  /// The screen is mounted directly by widget tests that supply no providers,
-  /// so a missing one has to degrade rather than throw.
-  String? _boutiqueNameOrNull(BuildContext context) {
-    try {
-      return context.watch<BoutiqueProvider>().name;
-    } catch (_) {
-      return null;
+  Future<void> _openAddPiece() async {
+    final created = await Navigator.of(context).push<CatalogProduct>(
+      MaterialPageRoute(
+        builder: (_) => AddEditProductScreen(
+          repository: widget.repository ?? DemoCatalogProductRepository(),
+        ),
+      ),
+    );
+
+    if (created != null && mounted) {
+      _products.loadFirstPage(query: _productQuery);
+    }
+  }
+
+  Future<void> _openComposeLook() async {
+    final created = await Navigator.of(context).push<OutfitComposition>(
+      MaterialPageRoute(
+        builder: (_) => ComposeOutfitScreen(
+          repository: widget.repository ?? DemoCatalogProductRepository(),
+        ),
+      ),
+    );
+
+    if (created != null && mounted) {
+      setState(() {});
+    }
+  }
+
+  Future<void> _openCreateSourcingTicket() async {
+    final created = await Navigator.of(context).push<SourcingRequest>(
+      MaterialPageRoute(
+        builder: (_) => CreateSourcingTicketScreen(
+          repository: widget.repository ?? DemoCatalogProductRepository(),
+          controller: _sourcingController,
+        ),
+      ),
+    );
+
+    if (created != null && mounted) {
+      setState(() {});
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final boutiqueName =
-        widget.boutiqueName ?? _boutiqueNameOrNull(context) ?? _fallbackName;
-    final tags = widget.tags ?? demoCatalogTags();
+    BoutiqueProvider? boutique;
+    try {
+      boutique = context.watch<BoutiqueProvider>();
+    } catch (_) {
+      boutique = null;
+    }
+    final organizationId = boutique?.organizationId;
+    if (organizationId != null && organizationId != _seededOrganizationId) {
+      _seededOrganizationId = organizationId;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _products.loadFirstPage(query: _productQuery);
+          _sourcingController.loadData();
+          _loadTags();
+        }
+      });
+    }
 
-    // Tags narrow the catalog too, so the standing panel counts them alongside
-    // the filter screen's options. The button badge stays on the screen's own
-    // count: the chosen tags are already visible as chosen pills.
+    final boutiqueName =
+        widget.boutiqueName ?? boutique?.name ?? _fallbackName;
+    final tags = widget.tags ?? _dynamicTags ?? demoCatalogTags();
     final activeNarrowingCount = _filters.activeCount + _selectedTagIds.length;
 
     return Stack(
       children: [
         const Positioned.fill(child: BrandBackdrop()),
-        CustomScrollView(
-          key: const Key('catalog_scroll'),
-          controller: _scrollController,
-          // Always scrollable, so the shell's pull-to-refresh still arms on a
-          // screen whose content is shorter than the viewport.
-          physics: const AlwaysScrollableScrollPhysics(),
-          slivers: [
-            // The sections the brand atmosphere is held behind.
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-              sliver: SliverToBoxAdapter(
+        SafeArea(
+          bottom: false,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
                 child: BrandSectionTitle(
                   boutiqueName: boutiqueName,
                   section: 'Catalog',
                   titleKey: const Key('catalog_title'),
                 ),
               ),
-            ),
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
-              sliver: SliverToBoxAdapter(
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: SectionSearchField(
-                        controller: _searchController,
-                        hintText: 'Search this catalog...',
-                        hasQuery: _query.isNotEmpty,
-                        onChanged: _onQueryChanged,
-                        onClear: _clearQuery,
-                        fieldKey: const Key('catalog_search_field'),
-                        clearKey: const Key('catalog_search_clear'),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    _CatalogFilterButton(
-                      activeCount: _filters.activeCount,
-                      onTap: _openFilters,
-                    ),
-                  ],
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+                child: _CatalogSegmentedTab(
+                  selectedTab: _selectedTab,
+                  onTabChanged: (tab) => setState(() => _selectedTab = tab),
                 ),
               ),
-            ),
-            const SliverToBoxAdapter(child: SizedBox(height: 16)),
-            // The shop's own tags. Full-bleed: the row scrolls to both edges
-            // and owns its own trailing padding.
-            SliverToBoxAdapter(
-              child: CatalogTagRow(
-                tags: tags,
-                selectedIds: _selectedTagIds,
-                onToggled: _toggleTag,
+              Expanded(
+                child: switch (_selectedTab) {
+                  CatalogDockTab.pieces => RefreshIndicator(
+                      onRefresh: _handleRefresh,
+                      child: CustomScrollView(
+                        key: const Key('catalog_scroll'),
+                        controller: _scrollController,
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        slivers: [
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: 8, bottom: 4),
+                            child: CatalogKpiCards(
+                              products: _products.products,
+                              isLoading: _products.isLoading,
+                            ),
+                          ),
+                        ),
+                        SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+                          sliver: SliverToBoxAdapter(
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: SectionSearchField(
+                                    controller: _searchController,
+                                    hintText: 'Search this catalog...',
+                                    hasQuery: _query.isNotEmpty,
+                                    onChanged: _onQueryChanged,
+                                    onClear: _clearQuery,
+                                    fieldKey: const Key('catalog_search_field'),
+                                    clearKey: const Key('catalog_search_clear'),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                _CatalogFilterButton(
+                                  activeCount: _filters.activeCount,
+                                  onTap: _openFilters,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SliverToBoxAdapter(child: SizedBox(height: 14)),
+                        SliverToBoxAdapter(
+                          child: CatalogTagRow(
+                            tags: tags,
+                            selectedIds: _selectedTagIds,
+                            onToggled: _toggleTag,
+                          ),
+                        ),
+                        const SliverToBoxAdapter(child: SizedBox(height: 18)),
+                        ..._productSlivers(activeNarrowingCount),
+                        const SliverToBoxAdapter(child: SizedBox(height: 140)),
+                      ],
+                    ),
+                  ),
+                  CatalogDockTab.lookbooks => LookbooksView(
+                      repository: widget.repository ?? DemoCatalogProductRepository(),
+                      searchQuery: _query,
+                    ),
+                  CatalogDockTab.sourcing => SourcingPipelineView(
+                      controller: _sourcingController,
+                      onCreateTicket: _openCreateSourcingTicket,
+                    ),
+                  CatalogDockTab.ateliers => SuppliersView(
+                      repository: widget.repository ?? DemoCatalogProductRepository(),
+                    ),
+                },
               ),
-            ),
-            const SliverToBoxAdapter(child: SizedBox(height: 20)),
-            ..._productSlivers(activeNarrowingCount),
-            // The animated Blossom floats over the bottom of the shell, so the
-            // grid keeps enough room to scroll clear of it.
-            const SliverToBoxAdapter(child: SizedBox(height: 96)),
-          ],
+            ],
+          ),
+        ),
+        Positioned(
+          bottom: 96,
+          right: 20,
+          child: switch (_selectedTab) {
+            CatalogDockTab.pieces => FloatingActionButton.extended(
+                key: const Key('catalog_add_piece_fab'),
+                onPressed: _openAddPiece,
+                icon: const Icon(Icons.add_a_photo_outlined, size: 20),
+                label: const Text('Add Piece'),
+              ),
+            CatalogDockTab.lookbooks => FloatingActionButton.extended(
+                key: const Key('catalog_compose_look_fab'),
+                onPressed: _openComposeLook,
+                icon: const Icon(Icons.auto_awesome, size: 20),
+                label: const Text('Compose Look'),
+              ),
+            CatalogDockTab.sourcing => FloatingActionButton.extended(
+                key: const Key('catalog_new_ticket_fab'),
+                onPressed: _openCreateSourcingTicket,
+                icon: const Icon(Icons.checkroom, size: 20),
+                label: const Text('New Sourcing Ticket'),
+              ),
+            CatalogDockTab.ateliers => const SizedBox.shrink(),
+          },
         ),
       ],
     );
@@ -644,6 +771,147 @@ class _CatalogEmptyState extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _CatalogSegmentedTab extends StatelessWidget {
+  const _CatalogSegmentedTab({
+    required this.selectedTab,
+    required this.onTabChanged,
+  });
+
+  final CatalogDockTab selectedTab;
+  final ValueChanged<CatalogDockTab> onTabChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Container(
+      height: 40,
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.6)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _SegmentButton(
+              key: const Key('catalog_tab_pieces'),
+              label: 'Pieces',
+              icon: Icons.checkroom_outlined,
+              isSelected: selectedTab == CatalogDockTab.pieces,
+              onTap: () => onTabChanged(CatalogDockTab.pieces),
+              scheme: scheme,
+            ),
+          ),
+          Expanded(
+            child: _SegmentButton(
+              key: const Key('catalog_tab_lookbooks'),
+              label: 'Lookbooks',
+              icon: Icons.style_outlined,
+              isSelected: selectedTab == CatalogDockTab.lookbooks,
+              onTap: () => onTabChanged(CatalogDockTab.lookbooks),
+              scheme: scheme,
+            ),
+          ),
+          Expanded(
+            child: _SegmentButton(
+              key: const Key('catalog_tab_sourcing'),
+              label: 'Sourcing',
+              icon: Icons.work_outline,
+              isSelected: selectedTab == CatalogDockTab.sourcing,
+              onTap: () => onTabChanged(CatalogDockTab.sourcing),
+              scheme: scheme,
+            ),
+          ),
+          Expanded(
+            child: _SegmentButton(
+              key: const Key('catalog_tab_ateliers'),
+              label: 'Ateliers',
+              icon: Icons.business_outlined,
+              isSelected: selectedTab == CatalogDockTab.ateliers,
+              onTap: () => onTabChanged(CatalogDockTab.ateliers),
+              scheme: scheme,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SegmentButton extends StatelessWidget {
+  const _SegmentButton({
+    super.key,
+    required this.label,
+    required this.icon,
+    required this.isSelected,
+    required this.onTap,
+    required this.scheme,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool isSelected;
+  final VoidCallback onTap;
+  final ColorScheme scheme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(17),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          decoration: BoxDecoration(
+            color: isSelected ? scheme.surface : Colors.transparent,
+            borderRadius: BorderRadius.circular(17),
+            boxShadow: isSelected
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.06),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  icon,
+                  size: 14,
+                  color: isSelected ? scheme.primary : scheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                      color: isSelected ? scheme.onSurface : scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

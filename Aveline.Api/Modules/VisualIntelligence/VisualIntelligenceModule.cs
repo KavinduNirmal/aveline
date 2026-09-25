@@ -33,6 +33,7 @@ public static class VisualIntelligenceModule
 
         // Repositories
         services.AddScoped<IInventoryRepository, InventoryRepository>();
+        services.AddScoped<ICatalogTagRepository, CatalogTagRepository>();
         services.AddScoped<ISourcingRequestRepository, SourcingRequestRepository>();
         services.AddScoped<ICustomerMatchRepository, CustomerMatchRepository>();
         services.AddScoped<IOutfitRepository, OutfitRepository>();

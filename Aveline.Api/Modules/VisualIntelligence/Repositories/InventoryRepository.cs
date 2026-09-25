@@ -17,6 +17,8 @@ public class InventoryRepository : IInventoryRepository
     {
         return await _db.InventoryItems
             .AsNoTracking()
+            .Include(i => i.ItemTags)
+            .ThenInclude(it => it.Tag)
             .FirstOrDefaultAsync(i => i.Id == id && i.OrgId == orgId && i.DeletedAt == null, cancellationToken);
     }
 
@@ -26,6 +28,8 @@ public class InventoryRepository : IInventoryRepository
         var trimmed = sku.Trim().ToLower();
         return await _db.InventoryItems
             .AsNoTracking()
+            .Include(i => i.ItemTags)
+            .ThenInclude(it => it.Tag)
             .FirstOrDefaultAsync(i =>
                 i.OrgId == orgId &&
                 i.DeletedAt == null &&
@@ -48,6 +52,8 @@ public class InventoryRepository : IInventoryRepository
     {
         var query = _db.InventoryItems
             .AsNoTracking()
+            .Include(x => x.ItemTags)
+            .ThenInclude(it => it.Tag)
             .Where(x =>
                 x.OrgId == orgId &&
                 x.DeletedAt == null &&
@@ -147,6 +153,8 @@ public class InventoryRepository : IInventoryRepository
         };
 
         var items = await query
+            .Include(x => x.ItemTags)
+            .ThenInclude(it => it.Tag)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync(cancellationToken);
@@ -402,6 +410,22 @@ public class InventoryRepository : IInventoryRepository
             // Build an OR expression across sizes using ILike pattern on the JSON serialized list
             var sizePredicates = request.Sizes.Select(s => $"%\"{s.Trim()}\"%").ToList();
             query = query.Where(x => sizePredicates.Any(p => EF.Functions.ILike(EF.Property<string>(x, "Sizes"), p)));
+        }
+
+        // Tags filter (multi-select: matches if any tag slug or tag Id matches)
+        if (request.TagIds is not null && request.TagIds.Count > 0)
+        {
+            var lowerTags = request.TagIds
+                .Where(t => !string.IsNullOrWhiteSpace(t))
+                .Select(t => t.Trim().ToLower())
+                .ToList();
+
+            if (lowerTags.Count > 0)
+            {
+                query = query.Where(item => item.ItemTags.Any(it =>
+                    lowerTags.Contains(it.Tag.Slug.ToLower()) ||
+                    lowerTags.Contains(it.TagId.ToString().ToLower())));
+            }
         }
 
         // Price Bands and ad-hoc ranges

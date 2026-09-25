@@ -1,4 +1,5 @@
 using Aveline.Api.Modules.Billing.Models;
+using Aveline.Api.Modules.Organizations.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -76,7 +77,7 @@ public class PlanEntitlementOverrideConfiguration : IEntityTypeConfiguration<Pla
         builder.Property(o => o.CreatedAt)
             .IsRequired();
 
-        builder.HasOne<Modules.Organizations.Models.Organization>()
+        builder.HasOne<Organization>()
             .WithMany()
             .HasForeignKey(o => o.OrganizationId)
             .OnDelete(DeleteBehavior.Restrict);
@@ -142,7 +143,7 @@ public class OrganizationSubscriptionConfiguration : IEntityTypeConfiguration<Or
         builder.Property(s => s.ConcurrencyToken)
             .IsRowVersion();
 
-        builder.HasOne<Modules.Organizations.Models.Organization>()
+        builder.HasOne<Organization>()
             .WithMany()
             .HasForeignKey(s => s.OrganizationId)
             .OnDelete(DeleteBehavior.Restrict);

@@ -321,3 +321,13 @@ docs/final_document/
 # because tracked files are unaffected by these patterns.
 .vercel/
 .env*
+
+# =============================================================================
+# DEPLOYMENT-ORCHESTRATION SCRATCH — credentials and CLI caches, never tracked
+# `.azcfg/` holds the Azure CLI token cache and `.vhome/` the Vercel CLI token
+# cache, both relocated here because the sandbox home is read-only. Committing
+# either would leak a live credential.
+# =============================================================================
+.azcfg/
+.vhome/
+.vercel-cache/

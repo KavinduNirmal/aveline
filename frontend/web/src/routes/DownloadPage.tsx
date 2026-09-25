@@ -60,7 +60,12 @@ export function DownloadPage() {
               </div>
               <Button asChild size="lg" className="mt-6 h-11 w-full">
                 <a
-                  href="https://github.com/KavinduNirmal/aveline/releases/latest"
+                  // Served from Cloudflare R2 (published by release-apk.yml).
+                  // Until the first run of that workflow publishes an APK this
+                  // resolves to 404; the manifest at
+                  // https://dl.aveline.gravora.dev/aveline-android-apk/latest.json
+                  // carries the versionCode and SHA-256 for the current build.
+                  href="https://dl.aveline.gravora.dev/aveline-android-apk/aveline-latest.apk"
                   target="_blank"
                   rel="noreferrer"
                 >

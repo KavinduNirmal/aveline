@@ -4,7 +4,7 @@
 
 The **Visual Intelligence & Sourcing** slice (owned by Student 2 — Elle) manages the boutique's catalog, inventory search, visual feature extraction, customer-to-inventory matching, occasion-based outfit composition, and supplier sourcing.
 
-It follows the **single modular monolith** architecture in `.NET 10` (`Aveline.Api/Modules/VisualIntelligence/`) and a specialized **LangGraph state graph** in Python (`agnet-service/app/agents/visual_insight/`).
+It follows the **single modular monolith** architecture in `.NET 10` (`Aveline.Api/Modules/VisualIntelligence/`) and a specialized **LangGraph state graph** in Python (`agent-service/app/agents/visual_insight/`).
 
 ---
 

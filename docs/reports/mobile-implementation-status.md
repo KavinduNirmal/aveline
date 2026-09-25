@@ -572,7 +572,7 @@ the five sections the tenant DTO cannot serve) determines the shape of the repos
   "26 unwired" slightly overstates the distinct capability gap. The capability grouping in that
   table is the honest reading.
 - **One item is `Unverified`:** whether the eight `POST /internal/customers/**` concierge routes and
-  the three `/internal/visual/**` families are still consumed by `agnet-service/`. That does not
+  the three `/internal/visual/**` families are still consumed by `agent-service/`. That does not
   affect any finding here — no mobile route depends on them — but it bears on whether the tenant
   customer surface should be extended (§3.3) rather than the internal one opened up.
 - **Dead code and "unreachable" are static claims.** §5.3 and §5.4 were established by walking the

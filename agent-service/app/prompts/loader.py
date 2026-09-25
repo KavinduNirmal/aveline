@@ -1,7 +1,7 @@
 """Load the canonical universal system prompt shipped with the agent service.
 
 The universal prompt is the single source of truth at
-``agnet-service/app/prompts/SYSTEM_PROMPT.md``. It lives inside the service (not
+``agent-service/app/prompts/SYSTEM_PROMPT.md``. It lives inside the service (not
 in ``.agents/brain``, which is reserved for coding-agent context) so it does not
 interfere with coding agents. It is read once and cached for the process lifetime
 so runtime prompt assembly does not hit the filesystem on every request.
@@ -13,7 +13,7 @@ from pathlib import Path
 
 logger = logging.getLogger("aveline.agent.prompts")
 
-# agnet-service/app/prompts/loader.py -> the prompt file sits beside this module.
+# agent-service/app/prompts/loader.py -> the prompt file sits beside this module.
 _DEFAULT_PROMPT_PATH = Path(__file__).resolve().parent / "SYSTEM_PROMPT.md"
 
 

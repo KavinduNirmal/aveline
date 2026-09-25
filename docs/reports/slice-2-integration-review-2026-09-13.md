@@ -77,7 +77,7 @@ Key consequence: **#233 is a superset of #175.** Merging `origin/catalog` brings
 | `Aveline.Api/Migrations/AppDbContextModelSnapshot.cs` (dev merge) | Generated file; 8 interleaved conflicts splitting mid-entity-block | Not hand-merged. Regenerated from the merged model with EF and verified |
 | `.gitignore` (catalog merge) | Additive: `docs/.obsidian` vs `Agents.md` | Union — kept both |
 | `Aveline.Api/Program.cs` (catalog merge) | Additive: 5 existing `Map*Endpoints()` vs `MapCatalogEndpoints()` | Union — kept all six |
-| `agnet-service/tests/test_concierge_workflow.py` (catalog merge) | Duplicate re-ordering of the same test block | Took `origin/catalog` — verified it is a strict superset (20 test functions, contains every test from the other side) |
+| `agent-service/tests/test_concierge_workflow.py` (catalog merge) | Duplicate re-ordering of the same test block | Took `origin/catalog` — verified it is a strict superset (20 test functions, contains every test from the other side) |
 | `docker-compose.yml` (catalog merge) | `development` block vs catalog's Vision block; auto-merge also duplicated the embeddings+Vision block | Rewrote the region once (see item 2 below) |
 
 **Snapshot procedure (why it is trustworthy).** A naive text union of the snapshot would have produced invalid C#, because the conflict hunks cut through the middle of `modelBuilder.Entity(...)` blocks. Instead the snapshot was regenerated from the merged model using a throwaway migration (`dotnet ef migrations add __Temp…`, then deleting the migration files and keeping the regenerated snapshot). This was validated with:
@@ -149,7 +149,7 @@ All **12** documented endpoints are mapped under `/internal/visual` with `.Requi
 |---|---|---|
 | 12 documented internal endpoints present | ✅ | `VisualEndpoints.cs:25-106` |
 | Auth restricted to `X-Internal-Token` (ADR-009) | ✅ | `VisualEndpoints.cs:23`; `X-Internal-Key` fallback removed |
-| Canonical `/internal/visual` prefix in Python | ✅ | `agnet-service/app/tools/registry.py:165-225` |
+| Canonical `/internal/visual` prefix in Python | ✅ | `agent-service/app/tools/registry.py:165-225` |
 | Route surface registered once | ⚠️ | Legacy alias groups retained: `/internal/visual`, `/api/internal/visual`, `/internal/inventory` → 32 mappings for 12 handlers (`VisualEndpoints.cs:21,109,128`) |
 
 ### 3.3 Python "Elle" sub-graph
@@ -269,7 +269,7 @@ Coverage **gaps that remain**: catalog UI components (0 % measured), `InventoryI
 | **S-5** | Medium | **WhatsApp webhook replay not enforced at the DB level.** `InboundMessageLog.ExternalId` has no unique index (only `(OrganizationId, ReceivedAt)` and `OrganizationId`), so duplicate provider redeliveries are not deduplicated by constraint, and there is no `DbUpdateException` catch. Rate-limiting-after-signature and constant-time signature compare *are* correctly implemented. Provenance: integrations/development, not the slice-2 PRs. | `Infrastructure/Data/Configurations/InboundMessageLogConfiguration.cs:23-40` |
 | **S-6** | Low | **Raw SQL via interpolated strings (EF1002 ×2).** Both sites interpolate server-side computed values only (`rawDays` from configuration; a computed `DateOnly`), so they are **not** currently injectable, but the analyser flags them and they are one refactor away from danger. Provenance: statistics/development. | `Modules/Statistics/Jobs/ApiStatsRetentionJob.cs:42`; `Modules/Statistics/Jobs/ApiRequestLogPartitionJob.cs:40` |
 | **S-7** | Low | **User-supplied image URL forwarded to the AI provider.** `AnalyzeImageDto.ImageUrl` has no validation and is passed as `image_url.url` to the Vision provider. The .NET server itself does not fetch it (so this is not a server-side SSRF), but it lets a caller make our provider fetch arbitrary URLs. Amplified by S-1 (no auth). | `DTOs/AnalyzeImageDto.cs`; `VisionService.cs` chat-completions payload |
-| **S-8** | Low | **Over-broad exception handling can fabricate data.** `image_tools.py:36-45` catches bare `Exception` and returns heuristic "Curated Piece" attributes, silently converting provider outages into plausible-looking analysis results. | `agnet-service/app/tools/inventory/image_tools.py:33-45` |
+| **S-8** | Low | **Over-broad exception handling can fabricate data.** `image_tools.py:36-45` catches bare `Exception` and returns heuristic "Curated Piece" attributes, silently converting provider outages into plausible-looking analysis results. | `agent-service/app/tools/inventory/image_tools.py:33-45` |
 
 ### 5.2 Positive security observations
 
@@ -284,7 +284,7 @@ Coverage **gaps that remain**: catalog UI components (0 % measured), `InventoryI
 |---|---|---|
 | NuGet (.NET) | `dotnet list package --vulnerable --include-transitive` | ✅ "no vulnerable packages given the current sources" |
 | npm/bun (web) | `bun audit` | ✅ "No vulnerabilities found" |
-| Python | not run | ⚠️ no `pip-audit` in the environment and `agnet-service` pins are unpinned/bare (`langgraph` unpinned) |
+| Python | not run | ⚠️ no `pip-audit` in the environment and `agent-service` pins are unpinned/bare (`langgraph` unpinned) |
 
 ---
 
@@ -312,7 +312,7 @@ Coverage **gaps that remain**: catalog UI components (0 % measured), `InventoryI
 | Naming (TS/React) | ⚠️ `components/catalog/mockData.ts` now holds shared **types** plus dead mock arrays — the name is misleading (see §6.3) |
 | Commit messages | ✅ Conventional Commits used consistently across both PRs (`feat(catalog):`, `fix(web):`, `docs(ai-usage):`, …) |
 | Linting (.NET) | ✅ Build clean; 26 warnings, all pre-existing (nullable/obsolete/testcontainers) |
-| Linting (Python) | ⚠️ `ruff check .` reports **12 errors** (11 auto-fixable) — all in `tests/`: unsorted import blocks (`I001`) and two unused symbols (`F401`, `F841`). CI only runs `ruff check agnet-service/app/`, so **CI passes**, but a plain `ruff check .` is red | `tests/tools/test_inventory_tools.py:1`, `tests/test_visual_routing.py:3:8`, `tests/test_golden_cases.py:61`, etc. |
+| Linting (Python) | ⚠️ `ruff check .` reports **12 errors** (11 auto-fixable) — all in `tests/`: unsorted import blocks (`I001`) and two unused symbols (`F401`, `F841`). CI only runs `ruff check agent-service/app/`, so **CI passes**, but a plain `ruff check .` is red | `tests/tools/test_inventory_tools.py:1`, `tests/test_visual_routing.py:3:8`, `tests/test_golden_cases.py:61`, etc. |
 | Linting (Web) | ⚠️ `oxlint`: **31 warnings, 0 errors** on 167 files, including React purity/set-state-in-effect warnings in `components/catalog/AddProductModal.tsx:46` and `:25-27` |
 | Linting (Flutter) | ✅ `flutter analyze --no-fatal-infos`: no issues |
 | Stale in-repo docs | ⚠️ `components/catalog/Catalog UI.md` documents endpoints that do not exist (`PATCH …/customer-matches/{matchId}` at :198, `PUT …/sourcing-requests/{id}` at :246); `Modules/VisualIntelligence/README.md` describes an abandoned MVC-controller layout; `docs/tests/README.md:70` lists only 5 of the 8 slice-2 .NET test files |
@@ -363,7 +363,7 @@ A full cross-check of the five admin reports found **61 resolved**, **9 partiall
 
 - **S-2/S-3/S-5 above** (weak token default, no rate limiting, webhook replay index).
 - **T-0.1:** `POST /internal/agent-runs/{workflowId}/steps` with `"steps": null` can throw a null-reference → 500; the companion run route is guarded but `AppendStepsAsync` has no `?? []`. (`Modules/Statistics/Services/AgentRunIngestService.cs:97`.)
-- **Agentic statistics have no producer:** `agent-runs` appears nowhere in `agnet-service/app`, and `dataQuality` flags are hardcoded all-false — the shipped statistics endpoints serve empty series.
+- **Agentic statistics have no producer:** `agent-runs` appears nowhere in `agent-service/app`, and `dataQuality` flags are hardcoded all-false — the shipped statistics endpoints serve empty series.
 - **Billing-statistics family absent**, `recompute` returns 501, and the day-rollup tables/jobs do not exist.
 - **Slice-1 gaps:** outbound WhatsApp send is never called, no LangGraph `interrupt`/`Command(resume)` SignOff resume, and `TotalSpent`/`VisitCount`/`LastVisitAt` are never written.
 
@@ -425,7 +425,7 @@ flutter analyze --no-fatal-infos                                         # No is
 
 # Lint / audit
 (cd frontend/web && bun run lint)                                        # 31 warnings, 0 errors
-(cd agnet-service && .venv/bin/python -m ruff check .)                   # 12 errors (tests/ only)
+(cd agent-service && .venv/bin/python -m ruff check .)                   # 12 errors (tests/ only)
 bun audit                                                                # No vulnerabilities found
 NUGET_HTTP_CACHE_PATH="$PWD/.nuget-review-cache/http" \
   dotnet list Aveline.Api/Aveline.Api.csproj package --vulnerable --include-transitive

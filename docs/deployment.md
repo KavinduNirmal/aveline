@@ -31,7 +31,7 @@ graph LR
 
     subgraph Azure
         ACA1["Container App: Aveline.Api<br/>(scale-to-zero)"]
-        ACA2["Container App: agnet-service<br/>(scale-to-zero)"]
+        ACA2["Container App: agent-service<br/>(scale-to-zero)"]
         PG[("PostgreSQL Flexible Server<br/>B1ms + pgvector")]
         KV["Key Vault<br/>(secrets)"]
         ACR["Container Registry"]
@@ -67,7 +67,7 @@ All communication between clients and the agent service goes through the API —
 | Resource | Service | Sizing | Est. cost/mo | Free-offer coverage |
 |---|---|---|---|---|
 | `Aveline.Api` | Azure Container Apps | Consumption, min 0 replicas | $0 (in grant) | 180k vCPU-sec, 360k GiB-sec, 2M req/mo |
-| `agnet-service` | Azure Container Apps | Consumption, min 0 replicas | $0 (in grant) | same grant |
+| `agent-service` | Azure Container Apps | Consumption, min 0 replicas | $0 (in grant) | same grant |
 | Database | PostgreSQL Flexible Server | Burstable **B1ms**, 32 GB | $0 | 750 h/mo + 32 GB (12-mo offer) |
 | Web dashboard | Azure Static Web Apps | Free tier | $0 | 100 GB bandwidth/mo |
 | Container images | Azure Container Registry | Standard | $0 | 12-mo offer (100 GB) — *fallback: GHCR* |
@@ -115,7 +115,7 @@ az deployment group create \
 ```
 
 ### Phase 2 — Container images
-- `Aveline.Api/Dockerfile` and `agnet-service/Dockerfile` already exist — validate `docker build` locally.
+- `Aveline.Api/Dockerfile` and `agent-service/Dockerfile` already exist — validate `docker build` locally.
 - Build and push `api` / `agent` images to ACR (or GHCR).
 
 ### Phase 3 — CI/CD: GitHub Actions `deploy.yml`
@@ -185,7 +185,7 @@ jobs:
         run: |
           az acr login --name ${{ vars.ACR_NAME }}
           docker build -t $ACR/api:${GITHUB_SHA} ./Aveline.Api
-          docker build -t $ACR/agent:${GITHUB_SHA} ./agnet-service
+          docker build -t $ACR/agent:${GITHUB_SHA} ./agent-service
           docker push $ACR/api:${GITHUB_SHA}
           docker push $ACR/agent:${GITHUB_SHA}
       - name: Deploy infrastructure (Bicep)

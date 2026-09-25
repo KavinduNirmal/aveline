@@ -27,7 +27,7 @@ flowchart LR
     subgraph App["Application tier"]
         API["Aveline.Api :8080"]
         MET["/metrics · MetricsPolicy"]
-        AGT["agnet-service :8000"]
+        AGT["agent-service :8000"]
     end
 
     subgraph Data["Stateful"]
@@ -337,7 +337,7 @@ selector keeps them out of the variable itself, so "All" means the real database
 
 ## 8. The agent service
 
-`agnet-service` has no inbound metrics port; it pushes OTLP metrics (`MeterProvider` +
+`agent-service` has no inbound metrics port; it pushes OTLP metrics (`MeterProvider` +
 `OTLPMetricExporter`, cumulative temporality) to `otel-collector`, which re-exposes them on
 `:8889` for the `aveline-agent` scrape job. `http://agent:8000/metrics` still 404s by design.
 

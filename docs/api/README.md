@@ -955,7 +955,7 @@ book. `limit` bounds the *named* clients, not the book, and is clamped by the se
 - `consentStatus` is one of `pending | granted | revoked`. **An absent row reads as `pending`**
   on this route *and* on `GET …/profile` — one value for one database state (defect D-2). The
   Python agent parses this exact field
-  (`agnet-service/app/agents/customer_memory/nodes.py`), so the property name is part of the
+  (`agent-service/app/agents/customer_memory/nodes.py`), so the property name is part of the
   contract.
 - `POST` accepts `pending`, `granted` and `revoked`. Re-granting clears `consentRevokedAt`, and
   the first update for a customer with no row inserts a row and stamps

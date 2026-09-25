@@ -1,7 +1,7 @@
 # Aveline Backend — Requirements Specification
 
 **Status:** Proposed — for review before implementation
-**Scope:** Backend only (`Aveline.Api`, `agnet-service`). No frontend, no screens, no UX flows.
+**Scope:** Backend only (`Aveline.Api`, `agent-service`). No frontend, no screens, no UX flows.
 **Baseline commit:** `902f27f` (merge of `integration/slice-2-to-slice-1`)
 **Companion documents:**
 [Domain Model](domain-model.md) ·
@@ -24,7 +24,7 @@ load-bearing sources are:
 | Pricing intent | `docs/architecture/pricing_plan.md`, `docs/ADR/ADR-010-usage-tracking-architecture.md`, `pricing_implementation_plan.ignore.md` |
 | Auth / authz | `Aveline.Api/Configurations/AuthorizationConfiguration.cs`, `Aveline.Api/Authorization/**`, `docs/architecture/authorization.md` |
 | Org / user / invitations | `Aveline.Api/Modules/Organizations/**`, `Aveline.Api/Modules/Shared/**`, `Aveline.Api/Endpoints/OrganizationEndpoints.cs` |
-| Agent service | `agnet-service/app/**` |
+| Agent service | `agent-service/app/**` |
 | Conventions | `docs/tests/README.md`, `.github/`, `Aveline.Api/Program.cs` |
 
 Where a claim is an inference rather than a verified reading, it is marked
@@ -85,11 +85,11 @@ place. Each is addressed by a requirement below.
 | **D-1** | **Plan limit is ignored on lazy ledger creation.** `GetOrCreateCurrentAccountAsync` always uses the *Seed* limit, regardless of the org's tier. | `Aveline.Api/Modules/Billing/Services/UsageTrackerService.cs:34,80` — `DefaultBlossomLimits[DefaultNewAccountTier]` where `DefaultNewAccountTier = PlanTier.Seed` |
 | **D-2** | **Same defect hardcoded in the repository.** When the ledger row is auto-created during a usage write it is seeded at 150 Blossoms with a comment admitting it. | `Aveline.Api/Modules/Billing/Repositories/UsageRepository.cs:44-53` |
 | **D-3** | **Lost-update race on the Blossom balance.** The balance update is a read-modify-write with no concurrency token and no row lock; concurrent workflows for one org will lose increments. No `IsConcurrencyToken`, `RowVersion`, `xmin`, or `FromSql` usage exists anywhere in the API. | `Aveline.Api/Modules/Billing/Repositories/UsageRepository.cs:36-61`; grep for concurrency tokens returns zero matches |
-| **D-4** | **The `visual_insight` usage report is mis-attributed.** It hardcodes `workflow_id="visual_insight"`, `provider="openai"`, `model="visual-llm"`, and passes `customer_id` as `request_id`. Those rows are unattributable and unusable for statistics. | `agnet-service/app/agents/visual_insight/nodes.py:371-388` |
-| **D-5** | **The LangGraph checkpointer is not effective.** `build_concierge_graph` documents itself as "(no checkpointer)" and returns `graph.compile()` with no checkpointer; the saver is instead created at the call site and passed as a call-time kwarg, which `langgraph 1.2.11` silently discards. Persisted workflow state — and therefore cross-approval pause/resume — does not survive. | Structural defect **confirmed by direct read**: `agnet-service/app/workflows/concierge_workflow.py:348-367` (`"""... (no checkpointer)."""`, `return graph.compile()`) and `:408-431` (`checkpointer=checkpointer` passed to `ainvoke`/`run_graph_with_states`). The claim that the kwarg is *discarded* rather than honoured was confirmed by an in-memory runtime repro in this investigation's agent-service workstream, not re-run by the author |
-| **D-6** | **Streaming runs emit no usage at all.** `POST /agents/query/stream` has no thread config, no checkpointer, and no usage report. | `agnet-service/app/api/agents.py:227-244` |
-| **D-7** | **Usage reporting is skipped when the org id is absent or not a UUID**, so those workflows produce zero telemetry. | `agnet-service/app/api/agents.py:120,139-149` |
-| **D-8** | **`cached_tokens` and `actual_cost_usd` are never sent by any caller**, so both are permanently zero on the wire and the cost-anomaly detector can never fire. | `agnet-service/app/services/usage_reporter.py:19-20`; no caller supplies them |
+| **D-4** | **The `visual_insight` usage report is mis-attributed.** It hardcodes `workflow_id="visual_insight"`, `provider="openai"`, `model="visual-llm"`, and passes `customer_id` as `request_id`. Those rows are unattributable and unusable for statistics. | `agent-service/app/agents/visual_insight/nodes.py:371-388` |
+| **D-5** | **The LangGraph checkpointer is not effective.** `build_concierge_graph` documents itself as "(no checkpointer)" and returns `graph.compile()` with no checkpointer; the saver is instead created at the call site and passed as a call-time kwarg, which `langgraph 1.2.11` silently discards. Persisted workflow state — and therefore cross-approval pause/resume — does not survive. | Structural defect **confirmed by direct read**: `agent-service/app/workflows/concierge_workflow.py:348-367` (`"""... (no checkpointer)."""`, `return graph.compile()`) and `:408-431` (`checkpointer=checkpointer` passed to `ainvoke`/`run_graph_with_states`). The claim that the kwarg is *discarded* rather than honoured was confirmed by an in-memory runtime repro in this investigation's agent-service workstream, not re-run by the author |
+| **D-6** | **Streaming runs emit no usage at all.** `POST /agents/query/stream` has no thread config, no checkpointer, and no usage report. | `agent-service/app/api/agents.py:227-244` |
+| **D-7** | **Usage reporting is skipped when the org id is absent or not a UUID**, so those workflows produce zero telemetry. | `agent-service/app/api/agents.py:120,139-149` |
+| **D-8** | **`cached_tokens` and `actual_cost_usd` are never sent by any caller**, so both are permanently zero on the wire and the cost-anomaly detector can never fire. | `agent-service/app/services/usage_reporter.py:19-20`; no caller supplies them |
 | **D-9** | **Doc/code drift in the permission catalog.** `docs/architecture/authorization.md:51-62` omits `conversations:view` from two role rows and from the catalog list; the code grants it. `Aveline.Api/Common/Exceptions/README.md` documents a `GlobalExceptionHandler.cs` that does not exist. `OnboardingService.cs:266` writes the literal `"org:principal"`, a value absent from `Aveline.Api/Authorization/Roles.cs` and therefore granted nothing. | Three separate files |
 | **D-10** | **Inconsistent error envelope.** `/internal/*` endpoints return `{ "error": ... }` while every other endpoint returns `{ "message": ... }`; 401/403 return empty bodies. | `Aveline.Api/Modules/Billing/Endpoints/UsageEndpoints.cs:58` vs `Aveline.Api/Endpoints/OrganizationEndpoints.cs:49` |
 | **D-11** | **No request correlation ID exists.** `HttpContext.TraceIdentifier` is never read and no correlation header is emitted or accepted, so API-consumption statistics cannot correlate a request to a workflow. | grep across `Aveline.Api` |
@@ -653,7 +653,7 @@ Confirmed absent:
 
 - Any per-agent or per-node run record — `NOT FOUND`.
 - Any latency measurement. `AgentMetadata.duration_ms` is **declared but never
-  populated** by production code (`agnet-service/app/schemas/response.py:28`; only
+  populated** by production code (`agent-service/app/schemas/response.py:28`; only
   tests set it).
 - Any tool-call record.
 - Any retry counting — no retry logic exists in the agent service at all.
@@ -664,7 +664,7 @@ Confirmed absent:
   with that id exists.
 - Any attribution of tokens to a specific agent: the concierge orchestrator folds
   every agent's usage into a single total
-  (`agnet-service/app/workflows/concierge_workflow.py:267-287`).
+  (`agent-service/app/workflows/concierge_workflow.py:267-287`).
 
 ### 6.2 Instrumentation gaps and their exact hook points
 
@@ -673,7 +673,7 @@ service must make for the statistics to be real.
 
 | # | Missing datum | Hook |
 | --- | --- | --- |
-| G-1 | Per-node run records (node name, start/end) | Wrap nodes in `build_concierge_graph` (`agnet-service/app/workflows/concierge_workflow.py:352-357`) or handle `on_chain_end` in `state_events.py:63-74`, which already observes `metadata.langgraph_node` per node |
+| G-1 | Per-node run records (node name, start/end) | Wrap nodes in `build_concierge_graph` (`agent-service/app/workflows/concierge_workflow.py:352-357`) or handle `on_chain_end` in `state_events.py:63-74`, which already observes `metadata.langgraph_node` per node |
 | G-2 | Per-node success/failure | `state_events.py:65-74` handles only `on_chain_start`; node errors are currently swallowed (`customer_memory/nodes.py:407-409`, `visual_insight/nodes.py:223-239`) |
 | G-3 | Per-node and per-workflow latency | Timers in `state_events.py:63-74`; populate the unused `AgentMetadata.duration_ms` in `formulate_response` (`concierge_workflow.py:227-264`) |
 | G-4 | Per-LLM-call token usage including model and cached tokens | Capture at each `ainvoke` (`customer_memory/nodes.py:404-406`, `visual_insight/nodes.py:260`); carry through state (`state.py:36-37`) and `AgentMetadata` (`concierge_workflow.py:267-287`) |

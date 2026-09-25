@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 /// read.**
 ///
 /// The parser here mirrors the web's `lib/mentions.ts`, which mirrors
-/// `agnet-service/app/customer_resolution/mentions.py`. The Salon draws a pill over
+/// `agent-service/app/customer_resolution/mentions.py`. The Salon draws a pill over
 /// the span it returns, so if the two drift the UI starts claiming the lookup used
 /// an entity it never saw — a mention that ends a word early, or swallows the prose
 /// after a name. The cases below are the resolver's own examples plus the edges its

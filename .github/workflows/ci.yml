@@ -141,20 +141,20 @@ jobs:
       - name: Install dependencies & linter
         run: |
           python -m pip install --upgrade pip
-          pip install -r agnet-service/requirements.txt -r agnet-service/requirements-dev.txt
+          pip install -r agent-service/requirements.txt -r agent-service/requirements-dev.txt
 
       - name: Run Ruff Lint
-        run: ruff check agnet-service/app/
+        run: ruff check agent-service/app/
 
       - name: Run Pytest (coverage gate >= 90%)
         run: pytest tests/ --cov=app --cov-report=xml:coverage.xml --cov-report=term --cov-fail-under=90
-        working-directory: agnet-service
+        working-directory: agent-service
 
       - name: Upload agent coverage report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aveline-agent-coverage
-          path: agnet-service/coverage.xml
+          path: agent-service/coverage.xml
 
   # ---------------------------------------------------------------------------
   # Job 4: Build, Test & Lint — Vite Web Dashboard

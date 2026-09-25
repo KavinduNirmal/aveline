@@ -2965,7 +2965,7 @@ paths:
         - internalToken: []
       description: |
         The read the Python agent uses before it processes a customer's message
-        (`agnet-service/app/agents/customer_memory/nodes.py` parses the camelCase `consentStatus`).
+        (`agent-service/app/agents/customer_memory/nodes.py` parses the camelCase `consentStatus`).
         A customer with no consent row reads as `pending` — the same value the customer profile
         reports for that state (defect D-2).
       responses:

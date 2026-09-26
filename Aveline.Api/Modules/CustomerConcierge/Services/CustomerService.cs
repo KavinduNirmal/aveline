@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Aveline.Api.Modules.CustomerConcierge.Common;
 using Aveline.Api.Modules.CustomerConcierge.DTOs;
 using Aveline.Api.Modules.CustomerConcierge.Models;
 using Aveline.Api.Modules.CustomerConcierge.Repositories;
@@ -49,10 +50,17 @@ public class CustomerService : ICustomerService
             return await BuildProfileAsync(orgId, customer, cancellationToken);
         }
 
+        // Stored canonically. This path runs for an inbound WhatsApp sender, where Meta supplies the
+        // number as digits with no plus, while every other write path stores E.164. Storing what it
+        // was handed left the same person able to exist as both `94771234567` and `+94771234567`,
+        // and the lookup had to guess which. The lookup now matches both forms, so this only decides
+        // which one new rows get.
+        var normalizedPhone = PhoneNormalizer.ToE164(phoneNumber) ?? phoneNumber;
+
         var created = await _customers.AddAsync(new Customer
         {
             OrganizationId = orgId,
-            PhoneNumber = phoneNumber,
+            PhoneNumber = normalizedPhone,
             FullName = fullName,
             Status = "new",
         }, cancellationToken);

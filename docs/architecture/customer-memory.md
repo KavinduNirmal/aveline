@@ -125,10 +125,14 @@ the staff-facing "Welcome to your Salon" string in `ConversationService`; that i
 message for a different audience.
 
 **Where the trigger lives.** `WebhookEndpoints` (the inbound POST) is the first place that knows
-both the organization and the identified customer. After the message is recorded it asks
-`IConsentGateService` whether the customer may be processed, and if so enqueues a
-`DisclosureIntent`. An unknown number is not enqueued (there is no consent row to stamp); it is
-disclosed once the agent identifies it and it messages again. A revoked customer is never enqueued.
+both the organization and the sender. It resolves the sender against the customer book by phone
+and, when the number is new, creates the profile there and then (`IdentifyOrCreateAsync`), so a
+first-time customer has a consent row to stamp. It then asks `IConsentGateService` whether the
+customer may be processed - passing the number as well, so an erasure tombstone is honoured - and
+if so enqueues a `DisclosureIntent`. A revoked or erased customer is never enqueued. Creating the
+profile in the webhook, before `message.received` is published, also means the agent's own identify
+finds the row rather than racing it. An unknown number used to be skipped here, which meant a
+brand-new customer received no disclosure on the first message they ever sent.
 
 **Synchronous or asynchronous? (plan §15 Q-1).** Asynchronous. The webhook's contract is "return
 200 fast and record what we can", and holding it open for a Meta round-trip risks a Meta retry that

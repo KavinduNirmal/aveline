@@ -18,12 +18,21 @@ public class CustomerRepository : ICustomerRepository
             .FirstOrDefaultAsync(c => c.OrganizationId == orgId && c.Id == id, cancellationToken);
 
     public async Task<Customer?> GetByPhoneAsync(Guid orgId, string phoneNumber, CancellationToken cancellationToken = default)
-        => await _context.Customers
+    {
+        // Matched on candidates rather than the raw string. The write paths disagree about format -
+        // CustomerTenantService normalizes to E.164 while CustomerService stored whatever it was
+        // handed - and Meta sends `from` as digits with no plus, so an exact comparison missed
+        // customers added from the dashboard. A miss here is not cosmetic: WebhookEndpoints reads a
+        // null customer as "unknown number", and that customer then gets no first-contact
+        // disclosure and their WhatsApp thread is never linked to their profile (2026-09-26).
+        var candidates = PhoneCandidates(phoneNumber);
+        return await _context.Customers
             .Include(c => c.Preferences)
             .Include(c => c.Tags)
             .FirstOrDefaultAsync(
-                c => c.OrganizationId == orgId && c.PhoneNumber == phoneNumber,
+                c => c.OrganizationId == orgId && candidates.Contains(c.PhoneNumber),
                 cancellationToken);
+    }
 
     public async Task<IReadOnlyList<Customer>> ListMatchesAsync(
         Guid orgId,

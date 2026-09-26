@@ -373,20 +373,53 @@ public class DisclosureInboundIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AnUnknownNumberProducesNoDisclosureButStillReturns200AndRecordsTheMessage()
+    public async Task AnUnknownNumberIsDisclosedOnItsFirstMessage()
     {
-        // No customer row for this number, so there is no consent row to stamp. The message must
-        // still be accepted and recorded; the disclosure follows once the number is identified.
+        // A number with no customer row used to be skipped outright: the webhook read a null
+        // customer as "unknown number" and returned before enqueuing anything, so a brand-new
+        // customer received no disclosure on the first message they ever sent, and the note only
+        // arrived if they happened to message again. The webhook now creates the profile, so first
+        // contact is disclosed on first contact (2026-09-26).
         var (orgId, _) = await SeedAsync(ConsentStatuses.Pending, "+94770000000");
 
-        var response = await PostAsync(orgId, "wamid.UNKNOWN", "+94771111111");
+        var response = await PostAsync(orgId, "wamid.FIRSTCONTACT", "+94771111111");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Empty(_disclosureQueue.Enqueued);
-        Assert.Equal(0, _whatsApp.SendCalls);
+        Assert.Single(_disclosureQueue.Enqueued);
+        Assert.Equal(1, _whatsApp.SendCalls);
 
         await using var context = CreateContext();
+        var created = await context.Customers.SingleAsync(
+            c => c.OrganizationId == orgId && c.PhoneNumber == "+94771111111");
+        Assert.Equal(created.Id, _disclosureQueue.Enqueued[0].CustomerId);
+
+        var consent = await context.CustomerConsents.SingleAsync(c => c.CustomerId == created.Id);
+        Assert.NotNull(consent.DisclosureShownAt);
+
         Assert.True(await context.InboundMessageLogs.AnyAsync(
-            l => l.OrganizationId == orgId && l.Direction == "inbound" && l.ExternalId == "wamid.UNKNOWN"));
+            l => l.OrganizationId == orgId && l.Direction == "inbound" && l.ExternalId == "wamid.FIRSTCONTACT"));
+        Assert.True(await context.InboundMessageLogs.AnyAsync(
+            l => l.OrganizationId == orgId && l.Direction == "outbound"));
+    }
+
+    [Fact]
+    public async Task ACustomerStoredInE164IsFoundWhenMetaSendsDigitsOnly()
+    {
+        // Meta sends `from` as digits with no leading plus, while the dashboard stores E.164. The
+        // lookup compared the two strings for equality, so this customer read as an unknown number:
+        // no disclosure, and their WhatsApp thread was never linked to their profile (2026-09-26).
+        var (orgId, customerId) = await SeedAsync(ConsentStatuses.Pending, "+94771234567");
+
+        var response = await PostAsync(orgId, "wamid.DIGITSONLY", "94771234567");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Single(_disclosureQueue.Enqueued);
+        Assert.Equal(customerId, _disclosureQueue.Enqueued[0].CustomerId);
+        Assert.Equal(1, _whatsApp.SendCalls);
+
+        await using var context = CreateContext();
+        // One customer, not two: the digits-only form matched the E.164 row rather than creating a
+        // second profile for the same person.
+        Assert.Equal(1, await context.Customers.CountAsync(c => c.OrganizationId == orgId));
     }
 }

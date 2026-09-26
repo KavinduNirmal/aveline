@@ -74,6 +74,7 @@ public static class WebhookEndpoints
             Aveline.Api.Modules.Conversations.Services.IConversationService conversations,
             Aveline.Api.Modules.Conversations.Services.IMessageBroadcaster broadcaster,
             Aveline.Api.Modules.CustomerConcierge.Repositories.ICustomerRepository customers,
+            Aveline.Api.Modules.CustomerConcierge.Services.ICustomerService customerService,
             Aveline.Api.Modules.CustomerConcierge.Services.IConsentGateService consentGate,
             Aveline.Api.Modules.Integrations.Services.Providers.IWhatsAppService whatsApp,
             Aveline.Api.Modules.Privacy.Services.IDisclosureDispatchQueue disclosureQueue,
@@ -205,6 +206,18 @@ public static class WebhookEndpoints
                     // A number that is not on file yields a null customer, and the thread is
                     // created with only its external ref - the client renders that state.
                     var customer = await customers.GetByPhoneAsync(organizationId, message.From, ct);
+                    var customerId = customer?.Id;
+
+                    // The disclosure cannot be skipped for a new number the way the thread binding
+                    // can. It needs a customer to stamp a consent row against, and treating a null
+                    // customer as "unknown number" meant a brand-new customer received no
+                    // disclosure on the first message they ever sent - the note only arrived if
+                    // they happened to message again. The profile is created here, before
+                    // `message.received` is published, so the agent's own identify finds this row
+                    // instead of racing it.
+                    var disclosureCustomerId = customerId
+                        ?? (await customerService.IdentifyOrCreateAsync(
+                                organizationId, message.From, cancellationToken: ct)).CustomerId;
 
                     // The customer's own media, stored before the message is recorded so the
                     // message can bind it. A missing integration or an expired media URL logs and
@@ -213,21 +226,22 @@ public static class WebhookEndpoints
                     if (message.Media is not null)
                     {
                         attachmentId = await TryStoreInboundMediaAsync(
-                            organizationId, message, customer?.Id, integrationService, whatsApp,
+                            organizationId, message, customerId, integrationService, whatsApp,
                             conversations, logger, ct);
                     }
 
                     var recorded = await conversations.RecordInboundClientMessageAsync(
                         organizationId, message.From, message.From, message.Text ?? string.Empty,
-                        customer?.Id, attachmentId, ct);
+                        customerId, attachmentId, ct);
 
                     // The first-contact disclosure (privacy plan §4.4). Enqueue-only and
                     // best-effort: the webhook must not be held open for a Meta round-trip, so the
                     // background worker sends it. A revoked customer is never disclosed to (Pr1's
-                    // gate); an unknown number has no consent row to stamp, so it is retried once
-                    // the number is identified and messages again.
+                    // gate), and the number was resolved above, so a first-time customer now has a
+                    // row to stamp instead of being skipped.
                     await TryEnqueueDisclosureAsync(
-                        organizationId, customer?.Id, message.From, consentGate, disclosureQueue, logger, ct);
+                        organizationId, disclosureCustomerId, message.From, consentGate,
+                        disclosureQueue, logger, ct);
 
                     // An inbound message may have created the thread, and `message.created` alone
                     // cannot deliver that: it carries a message for a conversation the client may
@@ -281,10 +295,10 @@ public static class WebhookEndpoints
     }
 
     /// <summary>
-    /// Queues the first-contact disclosure for an identified, non-revoked customer (privacy plan
-    /// §4.4, §15 Q-1). Every failure path is a log-and-continue: the webhook's contract is to return
-    /// 200 and record what it can, and a disclosure that is not queued is retried by the customer's
-    /// next inbound message because the consent row was never stamped.
+    /// Queues the first-contact disclosure for a non-revoked customer (privacy plan §4.4, §15 Q-1).
+    /// Every failure path is a log-and-continue: the webhook's contract is to return 200 and record
+    /// what it can, and a disclosure that is not queued is retried by the customer's next inbound
+    /// message because the consent row was never stamped.
     /// </summary>
     private static async Task TryEnqueueDisclosureAsync(
         Guid organizationId,
@@ -295,8 +309,10 @@ public static class WebhookEndpoints
         ILogger logger,
         CancellationToken ct)
     {
-        // An unknown number has no consent row, so there is nothing to stamp and nothing to retry
-        // against. The disclosure follows once the agent identifies the customer.
+        // Defensive only. The caller resolves the number against the book and creates the profile
+        // when it is new, so by the time this runs there is a customer and a consent row to stamp.
+        // It used to be the named unknown-number path, which is what denied a first-time customer
+        // their disclosure (2026-09-26).
         if (customerId is null)
         {
             return;
@@ -304,7 +320,10 @@ public static class WebhookEndpoints
 
         try
         {
-            var decision = await consentGate.CheckAsync(organizationId, customerId, ct);
+            // The number goes to the gate too, so an erasure tombstone is honoured for a customer
+            // whose row is already gone (plan §15 Q-4). It is optional there, and a store that
+            // cannot answer fails closed inside the gate.
+            var decision = await consentGate.CheckAsync(organizationId, customerId, from, ct);
             if (!decision.ShouldProcess)
             {
                 // Revoked, or the consent store is unavailable (fail closed). Either way, do not

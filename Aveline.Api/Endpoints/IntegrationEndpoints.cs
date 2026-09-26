@@ -94,7 +94,15 @@ public static class IntegrationEndpoints
             try
             {
                 var test = await integrationService.TestConnectionAsync(organizationId, integrationType, ct);
-                return Results.Ok(test);
+
+                // The flat IntegrationStatusDto, exactly as PUT above returns it. This used to
+                // answer with the wrapping IntegrationTestResultDto, so one question - "is this
+                // integration working?" - had two response shapes. The dashboard reads the flat
+                // one, so `status` arrived as an object rather than the string "Connected" and
+                // every Test click reported a failure, including the ones that passed
+                // (2026-09-26). `IsValid` was redundant with Status.Status and no client read it;
+                // the provider's own message already arrives as LastError.
+                return Results.Ok(test.Status);
             }
             catch (IntegrationNotConfiguredException ex)
             {

@@ -357,7 +357,7 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
     );
     _customerRepository = ApiCustomerRepository(
       _dio,
-      organizationIdProvider: () => _boutiqueProvider.organizationId,
+      organizationId: () => _boutiqueProvider.organizationId,
     );
     // The inbox reads the API through one repository, the same way Home does. The
     // organization id is read at call time because it arrives with `/orgs/my`,

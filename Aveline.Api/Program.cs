@@ -234,8 +234,9 @@ v1.MapRevenueModuleEndpoints();
 v1.MapCatalogEndpoints();
 v1.MapHomeEndpoints();
 v1.MapCustomerTenantEndpoints();
-        v1.MapIncomeEndpoints();
-        v1.MapDashboardEndpoints();
+v1.MapSearchEndpoints();
+v1.MapIncomeEndpoints();
+v1.MapDashboardEndpoints();
 
 app.MapBillingEndpoints();
 // The P7 admin payment reconciliation read, mapped at the root for the same reason as the Blossom

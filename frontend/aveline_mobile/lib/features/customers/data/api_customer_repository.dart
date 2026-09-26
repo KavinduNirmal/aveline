@@ -6,97 +6,106 @@ import '../domain/customer_detail.dart';
 import '../domain/customer_level.dart';
 import 'customer_repository.dart';
 
-/// Real API implementation of [CustomerRepository] connecting to
-/// `/api/v1/orgs/{organizationId}/customers`.
+/// Customer repository backed by the Aveline .NET Backend API.
+///
+/// Follows `docs/api/openapi.yaml` and `CustomerTenantEndpoints.cs`:
+/// - `GET /api/v1/orgs/{organizationId}/customers` (the book)
+/// - `GET /api/v1/orgs/{organizationId}/customers/{customerId}` (detail profile)
+/// - `GET /api/v1/orgs/{organizationId}/customers/{customerId}/consent` (consent)
+/// - `GET /api/v1/orgs/{organizationId}/customers/{customerId}/memories` (saved memories)
+/// - `GET /api/v1/orgs/{organizationId}/customers/{customerId}/events` (occasions)
+/// - `GET /api/v1/orgs/{organizationId}/customers/{customerId}/interactions` (interactions history)
+/// - `POST /api/v1/orgs/{organizationId}/customers/{customerId}/status` (tier recompute)
 class ApiCustomerRepository implements CustomerRepository {
   ApiCustomerRepository(
     this._dio, {
-    this.organizationId,
-    this.organizationIdProvider,
+    required this.organizationId,
+    this.pageSize = 200,
   });
 
   final Dio _dio;
-  final String? organizationId;
-  final String? Function()? organizationIdProvider;
+  final String? Function() organizationId;
+  final int pageSize;
 
-  String get _activeOrgId {
-    final id = organizationId ?? organizationIdProvider?.call();
-    if (id == null || id.isEmpty) {
-      throw StateError('Cannot make customer calls without an active organization.');
-    }
-    return id;
-  }
-
-  /// Fetches the entire filtered customer book in one call so the alphabet index
-  /// can offer every letter currently in scope.
   @override
-  Future<CustomerBook> fetchBook({CustomerQuery query = const CustomerQuery()}) async {
-    final response = await _dio.get(
-      '/api/v1/orgs/$_activeOrgId/customers',
+  Future<CustomerBook> fetchBook({
+    CustomerQuery query = const CustomerQuery(),
+  }) async {
+    final orgId = organizationId();
+    if (orgId == null || orgId.isEmpty) {
+      return CustomerBook.empty;
+    }
+
+    final response = await _dio.get<Map<String, dynamic>>(
+      '/api/v1/orgs/$orgId/customers',
       queryParameters: {
         'page': 1,
-        'pageSize': 200,
+        'pageSize': pageSize,
         if (query.search.trim().isNotEmpty) 'search': query.search.trim(),
-        if (query.level != null) 'level': query.level!.name,
+        if (query.level != null) 'level': _levelWire(query.level!),
       },
     );
 
-    final items = _items(response.data);
-    final customers = items
-        .map(_toCustomer)
-        .whereType<Customer>()
-        .toList()
-      ..sort((a, b) => a.sectionLetter.compareTo(b.sectionLetter));
+    final data = response.data;
+    if (data == null) {
+      return CustomerBook.empty;
+    }
 
-    return CustomerBook(_sections(customers));
+    final rawItems = data['items'];
+    if (rawItems is! List) {
+      return CustomerBook.empty;
+    }
+
+    final customers = <Customer>[];
+    for (final raw in rawItems) {
+      if (raw is Map<String, dynamic>) {
+        final customer = _toCustomer(raw, orgId);
+        if (customer != null) {
+          customers.add(customer);
+        }
+      }
+    }
+
+    return _section(customers);
   }
 
-  /// Fetches one client's profile along with their consent, memories, events, and interactions.
   @override
   Future<CustomerDetail?> fetchCustomer(String id) async {
+    final orgId = organizationId();
+    if (orgId == null || orgId.isEmpty) {
+      return null;
+    }
+
     try {
-      final detailResp = await _dio.get(
-        '/api/v1/orgs/$_activeOrgId/customers/$id',
+      final detailResponse = await _dio.get<Map<String, dynamic>>(
+        '/api/v1/orgs/$orgId/customers/$id',
       );
-      if (detailResp.statusCode != 200 || detailResp.data is! Map) {
-        return null;
-      }
-      final data = detailResp.data as Map;
-      final customer = _toCustomer(data);
-      if (customer == null) {
+      final detailData = detailResponse.data;
+      if (detailData == null) {
         return null;
       }
 
-      // Concurrently fetch sub-resources with resilient fallbacks
-      final consentFuture = _fetchConsent(id);
-      final memoriesFuture = _fetchMemories(id);
-      final eventsFuture = _fetchEvents(id);
-      final interactionsFuture = _fetchInteractions(id);
+      final customer = _toCustomerFromDetail(detailData, orgId);
 
+      // The sub-resources are separate reads, so they run together; each one
+      // degrades to its empty value rather than failing the whole profile.
       final results = await Future.wait([
-        consentFuture,
-        memoriesFuture,
-        eventsFuture,
-        interactionsFuture,
+        _fetchConsent(orgId, id),
+        _fetchMemories(orgId, id),
+        _fetchEvents(orgId, id),
+        _fetchInteractions(orgId, id),
       ]);
-
-      final consent = results[0] as CustomerConsent;
-      final memories = results[1] as List<CustomerMemory>;
-      final events = results[2] as List<CustomerEvent>;
-      final interactions = results[3] as List<CustomerInteraction>;
-
-      final preferences = _parsePreferences(data['preferences']);
 
       return CustomerDetail(
         customer: customer,
-        preferences: preferences,
-        consent: consent,
-        memories: memories,
-        events: events,
-        interactions: interactions,
+        consent: results[0] as CustomerConsent,
+        memories: results[1] as List<CustomerMemory>,
+        events: results[2] as List<CustomerEvent>,
+        interactions: results[3] as List<CustomerInteraction>,
+        preferences: _parsePreferences(detailData['preferences']),
       );
-    } on DioException catch (e) {
-      if (e.response?.statusCode == 404) {
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 404) {
         return null;
       }
       rethrow;
@@ -105,8 +114,13 @@ class ApiCustomerRepository implements CustomerRepository {
 
   /// Records an in-person walk-in visit at the counter.
   Future<void> recordVisit(String customerId) async {
+    final orgId = organizationId();
+    if (orgId == null || orgId.isEmpty) {
+      return;
+    }
+
     await _dio.post(
-      '/api/v1/orgs/$_activeOrgId/customers/$customerId/interactions',
+      '/api/v1/orgs/$orgId/customers/$customerId/interactions',
       data: {
         'occurredAtUtc': DateTime.now().toUtc().toIso8601String(),
         'channel': 'in_person',
@@ -115,156 +129,185 @@ class ApiCustomerRepository implements CustomerRepository {
         'purchaseTotal': null,
       },
       options: Options(
-        headers: {'Idempotency-Key': 'visit-${DateTime.now().microsecondsSinceEpoch}'},
+        headers: {
+          'Idempotency-Key': 'visit-${DateTime.now().microsecondsSinceEpoch}',
+        },
       ),
     );
   }
 
   /// Recomputes the client's loyalty tier from spend, visits, and recency.
   Future<String?> recomputeTier(String customerId) async {
-    final resp = await _dio.post(
-      '/api/v1/orgs/$_activeOrgId/customers/$customerId/status',
-      data: {},
-    );
-    if (resp.statusCode == 200 && resp.data is Map) {
-      return (resp.data as Map)['status'] as String?;
+    final orgId = organizationId();
+    if (orgId == null || orgId.isEmpty) {
+      return null;
     }
-    return null;
+
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/api/v1/orgs/$orgId/customers/$customerId/status',
+      data: const <String, dynamic>{},
+    );
+    return response.data?['status'] as String?;
   }
 
-  Future<CustomerConsent> _fetchConsent(String id) async {
+  /// Reads the consent row, falling back to `unknown` when the client has none
+  /// or the read fails.
+  Future<CustomerConsent> _fetchConsent(String orgId, String id) async {
     try {
-      final resp = await _dio.get('/api/v1/orgs/$_activeOrgId/customers/$id/consent');
-      if (resp.statusCode == 200 && resp.data is Map) {
-        final map = resp.data as Map;
-        return CustomerConsent(
-          status: ConsentStatus.parse(map['status'] as String?),
-          grantedAtUtc: _parseUtc(map['grantedAtUtc']),
-          revokedAtUtc: _parseUtc(map['revokedAtUtc']),
-        );
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/api/v1/orgs/$orgId/customers/$id/consent',
+      );
+      final data = response.data;
+      if (data != null) {
+        return _toConsent(data);
       }
-    } catch (_) {}
+    } catch (_) {
+      // Tolerates an absent consent row or a transient read failure.
+    }
     return CustomerConsent.unknown;
   }
 
-  Future<List<CustomerMemory>> _fetchMemories(String id) async {
+  /// Reads the saved memories, newest first.
+  Future<List<CustomerMemory>> _fetchMemories(String orgId, String id) async {
     try {
-      final resp = await _dio.get('/api/v1/orgs/$_activeOrgId/customers/$id/memories');
-      if (resp.statusCode == 200 && resp.data is List) {
-        final list = resp.data as List;
-        return list
-            .map((item) {
-              if (item is! Map) return null;
-              return CustomerMemory(
-                id: item['id'] as String? ?? '',
-                content: item['content'] as String? ?? '',
-                category: MemoryCategory.parse(item['category'] as String?),
-                source: MemorySource.parse(item['source'] as String?),
-                isExplicit: item['isExplicit'] as bool? ?? false,
-                confidence: (item['confidence'] as num?)?.toDouble() ?? 1.0,
-                createdAtUtc: _parseUtc(item['createdAtUtc']) ?? DateTime.now().toUtc(),
-              );
-            })
-            .whereType<CustomerMemory>()
+      final response = await _dio.get<dynamic>(
+        '/api/v1/orgs/$orgId/customers/$id/memories',
+      );
+      final data = response.data;
+      if (data is List) {
+        return data
+            .whereType<Map<String, dynamic>>()
+            .map(_toMemory)
             .toList();
       }
-    } catch (_) {}
+    } catch (_) {
+      // Tolerates an absent memory list or a transient read failure.
+    }
     return const [];
   }
 
-  Future<List<CustomerEvent>> _fetchEvents(String id) async {
+  /// Reads the client's occasions, which is a bare array on the wire.
+  Future<List<CustomerEvent>> _fetchEvents(String orgId, String id) async {
     try {
-      final resp = await _dio.get('/api/v1/orgs/$_activeOrgId/customers/$id/events');
-      if (resp.statusCode == 200 && resp.data is List) {
-        final list = resp.data as List;
-        return list
-            .map((item) {
-              if (item is! Map) return null;
-              final dateStr = item['eventDate'] as String?;
-              final date = dateStr != null ? DateTime.tryParse(dateStr)?.toUtc() : null;
-              if (date == null) return null;
-              return CustomerEvent(
-                id: item['id'] as String? ?? '',
-                type: CustomerEventType.parse(item['eventType'] as String?),
-                dateUtc: date,
-                description: item['description'] as String?,
-                isActive: item['isActive'] as bool? ?? true,
-              );
-            })
+      final response = await _dio.get<dynamic>(
+        '/api/v1/orgs/$orgId/customers/$id/events',
+      );
+      final data = response.data;
+      if (data is List) {
+        return data
+            .whereType<Map<String, dynamic>>()
+            .map(_toEvent)
             .whereType<CustomerEvent>()
             .toList();
       }
-    } catch (_) {}
+    } catch (_) {
+      // Tolerates an absent event list or a transient read failure.
+    }
     return const [];
   }
 
-  Future<List<CustomerInteraction>> _fetchInteractions(String id) async {
+  /// Reads the interaction history, which is paged on the wire.
+  Future<List<CustomerInteraction>> _fetchInteractions(
+    String orgId,
+    String id,
+  ) async {
     try {
-      final resp = await _dio.get('/api/v1/orgs/$_activeOrgId/customers/$id/interactions');
-      if (resp.statusCode == 200 && resp.data is Map) {
-        final items = (resp.data as Map)['items'];
-        if (items is List) {
-          return items
-              .map((item) {
-                if (item is! Map) return null;
-                return CustomerInteraction(
-                  id: item['interactionId'] as String? ?? '',
-                  channel: InteractionChannel.parse(item['channel'] as String?),
-                  direction: InteractionDirection.parse(item['direction'] as String?),
-                  createdAtUtc: _parseUtc(item['occurredAtUtc']) ?? DateTime.now().toUtc(),
-                  messageContent: item['note'] as String?,
-                );
-              })
-              .whereType<CustomerInteraction>()
-              .toList();
-        }
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/api/v1/orgs/$orgId/customers/$id/interactions',
+        queryParameters: {'page': 1, 'pageSize': 50},
+      );
+      final rawItems = response.data?['items'];
+      if (rawItems is List) {
+        return rawItems
+            .whereType<Map<String, dynamic>>()
+            .map(_toInteraction)
+            .whereType<CustomerInteraction>()
+            .toList();
       }
-    } catch (_) {}
+    } catch (_) {
+      // Tolerates an absent interaction history or a transient read failure.
+    }
     return const [];
+  }
+
+  CustomerMemory _toMemory(Map<String, dynamic> raw) {
+    return CustomerMemory(
+      id: raw['id'] as String? ?? '',
+      content: raw['content'] as String? ?? '',
+      category: MemoryCategory.parse(raw['category'] as String?),
+      source: MemorySource.parse(raw['source'] as String?),
+      createdAtUtc: _parseUtc(raw['createdAtUtc']) ?? DateTime.now().toUtc(),
+      isExplicit: raw['isExplicit'] as bool? ?? false,
+      confidence: (raw['confidence'] as num?)?.toDouble() ?? 1.0,
+    );
+  }
+
+  /// Returns `null` for an event the API gave no usable date for: an occasion
+  /// that cannot be placed on the calendar is not one the screen can show.
+  CustomerEvent? _toEvent(Map<String, dynamic> raw) {
+    final date = _parseUtc(raw['eventDate']);
+    if (date == null) {
+      return null;
+    }
+
+    return CustomerEvent(
+      id: raw['id'] as String? ?? '',
+      type: CustomerEventType.parse(raw['eventType'] as String?),
+      dateUtc: date,
+      description: raw['description'] as String?,
+      isActive: raw['isActive'] as bool? ?? true,
+    );
   }
 
   List<CustomerPreference> _parsePreferences(Object? raw) {
-    if (raw is! List) return const [];
+    if (raw is! List) {
+      return const [];
+    }
+
     return raw
-        .map((item) {
-          if (item is! Map) return null;
-          return CustomerPreference(
+        .whereType<Map<String, dynamic>>()
+        .map(
+          (item) => CustomerPreference(
             id: item['id'] as String? ?? '',
             key: item['preferenceKey'] as String? ?? '',
             value: item['preferenceValue'] as String? ?? '',
             isExplicit: item['isExplicit'] as bool? ?? true,
             confidence: (item['confidence'] as num?)?.toDouble() ?? 1.0,
-          );
-        })
-        .whereType<CustomerPreference>()
+          ),
+        )
         .toList();
   }
 
-  List<Object?> _items(Object? data) {
-    if (data is! Map) {
-      return const [];
-    }
-    final items = data['items'];
-    return items is List ? items : const [];
-  }
-
-  Customer? _toCustomer(Object? raw) {
-    if (raw is! Map) {
-      return null;
-    }
+  Customer? _toCustomer(Map<String, dynamic> raw, String orgId) {
     final id = raw['customerId'];
     if (id is! String || id.isEmpty) {
       return null;
     }
 
-    final rawTags = raw['tags'];
-    final tags = rawTags is List
-        ? rawTags.whereType<String>().toSet()
+    return Customer(
+      id: id,
+      organizationId: orgId,
+      phoneNumber: (raw['phoneNumber'] as String?) ?? '',
+      level: _levelFromWire(raw['level'] as String?) ?? CustomerLevel.level1,
+      status: CustomerStatus.parse(raw['status'] as String?),
+      fullName: raw['fullName'] as String?,
+      nickname: raw['nickname'] as String?,
+      totalSpent: _decimal(raw['totalSpent']),
+      visitCount: (raw['visitCount'] as num?)?.toInt() ?? 0,
+      lastVisitAtUtc: _parseUtc(raw['lastVisitAtUtc']),
+    );
+  }
+
+  Customer _toCustomerFromDetail(Map<String, dynamic> raw, String orgId) {
+    final id = raw['customerId'] as String? ?? '';
+    final tagsRaw = raw['tags'];
+    final tags = tagsRaw is List
+        ? tagsRaw.map((t) => t.toString()).toSet()
         : const <String>{};
 
     return Customer(
       id: id,
-      organizationId: _activeOrgId,
+      organizationId: orgId,
       phoneNumber: (raw['phoneNumber'] as String?) ?? '',
       level: _levelFromWire(raw['level'] as String?) ?? CustomerLevel.level1,
       status: CustomerStatus.parse(raw['status'] as String?),
@@ -279,7 +322,33 @@ class ApiCustomerRepository implements CustomerRepository {
     );
   }
 
-  static List<CustomerSection> _sections(List<Customer> customers) {
+  /// `TenantCustomerConsentDto` carries both the record's own `Status`/`GrantedAtUtc`
+  /// and its `ConsentStatus`/`ConsentGrantedAt` aliases, so either spelling is read.
+  CustomerConsent _toConsent(Map<String, dynamic> raw) {
+    final status = raw['status'] ?? raw['consentStatus'];
+    return CustomerConsent(
+      status: ConsentStatus.parse(status is String ? status : null),
+      grantedAtUtc: _parseUtc(raw['grantedAtUtc'] ?? raw['consentGrantedAt']),
+      revokedAtUtc: _parseUtc(raw['revokedAtUtc'] ?? raw['consentRevokedAt']),
+    );
+  }
+
+  CustomerInteraction? _toInteraction(Map<String, dynamic> raw) {
+    final id = raw['interactionId'];
+    if (id is! String || id.isEmpty) {
+      return null;
+    }
+
+    return CustomerInteraction(
+      id: id,
+      channel: InteractionChannel.parse(raw['channel'] as String?),
+      direction: InteractionDirection.parse(raw['direction'] as String?),
+      createdAtUtc: _parseUtc(raw['occurredAtUtc']) ?? DateTime.now().toUtc(),
+      messageContent: (raw['note'] as String?) ?? (raw['messageContent'] as String?),
+    );
+  }
+
+  static CustomerBook _section(List<Customer> customers) {
     final byLetter = <String, List<Customer>>{};
     for (final customer in customers) {
       byLetter.putIfAbsent(customer.sectionLetter, () => []).add(customer);
@@ -292,18 +361,29 @@ class ApiCustomerRepository implements CustomerRepository {
         return a.compareTo(b);
       });
 
-    return [
+    return CustomerBook([
       for (final letter in letters)
-        CustomerSection(letter: letter, customers: byLetter[letter]!),
-    ];
+        CustomerSection(
+          letter: letter,
+          customers: byLetter[letter]!
+            ..sort(
+              (a, b) => a.displayName.toLowerCase().compareTo(
+                    b.displayName.toLowerCase(),
+                  ),
+            ),
+        ),
+    ]);
   }
+
+  static String _levelWire(CustomerLevel level) => level.name;
 
   static CustomerLevel? _levelFromWire(String? value) {
     if (value == null) {
       return null;
     }
     for (final level in CustomerLevel.values) {
-      if (level.name.toLowerCase() == value.toLowerCase()) {
+      if (level.name.toLowerCase() == value.toLowerCase() ||
+          level.label.toLowerCase() == value.toLowerCase()) {
         return level;
       }
     }
@@ -311,7 +391,7 @@ class ApiCustomerRepository implements CustomerRepository {
   }
 
   static double _decimal(Object? value) =>
-      value is num ? value.toDouble() : 0;
+      value is num ? value.toDouble() : 0.0;
 
   static DateTime? _parseUtc(Object? value) =>
       value is String ? DateTime.tryParse(value)?.toUtc() : null;

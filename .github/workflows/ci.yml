@@ -562,16 +562,31 @@ jobs:
         run: flutter pub get
         working-directory: frontend/aveline_mobile
 
-      # firebase_core/firebase_messaging read ios/Runner/GoogleService-Info.plist at
-      # runtime. Dropping the file in place is not enough on its own: it also has to be
-      # referenced by Runner.xcodeproj to land in the app bundle, and it is not in this
-      # repository, so the build is honest about shipping without iOS push notifications.
-      - name: Warn when the iOS Firebase config is missing
-        working-directory: frontend/aveline_mobile
+      # firebase_core/firebase_messaging read ios/Runner/GoogleService-Info.plist at runtime, and
+      # Runner.xcodeproj references it so it lands in the app bundle. It is per-project config, so
+      # it is gitignored and CI supplies it from a secret - the same arrangement as Android's
+      # google-services.json. The secret holds the file base64-encoded: GitHub preserves a
+      # multi-line value but not its exact quoting, and a mangled plist fails inside Xcode with an
+      # error that says nothing about the secret.
+      #
+      # A missing secret is a warning, not an error: fork pull requests never receive secrets, and
+      # the app's NoopPushTokenSource fallback already handles FCM being unavailable.
+      - name: Write GoogleService-Info.plist from secret
+        working-directory: frontend/aveline_mobile/ios/Runner
+        env:
+          PLIST_B64: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST_BASE64 }}
         run: |
-          if [ ! -f ios/Runner/GoogleService-Info.plist ]; then
-            echo "::warning::ios/Runner/GoogleService-Info.plist is not in the repository, so Firebase cannot initialise on iOS and push notifications will not work in this build."
+          if [ -z "$PLIST_B64" ]; then
+            echo "::warning::GOOGLE_SERVICE_INFO_PLIST_BASE64 is not set, so Firebase cannot initialise on iOS and push notifications will not work in this build."
+            exit 0
           fi
+
+          printf '%s' "$PLIST_B64" | base64 --decode > GoogleService-Info.plist
+          # A plist is XML. A binary blob or a truncated paste would otherwise fail much later,
+          # inside Xcode, with an error that points nowhere near the secret.
+          head -c 5 GoogleService-Info.plist | grep -q '<?xml' \
+            || { echo "::error::GOOGLE_SERVICE_INFO_PLIST_BASE64 did not decode to an XML plist. Is the secret base64-encoded?"; exit 1; }
+          echo "Wrote $(wc -c < GoogleService-Info.plist) bytes of iOS Firebase config."
 
       - name: Derive app version from pubspec
         id: version

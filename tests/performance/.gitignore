@@ -1,0 +1,15 @@
+# Timestamped run artefacts.
+#
+# `measure.cjs` writes two files per run: a dated `perf-baseline-<label>-<stamp>.json` AND
+# `latest.json`. The dated ones accumulate on every run and are exact duplicates of the `latest.json`
+# written beside them, so they are ignored. Everything curated stays tracked:
+#
+#   reports/latest.json                     the CDP baseline (before)
+#   reports-after/latest.json               the CDP run after the optimisations
+#   reports-after/isolate-animation.json    the animated-vs-static isolation experiment
+#   reports/ab-codesplit.json               the A/B against the code-split prototype
+#   reports/lighthouse-mobile-default.json  the Lighthouse 12.6.1 mobile baseline
+#
+# `ab-aurora.cjs` also writes two screenshots here; they are regenerable and are not tracked.
+perf-baseline-*.json
+aurora-*.png

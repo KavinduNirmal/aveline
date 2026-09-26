@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest'
  * hero slides asked Pexels for `w=1400` into a 672 px box.
  *
  * This is a source-level gate rather than a browser assertion on purpose: the Playwright budget
- * suite in `testing/performance/` needs a headless Chrome and third-party network access, and it
+ * suite in `tests/performance/` needs a headless Chrome and third-party network access, and it
  * is not wired into `test-web` yet. This one runs wherever `bun run test` runs, which is where CI
  * actually looks, and it cannot pass vacuously — it counts the images it checked.
  *

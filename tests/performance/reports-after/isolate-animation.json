@@ -1,0 +1,77 @@
+{
+  "profile": {
+    "cpu": 4,
+    "net": {
+      "latency": 150,
+      "down": 204800,
+      "up": 84375
+    }
+  },
+  "observeMs": 15000,
+  "results": {
+    "no-preference": {
+      "runs": [
+        {
+          "longTaskCount": 20,
+          "mainThreadBusyMs": 1089,
+          "longestTaskMs": 726,
+          "fcpMs": 4056,
+          "mountedNodes": 2620
+        },
+        {
+          "longTaskCount": 27,
+          "mainThreadBusyMs": 1177,
+          "longestTaskMs": 605,
+          "fcpMs": 4068,
+          "mountedNodes": 2620
+        },
+        {
+          "longTaskCount": 14,
+          "mainThreadBusyMs": 910,
+          "longestTaskMs": 573,
+          "fcpMs": 4048,
+          "mountedNodes": 2620
+        }
+      ],
+      "median": {
+        "longTaskCount": 20,
+        "mainThreadBusyMs": 1089,
+        "longestTaskMs": 605,
+        "fcpMs": 4056,
+        "mountedNodes": 2620
+      }
+    },
+    "reduce": {
+      "runs": [
+        {
+          "longTaskCount": 6,
+          "mainThreadBusyMs": 431,
+          "longestTaskMs": 394,
+          "fcpMs": 3712,
+          "mountedNodes": 1338
+        },
+        {
+          "longTaskCount": 8,
+          "mainThreadBusyMs": 646,
+          "longestTaskMs": 449,
+          "fcpMs": 3688,
+          "mountedNodes": 1338
+        },
+        {
+          "longTaskCount": 7,
+          "mainThreadBusyMs": 623,
+          "longestTaskMs": 537,
+          "fcpMs": 3784,
+          "mountedNodes": 1338
+        }
+      ],
+      "median": {
+        "longTaskCount": 7,
+        "mainThreadBusyMs": 623,
+        "longestTaskMs": 449,
+        "fcpMs": 3712,
+        "mountedNodes": 1338
+      }
+    }
+  }
+}

@@ -14,7 +14,7 @@ import { describe, expect, it } from 'vitest'
  *
  * So the invariant is asserted at the source level, next to the existing registry/parity check
  * in `src/lib/admin/routes.router.test.ts`, and at the byte level by the deterministic budget
- * assertions in `testing/performance/budgets.spec.ts`.
+ * assertions in `tests/performance/budgets.spec.ts`.
  */
 const appSource = readFileSync(fileURLToPath(new URL('./App.tsx', import.meta.url)), 'utf8')
 

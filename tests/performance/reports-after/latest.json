@@ -1,0 +1,1263 @@
+{
+  "label": "after-codesplit",
+  "dist": "/run/media/kavindu/Development/Development/3-1/SEF/aveline/frontend/web/dist",
+  "origin": "http://127.0.0.1:41519",
+  "generatedAt": "2026-09-26T12:54:02.902Z",
+  "scenarios": {
+    "mobile-slow4g-cold": {
+      "runs": 3,
+      "fcpMs": 4064,
+      "lcpMs": 4932,
+      "cls": 0.0327,
+      "tbtMs": 1050,
+      "lastLongTaskEndMs": 20373,
+      "loadEventMs": 1847,
+      "mainThreadBusyMs": 2450,
+      "longTaskCount": 28,
+      "longestTaskMs": 662,
+      "requestCount": 53,
+      "thirdPartyRequests": 10,
+      "transferBytes": 507628,
+      "note": "Lighthouse mobile profile: Slow 4G + 4x CPU. Cold cache, 412x915.",
+      "profile": {
+        "cpu": 4,
+        "net": {
+          "latency": 150,
+          "down": 204800,
+          "up": 84375
+        },
+        "width": 412,
+        "height": 915,
+        "dsf": 2.625,
+        "warm": false
+      }
+    },
+    "mobile-4g-cold": {
+      "runs": 3,
+      "fcpMs": 2788,
+      "lcpMs": 3204,
+      "cls": 0.0327,
+      "tbtMs": 1084,
+      "lastLongTaskEndMs": 13297,
+      "loadEventMs": 1227,
+      "mainThreadBusyMs": 2434,
+      "longTaskCount": 27,
+      "longestTaskMs": 631,
+      "requestCount": 53,
+      "thirdPartyRequests": 10,
+      "transferBytes": 507628,
+      "note": "Good 4G + 4x CPU. Cold cache. The realistic mid-tier Android case.",
+      "profile": {
+        "cpu": 4,
+        "net": {
+          "latency": 70,
+          "down": 1125000,
+          "up": 375000
+        },
+        "width": 412,
+        "height": 915,
+        "dsf": 2.625,
+        "warm": false
+      }
+    },
+    "mobile-slow4g-warm": {
+      "runs": 2,
+      "fcpMs": 3010,
+      "lcpMs": 3868,
+      "cls": 0.0322,
+      "tbtMs": 1230,
+      "lastLongTaskEndMs": 10752,
+      "loadEventMs": 1180,
+      "mainThreadBusyMs": 2705,
+      "longTaskCount": 30,
+      "longestTaskMs": 726,
+      "requestCount": 53,
+      "thirdPartyRequests": 10,
+      "transferBytes": 254107,
+      "note": "Same profile, second visit with HTTP cache enabled.",
+      "profile": {
+        "cpu": 4,
+        "net": {
+          "latency": 150,
+          "down": 204800,
+          "up": 84375
+        },
+        "width": 412,
+        "height": 915,
+        "dsf": 2.625,
+        "warm": true
+      }
+    },
+    "desktop-unthrottled": {
+      "runs": 2,
+      "fcpMs": 2234,
+      "lcpMs": 3098,
+      "cls": 0.0108,
+      "tbtMs": 815,
+      "lastLongTaskEndMs": 5349,
+      "loadEventMs": 1058,
+      "mainThreadBusyMs": 1190,
+      "longTaskCount": 8,
+      "longestTaskMs": 457,
+      "requestCount": 55,
+      "thirdPartyRequests": 12,
+      "transferBytes": 507592,
+      "note": "No throttling. Desktop Chrome. The optimistic bound.",
+      "profile": {
+        "cpu": 1,
+        "net": null,
+        "width": 1350,
+        "height": 940,
+        "dsf": 1,
+        "warm": false
+      }
+    }
+  },
+  "waterfall": {
+    "note": "Cold, throttled first paint of the landing page. Sorted by start time.",
+    "lcpElement": {
+      "t": 4932,
+      "size": 98468,
+      "el": "H1.mt-6.max-w-xl.font-serif",
+      "url": null
+    },
+    "longTasks": [
+      {
+        "start": 1749,
+        "duration": 94,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 1847,
+        "duration": 81,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 3146,
+        "duration": 57,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 3356,
+        "duration": 654,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 5037,
+        "duration": 78,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 5118,
+        "duration": 62,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 5190,
+        "duration": 77,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 5360,
+        "duration": 72,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 5516,
+        "duration": 57,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 7527,
+        "duration": 52,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 7590,
+        "duration": 54,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 7858,
+        "duration": 50,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 8476,
+        "duration": 68,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 8598,
+        "duration": 63,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 9817,
+        "duration": 50,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 10194,
+        "duration": 52,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 10331,
+        "duration": 160,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 11656,
+        "duration": 63,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 11737,
+        "duration": 64,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 11805,
+        "duration": 59,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 11864,
+        "duration": 52,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 12069,
+        "duration": 51,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 14632,
+        "duration": 59,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      }
+    ],
+    "layoutShifts": [
+      {
+        "t": 5108,
+        "v": 0.01657
+      },
+      {
+        "t": 5423,
+        "v": 0.01612
+      }
+    ],
+    "navigation": {
+      "responseEnd": 154,
+      "domInteractive": 183,
+      "domContentLoaded": 1844,
+      "load": 1847
+    },
+    "resources": [
+      {
+        "name": "https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Geist+Mono:wght@100..900&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap",
+        "start": 173,
+        "duration": 904,
+        "transferSize": 1182,
+        "encodedBodySize": 882,
+        "decodedBodySize": 7326,
+        "initiatorType": "link"
+      },
+      {
+        "name": "/assets/index-D0fcEzF9.js",
+        "start": 173,
+        "duration": 1562,
+        "transferSize": 130979,
+        "encodedBodySize": 130679,
+        "decodedBodySize": 513869,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/rolldown-runtime-Dd_uD5pT.js",
+        "start": 174,
+        "duration": 961,
+        "transferSize": 841,
+        "encodedBodySize": 541,
+        "decodedBodySize": 1106,
+        "initiatorType": "other"
+      },
+      {
+        "name": "/assets/preload-helper-Czpn1I53.js",
+        "start": 174,
+        "duration": 992,
+        "transferSize": 858,
+        "encodedBodySize": 558,
+        "decodedBodySize": 1196,
+        "initiatorType": "other"
+      },
+      {
+        "name": "/assets/jsx-runtime-BpzPEenQ.js",
+        "start": 174,
+        "duration": 1011,
+        "transferSize": 2972,
+        "encodedBodySize": 2672,
+        "decodedBodySize": 7899,
+        "initiatorType": "other"
+      },
+      {
+        "name": "/assets/utils-DojpP95n.js",
+        "start": 174,
+        "duration": 1129,
+        "transferSize": 7853,
+        "encodedBodySize": 7553,
+        "decodedBodySize": 27262,
+        "initiatorType": "other"
+      },
+      {
+        "name": "/assets/index-Di5ydTR8.css",
+        "start": 174,
+        "duration": 1267,
+        "transferSize": 25959,
+        "encodedBodySize": 25659,
+        "decodedBodySize": 222496,
+        "initiatorType": "link"
+      },
+      {
+        "name": "https://inspired-warthog-8208.clerk.accounts.dev/npm/@clerk/clerk-js@6/dist/clerk.browser.js",
+        "start": 1864,
+        "duration": 1278,
+        "transferSize": 0,
+        "encodedBodySize": 0,
+        "decodedBodySize": 0,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/LandingPage-BPHEdDMN.js",
+        "start": 1885,
+        "duration": 268,
+        "transferSize": 15982,
+        "encodedBodySize": 15682,
+        "decodedBodySize": 77309,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/createLucideIcon-C9BLIj54.js",
+        "start": 1886,
+        "duration": 166,
+        "transferSize": 1015,
+        "encodedBodySize": 715,
+        "decodedBodySize": 1429,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/arrow-right-w_3t1P0x.js",
+        "start": 1886,
+        "duration": 172,
+        "transferSize": 458,
+        "encodedBodySize": 158,
+        "decodedBodySize": 165,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/check-B3bndvpk.js",
+        "start": 1886,
+        "duration": 178,
+        "transferSize": 410,
+        "encodedBodySize": 110,
+        "decodedBodySize": 124,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/chevron-left-Cc_C5Qj_.js",
+        "start": 1887,
+        "duration": 186,
+        "transferSize": 434,
+        "encodedBodySize": 134,
+        "decodedBodySize": 130,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/chevron-right-7Vszbjmw.js",
+        "start": 1887,
+        "duration": 193,
+        "transferSize": 414,
+        "encodedBodySize": 114,
+        "decodedBodySize": 130,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/circle-alert-DSr-TBO2.js",
+        "start": 1887,
+        "duration": 324,
+        "transferSize": 489,
+        "encodedBodySize": 189,
+        "decodedBodySize": 250,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/circle-check-CWofXKDS.js",
+        "start": 1888,
+        "duration": 331,
+        "transferSize": 482,
+        "encodedBodySize": 182,
+        "decodedBodySize": 183,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/package-check-BDmABdho.js",
+        "start": 1888,
+        "duration": 339,
+        "transferSize": 614,
+        "encodedBodySize": 314,
+        "decodedBodySize": 569,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/clock-CF07xdeb.js",
+        "start": 1888,
+        "duration": 345,
+        "transferSize": 464,
+        "encodedBodySize": 164,
+        "decodedBodySize": 169,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/file-text-BdtL93q2.js",
+        "start": 1888,
+        "duration": 353,
+        "transferSize": 523,
+        "encodedBodySize": 223,
+        "decodedBodySize": 385,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/message-circle-B0GaXt7G.js",
+        "start": 1889,
+        "duration": 418,
+        "transferSize": 487,
+        "encodedBodySize": 187,
+        "decodedBodySize": 241,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/search-CHaFUqV6.js",
+        "start": 1889,
+        "duration": 484,
+        "transferSize": 478,
+        "encodedBodySize": 178,
+        "decodedBodySize": 174,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/shield-check-DBoRTzsW.js",
+        "start": 1889,
+        "duration": 498,
+        "transferSize": 537,
+        "encodedBodySize": 237,
+        "decodedBodySize": 320,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/AnimatePresence-B4lTx7l-.js",
+        "start": 1889,
+        "duration": 534,
+        "transferSize": 2351,
+        "encodedBodySize": 2051,
+        "decodedBodySize": 4800,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/react-BmRvWMkp.js",
+        "start": 1890,
+        "duration": 973,
+        "transferSize": 34937,
+        "encodedBodySize": 34637,
+        "decodedBodySize": 120460,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/reduced-motion-2fDGfAC9.js",
+        "start": 1890,
+        "duration": 528,
+        "transferSize": 457,
+        "encodedBodySize": 157,
+        "decodedBodySize": 271,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/sliders-horizontal-C7-vcyBJ.js",
+        "start": 1890,
+        "duration": 586,
+        "transferSize": 506,
+        "encodedBodySize": 206,
+        "decodedBodySize": 424,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/sparkles-BhlVmNRA.js",
+        "start": 1890,
+        "duration": 651,
+        "transferSize": 550,
+        "encodedBodySize": 250,
+        "decodedBodySize": 494,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/triangle-alert-BPGzmmA4.js",
+        "start": 1890,
+        "duration": 673,
+        "transferSize": 486,
+        "encodedBodySize": 186,
+        "decodedBodySize": 265,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/button-Cnm9gWoc.js",
+        "start": 1890,
+        "duration": 695,
+        "transferSize": 1026,
+        "encodedBodySize": 726,
+        "decodedBodySize": 1886,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/dist-BN6CIFaG.js",
+        "start": 1891,
+        "duration": 730,
+        "transferSize": 1734,
+        "encodedBodySize": 1434,
+        "decodedBodySize": 3551,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/badge-Du5tMo8r.js",
+        "start": 1891,
+        "duration": 753,
+        "transferSize": 857,
+        "encodedBodySize": 557,
+        "decodedBodySize": 1415,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/Blossom-B7r6szdJ.js",
+        "start": 1891,
+        "duration": 818,
+        "transferSize": 783,
+        "encodedBodySize": 483,
+        "decodedBodySize": 1115,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/SitePage-Cegx1Dvd.js",
+        "start": 1891,
+        "duration": 841,
+        "transferSize": 1105,
+        "encodedBodySize": 805,
+        "decodedBodySize": 1855,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/x-CwRyJjsL.js",
+        "start": 1891,
+        "duration": 863,
+        "transferSize": 451,
+        "encodedBodySize": 151,
+        "decodedBodySize": 154,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/SiteNav-D3boYvTc.js",
+        "start": 1892,
+        "duration": 920,
+        "transferSize": 2091,
+        "encodedBodySize": 1791,
+        "decodedBodySize": 7352,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/simple-icons-B-ePgJaS.js",
+        "start": 1892,
+        "duration": 949,
+        "transferSize": 2696,
+        "encodedBodySize": 2396,
+        "decodedBodySize": 5850,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/useConstrainedDevice-T4iVAT2e.js",
+        "start": 1892,
+        "duration": 986,
+        "transferSize": 575,
+        "encodedBodySize": 275,
+        "decodedBodySize": 530,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/AuroraField-Dt56ghvr.js",
+        "start": 1893,
+        "duration": 1000,
+        "transferSize": 1202,
+        "encodedBodySize": 902,
+        "decodedBodySize": 2304,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/Reveal-CyiKj5Yd.js",
+        "start": 1893,
+        "duration": 1023,
+        "transferSize": 587,
+        "encodedBodySize": 287,
+        "decodedBodySize": 498,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/dialog-D5PNp2hD.js",
+        "start": 1893,
+        "duration": 1081,
+        "transferSize": 1084,
+        "encodedBodySize": 784,
+        "decodedBodySize": 2396,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/dist-Ctsj-0NW.js",
+        "start": 1893,
+        "duration": 1124,
+        "transferSize": 1874,
+        "encodedBodySize": 1574,
+        "decodedBodySize": 4881,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/dist-CErYYiMJ.js",
+        "start": 1894,
+        "duration": 1139,
+        "transferSize": 730,
+        "encodedBodySize": 430,
+        "decodedBodySize": 752,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/dist-HivSB61d.js",
+        "start": 1894,
+        "duration": 1174,
+        "transferSize": 1999,
+        "encodedBodySize": 1699,
+        "decodedBodySize": 4851,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/es2015-CLHdRHL1.js",
+        "start": 1894,
+        "duration": 1255,
+        "transferSize": 8349,
+        "encodedBodySize": 8049,
+        "decodedBodySize": 25228,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/favicon.svg",
+        "start": 1939,
+        "duration": 1151,
+        "transferSize": 622,
+        "encodedBodySize": 322,
+        "decodedBodySize": 1367,
+        "initiatorType": "other"
+      },
+      {
+        "name": "https://inspired-warthog-8208.clerk.accounts.dev/npm/@clerk/ui@1/dist/ui.browser.js",
+        "start": 3207,
+        "duration": 1964,
+        "transferSize": 0,
+        "encodedBodySize": 0,
+        "decodedBodySize": 0,
+        "initiatorType": "script"
+      },
+      {
+        "name": "https://inspired-warthog-8208.clerk.accounts.dev/v1/dev_browser?__clerk_api_version=2026-05-12&_clerk_js_version=6.34.1",
+        "start": 5359,
+        "duration": 1226,
+        "transferSize": 0,
+        "encodedBodySize": 0,
+        "decodedBodySize": 0,
+        "initiatorType": "fetch"
+      },
+      {
+        "name": "https://inspired-warthog-8208.clerk.accounts.dev/v1/environment?__clerk_api_version=2026-05-12&_clerk_js_version=6.34.1&_method=PATCH&__clerk_db_jwt=dvb_3JrlpMmXu020EZAWayscPc0vkcn",
+        "start": 6656,
+        "duration": 1634,
+        "transferSize": 0,
+        "encodedBodySize": 0,
+        "decodedBodySize": 0,
+        "initiatorType": "fetch"
+      },
+      {
+        "name": "https://inspired-warthog-8208.clerk.accounts.dev/v1/client?__clerk_api_version=2026-05-12&_clerk_js_version=6.34.1&__clerk_db_jwt=dvb_3JrlpMmXu020EZAWayscPc0vkcn",
+        "start": 6657,
+        "duration": 1686,
+        "transferSize": 0,
+        "encodedBodySize": 0,
+        "decodedBodySize": 0,
+        "initiatorType": "fetch"
+      },
+      {
+        "name": "https://inspired-warthog-8208.clerk.accounts.dev/npm/@clerk/ui@1.36.0/dist/framework_ui_58d0c7_1.36.0.js",
+        "start": 8420,
+        "duration": 574,
+        "transferSize": 43606,
+        "encodedBodySize": 43306,
+        "decodedBodySize": 132714,
+        "initiatorType": "script"
+      },
+      {
+        "name": "https://inspired-warthog-8208.clerk.accounts.dev/npm/@clerk/ui@1.36.0/dist/ui-common_ui_58d0c7_1.36.0.js",
+        "start": 8422,
+        "duration": 1121,
+        "transferSize": 132189,
+        "encodedBodySize": 131889,
+        "decodedBodySize": 478722,
+        "initiatorType": "script"
+      },
+      {
+        "name": "https://inspired-warthog-8208.clerk.accounts.dev/npm/@clerk/ui@1.36.0/dist/vendors_ui_58d0c7_1.36.0.js",
+        "start": 9671,
+        "duration": 560,
+        "transferSize": 66044,
+        "encodedBodySize": 65744,
+        "decodedBodySize": 183595,
+        "initiatorType": "script"
+      },
+      {
+        "name": "https://inspired-warthog-8208.clerk.accounts.dev/npm/@clerk/ui@1.36.0/dist/subscriptionDetails_ui_58d0c7_1.36.0.js",
+        "start": 9672,
+        "duration": 369,
+        "transferSize": 5306,
+        "encodedBodySize": 5006,
+        "decodedBodySize": 14977,
+        "initiatorType": "script"
+      }
+    ]
+  },
+  "rawRuns": [
+    {
+      "scenario": "mobile-slow4g-cold",
+      "run": 1,
+      "fcp": 4112,
+      "lcp": 4932,
+      "cls": 0.0327,
+      "tbt": 979,
+      "lastLongTaskEnd": 14691,
+      "load": 1847,
+      "dcl": 1844,
+      "busyMs": 2129,
+      "longTaskCount": 23,
+      "longestTask": 654,
+      "reqs": 53,
+      "reqsThirdParty": 10,
+      "firstPartyJsBytes": 232720,
+      "totalTransfer": 507628,
+      "domNodes": 2700,
+      "lcpElement": "H1.mt-6.max-w-xl.font-serif",
+      "errors": []
+    },
+    {
+      "scenario": "mobile-slow4g-cold",
+      "run": 2,
+      "fcp": 3964,
+      "lcp": 4784,
+      "cls": 0.0322,
+      "tbt": 1373,
+      "lastLongTaskEnd": 20881,
+      "load": 1817,
+      "dcl": 1814,
+      "busyMs": 3273,
+      "longTaskCount": 38,
+      "longestTask": 662,
+      "reqs": 53,
+      "reqsThirdParty": 10,
+      "firstPartyJsBytes": 232720,
+      "totalTransfer": 507628,
+      "domNodes": 2700,
+      "lcpElement": "H1.mt-6.max-w-xl.font-serif",
+      "errors": []
+    },
+    {
+      "scenario": "mobile-slow4g-cold",
+      "run": 3,
+      "fcp": 4064,
+      "lcp": 4948,
+      "cls": 0.0327,
+      "tbt": 1050,
+      "lastLongTaskEnd": 20373,
+      "load": 1886,
+      "dcl": 1882,
+      "busyMs": 2450,
+      "longTaskCount": 28,
+      "longestTask": 699,
+      "reqs": 53,
+      "reqsThirdParty": 10,
+      "firstPartyJsBytes": 232720,
+      "totalTransfer": 507628,
+      "domNodes": 2700,
+      "lcpElement": "H1.mt-6.max-w-xl.font-serif",
+      "errors": []
+    },
+    {
+      "scenario": "mobile-4g-cold",
+      "run": 1,
+      "fcp": 2748,
+      "lcp": 3576,
+      "cls": 0.0327,
+      "tbt": 1084,
+      "lastLongTaskEnd": 23904,
+      "load": 1227,
+      "dcl": 1223,
+      "busyMs": 2434,
+      "longTaskCount": 27,
+      "longestTask": 622,
+      "reqs": 53,
+      "reqsThirdParty": 10,
+      "firstPartyJsBytes": 232720,
+      "totalTransfer": 507628,
+      "domNodes": 2700,
+      "lcpElement": "H1.mt-6.max-w-xl.font-serif",
+      "errors": []
+    },
+    {
+      "scenario": "mobile-4g-cold",
+      "run": 2,
+      "fcp": 2840,
+      "lcp": 3204,
+      "cls": 0.0085,
+      "tbt": 860,
+      "lastLongTaskEnd": 10203,
+      "load": 1249,
+      "dcl": 1246,
+      "busyMs": 1510,
+      "longTaskCount": 13,
+      "longestTask": 631,
+      "reqs": 53,
+      "reqsThirdParty": 10,
+      "firstPartyJsBytes": 232720,
+      "totalTransfer": 507628,
+      "domNodes": 2700,
+      "lcpElement": "H1.mt-6.max-w-xl.font-serif",
+      "errors": []
+    },
+    {
+      "scenario": "mobile-4g-cold",
+      "run": 3,
+      "fcp": 2788,
+      "lcp": 3196,
+      "cls": 0.0196,
+      "tbt": 1419,
+      "lastLongTaskEnd": 13297,
+      "load": 1214,
+      "dcl": 1211,
+      "busyMs": 3469,
+      "longTaskCount": 41,
+      "longestTask": 695,
+      "reqs": 53,
+      "reqsThirdParty": 10,
+      "firstPartyJsBytes": 232720,
+      "totalTransfer": 507628,
+      "domNodes": 2700,
+      "lcpElement": "H1.mt-6.max-w-xl.font-serif",
+      "errors": []
+    },
+    {
+      "scenario": "mobile-slow4g-warm",
+      "run": 1,
+      "fcp": 4308,
+      "lcp": 5168,
+      "cls": 0.0322,
+      "tbt": 993,
+      "lastLongTaskEnd": 12309,
+      "load": 2012,
+      "dcl": 2009,
+      "busyMs": 1793,
+      "longTaskCount": 16,
+      "longestTask": 670,
+      "reqs": 53,
+      "reqsThirdParty": 10,
+      "firstPartyJsBytes": 232720,
+      "totalTransfer": 507592,
+      "domNodes": 2700,
+      "lcpElement": "H1.mt-6.max-w-xl.font-serif",
+      "errors": []
+    },
+    {
+      "scenario": "mobile-slow4g-warm",
+      "run": 2,
+      "fcp": 1712,
+      "lcp": 2568,
+      "cls": 0,
+      "tbt": 1467,
+      "lastLongTaskEnd": 9194,
+      "load": 347,
+      "dcl": 344,
+      "busyMs": 3617,
+      "longTaskCount": 43,
+      "longestTask": 781,
+      "reqs": 52,
+      "reqsThirdParty": 9,
+      "firstPartyJsBytes": 220420,
+      "totalTransfer": 622,
+      "domNodes": 2700,
+      "lcpElement": "H1.mt-6.max-w-xl.font-serif",
+      "errors": []
+    },
+    {
+      "scenario": "desktop-unthrottled",
+      "run": 1,
+      "fcp": 2036,
+      "lcp": 2964,
+      "cls": 0.0108,
+      "tbt": 564,
+      "lastLongTaskEnd": 5029,
+      "load": 1063,
+      "dcl": 1062,
+      "busyMs": 864,
+      "longTaskCount": 6,
+      "longestTask": 395,
+      "reqs": 55,
+      "reqsThirdParty": 12,
+      "firstPartyJsBytes": 232720,
+      "totalTransfer": 507592,
+      "domNodes": 2700,
+      "lcpElement": "H1.mt-6.max-w-xl.font-serif",
+      "errors": []
+    },
+    {
+      "scenario": "desktop-unthrottled",
+      "run": 2,
+      "fcp": 2432,
+      "lcp": 3232,
+      "cls": 0.0018,
+      "tbt": 1065,
+      "lastLongTaskEnd": 5669,
+      "load": 1052,
+      "dcl": 1051,
+      "busyMs": 1515,
+      "longTaskCount": 9,
+      "longestTask": 519,
+      "reqs": 54,
+      "reqsThirdParty": 11,
+      "firstPartyJsBytes": 232720,
+      "totalTransfer": 507592,
+      "domNodes": 2700,
+      "lcpElement": "H1.mt-6.max-w-xl.font-serif",
+      "errors": []
+    }
+  ],
+  "servedFiles": {
+    "/index.html": {
+      "rawBytes": 2128,
+      "wireBytes": 728,
+      "encoding": "br"
+    },
+    "/assets/index-D0fcEzF9.js": {
+      "rawBytes": 513869,
+      "wireBytes": 130679,
+      "encoding": "br"
+    },
+    "/assets/index-Di5ydTR8.css": {
+      "rawBytes": 222496,
+      "wireBytes": 25659,
+      "encoding": "br"
+    },
+    "/assets/rolldown-runtime-Dd_uD5pT.js": {
+      "rawBytes": 1106,
+      "wireBytes": 541,
+      "encoding": "br"
+    },
+    "/assets/jsx-runtime-BpzPEenQ.js": {
+      "rawBytes": 7899,
+      "wireBytes": 2672,
+      "encoding": "br"
+    },
+    "/assets/preload-helper-Czpn1I53.js": {
+      "rawBytes": 1196,
+      "wireBytes": 558,
+      "encoding": "br"
+    },
+    "/assets/utils-DojpP95n.js": {
+      "rawBytes": 27262,
+      "wireBytes": 7553,
+      "encoding": "br"
+    },
+    "/assets/LandingPage-BPHEdDMN.js": {
+      "rawBytes": 77309,
+      "wireBytes": 15682,
+      "encoding": "br"
+    },
+    "/assets/createLucideIcon-C9BLIj54.js": {
+      "rawBytes": 1429,
+      "wireBytes": 715,
+      "encoding": "br"
+    },
+    "/assets/arrow-right-w_3t1P0x.js": {
+      "rawBytes": 165,
+      "wireBytes": 158,
+      "encoding": "br"
+    },
+    "/assets/check-B3bndvpk.js": {
+      "rawBytes": 124,
+      "wireBytes": 110,
+      "encoding": "br"
+    },
+    "/assets/chevron-left-Cc_C5Qj_.js": {
+      "rawBytes": 130,
+      "wireBytes": 134,
+      "encoding": "br"
+    },
+    "/assets/chevron-right-7Vszbjmw.js": {
+      "rawBytes": 130,
+      "wireBytes": 114,
+      "encoding": "br"
+    },
+    "/assets/circle-alert-DSr-TBO2.js": {
+      "rawBytes": 250,
+      "wireBytes": 189,
+      "encoding": "br"
+    },
+    "/assets/circle-check-CWofXKDS.js": {
+      "rawBytes": 183,
+      "wireBytes": 182,
+      "encoding": "br"
+    },
+    "/assets/package-check-BDmABdho.js": {
+      "rawBytes": 569,
+      "wireBytes": 314,
+      "encoding": "br"
+    },
+    "/assets/clock-CF07xdeb.js": {
+      "rawBytes": 169,
+      "wireBytes": 164,
+      "encoding": "br"
+    },
+    "/assets/file-text-BdtL93q2.js": {
+      "rawBytes": 385,
+      "wireBytes": 223,
+      "encoding": "br"
+    },
+    "/assets/message-circle-B0GaXt7G.js": {
+      "rawBytes": 241,
+      "wireBytes": 187,
+      "encoding": "br"
+    },
+    "/assets/search-CHaFUqV6.js": {
+      "rawBytes": 174,
+      "wireBytes": 178,
+      "encoding": "br"
+    },
+    "/assets/shield-check-DBoRTzsW.js": {
+      "rawBytes": 320,
+      "wireBytes": 237,
+      "encoding": "br"
+    },
+    "/assets/AnimatePresence-B4lTx7l-.js": {
+      "rawBytes": 4800,
+      "wireBytes": 2051,
+      "encoding": "br"
+    },
+    "/assets/react-BmRvWMkp.js": {
+      "rawBytes": 120460,
+      "wireBytes": 34637,
+      "encoding": "br"
+    },
+    "/assets/reduced-motion-2fDGfAC9.js": {
+      "rawBytes": 271,
+      "wireBytes": 157,
+      "encoding": "br"
+    },
+    "/assets/sliders-horizontal-C7-vcyBJ.js": {
+      "rawBytes": 424,
+      "wireBytes": 206,
+      "encoding": "br"
+    },
+    "/assets/sparkles-BhlVmNRA.js": {
+      "rawBytes": 494,
+      "wireBytes": 250,
+      "encoding": "br"
+    },
+    "/assets/triangle-alert-BPGzmmA4.js": {
+      "rawBytes": 265,
+      "wireBytes": 186,
+      "encoding": "br"
+    },
+    "/assets/button-Cnm9gWoc.js": {
+      "rawBytes": 1886,
+      "wireBytes": 726,
+      "encoding": "br"
+    },
+    "/assets/dist-BN6CIFaG.js": {
+      "rawBytes": 3551,
+      "wireBytes": 1434,
+      "encoding": "br"
+    },
+    "/assets/badge-Du5tMo8r.js": {
+      "rawBytes": 1415,
+      "wireBytes": 557,
+      "encoding": "br"
+    },
+    "/assets/Blossom-B7r6szdJ.js": {
+      "rawBytes": 1115,
+      "wireBytes": 483,
+      "encoding": "br"
+    },
+    "/assets/SitePage-Cegx1Dvd.js": {
+      "rawBytes": 1855,
+      "wireBytes": 805,
+      "encoding": "br"
+    },
+    "/assets/x-CwRyJjsL.js": {
+      "rawBytes": 154,
+      "wireBytes": 151,
+      "encoding": "br"
+    },
+    "/assets/SiteNav-D3boYvTc.js": {
+      "rawBytes": 7352,
+      "wireBytes": 1791,
+      "encoding": "br"
+    },
+    "/assets/simple-icons-B-ePgJaS.js": {
+      "rawBytes": 5850,
+      "wireBytes": 2396,
+      "encoding": "br"
+    },
+    "/assets/useConstrainedDevice-T4iVAT2e.js": {
+      "rawBytes": 530,
+      "wireBytes": 275,
+      "encoding": "br"
+    },
+    "/assets/AuroraField-Dt56ghvr.js": {
+      "rawBytes": 2304,
+      "wireBytes": 902,
+      "encoding": "br"
+    },
+    "/assets/Reveal-CyiKj5Yd.js": {
+      "rawBytes": 498,
+      "wireBytes": 287,
+      "encoding": "br"
+    },
+    "/assets/dialog-D5PNp2hD.js": {
+      "rawBytes": 2396,
+      "wireBytes": 784,
+      "encoding": "br"
+    },
+    "/assets/dist-Ctsj-0NW.js": {
+      "rawBytes": 4881,
+      "wireBytes": 1574,
+      "encoding": "br"
+    },
+    "/assets/dist-CErYYiMJ.js": {
+      "rawBytes": 752,
+      "wireBytes": 430,
+      "encoding": "br"
+    },
+    "/assets/dist-HivSB61d.js": {
+      "rawBytes": 4851,
+      "wireBytes": 1699,
+      "encoding": "br"
+    },
+    "/assets/es2015-CLHdRHL1.js": {
+      "rawBytes": 25228,
+      "wireBytes": 8049,
+      "encoding": "br"
+    },
+    "/favicon.svg": {
+      "rawBytes": 1367,
+      "wireBytes": 322,
+      "encoding": "br"
+    }
+  }
+}

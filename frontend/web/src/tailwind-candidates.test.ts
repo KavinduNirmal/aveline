@@ -24,7 +24,7 @@ import { describe, expect, it } from 'vitest'
  *
  * This is the source-level half. It cannot prove a class was *emitted* — only that it could be —
  * so a utility that resolves to nothing for some other reason still needs the computed-style check
- * (`testing/performance/ab-aurora.cjs` reports `getComputedStyle(el).filter`).
+ * (`tests/performance/ab-aurora.cjs` reports `getComputedStyle(el).filter`).
  */
 const SRC = fileURLToPath(new URL('.', import.meta.url))
 

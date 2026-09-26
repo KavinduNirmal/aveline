@@ -9,7 +9,7 @@
 
 **Method.** Every load-bearing claim in the plan was re-checked against the source before it was
 acted on. Delivery numbers are parsed deterministically from `frontend/web/dist/index.html` and the
-files it references. Runtime numbers come from the CDP harness in `testing/performance/` (applied,
+files it references. Runtime numbers come from the CDP harness in `tests/performance/` (applied,
 not simulated, throttling) and from a purpose-built isolation experiment. No production RUM exists,
 so every number here is laboratory.
 
@@ -145,7 +145,7 @@ published or ignored, and it was a measurement artefact with a real cause: the o
 phase had shifted. Before, the window was spent downloading and parsing 2.7 MB of JavaScript; after,
 the app mounted at ~2.4 s and the window was spent running the landing page itself.
 
-`testing/performance/isolate-animation.cjs` settles it by measuring the same page twice under the
+`tests/performance/isolate-animation.cjs` settles it by measuring the same page twice under the
 same profile with only `prefers-reduced-motion` differing, which switches the aurora animation off
 through the component's own gate and changes nothing else:
 
@@ -204,7 +204,7 @@ Two things follow:
   plain literals and `\`${base} ${extra}\`` all pass.
 
 The honest lesson for the measurements: a byte budget cannot see a class that was never generated,
-and neither can a unit test that never renders the component. `testing/performance/ab-aurora.cjs`
+and neither can a unit test that never renders the component. `tests/performance/ab-aurora.cjs`
 was written for this and reports the **computed** `filter` on the blur layers under both motion
 preferences — it is the check that would have caught this immediately, and the one to run after any
 change to that component.
@@ -222,7 +222,7 @@ change to that component.
 | `useConstrainedDevice` fires on each signal and only on those | `src/hooks/useConstrainedDevice.test.ts` + `.dom.test.ts` (new) | 11 passed |
 | Tenant + admin design-conformance rules | existing | 15 passed |
 | No Tailwind candidate glued to `${` in a `className` template literal (§4.4) | `src/tailwind-candidates.test.ts` (new) | 2 passed |
-| Byte budgets, promoted Mermaid gate, entry-chunk assertions, mobile landing assertions | `testing/performance/budgets.spec.ts` | 10 passed |
+| Byte budgets, promoted Mermaid gate, entry-chunk assertions, mobile landing assertions | `tests/performance/budgets.spec.ts` | 10 passed |
 
 Full suite: **170 files / 1369 tests passed**; all three coverage runs (global, admin ratchet,
 tenant-dashboard ratchet) green at 87.7 % lines. Signed-out Playwright e2e: **19 passed, 1 skipped**.
@@ -305,15 +305,15 @@ bun run build && bun run test:coverage && bun run test:e2e
 # Byte budgets + mobile landing-page gates (expect "10 passed")
 HOME=/tmp NODE_PATH=$PWD/node_modules \
   PLAYWRIGHT_BROWSERS_PATH=$PWD/node_modules/.playwright-browsers \
-  node_modules/.bin/playwright test -c ../../testing/performance/playwright.perf.config.ts
+  node_modules/.bin/playwright test -c ../../tests/performance/playwright.perf.config.ts
 
 # Runtime comparison, Lighthouse mobile profile, applied throttling
-HOME=/tmp NODE_PATH=$PWD/node_modules node ../../testing/performance/measure.cjs
+HOME=/tmp NODE_PATH=$PWD/node_modules node ../../tests/performance/measure.cjs
 
 # Isolate the landing page's animation budget (animated vs reduced motion)
 HOME=/tmp NODE_PATH=$PWD/node_modules \
   PLAYWRIGHT_BROWSERS_PATH=$PWD/node_modules/.playwright-browsers \
-  node ../../testing/performance/isolate-animation.cjs
+  node ../../tests/performance/isolate-animation.cjs
 ```
 
 `HOME` must be writable — Chrome writes its profile there and dies at startup otherwise. Absolute

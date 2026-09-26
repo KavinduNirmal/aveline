@@ -4,12 +4,13 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('Permissions', () {
-    test('contains all 24 canonical permissions matching backend catalog', () {
+    test('contains all 25 canonical permissions matching backend catalog', () {
       // Derived rather than restated: the explicit assertions below name every
       // permission, so the count is the only thing that needs to move.
-      expect(Permissions.all, hasLength(24));
+      expect(Permissions.all, hasLength(25));
       expect(Permissions.catalogView, 'catalog:view');
       expect(Permissions.customersView, 'customers:view');
+      expect(Permissions.customersManage, 'customers:manage');
       expect(Permissions.catalogManage, 'catalog:manage');
       expect(Permissions.approvalsApprove, 'approvals:approve');
       expect(Permissions.paymentsRefund, 'payments:refund');

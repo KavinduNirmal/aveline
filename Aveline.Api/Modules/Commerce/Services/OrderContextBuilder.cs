@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using Aveline.Api.Modules.VisualIntelligence.DTOs;
 using Aveline.Api.Modules.VisualIntelligence.Services;
 
@@ -49,7 +51,8 @@ public enum OrderContextPurpose
 /// </summary>
 public sealed record OrderContext(
     IReadOnlyList<OrderContextItem> Items,
-    OrderContextPurpose Purpose = OrderContextPurpose.Order)
+    OrderContextPurpose Purpose = OrderContextPurpose.Order,
+    decimal? ProposedDiscount = null)
 {
     /// <summary>The context of a message that named no resolvable item.</summary>
     public static readonly OrderContext Empty = new(Array.Empty<OrderContextItem>());
@@ -166,8 +169,9 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
         }
 
         var normalized = Normalize(message);
+        var proposedDiscount = DiscountFrom(message);
         var isOrder = HasPurchaseSignal(normalized);
-        var isQuote = !isOrder && IsPricingQuestion(normalized);
+        var isQuote = !isOrder && (IsPricingQuestion(normalized) || proposedDiscount is not null);
         if (!isOrder && !isQuote)
         {
             return OrderContext.Empty;
@@ -201,7 +205,7 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
         }
 
         var selected = SelectDistinct(matches);
-        var quantity = QuantityFrom(normalized);
+        var quantity = QuantityFrom(message, normalized);
 
         var items = selected
             .Take(MaxItems)
@@ -220,7 +224,8 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
 
         return new OrderContext(
             items,
-            isOrder ? OrderContextPurpose.Order : OrderContextPurpose.Quote);
+            isOrder ? OrderContextPurpose.Order : OrderContextPurpose.Quote,
+            proposedDiscount);
     }
 
     private async Task<IReadOnlyList<InventoryItemDto>> LoadCatalogAsync(
@@ -336,11 +341,39 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
         return ordered;
     }
 
+    private static readonly Regex DiscountRateRegex = new(
+        @"\b(?<rate>\d+(?:\.\d+)?)\s*(?:%|percent\b|pct\b|off\b)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// Extract a proposed discount rate from the message if one was explicitly stated (e.g. "10% off",
+    /// "15 percent discount", "10 off"), returning null if no discount percentage was asked.
+    /// </summary>
+    internal static decimal? DiscountFrom(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return null;
+        }
+
+        var match = DiscountRateRegex.Match(message);
+        if (match.Success && decimal.TryParse(match.Groups["rate"].Value, CultureInfo.InvariantCulture, out var pct))
+        {
+            if (pct is > 0m and <= 100m)
+            {
+                return Math.Round(pct / 100m, 4);
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>
     /// The quantity the customer stated, defaulting to one. A number immediately after "size" is a
-    /// measurement, not a count.
+    /// measurement, not a count. A number followed by "%", "percent", "pct", or "off" is a discount
+    /// percentage, not a count.
     /// </summary>
-    internal static int QuantityFrom(string normalizedMessage)
+    internal static int QuantityFrom(string rawMessage, string normalizedMessage)
     {
         var raw = normalizedMessage.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         for (var i = 0; i < raw.Length; i++)
@@ -350,7 +383,31 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
                 continue;
             }
 
+            // Size measurement: "size 8", "sizes 10"
             if (i > 0 && raw[i - 1] is "size" or "sizes")
+            {
+                continue;
+            }
+
+            // Discount indicators following the number: "10 percent", "10 pct", "10 off", "10 percent off"
+            if (i + 1 < raw.Length && raw[i + 1] is "percent" or "pct" or "off")
+            {
+                continue;
+            }
+
+            // Discount indicator preceding the number: "discount 10", "discount of 10"
+            if (i > 0 && raw[i - 1] is "discount")
+            {
+                continue;
+            }
+            if (i > 1 && raw[i - 1] is "of" && raw[i - 2] is "discount")
+            {
+                continue;
+            }
+
+            // Check if in rawMessage this number is immediately followed by "%" (e.g. "10% off" or "10%")
+            var tokenPattern = $@"\b{value}\s*%";
+            if (Regex.IsMatch(rawMessage, tokenPattern))
             {
                 continue;
             }
@@ -360,6 +417,9 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
 
         return 1;
     }
+
+    internal static int QuantityFrom(string normalizedMessage)
+        => QuantityFrom(normalizedMessage, normalizedMessage);
 
     /// <summary>True when the message asks to buy something rather than asking about it.</summary>
     internal static bool HasPurchaseSignal(string normalizedMessage)

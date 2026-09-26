@@ -3,7 +3,13 @@ from functools import lru_cache
 from typing import Annotated
 
 from pydantic import field_validator
-from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+try:
+    from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+except ImportError:
+    from pydantic_settings import BaseSettings, SettingsConfigDict  # type: ignore
+
+    class NoDecode:  # type: ignore
+        pass
 
 # Defaults that are never acceptable for a shared service-to-service secret.
 _WEAK_INTERNAL_TOKENS = {"", "change-me", "change-me-internal-token"}

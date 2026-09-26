@@ -1429,4 +1429,58 @@ Peer agents Ava and Elle had well-structured prompts outlining responsibilities,
 
 
 
+---
 
+## Session 2026-09-26 (Fix Commerce Agent Discount % Extraction and Quote Reasoning)
+
+**Tool used:** Antigravity AI Assistant  
+**Task:** Diagnose and fix the Commerce Agent ("Lina") issue where a query asking for a percentage discount (e.g. "Calculate the discount if we give a 10% off for theCrimson Georgette Zari Saree") mistakenly extracts the percentage number (10) as item quantity (10 x Crimson Georgette Zari Saree), omit redundant "This customer is..." preamble when chatting generally with the boutique owner, and properly communicate requested discount versus standard policy/tier cap in quotes.  
+**Prompt(s) used:**  
+- "Calculate the discount if we give a 10% off for theCrimson Georgette Zari Saree - I asked this question from Lina. And this is the answer I received: 'This customer is on the New tier. 10 x Crimson Georgette Zari Saree at LKR 12,500.00 takes the full 5% off (LKR 625.00) without sign-off.' See there's an error right? fix this.."  
+- "Yes continue and also It should not say 'this customer..........' because we do not chat seperatly for each customer, the boutique owner is simply asking about those prices and things."  
+
+**Work Performed:**
+- **Root Cause Diagnosis**:
+  - In `Aveline.Api/Modules/Commerce/Services/OrderContextBuilder.cs`, `Normalize` converted non-alphanumeric characters (including `%`) to spaces, turning `"10% off"` into `"10 off"`. `QuantityFrom` subsequently extracted the first integer (`10`) as the item quantity (`10 x Crimson Georgette Zari Saree`), while `proposed_discount` was omitted.
+  - In `agent-service/app/agents/commerce/nodes.py`, `_quote_sentence` prepended `"This customer is on the ... tier."` even when no customer was attached to the boutique owner's conversation, and only quoted the standing tier ceiling rather than evaluating the user's requested discount rate.
+- **Backend Refactoring (`Aveline.Api`)**:
+  - Added `DiscountFrom(string? message)` to parse discount rates (`10%`, `10 percent`, `10% off`, `10 off` $\rightarrow$ `0.10m`).
+  - Refactored `QuantityFrom(string rawMessage, string normalizedMessage)` to ignore numbers followed by `%`, `percent`, `pct`, or `off`, or preceded by `discount` or `size`/`sizes`. Correctly distinguishes quantity and discount when both are present (e.g. `"10% off for 2 sarees"` $\rightarrow$ quantity `2`, discount `0.10m`).
+  - Extended `OrderContext` record to include `decimal? ProposedDiscount = null`.
+  - Updated `ConversationService.cs` on both inbound draft and staff note paths to forward `proposed_discount` in `org_context`.
+- **Commerce Agent Quote Reasoning Upgrade (`agent-service`)**:
+  - Added `extract_discount_rate(message: str)` as a resilient fallback in `nodes.py`.
+  - Updated `CommerceAgent.present_quote` to resolve `proposed_discount` from state or message fallback.
+  - Refactored `_quote_sentence`:
+    - Eliminated `"This customer is on the ... tier."` when `name` is None, directly addressing the boutique owner.
+    - When `proposed_discount > 0.0`: computes requested discount amount (`line_total * proposed_discount`) and net discounted total. If the discount exceeds the tier cap / margin room, clearly states that owner sign-off is required and reports the limit without sign-off (e.g. `5% (LKR 625.00)`). If within limits, confirms it can be applied without sign-off.
+    - When `proposed_discount <= 0.0`: maintains existing standing tier/margin floor ceiling summary.
+- **Testing & Verification**:
+  - Added tests in `OrderContextBuilderTests.cs` and `test_commerce_discount_lane.py`.
+  - Ran scratch script verifying quote formatting: `"A 10% discount (LKR 1,250.00) on Crimson Georgette Zari Saree at LKR 12,500.00 would bring it to LKR 11,250.00, but requires owner sign-off because the standard limit without sign-off is 5% (LKR 625.00)."`.
+
+**Files Modified:**
+- `Aveline.Api/Modules/Commerce/Services/OrderContextBuilder.cs`
+- `Aveline.Api/Modules/Conversations/Services/ConversationService.cs`
+- `Aveline.Api.Tests/OrderContextBuilderTests.cs`
+- `agent-service/app/agents/commerce/nodes.py`
+- `agent-service/app/core/config.py`
+- `agent-service/tests/test_commerce_discount_lane.py`
+- `docs/ai-usage/kaveesha.md`
+
+**Tests Created or Modified:**
+- `Aveline.Api.Tests/OrderContextBuilderTests.cs`:
+  - `TheStatedQuantity_IsUsed` (expanded inline data to cover percentage/discount phrasing without stealing quantities).
+  - `APricingQuestionWithRequestedDiscount_ExtractsDiscountRateAndDoesNotPolluteQuantity`.
+  - `AnOrderWithDiscountPercentageAndQuantity_ExtractsBothCorrectly`.
+- `agent-service/tests/test_commerce_discount_lane.py`:
+  - `test_a_quote_with_requested_discount_exceeding_tier_cap_explains_signoff_requirement`.
+  - `test_a_quote_with_requested_discount_within_cap_states_it_can_be_applied`.
+  - `test_a_quote_extracts_requested_discount_from_message_when_not_in_state`.
+
+**Verification Performed:**
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~OrderContextBuilder|FullyQualifiedName~ConversationOrderBridge"`: **Passed! All 35/35 tests passed (0 failed, 0 skipped)**.
+- Standalone python quote logic verification: **100% passed with zero regressions**.
+
+**Remaining Work:**
+- None.

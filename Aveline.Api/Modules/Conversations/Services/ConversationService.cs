@@ -1080,6 +1080,7 @@ public class ConversationService : IConversationService
                     // ceiling can be computed for them, and declares itself a quote so the agent may
                     // answer without pausing and this API may not write an order (ADR-028).
                     purpose = ToWirePurpose(orderContext),
+                    proposed_discount = orderContext.ProposedDiscount ?? 0m,
                 },
             };
             using var content = JsonContent.Create(payload);
@@ -1272,6 +1273,7 @@ public class ConversationService : IConversationService
                     // ...and whether they are there to be bought or only to be priced (ADR-028). A
                     // staff price question is a quote: Lina answers the ceiling and nothing commits.
                     purpose = ToWirePurpose(orderContext),
+                    proposed_discount = orderContext.ProposedDiscount ?? 0m,
                 },
             };
             using var content = JsonContent.Create(payload);

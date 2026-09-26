@@ -372,7 +372,7 @@ export function AddProductModal({
         const modelNamedColour = Boolean(backendResult.detectedColor)
         resolvedColor = backendResult.detectedColor || visualClientAnalysis?.colorName || ''
         resolvedHex = modelNamedColour
-          ? backendResult.colorHex || ''
+          ? backendResult.colorHex || getColorHex(backendResult.detectedColor, '') || visualClientAnalysis?.hex || ''
           : visualClientAnalysis?.hex || ''
         resolvedCategory = normalizeCategory(backendResult.category)
         resolvedGarment = backendResult.garmentType || `${resolvedColor} ${resolvedCategory}`
@@ -406,10 +406,10 @@ export function AddProductModal({
       } else if (backendResult) {
         // The backend's deterministic fallback with no client measurement to arbitrate. Its answer
         // is filename-derived and `isFallback` is set, so nothing here is a reading: only a colour
-        // the fallback actually named is carried, and no hex is derived from that name.
+        // the fallback actually named is carried.
         resolvedColor = backendResult.detectedColor || ''
-        // Same rule as the live branch: only the model's own hex is a measurement.
-        resolvedHex = backendResult.colorHex || ''
+        // Derive hex from the colour name if known, otherwise leave empty.
+        resolvedHex = backendResult.colorHex || getColorHex(backendResult.detectedColor, '') || ''
         resolvedCategory = normalizeCategory(backendResult.category)
         resolvedGarment = backendResult.garmentType || `${resolvedColor} ${resolvedCategory}`
         resolvedFabric = backendResult.fabric || ''

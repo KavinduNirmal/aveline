@@ -120,14 +120,16 @@ public class VisionService : IVisionService
                          "Analyze the clothing/garment in this image with meticulous aesthetic and textile fidelity." + hintSection + " " +
                          "CRITICAL STEP 1 - BACKGROUND EXCLUSION & FOREGROUND ISOLATION: " +
                          "First segment and isolate the garment from all non-clothing elements. Strictly ignore and exclude: neutral studio backdrops (white, gray, textured walls, studio floors), props (mannequins, hangers, stands, racks, furniture), ambient shadows/glare, and human anatomy (skin tones, hair, face, hands). All color, fabric, and silhouette extractions MUST be sampled exclusively from the primary garment textile. " +
-                         "CRITICAL STEP 2 - GARMENT SILHOUETTE & CLOTH IDENTIFICATION: " +
+                         "CRITICAL STEP 2 - BORDER & EMBROIDERY SEPARATION: " +
+                         "Many ethnic garments (like Sarees) have heavily contrasting borders, pallus, or zaris (e.g. thick gold borders on a black saree). You MUST NOT confuse the border color, motif color, or embroidery color with the primary base color. The primary color is strictly the base background color of the main body of the garment. " +
+                         "CRITICAL STEP 3 - GARMENT SILHOUETTE & CLOTH IDENTIFICATION: " +
                          "Clearly identify the exact garment structure, silhouette drape, and textile weave. Determine whether the garment is a Saree (e.g. Kanjeevaram Silk, Banarasi Brocade, Chanderi, Georgette), a Lehenga (Bridal Flared, A-Line, Chevron), a Gown (Luminous Evening Gown, Ballgown, Mermaid, Cocktail Maxi Dress), a Kurta & Tunic (Anarkali Kurta, Straight-cut Kurta, Angrakha, Tunic top, Blouse), Outerwear (Tailored Blazer, Embroidered Cape, Jacket), a Drape & Shawl (Cashmere Pashmina Shawl, Silk Dupatta, Stole), or Jewelry/Accessory. " +
-                         "CRITICAL STEP 3 - HAUTE COUTURE ATTRIBUTES & AUTO-POPULATION: " +
+                         "CRITICAL STEP 4 - HAUTE COUTURE ATTRIBUTES & AUTO-POPULATION: " +
                          "Return a JSON object with properties: " +
                          "category (string - EXACTLY one of: 'Sarees', 'Lehengas', 'Gowns', 'Kurtas & Tunics', 'Outerwear', 'Drapes & Shawls', or 'Jewelry & Accessories'), " +
                          "garment_type (string - specific luxury garment silhouette e.g. 'Kanjeevaram Silk Saree', 'Embroidered Bridal Lehenga', 'Luminous Evening Gown', 'Anarkali Kurta & Tunic', 'Tailored Boutique Blazer', 'Handwoven Cashmere Shawl'), " +
-                         "primary_color (string - precise authentic luxury color name sampled exclusively from the garment body e.g. 'Emerald Green', 'Royal Burgundy', 'Deep Crimson', 'Burnt Terracotta', 'Powder Blue', 'Champagne Gold', 'Dusty Sage', 'Midnight Navy', 'Lavender Lilac', 'Mustard Ochre', 'Bottle Green', 'Olive Green', 'Blush Rose'), " +
-                         "color_hex (string - exact 6-character hex code sampled directly from dominant garment fabric pixels e.g. '#0F5132'), " +
+                         "primary_color (string - precise authentic luxury color name sampled exclusively from the BASE FABRIC BODY of the garment, IGNORING all contrasting borders, zari, and embroidery. e.g. 'Midnight Black', 'Emerald Green', 'Royal Burgundy', 'Burnt Terracotta', 'Powder Blue', 'Champagne Gold', 'Dusty Sage'), " +
+                         "color_hex (string - exact 6-character hex code sampled directly from the BASE fabric pixels, ignoring the border e.g. '#000000', '#0F5132'), " +
                          "color_theme (string - 'Jewel Tones', 'Pastels', 'Earthy Neutrals', 'Classic Monochrome', 'Festive Metallics', 'Rich Berries', or 'Oceanic Spectrum'), " +
                          "undertone (string - 'Warm', 'Cool', or 'Neutral'), " +
                          "secondary_colors (array of strings - accent colors, border trims, zari, embroidery, lining, or print hues), " +

@@ -58,7 +58,7 @@ dependencies:
   shared_preferences: ^2.5.5
   app_links: ^7.2.1
   firebase_core: ^4.14.0
-  firebase_messaging: ^16.6.0
+  firebase_messaging: ^16.7.0
   signalr_netcore: ^1.4.4
   image_picker: ^1.2.3
   open_filex: ^4.7.0

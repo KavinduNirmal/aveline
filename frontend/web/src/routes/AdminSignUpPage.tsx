@@ -222,7 +222,7 @@ export function AdminSignUpPage() {
   )
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#faf7f6] px-4 py-10">
+    <div className="flex min-h-dvh items-center justify-center bg-[#faf7f6] px-4 py-10">
       <div className="w-full max-w-md">
         {heading}
 

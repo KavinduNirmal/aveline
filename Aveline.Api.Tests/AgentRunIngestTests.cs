@@ -30,6 +30,7 @@ public class AgentRunIngestTests : IAsyncLifetime
             {
                 builder.UseSetting("AgentService:InternalToken", _internalToken);
                 builder.UseSetting("AgentStats:MaxStepsPerRun", "200");
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
             });
 
         _client = _factory.CreateClient();
@@ -56,7 +57,7 @@ public class AgentRunIngestTests : IAsyncLifetime
 
     private static AppDbContext Context() =>
         new(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
     private static object RunBody(

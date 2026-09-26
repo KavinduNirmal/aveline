@@ -1393,9 +1393,13 @@ nothing correct to gate a write on).
 | `GET` | `/api/v1/orgs/{organizationId:guid}/customers/highlights` | `customers:view` | Home's client row; `activity` is generated from a real interaction, and there is deliberately **no** `hasNewActivity` flag — no read marker exists in the schema |
 | `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}` | `customers:view` | **E-6.** The tenant-safe detail |
 | `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/interactions` | `customers:view` | **E-9.** Paged history, newest first |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/consent` | `customers:view` | Tenant-safe consent read (returns `unknown` when no row exists) |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/memories` | `customers:view` | Tenant-safe customer memories |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/events` | `customers:view` | Customer life/boutique events list |
 | `POST` | `/api/v1/orgs/{organizationId:guid}/customers` | `customers:view` | Walk-in creation; requires `Idempotency-Key`. Also creates the client's organization-shared Salon, seeded with Aveline's greeting (see below) |
 | `POST` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/interactions` | `customers:view` | Records an interaction; requires `Idempotency-Key` |
-| `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/consent` | `customers:view` | Reads the client's consent status. A client in another boutique is `404`, indistinguishable from a missing one |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/events` | **`customers:manage`** | Add a customer event |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/status` | **`customers:manage`** | Recomputes derived loyalty tier from spend/visits |
 | `POST` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/consent` | **`customers:manage`** | **Phase 4 (item 4.4).** Sets `pending` \| `granted` \| `revoked`. This is the **staff** surface: the audit records `ActorKind = User` and `Source = staff`, which is what distinguishes it from the anonymous customer OTP path (§B.25). There is deliberately no `scope` field — a staff action always revokes this boutique's row only |
 | `PATCH` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}` | **`customers:manage`** | **E-7.** Partial update of the writable subset |
 | `DELETE` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}` | **`customers:manage`** | **E-8.** Soft delete |
@@ -2243,6 +2247,28 @@ rather than silently dropping rows. The window defaults to the last 24 hours.
 **Errors:** `400 invalid-window` (`from` after `to`); `401`; `403`.
 **Source:** `Modules/Payments/Endpoints/PaymentReconciliationEndpoints.cs`,
 `Modules/Payments/Services/PaymentReconciliationService.cs`.
+
+### B.28 Global cross-entity search
+
+> **Status: implemented.** Tenant-scoped cross-entity search aggregating inventory pieces,
+> customer profiles, and conversation threads.
+
+| Method | Path | Policy | Returns |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/search` | `BoutiqueMember` | `GlobalSearchResponseDto` |
+
+**Params:**
+- `q` (string, required, min length 2) — query text matching SKU/name/fabric/color for catalog items, name/phone/email for customers, and externalRef/customer name/message content for conversations.
+- `scope` (string, optional, default `all`) — entity filter scope (`all` \| `catalog` \| `customers` \| `conversations`).
+- `page` (int, optional, default 1, min 1).
+- `pageSize` (int, optional, default 20, 1..100).
+
+**Permission & tenant gating:** Caller must be an active member of `{organizationId}`. Entity results are filtered based on caller's role permissions (`catalog:view` for catalog items, `customers:view` for customer profiles, `conversations:view` for conversation threads). If the caller's role lacks access to an entity type, that entity type is omitted from results rather than returning 403.
+
+**Response `200`:** `GlobalSearchResponseDto` (`{ items: GlobalSearchResultItemDto[], total, page, pageSize }`).
+
+**Errors:** `400` query too short (< 2 chars); `401` unauthenticated; `403` not an active boutique member.
+**Source:** `Endpoints/SearchEndpoints.cs`, `Modules/Shared/DTOs/SearchDtos.cs`.
 
 ---
 

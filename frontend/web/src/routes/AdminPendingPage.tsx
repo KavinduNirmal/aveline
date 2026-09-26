@@ -79,7 +79,7 @@ export function AdminPendingPage() {
   if (approved) return <Navigate to="/admin" replace />
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#faf7f6] px-4 py-10">
+    <div className="flex min-h-dvh items-center justify-center bg-[#faf7f6] px-4 py-10">
       <div className="w-full max-w-md">
         <div className="mb-6 flex flex-col items-center text-center">
           <div className="mb-3 flex size-12 items-center justify-center rounded-full border border-dashed border-[#7a303f]/30 bg-[#7a303f]/5 text-[#7a303f]">

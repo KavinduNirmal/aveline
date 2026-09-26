@@ -49,6 +49,7 @@ public class TenantBillingEndpointsTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
             });
 
@@ -93,7 +94,7 @@ public class TenantBillingEndpointsTests : IAsyncLifetime
     private static async Task<Seeded> SeedAsync(string suffix)
     {
         await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
         User NewUser(string role, string tag)
@@ -254,7 +255,7 @@ public class TenantBillingEndpointsTests : IAsyncLifetime
         var expired = $"pack-expired-{suffix}";
 
         await using (var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-                         .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+                         .UseInMemoryDatabase(databaseName: TestDatabase.Name())
                          .Options))
         {
             context.BlossomPriceEntries.AddRange(

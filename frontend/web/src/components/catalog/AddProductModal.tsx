@@ -371,8 +371,10 @@ export function AddProductModal({
         // borrowing the other source's.
         const modelNamedColour = Boolean(backendResult.detectedColor)
         resolvedColor = backendResult.detectedColor || visualClientAnalysis?.colorName || ''
+        // The provider's own hex, and nothing else. `getColorHex` maps a colour *name* through a
+        // fixed palette, so deriving one here painted a swatch for a name the model never measured.
         resolvedHex = modelNamedColour
-          ? backendResult.colorHex || getColorHex(backendResult.detectedColor, '') || visualClientAnalysis?.hex || ''
+          ? backendResult.colorHex || ''
           : visualClientAnalysis?.hex || ''
         resolvedCategory = normalizeCategory(backendResult.category)
         resolvedGarment = backendResult.garmentType || `${resolvedColor} ${resolvedCategory}`
@@ -408,8 +410,9 @@ export function AddProductModal({
         // is filename-derived and `isFallback` is set, so nothing here is a reading: only a colour
         // the fallback actually named is carried.
         resolvedColor = backendResult.detectedColor || ''
-        // Derive hex from the colour name if known, otherwise leave empty.
-        resolvedHex = backendResult.colorHex || getColorHex(backendResult.detectedColor, '') || ''
+        // Only the provider's own hex: the name is a label, not a measurement, so an absent hex
+        // stays absent rather than being looked up in the palette.
+        resolvedHex = backendResult.colorHex || ''
         resolvedCategory = normalizeCategory(backendResult.category)
         resolvedGarment = backendResult.garmentType || `${resolvedColor} ${resolvedCategory}`
         resolvedFabric = backendResult.fabric || ''
@@ -687,6 +690,8 @@ export function AddProductModal({
                       <div className="flex items-center justify-between gap-3 p-3 rounded-xl border border-border bg-card">
                         <div className="flex items-center gap-3 min-w-0">
                           <img
+                            loading="lazy"
+                            decoding="async"
                             src={imageUrl}
                             alt="Garment preview"
                             className="size-14 rounded-lg object-cover border border-border shrink-0 shadow-2xs"

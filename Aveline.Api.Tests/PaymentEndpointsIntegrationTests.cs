@@ -56,6 +56,7 @@ public class PaymentEndpointsIntegrationTests : IAsyncLifetime
     private void ConfigurePayments(IWebHostBuilder builder)
     {
         builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+        builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
         builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
         ApplyPaymentsSettings(builder);
     }
@@ -73,6 +74,7 @@ public class PaymentEndpointsIntegrationTests : IAsyncLifetime
     private void ApplyProductionSettings(IWebHostBuilder builder)
     {
         builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+        builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
         builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
         builder.UseSetting("Telemetry:IpHashSalt", "test-production-ip-salt");
         builder.UseSetting("Metrics:ScrapeToken", "test-production-scrape-token");
@@ -126,7 +128,7 @@ public class PaymentEndpointsIntegrationTests : IAsyncLifetime
     }
 
     private static AppDbContext Context() => new(new DbContextOptionsBuilder<AppDbContext>()
-        .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+        .UseInMemoryDatabase(databaseName: TestDatabase.Name())
         .Options);
 
     /// <summary>Seeds a boutique whose owner holds the boutique-owner role BillingManage admits.</summary>

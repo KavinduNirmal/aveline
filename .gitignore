@@ -208,7 +208,10 @@ frontend/aveline_mobile/android/captures/
 frontend/aveline_mobile/android/local.properties
 frontend/aveline_mobile/android/key.properties
 frontend/aveline_mobile/android/app/*.jks
-frontend/aveline_mobile/android/app/google-services.json
+# Materialised in CI from the GOOGLE_SERVICES_JSON_BASE64 secret. Ignored at every path rather
+# than only at the canonical one: a copy committed from a build directory, or from a mistyped
+# `cp`, is always a mistake, and a path-specific rule does not catch it.
+google-services.json
 
 # JVM heap dumps — written by the JVM (and by Gradle's daemon) on OutOfMemoryError.
 # These run to hundreds of megabytes and must never enter git history.
@@ -219,7 +222,11 @@ frontend/aveline_mobile/android/app/google-services.json
 frontend/aveline_mobile/ios/Pods/
 frontend/aveline_mobile/ios/.symlinks/
 frontend/aveline_mobile/ios/Flutter/flutter_export_environment.sh
-frontend/aveline_mobile/ios/GoogleService-Info.plist
+# Materialised in CI from the GOOGLE_SERVICE_INFO_PLIST_BASE64 secret. The earlier rule named
+# `ios/GoogleService-Info.plist`, but the path Runner.xcodeproj actually references is
+# `ios/Runner/GoogleService-Info.plist` - so it guarded a file nobody used and left the real one
+# unprotected. Ignored at every path for the same reason as google-services.json above.
+GoogleService-Info.plist
 
 # =============================================================================
 # NODE / JAVASCRIPT (Husky + future web frontend)

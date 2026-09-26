@@ -53,7 +53,7 @@ export function InvitePage() {
   const ready = clerkLoaded && code !== null
 
   return (
-    <div className="relative min-h-screen bg-background overflow-hidden flex items-center justify-center px-4">
+    <div className="relative min-h-dvh bg-background overflow-hidden flex items-center justify-center px-4">
       <AuroraField />
       <div className="relative z-10 flex flex-col items-center gap-4 text-center max-w-md w-full">
         {!ready ? (

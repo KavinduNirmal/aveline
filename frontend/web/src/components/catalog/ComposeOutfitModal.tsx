@@ -287,6 +287,8 @@ export function ComposeOutfitModal({
                   >
                     {item.imageUrl ? (
                       <img
+                        loading="lazy"
+                        decoding="async"
                         src={item.imageUrl}
                         alt={item.name}
                         className="size-12 rounded object-cover border border-border"

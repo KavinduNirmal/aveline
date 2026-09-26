@@ -167,6 +167,8 @@ export function SuppliersTab({ suppliers }: SuppliersTabProps) {
                     className="flex gap-3 rounded-xl border border-border/80 bg-card p-3 shadow-2xs"
                   >
                     <img
+                      loading="lazy"
+                      decoding="async"
                       src={catItem.imageUrl}
                       alt={catItem.name}
                       className="size-16 rounded-lg object-cover border border-border"

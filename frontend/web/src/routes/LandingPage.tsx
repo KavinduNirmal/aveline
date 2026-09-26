@@ -144,9 +144,9 @@ const AGENTS: Agent[] = [
   },
   {
     name: 'Lina',
-    tint: 'from-rose-200/70 via-[#ffe9ef] to-white',
-    ink: 'text-commerce',
-    chip: 'bg-commerce',
+    tint: 'from-lilac/20 via-lilac-soft to-white',
+    ink: 'text-lilac',
+    chip: 'bg-lilac',
     tag: 'The commerce agent',
     line: 'She closes with care.',
     copy: 'Checks margins, issues deposits, and pauses big decisions for your approval before delivery.',
@@ -197,7 +197,7 @@ function AgentWorkflow() {
   const flows = [
     { key: 'ava', d: 'M450 0 L450 56 L150 56 L150 130', color: '#b0566b' },
     { key: 'elle', d: 'M450 0 L450 56 L450 130', color: '#8a6a14' },
-    { key: 'lina', d: 'M450 0 L450 56 L750 56 L750 130', color: '#7a303f' },
+    { key: 'lina', d: 'M450 0 L450 56 L750 56 L750 130', color: '#6b5a9e' },
   ]
 
   return (

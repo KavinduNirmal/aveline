@@ -1,4 +1,4 @@
-package com.example.aveline_mobile
+package dev.gravora.aveline
 
 import io.flutter.embedding.android.FlutterActivity
 

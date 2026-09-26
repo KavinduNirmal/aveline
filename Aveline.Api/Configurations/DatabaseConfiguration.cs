@@ -25,6 +25,17 @@ public static class DatabaseConfiguration
     /// </summary>
     public const string AllowInMemoryInProductionKey = "Database:AllowInMemoryInProduction";
 
+    /// <summary>
+    /// Overrides the EF Core in-memory store name. EF Core keys its internal service provider on
+    /// the options fingerprint, so two contexts built with the SAME store name share one store for
+    /// the life of the process. Test hosts set this per class so they cannot read each other's rows
+    /// (see <c>Aveline.Api.Tests.TestDatabase</c>); every other host keeps the default.
+    /// </summary>
+    public const string InMemoryNameKey = "Database:InMemoryName";
+
+    /// <summary>The store name used when nothing overrides it.</summary>
+    public const string DefaultInMemoryName = "AvelineInMemoryDb";
+
     public static IServiceCollection AddAvelineDatabase(
         this IServiceCollection services,
         IConfiguration configuration,
@@ -46,7 +57,7 @@ public static class DatabaseConfiguration
 
             services.AddDbContext<AppDbContext>(options =>
             {
-                options.UseInMemoryDatabase("AvelineInMemoryDb");
+                options.UseInMemoryDatabase(ResolveInMemoryName(configuration));
             });
             return services;
         }
@@ -64,6 +75,13 @@ public static class DatabaseConfiguration
 
         return services;
     }
+
+    /// <summary>
+    /// Resolves the in-memory store name, falling back to <see cref="DefaultInMemoryName"/> when no
+    /// override is configured.
+    /// </summary>
+    internal static string ResolveInMemoryName(IConfiguration configuration)
+        => configuration[InMemoryNameKey] is { Length: > 0 } name ? name : DefaultInMemoryName;
 
     /// <summary>
     /// Builds the shared <see cref="NpgsqlDataSource"/> with an explicit

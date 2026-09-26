@@ -177,6 +177,7 @@ public class PrivacyOptOutStartTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", "https://clerk.invalid");
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.UseSetting("AgentService:BaseUrl", "http://127.0.0.1:59999");
                 builder.UseSetting("AgentService:InternalToken", "test-internal-token");
@@ -211,7 +212,7 @@ public class PrivacyOptOutStartTests : IAsyncLifetime
 
     private static AppDbContext CreateContext()
         => new(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
     /// <summary>Seeds a boutique with WhatsApp connected, optionally with the customer on file.</summary>

@@ -568,10 +568,12 @@ public class MediaTokenEndpointTests : IAsyncLifetime
                 if (withAuth)
                 {
                     builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                    builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 }
                 else
                 {
                     builder.UseSetting("Clerk:Authority", "http://localhost:0");
+                    builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 }
 
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
@@ -699,7 +701,7 @@ public class MediaTokenEndpointTests : IAsyncLifetime
     private static AppDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options;
         return new AppDbContext(options);
     }

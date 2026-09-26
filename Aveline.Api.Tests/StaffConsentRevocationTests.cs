@@ -48,6 +48,7 @@ public class StaffConsentRevocationTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.UseSetting("Privacy:LinkSigningKey", PrivacyKey);
             });
@@ -87,7 +88,7 @@ public class StaffConsentRevocationTests : IAsyncLifetime
     private static async Task<Seeded> SeedAsync(string suffix)
     {
         await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
         var owner = NewUser($"staff_owner_{suffix}", Roles.BoutiqueOwner);
@@ -213,7 +214,7 @@ public class StaffConsentRevocationTests : IAsyncLifetime
         Assert.Equal("revoked", body.GetProperty("consentStatus").GetString());
 
         await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
         Assert.Equal(
@@ -260,7 +261,7 @@ public class StaffConsentRevocationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
 
         await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
         Assert.Equal(
             ConsentStatuses.Granted,

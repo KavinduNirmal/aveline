@@ -1923,6 +1923,10 @@ namespace Aveline.Api.Migrations
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)");
 
+                    b.Property<string>("Nickname")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.Property<Guid>("OrganizationId")
                         .HasColumnType("uuid");
 

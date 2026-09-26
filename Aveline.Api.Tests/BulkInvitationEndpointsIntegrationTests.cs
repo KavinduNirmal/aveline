@@ -48,6 +48,7 @@ public class BulkInvitationEndpointsIntegrationTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.UseSetting("App:BaseUrl", "https://app.aveline.lk");
             });
@@ -143,7 +144,7 @@ public class BulkInvitationEndpointsIntegrationTests : IAsyncLifetime
     /// <summary>Every test seeds its own organization, so the limiter's per-organization key differs.</summary>
     private static AppDbContext CreateContext()
         => new(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
     [Fact]

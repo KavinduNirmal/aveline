@@ -17,7 +17,7 @@ export function ForbiddenState({
   reason: string
 }) {
   return (
-    <div className="flex min-h-screen items-center justify-center p-6 bg-background">
+    <div className="flex min-h-dvh items-center justify-center p-6 bg-background">
       <Card className="max-w-md w-full border-destructive/30 shadow-md">
         <CardHeader className="text-center">
           <div className="mx-auto w-12 h-12 rounded-full bg-destructive/10 text-destructive flex items-center justify-center mb-2">

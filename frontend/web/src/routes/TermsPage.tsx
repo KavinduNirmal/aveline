@@ -361,7 +361,7 @@ export function TermsPage() {
   )
 
   return (
-    <div className="min-h-screen bg-[#faf7f6] px-6 py-12">
+    <div className="min-h-dvh bg-[#faf7f6] px-6 py-12">
       <div className="mx-auto w-full max-w-2xl">
         <Link to="/sign-up" className="text-sm text-[#7a303f] hover:underline">
           ← Back to sign up

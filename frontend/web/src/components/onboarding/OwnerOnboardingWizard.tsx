@@ -57,7 +57,7 @@ function WizardView() {
 
   if (isLoadingStatus) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="min-h-dvh flex items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-3">
           <Skeleton className="size-12 rounded-full" />
           <Skeleton className="h-4 w-48" />
@@ -122,7 +122,7 @@ function WizardView() {
   }
 
   return (
-    <div className="relative min-h-screen bg-background overflow-hidden">
+    <div className="relative min-h-dvh bg-background overflow-hidden">
       {/* Animated aurora background shared with the marketing site */}
       <AuroraField />
       <div
@@ -130,7 +130,7 @@ function WizardView() {
         className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_70%_60%_at_50%_0%,rgba(253,250,248,0.92)_0%,rgba(253,250,248,0.55)_55%,rgba(253,250,248,0)_100%)]"
       />
 
-      <div className="relative z-10 flex flex-col justify-center items-center min-h-screen py-10 px-4 sm:px-6 lg:px-8">
+      <div className="relative z-10 flex flex-col justify-center items-center min-h-dvh py-10 px-4 sm:px-6 lg:px-8">
         <div className="max-w-3xl w-full flex flex-col gap-6">
           {/* Atelier Brand Header */}
           <div className="text-center flex flex-col items-center gap-2">

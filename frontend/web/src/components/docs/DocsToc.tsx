@@ -17,7 +17,10 @@ export function DocsToc({ toc }: DocsTocProps) {
   useEffect(() => {
     if (toc.length === 0) return
 
-    const handleScroll = () => {
+    let frame = 0
+
+    const measure = () => {
+      frame = 0
       const headings = toc
         .map((item) => document.getElementById(item.id))
         .filter((el): el is HTMLElement => el !== null)
@@ -26,15 +29,25 @@ export function DocsToc({ toc }: DocsTocProps) {
 
       for (let i = headings.length - 1; i >= 0; i--) {
         const heading = headings[i]
+        // `offsetTop` forces the browser to flush style and layout before it can answer. Doing
+        // that inside a raw scroll listener means a forced reflow per scroll event — dozens per
+        // frame on a trackpad. Coalescing to one read per animation frame is the fix.
         if (heading.offsetTop <= scrollPosition) {
           setActiveId(heading.id)
           return
         }
       }
 
-      if (headings.length > 0 && activeId === '') {
-        setActiveId(headings[0].id)
+      if (headings.length > 0) {
+        // Functional update, so the effect does not have to depend on `activeId`. It used to, and
+        // that meant every active-section change tore the listener down and re-registered it.
+        setActiveId((previous) => (previous === '' ? headings[0].id : previous))
       }
+    }
+
+    const handleScroll = () => {
+      if (frame !== 0) return
+      frame = window.requestAnimationFrame(measure)
     }
 
     window.addEventListener('scroll', handleScroll, { passive: true })
@@ -42,8 +55,9 @@ export function DocsToc({ toc }: DocsTocProps) {
 
     return () => {
       window.removeEventListener('scroll', handleScroll)
+      if (frame !== 0) window.cancelAnimationFrame(frame)
     }
-  }, [toc, activeId])
+  }, [toc])
 
   if (toc.length === 0) {
     return null

@@ -1,0 +1,1070 @@
+{
+  "label": "local",
+  "dist": "/run/media/kavindu/Development/Development/3-1/SEF/aveline/frontend/web/dist",
+  "origin": "http://127.0.0.1:35525",
+  "generatedAt": "2026-09-26T10:28:34.319Z",
+  "scenarios": {
+    "mobile-slow4g-cold": {
+      "runs": 3,
+      "fcpMs": 9704,
+      "lcpMs": 10636,
+      "cls": 0.0327,
+      "tbtMs": 2155,
+      "lastLongTaskEndMs": 18463,
+      "loadEventMs": 8588,
+      "mainThreadBusyMs": 5355,
+      "longTaskCount": 58,
+      "longestTaskMs": 1052,
+      "requestCount": 28,
+      "thirdPartyRequests": 11,
+      "transferBytes": 744683,
+      "note": "Lighthouse mobile profile: Slow 4G + 4x CPU. Cold cache, 412x915.",
+      "profile": {
+        "cpu": 4,
+        "net": {
+          "latency": 150,
+          "down": 204800,
+          "up": 84375
+        },
+        "width": 412,
+        "height": 915,
+        "dsf": 2.625,
+        "warm": false
+      }
+    },
+    "mobile-4g-cold": {
+      "runs": 3,
+      "fcpMs": 10732,
+      "lcpMs": 11932,
+      "cls": 0.0192,
+      "tbtMs": 3589,
+      "lastLongTaskEndMs": 17906,
+      "loadEventMs": 7836,
+      "mainThreadBusyMs": 7289,
+      "longTaskCount": 70,
+      "longestTaskMs": 1868,
+      "requestCount": 20,
+      "thirdPartyRequests": 3,
+      "transferBytes": 744683,
+      "note": "Good 4G + 4x CPU. Cold cache. The realistic mid-tier Android case.",
+      "profile": {
+        "cpu": 4,
+        "net": {
+          "latency": 70,
+          "down": 1125000,
+          "up": 375000
+        },
+        "width": 412,
+        "height": 915,
+        "dsf": 2.625,
+        "warm": false
+      }
+    },
+    "mobile-slow4g-warm": {
+      "runs": 2,
+      "fcpMs": 10380,
+      "lcpMs": 11264,
+      "cls": 0.0327,
+      "tbtMs": 2285,
+      "lastLongTaskEndMs": 36713,
+      "loadEventMs": 9326,
+      "mainThreadBusyMs": 9285,
+      "longTaskCount": 140,
+      "longestTaskMs": 905,
+      "requestCount": 26,
+      "thirdPartyRequests": 9,
+      "transferBytes": 744683,
+      "note": "Same profile, second visit with HTTP cache enabled.",
+      "profile": {
+        "cpu": 4,
+        "net": {
+          "latency": 150,
+          "down": 204800,
+          "up": 84375
+        },
+        "width": 412,
+        "height": 915,
+        "dsf": 2.625,
+        "warm": true
+      },
+      "invalid": true,
+      "invalidReason": "Harness defect at the time of this run: a fresh browser context was created per run, so the HTTP cache did not survive and run 2 was cold, not warm. Do not cite this row as a warm-cache measurement."
+    },
+    "desktop-unthrottled": {
+      "runs": 2,
+      "fcpMs": 7236,
+      "lcpMs": 8188,
+      "cls": 0.0108,
+      "tbtMs": 2920,
+      "lastLongTaskEndMs": 26292,
+      "loadEventMs": 6663,
+      "mainThreadBusyMs": 8470,
+      "longTaskCount": 111,
+      "longestTaskMs": 407,
+      "requestCount": 34,
+      "thirdPartyRequests": 17,
+      "transferBytes": 991792,
+      "note": "No throttling. Desktop Chrome. The optimistic bound.",
+      "profile": {
+        "cpu": 1,
+        "net": null,
+        "width": 1350,
+        "height": 940,
+        "dsf": 1,
+        "warm": false
+      }
+    }
+  },
+  "waterfall": {
+    "note": "Cold, throttled first paint of the landing page. Sorted by start time.",
+    "lcpElement": {
+      "t": 10828,
+      "size": 98468,
+      "el": "H1.mt-6.max-w-xl.font-serif",
+      "url": null
+    },
+    "longTasks": [
+      {
+        "start": 8059,
+        "duration": 520,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 8590,
+        "duration": 1153,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 9744,
+        "duration": 96,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 9910,
+        "duration": 70,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 10215,
+        "duration": 54,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 10283,
+        "duration": 53,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 10681,
+        "duration": 54,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 10840,
+        "duration": 67,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 10918,
+        "duration": 62,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 10981,
+        "duration": 70,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 11280,
+        "duration": 57,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 11407,
+        "duration": 56,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 11465,
+        "duration": 62,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 12328,
+        "duration": 54,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 12383,
+        "duration": 55,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 13128,
+        "duration": 52,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 13574,
+        "duration": 56,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 13745,
+        "duration": 84,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 14299,
+        "duration": 91,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 14390,
+        "duration": 55,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 14513,
+        "duration": 185,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 14710,
+        "duration": 182,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 14901,
+        "duration": 168,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 15131,
+        "duration": 61,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 15228,
+        "duration": 80,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 15448,
+        "duration": 54,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 15537,
+        "duration": 69,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 15607,
+        "duration": 80,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 15704,
+        "duration": 56,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 15875,
+        "duration": 89,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 15969,
+        "duration": 62,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 16077,
+        "duration": 71,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 16148,
+        "duration": 77,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 16227,
+        "duration": 84,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 16312,
+        "duration": 82,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 16482,
+        "duration": 58,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 16554,
+        "duration": 76,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 16644,
+        "duration": 71,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 16715,
+        "duration": 65,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 16796,
+        "duration": 88,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 16895,
+        "duration": 62,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 16958,
+        "duration": 58,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 17017,
+        "duration": 71,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 17106,
+        "duration": 72,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 17180,
+        "duration": 64,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 17245,
+        "duration": 68,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 17314,
+        "duration": 79,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 17413,
+        "duration": 76,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 17518,
+        "duration": 56,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 17627,
+        "duration": 59,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 17710,
+        "duration": 58,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 17776,
+        "duration": 68,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 17876,
+        "duration": 68,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 18022,
+        "duration": 65,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 18108,
+        "duration": 69,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 18196,
+        "duration": 53,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 18250,
+        "duration": 72,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      },
+      {
+        "start": 18345,
+        "duration": 54,
+        "attribution": {
+          "name": "unknown",
+          "container": null,
+          "containerType": "window"
+        }
+      }
+    ],
+    "layoutShifts": [
+      {
+        "t": 14675,
+        "v": 0.01657
+      },
+      {
+        "t": 15050,
+        "v": 0.01612
+      }
+    ],
+    "navigation": {
+      "responseEnd": 163,
+      "domInteractive": 221,
+      "domContentLoaded": 8578,
+      "load": 8588
+    },
+    "resources": [
+      {
+        "name": "https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Geist+Mono:wght@100..900&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap",
+        "start": 206,
+        "duration": 1353,
+        "transferSize": 1182,
+        "encodedBodySize": 882,
+        "decodedBodySize": 7326,
+        "initiatorType": "link"
+      },
+      {
+        "name": "/assets/index-CAvbpT-b.js",
+        "start": 207,
+        "duration": 7790,
+        "transferSize": 611509,
+        "encodedBodySize": 611209,
+        "decodedBodySize": 2731826,
+        "initiatorType": "script"
+      },
+      {
+        "name": "/assets/chunk-Y2CYZVJY-DsF7k-Jl.js",
+        "start": 208,
+        "duration": 4128,
+        "transferSize": 414,
+        "encodedBodySize": 114,
+        "decodedBodySize": 155,
+        "initiatorType": "other"
+      },
+      {
+        "name": "/assets/src-BIGLCdTx.js",
+        "start": 208,
+        "duration": 4309,
+        "transferSize": 14744,
+        "encodedBodySize": 14444,
+        "decodedBodySize": 46749,
+        "initiatorType": "other"
+      },
+      {
+        "name": "/assets/dist-BcQTzhN8.js",
+        "start": 208,
+        "duration": 4391,
+        "transferSize": 1153,
+        "encodedBodySize": 853,
+        "decodedBodySize": 2160,
+        "initiatorType": "other"
+      },
+      {
+        "name": "/assets/chunk-DU6HZSFF-BsgDyYdA.js",
+        "start": 208,
+        "duration": 4764,
+        "transferSize": 28836,
+        "encodedBodySize": 28536,
+        "decodedBodySize": 236672,
+        "initiatorType": "other"
+      },
+      {
+        "name": "/assets/chunk-75Z2AOVW-VCBOuNYF.js",
+        "start": 208,
+        "duration": 4521,
+        "transferSize": 7967,
+        "encodedBodySize": 7667,
+        "decodedBodySize": 30764,
+        "initiatorType": "other"
+      },
+      {
+        "name": "/assets/path-fybaL0A-.js",
+        "start": 209,
+        "duration": 4654,
+        "transferSize": 1191,
+        "encodedBodySize": 891,
+        "decodedBodySize": 2278,
+        "initiatorType": "other"
+      },
+      {
+        "name": "/assets/array-BifhSqXX.js",
+        "start": 209,
+        "duration": 4661,
+        "transferSize": 387,
+        "encodedBodySize": 87,
+        "decodedBodySize": 107,
+        "initiatorType": "other"
+      },
+      {
+        "name": "/assets/line-DqQuhi0q.js",
+        "start": 209,
+        "duration": 4698,
+        "transferSize": 735,
+        "encodedBodySize": 435,
+        "decodedBodySize": 943,
+        "initiatorType": "other"
+      },
+      {
+        "name": "/assets/chunk-P2QGCYS3-BTAtgOho.js",
+        "start": 209,
+        "duration": 4822,
+        "transferSize": 1151,
+        "encodedBodySize": 851,
+        "decodedBodySize": 1947,
+        "initiatorType": "other"
+      },
+      {
+        "name": "/assets/chunk-PWAF6VOD-v9daPbql.js",
+        "start": 209,
+        "duration": 4858,
+        "transferSize": 2731,
+        "encodedBodySize": 2431,
+        "decodedBodySize": 5833,
+        "initiatorType": "other"
+      },
+      {
+        "name": "/assets/chunk-GMAD6QVW-Dwl47OsF.js",
+        "start": 209,
+        "duration": 5158,
+        "transferSize": 15396,
+        "encodedBodySize": 15096,
+        "decodedBodySize": 51804,
+        "initiatorType": "other"
+      },
+      {
+        "name": "/assets/rough.esm-Dy-Kn_BL.js",
+        "start": 210,
+        "duration": 5099,
+        "transferSize": 8099,
+        "encodedBodySize": 7799,
+        "decodedBodySize": 27109,
+        "initiatorType": "other"
+      },
+      {
+        "name": "/assets/chunk-4HAMMTFA-BZqmaI4p.js",
+        "start": 210,
+        "duration": 5289,
+        "transferSize": 22083,
+        "encodedBodySize": 21783,
+        "decodedBodySize": 104855,
+        "initiatorType": "other"
+      },
+      {
+        "name": "/assets/index-CsH4N13N.css",
+        "start": 210,
+        "duration": 5025,
+        "transferSize": 25475,
+        "encodedBodySize": 25175,
+        "decodedBodySize": 218948,
+        "initiatorType": "link"
+      },
+      {
+        "name": "/assets/chunk-GVQU2GXP-BKUwSAt7.js",
+        "start": 210,
+        "duration": 5048,
+        "transferSize": 1008,
+        "encodedBodySize": 708,
+        "decodedBodySize": 1416,
+        "initiatorType": "other"
+      },
+      {
+        "name": "https://inspired-warthog-8208.clerk.accounts.dev/npm/@clerk/clerk-js@6/dist/clerk.browser.js",
+        "start": 8613,
+        "duration": 5118,
+        "transferSize": 0,
+        "encodedBodySize": 0,
+        "decodedBodySize": 0,
+        "initiatorType": "script"
+      },
+      {
+        "name": "https://images.pexels.com/photos/2379004/pexels-photo-2379004.jpeg?auto=compress&cs=tinysrgb&w=150",
+        "start": 9742,
+        "duration": 8794,
+        "transferSize": 0,
+        "encodedBodySize": 0,
+        "decodedBodySize": 0,
+        "initiatorType": "img"
+      },
+      {
+        "name": "/favicon.svg",
+        "start": 9871,
+        "duration": 154,
+        "transferSize": 622,
+        "encodedBodySize": 322,
+        "decodedBodySize": 1367,
+        "initiatorType": "other"
+      },
+      {
+        "name": "https://inspired-warthog-8208.clerk.accounts.dev/npm/@clerk/ui@1/dist/ui.browser.js",
+        "start": 13862,
+        "duration": 3868,
+        "transferSize": 0,
+        "encodedBodySize": 0,
+        "decodedBodySize": 0,
+        "initiatorType": "script"
+      }
+    ]
+  },
+  "rawRuns": [
+    {
+      "scenario": "mobile-slow4g-cold",
+      "run": 1,
+      "fcp": 9908,
+      "lcp": 10828,
+      "cls": 0.0327,
+      "tbt": 2851,
+      "lastLongTaskEnd": 18399,
+      "load": 8588,
+      "dcl": 8578,
+      "busyMs": 5751,
+      "longTaskCount": 58,
+      "longestTask": 1153,
+      "reqs": 21,
+      "reqsThirdParty": 4,
+      "firstPartyJsBytes": 717404,
+      "totalTransfer": 744683,
+      "domNodes": 2932,
+      "lcpElement": "H1.mt-6.max-w-xl.font-serif",
+      "errors": []
+    },
+    {
+      "scenario": "mobile-slow4g-cold",
+      "run": 2,
+      "fcp": 9704,
+      "lcp": 10636,
+      "cls": 0.0322,
+      "tbt": 1986,
+      "lastLongTaskEnd": 18697,
+      "load": 8666,
+      "dcl": 8656,
+      "busyMs": 4786,
+      "longTaskCount": 56,
+      "longestTask": 906,
+      "reqs": 28,
+      "reqsThirdParty": 11,
+      "firstPartyJsBytes": 717404,
+      "totalTransfer": 744683,
+      "domNodes": 2934,
+      "lcpElement": "H1.mt-6.max-w-xl.font-serif",
+      "errors": []
+    },
+    {
+      "scenario": "mobile-slow4g-cold",
+      "run": 3,
+      "fcp": 9564,
+      "lcp": 10404,
+      "cls": 0.0322,
+      "tbt": 2155,
+      "lastLongTaskEnd": 18463,
+      "load": 8380,
+      "dcl": 8370,
+      "busyMs": 5355,
+      "longTaskCount": 64,
+      "longestTask": 1052,
+      "reqs": 28,
+      "reqsThirdParty": 11,
+      "firstPartyJsBytes": 717404,
+      "totalTransfer": 744683,
+      "domNodes": 2934,
+      "lcpElement": "H1.mt-6.max-w-xl.font-serif",
+      "errors": []
+    },
+    {
+      "scenario": "mobile-4g-cold",
+      "run": 1,
+      "fcp": 6520,
+      "lcp": 6828,
+      "cls": 0.0192,
+      "tbt": 2776,
+      "lastLongTaskEnd": 15377,
+      "load": 5408,
+      "dcl": 5399,
+      "busyMs": 6076,
+      "longTaskCount": 66,
+      "longestTask": 958,
+      "reqs": 20,
+      "reqsThirdParty": 3,
+      "firstPartyJsBytes": 717404,
+      "totalTransfer": 744683,
+      "domNodes": 2932,
+      "lcpElement": "H1.mt-6.max-w-xl.font-serif",
+      "errors": []
+    },
+    {
+      "scenario": "mobile-4g-cold",
+      "run": 2,
+      "fcp": 10732,
+      "lcp": 11932,
+      "cls": 0,
+      "tbt": 6080,
+      "lastLongTaskEnd": 17906,
+      "load": 7836,
+      "dcl": 7801,
+      "busyMs": 9580,
+      "longTaskCount": 70,
+      "longestTask": 2511,
+      "reqs": 18,
+      "reqsThirdParty": 1,
+      "firstPartyJsBytes": 717404,
+      "totalTransfer": 744683,
+      "domNodes": 2932,
+      "lcpElement": "H1.mt-6.max-w-xl.font-serif",
+      "errors": []
+    },
+    {
+      "scenario": "mobile-4g-cold",
+      "run": 3,
+      "fcp": 13460,
+      "lcp": 14360,
+      "cls": 0,
+      "tbt": 3589,
+      "lastLongTaskEnd": 21366,
+      "load": 11386,
+      "dcl": 11361,
+      "busyMs": 7289,
+      "longTaskCount": 74,
+      "longestTask": 1868,
+      "reqs": 22,
+      "reqsThirdParty": 5,
+      "firstPartyJsBytes": 717404,
+      "totalTransfer": 743501,
+      "domNodes": 2932,
+      "lcpElement": "H1.mt-6.max-w-xl.font-serif",
+      "errors": []
+    },
+    {
+      "scenario": "mobile-slow4g-warm",
+      "run": 1,
+      "fcp": 9404,
+      "lcp": 10288,
+      "cls": 0,
+      "tbt": 2537,
+      "lastLongTaskEnd": 32284,
+      "load": 8328,
+      "dcl": 8318,
+      "busyMs": 10737,
+      "longTaskCount": 164,
+      "longestTask": 931,
+      "reqs": 26,
+      "reqsThirdParty": 9,
+      "firstPartyJsBytes": 717404,
+      "totalTransfer": 744683,
+      "domNodes": 2931,
+      "lcpElement": "H1.mt-6.max-w-xl.font-serif",
+      "errors": []
+    },
+    {
+      "scenario": "mobile-slow4g-warm",
+      "run": 2,
+      "fcp": 11356,
+      "lcp": 12240,
+      "cls": 0.0327,
+      "tbt": 2032,
+      "lastLongTaskEnd": 41142,
+      "load": 10324,
+      "dcl": 10309,
+      "busyMs": 7832,
+      "longTaskCount": 116,
+      "longestTask": 878,
+      "reqs": 25,
+      "reqsThirdParty": 8,
+      "firstPartyJsBytes": 717404,
+      "totalTransfer": 744683,
+      "domNodes": 2931,
+      "lcpElement": "H1.mt-6.max-w-xl.font-serif",
+      "errors": []
+    },
+    {
+      "scenario": "desktop-unthrottled",
+      "run": 1,
+      "fcp": 9000,
+      "lcp": 9952,
+      "cls": 0.0108,
+      "tbt": 2816,
+      "lastLongTaskEnd": 29981,
+      "load": 8372,
+      "dcl": 8369,
+      "busyMs": 8866,
+      "longTaskCount": 121,
+      "longestTask": 452,
+      "reqs": 34,
+      "reqsThirdParty": 17,
+      "firstPartyJsBytes": 717404,
+      "totalTransfer": 991792,
+      "domNodes": 2932,
+      "lcpElement": "H1.mt-6.max-w-xl.font-serif",
+      "errors": []
+    },
+    {
+      "scenario": "desktop-unthrottled",
+      "run": 2,
+      "fcp": 5472,
+      "lcp": 6424,
+      "cls": 0.0108,
+      "tbt": 3023,
+      "lastLongTaskEnd": 22602,
+      "load": 4953,
+      "dcl": 4950,
+      "busyMs": 8073,
+      "longTaskCount": 101,
+      "longestTask": 362,
+      "reqs": 33,
+      "reqsThirdParty": 16,
+      "firstPartyJsBytes": 717404,
+      "totalTransfer": 991792,
+      "domNodes": 2932,
+      "lcpElement": "H1.mt-6.max-w-xl.font-serif",
+      "errors": []
+    }
+  ]
+}

@@ -56,10 +56,10 @@ export function AuthSplitLayout({
   const copy = COPY[mode]
 
   return (
-    <div className="dark relative isolate min-h-screen overflow-hidden bg-background text-foreground">
+    <div className="dark relative isolate min-h-dvh overflow-hidden bg-background text-foreground">
       <FlowerAuroraBackground />
 
-      <div className="relative z-10 grid min-h-screen lg:grid-cols-[1.1fr_minmax(430px,0.9fr)]">
+      <div className="relative z-10 grid min-h-dvh lg:grid-cols-[1.1fr_minmax(430px,0.9fr)]">
         {/* Left — brand + story */}
         <motion.section
           initial={{ opacity: 0, x: -24 }}
@@ -118,7 +118,7 @@ export function AuthSplitLayout({
         </motion.section>
 
         {/* Right — full-height form column */}
-        <section className="relative flex min-h-screen flex-col bg-[#140b0e]/75 backdrop-blur-2xl lg:border-l-2 lg:border-dashed lg:border-white/15">
+        <section className="relative flex min-h-dvh flex-col bg-[#140b0e]/75 backdrop-blur-2xl lg:border-l-2 lg:border-dashed lg:border-white/15">
           {/* Mobile brand */}
           <div className="flex items-center justify-between border-b border-dashed border-white/10 px-6 py-4 lg:hidden">
             <div className="flex items-center gap-2">

@@ -113,6 +113,8 @@ export function CustomerMatchesDrawer({
         {/* Selected Product Banner */}
         <div className="flex items-center gap-3 border-b border-border/70 bg-muted/20 p-4">
           <img
+            loading="lazy"
+            decoding="async"
             src={item.imageUrl}
             alt={item.name}
             className="size-14 rounded-lg object-cover border border-border/80 shadow-xs"

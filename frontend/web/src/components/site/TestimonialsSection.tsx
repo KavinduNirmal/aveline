@@ -112,6 +112,8 @@ export function TestimonialsSection() {
                 {/* Author Info */}
                 <div className="mt-6 flex items-center gap-3 border-t border-dashed border-neutral-200/80 pt-5">
                   <img
+                    loading="lazy"
+                    decoding="async"
                     src={t.avatarUrl}
                     alt={t.name}
                     className="size-11 rounded-full object-cover ring-2 ring-primary/20"

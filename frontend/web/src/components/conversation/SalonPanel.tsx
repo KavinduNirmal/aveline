@@ -100,9 +100,13 @@ export function SalonPanel() {
   const listedConversations = sortSalons(conversations)
 
   return (
-    <div className="grid h-[calc(100vh_-_8rem)] grid-cols-[280px_1fr] overflow-hidden rounded-xl border bg-background">
+    // One column below `lg`: a fixed 280px list beside the thread left roughly 110px for the
+    // messages on a 390px phone. The list is capped to the top 40% so the thread still has room.
+    // `dvh` rather than `vh` because the mobile URL bar is part of `100vh`, which pushed the
+    // composer below the visible area.
+    <div className="grid h-[calc(100dvh_-_8rem)] grid-cols-1 grid-rows-[minmax(0,40%)_minmax(0,1fr)] overflow-hidden rounded-xl border bg-background lg:grid-cols-[280px_1fr] lg:grid-rows-1">
       {/* Conversation list */}
-      <aside className="flex flex-col border-r">
+      <aside className="flex min-h-0 flex-col border-b lg:border-b-0 lg:border-r">
         <div className="flex h-14 items-center justify-between border-b px-3">
           <h2 className="font-serif text-base font-medium">Salons</h2>
           <Button

@@ -74,7 +74,17 @@
   /* Aveline landing accents — agent colors + colorful aurora additions. */
   --aveline-memory: #b0566b;      /* rose  — Ava, memory */
   --aveline-visual: #c9972b;      /* gold  — Elle, visual */
-  --aveline-commerce: #8b2e42;    /* wine-rose — Lina, commerce */
+  /* Brand wine-rose. This is also the theme primary, and it is what paints the documentation
+     section, the pricing CTA and the orders/payments surfaces. Lina's own accent is
+     `--aveline-lilac` below. The two were the same value until her accent was separated; they are
+     deliberately distinct tokens so that an agent-colour change can never recolour the docs
+     chrome or the primary CTA. */
+  --aveline-commerce: #8b2e42;
+  /* Lina's accent. Deeper than `--aveline-lavender` because Lina's avatar, status dots, chips and
+     message bubbles all put white or near-white ink on this colour at 10-11px, where #8e7cc3 is
+     only ~3.6:1 against white. #6b5a9e is ~5.9:1 and clears WCAG AA at those sizes. */
+  --aveline-lilac: #6b5a9e;
+  --aveline-lilac-soft: #efeaf7;
   --aveline-lavender: #8e7cc3;
   --aveline-lavender-soft: #f0eafa;
   --aveline-coral: #ef7a68;
@@ -188,6 +198,8 @@
   --color-memory: var(--aveline-memory);
   --color-visual: var(--aveline-visual);
   --color-commerce: var(--aveline-commerce);
+  --color-lilac: var(--aveline-lilac);
+  --color-lilac-soft: var(--aveline-lilac-soft);
   --color-lavender: var(--aveline-lavender);
   --color-lavender-soft: var(--aveline-lavender-soft);
   --color-coral: var(--aveline-coral);
@@ -445,6 +457,88 @@
 }
 .aveline-ripple-ring:nth-child(3) {
   animation-delay: 1.2s;
+}
+
+/* The Blossom counter-sway.
+   These two keyframes and two class rules used to be re-declared inside a `<style>` element
+   injected by every `<Blossom animateCounter>` instance — ~105 identical `<style>` nodes on the
+   landing page alone (7 AuroraField mounts x 14 blossoms, plus the explicit call sites), each one
+   asking the style engine to parse and match the same rules again. Declaring them once here is
+   behaviour-identical: `<style>` inside inline SVG is document-scoped, so the rules always
+   applied globally anyway.
+   The per-instance duration is now the `--aveline-sway-duration` custom property. */
+@keyframes aveline-sway-base {
+  0%   { transform: rotate(0deg); }
+  25%  { transform: rotate(12deg); }
+  50%  { transform: rotate(0deg); }
+  75%  { transform: rotate(-12deg); }
+  100% { transform: rotate(0deg); }
+}
+@keyframes aveline-sway-top {
+  0%   { transform: rotate(0deg); }
+  25%  { transform: rotate(-10deg); }
+  50%  { transform: rotate(0deg); }
+  75%  { transform: rotate(10deg); }
+  100% { transform: rotate(0deg); }
+}
+.aveline-petal-layer-base {
+  transform-origin: 12px 12px;
+  animation: aveline-sway-base var(--aveline-sway-duration, 18s) ease-in-out infinite;
+  animation-delay: calc(var(--aveline-sway-duration, 18s) * -0.25);
+}
+.aveline-petal-layer-top {
+  transform-origin: 12px 12px;
+  animation: aveline-sway-top var(--aveline-sway-duration, 18s) ease-in-out infinite;
+  animation-delay: 0s;
+}
+
+/* A layer that rocks back and forth forever is exactly what this preference is for. */
+@media (prefers-reduced-motion: reduce) {
+  .aveline-petal-layer-base,
+  .aveline-petal-layer-top,
+  .aveline-ripple-ring {
+    animation: none;
+  }
+}
+
+/* The aurora drift.
+   Both of these layers used to be Framer Motion animations driven from JavaScript: 42 blurred
+   gradient layers and 98 blossoms on the landing page, each animating four transform properties
+   forever. The component's own reduced-motion gate was used to measure what that costs — with the
+   animation off, the landing page's main-thread busy fell from 3,240 ms to 630 ms (−80.6 %) and
+   its long-task count from 80 to 9, on the Lighthouse mobile profile.
+   The keyframes below are the same keyframes Framer was interpolating. In CSS they run on the
+   compositor instead of the main thread, so the look is preserved and the cost is not.
+   Per-instance values ride in custom properties. */
+@keyframes aveline-aurora-blob {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  33%  { transform: translate3d(70px, -50px, 0) scale(1.15); }
+  66%  { transform: translate3d(-40px, 30px, 0) scale(0.95); }
+  100% { transform: translate3d(0, 0, 0) scale(1); }
+}
+.aveline-aurora-blob {
+  animation: aveline-aurora-blob var(--aurora-duration, 25s) ease-in-out infinite;
+  animation-delay: var(--aurora-delay, 0s);
+}
+
+@keyframes aveline-blossom-drift {
+  0%   { transform: translate3d(0, 0, 0) rotate(0deg) scale(1); }
+  50%  {
+    transform: translate3d(var(--blossom-drift-x, 0px), calc(-1 * var(--blossom-drift-y, 14px)), 0)
+      rotate(40deg) scale(1.08);
+  }
+  100% { transform: translate3d(0, 0, 0) rotate(0deg) scale(1); }
+}
+.aveline-blossom-drift {
+  animation: aveline-blossom-drift var(--blossom-duration, 24s) ease-in-out infinite;
+  animation-delay: var(--blossom-delay, 0s);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aveline-aurora-blob,
+  .aveline-blossom-drift {
+    animation: none;
+  }
 }
 
 

@@ -454,7 +454,7 @@ public class CustomerTenantEndpointsTests : IAsyncLifetime
         var token = CreateToken(seeded.ClerkId, orgRole: Roles.BoutiqueStaff);
 
         await using (var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options))
         {
             context.CustomerPreferences.Add(new CustomerPreference
@@ -521,7 +521,7 @@ public class CustomerTenantEndpointsTests : IAsyncLifetime
         var token = CreateToken(seeded.ClerkId, orgRole: Roles.BoutiqueStaff);
 
         await using (var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options))
         {
             context.CustomerMemories.Add(new CustomerMemory

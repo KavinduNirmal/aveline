@@ -237,7 +237,15 @@ public class IntegrationEndpointsIntegrationTests : IAsyncLifetime
             $"/api/v1/orgs/{org.Id}/integrations/whatsapp/test", token));
         Assert.Equal(HttpStatusCode.OK, test.StatusCode);
         var body = await test.Content.ReadAsStringAsync();
-        Assert.Contains("Connected", body);
+
+        // The body must be the flat IntegrationStatusDto, because that is what every client reads.
+        // It used to be the wrapping IntegrationTestResultDto, and the dashboard's Test button then
+        // compared an object against the string "Connected", failed that comparison, and reported a
+        // failed test on every click regardless of the real outcome (2026-09-26).
+        using var document = System.Text.Json.JsonDocument.Parse(body);
+        Assert.Equal("Connected", document.RootElement.GetProperty("status").GetString());
+        Assert.False(document.RootElement.TryGetProperty("isValid", out _));
+
         Assert.DoesNotContain("wa-secret-token", body);
     }
 

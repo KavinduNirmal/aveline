@@ -45,4 +45,10 @@ public interface IPrivacyLinkSigner
 
     /// <summary>Builds the data-policy URL the disclosure names: <c>{web_host}/privacy?org={slug}</c>.</summary>
     string BuildDataPolicyUrl(string organizationSlug);
+
+    /// <summary>
+    /// The web origin, for the "learn more about Aveline" link. The same host the privacy links use,
+    /// which is already the single configured web origin (<c>App:BaseUrl</c>).
+    /// </summary>
+    string BuildAvelineUrl();
 }

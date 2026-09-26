@@ -4,6 +4,7 @@ using Aveline.Api.Modules.Audit.Models;
 using Aveline.Api.Modules.CustomerConcierge.Models;
 using Aveline.Api.Modules.CustomerConcierge.Repositories;
 using Aveline.Api.Modules.Integrations.Services;
+using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Organizations.Repositories;
 using Aveline.Api.Modules.Privacy.Metrics;
 using Microsoft.EntityFrameworkCore;
@@ -54,6 +55,13 @@ public sealed class DisclosureDispatchService : IDisclosureDispatchService
     private readonly DisclosureMetrics _metrics;
     private readonly ILogger<DisclosureDispatchService> _logger;
     private readonly IPrivacyNotificationService? _notifications;
+    private readonly IDisclosureImageProvider? _imageProvider;
+
+    /// <summary>
+    /// Meta's limit for an image caption, against 4096 for a text body. The disclosure travels as a
+    /// caption, so this is the ceiling that decides which shape it is sent in.
+    /// </summary>
+    private const int CaptionCharacterLimit = 1024;
 
     public DisclosureDispatchService(
         ICustomerConsentRepository consent,
@@ -64,7 +72,8 @@ public sealed class DisclosureDispatchService : IDisclosureDispatchService
         IPrivacyLinkSigner linkSigner,
         DisclosureMetrics metrics,
         ILogger<DisclosureDispatchService> logger,
-        IPrivacyNotificationService? notifications = null)
+        IPrivacyNotificationService? notifications = null,
+        IDisclosureImageProvider? imageProvider = null)
     {
         _consent = consent;
         _organizations = organizations;
@@ -75,6 +84,7 @@ public sealed class DisclosureDispatchService : IDisclosureDispatchService
         _metrics = metrics;
         _logger = logger;
         _notifications = notifications;
+        _imageProvider = imageProvider;
     }
 
     /// <inheritdoc />
@@ -160,6 +170,7 @@ public sealed class DisclosureDispatchService : IDisclosureDispatchService
 
         var body = _bodyBuilder.Build(
             organization.Name,
+            _linkSigner.BuildAvelineUrl(),
             _linkSigner.BuildDataPolicyUrl(organization.Slug),
             _linkSigner.BuildOptOutUrl(organizationId));
         var idempotencyKey = IDisclosureDispatchService.BuildIdempotencyKey(
@@ -167,11 +178,45 @@ public sealed class DisclosureDispatchService : IDisclosureDispatchService
 
         // 3. Send. The channel owns per-org credentials, retry/backoff and the outbound log row; it
         // returns failures rather than throwing, and it replays a prior success for the same key.
+        //
+        // The preferred shape is the co-branded image with the notice as its caption, so the customer
+        // sees the boutique's name and the disclosure in one message. The image is optional by
+        // construction: if it cannot be produced, or Meta refuses it, the identical notice goes out
+        // as text under the same key. A consent notice must not depend on an image host, which is
+        // why this is a fallback rather than a retry.
         OutboundMessageResult result;
         try
         {
-            result = await _outbound.SendWhatsAppTextAsync(
-                organizationId, toE164, body.Text, idempotencyKey, cancellationToken);
+            // Meta caps an image caption at 1024 characters, and an over-long caption is refused
+            // wholesale. A boutique with a long name - it appears three times in the copy - gets the
+            // text version instead of a rejection, which carries the identical notice.
+            var imageUrl = body.Text.Length <= CaptionCharacterLimit
+                ? await TryGetImageUrlAsync(organization, cancellationToken)
+                : null;
+
+            if (imageUrl is null && body.Text.Length > CaptionCharacterLimit)
+            {
+                _logger.LogInformation(
+                    "Disclosure is {Length} characters, over the {Limit}-character caption limit, so it "
+                    + "will be sent as text. organizationId={OrganizationId}",
+                    body.Text.Length, CaptionCharacterLimit, organizationId);
+            }
+            result = imageUrl is null
+                ? await _outbound.SendWhatsAppTextAsync(
+                    organizationId, toE164, body.Text, idempotencyKey, cancellationToken)
+                : await _outbound.SendWhatsAppImageAsync(
+                    organizationId, toE164, imageUrl, body.Text, idempotencyKey, cancellationToken);
+
+            if (!result.IsSuccess && imageUrl is not null)
+            {
+                _logger.LogWarning(
+                    "Disclosure image was refused for organization {OrganizationId}; sending the notice "
+                    + "as text instead. skipped={Skipped}",
+                    organizationId, result.Skipped);
+
+                result = await _outbound.SendWhatsAppTextAsync(
+                    organizationId, toE164, body.Text, idempotencyKey, cancellationToken);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -225,6 +270,33 @@ public sealed class DisclosureDispatchService : IDisclosureDispatchService
             organizationId, customerId, version);
 
         return new DisclosureDispatchResult(DisclosureDispatchOutcome.Sent, result.ProviderMessageId);
+    }
+
+    /// <summary>
+    /// The disclosure image's public URL, or <c>null</c> when one cannot be produced. Never throws:
+    /// a missing image degrades the message to text, it does not stop it.
+    /// </summary>
+    private async Task<string?> TryGetImageUrlAsync(
+        Organization organization, CancellationToken cancellationToken)
+    {
+        if (_imageProvider is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _imageProvider.GetUrlAsync(organization.Id, organization.Name, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex,
+                "Could not produce the disclosure image for organization {OrganizationId}; the notice "
+                + "will be sent as text.",
+                organization.Id);
+            return null;
+        }
     }
 
     /// <summary>

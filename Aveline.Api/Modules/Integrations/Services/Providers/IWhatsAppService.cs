@@ -65,6 +65,23 @@ public interface IWhatsAppService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Sends an image by link, with the text as its caption.
+    /// </summary>
+    /// <remarks>
+    /// Meta fetches <paramref name="imageUrl"/> itself, so it must be publicly reachable and stable -
+    /// not a signed or expiring URL. The caption is limited to 1024 characters by Meta, well under
+    /// the 4096 a text body allows, and the first-contact disclosure fits inside it. Used by the
+    /// disclosure so the boutique's name and the notice arrive as one message.
+    /// </remarks>
+    Task<WhatsAppSendResult> SendImageAsync(
+        string accessToken,
+        string phoneNumberId,
+        string to,
+        string imageUrl,
+        string caption,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Sends an approved message template. This is the only mechanism Meta offers for a
     /// business-initiated message outside an open customer session, so it is the prerequisite for
     /// any proactive (non-reply) customer messaging.

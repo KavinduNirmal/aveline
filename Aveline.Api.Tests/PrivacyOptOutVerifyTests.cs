@@ -81,7 +81,17 @@ public class PrivacyOptOutVerifyTests : IAsyncLifetime
             string languageCode, IReadOnlyList<object>? components,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
-    }
+    
+        public Task<WhatsAppSendResult> SendImageAsync(
+            string accessToken,
+            string phoneNumberId,
+            string to,
+            string imageUrl,
+            string caption,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new WhatsAppSendResult(
+                IsSuccess: true, MessageId: "wamid.TESTIMAGE", HttpStatus: 200));
+}
 
     private sealed class NoopAgentClient : IAgentServiceClient
     {

@@ -85,6 +85,26 @@ public interface IOutboundChannel
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Sends an image with a caption, on the same terms as <see cref="SendTextAsync"/>: per-org
+    /// credentials, one logical send per idempotency key, failures returned rather than thrown.
+    /// </summary>
+    /// <param name="imageUrl">
+    /// A publicly reachable, stable URL. The provider fetches it, so a signed or expiring URL would
+    /// work at send time and fail later.
+    /// </param>
+    /// <param name="caption">
+    /// The message text. Recorded on success, because that is what the customer received and what a
+    /// data-subject request must be able to erase.
+    /// </param>
+    Task<OutboundMessageResult> SendImageAsync(
+        Guid organizationId,
+        string toE164,
+        string imageUrl,
+        string caption,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Sends an approved template. <b>Gated on policy question Q-2:</b> the capability exists so
     /// proactive messaging is implementable, but no proactive (non-reply) sender may be wired to
     /// it until Meta's template rules are confirmed.

@@ -4393,6 +4393,138 @@ paths:
         "503":
           description: The idempotency lease store is unreachable; the request was refused, not applied.
 
+  /api/v1/orgs/{organizationId}/customers/{customerId}/consent:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: customerId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Customers]
+      summary: Read customer consent status
+      description: |
+        `BoutiqueCustomerAccess` (`customers:view`). Returns the consent status for the customer.
+        Returns status `unknown` if no consent record has been established yet.
+      operationId: getTenantCustomerConsent
+      responses:
+        "200":
+          description: Customer consent status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantCustomerConsent" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/customers/{customerId}/memories:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: customerId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Customers]
+      summary: Read customer memories
+      description: |
+        `BoutiqueCustomerAccess` (`customers:view`). Returns tenant-safe memories about the customer.
+      operationId: getTenantCustomerMemories
+      responses:
+        "200":
+          description: List of memories
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TenantCustomerMemory" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/customers/{customerId}/events:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: customerId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Customers]
+      summary: List customer events
+      description: |
+        `BoutiqueCustomerAccess` (`customers:view`). Returns scheduled life and boutique events for this customer.
+      operationId: getTenantCustomerEvents
+      responses:
+        "200":
+          description: List of customer events
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CustomerEvent" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [Customers]
+      summary: Add a customer event
+      description: |
+        `BoutiqueCustomerManage` (`customers:manage`). Adds an event to the customer profile.
+      operationId: addTenantCustomerEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddEventRequest" }
+      responses:
+        "201":
+          description: Created customer event
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerEvent" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orgs/{organizationId}/customers/{customerId}/status:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationId"
+      - name: customerId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Customers]
+      summary: Recompute loyalty status
+      description: |
+        `BoutiqueCustomerManage` (`customers:manage`). Recomputes the customer's derived tier from spend, visits, and recency.
+      operationId: recomputeTenantCustomerStatus
+      responses:
+        "200":
+          description: Recomputed customer status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerLoyaltyStatus" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/v1/orgs/{organizationId}/customers/highlights:
     parameters:
       - $ref: "#/components/parameters/OrganizationId"
@@ -12226,6 +12358,9 @@ components:
         tags:
           type: array
           items: { type: string }
+        preferences:
+          type: array
+          items: { $ref: "#/components/schemas/CustomerPreference" }
 
     UpdateCustomerRequest:
       type: object
@@ -12334,3 +12469,60 @@ components:
         lastVisitAtUtcAfter: { type: string, format: date-time, nullable: true }
         tierAfter: { type: string, enum: [new, returning, vip, dormant] }
         blossomsCharged: { type: number, description: Always 0; a visit is not billable. }
+
+    CustomerPreference:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        customerId: { type: string, format: uuid }
+        preferenceKey: { type: string }
+        preferenceValue: { type: string }
+        isExplicit: { type: boolean }
+        confidence: { type: number, format: decimal }
+        source: { type: string }
+        createdAtUtc: { type: string, format: date-time }
+
+    TenantCustomerConsent:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [granted, revoked, unknown] }
+        grantedAtUtc: { type: string, format: date-time, nullable: true }
+        revokedAtUtc: { type: string, format: date-time, nullable: true }
+
+    TenantCustomerMemory:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        customerId: { type: string, format: uuid }
+        content: { type: string }
+        category: { type: string }
+        source: { type: string }
+        isExplicit: { type: boolean }
+        confidence: { type: number, format: decimal }
+        createdAtUtc: { type: string, format: date-time }
+
+    CustomerEvent:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        customerId: { type: string, format: uuid }
+        eventType: { type: string }
+        eventDate: { type: string, format: date-time }
+        description: { type: string, nullable: true }
+        isActive: { type: boolean }
+        createdAtUtc: { type: string, format: date-time }
+
+    AddEventRequest:
+      type: object
+      required: [eventType, eventDate]
+      properties:
+        eventType: { type: string, maxLength: 32 }
+        eventDate: { type: string, format: date-time }
+        description: { type: string, maxLength: 1000, nullable: true }
+
+    CustomerLoyaltyStatus:
+      type: object
+      properties:
+        status: { type: string, enum: [new, returning, vip, dormant] }
+        calculatedAt: { type: string, format: date-time }

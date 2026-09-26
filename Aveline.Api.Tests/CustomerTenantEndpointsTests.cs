@@ -92,7 +92,8 @@ public class CustomerTenantEndpointsTests : IAsyncLifetime
 
     private sealed record Seeded(Guid OrgId, string ClerkId, Guid CustomerId);
 
-    private static async Task<Seeded> SeedAsync(string suffix)
+    private static async Task<Seeded> SeedAsync(
+        string suffix, string boutiqueRole = Roles.BoutiqueStaff, string? nickname = null)
     {
         await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
             .UseInMemoryDatabase(databaseName: TestDatabase.Name())
@@ -127,7 +128,7 @@ public class CustomerTenantEndpointsTests : IAsyncLifetime
         {
             OrganizationId = org.Id,
             UserId = member.Id,
-            BoutiqueRole = Roles.BoutiqueStaff,
+            BoutiqueRole = boutiqueRole,
             Status = MembershipStatus.Active,
         });
 
@@ -136,6 +137,7 @@ public class CustomerTenantEndpointsTests : IAsyncLifetime
             OrganizationId = org.Id,
             PhoneNumber = $"+94771{suffix.Length:D6}",
             FullName = $"Nadia Client {suffix}",
+            Nickname = nickname ?? $"Nads {suffix}",
             Status = "new",
             Level = "level2",
         };
@@ -443,5 +445,200 @@ public class CustomerTenantEndpointsTests : IAsyncLifetime
             idempotencyKey: Guid.NewGuid().ToString()));
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetDetail_ReturnsCustomerProfileWithNicknameAndPreferences()
+    {
+        var seeded = await SeedAsync("detail", nickname: "Naddy");
+        var token = CreateToken(seeded.ClerkId, orgRole: Roles.BoutiqueStaff);
+
+        await using (var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .Options))
+        {
+            context.CustomerPreferences.Add(new CustomerPreference
+            {
+                OrganizationId = seeded.OrgId,
+                CustomerId = seeded.CustomerId,
+                PreferenceKey = "fabric",
+                PreferenceValue = "Silk and linen",
+                IsExplicit = true,
+                Confidence = 0.95m,
+                Source = "conversation",
+            });
+            await context.SaveChangesAsync();
+        }
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Get, $"/api/v1/orgs/{seeded.OrgId}/customers/{seeded.CustomerId}", token));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal(seeded.CustomerId, body.GetProperty("customerId").GetGuid());
+        Assert.Equal("Naddy", body.GetProperty("nickname").GetString());
+        Assert.Equal("level2", body.GetProperty("level").GetString());
+        Assert.Equal(1, body.GetProperty("loyaltyTierIsDerived").GetInt32());
+
+        var prefs = body.GetProperty("preferences").EnumerateArray().ToList();
+        Assert.Single(prefs);
+        Assert.Equal("fabric", prefs[0].GetProperty("preferenceKey").GetString());
+        Assert.Equal("Silk and linen", prefs[0].GetProperty("preferenceValue").GetString());
+    }
+
+    [Fact]
+    public async Task GetDetail_ForAnotherOrgsCustomer_Returns404()
+    {
+        var mine = await SeedAsync("detail_mine");
+        var theirs = await SeedAsync("detail_theirs");
+        var token = CreateToken(mine.ClerkId, orgRole: Roles.BoutiqueStaff);
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Get, $"/api/v1/orgs/{mine.OrgId}/customers/{theirs.CustomerId}", token));
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetConsent_ReturnsUnknown_WhenNoConsentRecordExists()
+    {
+        var seeded = await SeedAsync("consent");
+        var token = CreateToken(seeded.ClerkId, orgRole: Roles.BoutiqueStaff);
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Get, $"/api/v1/orgs/{seeded.OrgId}/customers/{seeded.CustomerId}/consent", token));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("unknown", body.GetProperty("status").GetString());
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("grantedAtUtc").ValueKind);
+    }
+
+    [Fact]
+    public async Task GetMemories_ReturnsCustomerMemories()
+    {
+        var seeded = await SeedAsync("memories");
+        var token = CreateToken(seeded.ClerkId, orgRole: Roles.BoutiqueStaff);
+
+        await using (var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .Options))
+        {
+            context.CustomerMemories.Add(new CustomerMemory
+            {
+                OrganizationId = seeded.OrgId,
+                CustomerId = seeded.CustomerId,
+                Content = "Prefers evening appointments on Thursdays.",
+                Category = "fact",
+                Source = "staff_note",
+                IsExplicit = true,
+                Confidence = 1.0m,
+            });
+            await context.SaveChangesAsync();
+        }
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Get, $"/api/v1/orgs/{seeded.OrgId}/customers/{seeded.CustomerId}/memories", token));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        var items = body.EnumerateArray().ToList();
+        Assert.Single(items);
+        Assert.Equal("Prefers evening appointments on Thursdays.", items[0].GetProperty("content").GetString());
+        Assert.Equal("fact", items[0].GetProperty("category").GetString());
+    }
+
+    [Fact]
+    public async Task PostEvents_AsStaffWithoutManage_ReturnsForbidden()
+    {
+        var seeded = await SeedAsync("events_forbidden", boutiqueRole: Roles.BoutiqueStaff);
+        var token = CreateToken(seeded.ClerkId, orgRole: Roles.BoutiqueStaff);
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Post,
+            $"/api/v1/orgs/{seeded.OrgId}/customers/{seeded.CustomerId}/events",
+            token,
+            new { eventType = "birthday", eventDate = DateTime.UtcNow.AddDays(5), description = "Birthday coming up" }));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PostEvents_AsManager_CreatesCustomerEvent()
+    {
+        var seeded = await SeedAsync("events_mgr", boutiqueRole: Roles.BoutiqueManager);
+        var token = CreateToken(seeded.ClerkId, orgRole: Roles.BoutiqueManager);
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Post,
+            $"/api/v1/orgs/{seeded.OrgId}/customers/{seeded.CustomerId}/events",
+            token,
+            new { eventType = "anniversary", eventDate = DateTime.UtcNow.AddDays(30), description = "Boutique 1yr anniversary" }));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("anniversary", body.GetProperty("eventType").GetString());
+
+        var getResponse = await _client.SendAsync(Authorized(
+            HttpMethod.Get, $"/api/v1/orgs/{seeded.OrgId}/customers/{seeded.CustomerId}/events", token));
+        Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
+        var getBody = JsonDocument.Parse(await getResponse.Content.ReadAsStringAsync()).RootElement;
+        Assert.Contains(getBody.EnumerateArray(), e => e.GetProperty("eventType").GetString() == "anniversary");
+    }
+
+    [Fact]
+    public async Task PostStatus_AsManager_RecomputesTier()
+    {
+        var seeded = await SeedAsync("status_mgr", boutiqueRole: Roles.BoutiqueManager);
+        var token = CreateToken(seeded.ClerkId, orgRole: Roles.BoutiqueManager);
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Post,
+            $"/api/v1/orgs/{seeded.OrgId}/customers/{seeded.CustomerId}/status",
+            token,
+            new { }));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.True(body.TryGetProperty("status", out var statusProp));
+        Assert.False(string.IsNullOrEmpty(statusProp.GetString()));
+    }
+
+    [Fact]
+    public async Task PatchCustomer_AsManager_UpdatesNicknameAndLevel()
+    {
+        var seeded = await SeedAsync("patch_mgr", boutiqueRole: Roles.BoutiqueManager);
+        var token = CreateToken(seeded.ClerkId, orgRole: Roles.BoutiqueManager);
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Patch,
+            $"/api/v1/orgs/{seeded.OrgId}/customers/{seeded.CustomerId}",
+            token,
+            new { nickname = "VipQueen", level = "level3" }));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("VipQueen", body.GetProperty("nickname").GetString());
+        Assert.Equal("level3", body.GetProperty("level").GetString());
+    }
+
+    [Fact]
+    public async Task DeleteCustomer_AsManager_SoftDeletesCustomer()
+    {
+        var seeded = await SeedAsync("del_mgr", boutiqueRole: Roles.BoutiqueManager);
+        var token = CreateToken(seeded.ClerkId, orgRole: Roles.BoutiqueManager);
+
+        var deleteResponse = await _client.SendAsync(Authorized(
+            HttpMethod.Delete,
+            $"/api/v1/orgs/{seeded.OrgId}/customers/{seeded.CustomerId}",
+            token));
+
+        Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
+
+        var getResponse = await _client.SendAsync(Authorized(
+            HttpMethod.Get,
+            $"/api/v1/orgs/{seeded.OrgId}/customers/{seeded.CustomerId}",
+            token));
+        Assert.Equal(HttpStatusCode.NotFound, getResponse.StatusCode);
     }
 }

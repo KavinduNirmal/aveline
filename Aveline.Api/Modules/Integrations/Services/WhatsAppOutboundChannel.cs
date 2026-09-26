@@ -112,15 +112,56 @@ public sealed class WhatsAppOutboundChannel : IOutboundChannel
     }
 
     /// <inheritdoc/>
-    public async Task<OutboundMessageResult> SendTextAsync(
+    public Task<OutboundMessageResult> SendTextAsync(
         Guid organizationId,
         string toE164,
         string text,
         string idempotencyKey,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(toE164);
         ArgumentException.ThrowIfNullOrWhiteSpace(text);
+
+        return SendCoreAsync(
+            organizationId, toE164, text, idempotencyKey, cancellationToken,
+            (accessToken, phoneNumberId, token) =>
+                _whatsApp.SendMessageAsync(accessToken, phoneNumberId, toE164, text, token));
+    }
+
+    /// <inheritdoc/>
+    public Task<OutboundMessageResult> SendImageAsync(
+        Guid organizationId,
+        string toE164,
+        string imageUrl,
+        string caption,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(imageUrl);
+        ArgumentException.ThrowIfNullOrWhiteSpace(caption);
+
+        // The caption is what is recorded, not the image: it is what the customer read, and it is
+        // what a data-subject request has to be able to erase.
+        return SendCoreAsync(
+            organizationId, toE164, caption, idempotencyKey, cancellationToken,
+            (accessToken, phoneNumberId, token) =>
+                _whatsApp.SendImageAsync(accessToken, phoneNumberId, toE164, imageUrl, caption, token));
+    }
+
+    /// <summary>
+    /// The one logical send both shapes share: resolve this organization's credentials, replay a
+    /// prior success for the key, send with bounded retries, then record what went out.
+    /// </summary>
+    /// <param name="content">The text the customer receives, recorded on success.</param>
+    /// <param name="send">The provider call, given the resolved credentials and the token.</param>
+    private async Task<OutboundMessageResult> SendCoreAsync(
+        Guid organizationId,
+        string toE164,
+        string content,
+        string idempotencyKey,
+        CancellationToken cancellationToken,
+        Func<string, string, CancellationToken, Task<WhatsAppSendResult>> send)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(toE164);
         ArgumentException.ThrowIfNullOrWhiteSpace(idempotencyKey);
 
         // 1-2. Resolve this organization's own credentials. An absent or half-filled integration is
@@ -154,10 +195,11 @@ public sealed class WhatsAppOutboundChannel : IOutboundChannel
         }
 
         // 4. One logical send, with bounded retries that keep the same key.
+        var accessToken = credentials["accessToken"];
+        var phoneNumberId = credentials["phoneNumberId"];
         var attempt = await SendWithRetryAsync(
             organizationId, toE164, cancellationToken,
-            (token) => _whatsApp.SendMessageAsync(
-                credentials["accessToken"], credentials["phoneNumberId"], toE164, text, token));
+            (token) => send(accessToken, phoneNumberId, token));
 
         if (!attempt.Result.IsSuccess)
         {
@@ -171,7 +213,7 @@ public sealed class WhatsAppOutboundChannel : IOutboundChannel
         // 5. Record the send. The unique filtered index on (OrganizationId, ExternalId) is the
         // backstop for a concurrent duplicate, so losing that race is "already recorded".
         await RecordOutboundAsync(
-            organizationId, toE164, text, idempotencyKey, attempt.Result.MessageId, cancellationToken);
+            organizationId, toE164, content, idempotencyKey, attempt.Result.MessageId, cancellationToken);
 
         return Record(OutboundMessageResult.Sent(attempt.Result.MessageId));
     }

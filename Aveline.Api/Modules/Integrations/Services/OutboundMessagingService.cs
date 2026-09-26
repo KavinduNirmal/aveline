@@ -45,6 +45,24 @@ public sealed class OutboundMessagingService : IOutboundMessagingService, IOutbo
             WhatsAppChannelKey, organizationId, toE164, text, idempotencyKey, cancellationToken);
 
     /// <inheritdoc/>
+    public Task<OutboundMessageResult> SendWhatsAppImageAsync(
+        Guid organizationId,
+        string toE164,
+        string imageUrl,
+        string caption,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        // Resolved inline rather than through a private helper, so the image path cannot silently
+        // drift from the text path's "unknown channel is a returned failure, not a throw" rule.
+        var channel = Resolve(WhatsAppChannelKey);
+        return channel is null
+            ? Task.FromResult(UnknownChannel(WhatsAppChannelKey))
+            : channel.SendImageAsync(
+                organizationId, toE164, imageUrl, caption, idempotencyKey, cancellationToken);
+    }
+
+    /// <inheritdoc/>
     public Task<OutboundMessageResult> SendWhatsAppTemplateAsync(
         Guid organizationId,
         string toE164,

@@ -134,6 +134,17 @@ profile in the webhook, before `message.received` is published, also means the a
 finds the row rather than racing it. An unknown number used to be skipped here, which meant a
 brand-new customer received no disclosure on the first message they ever sent.
 
+**The message itself is an image with the notice as its caption.** `DisclosureImageComposer`
+(`Modules/Privacy/Services/`) draws a co-branding lockup - the Aveline mark and wordmark, a cross,
+and the boutique's own name - knocked out to white on the app's aurora, at 1200x675. The fonts
+(Playfair Display SemiBold, DM Sans SemiBold and Regular) are embedded resources, because the
+runtime image is chiseled with no font packages. `DisclosureImageProvider` renders it, publishes it
+to Cloudinary under a public id that carries a hash of the boutique's name and the layout version,
+and returns the unsigned, version-less delivery URL for Meta to fetch. **The text remains the
+fallback**: if no image can be produced or Meta refuses the image, the identical notice goes out as
+text under the same idempotency key. The image is decoration on a consent notice, and a notice must
+not depend on an image host.
+
 **Synchronous or asynchronous? (plan §15 Q-1).** Asynchronous. The webhook's contract is "return
 200 fast and record what we can", and holding it open for a Meta round-trip risks a Meta retry that
 re-enters the whole path. The webhook therefore only enqueues; `DisclosureDispatchWorker`

@@ -136,6 +136,9 @@ public sealed class PrivacyLinkSigner : IPrivacyLinkSigner
         return $"{_webHost}{DataPolicyPath}{query}";
     }
 
+    /// <inheritdoc />
+    public string BuildAvelineUrl() => _webHost;
+
     /// <summary>
     /// The exact bytes the HMAC covers. Written as <c>v1|{organizationId}</c>; the version is a
     /// literal part of the payload so it cannot be substituted after signing.

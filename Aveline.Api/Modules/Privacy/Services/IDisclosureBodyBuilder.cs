@@ -23,7 +23,12 @@ public interface IDisclosureBodyBuilder
     /// Builds the disclosure for one boutique.
     /// </summary>
     /// <param name="boutiqueDisplayName">The boutique's own name, as the customer knows it.</param>
+    /// <param name="avelineUrl">
+    /// Where a customer can read about Aveline itself. The web origin, so the copy points at the
+    /// product rather than at this boutique's own page.
+    /// </param>
     /// <param name="dataPolicyUrl">The data-policy URL, including the org query parameter.</param>
     /// <param name="optOutUrl">The signed permanent opt-out URL.</param>
-    DisclosureBody Build(string boutiqueDisplayName, string dataPolicyUrl, string optOutUrl);
+    DisclosureBody Build(
+        string boutiqueDisplayName, string avelineUrl, string dataPolicyUrl, string optOutUrl);
 }

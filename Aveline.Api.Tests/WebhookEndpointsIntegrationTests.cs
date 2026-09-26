@@ -649,6 +649,47 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Post_WithAStatusReceipt_IsAcknowledgedAsIgnoredAndRecordsNothing()
+    {
+        var orgId = await SeedOrgWithWhatsAppAsync("wh_owner_status", "webhook-status");
+
+        // A delivery receipt: Meta addresses the `messages` field but sends no message. This branch
+        // answers 200 and records nothing, and it used to do so without logging at all, which made
+        // "Meta delivered and we dropped it" indistinguishable from "Meta never delivered".
+        var body = """
+        {
+          "object": "whatsapp_business_account",
+          "entry": [
+            {
+              "id": "WABA_ID",
+              "changes": [
+                {
+                  "value": {
+                    "messaging_product": "whatsapp",
+                    "metadata": { "display_phone_number": "15551234567", "phone_number_id": "111" },
+                    "statuses": [
+                      { "id": "wamid.OUT1", "status": "delivered", "timestamp": "1720000000",
+                        "recipient_id": "94771112222" }
+                    ]
+                  },
+                  "field": "messages"
+                }
+              ]
+            }
+          ]
+        }
+        """;
+
+        var response = await PostAsync(orgId, body);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("ignored", await response.Content.ReadAsStringAsync());
+
+        await using var context = CreateContext();
+        Assert.False(await context.InboundMessageLogs.AnyAsync(m => m.OrganizationId == orgId));
+    }
+
+    [Fact]
     public async Task Post_ValidSignature_CreatesClientMessageInSalon()
     {
         var orgId = await SeedOrgWithWhatsAppAsync("wh_owner_g", "webhook-g");

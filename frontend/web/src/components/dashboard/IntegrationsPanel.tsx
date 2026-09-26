@@ -4,6 +4,7 @@ import {
   BookOpen,
   CheckCircle2,
   Clock,
+  Copy,
   Info,
   Link2,
   Loader2,
@@ -12,6 +13,7 @@ import {
   RefreshCw,
   ShieldCheck,
   Unplug,
+  Wand2,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -40,12 +42,15 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 import { InstagramIcon, PaymentIcon, WhatsAppIcon } from '@/components/dashboard/BrandIcons'
+import { writeClipboard } from '@/lib/clipboard'
 import {
   deleteIntegration,
   listIntegrationMessages,
   listIntegrations,
   saveIntegration,
+  suggestWebhookVerifyToken,
   testIntegration,
+  whatsappWebhookUrl,
 } from '@/lib/integrations'
 import type {
   InboundMessageLogDto,
@@ -63,6 +68,12 @@ interface IntegrationField {
   key: string
   label: string
   placeholder: string
+  /** Rendered in clear text rather than masked: the operator has to paste it into the provider. */
+  reveal?: boolean
+  /** Offers a generated value, for a credential the provider only compares verbatim. */
+  generate?: boolean
+  /** One line under the input explaining what the provider expects. */
+  hint?: string
 }
 
 interface IntegrationMeta {
@@ -72,6 +83,8 @@ interface IntegrationMeta {
   help: string
   icon: (props: { className?: string }) => React.ReactNode
   fields: IntegrationField[]
+  /** Builds the URL the provider must call for this org's events, when it has one. */
+  webhookUrl?: (organizationId: string) => string
 }
 
 const INTEGRATIONS: IntegrationMeta[] = [
@@ -81,11 +94,19 @@ const INTEGRATIONS: IntegrationMeta[] = [
     description: 'Message customers and receive inbound messages on your WhatsApp Business number.',
     help: 'Uses your own Meta WhatsApp Business credentials. After connecting, point Meta at Aveline\u2019s webhook so inbound messages flow in. Meta may charge per message.',
     icon: WhatsAppIcon,
+    webhookUrl: whatsappWebhookUrl,
     fields: [
       { key: 'accessToken', label: 'Access Token', placeholder: 'EAAG… permanent token from Meta' },
       { key: 'phoneNumberId', label: 'Phone Number ID', placeholder: 'e.g. 123456789012345' },
       { key: 'appSecret', label: 'App Secret', placeholder: 'Meta app secret (webhook signing)' },
-      { key: 'webhookVerifyToken', label: 'Webhook Verify Token', placeholder: 'A token you set in Meta' },
+      {
+        key: 'webhookVerifyToken',
+        label: 'Webhook Verify Token',
+        placeholder: 'A token you set in Meta',
+        reveal: true,
+        generate: true,
+        hint: 'Meta echoes this token back when verifying the webhook, so it must match exactly.',
+      },
     ],
   },
   {
@@ -138,9 +159,58 @@ function maskPhone(value: string | null): string {
   return value.length > 8 ? `${value.slice(0, 3)}••••${value.slice(-4)}` : value
 }
 
+/**
+ * Copies a value the operator has to hand to a third party.
+ *
+ * The copy is best-effort — `writeClipboard` falls back to a selection on a non-secure origin —
+ * and a refusal is reported rather than leaving the button looking like it worked.
+ */
+async function copyWithFeedback(label: string, value: string): Promise<void> {
+  try {
+    await writeClipboard(value)
+    toast.success(`${label} copied.`)
+  } catch {
+    toast.error(`Unable to copy ${label}.`)
+  }
+}
+
+/** A read-only value with a copy affordance, for text the operator pastes into a provider. */
+function CopyableValue({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string
+  value: string
+  mono?: boolean
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <Input
+        readOnly
+        value={value}
+        aria-label={label}
+        onFocus={(event) => event.currentTarget.select()}
+        className={mono ? 'font-mono text-xs' : 'text-xs'}
+      />
+      <Button
+        type="button"
+        variant="outline"
+        size="icon-xs"
+        aria-label={`Copy ${label}`}
+        className="shrink-0"
+        onClick={() => void copyWithFeedback(label, value)}
+      >
+        <Copy className="size-3.5" aria-hidden />
+      </Button>
+    </div>
+  )
+}
+
 function IntegrationCard({
   meta,
   status,
+  webhookUrl,
   onConnect,
   onTest,
   onDisconnect,
@@ -148,6 +218,7 @@ function IntegrationCard({
 }: {
   meta: IntegrationMeta
   status: IntegrationStatusDto | null
+  webhookUrl?: string
   onConnect: () => void
   onTest: () => void
   onDisconnect: () => void
@@ -205,6 +276,12 @@ function IntegrationCard({
               <div className="flex items-center gap-2 text-muted-foreground">
                 <CheckCircle2 className="size-3.5 text-success" aria-hidden />
                 <span>Token: {status.maskedPreview}</span>
+              </div>
+            )}
+            {webhookUrl && (
+              <div className="flex flex-col gap-1.5 pt-1">
+                <span className="text-muted-foreground">Webhook URL</span>
+                <CopyableValue label="Webhook URL" value={webhookUrl} mono />
               </div>
             )}
           </div>
@@ -296,21 +373,74 @@ function ConnectDialog({
         </DialogHeader>
 
         <div className="grid gap-3">
-          {meta.fields.map((field) => (
-            <div key={field.key} className="flex flex-col gap-1.5">
-              <Label htmlFor={`${meta.type}-${field.key}`} className="text-xs text-muted-foreground">
-                {field.label}
-              </Label>
-              <Input
-                id={`${meta.type}-${field.key}`}
-                type="password"
-                value={values[field.key] ?? ''}
-                onChange={(e) => setValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
-                placeholder={field.placeholder}
-                autoComplete="off"
-              />
+          {meta.webhookUrl && (
+            <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-muted/40 p-3">
+              <Label className="text-xs text-muted-foreground">Webhook URL</Label>
+              <CopyableValue label="Webhook URL" value={meta.webhookUrl(organization.id)} mono />
+              <p className="text-[11px] text-muted-foreground">
+                Paste this into Meta&rsquo;s WhatsApp webhook configuration, then use the verify
+                token below.
+              </p>
             </div>
-          ))}
+          )}
+
+          {meta.fields.map((field) => {
+            const value = values[field.key] ?? ''
+            const revealed = field.reveal === true
+
+            return (
+              <div key={field.key} className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <Label
+                    htmlFor={`${meta.type}-${field.key}`}
+                    className="text-xs text-muted-foreground"
+                  >
+                    {field.label}
+                  </Label>
+                  {field.generate && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      onClick={() =>
+                        setValues((prev) => ({
+                          ...prev,
+                          [field.key]: suggestWebhookVerifyToken(),
+                        }))
+                      }
+                    >
+                      <Wand2 className="size-3" aria-hidden />
+                      Generate
+                    </Button>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id={`${meta.type}-${field.key}`}
+                    type={revealed ? 'text' : 'password'}
+                    value={value}
+                    onChange={(e) => setValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                    placeholder={field.placeholder}
+                    autoComplete="off"
+                    className={revealed ? 'font-mono text-xs' : undefined}
+                  />
+                  {revealed && value.length > 0 && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon-xs"
+                      aria-label={`Copy ${field.label}`}
+                      className="shrink-0"
+                      onClick={() => void copyWithFeedback(field.label, value)}
+                    >
+                      <Copy className="size-3.5" aria-hidden />
+                    </Button>
+                  )}
+                </div>
+                {field.hint && <p className="text-[11px] text-muted-foreground">{field.hint}</p>}
+              </div>
+            )
+          })}
         </div>
 
         <DialogFooter>
@@ -561,6 +691,7 @@ export function IntegrationsPanel({ organization }: IntegrationsPanelProps) {
             key={meta.type}
             meta={meta}
             status={statusFor(meta.type)}
+            webhookUrl={meta.webhookUrl?.(organization.id)}
             busy={busyType === meta.type}
             onConnect={() => setConnectFor(meta)}
             onTest={() => void handleTest(meta)}

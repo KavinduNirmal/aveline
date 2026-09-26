@@ -19,9 +19,21 @@ import { ADMIN_ROUTES } from './routes'
  */
 const appSource = readFileSync(fileURLToPath(new URL('../../App.tsx', import.meta.url)), 'utf8')
 
-/** Every file `App.tsx` imports for an admin page, e.g. `AdminBlossomsView`. */
+/**
+ * Every file `App.tsx` binds for an admin page, e.g. `AdminBlossomsView`.
+ *
+ * The route elements are code-split, so the binding is the lazy form
+ * (`const AdminBlossomsView = lazyRoute(() => import('...'), 'AdminBlossomsView')`) rather than
+ * an `import` statement. The static form is still recognised so this parser keeps working if a
+ * route is ever moved back to an eager import — the invariant below is about parity with the
+ * registry, not about how a view gets loaded.
+ */
 function adminViewImports(): string[] {
-  return [...appSource.matchAll(/import \{ (Admin\w+View) \}/g)].map((match) => match[1])
+  const staticImports = [...appSource.matchAll(/import \{ (Admin\w+View) \}/g)].map((match) => match[1])
+  const lazyBindings = [...appSource.matchAll(/const (Admin\w+View) = lazyRoute\(/g)].map(
+    (match) => match[1],
+  )
+  return [...new Set([...staticImports, ...lazyBindings])]
 }
 
 /**

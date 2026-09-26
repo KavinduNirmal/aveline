@@ -3,6 +3,7 @@ import { useReducedMotion } from 'motion/react'
 
 import { Blossom } from '@/components/auth/Blossom'
 import { useConstrainedDevice } from '@/hooks/useConstrainedDevice'
+import { cn } from '@/lib/utils'
 
 interface Blob {
   gradient: string
@@ -73,7 +74,11 @@ export function AuroraField({ className }: { className?: string }) {
       {BLOBS.map((b, i) => (
         <div
           key={i}
-          className={`absolute rounded-full blur-[70px]${staticOnly ? '' : ' aveline-aurora-blob'}`}
+          // `cn`, not a template literal: `blur-[70px]${...}` glues the candidate to the
+          // interpolation, Tailwind cannot extract it, and the class is silently never emitted —
+          // which is exactly how this shipped as an unblurred circle once. The utility must stay
+          // a standalone string literal.
+          className={cn('absolute rounded-full blur-[70px]', !staticOnly && 'aveline-aurora-blob')}
           style={
             {
               background: b.gradient,

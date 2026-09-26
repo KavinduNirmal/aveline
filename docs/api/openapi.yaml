@@ -127,11 +127,57 @@ tags:
       by design: the customer has no Aveline account and the one-time code is the authentication.
       The staff-side consent write lives on the tenant customer surface under `customers:manage` and
       is distinguishable in the audit by `ActorKind`.
+  - name: Search
+    description: Unified cross-entity search across catalog products, customers, and salon conversations.
 
 security:
   - bearerAuth: []
 
 paths:
+
+  # ---------------------------------------------------------------------------
+  # Search
+  # ---------------------------------------------------------------------------
+  /api/v1/orgs/{organizationId}/search:
+    get:
+      tags: [Search]
+      summary: Unified cross-entity search across products, customers, and conversations
+      operationId: globalSearch
+      parameters:
+        - name: organizationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Search term to query across entity names, titles, and snippets.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+            minimum: 1
+            maximum: 50
+          description: Maximum results to return per entity type.
+      responses:
+        "200":
+          description: Unified search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResultPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+
 
   # ---------------------------------------------------------------------------
   # Auth
@@ -12334,3 +12380,42 @@ components:
         lastVisitAtUtcAfter: { type: string, format: date-time, nullable: true }
         tierAfter: { type: string, enum: [new, returning, vip, dormant] }
         blossomsCharged: { type: number, description: Always 0; a visit is not billable. }
+
+    SearchResultItem:
+      type: object
+      required: [id, type, title]
+      properties:
+        id:
+          type: string
+          description: Unique identifier or slug of the matched record.
+        type:
+          type: string
+          enum: [product, customer, conversation]
+          description: Entity kind of the search match.
+        title:
+          type: string
+          description: Display name or primary headline.
+        subtitle:
+          type: string
+          nullable: true
+          description: Secondary context such as SKU, category, phone number, or handle.
+        route:
+          type: string
+          nullable: true
+          description: Deep-link route for in-app client navigation.
+
+    SearchResultPage:
+      type: object
+      required: [query, total, items]
+      properties:
+        query:
+          type: string
+          description: The search query string.
+        total:
+          type: integer
+          description: Total number of matching items across all entity categories.
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResultItem"
+

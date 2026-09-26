@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 
 import 'auth_interceptor.dart';
 import 'auth_token_provider.dart';
+import 'retry_interceptor.dart';
 
 /// Builds the app's single [Dio] instance.
 abstract final class ApiClientFactory {
@@ -16,13 +17,19 @@ abstract final class ApiClientFactory {
         baseUrl: baseUrl,
         connectTimeout: const Duration(seconds: 15),
         receiveTimeout: const Duration(seconds: 15),
+        sendTimeout: const Duration(seconds: 15),
         headers: const {'Accept': 'application/json'},
       ),
     );
 
     final authInterceptor = AuthInterceptor(tokenProvider: tokenProvider)
       ..attachTo(dio);
-    dio.interceptors.add(authInterceptor);
+    final retryInterceptor = RetryInterceptor()
+      ..attachTo(dio);
+    dio.interceptors.addAll([
+      authInterceptor,
+      retryInterceptor,
+    ]);
 
     return dio;
   }

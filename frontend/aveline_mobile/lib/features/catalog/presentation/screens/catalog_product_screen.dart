@@ -52,6 +52,12 @@ class _CatalogProductScreenState extends State<CatalogProductScreen> {
   /// Set once Aveline has been asked to look at the piece.
   bool _mentionedToAveline = false;
 
+  /// True while a status change or a supply request is in flight.
+  ///
+  /// The actions are gated on it, so one tap cannot become two requests and the screen
+  /// cannot claim an outcome while the request that decides it is still open.
+  bool _isActing = false;
+
   @override
   void initState() {
     super.initState();
@@ -107,33 +113,77 @@ class _CatalogProductScreenState extends State<CatalogProductScreen> {
     });
   }
 
-  /// Applies a status change locally and says so.
+  /// Moves the piece on the server and adopts the row it answers with.
   ///
-  /// The inventory API has no mutation wired on mobile yet; this keeps the
-  /// screen honest about what it did and leaves one place to swap in the call.
-  void _applyStatus(CatalogItemStatus status, String message) {
+  /// The reply is the server's own row rather than the local copy with a field swapped: a
+  /// status the API refused must not draw as though it had stuck, and the API is the one
+  /// that derives `isAvailable` from the status.
+  Future<void> _applyStatus(CatalogItemStatus status, String message) async {
     final piece = _product;
-    if (piece == null) {
+    if (piece == null || _isActing) {
       return;
     }
 
-    setState(() {
-      _product = piece.copyWith(
-        status: status,
-        isAvailable: status == CatalogItemStatus.available,
+    setState(() => _isActing = true);
+    try {
+      final updated = await _repository.updateStatus(piece.id, status);
+      if (!mounted) {
+        return;
+      }
+      setState(() => _product = updated);
+      AppToast.show(context, message);
+    } catch (error) {
+      debugPrint(
+        '[catalog] could not set ${piece.id} to ${status.wireValue}: $error',
       );
-    });
-    AppToast.show(context, message);
+      if (mounted) {
+        AppToast.show(
+          context,
+          'Could not update ${piece.name}. Nothing was changed.',
+          error: true,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isActing = false);
+      }
+    }
   }
 
-  void _requestSupply() {
+  /// Logs a sourcing ticket for a piece the shop does not carry.
+  ///
+  /// The action reads as done only once the ticket exists, so a refused request leaves the
+  /// button live for another try instead of claiming the atelier was asked.
+  Future<void> _requestSupply() async {
     final piece = _product;
-    if (piece == null) {
+    if (piece == null || _isActing) {
       return;
     }
 
-    setState(() => _supplyRequested = true);
-    AppToast.show(context, 'Supply request logged for ${piece.name}.');
+    setState(() => _isActing = true);
+    try {
+      await _repository.requestSupply(piece: piece);
+      if (!mounted) {
+        return;
+      }
+      setState(() => _supplyRequested = true);
+      AppToast.show(context, 'Supply request logged for ${piece.name}.');
+    } catch (error) {
+      debugPrint(
+        '[catalog] could not log a supply request for ${piece.id}: $error',
+      );
+      if (mounted) {
+        AppToast.show(
+          context,
+          'Could not log a supply request for ${piece.name}.',
+          error: true,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isActing = false);
+      }
+    }
   }
 
   void _mentionToAveline() {
@@ -142,8 +192,15 @@ class _CatalogProductScreenState extends State<CatalogProductScreen> {
       return;
     }
 
-    setState(() => _mentionedToAveline = true);
-    AppToast.show(context, 'Aveline will take a look at ${piece.name}.');
+    // Deliberately not a state flip. Mentioning means composing a Salon message, and the
+    // Salon's contract has no way to say "this message is about piece X" yet, so nothing
+    // reaches Aveline. Saying she was told would be the screen lying about what it did,
+    // which is the whole reason the other four actions are wired.
+    AppToast.show(
+      context,
+      'Mentioning a piece to Aveline is not available yet.',
+      error: true,
+    );
   }
 
   @override
@@ -177,6 +234,7 @@ class _CatalogProductScreenState extends State<CatalogProductScreen> {
         supplyRequested: _supplyRequested,
         onMention: _mentionToAveline,
         mentionedToAveline: _mentionedToAveline,
+        busy: _isActing,
       );
     }
 
@@ -237,6 +295,7 @@ class _Detail extends StatelessWidget {
     required this.supplyRequested,
     required this.onMention,
     required this.mentionedToAveline,
+    required this.busy,
   });
 
   final CatalogProduct piece;
@@ -245,6 +304,10 @@ class _Detail extends StatelessWidget {
   final bool supplyRequested;
   final VoidCallback onMention;
   final bool mentionedToAveline;
+
+  /// Whether a status change or a supply request is in flight, which holds every action
+  /// back rather than letting a second one race the first.
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
@@ -297,7 +360,7 @@ class _Detail extends StatelessWidget {
               icon: Icons.bookmark_add_outlined,
               label: 'Create a hold',
               tone: _ActionTone.primary,
-              onPressed: piece.status.isHoldable
+              onPressed: !busy && piece.status.isHoldable
                   ? () => onStatus(
                       CatalogItemStatus.onHold,
                       'Hold created for ${piece.name}.',
@@ -310,7 +373,7 @@ class _Detail extends StatelessWidget {
               icon: Icons.visibility_off_outlined,
               label: 'Mark unavailable',
               tone: _ActionTone.neutral,
-              onPressed: piece.status.isSellable
+              onPressed: !busy && piece.status.isSellable
                   ? () => onStatus(
                       CatalogItemStatus.unavailable,
                       '${piece.name} marked unavailable.',
@@ -323,7 +386,7 @@ class _Detail extends StatelessWidget {
               icon: Icons.sell_outlined,
               label: 'Mark sold out',
               tone: _ActionTone.danger,
-              onPressed: piece.status.isSellable
+              onPressed: !busy && piece.status.isSellable
                   ? () => onStatus(
                       CatalogItemStatus.soldOut,
                       '${piece.name} marked sold out.',
@@ -336,7 +399,7 @@ class _Detail extends StatelessWidget {
               icon: Icons.local_shipping_outlined,
               label: supplyRequested ? 'Supply requested' : 'Request a supply',
               tone: _ActionTone.tonal,
-              onPressed: supplyRequested ? null : onSupply,
+              onPressed: busy || supplyRequested ? null : onSupply,
             ),
             const SizedBox(height: 10),
             // The one action that leaves the catalog: it asks the agent to take
@@ -349,7 +412,10 @@ class _Detail extends StatelessWidget {
                   ? 'Mentioned to Aveline'
                   : 'Mention to Aveline',
               tone: _ActionTone.accent,
-              onPressed: mentionedToAveline ? null : onMention,
+              // Deliberately still local: mentioning Aveline means composing a Salon
+              // message, which needs a real design before it reaches the backend. The
+              // other four actions above are wired.
+              onPressed: busy || mentionedToAveline ? null : onMention,
             ),
           ],
         ),

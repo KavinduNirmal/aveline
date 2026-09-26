@@ -16,9 +16,11 @@ import 'core/config/app_config.dart';
 import 'core/network/api_client.dart';
 import 'core/network/auth_token_provider.dart';
 import 'core/notifications/device_token_api.dart';
+import 'core/notifications/firebase_push_message_source.dart';
 import 'core/notifications/firebase_push_token_source.dart';
 import 'core/notifications/notification_payload.dart';
 import 'core/notifications/notification_provider.dart';
+import 'core/notifications/push_message_handler.dart';
 import 'core/notifications/push_notification_service.dart';
 import 'core/notifications/realtime_connection_factory.dart';
 import 'core/notifications/realtime_notification_service.dart';
@@ -32,23 +34,35 @@ import 'features/auth/data/clerk_auth_repository.dart';
 import 'features/auth/domain/auth_repository.dart';
 import 'features/auth/domain/aveline_user.dart';
 import 'features/auth/presentation/screens/auth_screen.dart';
+import 'core/auth/permission_guard.dart';
+import 'core/auth/permissions.dart';
+import 'features/catalog/data/api_catalog_product_repository.dart';
 import 'features/catalog/data/catalog_product_repository.dart';
-import 'features/catalog/data/demo_catalog_product_repository.dart';
 import 'features/catalog/domain/catalog_filters.dart';
 import 'features/catalog/presentation/screens/catalog_filter_screen.dart';
 import 'features/catalog/presentation/screens/catalog_product_screen.dart';
 import 'features/catalog/presentation/screens/catalog_screen.dart';
+import 'features/conversations/data/api_conversation_repository.dart';
+import 'features/conversations/data/api_thread_repository.dart';
 import 'features/conversations/data/conversation_repository.dart';
-import 'features/conversations/data/demo_conversation_repository.dart';
+import 'features/conversations/data/thread_repository.dart';
 import 'features/conversations/presentation/screens/conversations_screen.dart';
+import 'features/conversations/presentation/screens/thread_route_screen.dart';
 import 'features/customers/data/customer_repository.dart';
 import 'features/customers/data/demo_customer_repository.dart';
 import 'features/customers/presentation/screens/customer_screen.dart';
 import 'features/customers/presentation/screens/customers_screen.dart';
+import 'features/home/data/api_home_repository.dart';
+import 'features/home/presentation/home_controller.dart';
 import 'features/home/presentation/screens/main_shell.dart';
-import 'features/notifications/data/demo_notification_repository.dart';
+import 'features/notifications/data/api_notification_repository.dart';
 import 'features/notifications/presentation/notifications_controller.dart';
 import 'features/notifications/presentation/screens/notifications_screen.dart';
+import 'features/commerce/data/repositories/api_commerce_repository.dart';
+import 'features/commerce/domain/repositories/commerce_repository.dart';
+import 'features/commerce/presentation/screens/create_order_screen.dart';
+import 'features/commerce/presentation/screens/order_detail_screen.dart';
+import 'features/commerce/presentation/screens/orders_list_screen.dart';
 import 'features/settings/presentation/screens/settings_screen.dart';
 import 'features/onboarding/data/onboarding_preferences.dart';
 import 'features/onboarding/data/owner_onboarding_api.dart';
@@ -289,6 +303,20 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
   late final OwnerOnboardingProvider _ownerOnboardingProvider;
   late final NotificationProvider _notificationProvider;
   late final NotificationsController _notificationsController;
+
+  /// The inbox's API source, kept so a push tap can mark one notification read
+  /// without the controller having to hold that row on screen.
+  late final ApiNotificationRepository _notificationRepository;
+
+  /// Handles FCM messages: a foreground arrival refreshes the inbox through the
+  /// same seam realtime uses; a tap marks that notification read and routes.
+  /// `null` when Firebase is unavailable or after sign-out.
+  PushMessageHandler? _pushMessageHandler;
+
+  /// One source for the Home tab's three data blocks (the focus deck, the client
+  /// row and the Blossom meter), provided beside the other long-lived
+  /// controllers so the screen and the shell's pull-to-refresh read one state.
+  late final HomeController _homeController;
   late final PushNotificationService _pushNotificationService;
   late final RealtimeNotificationService _realtimeNotificationService;
 
@@ -303,6 +331,13 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
   /// One source for the message inbox, so the tab and whatever opens a thread
   /// from it read the same conversations.
   late final ConversationRepository _conversationRepository;
+
+  /// One source for a client's thread, so the inbox's client rows and the thread
+  /// screen they open read the same history.
+  late final ThreadRepository _threadRepository;
+
+  /// Boutique commerce repository for orders, approvals, and payments.
+  late final CommerceRepository _commerceRepository;
   late final Dio _dio;
   late final GoRouter _router;
   final AppLinks _appLinks = AppLinks();
@@ -316,19 +351,46 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
     _dio = widget.dio;
     _boutiqueProvider = BoutiqueProvider();
     _onboardingProvider = OnboardingProvider(widget.preferences);
-    _catalogRepository = DemoCatalogProductRepository();
+    _catalogRepository = ApiCatalogProductRepository(
+      _dio,
+      organizationId: () => _boutiqueProvider.organizationId,
+    );
     _customerRepository = DemoCustomerRepository();
-    // The demo inbox stands in until the conversations endpoint carries enough
-    // to draw a row; swapping in `ApiConversationRepository(_dio, ...)` is the
-    // whole change.
-    _conversationRepository = DemoConversationRepository();
+    // The inbox reads the API through one repository, the same way Home does. The
+    // organization id is read at call time because it arrives with `/orgs/my`,
+    // after this controller is built; until then the screen stays in its loading
+    // state rather than reporting an error it does not have. The id is the active
+    // membership's, never the JWT's `org_id` claim, which can be stale.
+    _conversationRepository = ApiConversationRepository(
+      _dio,
+      organizationId: () => _boutiqueProvider.organizationId,
+    );
+    // The thread reads the same active membership's org id, read at call time for the same
+    // reason: it arrives with `/orgs/my` after this shell is built. Until it does the thread
+    // stays in its loading state, which is a "not yet" rather than an error.
+    _threadRepository = ApiThreadRepository(
+      _dio,
+      organizationId: () => _boutiqueProvider.organizationId,
+    );
+    _commerceRepository = ApiCommerceRepository(
+      _dio,
+      organizationId: () => _boutiqueProvider.organizationId,
+    );
     _ownerOnboardingProvider = OwnerOnboardingProvider(OwnerOnboardingApi(_dio));
     _notificationProvider = NotificationProvider();
+    // Home reads the API through one repository: the derived focus feed, the
+    // client highlights and the Blossom balance. The organization id is read at
+    // call time because it arrives with `/orgs/my`, after this controller is
+    // built; until then the screen stays in its loading state.
+    _homeController = HomeController(
+      ApiHomeRepository(_dio, organizationId: () => _boutiqueProvider.organizationId),
+    );
+    _notificationRepository = ApiNotificationRepository(_dio);
     _notificationsController = NotificationsController(
-      // The demo inbox stands in until the notification endpoints are live, the
-      // same way the client book and the catalog do. Swapping in
-      // `ApiNotificationRepository(_dio)` is the whole change.
-      DemoNotificationRepository(),
+      // The inbox reads the live API. The endpoints are mapped (`Program.cs`) and
+      // the route group is `/users/me`-shaped: it takes no organization id, so
+      // the repository needs only the shared Dio.
+      _notificationRepository,
     );
     // The header's badge and the inbox are the same number: the controller owns
     // it and reports it up, so a notification read on the tab clears the dot that
@@ -397,11 +459,11 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
   /// Starts push registration and the foreground realtime connection for the signed-in user.
   void _startNotifications() {
     _pushNotificationService.initialize();
-    _realtimeNotificationService.connect(
-      baseUrl: widget.config.apiBaseUrl,
-      getToken: _authRepository.getToken,
-      onNotification: _onNotificationReceived,
-    );
+    // Awaited inside [_connectRealtime] rather than left as an unawaited future: a
+    // connect failure that escapes becomes an unhandled async error, which is
+    // neither recorded nor actionable.
+    unawaited(_connectRealtime());
+    _startPushMessages();
     // A restored session opens on an inbox that is already stale. A sign-in that
     // fires again while the inbox is loaded only re-reads it, so the tab does not
     // blank out under a token refresh.
@@ -412,13 +474,97 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
     }
   }
 
+  /// Starts the FCM message handler, when Firebase is available.
+  ///
+  /// A foreground arrival refreshes the inbox through the same "an arrival
+  /// happened" seam the realtime path uses. A tap opens the app (the OS does
+  /// that), marks **that notification** read, and routes through the one shared
+  /// rule. A cold-start tap may arrive before the session is restored, so the
+  /// mark-read is best-effort and the route is still opened.
+  void _startPushMessages() {
+    if (_pushMessageHandler != null || Firebase.apps.isEmpty) {
+      return;
+    }
+    final handler = _pushMessageHandler = PushMessageHandler(
+      FirebasePushMessageSource(FirebaseMessaging.instance),
+    );
+    handler.start(
+      onMessage: _onNotificationReceived,
+      markRead: _markNotificationRead,
+      open: _openNotificationRoute,
+    );
+    unawaited(
+      handler.handleInitialMessage(
+        markRead: _markNotificationRead,
+        open: _openNotificationRoute,
+      ),
+    );
+  }
+
+  /// Marks the notification a push tap addressed as read, best-effort.
+  ///
+  /// Deliberately the **notification**, never the conversation or the message:
+  /// the thread owns its own read state and writes it when it is opened on the
+  /// newest message (Q7). A session that is not restored yet must not lose the
+  /// tap, so a failure is swallowed here.
+  Future<void> _markNotificationRead(String notificationId) async {
+    try {
+      await _notificationRepository.markRead(notificationId);
+      // The badge and the list must agree with the server after the tap.
+      await _notificationsController.refresh();
+    } catch (_) {
+      // Best-effort.
+    }
+  }
+
+  /// Opens the route a push tap asked for.
+  ///
+  /// Deferred to the next frame: a cold-start tap can be handled before the
+  /// router has settled, and navigating from outside a frame would throw.
+  void _openNotificationRoute(String location) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _router.go(location);
+      }
+    });
+  }
+
+  /// Opens the foreground realtime connection, recording a failure.
+  ///
+  /// A reconnection re-joins the hub's groups and then re-reads the inbox: anything
+  /// the socket missed while it was down is only recoverable from the API, and
+  /// SignalR does not preserve group membership across a rebuilt socket.
+  Future<void> _connectRealtime() async {
+    try {
+      await _realtimeNotificationService.connect(
+        baseUrl: widget.config.apiBaseUrl,
+        getToken: _authRepository.getToken,
+        onNotification: _onNotificationReceived,
+        onReconnected: _notificationsController.refresh,
+        onRejoinFailed: _onRejoinFailed,
+      );
+    } catch (error, stackTrace) {
+      debugPrint('[notifications] realtime connect failed: $error\n$stackTrace');
+    }
+  }
+
+  /// Records a failed re-join: the socket is up but subscribed to nothing.
+  void _onRejoinFailed(Object error) {
+    debugPrint('[notifications] realtime re-subscribe failed: $error');
+  }
+
   /// Records a notification that arrived while the app was open.
   ///
-  /// The payload is a live event with no inbox id, so it cannot be read or
-  /// dismissed from here. It is surfaced for the banner and the inbox is
-  /// re-read, which is what puts the persisted row on the tab.
+  /// When the payload carries the recipient's unread count the badge moves at
+  /// once, before the inbox's own reply lands. The list is re-read regardless,
+  /// because the rows remain the API's authority, and a payload without a count
+  /// behaves exactly as it did before.
   void _onNotificationReceived(NotificationPayload payload) {
     _notificationProvider.push(payload);
+    final count = payload.unreadCount;
+    if (count != null) {
+      _notificationsController.applyUnreadCount(count);
+    }
     _notificationsController.refresh();
   }
 
@@ -431,6 +577,13 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
   void _stopNotifications() {
     _realtimeNotificationService.disconnect();
     _pushNotificationService.unregister();
+    // The message listeners belong to the session that is ending; the next
+    // sign-in starts them again.
+    final pushMessages = _pushMessageHandler;
+    _pushMessageHandler = null;
+    if (pushMessages != null) {
+      unawaited(pushMessages.dispose());
+    }
     _notificationProvider.clear();
     _notificationsController.clearInbox();
   }
@@ -455,6 +608,11 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
       ..removeListener(_syncUnreadBadge)
       ..dispose();
     _notificationProvider.dispose();
+    final pushMessages = _pushMessageHandler;
+    _pushMessageHandler = null;
+    if (pushMessages != null) {
+      unawaited(pushMessages.dispose());
+    }
     super.dispose();
   }
 
@@ -537,11 +695,18 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
           // A full-screen editor rather than a panel: it is reached from the
           // field row, returns its draft to the catalog, and carries its own
           // back affordance so it does not need the shell's header.
-          builder: (context, state) => CatalogFilterScreen(
-            initial: state.extra is CatalogFilters
+          builder: (context, state) {
+            final initial = state.extra is CatalogFilters
                 ? state.extra as CatalogFilters
-                : null,
-          ),
+                : (state.uri.queryParameters.isNotEmpty
+                    ? CatalogFilters.fromQueryParameters(state.uri.queryParameters)
+                    : null);
+
+            return PermissionGuard(
+              permission: Permissions.catalogView,
+              child: CatalogFilterScreen(initial: initial),
+            );
+          },
         ),
         GoRoute(
           path: AppRoutes.catalogProductPattern,
@@ -584,7 +749,23 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
           path: AppRoutes.conversations,
           name: 'conversations',
           builder: (context, state) => MainShell(
-            child: ConversationsScreen(repository: _conversationRepository),
+            child: ConversationsScreen(
+              repository: _conversationRepository,
+              threadRepository: _threadRepository,
+            ),
+          ),
+        ),
+        GoRoute(
+          // A notification knows a thread only by its id, so the row is read before the thread
+          // screen is shown. The anchored message travels as a query parameter: the router
+          // re-parses its location and `extra` does not survive that.
+          path: AppRoutes.threadPattern,
+          name: 'thread',
+          builder: (context, state) => ThreadRouteScreen(
+            conversationId: state.pathParameters['conversationId'] ?? '',
+            messageId: state.uri.queryParameters['messageId'],
+            conversationRepository: _conversationRepository,
+            threadRepository: _threadRepository,
           ),
         ),
         GoRoute(
@@ -604,6 +785,29 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
           name: 'notifications',
           builder: (context, state) => const MainShell(
             child: NotificationsScreen(),
+          ),
+        ),
+        GoRoute(
+          path: AppRoutes.orders,
+          name: 'orders',
+          builder: (context, state) => MainShell(
+            child: OrdersListScreen(repository: _commerceRepository),
+          ),
+        ),
+        GoRoute(
+          path: AppRoutes.createOrder,
+          name: 'createOrder',
+          builder: (context, state) => CreateOrderScreen(
+            commerceRepository: _commerceRepository,
+            catalogRepository: _catalogRepository,
+          ),
+        ),
+        GoRoute(
+          path: AppRoutes.orderDetailPattern,
+          name: 'orderDetail',
+          builder: (context, state) => OrderDetailScreen(
+            orderId: state.pathParameters['orderId'] ?? '',
+            repository: _commerceRepository,
           ),
         ),
         GoRoute(
@@ -687,6 +891,7 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
         ChangeNotifierProvider<NotificationsController>.value(
           value: _notificationsController,
         ),
+        ChangeNotifierProvider<HomeController>.value(value: _homeController),
         Provider<Dio>.value(value: _dio),
       ],
       child: MaterialApp.router(

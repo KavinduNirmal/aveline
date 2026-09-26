@@ -8,30 +8,28 @@ namespace Aveline.Api.Tests;
 
 public class SignalRMessageBroadcasterTests
 {
+    private sealed record Send(string Group, string Method, object?[] Arguments);
+
     private sealed class RecordingClients : IHubClients
     {
-        public RecordingClientProxy SalonGroup { get; } = new();
+        public List<Send> Sends { get; } = [];
 
         public IClientProxy All => throw new NotImplementedException();
         public IClientProxy AllExcept(IReadOnlyList<string> excludedConnectionIds) => throw new NotImplementedException();
         public IClientProxy Client(string connectionId) => throw new NotImplementedException();
         public IClientProxy Clients(IReadOnlyList<string> connectionIds) => throw new NotImplementedException();
-        public IClientProxy Group(string groupName) => SalonGroup;
+        public IClientProxy Group(string groupName) => new RecordingClientProxy(groupName, Sends);
         public IClientProxy GroupExcept(string groupName, IReadOnlyList<string> excludedConnectionIds) => throw new NotImplementedException();
         public IClientProxy Groups(IReadOnlyList<string> groupNames) => throw new NotImplementedException();
         public IClientProxy User(string userId) => throw new NotImplementedException();
         public IClientProxy Users(IReadOnlyList<string> userIds) => throw new NotImplementedException();
     }
 
-    private sealed class RecordingClientProxy : IClientProxy
+    private sealed class RecordingClientProxy(string groupName, List<Send> sends) : IClientProxy
     {
-        public string? Method { get; private set; }
-        public object?[]? Arguments { get; private set; }
-
         public Task SendCoreAsync(string method, object?[] args, CancellationToken cancellationToken = default)
         {
-            Method = method;
-            Arguments = args;
+            sends.Add(new Send(groupName, method, args));
             return Task.CompletedTask;
         }
     }
@@ -43,14 +41,31 @@ public class SignalRMessageBroadcasterTests
         IHubClients IHubContext<ConversationHub>.Clients => Clients;
     }
 
+    private static ConversationDto Tile() => new(
+        Guid.NewGuid(),
+        "Salon",
+        Guid.NewGuid(),
+        "Nadeesha Perera",
+        null,
+        "thread-1",
+        "Active",
+        DateTime.UtcNow,
+        "A preview",
+        "Note",
+        "text",
+        "Agent",
+        AgentKeys.Ava,
+        ["draft"]);
+
     [Fact]
     public async Task BroadcastMessageAsync_SendsReceiveMessage_ToSalonGroup()
     {
         var hubContext = new TestableHubContext();
         var broadcaster = new SignalRMessageBroadcaster(hubContext);
+        var conversationId = Guid.NewGuid();
         var dto = new MessageDto(
             Guid.NewGuid(),
-            Guid.NewGuid(),
+            conversationId,
             "Agent",
             AgentKeys.Aveline,
             null,
@@ -63,9 +78,10 @@ public class SignalRMessageBroadcasterTests
 
         await broadcaster.BroadcastMessageAsync(dto);
 
-        Assert.Equal("ReceiveMessage", hubContext.Clients.SalonGroup.Method);
-        var sent = Assert.Single(hubContext.Clients.SalonGroup.Arguments!);
-        Assert.Same(dto, sent);
+        var send = Assert.Single(hubContext.Clients.Sends);
+        Assert.Equal(GroupName.ForSalon(conversationId), send.Group);
+        Assert.Equal("ReceiveMessage", send.Method);
+        Assert.Same(dto, Assert.Single(send.Arguments));
     }
 
     [Fact]
@@ -78,8 +94,46 @@ public class SignalRMessageBroadcasterTests
 
         await broadcaster.BroadcastAgentStateAsync(dto);
 
-        Assert.Equal("ReceiveAgentState", hubContext.Clients.SalonGroup.Method);
-        var sent = Assert.Single(hubContext.Clients.SalonGroup.Arguments!);
-        Assert.Same(dto, sent);
+        var send = Assert.Single(hubContext.Clients.Sends);
+        Assert.Equal(GroupName.ForSalon(conversationId), send.Group);
+        Assert.Equal("ReceiveAgentState", send.Method);
+        Assert.Same(dto, Assert.Single(send.Arguments));
+    }
+
+    [Fact]
+    public async Task BroadcastConversationChangedAsync_SharedThread_GoesToTheOrgGroup()
+    {
+        var hubContext = new TestableHubContext();
+        var broadcaster = new SignalRMessageBroadcaster(hubContext);
+        var organizationId = Guid.NewGuid();
+        var tile = Tile();
+
+        await broadcaster.BroadcastConversationChangedAsync(
+            new ConversationTile(tile, organizationId, OwnerUserId: null));
+
+        var send = Assert.Single(hubContext.Clients.Sends);
+        Assert.Equal(GroupName.ForOrganization(organizationId), send.Group);
+        Assert.Equal("ReceiveConversationChanged", send.Method);
+        Assert.Same(tile, Assert.Single(send.Arguments));
+    }
+
+    [Fact]
+    public async Task BroadcastConversationChangedAsync_PrivateSalon_NeverReachesTheOrgGroup()
+    {
+        // The general Salon is owned by one user (ADR-021). The org group is joined by every
+        // active member on connect, so routing this tile there would leak its existence.
+        var hubContext = new TestableHubContext();
+        var broadcaster = new SignalRMessageBroadcaster(hubContext);
+        var organizationId = Guid.NewGuid();
+        var ownerUserId = Guid.NewGuid();
+
+        await broadcaster.BroadcastConversationChangedAsync(
+            new ConversationTile(Tile(), organizationId, ownerUserId));
+
+        var send = Assert.Single(hubContext.Clients.Sends);
+        Assert.Equal(GroupName.ForUser(ownerUserId), send.Group);
+        Assert.DoesNotContain(
+            hubContext.Clients.Sends,
+            s => s.Group == GroupName.ForOrganization(organizationId));
     }
 }

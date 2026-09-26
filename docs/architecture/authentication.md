@@ -66,7 +66,7 @@ graph TB
         EF["EF Core / Npgsql"]
     end
 
-    subgraph AgentSvc["agnet-service (FastAPI + LangGraph)"]
+    subgraph AgentSvc["agent-service (FastAPI + LangGraph)"]
         Middleware["Internal-Token Middleware<br/>(service-to-service auth)"]
         Workflows["LangGraph Workflows"]
         Tools["Allow-listed Tools"]
@@ -103,7 +103,7 @@ graph TB
 **Where authentication lives:**
 - **Client side (Flutter / React):** Clerk SDK manages sessions, sign-in/up UI, and mints JWTs from the `jwt-aveline-v1` template.
 - **Aveline.Api:** validates every bearer token against Clerk's JWKS (signature, issuer, audience) and enforces role-based authorization from `user_role` / `org_role` claims.
-- **agnet-service:** does **not** accept user tokens. It only trusts an internal service token issued by Aveline.Api (shared secret header), so the agent is never directly reachable by clients.
+- **agent-service:** does **not** accept user tokens. It only trusts an internal service token issued by Aveline.Api (shared secret header), so the agent is never directly reachable by clients.
 
 ---
 
@@ -140,7 +140,7 @@ sequenceDiagram
     actor U as User (Associate)
     participant C as Flutter App
     participant A as Aveline.Api
-    participant G as agnet-service (LangGraph)
+    participant G as agent-service (LangGraph)
     participant D as PostgreSQL + pgvector
 
     U->>C: Trigger concierge action

@@ -633,4 +633,57 @@ void main() {
       expect(controller.actionError, isNull);
     });
   });
+
+  group('NotificationsController.applyUnreadCount', () {
+    test('takes the count that arrived with a realtime payload', () async {
+      final inbox = _FakeInbox(items: _tenItems(), reportedUnreadCount: 4);
+      final controller = _controller(inbox);
+      await controller.load();
+      expect(controller.unreadCount, 4);
+
+      var notifications = 0;
+      controller.addListener(() => notifications++);
+
+      controller.applyUnreadCount(5);
+
+      // The badge moves from the payload's count alone, without a list read.
+      expect(controller.unreadCount, 5);
+      expect(notifications, 1);
+    });
+
+    test('keeps the loaded inbox untouched, because rows are the API authority', () async {
+      final inbox = _FakeInbox(items: _tenItems(), reportedUnreadCount: 4);
+      final controller = _controller(inbox);
+      await controller.load();
+
+      controller.applyUnreadCount(9);
+
+      expect(controller.items, hasLength(10));
+      expect(controller.unreadCount, 9);
+    });
+
+    test('never lets the count fall below zero', () async {
+      final inbox = _FakeInbox(items: _tenItems(), reportedUnreadCount: 4);
+      final controller = _controller(inbox);
+      await controller.load();
+
+      controller.applyUnreadCount(-3);
+
+      expect(controller.unreadCount, 0);
+    });
+
+    test('a repeated count notifies nobody', () async {
+      final inbox = _FakeInbox(items: _tenItems(), reportedUnreadCount: 4);
+      final controller = _controller(inbox);
+      await controller.load();
+
+      var notifications = 0;
+      controller.addListener(() => notifications++);
+
+      controller.applyUnreadCount(4);
+
+      expect(controller.unreadCount, 4);
+      expect(notifications, 0);
+    });
+  });
 }

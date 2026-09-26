@@ -3,12 +3,14 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { RedirectIfAuthenticated } from './components/RedirectIfAuthenticated'
+import { RedirectAdminSignUps } from './components/RedirectAdminSignUps'
 import { RequireAccountState } from './components/RequireAccountState'
 import { NotificationsProvider } from './contexts/NotificationsContext'
 import { UserProvider } from './contexts/UserContext'
 import { AuthApiBridge } from './lib/AuthApiBridge'
 import { Toaster } from './components/ui/sonner'
 import { AdminSignUpPage } from './routes/AdminSignUpPage'
+import { AdminPendingPage } from './routes/AdminPendingPage'
 import { ContactPage } from './routes/ContactPage'
 import { DashboardRedirect } from './routes/Dashboard'
 import { DocsPage } from './routes/DocsPage'
@@ -17,14 +19,38 @@ import { ForbiddenPage } from './routes/ForbiddenPage'
 import { InvitePage } from './routes/InvitePage'
 import { LandingPage } from './routes/LandingPage'
 import { OnboardingPage } from './routes/OnboardingPage'
+import { OptOutPage } from './routes/OptOutPage'
 import { OrgSetupPage } from './routes/OrgSetupPage'
 import { PlansPage } from './routes/PlansPage'
+import { PrivacyPage } from './routes/PrivacyPage'
+import { ConsentFlowPage } from './routes/ConsentFlowPage'
 import { RootLayout } from './routes/RootLayout'
 import { SignInPage } from './routes/SignInPage'
 import { SignUpPage } from './routes/SignUpPage'
 import { SuspendedPage } from './routes/SuspendedPage'
 import { TenantDashboard } from './routes/TenantDashboard'
 import { TermsPage } from './routes/TermsPage'
+
+import { AdminLayout, AdminRootRedirect } from './routes/admin/AdminLayout'
+import { AdminShell } from './components/admin/shell/AdminShell'
+import { AdminBusinessGrowthView } from './routes/admin/AdminBusinessGrowth'
+import { AdminBusinessUsageView } from './routes/admin/AdminBusinessUsage'
+import { AdminDashboardView } from './routes/admin/AdminDashboard'
+import { AdminUsersView } from './routes/admin/AdminUsers'
+import { AdminOrgsView } from './routes/admin/AdminOrgs'
+import { AdminRequestsView } from './routes/admin/AdminRequests'
+import { AdminBlossomsView } from './routes/admin/AdminBlossoms'
+import { AdminRevenueView } from './routes/admin/AdminRevenue'
+import { AdminRevenueLedgerView } from './routes/admin/AdminRevenueLedger'
+import { AdminRevenueStatsView } from './routes/admin/AdminRevenueStats'
+import { AdminPricingRulesView } from './routes/admin/AdminPricingRules'
+import { AdminPriceBookView } from './routes/admin/AdminPriceBook'
+import { AdminLogsView } from './routes/admin/AdminLogs'
+import { AdminAuditView } from './routes/admin/AdminAudit'
+import { AdminSystemView } from './routes/admin/AdminSystem'
+import { AdminRolesView } from './routes/admin/AdminRoles'
+import { AdminStatisticsAgentsView } from './routes/admin/AdminStatisticsAgents'
+import { AdminStatisticsApiView } from './routes/admin/AdminStatisticsApi'
 
 export default function App() {
   return (
@@ -40,18 +66,67 @@ export default function App() {
           <Route path="/docs" element={<Navigate to="/docs/getting-started" replace />} />
           <Route path="/docs/:slug" element={<DocsPage />} />
           <Route path="/download" element={<DownloadPage />} />
+          {/* The transparency surface the WhatsApp disclosure links to. Public and anonymous by
+              design: the opt-out page authenticates with a one-time code, not an account. */}
+          <Route path="/privacy" element={<PrivacyPage />} />
+          <Route path="/privacy/consent-flow" element={<ConsentFlowPage />} />
+          <Route path="/privacy/opt-out" element={<OptOutPage />} />
 
           <Route element={<ProtectedRoute />}>
-            <Route path="/onboarding" element={<OnboardingPage />} />
-            <Route path="/org-setup" element={<OrgSetupPage />} />
+            {/* Administrator sign-ups wait here for review instead of onboarding. */}
+            <Route path="/admin/pending" element={<AdminPendingPage />} />
+            <Route element={<RedirectAdminSignUps />}>
+              <Route path="/onboarding" element={<OnboardingPage />} />
+              <Route path="/org-setup" element={<OrgSetupPage />} />
+            </Route>
             <Route path="/invite" element={<InvitePage />} />
             <Route element={<RequireAccountState />}>
               <Route path="/app" element={<DashboardRedirect />} />
-              <Route path="/app/b/:slug" element={<TenantDashboard />} />
-              <Route element={<RootLayout />}>
-                <Route path="/forbidden" element={<ForbiddenPage />} />
+              {/* The section is part of the URL so a dashboard section is linkable and survives
+                  a refresh (Q6). The bare slug route redirects to `/overview`. */}
+              <Route
+                path="/app/b/:slug"
+                element={<Navigate to="overview" replace />}
+              />
+              {/* One catalogue piece has its own URL, so its information page is linkable and
+                  survives a refresh. React Router ranks the literal `catalog` above `:section`, so
+                  this route wins for `/app/b/:slug/catalog/:itemId`. */}
+              <Route path="/app/b/:slug/catalog/:itemId" element={<TenantDashboard />} />
+              <Route path="/app/b/:slug/:section" element={<TenantDashboard />} />
+
+              {/* Administrator console. Nested inside the same guards as the tenant app, so an
+                  unauthenticated visitor cannot reach it and an account mid-lifecycle is handled
+                  by the state gate rather than by the console itself (A2). */}
+              <Route path="/admin" element={<AdminRootRedirect />} />
+              <Route path="/admin/:userId" element={<AdminLayout />}>
+                <Route element={<AdminShell />}>
+                  <Route index element={<Navigate to="dashboard" replace />} />
+                  <Route path="dashboard" element={<AdminDashboardView />} />
+                  <Route path="users" element={<AdminUsersView />} />
+                  <Route path="requests" element={<AdminRequestsView />} />
+                  <Route path="orgs" element={<AdminOrgsView />} />
+                  <Route path="blossoms" element={<AdminBlossomsView />} />
+                  <Route path="revenue" element={<AdminRevenueView />} />
+                  <Route path="revenue/ledger" element={<AdminRevenueLedgerView />} />
+                  <Route path="revenue/statistics" element={<AdminRevenueStatsView />} />
+                  <Route path="pricing" element={<AdminPricingRulesView />} />
+                  <Route path="pricing/price-book" element={<AdminPriceBookView />} />
+                  <Route path="logs" element={<AdminLogsView />} />
+                  <Route path="audit" element={<AdminAuditView />} />
+                  <Route path="system" element={<AdminSystemView />} />
+                  <Route path="roles" element={<AdminRolesView />} />
+                  <Route path="statistics/agents" element={<AdminStatisticsAgentsView />} />
+                  <Route path="statistics/api" element={<AdminStatisticsApiView />} />
+                  <Route path="business" element={<AdminBusinessGrowthView />} />
+                  <Route path="business/usage" element={<AdminBusinessUsageView />} />
+                  <Route path="*" element={<Navigate to="dashboard" replace />} />
+                </Route>
               </Route>
             </Route>
+          </Route>
+
+          <Route element={<RootLayout />}>
+            <Route path="/forbidden" element={<ForbiddenPage />} />
           </Route>
 
           <Route path="/sso-callback" element={<AuthenticateWithRedirectCallback signInFallbackRedirectUrl="/app" signUpFallbackRedirectUrl="/app" />} />
@@ -59,8 +134,14 @@ export default function App() {
           <Route element={<RedirectIfAuthenticated />}>
             <Route path="/sign-in/*" element={<SignInPage />} />
             <Route path="/sign-up/*" element={<SignUpPage />} />
-            <Route path="/sign-up/admin" element={<AdminSignUpPage />} />
           </Route>
+          {/*
+            Administrator sign-up is intentionally NOT wrapped in
+            RedirectIfAuthenticated: finalizing the Clerk sign-up activates the
+            session, and the redirect would unmount this page before the access
+            request is submitted.
+          */}
+          <Route path="/sign-up/admin" element={<AdminSignUpPage />} />
           <Route path="/terms" element={<TermsPage />} />
 
           <Route path="*" element={<Navigate to="/" replace />} />

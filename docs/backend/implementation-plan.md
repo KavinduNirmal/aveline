@@ -44,7 +44,7 @@ module inside `Aveline.Api/Modules/`, following the existing
     │ EF Core / Npgsql          │ X-Internal-Token      │ Redis
     ▼                           ▼                       ▼
 ┌──────────────┐   ┌────────────────────────┐   ┌──────────────────────┐
-│ PostgreSQL16 │   │ agnet-service (FastAPI) │   │ Redis                │
+│ PostgreSQL16 │   │ agent-service (FastAPI) │   │ Redis                │
 │ + pgvector   │◄──┤ LangGraph workflows     │   │ event bus, cache,    │
 │ + btree_gist │   │ + new run/step telemetry│   │ rate limits, quotas  │
 └──────────────┘   └────────────────────────┘   └──────────────────────┘
@@ -71,9 +71,12 @@ module inside `Aveline.Api/Modules/`, following the existing
 - No request **blocking** when Blossoms are exhausted. `ADR-010` §Decision 6
   defers enforcement, and this plan does not reverse that. It makes the balance
   correct, which is a prerequisite.
-- No payment-provider integration. `OrganizationSubscriptions` carries
-  `ExternalProvider`/`ExternalSubscriptionId` so a provider can be attached later,
-  but no provider client is written.
+- No payment-provider integration **in this plan**. `OrganizationSubscriptions` carries
+  `ExternalProvider`/`ExternalSubscriptionId` so a provider can be attached later. The
+  provider-neutral abstraction (a persisted intent, the `IPaymentProvider` SPI and a
+  Development-only mock) has since shipped under its own plan
+  ([ADR-029](../ADR/ADR-029-payment-gateway-abstraction.md)); this plan writes no provider
+  client and attaches no external gateway.
 - No second database, no message broker beyond the existing Redis pub/sub.
 - No changes to `backend/Aveline.Domain`, `Aveline.Application`, or
   `Aveline.Infrastructure`. Those directories are empty scaffolding that
@@ -451,7 +454,7 @@ and module events, exactly as `ADR-014` established.
 | API key by prefix | `apikey:{prefix}` | 60 s | `apikey.revoked`, `apikey.deleted` |
 | User authorization snapshot | existing `UserCacheService` | existing | existing invalidation calls; **extend to role and account-state changes** |
 | Usage summary for an org | `usage:summary:{organizationId}` | **not cached** | Deliberately uncached: the balance is the most correctness-sensitive read in the product and a stale balance is worse than a database round-trip |
-| System overview | `stats:system:overview` | 15 s | TTL only — **not implemented** in the Phase 6 shipment: `GET /admin/statistics/system/overview` is composed live on every call (finding M-10, corrected in #243) |
+| System overview | `stats:system:overview` | 15 s | **Implemented.** `SystemStatisticsService` caches the composite overview read in `IMemoryCache` for 15 s (`SystemStatisticsService.cs:49-61`) and the cache is registered by `BillingModule`/`SystemHealthModule`. Finding M-10 asserted the opposite; Slice 8 restored the 15 s claim because the code is authoritative (D7 = A) |
 | Latency percentiles | `stats:latency:{hash}` | 60 s | TTL only |
 | Quota counters | `quota:{org}:{key}:{period}` | period end | Redis `INCR`; durable copy written at rollover |
 
@@ -508,9 +511,9 @@ ids only.
 - **Correlation across services:** the internal `AgentServiceClient` propagates
   `traceparent` (W3C) and `X-Request-Id`. The Python service must accept
   `traceparent`; the `opentelemetry-instrumentation-httpx` package is already
-  installed (`agnet-service/requirements.txt:38`) but no exporter is configured
+  installed (`agent-service/requirements.txt:38`) but no exporter is configured
   because `OTEL_EXPORTER_OTLP_ENDPOINT` defaults to empty
-  (`agnet-service/app/core/config.py:47`). Setting that variable is a Phase-2
+  (`agent-service/app/core/config.py:47`). Setting that variable is a Phase-2
   deliverable, not new code.
 - The `Message.TraceId` column already exists
   (`Modules/Conversations/Models/Message.cs:42`) and `EventEnvelope` already
@@ -596,7 +599,8 @@ route declares exactly one scheme. The `ApiKey` scheme is never applied to
 | `Redis:Configuration` | `docker-compose.yml` | fakeredis / Moq | platform secret store |
 | Integration credentials | AES-256-GCM via `ICredentialEncryptionService`, key from `Encryption:Key` | existing | existing — `ADR-011` |
 | `Metrics:ScrapeToken` | unset (scheme disabled) | unset | platform secret store |
-| `Embeddings:ApiKey`, `Vision:ApiKey`, `PaymentGateway:ApiKey`, `Courier:ApiKey` | env only, absent in dev means the feature is inert | env | platform secret store |
+| `Embeddings:ApiKey`, `Vision:ApiKey`, `Courier:ApiKey` | env only, absent in dev means the feature is inert | env | platform secret store |
+| `Payments:Webhook:Secret`, `Payments:Mock:WebhookSigningSecret`, `Payments:Stripe:SecretKey`/`WebhookSigningSecret`, `Payments:OnePay:AppId`/`HashSalt`/`AppToken` | `Payments:Provider` defaults to `manual`, so none is required to boot; the mock is Development-only and refuses Production | env | platform secret store |
 
 Rules, enforced by CI (the existing `ci.yml` already checks for committed `.env`
 files):
@@ -669,7 +673,7 @@ and adds one new layer.
 | Backend unit | xUnit + Moq | `Aveline.Api.Tests/` | — | — |
 | Backend integration | xUnit + `WebApplicationFactory<Program>` + in-memory EF | `Aveline.Api.Tests/` | — | — |
 | Backend Postgres | xUnit + `Testcontainers.PostgreSql` | `Aveline.Api.Tests/` | two pgvector classes | all constraint/concurrency/partition tests |
-| Agent service | pytest + respx + fakeredis | `agnet-service/tests/` | 90 % coverage | new telemetry cases |
+| Agent service | pytest + respx + fakeredis | `agent-service/tests/` | 90 % coverage | new telemetry cases |
 | **Contract** | **NEW** — OpenAPI schema assertions | `Aveline.Api.Tests/Contract/` | — | must pass |
 | Load | **NEW** — NBomber or k6 script | `tests/load/` | — | report only in Phase 1–3; gate in Phase 4 |
 
@@ -871,6 +875,7 @@ Deploy order per phase: **migrate → deploy → verify → enable**.
 | M3 ledger backfill | During the M3 migration | Aborts the migration transaction; the database is unchanged |
 | Pricing snapshot backfill | Phase 2, as a job, not a migration | `AiUsageRecord.PricingRuleId` stays `NULL`; the read path already handles `NULL` as "assume 1000" |
 | `PlanEntitlements` seed | M4, as data in the migration | Entitlement resolution falls back to the hardcoded maps until the seed lands — so the seed must ship in the same migration, not later |
+| Price-book seed (Phase 0) | Once per environment, by an operator after M2 is applied; idempotent, so re-run freely | The failed row is not written and the script reports it; existing rows are left untouched |
 | `ApiRequestLogs` initial partitions | M7 raw-SQL step | Telemetry writes to the rollup only; the raw path degrades, the aggregate path does not |
 | Anomaly/pricing recompute | Phase 2, on demand | Writes nothing; the request is rejected and logged |
 
@@ -894,6 +899,48 @@ behaviour.
 
 ---
 
+### 10.7 Price-book seed (Phase 0)
+
+The commercial prices for Bloom, Orchid, Rose and the three Blossom top-up packs are
+**data, not code**. They live in `BlossomPriceEntries` and are created through the
+admin price-book API (`POST /api/v1/admin/pricing/price-book`, §3 of this document and
+`docs/api/README.md` §C.1), never as constants, `HasData` seeds or migration inserts.
+The accepted prices and the reasoning are recorded in
+[pricing_plan.md §18](../architecture/pricing_plan.md#18-accepted-decisions-phase-0).
+
+`scripts/seed-price-book.sh` performs that seed. Run it against an environment whose
+API is reachable and whose M2 migration has been applied:
+
+```bash
+AVELINE_ADMIN_TOKEN="<team-admin bearer token>" \
+  AVELINE_API_BASE_URL="http://localhost:5091" \
+  scripts/seed-price-book.sh
+```
+
+- `AVELINE_API_BASE_URL` — optional, defaults to `http://localhost:5091` (the local
+  `dotnet run` port and the compose `api` host port).
+- `AVELINE_ADMIN_TOKEN` — **required**; a bearer token for a team **Admin** holding
+  `pricing:manage`. It is read from the environment only, never stored in the tree.
+- `AVELINE_PRICE_EFFECTIVE_FROM` — optional ISO-8601 instant; the effective date for
+  rows the script creates. It defaults to a fixed instant, which is what makes re-runs
+  idempotent.
+
+The script creates the six rows and prints each one. Two admin writes are needed per
+row because the API creates a price entry as `Draft` (`PricingService.CreatePriceEntryAsync`)
+and activates it only through `PATCH /api/v1/admin/pricing/price-book/{entryId}` with
+`{"status":"Active"}`; `GET ?skuKind=PlanAllowance` returns the row either way, but the
+exit criterion and the top-up purchase path both require `Active`.
+
+Idempotency: the script reads the price book first and skips a SKU that already has a
+row, sends a per-row `Idempotency-Key` header, and treats a `409` (the unique
+`(PlanTier, OrganizationId, SkuKind, SkuCode, EffectiveFrom)` index) as "already
+exists". Re-running therefore creates nothing and changes nothing unless an existing
+row is still `Draft`, which it activates. **The price-book routes do not currently
+attach `IdempotencyEndpointFilter`, so the header is not yet enforced server-side**;
+the read-first check and the unique index are what make the script idempotent today.
+
+---
+
 ## 11. Risks and dependencies
 
 ### 11.1 Risks
@@ -904,7 +951,7 @@ behaviour.
 | R-2 | **The `btree_gist` extension may not be installable** on the managed Postgres provider | Medium | Medium | Ship M2 with a plain unique index and an application-level overlap check as the fallback, and raise a Critical alert if an overlap is ever detected. Documented in [OQ-8](assumptions-and-open-questions.md). **Verify before Phase 1 starts** |
 | R-3 | **Per-request telemetry degrades p99 latency** | Medium | High | The middleware only stamps a timestamp and enqueues a struct — no allocation of a sample object unless the channel accepts it. The 1 ms p99 gate is a CI load-test assertion, not an aspiration |
 | R-4 | **Tenant isolation regression.** No EF global filter exists, so a forgotten `.Where(OrganizationId == ...)` leaks data across boutiques | Medium | Critical | `TenantIsolationTests` is a required test that iterates every new tenant endpoint with a token for the wrong org. This is the single highest-value control in the plan |
-| R-5 | **Scope creep into enforcement and payments.** The requirements mention upgrade/downgrade and billing, and it is tempting to also implement blocking and Stripe | High | Medium | `ADR-010` §Decision 6 is explicitly preserved. `OrganizationSubscriptions` stores provider fields but no provider client is written |
+| R-5 | **Scope creep into enforcement and payments.** The requirements mention upgrade/downgrade and billing, and it is tempting to also implement blocking and Stripe | High | Medium | `ADR-010` §Decision 6 is explicitly preserved: enforcement and blocking stay out. The payment work is now **scoped rather than hypothetical**: `Modules/Payments/` ships a provider SPI, a persisted provider-neutral intent and a Development-only mock ([ADR-029](../ADR/ADR-029-payment-gateway-abstraction.md)); `Payments:Provider` defaults to the honest `manual` adapter, and an external provider is a registration + configuration swap. No external gateway client is required by this plan |
 | R-6 | **Migration M3 on a live database.** It adds a `CHECK` constraint and backfills | Low | High | The backfill is written to leave `BlossomRemaining` numerically unchanged, asserted by a pre/post test. The `CHECK` is added only after the backfill, in the same transaction |
 | R-7 | **The GiST exclusion constraint plus the unique index may reject legitimate data** — e.g. two `Draft` rules for the same scope being prepared concurrently | Medium | Low | Drafts are excluded from the exclusion constraint's predicate; only `Draft` and `Active` are covered, so two concurrent drafts still collide. Fix: allow only one `Draft` per scope via a partial unique index, and require explicit cancellation before creating another |
 | R-8 | **Percentile accuracy is limited by bucket granularity** | Certain | Low | Stated in the response (`precision: "bucket-interpolated"`) and in the statistics catalog. Acceptable for a dashboard; not suitable for an SLA report, and no SLA report is in scope |

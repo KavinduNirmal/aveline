@@ -10,14 +10,12 @@ const _clients = [
     name: 'Eleanor Vane',
     tier: ClientTier.vip,
     activity: 'Asked for the ivory silk to be held until Friday.',
-    hasNewActivity: true,
   ),
   ClientHighlight(
     id: 'b',
     name: 'Isabella Ranatunga',
     tier: ClientTier.level3,
     activity: 'Replied about the evening fitting on Thursday.',
-    hasNewActivity: true,
   ),
   ClientHighlight(
     id: 'c',
@@ -75,8 +73,7 @@ void main() {
       expect(find.text('Isabella R.'), findsNothing);
     });
 
-    testWidgets('rotates through the clients with something new',
-        (tester) async {
+    testWidgets('rotates through every client in the row', (tester) async {
       await tester.pumpWidget(_bed(animate: true));
 
       expect(find.text('Eleanor V.'), findsOneWidget);
@@ -84,25 +81,14 @@ void main() {
       await _nextStatus(tester);
       expect(find.text('Isabella R.'), findsOneWidget);
 
+      // There is no read marker, so a client with no flag is in the rotation
+      // like everyone else rather than being filtered out by a fiction.
+      await _nextStatus(tester);
+      expect(find.text('Sophia L.'), findsOneWidget);
+
       // Back to the top of the set.
       await _nextStatus(tester);
       expect(find.text('Eleanor V.'), findsOneWidget);
-    });
-
-    testWidgets('never rotates in a client with nothing new', (tester) async {
-      await tester.pumpWidget(_bed(animate: true));
-
-      for (var i = 0; i < 4; i++) {
-        await _nextStatus(tester);
-        expect(find.text('Sophia L.'), findsNothing);
-      }
-    });
-
-    testWidgets('falls back to every client when nothing is new',
-        (tester) async {
-      await tester.pumpWidget(_bed(clients: [_clients.last]));
-
-      expect(find.text('Sophia L.'), findsOneWidget);
     });
 
     testWidgets('tapping moves on without waiting for the hold',

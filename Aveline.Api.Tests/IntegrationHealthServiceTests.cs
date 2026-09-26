@@ -151,6 +151,9 @@ public class IntegrationHealthServiceTests
 
     private sealed class FakeWhatsAppService : IWhatsAppService
     {
+        public Task<WhatsAppMediaResult> GetMediaAsync(string accessToken, string mediaId, CancellationToken cancellationToken = default)
+            => Task.FromResult(new WhatsAppMediaResult(IsSuccess: false, Error: "not used in this test"));
+
         public bool Valid { get; set; } = true;
 
         public Task<WhatsAppTestResult> TestConnectionAsync(
@@ -162,16 +165,22 @@ public class IntegrationHealthServiceTests
         public Task<WhatsAppSendResult> SendMessageAsync(
             string accessToken, string phoneNumberId, string to, string text, CancellationToken cancellationToken = default)
             => Task.FromResult(new WhatsAppSendResult(IsSuccess: true, MessageId: "wamid.test"));
+
+        public Task<WhatsAppSendResult> SendTemplateAsync(
+            string accessToken, string phoneNumberId, string to, string templateName,
+            string languageCode, IReadOnlyList<object>? components,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("This test double does not send templates.");
     }
 
     private sealed class FakeNotificationDispatcher : INotificationDispatcher
     {
         public List<Notification> Dispatched { get; } = [];
 
-        public Task DispatchAsync(Notification notification, CancellationToken cancellationToken = default)
+        public Task<NotificationRecord?> DispatchAsync(Notification notification, CancellationToken cancellationToken = default)
         {
             Dispatched.Add(notification);
-            return Task.CompletedTask;
+            return Task.FromResult<NotificationRecord?>(null);
         }
     }
 }

@@ -1,0 +1,12 @@
+﻿# .trivyignore
+#
+# Suppress Trivy false positives. Each entry covers a specific finding in a
+# specific file. Findings here are NOT real secrets — they are regex pattern
+# strings used by the pre-commit hook itself to identify and block real secrets.
+#
+# Rule:        stripe-secret-token
+# Location:    .husky/pre-commit line 124
+# Reason:      PLACEHOLDER_RE contains literal strings "stripe_test_placeholder" /
+#              "stripe_pub_placeholder" as example patterns for developers to
+#              recognise. These are not API keys and carry no real entropy.
+secret:stripe-secret-token

@@ -16,6 +16,8 @@ enum NotificationKind {
   vipAtRisk('VipAtRisk', 'VIP at risk'),
   eventReminder('EventReminder', 'Event reminder'),
   newMatch('NewMatch', 'New match'),
+  integrationExpired('IntegrationExpired', 'Integration expired'),
+  systemAlert('SystemAlert', 'System alert'),
 
   /// A kind this build has not been taught. It still renders: a notification
   /// nobody can see is worse than one wearing a generic label.

@@ -25,13 +25,13 @@ class AgentActivity {
 /// a further reply closes it, it hung forever.
 ///
 /// Returns:
-///  * `null` for a terminal state ([AgentState.isTerminal]): the run is over, so the bubble
-///    collapses, even when it had already been collapsed by the reply;
+///  * `null` for a state that ends the run ([AgentState.endsRun]): the work has stopped, so the
+///    bubble collapses, even when it had already been collapsed by the reply;
 ///  * [current] carrying the new state while a run is in flight, so the bubble tracks
 ///    thinking -> searching -> processing;
 ///  * `null` when no run is in flight, so a late in-progress state cannot resurrect a finished
 ///    run's bubble.
 AgentActivity? nextAgentActivity(AgentActivity? current, AgentState state) {
-  if (state.isTerminal) return null;
+  if (state.endsRun) return null;
   return current?.withState(state);
 }

@@ -49,9 +49,15 @@ public sealed class OrganizationRecipientResolver : IRecipientResolver
         }
 
         var members = await _organizations.GetActiveMembersAsync(target.OrganizationId, cancellationToken);
-        var filtered = target.Roles is { Count: > 0 }
-            ? members.Where(m => target.Roles.Contains(m.BoutiqueRole))
-            : members;
+
+        // An untyped target no longer means "everyone": the type's rule supplies the default
+        // management scope (NotificationRecipientRules), so a producer that forgets its roles
+        // cannot broadcast a privacy event to the whole staff.
+        var roles = target.Roles is { Count: > 0 }
+            ? target.Roles
+            : NotificationRecipientRules.RolesFor(notification.Type);
+
+        var filtered = members.Where(m => roles.Contains(m.BoutiqueRole));
 
         var recipients = new List<ResolvedRecipient>();
         foreach (var member in filtered)

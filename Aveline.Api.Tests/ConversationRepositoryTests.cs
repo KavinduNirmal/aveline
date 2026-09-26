@@ -1,6 +1,7 @@
 using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Modules.Conversations.Models;
 using Aveline.Api.Modules.Conversations.Repositories;
+using Aveline.Api.Modules.Conversations.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace Aveline.Api.Tests;
@@ -166,9 +167,9 @@ public class ConversationRepositoryTests
         var (items, total) = await _sut.ListAsync(orgId, caller, 1, 50);
 
         Assert.Equal(2, total);
-        Assert.DoesNotContain(items, c => c.ThreadId == "colleague-general");
-        Assert.Contains(items, c => c.ThreadId == "caller-general");
-        Assert.Contains(items, c => c.ThreadId == "shared-customer");
+        Assert.DoesNotContain(items, r => r.Conversation.ThreadId == "colleague-general");
+        Assert.Contains(items, r => r.Conversation.ThreadId == "caller-general");
+        Assert.Contains(items, r => r.Conversation.ThreadId == "shared-customer");
     }
 
     [Fact]
@@ -187,7 +188,124 @@ public class ConversationRepositoryTests
 
         Assert.Equal(5, total);
         Assert.Equal(2, items.Count);
-        Assert.All(items, c => Assert.Equal(orgId, c.OrganizationId));
+        Assert.All(items, r => Assert.Equal(orgId, r.Conversation.OrganizationId));
+    }
+
+    [Fact]
+    public async Task ListAsync_IsTotalAcrossPages_WhenEffectiveTimestampsTie()
+    {
+        // A page boundary on a non-total order duplicates one row and skips another. The id
+        // tiebreak is what makes the ordering total.
+        var orgId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var shared = new DateTime(2026, 9, 18, 12, 0, 0, DateTimeKind.Utc);
+        for (var i = 0; i < 5; i++)
+        {
+            var (conversation, _) = await _sut.GetOrCreateSalonAsync(orgId, userId, Guid.NewGuid(), $"tie-thread-{i}");
+            conversation.LastMessageAt = shared;
+        }
+        await _context.SaveChangesAsync();
+
+        var (first, _) = await _sut.ListAsync(orgId, userId, 1, 2);
+        var (second, _) = await _sut.ListAsync(orgId, userId, 2, 2);
+
+        var firstIds = first.Select(r => r.Conversation.Id).ToList();
+        var secondIds = second.Select(r => r.Conversation.Id).ToList();
+
+        Assert.Equal(2, firstIds.Count);
+        Assert.Equal(2, secondIds.Count);
+        Assert.Empty(firstIds.Intersect(secondIds));
+        Assert.Equal(4, firstIds.Concat(secondIds).Distinct().Count());
+    }
+
+    [Fact]
+    public async Task ListAsync_JoinsTheNewestMessage_CustomerNameAndPendingSignOff()
+    {
+        var orgId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
+        _context.Customers.Add(new Aveline.Api.Modules.CustomerConcierge.Models.Customer
+        {
+            Id = customerId,
+            OrganizationId = orgId,
+            PhoneNumber = "+94771234567",
+            FullName = "Nadeesha Perera",
+        });
+
+        var (conversation, _) = await _sut.GetOrCreateSalonAsync(orgId, userId, customerId, "thread-1");
+        _context.Messages.AddRange(
+            new Message
+            {
+                ConversationId = conversation.Id,
+                AuthorKind = AuthorKind.Agent,
+                Kind = MessageKind.Note,
+                ContentBlocksJson = "[{\"type\":\"text\",\"text\":\"older\"}]",
+                Status = MessageStatus.Published,
+                CreatedAt = new DateTime(2026, 9, 18, 11, 0, 0, DateTimeKind.Utc),
+            },
+            new Message
+            {
+                ConversationId = conversation.Id,
+                AuthorKind = AuthorKind.System,
+                Kind = MessageKind.ClientMessage,
+                ContentBlocksJson = "[{\"type\":\"client_message\",\"from\":\"+94\",\"text\":\"newest\"}]",
+                Status = MessageStatus.Published,
+                CreatedAt = new DateTime(2026, 9, 18, 12, 0, 0, DateTimeKind.Utc),
+            },
+            new Message
+            {
+                ConversationId = conversation.Id,
+                AuthorKind = AuthorKind.Agent,
+                Kind = MessageKind.SignOff,
+                ContentBlocksJson = "[{\"type\":\"sign_off\",\"reason\":\"discount\"}]",
+                Status = MessageStatus.AwaitingSignOff,
+                CreatedAt = new DateTime(2026, 9, 18, 10, 0, 0, DateTimeKind.Utc),
+            });
+        await _context.SaveChangesAsync();
+
+        var (items, _) = await _sut.ListAsync(orgId, userId, 1, 50);
+
+        var row = Assert.Single(items);
+        Assert.Equal("Nadeesha Perera", row.CustomerName);
+        Assert.NotNull(row.LastMessage);
+        Assert.Equal(MessageKind.ClientMessage, row.LastMessage!.Kind);
+        Assert.True(row.HasPendingSignOff);
+    }
+
+    [Fact]
+    public async Task GetRowAsync_MatchesTheListRow_SoABroadcastTileEqualsAReRead()
+    {
+        // The realtime tile and the list row must be derived the same way, or a client that
+        // receives a broadcast and then re-reads would see two different rows for one thread.
+        var orgId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var (conversation, _) = await _sut.GetOrCreateSalonAsync(orgId, userId, Guid.NewGuid(), "thread-1");
+        _context.Messages.Add(new Message
+        {
+            ConversationId = conversation.Id,
+            AuthorKind = AuthorKind.Agent,
+            AuthorAgentKey = "ava",
+            Kind = MessageKind.Note,
+            ContentBlocksJson = "[{\"type\":\"suggestion\",\"text\":\"A draft\"}]",
+            Status = MessageStatus.Published,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await _context.SaveChangesAsync();
+
+        var (items, _) = await _sut.ListAsync(orgId, userId, 1, 50);
+        var listed = ConversationTileMapper.ToDto(Assert.Single(items));
+
+        var row = await _sut.GetRowAsync(conversation.Id);
+        Assert.NotNull(row);
+        var broadcast = ConversationTileMapper.ToDto(row!);
+
+        Assert.Equal(listed.Id, broadcast.Id);
+        Assert.Equal(listed.CustomerName, broadcast.CustomerName);
+        Assert.Equal(listed.LastMessagePreview, broadcast.LastMessagePreview);
+        Assert.Equal(listed.LastMessageBlock, broadcast.LastMessageBlock);
+        Assert.Equal(listed.LastMessageAuthor, broadcast.LastMessageAuthor);
+        Assert.Equal(listed.LastMessageAgentKey, broadcast.LastMessageAgentKey);
+        Assert.Equal(listed.Markers, broadcast.Markers);
     }
 
     [Fact]
@@ -196,8 +314,8 @@ public class ConversationRepositoryTests
         var orgId = Guid.NewGuid();
         const string number = "+94771234567";
 
-        var first = await _sut.GetOrCreateSalonByExternalRefAsync(orgId, number, "thread-1");
-        var second = await _sut.GetOrCreateSalonByExternalRefAsync(orgId, number, "thread-2");
+        var first = await _sut.GetOrCreateSalonByExternalRefAsync(orgId, number, "thread-1", null);
+        var second = await _sut.GetOrCreateSalonByExternalRefAsync(orgId, number, "thread-2", null);
 
         Assert.Equal(first.Id, second.Id);
         Assert.Equal(1, await _context.Conversations.CountAsync());

@@ -3,6 +3,7 @@ import { MessageSquarePlus } from 'lucide-react'
 import { AvelineAvatar } from '@/components/conversation/AvelineAvatar'
 import { Composer } from '@/components/conversation/Composer'
 import { MessageThread } from '@/components/conversation/MessageThread'
+import { useBlockActions } from '@/components/conversation/useBlockActions'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -10,20 +11,34 @@ import { useConversations } from '@/contexts/ConversationsContext'
 import { cn } from '@/lib/utils'
 import type { ConversationDto } from '@/types/conversation'
 import { avelineStateConfig } from './avelineStates'
+import { isDeliverable } from './blockActions'
+import { isGeneralSalon, salonLabel, sortSalons } from './salonLabel'
 
-/** The display name for a salon: just the name, no "Salon" suffix. */
-function salonName(conversation: ConversationDto): string {
-  return conversation.customerId ? 'Customer' : 'Aveline'
-}
-
-/** The avatar shown for a salon row. Aveline uses the blossom; customers use an initial. */
-function SalonAvatar({ conversation }: { conversation: ConversationDto }) {
-  if (!conversation.customerId) {
-    return <AvelineAvatar className="size-10" blossomClassName="size-8" />
+/**
+ * The identity mark for a Salon. Aveline's own thread uses the blossom; a client's thread uses the
+ * client's initial, because the blossom in a client's header reads as "you are talking to Aveline"
+ * when the thread is that client's.
+ */
+export function SalonAvatar({
+  conversation,
+  className = 'size-10',
+}: {
+  conversation: ConversationDto
+  className?: string
+}) {
+  if (isGeneralSalon(conversation)) {
+    return <AvelineAvatar className={className} blossomClassName="size-8" />
   }
   return (
-    <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-semibold text-muted-foreground">
-      C
+    <div
+      className={cn(
+        'flex shrink-0 items-center justify-center rounded-full bg-primary/10 font-semibold text-primary',
+        className,
+      )}
+      aria-label={`${salonLabel(conversation)} avatar`}
+      role="img"
+    >
+      {salonLabel(conversation).charAt(0).toUpperCase()}
     </div>
   )
 }
@@ -42,16 +57,47 @@ export function SalonPanel() {
     sending,
     agentState,
     agentActivity,
+    waiting,
     openConversation,
     openOrCreateSalon,
     send,
     decide,
     selectCustomer,
+    deliverToClient,
+    regenerate,
+    pendingAttachments,
+    attach,
+    retryAttachment,
+    removeAttachment,
   } = useConversations()
 
   const activeConversation = conversations.find((c) => c.id === activeConversationId)
-  const headerTitle = activeConversation ? salonName(activeConversation) : 'Salon'
-  const headerSubtitle = avelineStateConfig(agentState).label
+
+  // The rail acts on the thread the associate is looking at. Both delivery actions leave the
+  // boutique — the endpoint resolves the client's channel and sends on it — so the Salon's own
+  // `send` is deliberately NOT wired into it: a note in the room reaches nobody.
+  const { bridge: blockActions, dialogs: blockActionDialogs } = useBlockActions({
+    conversationId: activeConversationId,
+    customerName: activeConversation?.customerName ?? null,
+    customerReachable: Boolean(activeConversation && isDeliverable(activeConversation)),
+    conversations,
+    deliver: deliverToClient,
+    regenerate,
+    agentBusy: waiting,
+  })
+
+  // The tray is keyed by conversation in the context, so a section switch does not orphan it.
+  const pendingForActive = activeConversationId
+    ? (pendingAttachments[activeConversationId] ?? [])
+    : []
+  const headerTitle = activeConversation ? salonLabel(activeConversation) : 'Salon'
+  const headerSubtitle = activeConversation
+    ? isGeneralSalon(activeConversation)
+      ? 'Shared concierge thread'
+      : avelineStateConfig(agentState).label
+    : avelineStateConfig(agentState).label
+  // The general thread is pinned first; the rest keep the server's newest-first order.
+  const listedConversations = sortSalons(conversations)
 
   return (
     <div className="grid h-[calc(100vh_-_8rem)] grid-cols-[280px_1fr] overflow-hidden rounded-xl border bg-background">
@@ -78,29 +124,44 @@ export function SalonPanel() {
               No salons yet. Start a conversation with Aveline.
             </p>
           ) : (
-            conversations.map((conversation) => (
-              <button
-                key={conversation.id}
-                type="button"
-                onClick={() => void openConversation(conversation.id)}
-                className={cn(
-                  'mb-1 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors',
-                  activeConversationId === conversation.id
-                    ? 'bg-primary/10 text-primary'
-                    : 'hover:bg-muted',
-                )}
-              >
-                <SalonAvatar conversation={conversation} />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{salonName(conversation)}</p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {conversation.lastMessageAt
-                      ? new Date(conversation.lastMessageAt).toLocaleString()
-                      : 'No messages yet'}
-                  </p>
-                </div>
-              </button>
-            ))
+            listedConversations.map((conversation) => {
+              const general = isGeneralSalon(conversation)
+              return (
+                <button
+                  key={conversation.id}
+                  type="button"
+                  // Named for the row's own subject, so a screen reader says whose thread it opens.
+                  aria-label={`Open salon ${salonLabel(conversation)}`}
+                  onClick={() => void openConversation(conversation.id)}
+                  className={cn(
+                    'mb-1 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors',
+                    activeConversationId === conversation.id
+                      ? 'bg-primary/10 text-primary'
+                      : 'hover:bg-muted',
+                  )}
+                >
+                  <SalonAvatar conversation={conversation} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <p className="truncate text-sm font-medium">
+                        {salonLabel(conversation)}
+                      </p>
+                      {/* The general thread is marked, so it is never mistaken for a client's. */}
+                      {general ? (
+                        <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                          Concierge
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {conversation.lastMessageAt
+                        ? new Date(conversation.lastMessageAt).toLocaleString()
+                        : 'No messages yet'}
+                    </p>
+                  </div>
+                </button>
+              )
+            })
           )}
         </div>
       </aside>
@@ -110,11 +171,12 @@ export function SalonPanel() {
         <Card className="flex h-full flex-col overflow-hidden rounded-none border-0 py-0 shadow-none">
           {/* Chatroom header */}
           <header className="flex h-14 items-center gap-2.5 border-b px-4">
-            <AvelineAvatar
-              state={agentState}
-              className="size-10"
-              blossomClassName="size-8"
-            />
+            {/* The thread's own identity: a client's thread shows the client, not Aveline. */}
+            {activeConversation ? (
+              <SalonAvatar conversation={activeConversation} />
+            ) : (
+              <AvelineAvatar state={agentState} className="size-10" blossomClassName="size-8" />
+            )}
             <div className="min-w-0">
               <p className="truncate font-serif text-sm font-medium leading-tight">
                 {headerTitle}
@@ -128,17 +190,31 @@ export function SalonPanel() {
               messages={messages}
               loading={loading && !activeConversationId}
               agentActivity={agentActivity}
+              blockActions={blockActions}
               onSignOff={(messageId, approved) => void decide(messageId, approved)}
               onSelectCustomer={(customerId) => void selectCustomer(customerId)}
             />
           </div>
           <Composer
-            onSend={(text) => void send(text)}
+            onSend={(text, attachmentIds) => send(text, attachmentIds)}
+            onAttach={(files) =>
+              activeConversationId ? attach(activeConversationId, files) : Promise.resolve([])
+            }
+            pendingAttachments={pendingForActive}
+            onRetryAttachment={(attachmentId) => {
+              if (activeConversationId) void retryAttachment(activeConversationId, attachmentId)
+            }}
+            onRemoveAttachment={(attachmentId) => {
+              if (activeConversationId) removeAttachment(activeConversationId, attachmentId)
+            }}
             disabled={!activeConversationId}
             sending={sending}
           />
         </Card>
       </section>
+
+      {/* The forward picker and the send confirmation, driven by the rail above. */}
+      {blockActionDialogs}
     </div>
   )
 }

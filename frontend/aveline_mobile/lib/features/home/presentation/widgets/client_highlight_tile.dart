@@ -57,24 +57,23 @@ String clientTierLabel(ClientTier tier) =>
     tier.isVip ? 'VIP' : 'LVL ${tier.level}';
 
 /// A client's initials in a tinted circle, ringed in wine for VIPs, with a mint
-/// dot when something new has arrived.
+/// The circular avatar, tinted from the client's own name, with the wine ring
+/// a VIP wears.
 class ClientAvatar extends StatelessWidget {
   const ClientAvatar({
     super.key,
     required this.client,
     this.size = ClientTileMetrics.avatarSize,
-    this.showActivityDot = true,
   });
 
   final ClientHighlight client;
   final double size;
-  final bool showActivityDot;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final isVip = client.tier.isVip;
+    final isVip = client.tier?.isVip ?? false;
 
     final circle = Container(
       width: size,
@@ -97,7 +96,7 @@ class ClientAvatar extends StatelessWidget {
       ),
     );
 
-    final ringed = Container(
+    return Container(
       padding: EdgeInsets.all(isVip ? 2 : 0),
       decoration: BoxDecoration(
         shape: BoxShape.circle,
@@ -109,35 +108,6 @@ class ClientAvatar extends StatelessWidget {
         ),
       ),
       child: circle,
-    );
-
-    if (!showActivityDot || !client.hasNewActivity) {
-      return ringed;
-    }
-
-    final dot = (size * 0.2).clamp(9.0, 13.0);
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        ringed,
-        Positioned(
-          top: 0,
-          right: 0,
-          child: Container(
-            key: const Key('client_activity_dot'),
-            width: dot,
-            height: dot,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: const Color(0xFF2E6B58),
-              border: Border.all(
-                color: scheme.surfaceContainerLowest,
-                width: 2,
-              ),
-            ),
-          ),
-        ),
-      ],
     );
   }
 }
@@ -287,9 +257,13 @@ class ClientHighlightTile extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
+    final tier = client.tier;
+
     return Semantics(
       button: true,
-      label: '${client.shortName}, ${clientTierLabel(client.tier)}',
+      label: tier == null
+          ? client.shortName
+          : '${client.shortName}, ${clientTierLabel(tier)}',
       child: Material(
         type: MaterialType.transparency,
         child: InkWell(
@@ -308,13 +282,15 @@ class ClientHighlightTile extends StatelessWidget {
                     alignment: Alignment.center,
                     children: [
                       ClientAvatar(client: client),
-                      Positioned(
-                        // Centred on the avatar's bottom edge, so the badge
-                        // straddles the circle the way a wax seal would.
-                        bottom: ClientTileMetrics.avatarInset -
-                            ClientTierBadge.heightFor(client.tier) / 2,
-                        child: ClientTierBadge(tier: client.tier),
-                      ),
+                      // No grade, no badge: an ungraded client is not Level 1.
+                      if (tier != null)
+                        Positioned(
+                          // Centred on the avatar's bottom edge, so the badge
+                          // straddles the circle the way a wax seal would.
+                          bottom: ClientTileMetrics.avatarInset -
+                              ClientTierBadge.heightFor(tier) / 2,
+                          child: ClientTierBadge(tier: tier),
+                        ),
                     ],
                   ),
                 ),

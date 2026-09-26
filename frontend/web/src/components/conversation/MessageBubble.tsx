@@ -2,8 +2,10 @@ import { cn } from '@/lib/utils'
 import type { ChatMessage } from '@/contexts/ConversationsContext'
 import { AvelineAvatar } from './AvelineAvatar'
 import { AvelineBlossom } from './AvelineBlossom'
+import type { BlockActionBridge } from './blockActions'
 import { BlockList } from './blocks'
 import { personaForAuthor } from './persona'
+import { hasTileRow } from './tileBlocks'
 import { TypewriterText } from './TypewriterText'
 
 interface MessageBubbleProps {
@@ -13,8 +15,12 @@ interface MessageBubbleProps {
   onSignOff?: (approved: boolean) => void
   /** Called when the staff picks a customer from a resolution `choice` block. */
   onSelectCustomer?: (customerId: string) => void
+  /** Called with the attachment id when a thread attachment is opened for viewing. */
+  onOpenAttachment?: (attachmentId: string) => void
   /** Called as a streamed message types out, so the thread can keep the tail in view. */
   onStreamProgress?: () => void
+  /** The thread's action-rail config. Absent draws every block without one. */
+  blockActions?: BlockActionBridge
 }
 
 function timeLabel(iso: string): string {
@@ -92,19 +98,28 @@ export function MessageBubble({
   isOwn,
   onSignOff,
   onSelectCustomer,
+  onOpenAttachment,
   onStreamProgress,
+  blockActions,
 }: MessageBubbleProps) {
   const persona = personaForAuthor(message.authorKind, message.agentKey)
   const isAgent = message.authorKind === 'Agent'
   const isSending = message.pending === 'sending'
   const isFailed = message.pending === 'failed'
   const streamText = shouldStreamContent(message) ? primaryText(message) : null
+  // A row of tiles has to count its columns against a definite width, and the bubble is otherwise
+  // shrink-to-fit: without this the grid resolves to a single track and the pieces stack. A message
+  // with a photograph in it already reached the same width through the image's own intrinsic size.
+  const tileRow = hasTileRow(message.contentBlocks)
 
   return (
     <div className={cn('flex w-full gap-2.5', isOwn && 'flex-row-reverse')}>
       {persona && <AgentAvatar persona={persona} />}
 
-      <div className={cn('flex max-w-[78%] flex-col gap-1', isOwn && 'items-end')}>
+      <div
+        data-slot="message-bubble"
+        className={cn('flex max-w-[78%] flex-col gap-1', tileRow && 'w-full', isOwn && 'items-end')}
+      >
         {persona && (
           <span className={cn('px-1 text-[11px] font-medium', persona.text)}>
             {persona.name}
@@ -126,9 +141,15 @@ export function MessageBubble({
           ) : (
             <BlockList
               blocks={message.contentBlocks}
+              messageId={message.id}
+              bridge={blockActions}
               onSignOff={onSignOff}
               onSelectCustomer={onSelectCustomer}
+              onOpenAttachment={onOpenAttachment}
               persona={persona}
+              // The staff bubble is filled with `primary`; the attachment surface has to know so it
+              // tints with the bubble's ink instead of punching a background-coloured hole in it.
+              tone={isOwn ? 'own' : 'other'}
             />
           )}
         </div>

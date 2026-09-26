@@ -35,6 +35,22 @@
   --destructive: #ba1a1a;
   --destructive-foreground: #ffffff;
 
+  /* Semantic state colours. The admin console maps every state to one of these rather than to
+     a raw palette utility, because a raw palette class is what breaks in dark mode. */
+  --warning: #8a5a00;
+  --warning-foreground: #ffffff;
+  --success: #1f6b4a;
+  --success-foreground: #ffffff;
+
+  /* The WhatsApp channel an inbound customer message arrived on. `--whatsapp` is the brand green
+     and is only ever a mark or a tint; `--whatsapp-deep` is the ink that carries the channel's
+     name, because white on the brand green fails contrast at label sizes; `--whatsapp-canvas` is
+     the field the customer's words sit on, the way a chat app paints its own background. */
+  --whatsapp: #25d366;
+  --whatsapp-foreground: #ffffff;
+  --whatsapp-deep: #0b5d4f;
+  --whatsapp-canvas: #eff8f2;
+
   --border: #e9e0e0;
   --input: #d9c1c3;
   --ring: #8b2e42;
@@ -91,6 +107,16 @@
   --destructive: #ffb4ab;
   --destructive-foreground: #690005;
 
+  --warning: #e0b64c;
+  --warning-foreground: #3a2a00;
+  --success: #7fd1a8;
+  --success-foreground: #003824;
+
+  --whatsapp: #25d366;
+  --whatsapp-foreground: #ffffff;
+  --whatsapp-deep: #8fe3b0;
+  --whatsapp-canvas: #1b2a24;
+
   --border: #453e3f;
   --input: #453e3f;
   --ring: #ffcdd5;
@@ -133,6 +159,14 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-whatsapp: var(--whatsapp);
+  --color-whatsapp-foreground: var(--whatsapp-foreground);
+  --color-whatsapp-deep: var(--whatsapp-deep);
+  --color-whatsapp-canvas: var(--whatsapp-canvas);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -415,3 +449,11 @@
 
 
 
+
+/* The administrator console's single geometry rule. Applied once, in `AdminShell`, so the
+   header and every page share one centred `max-w-[1600px]` column and cannot drift apart. */
+.admin-container {
+  margin-inline: auto;
+  width: 100%;
+  max-width: 1600px;
+}

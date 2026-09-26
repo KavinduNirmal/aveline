@@ -17,12 +17,22 @@ import {
 } from '@/lib/conversations'
 import {
   decideSignOff,
+  deliverBlockToCustomer,
   fetchConversations,
   fetchMessages,
   getOrCreateConversation,
+  regenerateMessage as requestRegeneration,
   selectConversationCustomer,
   sendMessage,
+  uploadConversationAttachment,
 } from '@/lib/conversations-api'
+import {
+  checkAttachmentCap,
+  isAnalysableContentType,
+  prepareAttachment,
+  type AttachmentRefusal,
+  type PreparedAttachment,
+} from '@/lib/attachment-preparation'
 import type { ConversationDto, MessageDto } from '@/types/conversation'
 import type { AvelineState } from '@/components/conversation/avelineStates'
 import { isTerminalState } from '@/components/conversation/avelineStates'
@@ -76,6 +86,68 @@ export interface AgentActivity {
   currentState: AvelineState
 }
 
+/**
+ * A file held in the composer's pending tray. Picked files upload immediately (upload-on-pick) and
+ * the tray is keyed by conversation id so switching dashboard sections does not lose it, mirroring
+ * the mobile client. The prepared bytes are retained after a failure so a retry re-uploads the
+ * exact payload rather than re-encoding the original file.
+ */
+export interface PendingAttachment {
+  /** Stable client-side id for the chip (also its list key). */
+  id: string
+  fileName: string
+  /** The bytes an upload sends; retained so a retry reuses them. */
+  payload: Blob
+  status: 'uploading' | 'ready' | 'failed'
+  /** The server's id once the upload is stored; null until then. */
+  attachmentId: string | null
+  /** The stored content type the upload response reported; null until stored. */
+  storedContentType: string | null
+  /**
+   * Whether the visual assistant can read the stored bytes. Taken from the upload **response's**
+   * content type, never the declared one, and never a reason to block the upload.
+   */
+  analysable: boolean
+  sizeBytes: number
+  error?: string
+  /**
+   * Whether retrying this upload could plausibly succeed. False for a denial the server will not
+   * reconsider (403/404), true for a network, timeout or 5xx failure. The tray reads this rather
+   * than matching the error wording, so the two cannot drift apart.
+   */
+  retryable: boolean
+}
+
+/** Mints the idempotency key for a composed message; every retry of that message reuses it. */
+function mintClientMessageId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `cmsg-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+/** The HTTP status an axios-style upload failure carries, when it carries one. */
+function uploadFailureStatus(error: unknown): number | undefined {
+  return (error as { response?: { status?: number } } | null)?.response?.status
+}
+
+/**
+ * Whether the failure is a denial the server will not reconsider, so a retry would be pointless.
+ * The value travels on the chip so the tray never has to match the message text.
+ */
+function isPermanentUploadFailure(error: unknown): boolean {
+  const status = uploadFailureStatus(error)
+  return status === 403 || status === 404
+}
+
+/** A message for a failed upload, distinguishing a genuine denial from a transient failure. */
+function describeUploadFailure(error: unknown): string {
+  const status = uploadFailureStatus(error)
+  if (status === 403) return "You don't have access to this thread."
+  if (status === 404) return 'This thread is no longer available.'
+  return 'That file could not be uploaded. Check your connection and try again.'
+}
+
 interface ConversationsContextValue {
   /** The organization's Salons, newest first. */
   conversations: ConversationDto[]
@@ -96,8 +168,27 @@ interface ConversationsContextValue {
   openConversation: (conversationId: string) => Promise<void>
   /** Gets-or-creates the Salon for an optional customer and opens it. */
   openOrCreateSalon: (customerId?: string | null) => Promise<ConversationDto>
-  /** Sends a staff note (optimistic) and triggers the agent. */
-  send: (text: string) => Promise<void>
+  /**
+   * Sends a staff note (optimistic) and triggers the agent, binding the already-uploaded
+   * `attachmentIds`. The `clientMessageId` is minted once per composed message here and reused
+   * across retries, which is what makes a retried send idempotent.
+   */
+  send: (text: string, attachmentIds?: string[]) => Promise<void>
+  /**
+   * The pending attachment tray, keyed by conversation id. Empty for a conversation with none.
+   */
+  pendingAttachments: Record<string, PendingAttachment[]>
+  /**
+   * Picks files for a conversation: uploads each immediately and returns the refusals (over-cap,
+   * unsupported type, or a pick that would cross the five-per-message cap) without creating a chip.
+   */
+  attach: (conversationId: string, files: File[]) => Promise<AttachmentRefusal[]>
+  /** Retries a failed chip with the exact bytes it already holds. */
+  retryAttachment: (conversationId: string, attachmentId: string) => Promise<void>
+  /** Drops a chip. An already-stored upload is left to the 24 h sweep; the composed text is untouched. */
+  removeAttachment: (conversationId: string, attachmentId: string) => void
+  /** True when every held file is stored, so a send may bind them. */
+  attachmentsReady: (conversationId: string) => boolean
   /** Approves or rejects a SignOff message. */
   decide: (messageId: string, approved: boolean) => Promise<void>
   /**
@@ -105,9 +196,80 @@ interface ConversationsContextValue {
    * re-triggers the agent with that customer in context.
    */
   selectCustomer: (customerId: string) => Promise<void>
+
+  /**
+   * Delivers a block's words to a client's own channel and records it in that client's thread.
+   *
+   * This is the only outbound path: it calls the delivery endpoint, which resolves the client's
+   * handle, sends over the channel the boutique has connected (WhatsApp today) and writes the row
+   * as `Sent`. It deliberately does **not** post a note into the Salon and trigger the agent —
+   * that reaches nobody and is not a forward. `targetConversationId` names which client thread the
+   * delivery belongs to; the customer and channel are resolved server-side from it. Rejects with
+   * a {@link DeliveryRefusedError} when the server refuses, carrying its sentence.
+   */
+  deliverToClient: (
+    targetConversationId: string,
+    text: string,
+    clientMessageId?: string,
+  ) => Promise<void>
+  /**
+   * Asks Aveline to answer the turn behind `messageId` again. Resolves when the **request** is
+   * accepted, not when the fresh blocks land: those arrive over the hub like any other agent
+   * reply, so the caller leaves its action state on the request and the thread's own working
+   * indicator carries the wait.
+   */
+  regenerate: (messageId: string) => Promise<void>
+
+  /**
+   * The Aveline drawer's **own** thread. It shares the conversation list and the hub connection
+   * with the Salon section, but never the open thread: one shared `activeConversationId` meant
+   * opening a client's Salon in either surface moved the other one with it.
+   */
+  avelineConversationId: string | null
+  avelineMessages: ChatMessage[]
+  avelineAgentState: AvelineState
+  avelineAgentActivity: AgentActivity | null
+  avelineLoading: boolean
+  avelineSending: boolean
+  /** Opens the general, client-less Salon in the drawer's thread only. */
+  openAveline: () => Promise<void>
+  /**
+   * Sends to the drawer's thread. `attachmentIds` are the stored chips the message binds, exactly as
+   * the Salon's `send` takes them; omitting them sends text alone.
+   */
+  sendToAveline: (text: string, attachmentIds?: string[]) => Promise<void>
+  decideAveline: (messageId: string, approved: boolean) => Promise<void>
+  /** `regenerate`, for the drawer's own thread slot. */
+  regenerateAveline: (messageId: string) => Promise<void>
 }
 
 const ConversationsContext = createContext<ConversationsContextValue | undefined>(undefined)
+
+/**
+ * Fetches the **newest** page of a thread.
+ *
+ * History is served oldest-first, so page 1 is the OLDEST page: once a Salon grows past one page, a
+ * reload would drop the recent messages. Shared by the Salon section and the Aveline drawer so both
+ * threads agree on what "the newest messages" means.
+ */
+/** The paging query `fetchMessages` accepts, without the ids it is already bound to. */
+type MessagePageQuery = Omit<Parameters<typeof fetchMessages>[2] & object, never>
+
+async function loadNewestPage(
+  fetchPage: (query: MessagePageQuery) => Promise<{
+    items: ChatMessage[]
+    total: number
+    pageSize: number
+  }>,
+): Promise<ChatMessage[]> {
+  const page = await fetchPage({ pageSize: 100 })
+  if (page.total <= page.items.length || page.pageSize <= 0) {
+    return page.items
+  }
+  const lastPage = Math.max(1, Math.ceil(page.total / page.pageSize))
+  const newest = await fetchPage({ page: lastPage, pageSize: page.pageSize })
+  return newest.items
+}
 
 interface ConversationsProviderProps {
   organizationId: string
@@ -128,10 +290,32 @@ export function ConversationsProvider({
   const [conversations, setConversations] = useState<ConversationDto[]>([])
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  // The Aveline drawer keeps its **own** thread. It shares one conversation list and one hub
+  // connection with the Salon section, but not the open thread: sharing that made opening a
+  // client's Salon in one surface drag the other surface with it.
+  const [avelineConversationId, setAvelineConversationId] = useState<string | null>(null)
+  const [avelineMessages, setAvelineMessages] = useState<ChatMessage[]>([])
+  const [avelineAgentState, setAvelineAgentState] = useState<AvelineState>('idle')
+  const [avelineAgentActivity, setAvelineAgentActivity] = useState<AgentActivity | null>(null)
+  const [avelineLoading, setAvelineLoading] = useState(false)
+  const [avelineSending, setAvelineSending] = useState(false)
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
+  const [pendingAttachments, setPendingAttachments] = useState<
+    Record<string, PendingAttachment[]>
+  >({})
   const [agentState, setAgentState] = useState<AvelineState>('idle')
   const [agentActivity, setAgentActivity] = useState<AgentActivity | null>(null)
+  // The last state each thread slot observed. A send claims the "Aveline is working" indicator
+  // optimistically, and the API **awaits the whole agent run** before the send resolves - so by
+  // then the run's states, terminal one included, have usually already arrived. Setting the
+  // indicator unconditionally would place it *after* that terminal state, with nothing left to
+  // clear it: the bubble hangs. That is not theoretical - a run that produced no message (see
+  // `_fallback_reply` in the agent's gate) left it hanging every time, because the incoming message
+  // is the other thing that clears it. Track the slot's last state so a send can decline to claim
+  // an indicator for a run that has already finished.
+  const lastAgentStateRef = useRef<AvelineState>('idle')
+  const lastAvelineStateRef = useRef<AvelineState>('idle')
   const [connectionState, setConnectionState] = useState<HubConnectionState>(
     HubConnectionState.Disconnected,
   )
@@ -139,11 +323,20 @@ export function ConversationsProvider({
   const connectionRef = useRef<HubConnection | null>(null)
   const activeRef = useRef<string | null>(null)
   activeRef.current = activeConversationId
+  const avelineIdRef = useRef<string | null>(null)
+  avelineIdRef.current = avelineConversationId
   const messagesRef = useRef<ChatMessage[]>([])
   messagesRef.current = messages
+  const avelineMessagesRef = useRef<ChatMessage[]>([])
+  avelineMessagesRef.current = avelineMessages
+  /** The key and optimistic row of the message currently being composed, for retry reuse. */
+  const composedRef = useRef<{ key: string; signature: string; optimisticId: string } | null>(
+    null,
+  )
   const agentActivityRef = useRef<AgentActivity | null>(null)
   agentActivityRef.current = agentActivity
   const transientTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const avelineTransientTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const handleStateChange = useCallback((state: HubConnectionState) => {
     setConnectionState(state)
@@ -161,6 +354,22 @@ export function ConversationsProvider({
     }
   }, [])
 
+  // The drawer's settle-to-idle, independent of the panel's so a transient state in one thread
+  // cannot clear the other's indicator.
+  const applyAvelineAgentState = useCallback((state: AvelineState) => {
+    setAvelineAgentState(state)
+    if (avelineTransientTimerRef.current) {
+      clearTimeout(avelineTransientTimerRef.current)
+      avelineTransientTimerRef.current = null
+    }
+    if (state === 'success' || state === 'error' || state === 'response') {
+      avelineTransientTimerRef.current = setTimeout(
+        () => setAvelineAgentState('idle'),
+        TRANSIENT_TIMEOUT_MS,
+      )
+    }
+  }, [])
+
   const waiting = ACTIVE_STATES.has(agentState)
 
   const openConversation = useCallback(
@@ -169,20 +378,7 @@ export function ConversationsProvider({
       setMessages([])
       setAgentActivity(null)
       try {
-        const page = await fetchMessages(organizationId, conversationId, { pageSize: 100 })
-        // History is served oldest-first, so page 1 is the OLDEST 100 messages. Once a Salon
-        // grows past a single page, a reload would otherwise drop the newest messages. Fetch
-        // the last (newest) page instead so the recent thread survives a refresh.
-        let items = page.items
-        if (page.total > items.length && page.pageSize > 0) {
-          const lastPage = Math.max(1, Math.ceil(page.total / page.pageSize))
-          const newest = await fetchMessages(organizationId, conversationId, {
-            page: lastPage,
-            pageSize: page.pageSize,
-          })
-          items = newest.items
-        }
-        setMessages(items)
+        setMessages(await loadNewestPage((query) => fetchMessages(organizationId, conversationId, query)))
       } catch {
         setMessages([])
       }
@@ -232,40 +428,65 @@ export function ConversationsProvider({
     connectionRef.current = connection
     cleanupRef.current = startConversations(connection, {
       onMessage: (payload) => {
-        // Only surface messages for the currently open Salon.
-        if (payload.conversationId !== activeRef.current) return
+        // A payload belongs to whichever slot is displaying that conversation. Both slots subscribe
+        // to their own group, so the connection can carry two threads at once.
+        const forPanel = payload.conversationId === activeRef.current
+        const forAveline = payload.conversationId === avelineIdRef.current
+        if (!forPanel && !forAveline) return
 
-        setMessages((prev) => {
+        const isAgent = payload.authorKind === 'Agent'
+        const append = (prev: ChatMessage[]) => {
           if (prev.some((m) => m.id === payload.id)) return prev
           // When an agent reply lands, collapse the live activity into a "Thought for Xs"
           // caption on the incoming message and stream the text in word by word.
-          const isAgent = payload.authorKind === 'Agent'
           const activity = agentActivityRef.current
           const thoughtSeconds =
             isAgent && activity ? Math.max(0, (Date.now() - activity.startedAt) / 1000) : undefined
           return [...prev, { ...payload, thoughtSeconds, streamIn: isAgent }]
-        })
+        }
 
-        if (payload.authorKind === 'Agent') {
-          setAgentActivity(null)
+        if (forPanel) {
+          setMessages(append)
+          if (isAgent) setAgentActivity(null)
+        }
+        if (forAveline) {
+          setAvelineMessages(append)
+          if (isAgent) setAvelineAgentActivity(null)
         }
       },
       onAgentState: (payload: AgentStatePayload) => {
-        // Only reflect states for the currently open Salon.
-        if (payload.conversationId !== activeRef.current) return
+        const forPanel = payload.conversationId === activeRef.current
+        const forAveline = payload.conversationId === avelineIdRef.current
+        if (!forPanel && !forAveline) return
         const state = payload.state as AvelineState
-        applyAgentState(state)
-        // Terminal states (success/error/response) mean the workflow finished: collapse the
-        // live activity bubble so it can't hang as a stale 'Done' card. In-progress states
-        // (thinking/searching/…) keep the "Aveline is working" bubble.
-        if (isTerminalState(state)) {
-          setAgentActivity(null)
-        } else {
-          setAgentActivity((prev) =>
-            prev
-              ? { ...prev, currentState: state }
-              : { startedAt: Date.now(), currentState: state },
-          )
+        if (forPanel) {
+          lastAgentStateRef.current = state
+          applyAgentState(state)
+          // Terminal states (success/error/response) mean the workflow finished: collapse the
+          // live activity bubble so it can't hang as a stale 'Done' card. In-progress states
+          // (thinking/searching/…) keep the "Aveline is working" bubble.
+          if (isTerminalState(state)) {
+            setAgentActivity(null)
+          } else {
+            setAgentActivity((prev) =>
+              prev
+                ? { ...prev, currentState: state }
+                : { startedAt: Date.now(), currentState: state },
+            )
+          }
+        }
+        if (forAveline) {
+          lastAvelineStateRef.current = state
+          applyAvelineAgentState(state)
+          if (isTerminalState(state)) {
+            setAvelineAgentActivity(null)
+          } else {
+            setAvelineAgentActivity((prev) =>
+              prev
+                ? { ...prev, currentState: state }
+                : { startedAt: Date.now(), currentState: state },
+            )
+          }
         }
       },
       onStateChange: handleStateChange,
@@ -287,17 +508,33 @@ export function ConversationsProvider({
         clearTimeout(transientTimerRef.current)
         transientTimerRef.current = null
       }
+      if (avelineTransientTimerRef.current) {
+        clearTimeout(avelineTransientTimerRef.current)
+        avelineTransientTimerRef.current = null
+      }
     }
-  }, [applyAgentState, getToken, handleStateChange, isLoaded, isSignedIn, organizationId])
+  }, [
+    applyAgentState,
+    applyAvelineAgentState,
+    getToken,
+    handleStateChange,
+    isLoaded,
+    isSignedIn,
+    organizationId,
+  ])
 
-  // Re-join the Salon group whenever the active conversation changes so the client keeps
-  // receiving live messages/states for the conversation currently on screen.
+  // Join the groups for both open threads. `JoinSalon` adds to a group without leaving others, so
+  // one connection can carry the Salon section's thread and the Aveline drawer's thread at once.
   useEffect(() => {
     const connection = connectionRef.current
     if (!connection || connection.state !== HubConnectionState.Connected) return
-    if (!activeConversationId) return
-    void connection.invoke('JoinSalon', organizationId, activeConversationId)
-  }, [activeConversationId, connectionState, organizationId])
+    if (activeConversationId) {
+      void connection.invoke('JoinSalon', organizationId, activeConversationId)
+    }
+    if (avelineConversationId && avelineConversationId !== activeConversationId) {
+      void connection.invoke('JoinSalon', organizationId, avelineConversationId)
+    }
+  }, [activeConversationId, avelineConversationId, connectionState, organizationId])
 
   const openOrCreateSalon = useCallback(
     async (customerId?: string | null) => {
@@ -313,12 +550,247 @@ export function ConversationsProvider({
     [openConversation, organizationId],
   )
 
-  const send = useCallback(
-    async (text: string) => {
-      if (!activeConversationId || !text.trim()) return
+  /**
+   * Opens the general, client-less Salon in the **drawer's** slot. Deliberately does not touch the
+   * panel's thread: `openOrCreateSalon` is the Salon section's, and routing the drawer through it is
+   * what coupled the two surfaces.
+   */
+  const openAveline = useCallback(async () => {
+    const existing = conversations.find(
+      (c) => c.customerId === null && c.externalRef === null,
+    )
+    const salon = existing ?? (await getOrCreateConversation(organizationId, null))
+    setConversations((prev) => (prev.some((c) => c.id === salon.id) ? prev : [salon, ...prev]))
+    setAvelineConversationId(salon.id)
+    setAvelineMessages([])
+    setAvelineAgentActivity(null)
+    setAvelineLoading(true)
+    try {
+      setAvelineMessages(
+        await loadNewestPage((options) => fetchMessages(organizationId, salon.id, options)),
+      )
+    } catch {
+      setAvelineMessages([])
+    } finally {
+      setAvelineLoading(false)
+    }
+  }, [conversations, organizationId])
+
+  const sendToAveline = useCallback(
+    async (text: string, attachmentIds?: string[]) => {
+      const conversationId = avelineIdRef.current
+      if (!conversationId || !text.trim()) return
       const trimmed = text.trim()
+      const ids = attachmentIds ?? []
       const optimistic: ChatMessage = {
         id: `local-${Date.now()}`,
+        conversationId,
+        authorKind: 'User',
+        agentKey: null,
+        authorUserId: null,
+        kind: 'Note',
+        contentBlocks: [{ type: 'text', text: trimmed }],
+        contentHash: null,
+        replyToMessageId: null,
+        status: 'Published',
+        createdAt: new Date().toISOString(),
+        pending: 'sending',
+      }
+
+      setAvelineSending(true)
+      setAvelineMessages((prev) => [...prev, optimistic])
+      try {
+        const message = await sendMessage(organizationId, conversationId, trimmed, ids)
+        setAvelineMessages((prev) =>
+          prev.map((m) => (m.id === optimistic.id ? { ...message } : m)),
+        )
+        // The message is bound: clear the drawer's tray so a chip cannot linger pending after its
+        // row is attached. Only a confirmed send reaches here, exactly as the Salon's `send` does.
+        setPendingAttachments((prev) => ({ ...prev, [conversationId]: [] }))
+        // Only claim the indicator if this run has not already settled. The API awaited the agent,
+        // so a run that finished has already sent its terminal state, and claiming 'thinking' now
+        // would leave nothing able to clear it.
+        if (!isTerminalState(lastAvelineStateRef.current)) {
+          setAvelineAgentActivity({ startedAt: Date.now(), currentState: 'thinking' })
+          applyAvelineAgentState('thinking')
+        }
+      } catch (error) {
+        setAvelineMessages((prev) =>
+          prev.map((m) => (m.id === optimistic.id ? { ...m, pending: 'failed' } : m)),
+        )
+        // Rethrow so the composer can tell a failed send from a confirmed one and keep the text and
+        // the tray, which only a confirmed send may clear.
+        throw error
+      } finally {
+        setAvelineSending(false)
+      }
+    },
+    [applyAvelineAgentState, organizationId],
+  )
+
+  const decideAveline = useCallback(
+    async (messageId: string, approved: boolean) => {
+      const conversationId = avelineIdRef.current
+      if (!conversationId) return
+      const message = avelineMessagesRef.current.find((m) => m.id === messageId)
+      if (!message) return
+      const updated = await decideSignOff(
+        organizationId,
+        conversationId,
+        messageId,
+        approved,
+        message.contentHash ?? '',
+      )
+      setAvelineMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)))
+    },
+    [organizationId],
+  )
+
+  /** Merges a functional update into one conversation's tray. */
+  const updatePending = useCallback(
+    (conversationId: string, update: (held: PendingAttachment[]) => PendingAttachment[]) => {
+      setPendingAttachments((prev) => ({
+        ...prev,
+        [conversationId]: update(prev[conversationId] ?? []),
+      }))
+    },
+    [],
+  )
+
+  /** Uploads one chip's retained bytes and records the stored type the response reported. */
+  const runUpload = useCallback(
+    async (conversationId: string, chip: PendingAttachment) => {
+      try {
+        const stored = await uploadConversationAttachment(
+          organizationId,
+          conversationId,
+          chip.payload,
+          chip.fileName,
+        )
+        updatePending(conversationId, (held) =>
+          held.map((a) =>
+            a.id === chip.id
+              ? {
+                  ...a,
+                  status: 'ready',
+                  attachmentId: stored.attachmentId,
+                  storedContentType: stored.contentType,
+                  analysable: isAnalysableContentType(stored.contentType),
+                  sizeBytes: stored.sizeBytes,
+                  error: undefined,
+                }
+              : a,
+          ),
+        )
+      } catch (error) {
+        updatePending(conversationId, (held) =>
+          held.map((a) =>
+            a.id === chip.id
+              ? {
+                  ...a,
+                  status: 'failed',
+                  error: describeUploadFailure(error),
+                  // A denial the server will not reconsider is not worth retrying; everything
+                  // else (network, timeout, 5xx) is.
+                  retryable: !isPermanentUploadFailure(error),
+                }
+              : a,
+          ),
+        )
+      }
+    },
+    [organizationId, updatePending],
+  )
+
+  const attach = useCallback(
+    async (conversationId: string, files: File[]): Promise<AttachmentRefusal[]> => {
+      const refusals: AttachmentRefusal[] = []
+      const heldCount = pendingAttachments[conversationId]?.length ?? 0
+      const prepared: PreparedAttachment[] = []
+
+      // Refusals are decided before any chip exists and before any byte leaves the browser: a
+      // sixth file, an unsupported type, and an over-cap payload all fail here.
+      for (const file of files) {
+        const cap = checkAttachmentCap(heldCount + prepared.length)
+        if (cap) {
+          refusals.push({ ...cap, fileName: file.name })
+          continue
+        }
+        const result = await prepareAttachment(file)
+        if (result.status === 'refused') {
+          refusals.push(result)
+          continue
+        }
+        prepared.push(result)
+      }
+
+      if (prepared.length === 0) return refusals
+
+      const chips: PendingAttachment[] = prepared.map((item) => ({
+        id: mintClientMessageId(),
+        fileName: item.fileName,
+        payload: item.file,
+        status: 'uploading',
+        attachmentId: null,
+        storedContentType: null,
+        analysable: false,
+        sizeBytes: item.byteLength,
+        // A fresh pick can always be retried: nothing has been denied yet.
+        retryable: true,
+      }))
+      updatePending(conversationId, (held) => [...held, ...chips])
+      await Promise.all(chips.map((chip) => runUpload(conversationId, chip)))
+      return refusals
+    },
+    [pendingAttachments, runUpload, updatePending],
+  )
+
+  const retryAttachment = useCallback(
+    async (conversationId: string, attachmentId: string) => {
+      const chip = (pendingAttachments[conversationId] ?? []).find((a) => a.id === attachmentId)
+      if (!chip) return
+      updatePending(conversationId, (held) =>
+        held.map((a) =>
+          a.id === attachmentId ? { ...a, status: 'uploading', error: undefined } : a,
+        ),
+      )
+      // The same `chip.payload` reference: a retry re-uploads the bytes already prepared.
+      await runUpload(conversationId, { ...chip, status: 'uploading', error: undefined })
+    },
+    [pendingAttachments, runUpload, updatePending],
+  )
+
+  const removeAttachment = useCallback(
+    (conversationId: string, attachmentId: string) => {
+      updatePending(conversationId, (held) => held.filter((a) => a.id !== attachmentId))
+    },
+    [updatePending],
+  )
+
+  const attachmentsReady = useCallback(
+    (conversationId: string) => {
+      const held = pendingAttachments[conversationId] ?? []
+      return held.every((a) => a.status === 'ready' && a.attachmentId !== null)
+    },
+    [pendingAttachments],
+  )
+
+  const send = useCallback(
+    async (text: string, attachmentIds?: string[]) => {
+      if (!activeConversationId || !text.trim()) return
+      const trimmed = text.trim()
+      const ids = attachmentIds ?? []
+      // The same composed message (same text and same held files) keeps its idempotency key and
+      // its optimistic row across retries, so a retried send cannot write a second note.
+      const signature = `${trimmed}\u0000${ids.join('\u0000')}`
+      const prior = composedRef.current
+      const isRetry = prior !== null && prior.signature === signature
+      const clientMessageId = isRetry ? prior.key : mintClientMessageId()
+      const optimisticId = isRetry ? prior.optimisticId : `local-${Date.now()}`
+      composedRef.current = { key: clientMessageId, signature, optimisticId }
+
+      const optimistic: ChatMessage = {
+        id: optimisticId,
         conversationId: activeConversationId,
         authorKind: 'User',
         agentKey: null,
@@ -333,27 +805,45 @@ export function ConversationsProvider({
       }
 
       setSending(true)
-      // Optimistic: show the staff message immediately.
-      setMessages((prev) => [...prev, optimistic])
+      // Optimistic: show the staff message immediately (replacing its failed retry, if any).
+      setMessages((prev) =>
+        prev.some((m) => m.id === optimisticId)
+          ? prev.map((m) => (m.id === optimisticId ? optimistic : m))
+          : [...prev, optimistic],
+      )
 
       try {
-        const message = await sendMessage(organizationId, activeConversationId, trimmed)
+        const message = await sendMessage(
+          organizationId,
+          activeConversationId,
+          trimmed,
+          ids,
+          clientMessageId,
+        )
         // Replace the optimistic bubble with the confirmed message (real id + timestamp).
         setMessages((prev) =>
-          prev.map((m) => (m.id === optimistic.id ? { ...message } : m)),
+          prev.map((m) => (m.id === optimisticId ? { ...message } : m)),
         )
+        // The composed message is delivered: the next message mints a fresh key, and the tray
+        // clears so a chip can never linger pending after its row is bound.
+        composedRef.current = null
+        updatePending(activeConversationId, () => [])
         // Only once the user message is confirmed does Aveline's activity bubble appear.
         setAgentActivity({ startedAt: Date.now(), currentState: 'thinking' })
         applyAgentState('thinking')
-      } catch {
+      } catch (error) {
         setMessages((prev) =>
-          prev.map((m) => (m.id === optimistic.id ? { ...m, pending: 'failed' } : m)),
+          prev.map((m) => (m.id === optimisticId ? { ...m, pending: 'failed' } : m)),
         )
+        // Rethrow so the caller can tell a failed send from a confirmed one. The optimistic row
+        // above is the visual state; this rejection is the control-flow signal the Composer needs
+        // to keep the textarea and the tray, because only a confirmed send may clear them.
+        throw error
       } finally {
         setSending(false)
       }
     },
-    [activeConversationId, applyAgentState, organizationId],
+    [activeConversationId, applyAgentState, organizationId, updatePending],
   )
 
   const decide = useCallback(
@@ -399,6 +889,73 @@ export function ConversationsProvider({
     [activeConversationId, applyAgentState, organizationId],
   )
 
+  /**
+   * Delivers a block to a client's own channel and shows it in that client's thread.
+   *
+   * It records the row the server wrote rather than the optimistic one: a delivery has no
+   * optimistic phase, because a bubble that says "Sent" before the provider has accepted would be
+   * the console claiming a customer was messaged when nobody was. The server's `Sent` row is
+   * broadcast over the hub, so the target thread updates itself if it is open.
+   */
+  const deliverToClient = useCallback(
+    async (targetConversationId: string, text: string, clientMessageId?: string) => {
+      const body = text.trim()
+      if (!targetConversationId || !body) return
+      const receipt = await deliverBlockToCustomer(
+        organizationId,
+        targetConversationId,
+        body,
+        clientMessageId,
+      )
+      // Keep the target row's preview and ordering honest in the list the picker was drawn from.
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === targetConversationId
+            ? {
+                ...c,
+                lastMessageAt: receipt.message?.createdAt ?? new Date().toISOString(),
+                lastMessagePreview: body.slice(0, 120),
+              }
+            : c,
+        ),
+      )
+    },
+    [organizationId],
+  )
+
+  /**
+   * Re-runs the agent for the turn behind a message in the panel's thread.
+   *
+   * The wait after this resolves is Aveline's, not the caller's: the fresh blocks arrive through
+   * the event subscriber and the hub, so the thread's working indicator is set here and cleared by
+   * the same terminal agent-state handling every other reply goes through.
+   */
+  const regenerate = useCallback(
+    async (messageId: string) => {
+      if (!activeConversationId) return
+      await requestRegeneration(organizationId, activeConversationId, messageId)
+      if (!isTerminalState(lastAgentStateRef.current)) {
+        setAgentActivity({ startedAt: Date.now(), currentState: 'thinking' })
+        applyAgentState('thinking')
+      }
+    },
+    [activeConversationId, applyAgentState, organizationId],
+  )
+
+  /** `regenerate`, bound to the drawer's own thread slot rather than the panel's. */
+  const regenerateAveline = useCallback(
+    async (messageId: string) => {
+      const conversationId = avelineIdRef.current
+      if (!conversationId) return
+      await requestRegeneration(organizationId, conversationId, messageId)
+      if (!isTerminalState(lastAvelineStateRef.current)) {
+        setAvelineAgentActivity({ startedAt: Date.now(), currentState: 'thinking' })
+        applyAvelineAgentState('thinking')
+      }
+    },
+    [applyAvelineAgentState, organizationId],
+  )
+
   return (
     <ConversationsContext.Provider
       value={{
@@ -414,8 +971,25 @@ export function ConversationsProvider({
         openConversation,
         openOrCreateSalon,
         send,
+        pendingAttachments,
+        attach,
+        retryAttachment,
+        removeAttachment,
+        attachmentsReady,
         decide,
         selectCustomer,
+        deliverToClient,
+        regenerate,
+        avelineConversationId,
+        avelineMessages,
+        avelineAgentState,
+        avelineAgentActivity,
+        avelineLoading,
+        avelineSending,
+        openAveline,
+        sendToAveline,
+        decideAveline,
+        regenerateAveline,
       }}
     >
       {children}

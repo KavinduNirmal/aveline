@@ -40,6 +40,7 @@ public class IntegrationEndpointsIntegrationTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.UseSetting("Credentials:EncryptionKey", Base64Key);
             })
@@ -295,7 +296,7 @@ public class IntegrationEndpointsIntegrationTests : IAsyncLifetime
     private static AppDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options;
         return new AppDbContext(options);
     }
@@ -303,6 +304,9 @@ public class IntegrationEndpointsIntegrationTests : IAsyncLifetime
     /// <summary>Offline WhatsApp provider used to keep endpoint tests free of network calls.</summary>
     private sealed class FakeWhatsAppService : IWhatsAppService
     {
+        public Task<WhatsAppMediaResult> GetMediaAsync(string accessToken, string mediaId, CancellationToken cancellationToken = default)
+            => Task.FromResult(new WhatsAppMediaResult(IsSuccess: false, Error: "not used in this test"));
+
         public Task<WhatsAppTestResult> TestConnectionAsync(
             string accessToken, string phoneNumberId, CancellationToken cancellationToken = default)
             => Task.FromResult(new WhatsAppTestResult(IsValid: true));
@@ -310,5 +314,11 @@ public class IntegrationEndpointsIntegrationTests : IAsyncLifetime
         public Task<WhatsAppSendResult> SendMessageAsync(
             string accessToken, string phoneNumberId, string to, string text, CancellationToken cancellationToken = default)
             => Task.FromResult(new WhatsAppSendResult(IsSuccess: true, MessageId: "wamid.test"));
+
+        public Task<WhatsAppSendResult> SendTemplateAsync(
+            string accessToken, string phoneNumberId, string to, string templateName,
+            string languageCode, IReadOnlyList<object>? components,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("This test double does not send templates.");
     }
 }

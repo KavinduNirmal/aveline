@@ -358,6 +358,22 @@ class NotificationsController extends ChangeNotifier {
     _notify();
   }
 
+  /// Applies an authoritative count that arrived with a realtime payload.
+  ///
+  /// The server computes the count after the row was written, so the badge is
+  /// exact before the list's own reply lands. Clamped at zero, and silent when
+  /// the value has not changed, so an arrival cannot rebuild a frame for a
+  /// number nobody can see move. The list still refreshes separately: rows stay
+  /// the API's authority.
+  void applyUnreadCount(int count) {
+    final normalized = math.max(0, count);
+    if (normalized == _unreadCount) {
+      return;
+    }
+    _unreadCount = normalized;
+    _notify();
+  }
+
   /// Clears [actionError] once the screen has reported it.
   ///
   /// Deliberately silent: the screen calls this from its own listener, and

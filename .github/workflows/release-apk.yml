@@ -1,0 +1,400 @@
+# =============================================================================
+# Aveline — Android release APK
+#
+# Builds a signed, correctly-configured release APK and publishes it to
+# Cloudflare R2, which serves it from https://dl.aveline.gravora.dev.
+#
+# R2 STORES AND SERVES THE APK; IT DOES NOT BUILD IT. The build happens on the
+# GitHub runner below.
+#
+# -----------------------------------------------------------------------------
+# WHY THIS WORKFLOW EXISTS
+# -----------------------------------------------------------------------------
+# Every APK CI has published so far was inert. `.github/workflows/ci.yml` runs a
+# bare `flutter build apk --release` with no `--dart-define`, so:
+#   * API_BASE_URL fell back to `http://10.0.2.2:5091` — the Android EMULATOR's
+#     loopback alias, which resolves to nothing on a real device;
+#   * the Clerk key fell back to the DEVELOPMENT instance.
+# A tester installs it, gets a network error, and cannot sign in.
+#
+# -----------------------------------------------------------------------------
+# ONE-TIME SETUP
+# -----------------------------------------------------------------------------
+# Secrets (Settings > Secrets and variables > Actions > Secrets):
+#   R2_ACCESS_KEY_ID            R2 API token, Access Key ID
+#   R2_SECRET_ACCESS_KEY        R2 API token, Secret Access Key
+#   ANDROID_KEYSTORE_BASE64     base64 of the release .jks
+#   ANDROID_KEYSTORE_PASSWORD   keystore password
+#   ANDROID_KEY_ALIAS           key alias
+#   ANDROID_KEY_PASSWORD        key password
+#   GOOGLE_SERVICES_JSON_BASE64 base64 of google-services.json (optional)
+#
+# Variables (Settings > Secrets and variables > Actions > Variables):
+#   R2_ACCOUNT_ID               Cloudflare account id (the S3 endpoint prefix)
+#   R2_BUCKET                   aveline-r2
+#   R2_PUBLIC_BASE_URL          https://dl.aveline.gravora.dev
+#   APK_API_BASE_URL            backend the APK talks to
+#   APK_CLERK_PUBLISHABLE_KEY   pk_live_... for the production Clerk instance
+#   APK_WEB_BASE_URL            https://aveline.gravora.dev
+#
+# Create the keystore once, and KEEP IT FOREVER — losing it means you can never
+# update an installed app again:
+#
+#   keytool -genkeypair -v -keystore aveline-release.jks \
+#     -keyalg RSA -keysize 2048 -validity 10000 -alias aveline \
+#     -dname "CN=Aveline, O=Aveline, C=LK"
+#   base64 -w0 aveline-release.jks    # paste into ANDROID_KEYSTORE_BASE64
+# =============================================================================
+
+name: Aveline Release APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_name:
+        description: "versionName, e.g. 1.0.0. Defaults to the pubspec version."
+        required: false
+        type: string
+      allow_template_package:
+        description: "Allow publishing while applicationId is still com.example.*. Leave false for a real release."
+        required: false
+        type: boolean
+        default: false
+
+# Never two releases at once, and never cancel one: a half-uploaded manifest
+# would point at an APK that is not there yet.
+concurrency:
+  group: release-apk
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: '3.35.4'
+  JAVA_VERSION: '17'
+
+jobs:
+  release:
+    name: Build, sign and publish the APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- preflight: refuse to publish a known-broken artifact ---------------
+      # Fail before spending ten minutes on a build if the configuration that
+      # makes the APK usable is missing. A debug-signed or template-packaged APK
+      # is worse than no APK, because it installs and then cannot update.
+      #
+      # Values arrive through `env`, not inline `${{ }}`: the `secrets` context is
+      # not available in a step-level `if`, and interpolating into a `case` is
+      # fragile.
+      - name: Preflight
+        env:
+          API_BASE_URL: ${{ vars.APK_API_BASE_URL || secrets.APK_API_BASE_URL }}
+          CLERK_KEY: ${{ vars.APK_CLERK_PUBLISHABLE_KEY || secrets.APK_CLERK_PUBLISHABLE_KEY }}
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          fail=0
+          if [ -z "$API_BASE_URL" ]; then
+            echo "::error::APK_API_BASE_URL is not set. Without it the APK falls back to the emulator loopback address."
+            fail=1
+          fi
+          if [ -z "$CLERK_KEY" ]; then
+            echo "::error::APK_CLERK_PUBLISHABLE_KEY is not set. Without it the APK defaults to the DEVELOPMENT Clerk instance."
+            fail=1
+          elif [ "${CLERK_KEY#pk_live_}" = "$CLERK_KEY" ]; then
+            echo "::error::APK_CLERK_PUBLISHABLE_KEY is not a pk_live_ key; the app would authenticate against the wrong Clerk instance."
+            fail=1
+          fi
+          if [ -z "$KEYSTORE" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is not set. A debug-signed release APK cannot update over a previous install."
+            fail=1
+          fi
+          [ "$fail" -eq 0 ] || exit 1
+          echo "Preflight passed."
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      # --- signing ------------------------------------------------------------
+      # key.properties and the .jks are gitignored (.gitignore:209-210); the
+      # keystore exists only inside this runner and the Actions secret.
+      - name: Materialise the signing config
+        working-directory: frontend/aveline_mobile/android
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          printf '%s' "$KEYSTORE_B64" | base64 -d > app/aveline-release.jks
+          cat > key.properties <<EOF
+          storePassword=${KS_PASS}
+          keyPassword=${KEY_PASS}
+          keyAlias=${KEY_ALIAS}
+          storeFile=aveline-release.jks
+          EOF
+
+      # Optional: without it the build still succeeds and FCM is a no-op, which
+      # the app's NoopPushTokenSource fallback already handles. Uses a shell test
+      # rather than a step-level `if`, because `secrets` is not an allowed context
+      # in `if` at step scope.
+      - name: Materialise google-services.json (optional)
+        working-directory: frontend/aveline_mobile/android/app
+        env:
+          GS_B64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+        run: |
+          if [ -n "$GS_B64" ]; then
+            printf '%s' "$GS_B64" | base64 -d > google-services.json
+            echo "google-services.json written; FCM will be configured."
+          else
+            echo "No GOOGLE_SERVICES_JSON_BASE64 secret; building without FCM."
+          fi
+
+      - name: Resolve versions
+        id: v
+        working-directory: frontend/aveline_mobile
+        run: |
+          # versionName from the input, else the pubspec version without its +build suffix.
+          NAME="${{ inputs.build_name }}"
+          if [ -z "$NAME" ]; then
+            NAME=$(grep -E '^version:' pubspec.yaml | sed -E 's/^version:[[:space:]]*//; s/\+.*//')
+          fi
+          # versionCode must increase monotonically. pubspec pins it at 1 forever,
+          # so Android cannot tell build 200 from build 152 and will happily install
+          # the older one over the newer one. run_number always increases.
+          CODE="${{ github.run_number }}"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "Building versionName=$NAME versionCode=$CODE"
+
+      - name: Resolve dependencies
+        working-directory: frontend/aveline_mobile
+        run: flutter pub get
+
+      # The committed android/gradle.properties caps the Gradle and Kotlin JVMs for a
+      # 15 GB development host with no swap, where a larger heap drew the kernel OOM
+      # killer: -Xmx1280m with -XX:MaxMetaspaceSize=448m, plus
+      # kotlin.compiler.execution.strategy=in-process, which runs Kotlin in that same
+      # JVM. Those caps also apply here, and on the runner AGP 9 plus Kotlin exhausts
+      # 448m of metaspace and dies with "java.lang.OutOfMemoryError: Metaspace".
+      #
+      # Raised for CI only, so the developer's host keeps the tuning that made it
+      # buildable in the first place.
+      - name: Raise the Gradle JVM limits for this runner
+        working-directory: frontend/aveline_mobile/android
+        run: |
+          set -euo pipefail
+          sed -i \
+            's|^org\.gradle\.jvmargs=.*|org.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g -XX:ReservedCodeCacheSize=256m -XX:+HeapDumpOnOutOfMemoryError|' \
+            gradle.properties
+          grep '^org.gradle.jvmargs=' gradle.properties
+
+      # --- build --------------------------------------------------------------
+      # The three --dart-define values are the entire point of this workflow:
+      # AppConfig reads every setting from String.fromEnvironment at COMPILE time,
+      # so a missing define is not a runtime default, it is a wrong build.
+      #
+      # The universal APK is staged OUT of the build output before the split build
+      # runs: both write to the same flutter-apk directory, so the second build can
+      # remove the first one's artifacts.
+      - name: Build release APKs
+        working-directory: frontend/aveline_mobile
+        env:
+          DEFINES: >-
+            --dart-define=API_BASE_URL=${{ vars.APK_API_BASE_URL || secrets.APK_API_BASE_URL }}
+            --dart-define=CLERK_PUBLISHABLE_KEY=${{ vars.APK_CLERK_PUBLISHABLE_KEY || secrets.APK_CLERK_PUBLISHABLE_KEY }}
+            --dart-define=AVELINE_WEB_BASE_URL=${{ vars.APK_WEB_BASE_URL || secrets.APK_WEB_BASE_URL }}
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/apk"
+          mkdir -p "$OUT"
+
+          flutter build apk --release \
+            --build-name="${{ steps.v.outputs.name }}" \
+            --build-number="${{ steps.v.outputs.code }}" \
+            $DEFINES
+          cp build/app/outputs/flutter-apk/app-release.apk "$OUT/aveline-universal.apk"
+          echo "universal: $(stat -c%s "$OUT/aveline-universal.apk") bytes"
+
+          flutter build apk --release --split-per-abi \
+            --build-name="${{ steps.v.outputs.name }}" \
+            --build-number="${{ steps.v.outputs.code }}" \
+            $DEFINES
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            src="build/app/outputs/flutter-apk/app-${abi}-release.apk"
+            [ -f "$src" ] && cp "$src" "$OUT/aveline-${abi}.apk" && echo "${abi}: $(stat -c%s "$OUT/aveline-${abi}.apk") bytes"
+          done
+          ls -la "$OUT"
+
+      # --- verification -------------------------------------------------------
+      # Assert what the artifacts actually are, rather than trusting the build.
+      # A Healthy-looking build once shipped the Flutter template package on a
+      # debug certificate; neither is visible without inspecting the APK.
+      # build-tools binaries are not on PATH, so they are located explicitly.
+      - name: Inspect the artifacts
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/apk"
+          BT=$(ls -d "${ANDROID_HOME:-/usr/local/lib/android/sdk}"/build-tools/* | sort -V | tail -1)
+          AAPT2="$BT/aapt2"
+          APKSIGNER="$BT/apksigner"
+          echo "using build-tools: $BT"
+
+          UNIVERSAL="$OUT/aveline-universal.apk"
+          BADGING=$("$AAPT2" dump badging "$UNIVERSAL")
+          PACKAGE=$(echo "$BADGING" | sed -nE "s/^package: name='([^']+)'.*/\1/p")
+          VCODE=$(echo "$BADGING" | sed -nE "s/.*versionCode='([0-9]+)'.*/\1/p")
+          VNAME=$(echo "$BADGING" | sed -nE "s/.*versionName='([^']+)'.*/\1/p")
+          echo "applicationId : $PACKAGE"
+          echo "versionCode   : $VCODE"
+          echo "versionName   : $VNAME"
+
+          if [ "$VCODE" = "1" ]; then
+            echo "::error::versionCode is 1. It must increase on every release or Android treats an older build as an update."
+            exit 1
+          fi
+
+          case "$PACKAGE" in
+            com.example.*)
+              if [ "${{ inputs.allow_template_package }}" != "true" ]; then
+                echo "::error::applicationId is still '$PACKAGE'. The Play Store will not accept it, it collides with countless template apps, and changing it later makes this a different app that cannot update in place. Set a real id, or re-run with allow_template_package=true to publish a deliberately-marked test build."
+                exit 1
+              fi
+              echo "::warning::Publishing with the template applicationId because allow_template_package=true."
+              ;;
+          esac
+
+          echo "--- signature ---"
+          "$APKSIGNER" verify --print-certs "$UNIVERSAL" | head -6
+          if "$APKSIGNER" verify --print-certs "$UNIVERSAL" | grep -qi "Android Debug"; then
+            echo "::error::The release APK is signed with the Android Debug certificate. The certificate is public and password-free, so anyone can sign a replacement, and every release forces an uninstall."
+            exit 1
+          fi
+          echo "Artifacts verified."
+
+      - name: Compute hashes
+        id: hash
+        run: |
+          OUT="$RUNNER_TEMP/apk"
+          {
+            echo "universal_sha=$(sha256sum "$OUT/aveline-universal.apk" | cut -d' ' -f1)"
+            echo "universal_bytes=$(stat -c%s "$OUT/aveline-universal.apk")"
+          } >> "$GITHUB_OUTPUT"
+          if [ -f "$OUT/aveline-arm64-v8a.apk" ]; then
+            {
+              echo "arm64_sha=$(sha256sum "$OUT/aveline-arm64-v8a.apk" | cut -d' ' -f1)"
+              echo "arm64_bytes=$(stat -c%s "$OUT/aveline-arm64-v8a.apk")"
+            } >> "$GITHUB_OUTPUT"
+          fi
+          echo "version_code=${{ steps.v.outputs.code }}" >> "$GITHUB_OUTPUT"
+          echo "version_name=${{ steps.v.outputs.name }}" >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT" | sed 's/^/  /'
+
+      # aws-cli speaks the S3 API that R2 implements; only the endpoint differs.
+      - name: Upload to Cloudflare R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          set -euo pipefail
+          ENDPOINT="https://${{ vars.R2_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
+          BUCKET="${{ vars.R2_BUCKET || secrets.R2_BUCKET }}"
+          PREFIX="aveline-android-apk"
+          NAME="${{ steps.v.outputs.version_name }}"
+          CODE="${{ steps.v.outputs.version_code }}"
+          OUT="$RUNNER_TEMP/apk"
+
+          # Immutable, version-addressed copies, cached for a year.
+          for f in "$OUT"/*.apk; do
+            BASE=$(basename "$f" .apk)
+            aws s3 cp "$f" "s3://$BUCKET/$PREFIX/${NAME}+${CODE}/$BASE.apk" \
+              --endpoint-url "$ENDPOINT" \
+              --cache-control "public, max-age=31536000, immutable"
+          done
+
+          # Stable "latest" aliases. Short cache so a new release propagates fast.
+          aws s3 cp "$OUT/aveline-universal.apk" \
+            "s3://$BUCKET/$PREFIX/aveline-latest.apk" \
+            --endpoint-url "$ENDPOINT" --cache-control "public, max-age=300"
+          if [ -f "$OUT/aveline-arm64-v8a.apk" ]; then
+            aws s3 cp "$OUT/aveline-arm64-v8a.apk" \
+              "s3://$BUCKET/$PREFIX/aveline-latest-arm64-v8a.apk" \
+              --endpoint-url "$ENDPOINT" --cache-control "public, max-age=300"
+          fi
+
+      # The manifest is the only integrity signal a sideloader gets. Without it
+      # there is also no way for the app to detect that a newer build exists,
+      # because Play is deferred and therefore provides no auto-update.
+      - name: Publish the latest.json manifest
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          set -euo pipefail
+          ENDPOINT="https://${{ vars.R2_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
+          BUCKET="${{ vars.R2_BUCKET || secrets.R2_BUCKET }}"
+          BASE="${{ vars.R2_PUBLIC_BASE_URL || secrets.R2_PUBLIC_BASE_URL }}/aveline-android-apk"
+
+          # Built with python, not an interpolated heredoc: if the arm64 split is
+          # absent its sha/bytes outputs are empty, and a heredoc would emit
+          # `"bytes": ,` which is not valid JSON. Absent variants become null.
+          VERSION_CODE='${{ steps.hash.outputs.version_code }}' \
+          VERSION_NAME='${{ steps.hash.outputs.version_name }}' \
+          COMMIT="$GITHUB_SHA" \
+          BASE="$BASE" \
+          UNIVERSAL_SHA='${{ steps.hash.outputs.universal_sha }}' \
+          UNIVERSAL_BYTES='${{ steps.hash.outputs.universal_bytes }}' \
+          ARM64_SHA='${{ steps.hash.outputs.arm64_sha }}' \
+          ARM64_BYTES='${{ steps.hash.outputs.arm64_bytes }}' \
+          python3 - <<'PY' > latest.json
+          import json, os, datetime
+
+          def variant(name, url, sha, size):
+              if not sha or not size:
+                  return None
+              return {"url": url, "sha256": sha, "bytes": int(size), "variant": name}
+
+          base = os.environ["BASE"]
+          doc = {
+              "versionCode": int(os.environ["VERSION_CODE"]),
+              "versionName": os.environ["VERSION_NAME"],
+              "commit": os.environ["COMMIT"],
+              "builtAt": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "apk": variant("universal", f"{base}/aveline-latest.apk",
+                             os.environ.get("UNIVERSAL_SHA"), os.environ.get("UNIVERSAL_BYTES")),
+              "arm64": variant("arm64-v8a", f"{base}/aveline-latest-arm64-v8a.apk",
+                               os.environ.get("ARM64_SHA"), os.environ.get("ARM64_BYTES")),
+          }
+          print(json.dumps(doc, indent=2))
+          PY
+
+          aws s3 cp latest.json "s3://$BUCKET/aveline-android-apk/latest.json" \
+            --endpoint-url "$ENDPOINT" \
+            --content-type "application/json" \
+            --cache-control "public, max-age=300"
+
+          echo "=== published manifest ==="
+          cat latest.json
+          echo
+          echo "Download: ${BASE}/aveline-latest.apk"
+
+      - name: Upload as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aveline-release-apk-${{ steps.v.outputs.name }}+${{ steps.v.outputs.code }}
+          path: ${{ runner.temp }}/apk/*.apk
+          retention-days: 30

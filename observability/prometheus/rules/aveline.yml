@@ -1,0 +1,81 @@
+# =============================================================================
+# Aveline — Prometheus recording rules and operator alerts.
+#
+# SERIES NAMES: the pinned OpenTelemetry exporter translates a dotted instrument
+# name and appends its unit (`ms -> milliseconds`, `count -> _count`) and `_total`
+# for counters. `aveline_blossom_balance_count` is therefore the real series, not
+# `aveline.blossom.balance`. `MetricsCatalog` in the API is the authored table and
+# `MetricsNamingTests` asserts every name below against a live scrape; do not copy
+# an expression from a dashboard found online.
+#
+# OWNERSHIP: these are OPERATOR alerts. The eleven seeded product rules live in
+# `SystemAlertRuleSeed` and are surfaced to boutique roles through the product;
+# they must not share a contact point with this file (plan §3.4).
+# =============================================================================
+
+groups:
+  - name: aveline.operator
+    interval: 30s
+    rules:
+      # --- Recording rules: one definition per quantity two consumers care about.
+      - record: aveline:api_requests:rate5m
+        expr: sum(rate(http_server_request_duration_seconds_count{job="aveline-api"}[5m]))
+
+      # `or vector(0)` on the NUMERATOR only. Without it the division has an empty operand whenever
+      # there are no 5xx samples and PromQL returns no series at all, so the panel reads "no data"
+      # during normal operation. With it: 0% while there is traffic and no errors, and still no data
+      # when there is no traffic (the denominator stays empty), so a total outage is never reported
+      # as a healthy 0%.
+      - record: aveline:api_error_ratio:rate5m
+        expr: |
+          (sum(rate(http_server_request_duration_seconds_count{job="aveline-api",http_response_status_code=~"5.."}[5m])) or vector(0))
+            / clamp_min(sum(rate(http_server_request_duration_seconds_count{job="aveline-api"}[5m])), 1)
+
+      - record: aveline:api_latency_p95:5m
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(http_server_request_duration_seconds_bucket{job="aveline-api"}[5m])))
+
+      # The bridged business series; the exact balance record stays in Postgres.
+      - record: aveline:blossom_balance:min
+        expr: min(aveline_blossom_balance_count)
+
+      # PostgreSQL buffer-cache hit ratio. clamp_min is required or the ratio is NaN
+      # whenever blks_read is 0 in the window.
+      - record: aveline:pg_cache_hit_ratio:5m
+        expr: |
+          sum by (datname) (rate(pg_stat_database_blks_hit[5m]))
+            / clamp_min(sum by (datname) (rate(pg_stat_database_blks_hit[5m]))
+                      + sum by (datname) (rate(pg_stat_database_blks_read[5m])), 1)
+
+      # --- Operator alerts. Deliberately only the concerns with no tenant dimension.
+      - alert: AvelineApiScrapeDown
+        expr: up{job="aveline-api"} == 0
+        for: 3m
+        labels: { severity: critical }
+        annotations:
+          summary: "Prometheus cannot scrape the Aveline API /metrics endpoint"
+          description: >-
+            The scrape has been failing for three minutes. Check that the API is up and that
+            METRICS_SCRAPE_TOKEN matches the token in observability/prometheus/secrets/scrape_token.
+
+      - alert: AvelineApiErrorRatioHigh
+        expr: aveline:api_error_ratio:rate5m > 0.05
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Aveline API 5xx ratio above 5% for 10 minutes"
+          description: >-
+            The product's own api.error.rate alert owns boutique-facing notification of this
+            condition; this operator alert exists so the on-call engineer sees it in the same
+            place as scrape health. They must not share a contact point.
+
+      - alert: AvelinePostgresTargetDown
+        expr: up{job="aveline-postgres"} == 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Prometheus cannot scrape postgres_exporter"
+          description: >-
+            Server-side database metrics (locks, buffer cache, growth, backends) are missing.
+            The application is unaffected; the Database dashboard will show a gap.

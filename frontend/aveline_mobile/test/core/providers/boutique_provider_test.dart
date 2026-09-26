@@ -69,6 +69,55 @@ void main() {
       expect(adapter.lastPath, '/api/v1/orgs/my');
     });
 
+    test('keeps the active membership id and role beside the name', () async {
+      adapter.body = [
+        {
+          'organizationId': '11111111-1111-1111-1111-111111111111',
+          'organizationName': 'Old Atelier',
+          'boutiqueRole': 'org:boutique_staff',
+          'status': 'Invited',
+        },
+        {
+          'organizationId': '22222222-2222-2222-2222-222222222222',
+          'organizationName': 'Ceylon Atelier',
+          'boutiqueRole': 'org:boutique_manager',
+          'status': 'Active',
+        },
+      ];
+
+      await provider.fetchBoutique(dio);
+
+      // The id, the role and the name must describe one membership, so a screen
+      // can build `/orgs/{id}/...` for the shop whose name it is showing.
+      expect(provider.name, 'Ceylon Atelier');
+      expect(provider.organizationId, '22222222-2222-2222-2222-222222222222');
+      expect(provider.boutiqueRole, 'org:boutique_manager');
+    });
+
+    test('takes the id and role from the membership that supplied the name',
+        () async {
+      adapter.body = [
+        {
+          'organizationId': '33333333-3333-3333-3333-333333333333',
+          'organizationName': '  Ceylon Atelier  ',
+          'boutiqueRole': 'org:boutique_owner',
+          'status': 'Invited',
+        },
+        {
+          'organizationId': '44444444-4444-4444-4444-444444444444',
+          'organizationName': 'Second Atelier',
+          'boutiqueRole': 'org:boutique_staff',
+          'status': 'Suspended',
+        },
+      ];
+
+      await provider.fetchBoutique(dio);
+
+      expect(provider.name, 'Ceylon Atelier');
+      expect(provider.organizationId, '33333333-3333-3333-3333-333333333333');
+      expect(provider.boutiqueRole, 'org:boutique_owner');
+    });
+
     test(
       'falls back to the first named membership when none is active',
       () async {
@@ -121,12 +170,20 @@ void main() {
       await provider.fetchBoutique(dio);
 
       expect(provider.name, isNull);
+      // No membership means no org id, which is a hard stop for org-scoped calls.
+      expect(provider.organizationId, isNull);
+      expect(provider.boutiqueRole, isNull);
       expect(provider.hasLoadFailed, isTrue);
     });
 
-    test('clears the loaded name and failure', () async {
+    test('clears the loaded name, role and org id', () async {
       adapter.body = [
-        {'organizationName': 'Ceylon Atelier', 'status': 'Active'},
+        {
+          'organizationId': '22222222-2222-2222-2222-222222222222',
+          'organizationName': 'Ceylon Atelier',
+          'boutiqueRole': 'org:boutique_manager',
+          'status': 'Active',
+        },
       ];
       await provider.fetchBoutique(dio);
       expect(provider.name, 'Ceylon Atelier');
@@ -134,6 +191,8 @@ void main() {
       provider.clear();
 
       expect(provider.name, isNull);
+      expect(provider.organizationId, isNull);
+      expect(provider.boutiqueRole, isNull);
       expect(provider.hasLoadFailed, isFalse);
     });
   });

@@ -125,9 +125,52 @@ public class ApiStatsRollupJobTests
         Assert.Equal(1, await job.RunAsync(CancellationToken.None));
 
         await using var verify = Context(databaseName);
-        var row = await verify.ApiRequestMetrics.SingleAsync();
+        // Scope to the hour window: when the just-closed hour is 23:00 UTC, RunAsync also
+        // recomputes the day row for that date into the same table (see ApiStatsRollupJob's
+        // remarks), so an unfiltered SingleAsync would see two rows for one hour of every day.
+        var row = await verify.ApiRequestMetrics
+            .SingleAsync(candidate => candidate.WindowSize == "hour");
         Assert.Equal(closedHour, row.WindowStart);
         Assert.Equal("5xx", row.StatusClass);
+    }
+
+    [Fact]
+    public async Task RecomputeOfTheTwentyThreeHundredHourKeepsHourAndDayRowsCoexisting()
+    {
+        var (_, databaseName) = Build();
+        // A fixed 23:00 hour, the only hour for which RunAsync also recomputes the day row.
+        var endOfDayHour = new DateTime(2026, 9, 11, 23, 0, 0, DateTimeKind.Utc);
+
+        await using (var context = Context(databaseName))
+        {
+            var metric = BrokenMetric();
+            metric.WindowStart = endOfDayHour;
+            context.ApiRequestMetrics.Add(metric);
+            await context.SaveChangesAsync();
+        }
+
+        await using (var context = Context(databaseName))
+        {
+            // Exactly RunAsync's 23:00 branch. RunAsync reads the system clock, so the test
+            // drives the same two steps against a fixed hour: recompute the closed hour, then
+            // recompute the day row from that date's hour rows.
+            Assert.Equal(1, await ApiStatsRollupJob.RecomputeHourAsync(context, endOfDayHour));
+            Assert.Equal(1, await ApiStatsRollupJob.RecomputeDayAsync(context, endOfDayHour.Date));
+        }
+
+        await using var verify = Context(databaseName);
+        var rows = await verify.ApiRequestMetrics.ToListAsync();
+
+        // The hour and day rows coexist in the one table, distinguished only by WindowSize.
+        Assert.Equal(2, rows.Count);
+        var hourRow = Assert.Single(rows, row => row.WindowSize == "hour");
+        var dayRow = Assert.Single(rows, row => row.WindowSize == "day");
+
+        Assert.Equal(endOfDayHour, hourRow.WindowStart);
+        Assert.Equal(endOfDayHour.Date, dayRow.WindowStart);
+        Assert.Equal("5xx", hourRow.StatusClass);
+        Assert.Equal("5xx", dayRow.StatusClass);
+        Assert.Equal(hourRow.RequestCount, dayRow.RequestCount);
     }
 
     [Fact]

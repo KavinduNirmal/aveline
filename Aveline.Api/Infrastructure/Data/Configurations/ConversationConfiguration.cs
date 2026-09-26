@@ -58,5 +58,10 @@ public class ConversationConfiguration : IEntityTypeConfiguration<Conversation>
         builder.HasIndex(c => c.OrganizationId);
         builder.HasIndex(c => new { c.OrganizationId, c.OwnerUserId, c.CustomerId, c.Kind });
         builder.HasIndex(c => c.ThreadId).IsUnique();
+
+        // Supports the inbox's list ordering - newest-first on the effective timestamp with an
+        // id tiebreak - so paging stays total on a large org.
+        builder.HasIndex(c => new { c.OrganizationId, c.LastMessageAt, c.Id })
+            .IsDescending(false, true, true);
     }
 }

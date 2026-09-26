@@ -5,6 +5,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using Aveline.Api.Authorization;
 using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Modules.Commerce.Models;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Shared.Models;
 using Aveline.Api.Modules.VisualIntelligence.DTOs;
@@ -376,6 +377,42 @@ public class CatalogEndpointsIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public void CatalogImageRoute_KeepsTheF7AnonymityCommentAndTheCloudinaryDirection()
+    {
+        // F-7/Q4: the catalog image route is the one deliberate anonymous route on the catalog
+        // group, because catalog imagery is public. U1.2 extends the recorded reason — a
+        // Cloudinary row now answers 302 to the CDN rather than streaming bytes — without
+        // dropping it. The guard is keyed on the source text next to the route template, because
+        // a runtime test can only see the behaviour, not the recorded reason.
+        var source = File.ReadAllText(
+            Path.Combine(RepositoryRoot, "Aveline.Api", "Endpoints", "CatalogEndpoints.cs"));
+
+        var routeStart = source.IndexOf("\"/images/{imageId:guid}\"", StringComparison.Ordinal);
+        routeStart.Should().BeGreaterThanOrEqualTo(0, "the catalog image route must still exist");
+
+        var route = source[routeStart..Math.Min(source.Length, routeStart + 3000)];
+        route.Should().Contain("F-7", "the reason for the anonymity stays recorded on the route");
+        route.Should().Contain("Cloudinary", "the extended comment must name the direction it now redirects to");
+        route.Should().Contain("302", "the redirect is the delivery contract for a Cloudinary row");
+        route.Should().Contain(".AllowAnonymous()", "the route stays deliberately anonymous");
+    }
+
+    private static string RepositoryRoot
+    {
+        get
+        {
+            var directory = new DirectoryInfo(AppContext.BaseDirectory);
+            while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "docker-compose.yml")))
+            {
+                directory = directory.Parent;
+            }
+
+            directory.Should().NotBeNull();
+            return directory!.FullName;
+        }
+    }
+
+    [Fact]
     public async Task CreateItem_WithBase64DataUrlImage_AutoOffloadsToInventoryImages_AndPersistsSuccessfully()
     {
         var (user, org) = await SeedMemberAndOrgAsync("cat_base64_auto");
@@ -413,5 +450,665 @@ public class CatalogEndpointsIntegrationTests : IAsyncLifetime
         var getImageResponse = await _client.GetAsync(created.ImageUrl);
         getImageResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         getImageResponse.Content.Headers.ContentType?.MediaType.Should().Be("image/png");
+    }
+
+    [Fact]
+    public async Task GetItemQr_AsPng_Returns200WithPngImage()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_qr_png");
+        var token = CreateToken(user.ClerkId);
+
+        var createDto = new CreateInventoryItemDto
+        {
+            ItemName = "Embroidered Velvet Cape",
+            Category = "Capes",
+            Color = "Midnight Blue",
+            Price = 650.00m,
+            Quantity = 4,
+            Sku = "CPE-VLV-001"
+        };
+
+        var postResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Post, $"/api/v1/orgs/{org.Id}/catalog/items", token, JsonContent.Create(createDto)));
+        postResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+        var created = await postResponse.Content.ReadFromJsonAsync<InventoryItemDto>();
+
+        // Act: Get QR as PNG binary
+        var qrResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{org.Id}/catalog/items/{created!.Id}/qr?format=png&size=300", token));
+
+        // Assert
+        qrResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        qrResponse.Content.Headers.ContentType?.MediaType.Should().Be("image/png");
+        var bytes = await qrResponse.Content.ReadAsByteArrayAsync();
+        bytes.Length.Should().BeGreaterThan(50);
+        bytes[0].Should().Be(0x89);
+        bytes[1].Should().Be(0x50);
+    }
+
+    [Fact]
+    public async Task GetItemQr_AsSvg_Returns200WithSvgImage()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_qr_svg");
+        var token = CreateToken(user.ClerkId);
+
+        var createDto = new CreateInventoryItemDto
+        {
+            ItemName = "Pleated Silk Maxi",
+            Category = "Dresses",
+            Color = "Rose Gold",
+            Price = 420.00m,
+            Quantity = 3,
+            Sku = "DRS-MAX-002"
+        };
+
+        var postResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Post, $"/api/v1/orgs/{org.Id}/catalog/items", token, JsonContent.Create(createDto)));
+        var created = await postResponse.Content.ReadFromJsonAsync<InventoryItemDto>();
+
+        // Act: Get QR as SVG
+        var qrResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{org.Id}/catalog/items/{created!.Id}/qr?format=svg&size=200", token));
+
+        // Assert
+        qrResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        qrResponse.Content.Headers.ContentType?.MediaType.Should().Be("image/svg+xml");
+        var svgText = await qrResponse.Content.ReadAsStringAsync();
+        svgText.Should().Contain("<svg");
+        svgText.Should().Contain("</svg>");
+    }
+
+    [Fact]
+    public async Task GetItemQr_AsJson_Returns200WithBase64AndPayload()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_qr_json");
+        var token = CreateToken(user.ClerkId);
+
+        var createDto = new CreateInventoryItemDto
+        {
+            ItemName = "Cashmere Scarf",
+            Category = "Accessories",
+            Color = "Camel",
+            Price = 160.00m,
+            Quantity = 12,
+            Sku = "ACC-SCF-003"
+        };
+
+        var postResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Post, $"/api/v1/orgs/{org.Id}/catalog/items", token, JsonContent.Create(createDto)));
+        var created = await postResponse.Content.ReadFromJsonAsync<InventoryItemDto>();
+
+        // Act: Get QR as JSON
+        var qrResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{org.Id}/catalog/items/{created!.Id}/qr?format=json&size=250", token));
+
+        // Assert
+        qrResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var jsonDto = await qrResponse.Content.ReadFromJsonAsync<QrCodeResponseDto>();
+        jsonDto.Should().NotBeNull();
+        jsonDto!.DataUrl.Should().StartWith("data:image/png;base64,");
+        jsonDto.Payload.Should().Contain(created.Id.ToString());
+        jsonDto.Payload.Should().Contain("ACC-SCF-003");
+        // The code names the boutique, so the same piece id in another shop cannot be confused for
+        // this one.
+        jsonDto.Payload.Should().Contain($"org={org.Id}");
+    }
+
+    [Fact]
+    public async Task PostQrGenerate_WithCustomPayload_ReturnsValidResponse()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_qr_gen");
+        var token = CreateToken(user.ClerkId);
+
+        var genDto = new GenerateQrDto
+        {
+            Payload = "https://aveline.app/fitting-room/123",
+            Format = "json",
+            Size = 200
+        };
+
+        var response = await _client.SendAsync(
+            Authorized(HttpMethod.Post, $"/api/v1/orgs/{org.Id}/catalog/qr/generate", token, JsonContent.Create(genDto)));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var dto = await response.Content.ReadFromJsonAsync<QrCodeResponseDto>();
+        dto.Should().NotBeNull();
+        dto!.Payload.Should().Be("https://aveline.app/fitting-room/123");
+        dto.DataUrl.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task PostScanQr_WithJsonPayload_ResolvesItem()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_qr_scan_json");
+        var token = CreateToken(user.ClerkId);
+
+        var createDto = new CreateInventoryItemDto
+        {
+            ItemName = "Chiffon Evening Gown",
+            Category = "Eveningwear",
+            Color = "Champagne",
+            Price = 980.00m,
+            Quantity = 2,
+            Sku = "GWN-CHF-777"
+        };
+
+        var postResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Post, $"/api/v1/orgs/{org.Id}/catalog/items", token, JsonContent.Create(createDto)));
+        var created = await postResponse.Content.ReadFromJsonAsync<InventoryItemDto>();
+
+        // Get the generated QR payload
+        var qrJsonResp = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{org.Id}/catalog/items/{created!.Id}/qr?format=json", token));
+        var qrDto = await qrJsonResp.Content.ReadFromJsonAsync<QrCodeResponseDto>();
+
+        // Act: Scan and resolve the QR code
+        var scanDto = new ScanQrDto { Code = qrDto!.Payload };
+        var scanResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Post, $"/api/v1/orgs/{org.Id}/catalog/items/scan-qr", token, JsonContent.Create(scanDto)));
+
+        // Assert
+        scanResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await scanResponse.Content.ReadFromJsonAsync<QrScanResultDto>();
+        result.Should().NotBeNull();
+        result!.Success.Should().BeTrue();
+        result.Found.Should().BeTrue();
+        result.ScanType.Should().Be("InventoryItem");
+        result.Item.Should().NotBeNull();
+        result.Item!.Id.Should().Be(created.Id);
+        result.Item.ItemName.Should().Be("Chiffon Evening Gown");
+    }
+
+    [Fact]
+    public async Task PostScanQr_WithSku_ResolvesItem()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_qr_scan_sku");
+        var token = CreateToken(user.ClerkId);
+
+        var createDto = new CreateInventoryItemDto
+        {
+            ItemName = "Structured Tuxedo Jacket",
+            Category = "Jackets",
+            Color = "Ivory",
+            Price = 720.00m,
+            Quantity = 6,
+            Sku = "JKT-TUX-555"
+        };
+
+        var postResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Post, $"/api/v1/orgs/{org.Id}/catalog/items", token, JsonContent.Create(createDto)));
+        var created = await postResponse.Content.ReadFromJsonAsync<InventoryItemDto>();
+
+        // Act: Scan SKU directly
+        var scanDto = new ScanQrDto { Code = "JKT-TUX-555" };
+        var scanResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Post, $"/api/v1/orgs/{org.Id}/catalog/items/scan-qr", token, JsonContent.Create(scanDto)));
+
+        // Assert
+        scanResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await scanResponse.Content.ReadFromJsonAsync<QrScanResultDto>();
+        result.Should().NotBeNull();
+        result!.Success.Should().BeTrue();
+        result.Found.Should().BeTrue();
+        result.Item!.Id.Should().Be(created!.Id);
+        result.Item.Sku.Should().Be("JKT-TUX-555");
+    }
+
+    [Fact]
+    public async Task PostScanQr_WithCrossTenantItem_ReturnsFoundFalse()
+    {
+        var (user1, org1) = await SeedMemberAndOrgAsync("cat_qr_iso1");
+        var (user2, org2) = await SeedMemberAndOrgAsync("cat_qr_iso2");
+        var token1 = CreateToken(user1.ClerkId);
+        var token2 = CreateToken(user2.ClerkId);
+
+        // Org 1 creates an item
+        var createDto = new CreateInventoryItemDto
+        {
+            ItemName = "Org1 Exclusive Corset",
+            Category = "Tops",
+            Color = "Noir",
+            Price = 350.00m,
+            Quantity = 1,
+            Sku = "TOP-COR-001"
+        };
+
+        var postResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Post, $"/api/v1/orgs/{org1.Id}/catalog/items", token1, JsonContent.Create(createDto)));
+        var created = await postResponse.Content.ReadFromJsonAsync<InventoryItemDto>();
+
+        // Org 2 attempts to scan Org 1's Item ID
+        var scanDto = new ScanQrDto { Code = created!.Id.ToString() };
+        var scanResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Post, $"/api/v1/orgs/{org2.Id}/catalog/items/scan-qr", token2, JsonContent.Create(scanDto)));
+
+        // Assert: Multi-tenant isolation prevents org 2 from finding org 1's item
+        scanResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await scanResponse.Content.ReadFromJsonAsync<QrScanResultDto>();
+        result.Should().NotBeNull();
+        result!.Found.Should().BeFalse();
+        result.Item.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DeleteItem_WithValidId_Returns204NoContent_AndExcludesFromSubsequentQueries()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_del_ok");
+        var token = CreateToken(user.ClerkId);
+
+        var createDto = new CreateInventoryItemDto
+        {
+            ItemName = "Embroidered Organza Dupatta",
+            Category = "Drapes & Shawls",
+            Color = "Rose Gold",
+            Price = 450.00m,
+            Quantity = 2,
+            Sku = "DRP-ORG-999"
+        };
+
+        var postResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Post, $"/api/v1/orgs/{org.Id}/catalog/items", token, JsonContent.Create(createDto)));
+        postResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+        var created = await postResponse.Content.ReadFromJsonAsync<InventoryItemDto>();
+        created.Should().NotBeNull();
+
+        // Act: Delete item
+        var deleteResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Delete, $"/api/v1/orgs/{org.Id}/catalog/items/{created!.Id}", token));
+
+        // Assert: 204 No Content
+        deleteResponse.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        // Subsequent GET by ID should return 404
+        var getResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{org.Id}/catalog/items/{created.Id}", token));
+        getResponse.StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+        // Subsequent search should not include the deleted item
+        var searchResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{org.Id}/catalog/items", token));
+        searchResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var searchItems = await searchResponse.Content.ReadFromJsonAsync<List<InventoryItemDto>>();
+        searchItems.Should().NotContain(i => i.Id == created.Id);
+    }
+
+    [Fact]
+    public async Task DeleteItem_WithNonExistentId_Returns404NotFound()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_del_404");
+        var token = CreateToken(user.ClerkId);
+
+        var deleteResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Delete, $"/api/v1/orgs/{org.Id}/catalog/items/{Guid.NewGuid()}", token));
+
+        deleteResponse.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task DeleteItem_WithCrossTenantOrgId_Returns404NotFound()
+    {
+        var (user1, org1) = await SeedMemberAndOrgAsync("cat_del_iso1");
+        var (user2, org2) = await SeedMemberAndOrgAsync("cat_del_iso2");
+        var token1 = CreateToken(user1.ClerkId);
+        var token2 = CreateToken(user2.ClerkId);
+
+        var createDto = new CreateInventoryItemDto
+        {
+            ItemName = "Org 1 Royal Saree",
+            Category = "Sarees",
+            Color = "Emerald",
+            Price = 1200.00m,
+            Quantity = 1,
+            Sku = "SAR-EMR-001"
+        };
+
+        var postResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Post, $"/api/v1/orgs/{org1.Id}/catalog/items", token1, JsonContent.Create(createDto)));
+        var created = await postResponse.Content.ReadFromJsonAsync<InventoryItemDto>();
+
+        // Org 2 tries to delete Org 1's item
+        var deleteResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Delete, $"/api/v1/orgs/{org2.Id}/catalog/items/{created!.Id}", token2));
+
+        // Assert: 404 NotFound
+        deleteResponse.StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+        // Org 1 can still fetch their item
+        var getResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{org1.Id}/catalog/items/{created.Id}", token1));
+        getResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task QueryItems_MultiSelectAndPriceBands_ReturnsEnvelope()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_query");
+        var token = CreateToken(user.ClerkId);
+
+        // Seed 3 items
+        var item1 = new CreateInventoryItemDto
+        {
+            ItemName = "Bridal Silk Saree",
+            Category = "Sarees",
+            Color = "Wine",
+            Fabric = "Raw silk",
+            Sizes = new List<string> { "36", "38" },
+            Price = 24000.00m,
+            Quantity = 5,
+            Status = "available"
+        };
+        var item2 = new CreateInventoryItemDto
+        {
+            ItemName = "Velvet Evening Gown",
+            Category = "Gowns",
+            Color = "Black",
+            Fabric = "Velvet",
+            Sizes = new List<string> { "40" },
+            Price = 65000.00m,
+            Quantity = 3,
+            Status = "available"
+        };
+        var item3 = new CreateInventoryItemDto
+        {
+            ItemName = "Chiffon Summer Saree",
+            Category = "Sarees",
+            Color = "Blue",
+            Fabric = "Chiffon",
+            Sizes = new List<string> { "38" },
+            Price = 180000.00m,
+            Quantity = 2,
+            Status = "sold_out"
+        };
+
+        await _client.SendAsync(Authorized(HttpMethod.Post, $"/api/v1/orgs/{org.Id}/catalog/items", token, JsonContent.Create(item1)));
+        await _client.SendAsync(Authorized(HttpMethod.Post, $"/api/v1/orgs/{org.Id}/catalog/items", token, JsonContent.Create(item2)));
+        await _client.SendAsync(Authorized(HttpMethod.Post, $"/api/v1/orgs/{org.Id}/catalog/items", token, JsonContent.Create(item3)));
+
+        // Query by multiple categories: Sarees and Gowns with price band under 75k
+        var queryRequest = new CatalogQueryRequest
+        {
+            Categories = new List<string> { "Sarees", "Gowns" },
+            PriceBands = new List<string> { "under_25k", "25k_to_75k" },
+            Page = 1,
+            PageSize = 10
+        };
+
+        var response = await _client.SendAsync(
+            Authorized(HttpMethod.Post, $"/api/v1/orgs/{org.Id}/catalog/items/query", token, JsonContent.Create(queryRequest)));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var paged = await response.Content.ReadFromJsonAsync<CatalogPagedResponse>();
+        paged.Should().NotBeNull();
+        paged!.Total.Should().Be(2);
+        paged.Items.Should().HaveCount(2);
+        paged.Page.Should().Be(1);
+        paged.PageSize.Should().Be(10);
+    }
+
+    [Fact]
+    public async Task GetFacets_ReturnsGroupsWithCounts()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_facets");
+        var token = CreateToken(user.ClerkId);
+
+        var item = new CreateInventoryItemDto
+        {
+            ItemName = "Royal Silk Saree",
+            Category = "Sarees",
+            Color = "Emerald",
+            Fabric = "Raw silk",
+            Sizes = new List<string> { "36" },
+            Price = 50000.00m,
+            Quantity = 4,
+            Status = "available"
+        };
+        await _client.SendAsync(Authorized(HttpMethod.Post, $"/api/v1/orgs/{org.Id}/catalog/items", token, JsonContent.Create(item)));
+
+        var response = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{org.Id}/catalog/facets", token));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var facets = await response.Content.ReadFromJsonAsync<CatalogFacetsResponse>();
+        facets.Should().NotBeNull();
+        facets!.TotalItems.Should().BeGreaterThanOrEqualTo(1);
+        facets.Groups.Should().Contain(g => g.Key == "availability");
+        facets.Groups.Should().Contain(g => g.Key == "category");
+        facets.Groups.Should().Contain(g => g.Key == "fabric");
+        facets.Groups.Should().Contain(g => g.Key == "size");
+        facets.Groups.Should().Contain(g => g.Key == "price");
+    }
+
+    [Fact]
+    public async Task Lookbook_UpdateAndDelete_Flow_Succeeds()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_lookbook_crud");
+        var token = CreateToken(user.ClerkId);
+
+        var item = await CreateItemAsync(org.Id, token, "Embroidered Velvet Lehenga", 900m, 3);
+
+        var composeResponse = await _client.SendAsync(
+            Authorized(
+                HttpMethod.Post,
+                $"/api/v1/orgs/{org.Id}/catalog/lookbooks/compose",
+                token,
+                JsonContent.Create(new ComposeOutfitDto { PrimaryItemId = item.Id, Occasion = "gala" })));
+        composeResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var listResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{org.Id}/catalog/lookbooks", token));
+        var lookbooks = (await listResponse.Content.ReadFromJsonAsync<List<OutfitCompositionDto>>())!;
+        lookbooks.Should().HaveCount(1);
+        var lookbookId = lookbooks[0].Id;
+
+        // Rename and re-occasion it.
+        var updateDto = new UpdateOutfitCompositionDto
+        {
+            Name = "Royal Gala Ensemble",
+            Occasion = "Cocktail Reception & Gala",
+            StyleNotes = "Pair with a statement choker."
+        };
+        var putResponse = await _client.SendAsync(
+            Authorized(
+                HttpMethod.Put,
+                $"/api/v1/orgs/{org.Id}/catalog/lookbooks/{lookbookId}",
+                token,
+                JsonContent.Create(updateDto)));
+
+        putResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var updated = (await putResponse.Content.ReadFromJsonAsync<OutfitCompositionDto>())!;
+        updated.Name.Should().Be("Royal Gala Ensemble");
+        updated.Occasion.Should().Be("Cocktail Reception & Gala");
+        updated.StyleNotes.Should().Be("Pair with a statement choker.");
+
+        // Delete it, and prove the list no longer carries it.
+        var deleteResponse = await _client.SendAsync(
+            Authorized(
+                HttpMethod.Delete,
+                $"/api/v1/orgs/{org.Id}/catalog/lookbooks/{lookbookId}",
+                token));
+        deleteResponse.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        var afterDelete = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{org.Id}/catalog/lookbooks", token));
+        var remaining = (await afterDelete.Content.ReadFromJsonAsync<List<OutfitCompositionDto>>())!;
+        remaining.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task UpdateLookbook_WithUnknownOrCrossTenantId_Returns404()
+    {
+        var (user1, org1) = await SeedMemberAndOrgAsync("cat_lookbook_iso1");
+        var (user2, org2) = await SeedMemberAndOrgAsync("cat_lookbook_iso2");
+        var token1 = CreateToken(user1.ClerkId);
+        var token2 = CreateToken(user2.ClerkId);
+
+        var item = await CreateItemAsync(org1.Id, token1, "Org One Saree", 500m, 2);
+        await _client.SendAsync(
+            Authorized(
+                HttpMethod.Post,
+                $"/api/v1/orgs/{org1.Id}/catalog/lookbooks/compose",
+                token1,
+                JsonContent.Create(new ComposeOutfitDto { PrimaryItemId = item.Id, Occasion = "wedding" })));
+
+        var listResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{org1.Id}/catalog/lookbooks", token1));
+        var lookbookId = (await listResponse.Content.ReadFromJsonAsync<List<OutfitCompositionDto>>())![0].Id;
+
+        var body = JsonContent.Create(new UpdateOutfitCompositionDto { Name = "Stolen Look" });
+
+        // Unknown id, and another tenant's id: both are 404, never a silent write.
+        (await _client.SendAsync(Authorized(
+            HttpMethod.Put, $"/api/v1/orgs/{org1.Id}/catalog/lookbooks/{Guid.NewGuid()}", token1, body)))
+            .StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+        (await _client.SendAsync(Authorized(
+            HttpMethod.Put, $"/api/v1/orgs/{org2.Id}/catalog/lookbooks/{lookbookId}", token2, body)))
+            .StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+        (await _client.SendAsync(Authorized(
+            HttpMethod.Delete, $"/api/v1/orgs/{org2.Id}/catalog/lookbooks/{lookbookId}", token2)))
+            .StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task RecordSale_DecrementsStockAndWritesTheTakingsJournal()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_sale_ok");
+        var token = CreateToken(user.ClerkId);
+
+        var item = await CreateItemAsync(org.Id, token, "Kanjeevaram Silk Saree", 450m, 5);
+
+        var saleResponse = await _client.SendAsync(
+            Authorized(
+                HttpMethod.Post,
+                $"/api/v1/orgs/{org.Id}/catalog/items/{item.Id}/sales",
+                token,
+                JsonContent.Create(new RecordCatalogSaleDto { Quantity = 2 })));
+
+        saleResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var receipt = (await saleResponse.Content.ReadFromJsonAsync<CatalogSaleReceiptDto>())!;
+        receipt.QuantitySold.Should().Be(2);
+        receipt.UnitPrice.Should().Be(450m);
+        receipt.TotalAmount.Should().Be(900m);
+        receipt.RemainingStock.Should().Be(3);
+        receipt.Status.Should().Be("available");
+
+        // The catalog row is the one source of stock truth, so read it back rather than trusting
+        // the receipt.
+        var getResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{org.Id}/catalog/items/{item.Id}", token));
+        var reloaded = (await getResponse.Content.ReadFromJsonAsync<InventoryItemDto>())!;
+        reloaded.Quantity.Should().Be(3);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var ledgerEntry = db.BoutiqueSaleEntries
+            .Single(entry => entry.OrganizationId == org.Id);
+        ledgerEntry.Id.Should().Be(receipt.LedgerEntryId);
+        ledgerEntry.Amount.Should().Be(900m);
+        ledgerEntry.Kind.Should().Be(BoutiqueSaleEntryKind.Sale);
+        ledgerEntry.ChargeBasis.Should().Be(BoutiqueSaleChargeBasis.Verified);
+        ledgerEntry.Status.Should().Be(BoutiqueSaleEntryStatus.Recorded);
+    }
+
+    [Fact]
+    public async Task RecordSale_ThatEmptiesTheShelf_LeavesThePieceReserved()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_sale_empty");
+        var token = CreateToken(user.ClerkId);
+
+        var item = await CreateItemAsync(org.Id, token, "Single Run Corset", 1200m, 1);
+
+        var saleResponse = await _client.SendAsync(
+            Authorized(
+                HttpMethod.Post,
+                $"/api/v1/orgs/{org.Id}/catalog/items/{item.Id}/sales",
+                token,
+                JsonContent.Create(new RecordCatalogSaleDto { Quantity = 1 })));
+
+        saleResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var receipt = (await saleResponse.Content.ReadFromJsonAsync<CatalogSaleReceiptDto>())!;
+        receipt.RemainingStock.Should().Be(0);
+        // The same derivation the Add/Edit drawer uses for a row at zero.
+        receipt.Status.Should().Be("reserved");
+    }
+
+    [Fact]
+    public async Task RecordSale_WithMorePiecesThanStock_Returns409AndSellsNothing()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_sale_oversell");
+        var token = CreateToken(user.ClerkId);
+
+        var item = await CreateItemAsync(org.Id, token, "Limited Organza Dupatta", 300m, 2);
+
+        var saleResponse = await _client.SendAsync(
+            Authorized(
+                HttpMethod.Post,
+                $"/api/v1/orgs/{org.Id}/catalog/items/{item.Id}/sales",
+                token,
+                JsonContent.Create(new RecordCatalogSaleDto { Quantity = 3 })));
+
+        saleResponse.StatusCode.Should().Be(HttpStatusCode.Conflict);
+
+        var getResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{org.Id}/catalog/items/{item.Id}", token));
+        var reloaded = (await getResponse.Content.ReadFromJsonAsync<InventoryItemDto>())!;
+        reloaded.Quantity.Should().Be(2);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        db.BoutiqueSaleEntries.Count(entry => entry.OrganizationId == org.Id).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task RecordSale_WithZeroPriceOrForeignItem_IsRefused()
+    {
+        var (user1, org1) = await SeedMemberAndOrgAsync("cat_sale_guard1");
+        var (user2, org2) = await SeedMemberAndOrgAsync("cat_sale_guard2");
+        var token1 = CreateToken(user1.ClerkId);
+        var token2 = CreateToken(user2.ClerkId);
+
+        var item = await CreateItemAsync(org1.Id, token1, "Free Sample Stole", 0m, 4);
+
+        // A zero-price sale is a gift, and the ledger refuses a non-positive amount.
+        (await _client.SendAsync(Authorized(
+            HttpMethod.Post,
+            $"/api/v1/orgs/{org1.Id}/catalog/items/{item.Id}/sales",
+            token1,
+            JsonContent.Create(new RecordCatalogSaleDto { Quantity = 1, UnitPrice = 0m }))))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        // Another tenant's piece is a 404, and its stock is untouched.
+        (await _client.SendAsync(Authorized(
+            HttpMethod.Post,
+            $"/api/v1/orgs/{org2.Id}/catalog/items/{item.Id}/sales",
+            token2,
+            JsonContent.Create(new RecordCatalogSaleDto { Quantity = 1 }))))
+            .StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+        var getResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{org1.Id}/catalog/items/{item.Id}", token1));
+        (await getResponse.Content.ReadFromJsonAsync<InventoryItemDto>())!.Quantity.Should().Be(4);
+    }
+
+    /// <summary>Creates one piece through the API and returns it, so a test names real server state.</summary>
+    private async Task<InventoryItemDto> CreateItemAsync(Guid orgId, string token, string name, decimal price, int quantity)
+    {
+        var response = await _client.SendAsync(
+            Authorized(
+                HttpMethod.Post,
+                $"/api/v1/orgs/{orgId}/catalog/items",
+                token,
+                JsonContent.Create(new CreateInventoryItemDto
+                {
+                    ItemName = name,
+                    Category = "Sarees",
+                    Color = "Emerald",
+                    Price = price,
+                    Quantity = quantity
+                })));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        return (await response.Content.ReadFromJsonAsync<InventoryItemDto>())!;
     }
 }

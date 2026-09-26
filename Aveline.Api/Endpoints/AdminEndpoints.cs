@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Aveline.Api.Configurations;
 using Aveline.Api.Modules.Admin.Models;
+using Aveline.Api.Modules.Admin.Repositories;
 using Aveline.Api.Modules.Admin.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -40,10 +41,10 @@ public static class AdminEndpoints
         }).RequireAuthorization();
 
         group.MapGet("/requests", async (
-            IAdminApprovalService adminApprovalService,
+            IAdminApprovalRepository adminApprovalRepo,
             CancellationToken ct) =>
         {
-            var requests = await adminApprovalService.ListPendingAsync(ct);
+            var requests = await adminApprovalRepo.ListAllAsync(ct);
             return Results.Ok(requests.Select(ToSummary));
         }).RequireAuthorization(AuthorizationConfiguration.AdminReviewPolicy);
 

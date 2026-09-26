@@ -6,7 +6,7 @@ Accepted
 ## Context
 
 Staff resolve customers by typing free text into the Salon (e.g. "Any events for samantha
-arias?"). The shared customer resolver (`agnet-service/app/customer_resolution/`, Issue #161)
+arias?"). The shared customer resolver (`agent-service/app/customer_resolution/`, Issue #161)
 extracts a name or phone from the message deterministically, but free-text extraction is
 ambiguous:
 

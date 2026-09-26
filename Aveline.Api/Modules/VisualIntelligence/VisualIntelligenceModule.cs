@@ -1,6 +1,9 @@
+using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Modules.Media;
 using Aveline.Api.Modules.VisualIntelligence.Repositories;
 using Aveline.Api.Modules.VisualIntelligence.Services;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace Aveline.Api.Modules.VisualIntelligence;
 
@@ -35,8 +38,26 @@ public static class VisualIntelligenceModule
         services.AddScoped<IOutfitRepository, OutfitRepository>();
         services.AddScoped<ISupplierRepository, SupplierRepository>();
 
+        // The catalog row seam (strategy §3.1). Each module registers its own row seam, and the
+        // implementation follows Media:Provider, which L1's MediaModule owns. The caller never
+        // branches on the provider; the seam is chosen once, here.
+        services.AddScoped<IInventoryImageStore>(sp =>
+        {
+            var mediaOptions = sp.GetRequiredService<IOptions<MediaOptions>>();
+            return mediaOptions.Value.Provider == MediaProvider.Cloudinary
+                ? new CloudinaryInventoryImageStore(
+                    sp.GetRequiredService<IMediaStorage>(),
+                    sp.GetRequiredService<IInventoryRepository>(),
+                    mediaOptions)
+                : new DatabaseInventoryImageStore(
+                    sp.GetRequiredService<AppDbContext>(),
+                    sp.GetRequiredService<IMediaStorage>(),
+                    sp.GetRequiredService<IInventoryRepository>());
+        });
+
         // Services
         services.AddScoped<IInventoryService, InventoryService>();
+        services.AddScoped<IQrCodeService, QrCodeService>();
         services.AddScoped<IVisualService, VisualService>();
 
         return services;

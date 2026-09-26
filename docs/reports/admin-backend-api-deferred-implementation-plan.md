@@ -48,7 +48,7 @@ markdown files and no C# at all (`find Aveline.Api/Modules/VisualIntelligence -t
 while `origin/catalog` carries 46 C# files in that module, seven entities, a migration,
 five test files, and the routes (`git ls-tree -r --name-only origin/catalog -- Aveline.Api/Modules/VisualIntelligence/`).
 Moreover the Python agent in the current tree still calls `/api/internal/inventory/...`
-(`agnet-service/app/tools/registry.py:161-175`), and the catalog branch registers those
+(`agent-service/app/tools/registry.py:161-175`), and the catalog branch registers those
 legacy paths as aliases (`origin/catalog:Aveline.Api/Endpoints/VisualEndpoints.cs:109-125`).
 **Consequence:** T-4.1 is a port-and-reconcile task, not a from-scratch build. This is the
 single largest change to the plan's cost and risk profile.
@@ -84,7 +84,7 @@ This becomes reachable the moment Phase 1 wires a producer (T-1.7).
 
 | Fact | Evidence |
 |---|---|
-| No producer calls `/internal/agent-runs`; all five `dataQuality` flags come from one all-false constant | `grep -rn "agent-runs" agnet-service/` → only vendored `site-packages` hits; `Aveline.Api/Modules/Statistics/DTOs/AgentStatisticsDtos.cs:19-24` |
+| No producer calls `/internal/agent-runs`; all five `dataQuality` flags come from one all-false constant | `grep -rn "agent-runs" agent-service/` → only vendored `site-packages` hits; `Aveline.Api/Modules/Statistics/DTOs/AgentStatisticsDtos.cs:19-24` |
 | The eight admin-statistics paths and all three internal agent-run paths are absent from `openapi.yaml` | `grep -c 'admin/statistics/agents' docs/api/openapi.yaml` → `0`; `grep -c 'admin/statistics/api'` → `0`; `grep -c '^  /internal'` → `0` |
 | The admin-statistics routes do exist in code and are prefixed `/api/v1` | `AgentStatisticsEndpoints.cs:116`, `ApiStatisticsEndpoints.cs:132,181`; prefix at `Aveline.Api/Program.cs:135,161` |
 | `GET /api/v1/orgs/{id}/integrations/messages` is undocumented in both files | `Aveline.Api/Endpoints/IntegrationEndpoints.cs:35`; absent from `openapi.yaml` and from `docs/api/README.md` |
@@ -221,8 +221,8 @@ tell which response fields in the intended contract are not deliverable and why.
 nothing. *Acceptance:* an implementer filtering on the catalog's literal would match rows.
 *Verification:* `grep -n 'org\.plan\.changed' Aveline.Api/Modules/Billing/Services/SubscriptionService.cs`.
 
-**T-0.4 — Pin `langgraph`.** *Touches:* `agnet-service/requirements.txt:6-7`,
-`agnet-service/pyproject.toml`. Today `langgraph` and `langgraph-checkpoint-postgres` are
+**T-0.4 — Pin `langgraph`.** *Touches:* `agent-service/requirements.txt:6-7`,
+`agent-service/pyproject.toml`. Today `langgraph` and `langgraph-checkpoint-postgres` are
 bare, so the version the docs cite (`docs/backend/backend-requirements.md:89` says 1.2.11)
 is not reproducible and defect D-5's behaviour cannot be asserted. Pin the installed version
 exactly. *Depends on:* nothing. *Acceptance:* a fresh `pip install -r requirements.txt`
@@ -241,13 +241,13 @@ capture, step-level capture, and the producer plus its truthful `dataQuality`.
 #### Workstream 1A — Graph lifecycle (the hard prerequisite)
 
 **T-1.1 — Decide and fix the checkpointer.** *Touches:*
-`agnet-service/app/workflows/concierge_workflow.py:311-330,371-379`,
-`agnet-service/app/workflows/checkpointer.py:41-60`, `agnet-service/app/workflows/state_events.py:61-62`.
+`agent-service/app/workflows/concierge_workflow.py:311-330,371-379`,
+`agent-service/app/workflows/checkpointer.py:41-60`, `agent-service/app/workflows/state_events.py:61-62`.
 The graph is compiled with no checkpointer and the saver is passed as a call-time kwarg.
 Confirm empirically whether that kwarg is honoured; if not, compile with the saver instead.
 *Depends on:* T-0.4. *Acceptance:* a run's state survives a process restart — assert by
 reading the checkpoint table after restart. *Verification:* a new test beside
-`agnet-service/tests/test_tracing.py`; the checkpoint table is created by
+`agent-service/tests/test_tracing.py`; the checkpoint table is created by
 `create_checkpointer` (`checkpointer.py:41-60`).
 
 **T-1.2 — Implement or explicitly stub the human-in-the-loop pause.** *Touches:*
@@ -263,7 +263,7 @@ resumes, or the deferred status is written down with S-21 named.
 #### Workstream 1B — Run-level capture
 
 **T-1.3 — Introduce a run/step capture model in Python.** *Touches:* a new module under
-`agnet-service/app/` (suggested `app/telemetry/`), plus `app/schemas/`. This is the missing
+`agent-service/app/` (suggested `app/telemetry/`), plus `app/schemas/`. This is the missing
 data model: `grep -rn -iE "step_index|agentstepreport|agentrunreport|attempt_number" app`
 finds only a field declaration (`app/schemas/response.py:28`). Model the fields the C#
 contract requires — the full list is in `Aveline.Api/Modules/Statistics/DTOs/AgentRunIngestDtos.cs:10-65`.
@@ -475,7 +475,7 @@ the entities migrate cleanly onto HEAD's schema, and the ported tests pass.
 `InventoryRepositoryTests.cs` and `InventoryServiceTests.cs`; plus a route-table assertion
 that all 13 paths resolve and 401 without the internal token.
 **Open sub-question to settle during the port:** the Python registry currently calls
-`/api/internal/inventory/search` (`agnet-service/app/tools/registry.py:161`), a path with the
+`/api/internal/inventory/search` (`agent-service/app/tools/registry.py:161`), a path with the
 legacy prefix that the docs do not list. Decide whether the canonical Python target becomes
 `/internal/visual/inventory/search` and update `registry.py`, or the alias is kept. The
 documented list at `docs/api/README.md:678-688` already omits the catalog branch's
@@ -580,7 +580,7 @@ exists) rather than persisting bodies. *Depends on:* nothing. *Acceptance:* eith
 *Verification:* an integration test asserting a 409's key is queryable.
 
 **T-4.11 — Wire the already-ported visual tools to the API paths chosen in T-4.1.**
-*Touches:* `agnet-service/app/tools/registry.py:161-175` and the ported tool modules.
+*Touches:* `agent-service/app/tools/registry.py:161-175` and the ported tool modules.
 *Depends on:* T-4.1. *Acceptance:* the Python agent calls paths that exist and 200.
 *Verification:* a Python test against a stubbed transport asserting the exact URL per tool;
 `test-python` enforces the 90 % coverage gate (`ci.yml:140-142`), so these tests are

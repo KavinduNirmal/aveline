@@ -145,10 +145,107 @@ public class PermissionsCatalogTests
         Assert.True(Permissions.IsGranted(role, Permissions.ConversationsView));
     }
 
+    [Theory]
+    [InlineData(Roles.BoutiqueOwner)]
+    [InlineData(Roles.BoutiqueManager)]
+    [InlineData(Roles.BoutiqueSupervisor)]
+    [InlineData(Roles.BoutiqueStaff)]
+    public void AgentStatisticsPermission_IsNeverGrantedToBoutiqueRoles(string role)
+    {
+        // A boutique's usage unit is the Blossom. Agent runs, tokens and provider cost are agent
+        // internals; the org-scoped statistics routes were removed and no tenant role holds the
+        // permission. The platform roles keep it, because the admin console reads the same family.
+        Assert.False(Permissions.IsGranted(role, Permissions.StatsViewAgent));
+    }
+
+    [Fact]
+    public void AgentStatisticsPermission_IsStillHeldByTheTeamRoles()
+    {
+        Assert.True(Permissions.IsGranted(Roles.Moderator, Permissions.StatsViewAgent));
+        Assert.True(Permissions.IsGranted(Roles.Admin, Permissions.StatsViewAgent));
+        Assert.True(Permissions.IsGranted(Roles.Owner, Permissions.StatsViewAgent));
+    }
+
     [Fact]
     public void BoutiqueOwner_PreservesSettingsAndRefundGrants()
     {
         Assert.True(Permissions.IsGranted(Roles.BoutiqueOwner, Permissions.SettingsManage));
         Assert.True(Permissions.IsGranted(Roles.BoutiqueOwner, Permissions.PaymentsRefund));
+    }
+
+    [Theory]
+    [InlineData(Roles.BoutiqueStaff)]
+    [InlineData(Roles.BoutiqueManager)]
+    [InlineData(Roles.BoutiqueSupervisor)]
+    [InlineData(Roles.BoutiqueOwner)]
+    public void BillingViewSelf_IsGrantedToEveryOrgRole(string role)
+    {
+        // Decision D1 (b): an associate may see how many Blossoms the shop has
+        // left, through a distinct self-service read rather than the management
+        // read.
+        Assert.True(Permissions.IsGranted(role, Permissions.BillingViewSelf));
+    }
+
+    [Fact]
+    public void BillingViewSelf_DoesNotWidenTheManagementRead()
+    {
+        // The new permission must not be mistaken for a widening of
+        // `billing:view`, which reaches usage statements and burn-rate.
+        Assert.False(Permissions.IsGranted(Roles.BoutiqueStaff, Permissions.BillingView));
+        Assert.False(Permissions.IsGranted(Roles.BoutiqueSupervisor, Permissions.BillingView));
+        Assert.True(Permissions.IsGranted(Roles.BoutiqueManager, Permissions.BillingView));
+        Assert.True(Permissions.IsGranted(Roles.BoutiqueOwner, Permissions.BillingView));
+    }
+
+    /// <summary>
+    /// The tenant-dashboard slice adds three permissions. They are one atomic change: each
+    /// must be in <c>All</c> (or <c>EveryPermission_HasARegisteredPolicy</c> and the client
+    /// mirrors fail) and each must name its grants here rather than being inferred.
+    /// </summary>
+    [Theory]
+    [InlineData(Roles.BoutiqueManager)]
+    [InlineData(Roles.BoutiqueSupervisor)]
+    [InlineData(Roles.BoutiqueOwner)]
+    public void TheThreeNewTenantPermissions_AreGrantedToManagementRoles(string role)
+    {
+        Assert.True(Permissions.IsGranted(role, Permissions.CustomersManage));
+        Assert.True(Permissions.IsGranted(role, Permissions.TeamManage));
+        Assert.True(Permissions.IsGranted(role, Permissions.OrdersManage));
+    }
+
+    [Fact]
+    public void TheThreeNewTenantPermissions_AreInTheCatalog()
+    {
+        Assert.Contains(Permissions.CustomersManage, Permissions.All);
+        Assert.Contains(Permissions.TeamManage, Permissions.All);
+        Assert.Contains(Permissions.OrdersManage, Permissions.All);
+        Assert.Equal(31, Permissions.All.Count);
+    }
+
+    [Fact]
+    public void BoutiqueStaff_HoldsNoneOfTheNewWritePermissions()
+    {
+        // Staff may read and may approve a customer order, but may not rewrite a client
+        // record, manage staff, or cancel/revise an order.
+        Assert.False(Permissions.IsGranted(Roles.BoutiqueStaff, Permissions.CustomersManage));
+        Assert.False(Permissions.IsGranted(Roles.BoutiqueStaff, Permissions.TeamManage));
+        Assert.False(Permissions.IsGranted(Roles.BoutiqueStaff, Permissions.OrdersManage));
+    }
+
+    [Fact]
+    public void BoutiqueStaff_MayApproveCustomerOrders()
+    {
+        // Q8: staff approve customer orders. The controller's verb split (reject/revise at
+        // `orders:manage`) is what stops the same grant from also cancelling an order.
+        Assert.True(Permissions.IsGranted(Roles.BoutiqueStaff, Permissions.ApprovalsApprove));
+    }
+
+    [Fact]
+    public void TeamManage_IsSeparateFromSettingsManage()
+    {
+        // The whole point of `team:manage`: a manager gains staff management without also
+        // gaining Integrations, where the WhatsApp and payment-gateway credentials live.
+        Assert.False(Permissions.IsGranted(Roles.BoutiqueManager, Permissions.SettingsManage));
+        Assert.True(Permissions.IsGranted(Roles.BoutiqueManager, Permissions.TeamManage));
     }
 }

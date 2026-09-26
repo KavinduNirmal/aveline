@@ -3,13 +3,13 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../core/providers/boutique_provider.dart';
-import '../../../../core/router/route_guards.dart';
+import '../../../../core/notifications/notification_route.dart';
 import '../../../../shared/widgets/app_toast.dart';
 import '../../../../shared/widgets/aurora_field.dart';
 import '../../../../shared/widgets/blossom_refresh.dart';
 import '../../../../shared/widgets/brand_section_title.dart';
 import '../../../../shared/widgets/filter_pill.dart';
-import '../../data/demo_notification_repository.dart';
+import '../../data/empty_notification_repository.dart';
 import '../../domain/app_notification.dart';
 import '../notifications_controller.dart';
 import '../widgets/notification_tile.dart';
@@ -26,7 +26,23 @@ import '../widgets/notification_tile.dart';
 /// number, and the header's badge cannot claim unread work the list has already
 /// cleared. The controller is injectable for tests and previews, and when no
 /// provider is above the screen - a widget test mounting it alone - it falls back
-/// to a demo inbox rather than throwing.
+/// to an empty inbox rather than throwing or inventing notifications.
+///
+/// Where a notification goes when it is tapped, or `null` when it goes nowhere.
+///
+/// Pure, so the rule is testable without a router. A thread notification addresses the
+/// **conversation** rather than the client - the thread may be one whose client is not
+/// identified yet - so it opens the thread, anchored to the message the notification named. One
+/// that addresses a client opens the client book, which is where it went before.
+///
+/// Delegates to [notificationRouteForIds] so a push tap and this tile share one
+/// rule rather than two that can drift.
+String? notificationRouteFor(AppNotification item) => notificationRouteForIds(
+  conversationId: item.conversationId,
+  messageId: item.messageId,
+  customerId: item.customerId,
+);
+
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key, this.controller, this.boutiqueName});
 
@@ -96,8 +112,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       provided = null;
     }
 
-    _controller =
-        provided ?? NotificationsController(DemoNotificationRepository());
+    _controller = provided ??
+        NotificationsController(const EmptyNotificationRepository());
     _ownsController = provided == null;
   }
 
@@ -226,11 +242,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   /// Opens the client the notification is about.
   void _open(AppNotification item) {
-    final customerId = item.customerId;
-    if (customerId == null) {
-      return;
+    final location = notificationRouteFor(item);
+    if (location != null) {
+      GoRouter.maybeOf(context)?.push(location);
     }
-    GoRouter.maybeOf(context)?.push(AppRoutes.customer(customerId));
   }
 
   @override
@@ -386,7 +401,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               onToggle: () => _toggle(item.id),
               onMarkRead: () => _markRead(item),
               onDelete: () => _delete(item),
-              onOpen: item.customerId == null ? null : () => _open(item),
+              onOpen: item.isOpenable ? () => _open(item) : null,
             );
           },
         ),

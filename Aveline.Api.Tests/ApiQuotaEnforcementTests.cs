@@ -37,6 +37,7 @@ public class ApiQuotaEnforcementTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.UseSetting("Telemetry:Enabled", "false");
                 builder.UseSetting("Quotas:EnforcementEnabled", "true");
@@ -83,7 +84,7 @@ public class ApiQuotaEnforcementTests : IAsyncLifetime
     {
         await using var context = new AppDbContext(
             new DbContextOptionsBuilder<AppDbContext>()
-                .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+                .UseInMemoryDatabase(databaseName: TestDatabase.Name())
                 .Options);
 
         var owner = new User
@@ -165,6 +166,7 @@ public class ApiQuotaEnforcementTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.UseSetting("Telemetry:Enabled", "false");
                 builder.UseSetting("Quotas:EnforcementEnabled", "false");

@@ -8,5 +8,13 @@ namespace Aveline.Api.Modules.Notifications.Services;
 /// </summary>
 public interface INotificationDispatcher
 {
-    Task DispatchAsync(Notification notification, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Dispatches the notification, or does nothing when no recipient resolves.
+    /// </summary>
+    /// <returns>
+    /// The <see cref="NotificationRecord"/> that was written, or <c>null</c> when no
+    /// recipient resolved. Callers that need the record id use it; the two producers
+    /// that only deliver await and ignore it.
+    /// </returns>
+    Task<NotificationRecord?> DispatchAsync(Notification notification, CancellationToken cancellationToken = default);
 }

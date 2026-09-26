@@ -1,4 +1,11 @@
+using System.IO;
+using System.Security.Claims;
+using System.Text;
 using Aveline.Api.Configurations;
+using Aveline.Api.Common.Media;
+using Aveline.Api.Modules.Commerce.Services;
+using Aveline.Api.Modules.Media;
+using Aveline.Api.Modules.Shared.Repositories;
 using Aveline.Api.Modules.VisualIntelligence;
 using Aveline.Api.Modules.VisualIntelligence.DTOs;
 using Aveline.Api.Modules.VisualIntelligence.Models;
@@ -7,6 +14,7 @@ using Aveline.Api.Modules.VisualIntelligence.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace Aveline.Api.Endpoints;
 
@@ -75,6 +83,61 @@ public static class CatalogEndpoints
         .WithSummary("Search inventory items via POST request payload.")
         .Produces<IReadOnlyList<InventoryItemDto>>(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
+
+        group.MapPost("/items/query", async (
+            [FromRoute] Guid organizationId,
+            [FromBody] CatalogQueryRequest request,
+            [FromServices] IVisualService visualService,
+            CancellationToken cancellationToken) =>
+        {
+            request.OrganizationId = organizationId;
+            try
+            {
+                var result = await visualService.QueryCatalogAsync(organizationId, request, cancellationToken);
+                return Results.Ok(result);
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        })
+        .WithName("CatalogQueryItems")
+        .WithSummary("Query catalog items with multi-select filters, price bands, and pagination envelope.")
+        .Produces<CatalogPagedResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden);
+
+        group.MapGet("/facets", async (
+            [FromRoute] Guid organizationId,
+            [FromServices] IVisualService visualService,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await visualService.GetFacetsAsync(organizationId, null, cancellationToken);
+            return Results.Ok(result);
+        })
+        .WithName("CatalogGetFacets")
+        .WithSummary("Get active facet options and item counts under mutual constraints.")
+        .Produces<CatalogFacetsResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden);
+
+        group.MapPost("/facets", async (
+            [FromRoute] Guid organizationId,
+            [FromBody] CatalogQueryRequest currentNarrowing,
+            [FromServices] IVisualService visualService,
+            CancellationToken cancellationToken) =>
+        {
+            currentNarrowing.OrganizationId = organizationId;
+            var result = await visualService.GetFacetsAsync(organizationId, currentNarrowing, cancellationToken);
+            return Results.Ok(result);
+        })
+        .WithName("CatalogGetFacetsWithNarrowing")
+        .WithSummary("Get active facet options and item counts under currently selected filter state.")
+        .Produces<CatalogFacetsResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status403Forbidden);
 
         group.MapGet("/items/{itemId:guid}", async (
@@ -105,15 +168,19 @@ public static class CatalogEndpoints
             CancellationToken cancellationToken) =>
         {
             dto.OrganizationId = organizationId;
-            var created = await visualService.CreateInventoryItemAsync(dto, cancellationToken);
-            return Results.Created($"/api/v1/orgs/{organizationId}/catalog/items/{created.Id}", created);
+            return await WriteCatalogItemAsync(async () =>
+            {
+                var created = await visualService.CreateInventoryItemAsync(dto, cancellationToken);
+                return Results.Created($"/api/v1/orgs/{organizationId}/catalog/items/{created.Id}", created);
+            });
         })
         .WithName("CatalogCreateItem")
         .WithSummary("Create a new item in the boutique inventory catalog.")
         .Produces<InventoryItemDto>(StatusCodes.Status201Created)
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status401Unauthorized)
-        .Produces(StatusCodes.Status403Forbidden);
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueCatalogManagePolicy);
 
         group.MapPut("/items/{itemId:guid}", async (
             [FromRoute] Guid organizationId,
@@ -123,20 +190,25 @@ public static class CatalogEndpoints
             CancellationToken cancellationToken) =>
         {
             dto.OrganizationId = organizationId;
-            var updated = await visualService.UpdateInventoryItemAsync(itemId, dto, cancellationToken);
-            if (updated is null)
+            return await WriteCatalogItemAsync(async () =>
             {
-                return Results.NotFound(new { error = "Catalog item not found." });
-            }
+                var updated = await visualService.UpdateInventoryItemAsync(itemId, dto, cancellationToken);
+                if (updated is null)
+                {
+                    return Results.NotFound(new { error = "Catalog item not found." });
+                }
 
-            return Results.Ok(updated);
+                return Results.Ok(updated);
+            });
         })
         .WithName("CatalogUpdateItem")
         .WithSummary("Update details of an existing catalog item.")
         .Produces<InventoryItemDto>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status404NotFound)
         .Produces(StatusCodes.Status401Unauthorized)
-        .Produces(StatusCodes.Status403Forbidden);
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueCatalogManagePolicy);
 
         group.MapPatch("/items/{itemId:guid}/status", async (
             [FromRoute] Guid organizationId,
@@ -159,7 +231,80 @@ public static class CatalogEndpoints
         .Produces<InventoryItemDto>(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status404NotFound)
         .Produces(StatusCodes.Status401Unauthorized)
-        .Produces(StatusCodes.Status403Forbidden);
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueCatalogManagePolicy);
+
+        group.MapDelete("/items/{itemId:guid}", async (
+            [FromRoute] Guid organizationId,
+            [FromRoute] Guid itemId,
+            [FromServices] IVisualService visualService,
+            CancellationToken cancellationToken) =>
+        {
+            var deleted = await visualService.DeleteInventoryItemAsync(itemId, organizationId, cancellationToken);
+            if (!deleted)
+            {
+                return Results.NotFound(new { error = "Catalog item not found or already deleted." });
+            }
+
+            return Results.NoContent();
+        })
+        .WithName("CatalogDeleteItem")
+        .WithSummary("Delete (soft-delete) an inventory item from the boutique catalog.")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueCatalogManagePolicy);
+
+        group.MapPost("/items/{itemId:guid}/sales", async (
+            [FromRoute] Guid organizationId,
+            [FromRoute] Guid itemId,
+            [FromBody] RecordCatalogSaleDto dto,
+            ClaimsPrincipal principal,
+            [FromServices] ICatalogSaleService sales,
+            [FromServices] IUserRepository users,
+            CancellationToken cancellationToken) =>
+        {
+            dto.OrganizationId = organizationId;
+            var actorUserId = await ResolveUserIdAsync(principal, users, cancellationToken);
+
+            try
+            {
+                var receipt = await sales.RecordSaleAsync(
+                    organizationId, itemId, dto, actorUserId, cancellationToken);
+                return receipt is null
+                    ? Results.NotFound(new { error = "Catalog item not found." })
+                    : Results.Ok(receipt);
+            }
+            catch (InsufficientStockException ex)
+            {
+                // The request was well-formed; the shop's stock is what says no, so this is a
+                // conflict rather than a validation error.
+                return Results.Conflict(new
+                {
+                    code = "insufficient-stock",
+                    error = ex.Message,
+                    available = ex.Available,
+                    requested = ex.Requested
+                });
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        })
+        .WithName("CatalogRecordSale")
+        .WithSummary("Sell a catalog piece over the counter: decrements stock and records the takings.")
+        .Produces<CatalogSaleReceiptDto>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status409Conflict)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        // Selling at the counter is an operational act every admitted role performs, exactly like
+        // recording the customer interaction that already writes the same journal (a staff member
+        // must not be blocked from selling). It is not a `catalog:manage` edit of the piece.
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
 
         group.MapGet("/low-stock", async (
             [FromRoute] Guid organizationId,
@@ -176,6 +321,152 @@ public static class CatalogEndpoints
         .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status403Forbidden);
 
+        // --- QR Codes & Scanning ---
+
+        group.MapGet("/items/{itemId:guid}/qr", async (
+            [FromRoute] Guid organizationId,
+            [FromRoute] Guid itemId,
+            [FromQuery] string? format,
+            [FromQuery] int? size,
+            [FromServices] IQrCodeService qrService,
+            HttpContext context,
+            CancellationToken cancellationToken) =>
+        {
+            var requestedFormat = format?.Trim().ToLowerInvariant() ?? "png";
+            var requestedSize = Math.Clamp(size.GetValueOrDefault(300), 50, 2000);
+
+            if (requestedFormat == "json")
+            {
+                try
+                {
+                    var dto = await qrService.GenerateItemQrDtoAsync(organizationId, itemId, "png", requestedSize, cancellationToken);
+                    return Results.Ok(dto);
+                }
+                catch (KeyNotFoundException)
+                {
+                    return Results.NotFound(new { error = "Catalog item not found." });
+                }
+            }
+
+            try
+            {
+                var bytes = await qrService.GenerateItemQrBytesAsync(organizationId, itemId, requestedFormat, requestedSize, cancellationToken);
+                context.Response.Headers.CacheControl = "public, max-age=86400";
+                context.Response.Headers.XContentTypeOptions = "nosniff";
+
+                if (requestedFormat == "svg")
+                {
+                    return Results.File(bytes, "image/svg+xml; charset=utf-8");
+                }
+
+                return Results.File(bytes, "image/png");
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound(new { error = "Catalog item not found." });
+            }
+        })
+        .WithName("CatalogGetItemQr")
+        .WithSummary("Generate and retrieve a QR code for a specific catalog inventory item.")
+        .Produces(StatusCodes.Status200OK)
+        .Produces<QrCodeResponseDto>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden);
+
+        group.MapPost("/qr/generate", (
+            [FromRoute] Guid organizationId,
+            [FromBody] GenerateQrDto request,
+            [FromServices] IQrCodeService qrService,
+            HttpContext context) =>
+        {
+            var requestedFormat = request.Format?.Trim().ToLowerInvariant() ?? "png";
+            if (requestedFormat == "json" || requestedFormat == "base64")
+            {
+                var result = qrService.GenerateQrResponse(request);
+                return Results.Ok(result);
+            }
+
+            var size = Math.Clamp(request.Size, 50, 2000);
+            context.Response.Headers.CacheControl = "public, max-age=86400";
+            context.Response.Headers.XContentTypeOptions = "nosniff";
+
+            if (requestedFormat == "svg")
+            {
+                var svg = qrService.GenerateSvg(request.Payload, size, request.EccLevel, request.QuietZone);
+                return Results.File(Encoding.UTF8.GetBytes(svg), "image/svg+xml; charset=utf-8");
+            }
+
+            var pngBytes = qrService.GeneratePng(request.Payload, size, request.EccLevel, request.QuietZone);
+            return Results.File(pngBytes, "image/png");
+        })
+        .WithName("CatalogGenerateQr")
+        .WithSummary("Generate a custom QR code (PNG, SVG, or JSON base64 data URL) for any payload.")
+        .Produces<QrCodeResponseDto>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
+
+        var scanHandler = async (
+            [FromRoute] Guid organizationId,
+            HttpRequest request,
+            [FromServices] IQrCodeService qrService,
+            CancellationToken cancellationToken) =>
+        {
+            if (request.HasFormContentType)
+            {
+                var form = await request.ReadFormAsync(cancellationToken);
+                var file = form.Files.GetFile("file") ?? (form.Files.Count > 0 ? form.Files[0] : null);
+                if (file != null && file.Length > 0)
+                {
+                    using var ms = new MemoryStream();
+                    await file.CopyToAsync(ms, cancellationToken);
+                    var scanResult = await qrService.ScanAndResolveImageBytesAsync(organizationId, ms.ToArray(), cancellationToken);
+                    return Results.Ok(scanResult);
+                }
+
+                var codeFromForm = form["code"].ToString();
+                if (string.IsNullOrWhiteSpace(codeFromForm))
+                {
+                    codeFromForm = form["payload"].ToString();
+                }
+
+                if (!string.IsNullOrWhiteSpace(codeFromForm))
+                {
+                    var scanResult = await qrService.ScanAndResolveAsync(organizationId, new ScanQrDto { Code = codeFromForm }, cancellationToken);
+                    return Results.Ok(scanResult);
+                }
+            }
+            else if (request.ContentType?.Contains("application/json", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                var payload = await request.ReadFromJsonAsync<ScanQrDto>(cancellationToken);
+                if (payload != null)
+                {
+                    var scanResult = await qrService.ScanAndResolveAsync(organizationId, payload, cancellationToken);
+                    return Results.Ok(scanResult);
+                }
+            }
+
+            return Results.BadRequest(new { error = "Invalid scan request. Provide a 'code', 'payload', 'imageData', or upload a valid QR image file." });
+        };
+
+        group.MapPost("/items/scan-qr", scanHandler)
+            .WithName("CatalogScanItemQr")
+            .WithSummary("Scan and resolve a QR barcode or uploaded camera image to an inventory catalog piece.")
+            .Produces<QrScanResultDto>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .Produces(StatusCodes.Status403Forbidden)
+            .DisableAntiforgery()
+            .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
+
+        group.MapPost("/qr/scan", scanHandler)
+            .WithName("CatalogScanQrAlias")
+            .WithSummary("Alias endpoint for scanning and resolving QR codes.")
+            .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
+
         // --- Vision Analysis ---
 
         group.MapPost("/analyze-image", async (
@@ -185,15 +476,38 @@ public static class CatalogEndpoints
             CancellationToken cancellationToken) =>
         {
             dto.OrganizationId = organizationId;
-            var analysis = await visualService.AnalyzeImageAsync(dto, cancellationToken);
-            return Results.Ok(analysis);
+
+            try
+            {
+                var analysis = await visualService.AnalyzeImageAsync(dto, cancellationToken);
+                return Results.Ok(analysis);
+            }
+            catch (KeyNotFoundException)
+            {
+                // The same translation VisualEndpoints.AnalyzeImageAsync applies. A named
+                // reference the caller cannot see - another organisation's, unknown, or deleted -
+                // is a 404, never a resolved image and never a token (strategy §3.5, migration
+                // plan §7.5).
+                return Results.NotFound(new { error = "Image not found." });
+            }
+            catch (ArgumentException ex)
+            {
+                // The vision target refusal: a blank target, inline data the provider cannot read,
+                // or - the production defect - a relative Aveline media route that is neither an
+                // absolute http(s) URL nor inline image data. That is a caller error, not a
+                // provider fault, so it is a 400 with the service's own message rather than the
+                // global handler's 500. Everything else still propagates.
+                return Results.BadRequest(new { error = ex.Message });
+            }
         })
         .WithName("CatalogAnalyzeImage")
         .WithSummary("Extract visual fashion attributes and tags using Elle Vision AI.")
         .Produces<ImageAnalysisResultDto>(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status401Unauthorized)
-        .Produces(StatusCodes.Status403Forbidden);
+        .Produces(StatusCodes.Status403Forbidden)
+        .Produces(StatusCodes.Status404NotFound)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
 
         // --- Customer Matches ---
 
@@ -229,7 +543,8 @@ public static class CatalogEndpoints
         .WithSummary("Trigger customer style match computation for a catalog item.")
         .Produces<IReadOnlyList<CustomerMatchDto>>(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status401Unauthorized)
-        .Produces(StatusCodes.Status403Forbidden);
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
 
         // --- Lookbooks & Outfit Composition ---
 
@@ -262,7 +577,55 @@ public static class CatalogEndpoints
         .Produces<ComposedOutfitDto>(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status401Unauthorized)
-        .Produces(StatusCodes.Status403Forbidden);
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
+
+        group.MapPut("/lookbooks/{id:guid}", async (
+            [FromRoute] Guid organizationId,
+            [FromRoute] Guid id,
+            [FromBody] UpdateOutfitCompositionDto dto,
+            [FromServices] IVisualService visualService,
+            CancellationToken cancellationToken) =>
+        {
+            dto.OrganizationId = organizationId;
+            var updated = await visualService.UpdateLookbookAsync(id, organizationId, dto, cancellationToken);
+            if (updated is null)
+            {
+                return Results.NotFound(new { error = "Lookbook not found." });
+            }
+
+            return Results.Ok(updated);
+        })
+        .WithName("CatalogUpdateLookbook")
+        .WithSummary("Rename or re-occasion a composed lookbook.")
+        .Produces<OutfitCompositionDto>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueCatalogManagePolicy);
+
+        group.MapDelete("/lookbooks/{id:guid}", async (
+            [FromRoute] Guid organizationId,
+            [FromRoute] Guid id,
+            [FromServices] IVisualService visualService,
+            CancellationToken cancellationToken) =>
+        {
+            var deleted = await visualService.DeleteLookbookAsync(id, organizationId, cancellationToken);
+            if (!deleted)
+            {
+                return Results.NotFound(new { error = "Lookbook not found." });
+            }
+
+            return Results.NoContent();
+        })
+        .WithName("CatalogDeleteLookbook")
+        .WithSummary("Remove a composed lookbook from the boutique.")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueCatalogManagePolicy);
 
         // --- Sourcing Requests ---
 
@@ -296,7 +659,8 @@ public static class CatalogEndpoints
         .Produces<SourcingRequestDto>(StatusCodes.Status201Created)
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status401Unauthorized)
-        .Produces(StatusCodes.Status403Forbidden);
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
 
         group.MapPatch("/sourcing/{id:guid}/status", async (
             [FromRoute] Guid organizationId,
@@ -318,7 +682,8 @@ public static class CatalogEndpoints
         .Produces<SourcingRequestDto>(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status404NotFound)
         .Produces(StatusCodes.Status401Unauthorized)
-        .Produces(StatusCodes.Status403Forbidden);
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
 
         // --- Suppliers & External Catalogs ---
 
@@ -354,16 +719,17 @@ public static class CatalogEndpoints
         .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status403Forbidden);
 
-        // --- Binary Media Storage (PostgreSQL bytea) ---
+        // --- Binary Media Storage (the configured provider: database bytea or Cloudinary) ---
 
         group.MapPost("/images/upload", async (
             [FromRoute] Guid organizationId,
             HttpRequest request,
-            [FromServices] IInventoryRepository repository,
+            [FromServices] IInventoryImageStore imageStore,
+            [FromServices] IOptions<MediaOptions> mediaOptions,
             CancellationToken cancellationToken) =>
         {
             byte[]? bytes = null;
-            string contentType = ImageContentTypes.DefaultImage;
+            string contentType = MediaContentTypes.DefaultImage;
             string? fileName = null;
             long fileSizeBytes = 0;
 
@@ -376,7 +742,7 @@ public static class CatalogEndpoints
                     using var ms = new MemoryStream();
                     await file.CopyToAsync(ms, cancellationToken);
                     bytes = ms.ToArray();
-                    contentType = ImageContentTypes.Normalize(file.ContentType);
+                    contentType = MediaContentTypes.NormalizeImage(file.ContentType);
                     fileName = file.FileName;
                     fileSizeBytes = file.Length;
                 }
@@ -395,7 +761,7 @@ public static class CatalogEndpoints
                             var mimePart = raw[5..commaIdx];
                             if (mimePart.Contains(';'))
                             {
-                                contentType = ImageContentTypes.Normalize(mimePart.Split(';')[0]);
+                                contentType = MediaContentTypes.NormalizeImage(mimePart.Split(';')[0]);
                             }
                             bytes = Convert.FromBase64String(raw[(commaIdx + 1)..]);
                         }
@@ -414,20 +780,34 @@ public static class CatalogEndpoints
                 return Results.BadRequest(new { error = "No valid image data provided." });
             }
 
-            var imageId = Guid.NewGuid();
-            var imageRecord = new InventoryImage
+            // The catalog tier's own ceiling, tighter than the attachment tier's 5 MB: the
+            // web optimizer's raw-bytes fallback can post an unshrunk phone photo here, and a
+            // catalog photo is displayed at a known, much smaller size (strategy §3.4, §3.7).
+            // Checked before anything is built or written, on both the multipart and the
+            // base64-JSON branch, so a refused upload is never stored.
+            var catalogMaxFileBytes = mediaOptions.Value.CatalogMaxFileBytes;
+            if (bytes.LongLength > catalogMaxFileBytes)
             {
-                Id = imageId,
-                OrgId = organizationId,
-                ImageData = bytes,
-                ContentType = contentType,
-                FileName = fileName,
-                FileSizeBytes = fileSizeBytes,
-                ImageUrl = $"/api/v1/orgs/{organizationId}/catalog/images/{imageId}",
-                CreatedAtUtc = DateTime.UtcNow
-            };
+                return Results.BadRequest(new
+                {
+                    error = $"A catalog image may be at most {catalogMaxFileBytes} bytes."
+                });
+            }
 
-            await repository.AddImageAsync(imageRecord, cancellationToken);
+            // The row and the bytes both go through the catalog row seam, which delegates to the
+            // provider chosen once from Media:Provider (strategy §3.1): the database tier keeps
+            // the bytes in the row and returns the relative Aveline route, the Cloudinary tier
+            // stores them at the CDN and returns the absolute delivery URL. The route never
+            // branches on the provider.
+            var imageRecord = await imageStore.StoreAsync(
+                new InventoryImageStoreRequest(
+                    organizationId,
+                    ItemId: null,
+                    bytes,
+                    contentType,
+                    fileName ?? "image",
+                    fileSizeBytes),
+                cancellationToken);
 
             return Results.Ok(new
             {
@@ -439,12 +819,13 @@ public static class CatalogEndpoints
             });
         })
         .WithName("CatalogUploadImage")
-        .WithSummary("Upload and store an image binary directly in the PostgreSQL database.")
+        .WithSummary("Upload an image through the configured media provider and return its row.")
         .Produces(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status403Forbidden)
-        .DisableAntiforgery();
+        .DisableAntiforgery()
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
 
         group.MapGet("/images/{imageId:guid}", async (
             [FromRoute] Guid organizationId,
@@ -454,7 +835,21 @@ public static class CatalogEndpoints
             CancellationToken cancellationToken) =>
         {
             var image = await repository.GetImageByIdAsync(imageId, organizationId, cancellationToken);
-            if (image == null || image.ImageData == null || image.ImageData.Length == 0)
+            if (image is null)
+            {
+                return Results.NotFound(new { error = "Image not found." });
+            }
+
+            // Per-row dispatch (strategy §3.3): a Cloudinary row's bytes live at the CDN, so this
+            // stable Aveline route answers 302 to the absolute delivery URL instead of streaming
+            // them. A database row keeps streaming bytes exactly as before, and a row with
+            // neither is a 404 — never a 500.
+            if (IsCloudinaryRow(image) && Uri.TryCreate(image.ImageUrl, UriKind.Absolute, out _))
+            {
+                return Results.Redirect(image.ImageUrl, permanent: false);
+            }
+
+            if (image.ImageData == null || image.ImageData.Length == 0)
             {
                 return Results.NotFound(new { error = "Image not found." });
             }
@@ -463,14 +858,75 @@ public static class CatalogEndpoints
             // The stored content type comes from the uploader, so never let the browser
             // sniff or render a non-image payload (e.g. text/html) from this origin.
             context.Response.Headers.XContentTypeOptions = "nosniff";
-            return Results.File(image.ImageData, ImageContentTypes.SafeServe(image.ContentType));
+            return Results.File(image.ImageData, MediaContentTypes.SafeServe(image.ContentType));
         })
         .WithName("CatalogGetImage")
-        .WithSummary("Retrieve physical image binary from PostgreSQL.")
+        .WithSummary("Retrieve a catalog image: 302 to the CDN for a Cloudinary row, bytes for a database row.")
         .Produces(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status302Found)
         .Produces(StatusCodes.Status404NotFound)
+        // F-7, decided (Q4): **catalog imagery is public.** Product photography is a public
+        // artefact, and the direction is to serve it from Cloudinary: since U1.2 a row whose
+        // StorageProvider is `cloudinary` answers 302 to its absolute CDN delivery URL rather
+        // than streaming bytes from PostgreSQL, while a database row streams exactly as before.
+        // This route therefore overrides the group's member-level policy on purpose. The GUID is
+        // unguessable but not secret, and the database tier's response is
+        // `public, max-age=31536000, immutable`, which means anyone who has ever held the URL
+        // keeps the bytes. Recorded here rather than inherited silently — this is the one
+        // deliberate anonymous route on the catalog group.
         .AllowAnonymous();
 
         return endpoints;
+    }
+
+    /// <summary>
+    /// Whether a catalog row's bytes belong to Cloudinary rather than to the row itself
+    /// (strategy §3.3). The row alone decides, so a mixed population needs no data migration.
+    /// </summary>
+    private static bool IsCloudinaryRow(InventoryImage image) =>
+        string.Equals(
+            image.StorageProvider,
+            CloudinaryInventoryImageStore.ProviderName,
+            StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Resolves the authenticated caller's user id for the one catalog route that attributes a
+    /// write to a person (the counter sale). Returns <c>null</c> when the principal carries no
+    /// resolvable subject, which the ledger accepts as "written by a job or an unattributable
+    /// path" rather than inventing an id.
+    /// </summary>
+    private static async Task<Guid?> ResolveUserIdAsync(
+        ClaimsPrincipal principal,
+        IUserRepository users,
+        CancellationToken cancellationToken)
+    {
+        var clerkId = principal.FindFirstValue(ClaimTypes.NameIdentifier)
+                      ?? principal.FindFirstValue("sub");
+        if (string.IsNullOrEmpty(clerkId))
+        {
+            return null;
+        }
+
+        var dbUser = await users.GetByClerkIdAsync(clerkId, cancellationToken);
+        return dbUser?.Id;
+    }
+
+    /// <summary>
+    /// Runs a catalog item write, translating the catalog tier's image-size refusal
+    /// (<see cref="CatalogImageTooLargeException"/>, raised by
+    /// <c>InventoryService.ProcessImageUrlAsync</c> for a <c>data:</c> image URL) into the same
+    /// <c>400 { error }</c> shape this file's other refusals use. Every other failure keeps
+    /// propagating to the global handler, so this cannot mask an unrelated fault.
+    /// </summary>
+    private static async Task<IResult> WriteCatalogItemAsync(Func<Task<IResult>> write)
+    {
+        try
+        {
+            return await write();
+        }
+        catch (CatalogImageTooLargeException ex)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
     }
 }

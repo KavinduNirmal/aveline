@@ -141,13 +141,27 @@ void main() {
         isFalse,
       );
     });
-
-    test('an agent message that was never sent is an internal note too', () {
-      expect(
-        of(author: MessageAuthor.agent, status: MessageStatus.published)
-            .isInternalNote,
-        isTrue,
+    test('an agent reply is drawn as a reply, not as a note', () {
+      // The side is who spoke and the treatment is where it went. Reading
+      // `!isFromClient` as the side test put every persona on the associate's own
+      // side and read every published reply as `NOTE · NOT SENT`.
+      final reply = of(
+        author: MessageAuthor.agent,
+        status: MessageStatus.published,
       );
+
+      expect(reply.isInternalNote, isFalse);
+      expect(reply.isFromStaff, isFalse);
+      expect(reply.isFromAgent, isTrue);
+    });
+
+    test('the side test separates the associate from a persona', () {
+      // The wire has no `Client` author, so `!isFromClient` is true of staff,
+      // agents and system alike and cannot decide which side a bubble sits on.
+      expect(of(author: MessageAuthor.staff).isFromStaff, isTrue);
+      expect(of(author: MessageAuthor.agent).isFromStaff, isFalse);
+      expect(of(author: MessageAuthor.client).isFromStaff, isFalse);
+      expect(of(author: MessageAuthor.system).isFromStaff, isFalse);
     });
 
     test('a client message is never an internal note', () {
@@ -202,6 +216,155 @@ void main() {
       final failed = of(deliveryStatus: MessageDeliveryStatus.failed);
 
       expect(failed.copyWith(clearDeliveryStatus: true).deliveryStatus, isNull);
+    });
+  });
+
+  group('ThreadMessage briefing blocks', () {
+    test('reads a client_message block as the client\u2019s words and channel handle', () {
+      // The block's own field is `text`, and `from` is the channel handle. A thread that
+      // read only the first `text` block drew this as an empty bubble.
+      final message = ThreadMessage.fromJson(const {
+        'id': 'msg_8',
+        'authorKind': 'System',
+        'kind': 'ClientMessage',
+        'status': 'Published',
+        'contentBlocks': [
+          {'type': 'client_message', 'from': 'whatsapp:+94771234567', 'text': 'Is it ready?'},
+        ],
+      });
+
+      expect(message.author, MessageAuthor.client);
+      expect(message.isFromClient, isTrue);
+      expect(message.text, 'Is it ready?');
+      expect(message.clientMessageFrom, 'whatsapp:+94771234567');
+    });
+
+    test('falls back to the first text block when there is no client_message', () {
+      final message = ThreadMessage.fromJson(const {
+        'id': 'msg_9',
+        'kind': 'Note',
+        'contentBlocks': [
+          {'type': 'piece', 'name': 'Silk Slip Dress'},
+          {'type': 'text', 'text': 'Three pieces match the brief.'},
+          {'type': 'at_a_glance', 'columns': ['Size'], 'rows': [['M']]},
+        ],
+      });
+
+      expect(message.text, 'Three pieces match the brief.');
+    });
+
+    test('keeps every block, in order, so the renderer can draw each one', () {
+      final message = ThreadMessage.fromJson(const {
+        'id': 'msg_10',
+        'kind': 'Note',
+        'contentBlocks': [
+          {'type': 'text', 'text': 'A summary.'},
+          {'type': 'piece', 'name': 'Silk Slip Dress', 'price': 24000},
+          {'type': 'at_a_glance', 'columns': ['Size', 'Stock'], 'rows': [['M', '2']]},
+        ],
+      });
+
+      expect(message.blocks.map((block) => block.type), [
+        'text',
+        'piece',
+        'at_a_glance',
+      ]);
+      expect(message.blocks[1].name, 'Silk Slip Dress');
+      expect(message.blocks[1].amount, 24000);
+      expect(message.blocks[2].rows, hasLength(1));
+      expect(message.blocks[2].columns, ['Size', 'Stock']);
+    });
+
+    test('reads a choice block with its options', () {
+      final message = ThreadMessage.fromJson(const {
+        'id': 'msg_11',
+        'kind': 'Note',
+        'contentBlocks': [
+          {
+            'type': 'choice',
+            'prompt': 'Which one did you mean?',
+            'options': [
+              {'customerId': 'aaaa', 'fullName': 'Nadeesha Perera', 'status': 'active'},
+              {'customerId': 'bbbb', 'fullName': 'Nadeesha Silva', 'status': 'new'},
+            ],
+          },
+        ],
+      });
+
+      final choice = message.blocks.single;
+      expect(choice.prompt, 'Which one did you mean?');
+      expect(choice.options, hasLength(2));
+      expect(choice.options.first['customerId'], 'aaaa');
+      expect(choice.options.first['fullName'], 'Nadeesha Perera');
+    });
+
+    test('carries the clientMessageId a retry reuses', () {
+      final message = ThreadMessage.fromJson(const {
+        'id': 'msg_12',
+        'authorKind': 'User',
+        'clientMessageId': '22222222-2222-4222-8222-222222222222',
+      });
+
+      expect(message.clientMessageId, '22222222-2222-4222-8222-222222222222');
+    });
+
+    test('an approved SignOff is not an internal note', () {
+      // A SignOff is published once approved. Drawn by status alone it would read
+      // `NOTE · NOT SENT`, which is the record lying about a decision that was made.
+      final approved = ThreadMessage.fromJson(const {
+        'id': 'msg_13',
+        'authorKind': 'Agent',
+        'kind': 'SignOff',
+        'status': 'Published',
+        'contentBlocks': [
+          {'type': 'sign_off', 'amount': 48000, 'reason': 'above discretionary limit'},
+        ],
+      });
+
+      expect(approved.isInternalNote, isFalse);
+      expect(approved.isApprovedSignOff, isTrue);
+      expect(approved.isDismissedSignOff, isFalse);
+    });
+
+    test('a dismissed SignOff is dismissed rather than a note', () {
+      final dismissed = ThreadMessage.fromJson(const {
+        'id': 'msg_14',
+        'authorKind': 'Agent',
+        'kind': 'SignOff',
+        'status': 'Cancelled',
+      });
+
+      expect(dismissed.isInternalNote, isFalse);
+      expect(dismissed.isDismissedSignOff, isTrue);
+      expect(dismissed.isApprovedSignOff, isFalse);
+    });
+
+    test('a staged SignOff is awaiting, not a note', () {
+      final staged = ThreadMessage.fromJson(const {
+        'id': 'msg_15',
+        'authorKind': 'Agent',
+        'kind': 'SignOff',
+        'status': 'AwaitingSignOff',
+      });
+
+      expect(staged.needsSignOff, isTrue);
+      expect(staged.isInternalNote, isFalse);
+    });
+
+    test('copyWith carries the blocks and the send key', () {
+      final original = ThreadMessage.fromJson(const {
+        'id': 'msg_16',
+        'clientMessageId': '22222222-2222-4222-8222-222222222222',
+        'contentBlocks': [
+          {'type': 'text', 'text': 'hello'},
+        ],
+      });
+
+      final copy = original.copyWith(status: MessageStatus.sent);
+
+      expect(copy.clientMessageId, original.clientMessageId);
+      expect(copy.blocks.map((block) => block.type), ['text']);
+      expect(copy.text, 'hello');
     });
   });
 }

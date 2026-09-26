@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type {
   CompleteOnboardingResponse,
   OnboardingOrganizationDto,
@@ -8,6 +8,8 @@ import type {
   SaveBoutiqueDetailsRequest,
   SelectPlanRequest,
 } from './onboarding'
+import { selectPlan } from './onboarding'
+import { apiClient } from './api'
 
 describe('Onboarding Module Contracts', () => {
   it('validates SaveBoutiqueDetailsRequest construction', () => {
@@ -102,4 +104,50 @@ describe('Onboarding Module Contracts', () => {
     expect(complete.blossomAllocation).toBe(750)
     expect(complete.agentWarmedUp).toBe(true)
   })
+
+  /**
+   * Plan §9.1 F1 acceptance (4): `selectPlan` returns the widened server contract, so the wizard
+   * can render the price the backend resolved instead of the hardcoded constant. In defer mode the
+   * two payment fields are always null.
+   */
+  it('selectPlan returns the priced subscription fields from the server', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: {
+        id: 'org-1',
+        name: 'The Silk Pavilion',
+        slug: 'the-silk-pavilion',
+        address: null,
+        phoneNumber: null,
+        description: null,
+        logoUrl: null,
+        planTier: 'Bloom',
+        brandVoice: null,
+        businessRules: null,
+        preferredColorsFabrics: null,
+        customerPreferences: null,
+        onboardingStep: 4,
+        hasCompletedOnboarding: false,
+        priceLkr: 3500,
+        currency: 'LKR',
+        subscriptionStatus: 'Trialing',
+        paymentIntentId: null,
+        checkoutUrl: null,
+      },
+    })
+
+    const result = await selectPlan('Bloom')
+
+    expect(post).toHaveBeenCalledWith('/api/v1/onboarding/plan', { planTier: 'Bloom' })
+    expect(result.priceLkr).toBe(3500)
+    expect(result.currency).toBe('LKR')
+    expect(result.subscriptionStatus).toBe('Trialing')
+    expect(result.paymentIntentId).toBeNull()
+    expect(result.checkoutUrl).toBeNull()
+
+    post.mockRestore()
+  })
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })

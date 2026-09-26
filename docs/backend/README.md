@@ -8,7 +8,7 @@ statistics, and system statistics and alerts) are **implemented** on
 ledger, M4 entitlements, M5 API access, M6 agent statistics, M7 API consumption and
 M8 system statistics are all applied. No further migration is planned by this document.
 **Baseline:** commit `902f27f` (`integration/slice-2-to-slice-1`)
-**Scope:** backend only — `Aveline.Api` and `agnet-service`. No frontend, no
+**Scope:** backend only — `Aveline.Api` and `agent-service`. No frontend, no
 screens, no UX flows.
 
 ---
@@ -242,7 +242,7 @@ entitlements.
 
 1. **The Python instrumentation (gaps G-1…G-14) is deferred per risk R-1.** The
    C# ingest, storage, endpoints and jobs are complete and covered by tests, but
-   nothing in `agnet-service/` emits run/step telemetry yet, so every live response
+   nothing in `agent-service/` emits run/step telemetry yet, so every live response
    carries `dataQuality` with `latencyInstrumented`, `nodeFailuresObserved`,
    `perStepAttribution`, `toolInstrumented` and `costInstrumented` **all `false`**.
    `GET /latency` returns a null series rather than zeros. The catalog's §8 flag
@@ -250,10 +250,11 @@ entitlements.
    where the catalog says `costIsEstimated`, and the API omits
    `retryInstrumented`, `materialisedCounts`, `streamingRunsIncluded` and
    `unattributedRunsExcluded` until the corresponding work exists.
-2. **There is no `DailyAgentMetrics` rollup and therefore no `AgentStatsRollupJob`.**
-   Percentiles are computed on the fly over the bounded window (catalog §9 says the
-   on-the-fly path is sufficient at current volumes). The hybrid "rollup beyond
-   seven days" described for S-16 is not implemented.
+2. **The rollup job exists and is registered.** `AgentStatsRollupJob` is present in
+   `Modules/Statistics/Jobs/` and registered as a hosted service by
+   `StatisticsModule`. Percentiles are still computed on the fly over the bounded window
+   (catalog §9 says the on-the-fly path is sufficient at current volumes); the earlier
+   claim that the job does not exist was stale and is corrected here (Slice 8, N-3a).
 3. **`AgentStats:MinSampleForPercentile` and the retention keys are new config
    keys** beyond the two the plan's §10.2 listed (`MaxStepsPerRun`,
    `PausedRunTimeoutHours`). `AgentStats:StepRetentionDays` (90) and
@@ -289,25 +290,44 @@ entitlements.
    "not configured → unlimited", never an exhausted quota. When the counter store is
    unreachable the quota path **fails closed** (treats the meter as exhausted) only while
    enforcement is enabled; with enforcement disabled it can never fail a request.
-2. **Hour→day compaction beyond the 90-day hourly retention is deferred.** Hourly and
-   daily windows share one table and one unique dimension index, so a day row at the day
-   boundary would collide with the 00:00 hour row. `ApiStatsRollupJob` therefore
-   recomputes-and-replaces (normalises and merges) the just-closed hour; the 400-day daily
-   rollup from S-24/§9 is not produced yet.
-3. **The load-test harness is deferred.** There is no load runner in CI, so the FR-6.3 /
+2. **Hour→day compaction IS produced.** When the just-closed hour is 23:00 UTC,
+   `ApiStatsRollupJob.RunAsync` also calls `RecomputeDayAsync`, which backs the 400-day
+   daily rollup from S-24/§9 and `Telemetry:DailyRollupRetentionDays`. Hourly and daily
+   windows share one table but are distinguished by `WindowSize`, so the day row does not
+   collide with the 00:00 hour row. The earlier "deferred / not produced yet" claim was
+   stale and is corrected here (Slice 8, N-3b).
+3. **The load runner is not wired into CI, though the script is tracked.**
+   `tests/load/k6-telemetry-overhead.js` is committed; what is missing is a CI job that
+   runs it. The FR-6.3 /
    BR-6.3 gate — 5 000 req/s for 60 s with p99 telemetry overhead ≤ 1 ms — is a noted
    acceptance criterion, not a measured one. The middleware inlines no I/O and only
    stamps/enqueues, and `ApiTelemetryWriterTests` covers buffer overflow, but the
    latency gate itself is unproven in this environment.
-4. **JWT user/org attribution is claim-only.** `RequestPrincipal` reads `org_id`/`user_id`
-   claims; it deliberately performs no database lookup on the request path (FR-6.3), so a
-   Clerk token without those claims is attributed to `OrganizationId = NULL` and counted
-   in system statistics only (BR-6.1). API-key traffic is fully attributed.
+4. **JWT user/org attribution is claim-only, with an in-memory map behind it.** `RequestPrincipal`
+   reads `org_id`/`user_id`/`sub` and parses them as GUIDs. A Clerk `jwt-aveline-v1` token carries
+   Clerk's native `user_…`/`org_…` ids rather than the Aveline GUIDs, so that chain failed for every
+   human session and `ApiRequestMetric.UserId` was `null`. `IClaimIdentityMap` — two
+   `FrozenDictionary`s rebuilt every five minutes by `ClaimIdentityMapRefresher` — now resolves the
+   Clerk ids **off the request path**, and `RequestPrincipal.Resolve(principal, identities)` is one
+   synchronous dictionary read, so the middleware still does no I/O (FR-6.3). A refresh failure keeps
+   the previous map, and an unmapped Clerk id increments `UnresolvedCount`, which the business-KPI
+   `dataQuality` block exposes. Anything still unresolvable is attributed to
+   `OrganizationId = NULL`/`UserId = NULL` and counted in system statistics only (BR-6.1). API-key
+   traffic is unchanged and fully attributed.
 5. **`IX_ApiRequestLogs_Slow` and `IX_ApiRequestLogs_Errors` are created by raw SQL.**
    EF Core identifies an index by its property set, so the two partial indexes on
    `OccurredAt` cannot both be modelled; they exist in the hand-edited M7 migration and
    are verified by `ApiConsumptionPostgresTests`.
-6. **New `Telemetry:*` retention/threshold keys** (`RawLogRetentionDays`,
+6. **`OrganizationSubscriptionSnapshots` is a new table.** One row per organization per UTC day,
+   written at 02:00 UTC by `OrganizationSubscriptionSnapshotJob` and pruned at 400 days. It exists
+   because `OrganizationSubscriptions` holds one current row per organization, created only when a
+   plan changes or is cancelled, so it can never answer "how many were on Bloom in March" — and an
+   organization that never changed plan has no row there at all. The snapshot's tier therefore comes
+   from `Organizations.PlanTier`, which is authoritative for every organization, and `HasBillingRow`
+   records whether a billing row existed. Days before the first real snapshot are reconstructed from
+   `AuditLogEntries[Action='org.plan.changed']` and marked `IsBackfilled`. See
+   [statistics-catalog.md](statistics-catalog.md) S-47.
+7. **New `Telemetry:*` retention/threshold keys** (`RawLogRetentionDays`,
    `HourlyRollupRetentionDays`, `DailyRollupRetentionDays`, `WriterBatchSize`,
    `WriterFlushSeconds`, `MinSampleForPercentile`, `MaxWindowDays`,
    `QuotaWarningPercent`, `IpHashSalt`) are exposed in `appsettings.json` beyond the
@@ -347,8 +367,8 @@ entitlements.
    `NotificationRecords.OrganizationId` is a required FK to `Organizations` and the scheduled
    rules are system-wide, so a system-wide critical alert logs that no notification was
    created rather than writing an invalid FK. `IAlertService.EvaluateRuleAsync` accepts an
-   optional organization id, so an org-scoped alert does create the record through
-   `IRecipientResolver`.
+   optional organization id, so an org-scoped alert does notify through
+   `INotificationDispatcher` (record + one inbox row per recipient).
 4. **`inbound_message_backlog` and `publish_latency_ms` are unmeasurable today.**
    `InboundMessageLog` has no processed marker and `EventBusMetrics` exposes counters only;
    both appear in each response's `omitted` list instead of as zero (BR-7.10).
@@ -361,20 +381,164 @@ entitlements.
    plan's §10.2 list.
 8. **The alert cooldown elapses against the fire time (M-21).** `AlertService` measures
    `now − FiredAt`; a sustained breach aggregates `OccurrenceCount` while inside the cooldown
-   and, once it elapses, re-fires — resetting `FiredAt`/`OccurrenceCount`, clearing
-   `NotificationRecordId` and publishing `system.alert.fired` (and re-notifying) again. The
+   and, once it elapses, re-fires — resetting `FiredAt`/`OccurrenceCount` and publishing
+   `system.alert.fired` again. The record id is **no longer cleared** (issue #309, Q6), so a
+   sustained breach notifies once per rule rather than on every cooldown. The
    three-consecutive-OK auto-resolution path is unchanged.
 9. **System metric samples are organisation-agnostic (M-22).** `SystemMetricSample` has no
    organization column and the collector writes `{}` dimensions, so `LoadSamplesAsync` cannot
    filter by organization. `EvaluateRuleAsync`'s `organizationId` only scopes the fired alert
    (and its critical notification); a future org-scoped metric would carry the organization in
    `DimensionsJson` and be selected through the rule's dimension filter.
-10. **The billing statistics family is deferred, not shipped.** The five
+10. **The billing statistics family IS shipped.** The five
     `/api/v1/admin/statistics/billing/*` endpoints (`profitability`, `org-usage`,
     `adjustments`, `plan-changes`, `downgrades`) and the three organization billing
     statistics (`/orgs/{id}/statistics/billing/burn-rate`, `/customers/active`,
-    `/staff/seats`) are consciously out of scope for the #241 fix. No route exists, so
-    they return **404**; `docs/api/README.md` marks them as deferred.
+    `/staff/seats`) are mapped in `BillingStatisticsEndpoints.cs` and present in
+    `docs/api/openapi.yaml`. The earlier claim that "no route exists, so they return
+    **404**" was stale (Slice 8, N-3c) and is corrected here.
+
+### Implementation status (metrics infrastructure — Prometheus + Grafana)
+
+> Operator runbook: [observability.md](observability.md) — architecture, the two-name metric
+> contract, token rotation, how to add a dashboard, the cardinality prohibition, the deferred
+> register and the production deployment note.
+
+
+The executable plan is
+`.agents/plans/prometheus-grafana-metrics-implementation.ignore.md` (Revision 4), which
+re-scoped the work to Prometheus and Grafana only; the admin console, the PromQL proxy and the
+notification HTTP routes are deferred with frozen contracts, and nothing in these slices needs a
+frontend or a backend contract change. One GitHub issue per slice, all on
+`feature/prometheus-and-grafana-monitoring`.
+
+| Slice | Issue | What lands |
+| --- | --- | --- |
+| 1 | [#315](https://github.com/KavinduNirmal/aveline/issues/315) | A real `Metrics:ScrapeToken` with no committed default, the pinned `prometheus` compose service, `observability/prometheus/{prometheus.yml,rules/aveline.yml}`, `MetricsNamingTests` proving the exporter's name translation, the `observability-config` CI job, and `scripts/validate_observability_config.py` |
+| 4a | [#318](https://github.com/KavinduNirmal/aveline/issues/318) | The agent service's `MeterProvider` + `OTLPMetricExporter` (OLTP push to the collector), the additive agent instruments, cumulative temporality pinned explicitly, the recorded `OTEL_SEMCONV_STABILITY_OPT_IN=http` convention, and `test_metrics_are_recorded` |
+| 4b | [#319](https://github.com/KavinduNirmal/aveline/issues/319) | The step-record producer on the real graph path, real `steps[]` rows through `POST /internal/agent-runs`, and `AgentDataQualityDto.Derive` called from the two sites that hard-coded the flags |
+
+**Slice 1 findings worth carrying forward.**
+
+1. **The scrape credential is no longer the internal token.** `METRICS_SCRAPE_TOKEN` is empty in
+   `.env.example`, `docker-compose.yml` declares `Metrics__ScrapeToken:
+   ${METRICS_SCRAPE_TOKEN:?...}` so an unset value fails the stack, and
+   `MetricsSecurityGuard.EnsureScrapeTokenForProduction` refuses to boot Production without it
+   (S-1/R-1). Prometheus is now a scrape-only caller; `Authorization` is a reserved header name
+   in Prometheus' scrape config, which is why the credential goes through
+   `authorization.credentials_file` rather than `http_headers`.
+2. **Retention lives in `prometheus.yml`, never a CLI flag.** `--storage.tsdb.retention.time`
+   is deprecated and the config-file field silently takes precedence; the bare
+   `--storage.tsdb.retention` is startup-fatal in Prometheus 3. `promtool check config` is run
+   against the real pinned image by the `observability-config` job.
+3. **The exporter translates, and the plan's hand-applied table was wrong in three rows.**
+   `MetricsNamingTests` scrapes a live meter and asserts every `MetricsCatalog` entry, which
+   caught `aveline.process.cpu_seconds → aveline_process_cpu_seconds_total`,
+   `aveline.api.error_rate → aveline_api_error_rate_ratio` and
+   `aveline.agent.success_rate → aveline_agent_success_rate_ratio` — all three of which the
+   strategy document recorded as passing through unchanged. This is why the naming test ships
+   **before** any rule or dashboard: without it, an exporter upgrade empties every panel
+   silently. Full detail is in [../api/README.md §C.9](../api/README.md).
+4. **The collector now has a `metrics:` pipeline.** The agent service pushes OTLP metrics
+   through `otel-collector`, which exposes them on port 8889 for the `aveline-agent` scrape
+   job. The two deprecated forms were fixed in the same commit (`otlp` → `otlp_grpc/jaeger`,
+   `resource_to_telemetry_conversion` → `resource_constant_labels`), and the collector is
+   pinned to `0.161.0` rather than `:latest`.
+
+**The agent metrics pipeline (Slices 4a–4b).**
+
+The agent service pushes, it is never scraped. `app/observability/metrics.py` builds a
+`MeterProvider` with an `OTLPMetricExporter` next to the existing `TracerProvider`;
+`init_metrics()` runs on the FastAPI lifespan. There is **no `/metrics` route and no inbound
+metrics port**, so `http://agent:8000/metrics` still returns `404` (the test asserts it). The
+collector's `metrics:` pipeline and `prometheus` exporter (Slice 1, above) are the receiving
+half.
+
+1. **Endpoint precedence follows the OTel spec.** An explicit argument wins, then
+   `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` (verbatim), then `OTEL_EXPORTER_OTLP_ENDPOINT` +
+   `/v1/metrics`. With none set the provider is not built and every instrument is a no-op, so
+   tests and local runs without a collector keep working.
+2. **Cumulative temporality is pinned twice.** `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE`
+   is set to `CUMULATIVE` *and* passed as the exporter's `preferred_temporality`, so a delta
+   exporter cannot be introduced downstream. Prometheus requires cumulative.
+3. **The semconv convention is recorded, not discovered.** The service sets
+   `OTEL_SEMCONV_STABILITY_OPT_IN=http` before the FastAPI/HTTPX instrumentors run, so the
+   agent's HTTP metrics use the API's stable seconds-based names instead of the legacy
+   millisecond incubating ones (R-17).
+4. **Additive instruments only.** `aveline.agent.run.{duration,count}`,
+   `aveline.agent.node.{duration,failures}`, `aveline.agent.tool.calls`,
+   `aveline.agent.retries`, `aveline.agent.run.unattributed`, `aveline.agent.stream.runs` and
+   `aveline.agent.llm.tokens.cached`. There is deliberately **no input/output token counter**:
+   the LangChain instrumentor already emits `gen_ai.client.token.usage`, and a second measure
+   of the same quantity is a defect (R-15). `opentelemetry-exporter-otlp-proto-http` is an
+   explicit pin in `agent-service/requirements.txt` (N-6).
+5. **`workflow` is a bounded name, never an id.** `runId`/`stepIndex` are row columns, never
+   metric labels (plan §7.3). `test_agent_step_records.py` asserts no forbidden label key and
+   that `workflow` is always `concierge`.
+6. **The step-record producer is real.** `POST /agents/query` builds a `TelemetryCollector`,
+   passes it into `run_concierge`, and every graph node writes an `AgentStepTelemetry` row
+   (tool calls append `ToolCall` rows). The collector is finalized into the existing
+   `AgentRunTelemetry` → `POST /internal/agent-runs` `steps[]` payload, replacing the single
+   synthetic step. The same change gives `chain_of_thought_span` its first application caller
+   (`agent.node.<node>`), closing G-13.
+7. **`dataQuality` is derived, not asserted (M-6).** `AgentDataQualityDto.Derive` is now called
+   from `AgentRunIngestService.GetRunAsync` and both `BillingStatisticsService` constructions
+   (burn rate and profitability). A flag is `true` only when a persisted run/step row justifies
+   it and `false` on an empty window; `AgentDataQualityDerivationTests` pins the truth table,
+   including the empty window, so the "do not flip a flag because an instrument exists" rule is
+   enforced by a test rather than by a comment.
+
+### Implementation status (notifications inbox — backend slices)
+
+The Flutter-to-backend notifications plan
+(`.agents/plans/flutter-to-backend-notifications-implementation.ignore.md`, S0–S9) wired the
+associate's inbox to the live API and enabled the backend surfaces it reads. The backend
+slices, one issue per phase:
+
+| Issue | What landed |
+| --- | --- |
+| [#306](https://github.com/KavinduNirmal/aveline/issues/306) | `NotificationHub.SubscribeAsync` — an idempotent, client-callable re-join of `user:{id}` and the active `org:{id}` groups, invoked on reconnect. SignalR does not preserve group membership across a rebuilt socket, so without it a reconnected app received nothing, silently and permanently. |
+| [#307](https://github.com/KavinduNirmal/aveline/issues/307) | `NotificationDto` gains `notificationId` (the `UserNotification` row) and `unreadCount` (the recipient's count **after** the row was written). `IRealtimeChannel.SendAsync` takes both; `IPushChannel.SendAsync` takes the id; `NotificationDispatcher` computes the count per recipient. |
+| [#308](https://github.com/KavinduNirmal/aveline/issues/308) | The FCM `data` map gains `type` (the `NotificationType` name) and `notificationId`, so a closed app renders the right kind and a tap can mark that notification read. `EventReminderService` now requests `Push` as well as `Realtime | Email` (Q8). |
+| [#309](https://github.com/KavinduNirmal/aveline/issues/309) | `INotificationDispatcher.DispatchAsync` returns the `NotificationRecord` it wrote (or `null`); `AlertService` dispatches through it instead of writing an orphan record, and a sustained breach notifies **once** per rule. Before this, a Critical `SystemAlert` created no inbox row and invoked no channel. |
+| [#310](https://github.com/KavinduNirmal/aveline/issues/310) | `NotificationRetentionJob` — dismissed inbox rows after `Notifications:DismissedRetentionDays` (30), read rows after `Notifications:ReadRetentionDays` (180), lock-guarded and idempotent. The `NotificationRecord`/`NotificationDelivery` audit trail is never purged. |
+
+**Notes:**
+
+1. **A critical alert reaches the inbox once per rule per breach.** `NotificationDispatcher`
+   is the only code that creates `UserNotification` rows; one dispatch writes one record and
+   one inbox row per resolved recipient, and `AlertService` stores the returned record id.
+   A re-fire inside the same breach publishes `system.alert.fired` but creates nothing new.
+2. **`unreadCount` is named forward-compatibly.** It means "the recipient's open work under
+   the model in force", so a fan-out producer can redefine it to "work items not acted upon"
+   with no rename and no client change.
+
+#### Deferred and not built by this work
+
+D1 = B ships the inbox, not a producer. The list below is the deliberate scope boundary: each
+item is gated on the thing that unblocks it, and none of it leaves client or contract work for
+the producer to do.
+
+| Item | Why it is deferred | What unblocks it |
+| --- | --- | --- |
+| `NewMessage` producer | Producers belong to the module that owns the event. The inbox is ready to receive it. | The conversations module: dispatch on the inbound persist (`WebhookEndpoints`/`ConversationService`), emit `conversationId` (+ `messageId`, `customerId`), and implement D5 (one per unread conversation, appended) and D12 (fan-out + count). |
+| `NewMatch` producer | Same, and no recipient rule exists today — the match-completion path captures no user identity. | The visual-intelligence plan, at match completion; needs a recipient rule and D12. |
+| `VipAtRisk` producer | Q4 re-frames it as **Ava's baseline-deviation insight**, not a scheduled threshold job. | An identifiable Ava at-risk output: a recognised block while applying an agent message, or a subscriber on the documented-but-unbuilt `aveline:<org>:notification` channel. |
+| `ApprovalNeeded` producer | Blocked: no written `ApprovalQueueEntry`, `IApprovalRepository` is an empty file, and there is no real `pause_for_approval` interrupt. | The Commerce approval flow. |
+| `PaymentConfirmed` producer | Blocked: nothing actually confirms a payment (`PaymentRepository`/`IPaymentRepository` are empty files; the Python tool calls a route that does not exist). Q5: the kind waits. | A verifying payment path (a gateway webhook or `PaymentService`). |
+| D12 fan-out schema (nullable `ResolvedAt`/`ResolvedByUserId` on `NotificationRecord`), the append/update path on `INotificationRepository`, and the count's re-definition to "work items not acted upon" | No fan-out producer exists yet, so there is nothing to exercise the model; shipping it now would be unverifiable. The contract is frozen in the plan so the first producer inherits it. | The first fan-out producer. |
+| The D12 race guard (a row-version conditional update plus a uniqueness backstop, loser gets 409) | The guard belongs to the domain transition that owns the decision; the shipped sign-off path is a read-check-write with no token and a non-unique decision index. Reported as a conversations defect, not fixed here. | The conversations plan (sign-off) and the Commerce approval queue. |
+| The `notification*` metric endpoints | D9/Q9: record everything, build nothing. The catalog is the naming authority and nothing may be exposed until it appears in the catalog **and** in `openapi.yaml`. | A metrics plan or an operator requirement. |
+| The notification **hub** in OpenAPI | OpenAPI documents HTTP routes; the SignalR contract (`SubscribeAsync`, `ReceiveNotification`) is documented in [`docs/api/README.md`](../api/README.md) §B.6 and the hub's XML doc. | A decision to publish an AsyncAPI document. |
+| A restore route (Undo after the toast) | Five seconds of convenience for a route, an OpenAPI entry and a foreign-id test. Undo stays client-side and the README says so. | A product requirement that a dismissal be undoable after the toast. |
+| An org filter on the inbox | The inbox is `/users/me`-shaped; filtering would hide work rather than label it, and today's staff accounts are single-boutique (Q1). | The owner-with-several-boutiques feature plus an in-app org switcher. |
+| A local-notification stack | The OS already draws the notification when the app is not foregrounded. | A requirement for app-styled foreground banners. |
+| Fixing the Commerce module wiring (no `AddCommerceModule`, no DI for `IOrderService`/`IBusinessRulesService`, `MapBusinessRulesEndpoints()` never called) | Real defects, but another module's plan. Reported here, not fixed. | Whoever owns Commerce. |
+| FCM credential provisioning | Deployment, not code; the `fcmCredentialConfigured` metric reports it. | Ops. |
+
+Client-side deferrals (conversation-grouped UX, rendering the per-row label, the org switcher
+and the local-notification stack) are recorded in
+[`frontend/aveline_mobile/lib/features/notifications/README.md`](../../frontend/aveline_mobile/lib/features/notifications/README.md).
 
 ### Deferred medium findings (issue #242)
 
@@ -393,7 +557,7 @@ intended contract, so this list and the catalogue now agree.
 | M-4 | WhatsApp webhook replay window | **Partially fixed.** The rate limit now runs *after* signature verification (`Endpoints/WebhookEndpoints.cs:113-124`), so only authentic traffic consumes the window, and the GET verify-token compare is constant-time (`:202-217`). Still open: `WebhookSignatureVerifier` has no timestamp/nonce/tolerance check (Meta sends no timestamp), and `InboundMessageLog` has no unique index on `ExternalId` (`Infrastructure/Data/Configurations/InboundMessageLogConfiguration.cs:23-24`), so a captured signed body replays indefinitely — bounded only by the 120/min per org+IP limiter. |
 | M-5 | No application-level rate limiting outside the two in-handler limiters | Deferred; tracked as accepted risk SEC-M2 in `docs/security/auth-security-review.md`; needs an infrastructure decision. |
 | M-8 | `GET /admin/pricing/price-book` returns a bare, unpaginated array | Behaviour deferred (a contract change with frontend impact); now explicitly documented in [api/README.md §C.1](../api/README.md). |
-| M-10 | `/admin/statistics/system/overview` is not cached server-side | **Claim corrected** in [api/README.md §D.3](../api/README.md); the cache itself remains unimplemented. |
+| M-10 | `/admin/statistics/system/overview` is not cached server-side | **The claim is restored, not corrected (D7 = A, Slice 8).** The code caches the composite read for 15 s in `IMemoryCache`, which `BillingModule` and `SystemHealthModule` register (`SystemStatisticsService.cs:49-61`), so the code is authoritative. [api/README.md §D.3](../api/README.md) and [implementation-plan.md](implementation-plan.md) now say 15 s again; the frontend uses `staleTime: 15_000` for this query only. |
 | M-11 | `GET /system/eventbus` ignores the documented `from`/`to` window | Behaviour deferred (the response is an instantaneous counter snapshot); now explicitly documented in [api/README.md §C.8](../api/README.md). |
 | M-16 | The `/metrics` scheme requirement was not documented precisely | **Documented** in [api/README.md §B.12 and §C.9](../api/README.md): `MetricsPolicy` accepts `X-Internal-Token` or `Authorization: Bearer <Metrics:ScrapeToken>`. |
 | M-17 | Ledger `201` bodies use `blossomBalanceAfter`/`createdAt` | **Documented** in [api/README.md §C.2](../api/README.md); the example now matches the shipped `BlossomLedgerEntryDto` and distinguishes it from the statement item shape. |

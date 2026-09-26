@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { AvelineAvatar } from '@/components/conversation/AvelineAvatar'
 import { Composer } from '@/components/conversation/Composer'
 import { MessageThread } from '@/components/conversation/MessageThread'
+import { useBlockActions } from '@/components/conversation/useBlockActions'
 import { Button } from '@/components/ui/button'
 import { useConversations } from '@/contexts/ConversationsContext'
 import { cn } from '@/lib/utils'
@@ -17,31 +18,63 @@ interface AvelineChatDrawerProps {
 /**
  * The slide-in Aveline chat panel. Rendered at the shell root (NOT inside the header,
  * whose backdrop-blur would otherwise become the containing block for `fixed`
- * positioning) so it spans the full viewport height. Shares the same Salon thread as the
- * full Salon tab via the shared ConversationsContext.
+ * positioning) so it spans the full viewport height.
+ *
+ * This is **Aveline's own thread and only that**. It shares the conversation list and the SignalR
+ * connection with the Salon section, but not the open thread: while both surfaces read one
+ * `activeConversationId`, opening a client's Salon in the section turned this panel into that
+ * client's chat, and pinning this panel to Aveline moved the section off whatever the operator had
+ * selected. The two now hold separate thread slots, so neither can move the other.
  */
 export function AvelineChatDrawer({ open, onClose }: AvelineChatDrawerProps) {
   const {
-    activeConversationId,
-    messages,
-    loading,
-    sending,
-    agentState,
-    agentActivity,
-    openOrCreateSalon,
-    send,
-    decide,
-    selectCustomer,
+    conversations,
+    avelineConversationId,
+    avelineMessages,
+    avelineLoading,
+    avelineSending,
+    avelineAgentState,
+    avelineAgentActivity,
+    openAveline,
+    sendToAveline,
+    decideAveline,
+    regenerateAveline,
+    deliverToClient,
+    // The drawer's thread shares the one pending-attachment tray, keyed by conversation id, with the
+    // Salon. It was only ever wired for the Salon, so the drawer's composer had no paperclip at all.
+    pendingAttachments,
+    attach,
+    retryAttachment,
+    removeAttachment,
   } = useConversations()
 
-  // Ensure a Salon is open so the drawer has somewhere to send.
-  useEffect(() => {
-    if (open && !activeConversationId) {
-      void openOrCreateSalon(null)
-    }
-  }, [activeConversationId, open, openOrCreateSalon])
+  // The drawer's rail is built for the drawer's own thread. It has no client of its own — the
+  // concierge Salon is client-less — so "send to customer" is refused here with its reason rather
+  // than pointing at whichever client the Salon section happens to have open. Forward still works:
+  // it picks a client from the list, and the delivery goes out on that client's channel.
+  const { bridge: blockActions, dialogs: blockActionDialogs } = useBlockActions({
+    conversationId: avelineConversationId,
+    customerName: null,
+    customerReachable: false,
+    conversations,
+    deliver: deliverToClient,
+    regenerate: regenerateAveline,
+    agentBusy: avelineAgentState === 'thinking',
+  })
 
-  const stateConfig = avelineStateConfig(agentState)
+  // Opening the drawer opens Aveline's thread, once. Guarding on the id rather than only on `open`
+  // keeps this from re-opening (and re-fetching) when `openAveline` is re-created by a conversation
+  // list update.
+  useEffect(() => {
+    if (open && !avelineConversationId) {
+      void openAveline()
+    }
+  }, [avelineConversationId, open, openAveline])
+
+  const stateConfig = avelineStateConfig(avelineAgentState)
+  const pendingForAveline = avelineConversationId
+    ? pendingAttachments[avelineConversationId] ?? []
+    : []
 
   return (
     <div
@@ -56,7 +89,7 @@ export function AvelineChatDrawer({ open, onClose }: AvelineChatDrawerProps) {
       <header className="flex items-center justify-between border-b px-4 py-3">
         <div className="flex items-center gap-2.5">
           <AvelineAvatar
-            state={agentState}
+            state={avelineAgentState}
             className="size-8"
             blossomClassName="size-5"
           />
@@ -72,21 +105,35 @@ export function AvelineChatDrawer({ open, onClose }: AvelineChatDrawerProps) {
 
       <div className="flex-1 overflow-y-auto">
         <MessageThread
-          messages={messages}
-          loading={loading && !activeConversationId}
-          agentActivity={agentActivity}
-          onSignOff={(messageId, approved) => void decide(messageId, approved)}
-          onSelectCustomer={(customerId) => void selectCustomer(customerId)}
+          messages={avelineMessages}
+          loading={avelineLoading && !avelineConversationId}
+          agentActivity={avelineAgentActivity}
+          blockActions={blockActions}
+          onSignOff={(messageId, approved) => void decideAveline(messageId, approved)}
         />
       </div>
 
       <Composer
-        onSend={(text) => void send(text)}
-        disabled={!activeConversationId}
-        sending={sending}
+        // Return the promise rather than discarding it: the composer awaits it to keep the text and
+        // the tray when a send fails, and only clears them once the server confirms.
+        onSend={(text, attachmentIds) => sendToAveline(text, attachmentIds)}
+        onAttach={(files) =>
+          avelineConversationId ? attach(avelineConversationId, files) : Promise.resolve([])
+        }
+        pendingAttachments={pendingForAveline}
+        onRetryAttachment={(attachmentId) => {
+          if (avelineConversationId) void retryAttachment(avelineConversationId, attachmentId)
+        }}
+        onRemoveAttachment={(attachmentId) => {
+          if (avelineConversationId) removeAttachment(avelineConversationId, attachmentId)
+        }}
+        disabled={!avelineConversationId}
+        sending={avelineSending}
         placeholder="Ask Aveline…"
       />
+
+      {/* The forward picker and the send confirmation, driven by the rail above. */}
+      {blockActionDialogs}
     </div>
   )
 }
-

@@ -25,6 +25,18 @@ public class Customer : ITenantEntity
     /// <summary>new | returning | vip | dormant | deleted</summary>
     public string Status { get; set; } = "new";
 
+    /// <summary>
+    /// The grade the boutique works with: <c>vip</c> | <c>level3</c> |
+    /// <c>level2</c> | <c>level1</c>, or null for a client nobody has graded.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="Status"/>, which the loyalty rule derives from
+    /// spend, visits and recency. Nullable on purpose: a default would invent a
+    /// grade for every client, including the ones created before the column
+    /// existed.
+    /// </remarks>
+    public string? Level { get; set; }
+
     public decimal TotalSpent { get; set; }
 
     public int VisitCount { get; set; }

@@ -4,9 +4,9 @@ import '../../domain/notification_kind.dart';
 
 /// The icon and tint a notification wears for its kind.
 ///
-/// The six accents are brand-adjacent rather than brand-exact. The palette in
+/// The eight accents are brand-adjacent rather than brand-exact. The palette in
 /// `.agents/brain/DESIGN.md` names three agent states - memory, visual, commerce
-/// - and the inbox has six kinds to keep apart at a glance, so four hues are
+/// - and the inbox has eight kinds to keep apart at a glance, so further hues are
 /// added. All of them stay warm and low-saturation, which is what keeps the
 /// inbox reading as the same room as the rest of the app rather than as a set of
 /// system alerts.
@@ -37,6 +37,12 @@ class NotificationKindVisuals {
   /// Soft gold, the visual hue, for a piece found.
   static const Color _gold = Color(0xFFB08A3E);
 
+  /// Terracotta, for a connection that has lapsed.
+  static const Color _terracotta = Color(0xFF8A4B3C);
+
+  /// Brick, the warm end of the alarm register, for a critical system alert.
+  static const Color _brick = Color(0xFF9E3B33);
+
   static const Map<NotificationKind, NotificationKindVisuals> _byKind = {
     NotificationKind.newMessage: NotificationKindVisuals(
       icon: Icons.chat_bubble_outline_rounded,
@@ -61,6 +67,14 @@ class NotificationKindVisuals {
     NotificationKind.newMatch: NotificationKindVisuals(
       icon: Icons.auto_awesome_outlined,
       tint: _gold,
+    ),
+    NotificationKind.integrationExpired: NotificationKindVisuals(
+      icon: Icons.link_off_rounded,
+      tint: _terracotta,
+    ),
+    NotificationKind.systemAlert: NotificationKindVisuals(
+      icon: Icons.report_problem_outlined,
+      tint: _brick,
     ),
   };
 

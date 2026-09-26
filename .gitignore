@@ -18,6 +18,13 @@
 *.cer
 secrets/
 *secret*
+# The Prometheus scrape-token directory must be tracked (empty except .gitkeep) so
+# `promtool check config` has a mount point in CI; the token itself stays ignored.
+!observability/prometheus/secrets/
+observability/prometheus/secrets/*
+!observability/prometheus/secrets/.gitkeep
+# Local password file mounted into postgres-exporter (Slice 6).
+postgres-exporter-password
 
 # =============================================================================
 # OPERATING SYSTEM
@@ -84,8 +91,13 @@ x86/
 [Aa][Rr][Mm]64/
 
 # Logs
-[Ll]og/
-[Ll]ogs/
+# Anchored to the repo root on purpose. The unanchored Visual Studio template
+# patterns also matched `src/**/logs/`, so they silently swallowed
+# `frontend/web/src/components/admin/logs/` — source files that existed only on
+# the machine that wrote them and broke every clean clone (CI, Vercel).
+# `frontend/web/src/test/ignored-source.test.ts` guards against a recurrence.
+/log/
+/logs/
 
 # NuGet
 *.nupkg
@@ -150,6 +162,12 @@ wheels/
 htmlcov/
 *.cover
 
+# Playwright (tests/e2e, run from frontend/web): per-run traces, screenshots and videos, and the
+# HTML report. The browsers themselves live in node_modules/.playwright-browsers, already ignored.
+test-results/
+playwright-report/
+blob-report/
+
 # Type checking
 .mypy_cache/
 .dmypy.json
@@ -184,6 +202,8 @@ build/
 
 # Android
 frontend/aveline_mobile/android/.gradle/
+# Kotlin compiler session/cache dir, written by Gradle builds like .gradle/ above.
+frontend/aveline_mobile/android/.kotlin/
 frontend/aveline_mobile/android/captures/
 frontend/aveline_mobile/android/local.properties
 frontend/aveline_mobile/android/key.properties
@@ -281,3 +301,54 @@ backend/.cache
 opencode.json
 # Final academic documentation (presented at evaluation, kept untracked)
 docs/final_document/
+
+# DSH harness tool cache: downloaded binaries (e.g. a 172 MB Flutter engine JAR), never project source.
+.dsh-tools/
+
+# =============================================================================
+# AGENT SCRATCH & TOOLING — local only, never tracked
+# The plans themselves stay untracked; these subpaths are pure scratch (agent
+# worklogs, Obsidian state, generated issue bodies) and downloaded binaries.
+# =============================================================================
+.agents/plans/.work/
+.agents/plans/.obsidian/
+.agents/plans/*
+.dsh-tools/
+.research-shots/
+.screenshots/
+
+# The local Vercel project link, and every real environment file. `.env.example` stays tracked
+# because tracked files are unaffected by these patterns.
+.vercel/
+.env*
+
+# =============================================================================
+# DEPLOYMENT-ORCHESTRATION SCRATCH — credentials and CLI caches, never tracked
+# `.azcfg/` holds the Azure CLI token cache and `.vhome/` the Vercel CLI token
+# cache, both relocated here because the sandbox home is read-only. Committing
+# either would leak a live credential.
+# =============================================================================
+.azcfg/
+.vhome/
+.vercel-cache/
+
+# =============================================================================
+# ANDROID RELEASE SIGNING MATERIAL — never tracked, at ANY path
+# The instructions in .github/workflows/release-apk.yml tell you to create
+# `aveline-release.jks` in the repository ROOT, which the narrower Android
+# patterns above (frontend/aveline_mobile/android/...) do NOT cover. An Android
+# signing key cannot be revoked, so these match by extension everywhere rather
+# than by directory.
+# =============================================================================
+*.jks
+*.keystore
+key.properties
+aveline-release.jks
+
+# =============================================================================
+# LOCAL BUILD BYPRODUCTS — large or noisy, never tracked
+# `.docker-tmp/` held a 1.2 GB image build context and broke `vercel deploy`
+# with "Request body too large. Limit: 10mb".
+# =============================================================================
+.docker-tmp/
+texput.log

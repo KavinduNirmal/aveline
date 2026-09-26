@@ -7,6 +7,14 @@ namespace Aveline.Api.Modules.Notifications.DTOs;
 /// A single inbox item returned to a user. The <see cref="Data"/> payload is the parsed
 /// <see cref="NotificationRecord.DataJson"/> of the underlying notification.
 /// </summary>
+/// <param name="OrganizationId">
+/// The dispatching organisation. It is already required on the record, so this is a
+/// projection rather than a new column; it lets a merged inbox label each row with the
+/// boutique it belongs to.
+/// </param>
+/// <param name="OrganizationName">
+/// The boutique's name, or <c>null</c> when the organisation could not be loaded.
+/// </param>
 public sealed record UserNotificationDto(
     Guid Id,
     Guid NotificationId,
@@ -17,7 +25,9 @@ public sealed record UserNotificationDto(
     bool IsRead,
     DateTime? ReadAt,
     DateTime? DeliveredAt,
-    DateTime CreatedAt)
+    DateTime CreatedAt,
+    Guid OrganizationId,
+    string? OrganizationName)
 {
     public static UserNotificationDto From(UserNotification item)
     {
@@ -46,6 +56,8 @@ public sealed record UserNotificationDto(
             item.ReadAt is not null,
             item.ReadAt,
             item.DeliveredAt,
-            item.CreatedAt);
+            item.CreatedAt,
+            notification?.OrganizationId ?? Guid.Empty,
+            notification?.Organization?.Name);
     }
 }

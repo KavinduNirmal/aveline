@@ -2,10 +2,9 @@ import '../domain/notification_page.dart';
 
 /// The signed-in user's notification inbox.
 ///
-/// One interface for both the API and the demo inbox the app ships with until
-/// the notification endpoints are live, so the tab does not know which one it is
-/// talking to. Every method is scoped to the caller on the server side: there is
-/// no user id in these calls on purpose.
+/// One interface for both the live API and the empty fallback, so the tab does
+/// not know which one it is talking to. Every method is scoped to the caller on
+/// the server side: there is no user id in these calls on purpose.
 abstract interface class NotificationRepository {
   /// One page of the inbox, newest first.
   ///

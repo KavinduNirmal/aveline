@@ -12,7 +12,7 @@ Aveline tests four independent codebases, one per technology stack:
 | Layer | Stack | Tools | Location |
 |---|---|---|---|
 | **Backend API** | ASP.NET Core 10 (C#) | xUnit + Moq + `WebApplicationFactory` + Coverlet | `Aveline.Api.Tests/` |
-| **Agent Service** | Python 3.12 + FastAPI + LangGraph | pytest + `pytest-asyncio` + `pytest-cov` + respx + fakeredis | `agnet-service/tests/` |
+| **Agent Service** | Python 3.12 + FastAPI + LangGraph | pytest + `pytest-asyncio` + `pytest-cov` + respx + fakeredis | `agent-service/tests/` |
 | **Web Dashboard** | React 19 + TypeScript (Vite) | Vitest + `@vitest/coverage-v8` | `frontend/web/src/**/*.test.ts(x)` |
 | **Mobile App** | Flutter (Dart) | `flutter_test` | `frontend/aveline_mobile/test/` |
 
@@ -20,7 +20,7 @@ Aveline tests four independent codebases, one per technology stack:
 
 ## 2. Backend Tests (`Aveline.Api.Tests/`)
 
-569 test cases across unit and integration test suites. Two distinct approaches:
+2,298 test cases across unit and integration test suites. Two distinct approaches:
 
 - **Unit tests** — exercise a single class in isolation, with collaborators mocked
   via **Moq** (e.g. `OrganizationServiceTests`, `CredentialEncryptionServiceTests`,
@@ -28,7 +28,7 @@ Aveline tests four independent codebases, one per technology stack:
 - **Integration tests** — boot the real app with
   `WebApplicationFactory<Program>` against an **in-memory EF Core database**
   (`UseInMemoryDatabase`), with external dependencies replaced by stub servers
-  and fake stores (see §5).
+  and fake stores (see §6).
 
 Shared test infrastructure:
 
@@ -73,10 +73,11 @@ Reports are written to `Aveline.Api.Tests/TestResults/` (gitignored).
 | **Integrations** | `IntegrationServiceTests`, `IntegrationEndpointsIntegrationTests` |
 | **Usage & Billing** | `UsageTrackerServiceTests`, `UsageEndpointsIntegrationTests` |
 | **Security / Resilience** | `CredentialEncryptionServiceTests`, `DistributedRateLimiterTests` |
+| **Conversations / Salon** | `ConversationServiceTests` — **extended by the web media picker (W5)**: a replay that presents its `clientMessageId` *and* the attachment ids the first attempt bound returns the stored row with its blocks instead of re-resolving (and refusing) them, the same key with different words is a `409`, and a fresh write still validates every attachment before the message is stored. The module's other suites (`ConversationEndpointsIntegrationTests`, `ConversationRepositoryTests`, `ConversationHubTests`, `ConversationReadStateRepositoryTests`, `ConversationAttachmentTests`, `AttachmentContentHashTests`, `AttachmentRetentionTests`, `AttachmentSniffIntegrationTests`, `CloudinaryAttachmentStoreTests`, `SalonAttachmentRequestTests`, `ConversationTileMapperTests`, `AgentContextAttachmentTests`, and others) are outside this workstream |
 
 ---
 
-## 3. Python Tests (`agnet-service/tests/`)
+## 3. Python Tests (`agent-service/tests/`)
 
 381 test functions across agent graphs, tool registries, orchestrators, and schemas.
 
@@ -92,10 +93,10 @@ Approach:
 ### Run
 
 ```bash
-pytest agnet-service/tests/ -v
+pytest agent-service/tests/ -v
 ```
 
-Configuration lives in `agnet-service/pyproject.toml` (`[tool.pytest.ini_options]`:
+Configuration lives in `agent-service/pyproject.toml` (`[tool.pytest.ini_options]`:
 `testpaths = ["tests"]`, `pythonpath = ["."]`, `asyncio_mode = "auto"`).
 
 ### Files
@@ -121,17 +122,52 @@ Configuration lives in `agnet-service/pyproject.toml` (`[tool.pytest.ini_options
 
 ## 4. Web Dashboard Tests (`frontend/web/`)
 
-Vitest (node environment, no jsdom) across 13 files covering the `lib/` service
-layer and React contexts. Component/context rendering uses `renderToString` from
-`react-dom/server`; heavy dependencies (`@clerk/react`, `sonner`,
-`@microsoft/signalr`) are stubbed with `vi.mock` + `vi.hoisted`.
+Vitest across **two projects** declared in one config: a `node` environment for the service layer
+(`lib/`, hooks, types) and a `jsdom` environment for component and context rendering, selected by the
+`*.dom.test.tsx` filename convention. Heavy dependencies (`@clerk/react`, `sonner`,
+`@microsoft/signalr`, `recharts`) are stubbed with `vi.mock` + `vi.hoisted`, and the DOM project
+raises the per-test timeout to 20 s because v8 coverage instrumentation plus a 2-core CI runner pushes
+the form-driving tests past Vitest's 5 s liveness default.
 
 ### Run
 
 ```bash
-bun run test            # vitest run
-bun run test:coverage   # with coverage thresholds
+bun run test                      # vitest run
+bun run test:coverage             # global run; excludes the admin and tenant subtrees
+bun run test:coverage:admin       # the admin subtree only (its own ratchet)
+bun run test:coverage:dashboard   # the tenant-dashboard subtree only (its own ratchet)
 ```
+
+### Three coverage runs, on purpose
+
+The global run deliberately **excludes** `src/routes/**`, `src/components/**` and
+`src/contexts/**`, because those subtrees carry their own gates. Each subtree run is
+`include`-only — a gate added after the work is a gate that measures nothing — writes to its own
+reports directory, and carries a **ratchet** that never lowers: it starts at 0 and is raised to the
+value actually achieved (the admin ratchet in R0–R6, the tenant one in T7).
+
+| Run | Measures | Config |
+| --- | --- | --- |
+| `test:coverage` | the shared layer: `src/lib/**`, `src/hooks/**`, `src/types/**`, `src/*` | `vite.config.ts` |
+| `test:coverage:admin` | `src/routes/admin/**`, `src/components/admin/**`, `AdminSessionContext` | `vitest.admin-coverage.config.ts` |
+| `test:coverage:dashboard` | `src/components/dashboard/**`, `src/components/shared/**`, the tenant `lib/*-api.ts` modules, `useDashboardWindow` | `vitest.dashboard-coverage.config.ts` |
+
+The dashboard run exists because the tenant surface was previously measured by **nothing**: a file
+under `src/components/shared/**` fell outside both the global and the admin denominators. All three
+runs execute in the `test-web` CI job. See `docs/frontend/tenant-dashboard.md`.
+
+### Mechanical gates in the web suite
+
+Five test files assert rules a linter cannot: they are the reason the two UIs cannot drift into
+fabricated numbers or a broken dark mode.
+
+| File | Enforces |
+| --- | --- |
+| `test/admin-conformance.test.ts` | the admin tree's brand rules (no raw palette/hex/controls, `gap-*` not `space-*`) |
+| `test/admin-truthfulness.test.ts` | the console cannot render an invented number |
+| `test/tenant-conformance.test.ts` | the same conformance rule set over the tenant dashboard, with an **empty** allow-list |
+| `test/tenant-truthfulness.test.ts` | the tenant tree's four literal truthfulness rules (`null` is not `0`; no "demo mode"; recharts only through the chart wrapper) |
+| `test/tenant-sections.test.ts` | the nav table and the router agree about the section list and the section gates |
 
 ### Files
 
@@ -144,15 +180,30 @@ bun run test:coverage   # with coverage thresholds
 | `lib/notifications.test.ts`, `lib/notifications-api.test.ts` | Notification client + API |
 | `contexts/UserContext.test.tsx`, `contexts/NotificationsContext.test.tsx` | Context providers (default state + misuse guards) |
 
+**The web attachment picker (W1–W4).** The layer is in the filename: `*.test.ts(x)` runs in the
+`node` project and `*.dom.test.tsx` in the `jsdom` project.
+
+| File | Covers |
+|---|---|
+| `lib/attachment-preparation.test.ts` *(node, new)* | the picker's pure decisions, over a mocked resize: the nine-image-plus-PDF allow-list, including the extension rescue for a missing/generic declared type and the refusal to rescue a declared disallowed type; the analysable four against the storable-but-unreadable rest; a PDF passed through untouched (identity, not equality); a HEIC source the browser re-encodes to JPEG; the 5 MB cap checked against the **decoded** length, so a byte-over payload and an 8 MB source that resizes under the cap are decided by what would actually be sent; and the sixth-held-file refusal in the server's own wording |
+| `lib/conversations-api.test.ts` *(node, extended)* | the attachment seam: `uploadConversationAttachment` posts `FormData` to the attachments route with the `file` field and the multipart content type (using the supplied name for a `Blob`), while `sendMessage` keeps the text-only body byte-for-byte when neither optional field is given, adds `attachmentIds` only when the list is non-empty, and adds `clientMessageId` when supplied |
+| `contexts/ConversationsContext.dom.test.tsx` *(jsdom, new)* | the pending tray's state: a pick uploads immediately and the chip records the **response's** stored type (a PDF the server stored as JPEG is analysable, and the upload is never blocked); readiness is false while a chip uploads and true once stored; a failed chip's retry re-uploads the **same bytes**; removing a chip keeps the composed text; a sixth file is refused client-side with only five uploaded; and a send carries the held ids with a `clientMessageId` identical across a retry |
+| `components/conversation/Composer.dom.test.tsx` *(jsdom, new)* | the composer affordance: the paperclip's accessible name and a hidden `multiple` input restricted to `image/*,application/pdf`; chosen files reach `onAttach`; send is disabled with an accessible reason while a chip uploads or has failed; the sixth file shows the cap message without calling `onAttach`; an over-cap refusal shows the size message; the textarea is cleared only on a confirmed send; stored chips' ids are bound to the send; and text still sends while a refused file is displayed |
+| `components/conversation/AttachmentTray.dom.test.tsx` *(jsdom, new)* | the tray's own contract: nothing renders with no chips; each chip names itself with size and state; an upload in flight is an indeterminate busy state with **no fabricated percentage**; a failure renders its message and offers retry only when the chip is `retryable` (never for a 403/404 refusal); a remove control exists in every state; and the not-analysable note appears for a stored PDF and not for an analysable image |
+| `components/conversation/blocks.dom.test.tsx` *(jsdom, new)* | interactive rendering and access: bytes are fetched **through the authenticated client** (`apiClient.get`, `responseType: 'arraybuffer'`) from the stored route, never a token URL, and the `<img>` loads a `blob:` object URL rather than the stored route; each attachment id is fetched once however many blocks show it; the object URL is revoked on unmount; a PDF offers Open/Download with an `<embed>` preview; a rejected fetch degrades to the name-and-size chip with no broken image; and nothing is fetched without both an id and a stored route |
+
 ---
 
 ## 5. Flutter Tests (`frontend/aveline_mobile/`)
 
-A single widget test bootstraps the mobile suite.
+A bootstrap widget test plus the feature trees' own widget and unit tests. The two conversations
+files the attachment parity slice (**W7**) extended are listed alongside it.
 
 | File | Covers |
 |---|---|
 | `test/widget_test.dart` | `AppTheme.light` builds a `MaterialApp` with the expected color scheme |
+| `test/features/conversations/client_thread_controller_test.dart` | the thread controller's flows, **extended by the parity slice**: a full five-file tray uploads and the message binds all five; a sixth file is refused in the server's own words **before** it is uploaded; and an upload failure names the file it could not upload |
+| `test/features/conversations/client_thread_screen_test.dart` | the thread screen's widget flows, **extended by the parity slice**: a picker that throws says so on screen rather than only in the log; a sixth file is refused in the API's words and never uploaded; and a failed upload is readable in the tray and can be retried |
 
 ### Run
 
@@ -176,7 +227,7 @@ Clerk-style JWT  →  Aveline.Api (real JwtBearer + JWKS pipeline)
   document + a test JWKS, so `AddJwtBearer` runs its full discovery → signature →
   issuer → lifetime pipeline offline.
 - A **stub agent server** records the `X-Internal-Token` header and echoes the payload,
-  mirroring `agnet-service/app/api/agents.py`.
+  mirroring `agent-service/app/api/agents.py`.
 - The API is booted via `WebApplicationFactory<Program>` with `Clerk:Authority`,
   `AgentService:BaseUrl`, and `AgentService:InternalToken` overridden.
 
@@ -195,7 +246,43 @@ in-memory EF Core DB seeded per test, external HTTP via stub servers or
 
 ---
 
-## 7. Coverage
+## 7. End-to-End Tests (`tests/e2e/`)
+
+Playwright walks the two authenticated UI trees in a real browser, from the repository-level
+`tests/e2e/` tree rather than inside the web package. All but one spec cover the **signed-out**
+path — the one walk buildable without a Clerk test session — and assert both the redirect and the
+absence of that tree's own API traffic. The payments walk is the exception: it needs a signed-in
+tenant session and is skipped until one is supplied.
+
+| Spec | Asserts |
+|---|---|
+| `admin-console/console-access.spec.ts` | signed out, `/admin/{userId}` reaches `/sign-in`, renders no console chrome, and issues **zero** `/api/v1/admin/` requests |
+| `tenant-dashboard/signed-out.spec.ts` | signed out, `/app/b/{slug}` and `/app/b/{slug}/{section}` reach `/sign-in`, render no dashboard chrome (`Switch boutique`, `Reporting window`, `Top up`), and issue **zero** `/api/v1/orgs/` requests |
+| `payments/top-up.spec.ts` | **needs `E2E_TENANT_STORAGE_STATE`** (a signed-in boutique-owner session) and `E2E_TENANT_SLUG`; buys a pack through the dashboard dialog against the **mock** provider, completes the mock's hosted page, and asserts the balance rises only after the polled intent is terminal. See the spec's header for the full run command. |
+
+### Run
+
+```bash
+bun run test:e2e:install   # chromium into node_modules/.playwright-browsers (git-ignored)
+bun run test:e2e           # all specs; starts vite on :5173 unless E2E_BASE_URL is set
+```
+
+Run it through the script rather than `playwright test` directly: the specs sit **above** the web
+package, so Node cannot resolve `@playwright/test` from their directory, and the script sets
+`NODE_PATH=node_modules` for exactly that reason. `E2E_BASE_URL` points the suite at a deployed
+origin instead of starting a local server. The suite is run in parallel workers; one admin
+assertion waiting on Clerk's first load is timing-sensitive under a cold, loaded server and can
+flake, so a red admin run should be re-run in isolation before it is believed.
+
+**Not delivered, and stated as such.** The authenticated walks need a Clerk test session and a
+running API, which this environment does not provide. The tenant role matrix is pinned instead by the
+backend integration tests plus the DOM tests on the shell's `allowedSections` logic; the console
+walks are pinned by the admin DOM tests. `docs/frontend/tenant-dashboard.md` records the same
+limitation.
+
+---
+
+## 8. Coverage
 
 Each stack instruments coverage with its own tooling and enforces a threshold in CI:
 
@@ -203,13 +290,15 @@ Each stack instruments coverage with its own tooling and enforces a threshold in
 |---|---|---|---|
 | **Backend** | Coverlet (coverage.cobertura.xml) | `dotnet test --collect:"XPlat Code Coverage"` + ReportGenerator (HTML) | line ≥ **30%** (CI gate) |
 | **Agent Service** | `pytest-cov` | `pytest --cov=app --cov-report=xml --cov-report=term --cov-fail-under=90` | **90%** |
-| **Web** | `@vitest/coverage-v8` | `vitest run --coverage` (config in `vite.config.ts`) | lines 80 / functions 70 / branches 70 / statements 80 |
+| **Web (global)** | `@vitest/coverage-v8` | `bun run test:coverage` (config in `vite.config.ts`) | lines 80 / functions 70 / branches 70 / statements 80 |
+| **Web (admin)** | `@vitest/coverage-v8` | `bun run test:coverage:admin` (`vitest.admin-coverage.config.ts`) | ratchet: `routes/admin` 80/74/70/79, `components/admin` 82/74/68/80 |
+| **Web (tenant dashboard)** | `@vitest/coverage-v8` | `bun run test:coverage:dashboard` (`vitest.dashboard-coverage.config.ts`) | ratchet raised in T7: `components/dashboard` 44/31/42/42, `useDashboardWindow` and most `lib/*-api.ts` modules at 100 |
 | **Mobile** | `flutter test --coverage` | `flutter test --coverage` → `coverage/lcov.info` | none (report uploaded only) |
 
 Local coverage reports:
 
 - **Backend**: `Aveline.Api.Tests/TestResults/` (gitignored).
-- **Agent Service**: `agnet-service/coverage.xml` (XML) + terminal summary.
+- **Agent Service**: `agent-service/coverage.xml` (XML) + terminal summary.
 - **Web**: `frontend/web/coverage/` (text, JSON summary, and HTML reporters).
 - **Mobile**: `frontend/aveline_mobile/coverage/lcov.info`.
 
@@ -220,12 +309,13 @@ Local coverage reports:
   line coverage — the integration tests exercise `Program` and all configuration
   end-to-end.
 - The backend CI gate is deliberately low (30%) because feature modules are still
-  scaffolding; the agent service (90%) and web (80%) gates are strict and enforced
-  on every PR.
+  scaffolding; the agent service (90%) and the global web run (80 %) are enforced on
+  every PR, and the admin and tenant subtrees each carry their own **ratchet** in their
+  own run (see §4).
 
 ---
 
-## 8. CI Integration
+## 9. CI Integration
 
 `ci.yml` runs each suite in its own job:
 
@@ -233,14 +323,19 @@ Local coverage reports:
 |---|---|
 | `build-api` | build solution → `dotnet test` → collect coverage → enforce ≥30% line → ReportGenerator HTML → upload `aveline-api-coverage` |
 | `test-python` | `ruff check` → `pytest --cov --cov-fail-under=90` → upload `aveline-agent-coverage` |
-| `test-web` | `oxlint` → `bun run test:coverage` (thresholds) → upload `aveline-web-coverage` → build |
+| `test-web` | `oxlint` → `bun run test:coverage` (global thresholds) → `bun run test:coverage:admin` → `bun run test:coverage:dashboard` → upload `aveline-web-coverage` → build |
 | `test-flutter` | `flutter analyze` → `flutter test --coverage` → upload `aveline-mobile-coverage` → build APK |
 
 All four coverage artifacts are uploaded as GitHub Actions artifacts for inspection.
 
+**The Playwright suite is not a CI step.** It needs a browser download and (for the authenticated
+walks) a Clerk test session, neither of which the workflow provides; it is a local and
+pre-release check. Adding it is a workflow change with its own cache and secret decisions rather
+than a line in this table.
+
 ---
 
-## 9. Related Documentation
+## 10. Related Documentation
 
 - [ADR-007: Clerk Authentication & JWT Validation Strategy](../ADR/ADR-007-clerk-authentication.md)
 - [Authentication Flow — Architecture](../architecture/authentication.md)

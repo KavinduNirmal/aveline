@@ -65,7 +65,7 @@ Give Ava, Elle, and Lina separate inboxes.
    and `workflowRunId`/`traceId` for audit.
 4. **`Conversation.threadId` == LangGraph checkpoint key.** One conversation, one
    supervisor thread; sub-agents run under it and attribute their messages to their own
-   persona. This is the single context anchor (see `agnet-service/app/workflows/checkpointer.py`).
+   persona. This is the single context anchor (see `agent-service/app/workflows/checkpointer.py`).
 5. **The API is the system of record for messages.** The agent service emits content
    events over the bus (ADR-014) and the API persists and broadcasts. The agent service
    never writes message rows directly, consistent with ADR-010/ADR-015 and the agent

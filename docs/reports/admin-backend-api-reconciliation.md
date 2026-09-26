@@ -420,4 +420,4 @@ Two things stand between this and a release: **Phase 1** (both items are small a
 
 ---
 
-*Read-only review: no file under `Aveline.Api/`, `Aveline.Api.Tests/` or `agnet-service/` was modified. The only file written is this report.*
+*Read-only review: no file under `Aveline.Api/`, `Aveline.Api.Tests/` or `agent-service/` was modified. The only file written is this report.*

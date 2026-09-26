@@ -1,5 +1,6 @@
 using Aveline.Api.Configurations;
 using Aveline.Api.Modules.CustomerConcierge.DTOs;
+using Aveline.Api.Modules.CustomerConcierge.Models;
 using Aveline.Api.Modules.CustomerConcierge.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -42,6 +43,22 @@ public static class CustomerConciergeEndpoints
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized);
 
+        group.MapGet("/book-summary", GetBookSummaryAsync)
+            .WithName("GetCustomerBookSummary")
+            .WithSummary(
+                "How many clients this boutique has, and the few most recently active (ADR-026).")
+            .Produces<CustomerBookSummaryDto>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status401Unauthorized);
+
+        group.MapPatch("/{customerId:guid}", UpdateCustomerAsync)
+            .WithName("UpdateCustomerInternal")
+            .WithSummary("Apply an explicit staff instruction to a customer's name or phone.")
+            .Produces<TenantCustomerDetailDto>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status409Conflict)
+            .Produces(StatusCodes.Status401Unauthorized);
+
         group.MapPost("/{customerId:guid}/memories", SaveMemoryAsync)
             .WithName("SaveCustomerMemory")
             .WithSummary("Persist a semantic memory for a customer (embeds content).")
@@ -78,7 +95,7 @@ public static class CustomerConciergeEndpoints
 
         group.MapPost("/{customerId:guid}/consent", UpdateConsentAsync)
             .WithName("UpdateCustomerConsent")
-            .WithSummary("Set a customer's consent status (granted | revoked).")
+            .WithSummary("Set a customer's consent status (pending | granted | revoked).")
             .Produces<CustomerConsentDto>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized);
@@ -122,6 +139,27 @@ public static class CustomerConciergeEndpoints
         return Results.Ok(profile);
     }
 
+    /// <summary>
+    /// The book at a glance, for Aveline (ADR-026). Read by the agent service only, and only when
+    /// the request that reached it declared itself staff, so a customer message never causes this
+    /// route to be called.
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="limit"/> bounds the named highlights rather than the book: this is a chat
+    /// answer, not a listing surface, and the Customers screen already pages the whole book. The
+    /// service clamps it, so an over-large value cannot turn one question into an enumeration.
+    /// </remarks>
+    private static async Task<IResult> GetBookSummaryAsync(
+        [FromQuery] Guid organizationId,
+        [FromQuery] int? limit,
+        ICustomerTenantService customers,
+        CancellationToken cancellationToken)
+    {
+        var summary = await customers.GetBookSummaryAsync(
+            organizationId, limit ?? 5, activitySince: null, cancellationToken);
+        return Results.Ok(summary);
+    }
+
     private static async Task<IResult> GetProfileAsync(
         Guid customerId,
         [FromQuery] Guid organizationId,
@@ -147,6 +185,57 @@ public static class CustomerConciergeEndpoints
 
         var result = await customers.LookupAsync(request, cancellationToken);
         return Results.Ok(result);
+    }
+
+    /// <summary>
+    /// Applies an explicit staff instruction to a customer's name or phone (ADR-023 follow-up).
+    /// </summary>
+    /// <remarks>
+    /// Reuses <see cref="ICustomerTenantService.UpdateAsync"/> rather than re-implementing the
+    /// write, so the agent inherits the same validation, phone normalization and duplicate-phone
+    /// detection the staff API enforces. The agent is a reasoning engine and must not own business
+    /// rules (SYSTEM_PROMPT "Tools only").
+    ///
+    /// A duplicate phone is a <c>409</c> rather than a silent overwrite: two customers sharing a
+    /// number is a data-integrity problem the caller has to resolve, not one to swallow.
+    /// </remarks>
+    private static async Task<IResult> UpdateCustomerAsync(
+        Guid customerId,
+        [FromQuery] Guid organizationId,
+        UpdateCustomerRequest request,
+        ICustomerTenantService customers,
+        CancellationToken cancellationToken)
+    {
+        if (organizationId == Guid.Empty)
+        {
+            return Results.BadRequest(new { message = "organizationId is required." });
+        }
+
+        if (request.FullName is null && request.PhoneNumber is null)
+        {
+            return Results.BadRequest(new { message = "Provide a name and/or phone number to update." });
+        }
+
+        try
+        {
+            var updated = await customers.UpdateAsync(organizationId, customerId, request, cancellationToken);
+
+            return updated is null
+                ? Results.NotFound(new { message = "That customer is not in this boutique." })
+                : Results.Ok(updated);
+        }
+        catch (CustomerPhoneConflictException)
+        {
+            return Results.Conflict(new
+            {
+                code = "customer-phone-conflict",
+                message = "Another customer in this boutique already has that phone number.",
+            });
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new { message = ex.Message });
+        }
     }
 
     private static async Task<IResult> SaveMemoryAsync(
@@ -183,7 +272,7 @@ public static class CustomerConciergeEndpoints
     {
         var brief = await memories.GenerateBriefAsync(organizationId, customerId, cancellationToken);
         return brief is null
-            ? Results.NotFound(new { message = "Customer not found." })
+            ? Results.NotFound(new { message = "No brief available (customer not found, or consent revoked)." })
             : Results.Ok(brief);
     }
 
@@ -202,7 +291,11 @@ public static class CustomerConciergeEndpoints
             request.ParsedIntentJson,
             request.StaffMemberId,
             cancellationToken);
-        return Results.Created($"/internal/customers/{customerId}/interactions/{interaction.Id}", interaction);
+        // §5.5: a revoked customer's interaction is not written. Mirrors the memory endpoint's
+        // documented 400 rather than silently returning a row that does not exist.
+        return interaction is null
+            ? Results.BadRequest(new { message = "Consent revoked; interaction not recorded." })
+            : Results.Created($"/internal/customers/{customerId}/interactions/{interaction.Id}", interaction);
     }
 
     private static async Task<IResult> GetConsentAsync(
@@ -226,9 +319,11 @@ public static class CustomerConciergeEndpoints
             var dto = await consent.UpdateAsync(request.OrganizationId, customerId, request.ConsentStatus, cancellationToken);
             return Results.Ok(dto);
         }
-        catch (ArgumentException ex)
+        catch (InvalidConsentStatusException ex)
         {
-            return Results.BadRequest(new { message = ex.Message });
+            // D-3: a typed domain error, mapped deliberately to the documented 400 rather than
+            // reaching the global handler as a 500.
+            return Results.BadRequest(new { code = ex.Code, message = ex.Message });
         }
     }
 
@@ -239,7 +334,10 @@ public static class CustomerConciergeEndpoints
         CancellationToken cancellationToken)
     {
         var customerEvent = await events.AddAsync(customerId, request, cancellationToken);
-        return Results.Created($"/internal/customers/{customerId}/events/{customerEvent.Id}", customerEvent);
+        // §5.5: a revoked customer's event is not written (see RecordInteractionAsync).
+        return customerEvent is null
+            ? Results.BadRequest(new { message = "Consent revoked; event not stored." })
+            : Results.Created($"/internal/customers/{customerId}/events/{customerEvent.Id}", customerEvent);
     }
 
     private static async Task<IResult> ListEventsAsync(

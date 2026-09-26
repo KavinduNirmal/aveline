@@ -60,6 +60,10 @@
 	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Aveline attaches a photo you pick to the note you are writing in a client's thread.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Aveline attaches a photo you take to the note you are writing in a client's thread.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

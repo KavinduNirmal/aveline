@@ -1,10 +1,8 @@
-using System.Text.Json;
 using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Infrastructure.Eventing;
 using Aveline.Api.Modules.Audit.Models;
 using Aveline.Api.Modules.Audit.Services;
 using Aveline.Api.Modules.Notifications.Models;
-using Aveline.Api.Modules.Notifications.Repositories;
 using Aveline.Api.Modules.Notifications.Services;
 using Aveline.Api.Modules.Statistics.Models;
 using Microsoft.EntityFrameworkCore;
@@ -18,9 +16,9 @@ namespace Aveline.Api.Modules.Statistics.Services;
 /// breaching rule either opens a new alert or, while the open alert is inside its cooldown,
 /// increments the existing row instead of re-firing (BR-7.6). A non-breaching evaluation
 /// increments the persisted consecutive-OK counter and auto-resolves the alert once it
-/// reaches <c>Observability:AutoResolveConsecutiveOk</c> (BR-7.7). A critical fire resolves
-/// the owner/manager recipients through <see cref="IRecipientResolver"/> and stores a
-/// <see cref="NotificationRecord"/> (BR-7.11).
+/// reaches <c>Observability:AutoResolveConsecutiveOk</c> (BR-7.7). A critical fire
+/// dispatches through <see cref="INotificationDispatcher"/> — the only code that creates
+/// inbox rows — and stores the returned record id (BR-7.11).
 /// </summary>
 public sealed class AlertService : IAlertService
 {
@@ -31,8 +29,7 @@ public sealed class AlertService : IAlertService
     private readonly AppDbContext _db;
     private readonly IAuditService _audit;
     private readonly IEventBus _eventBus;
-    private readonly INotificationRepository _notifications;
-    private readonly IRecipientResolver _recipients;
+    private readonly INotificationDispatcher _dispatcher;
     private readonly IConfiguration _configuration;
     private readonly ILogger<AlertService> _logger;
 
@@ -40,16 +37,14 @@ public sealed class AlertService : IAlertService
         AppDbContext db,
         IAuditService audit,
         IEventBus eventBus,
-        INotificationRepository notifications,
-        IRecipientResolver recipients,
+        INotificationDispatcher dispatcher,
         IConfiguration configuration,
         ILogger<AlertService> logger)
     {
         _db = db;
         _audit = audit;
         _eventBus = eventBus;
-        _notifications = notifications;
-        _recipients = recipients;
+        _dispatcher = dispatcher;
         _configuration = configuration;
         _logger = logger;
     }
@@ -141,7 +136,6 @@ public sealed class AlertService : IAlertService
 
             open.FiredAt = now;
             open.OccurrenceCount = 1;
-            open.NotificationRecordId = null;
             rule.LastTriggeredAt = now;
             await _db.SaveChangesAsync(cancellationToken);
             await FireAsync(rule, open, observedValue, cancellationToken);
@@ -212,6 +206,15 @@ public sealed class AlertService : IAlertService
         if (alert is null)
         {
             return null;
+        }
+
+        // A Resolved alert is terminal (BR-7.7). Acknowledging it would move it back to
+        // Acknowledged and stamp an acknowledgement on a closed incident; reject it
+        // instead of silently succeeding (A9 B3).
+        if (alert.Status == AlertStatus.Resolved)
+        {
+            throw new AlertStateConflictException(
+                $"Alert {alert.Id} is resolved and can no longer be acknowledged.");
         }
 
         alert.Status = AlertStatus.Acknowledged;
@@ -399,24 +402,16 @@ public sealed class AlertService : IAlertService
             },
             NotificationChannel.Realtime | NotificationChannel.Push);
 
-        var recipients = await _recipients.ResolveAsync(notification, cancellationToken);
-        if (recipients.Count == 0)
+        // The dispatcher resolves recipients, writes the record and creates one inbox
+        // row per recipient. It is the only code that creates inbox rows; writing a
+        // bare record here (as this used to) notified nobody.
+        var record = await _dispatcher.DispatchAsync(notification, cancellationToken);
+        if (record is null)
         {
             _logger.LogInformation(
                 "Critical alert {Rule} resolved to no organization recipients.", rule.Name);
             return;
         }
-
-        var record = await _notifications.AddAsync(
-            new NotificationRecord
-            {
-                OrganizationId = organizationId,
-                Type = notification.Type,
-                Title = notification.Title,
-                Body = notification.Body,
-                DataJson = JsonSerializer.Serialize(notification.Data),
-            },
-            cancellationToken);
 
         alert.NotificationRecordId = record.Id;
         await _db.SaveChangesAsync(cancellationToken);

@@ -3129,3 +3129,4579 @@ constraint behaviour the in-memory provider cannot.
   confirmation flow.
 - `shared/widgets/floating_dock.dart` still lists a `profile` tab; it is unmounted dead
   code, so it was left alone.
+
+## Session 2026-09-18 (cont.) — Home tab: Flutter to backend (session start)
+
+**Task:** Implement the Home tab Flutter-to-backend feature across the phases defined in
+`.agents/plans/flutter-to-backend-home-implementation.ignore.md` and its strategy document.
+**Tool used:** DeepSeek Harness (deepseek-flash) coding agent
+
+### Plan read and reconciled
+
+- Read both plan documents in full (1,232 + 869 lines). The plan establishes that all six Home
+  blocks are fed from in-memory demo data, that three of them have **no server-side concept at
+  all** (focus task, customer activity, visit), that the one real endpoint
+  (`GET …/blossoms/balance`) is gated by `billing:view`, which plain staff does not hold, and that
+  `Customer.VisitCount`/`LastVisitAt`/`TotalSpent` have no writer anywhere outside migrations.
+- The strategy layer supplies what the plan lacks: four gated product decisions (D1–D4), the shared
+  contracts Home must consume rather than invent, and a six-slice order (S0–S6) in which no slice
+  leaves the app worse than it found it. The review markers select **D1 = (b)** (a distinct
+  self-service `billing:view:self`, not a widened `billing:view`), **D2 = (a)** (the activity dot
+  does not ship), **D3 = open** (the `logistics` column stays, the feed self-describes), and
+  **D4 = B** (derived feed + a `FocusDismissals` record keyed by `sourceKey` with a content hash).
+- Verified against the live repository before starting: `billing:view:self` does not exist yet,
+  `BoutiqueProvider` still discards the membership id, the tenant customer routes are absent, and
+  the sibling customer plans have not landed. That last finding matters: S5's gate is "the customer
+  surface has landed or is landing in the same release", so this session must build the minimal
+  org-scoped customer surface Home needs under the name the sibling plans already froze
+  (`BoutiqueCustomerAccess`).
+
+### Issues created (one per phase)
+
+- S0 [#274](https://github.com/KavinduNirmal/aveline/issues/274) — client truthfulness and gated client section
+- S1 [#275](https://github.com/KavinduNirmal/aveline/issues/275) — Home controller scaffolding refactor
+- S2 [#276](https://github.com/KavinduNirmal/aveline/issues/276) — organization context and named org-scoped policies
+- S3 [#277](https://github.com/KavinduNirmal/aveline/issues/277) — Blossom meter and the self-service balance read (D1)
+- S4 [#278](https://github.com/KavinduNirmal/aveline/issues/278) — focus deck feed and dismissal record (D4)
+- S5 [#279](https://github.com/KavinduNirmal/aveline/issues/279) — client row, log-visit picker and walk-in create (D2)
+- S6 [#280](https://github.com/KavinduNirmal/aveline/issues/280) — visit record and atomic customer counters
+
+Working on the current branch `feature/flutter-to-backend-home` throughout; no branch was created or
+switched.
+
+### Summary of work done
+
+**S0 — client truthfulness.** `Direct client link` is now wrapped in
+`PermissionGuard(customers:view)` at the screen, so a plain `staff` account hides a row whose only
+possible answer was `403`; it is `PermissionGuard`'s first production user. A client tile and a
+`See all` row push `/customers/<id>` instead of toasting that the profile is "not on mobile yet",
+and the More sheet's `Settings` row reaches `/settings`. `demo_focus_tasks_test.dart` is declared a
+fixture contract.
+
+**S1 — Home controller.** `HomeController` (the `NotificationsController` pattern: loading, error,
+stale-reply guard, optimistic completion with rollback) now owns the deck, the client row and the
+meter; `HomeScreen` reads it and renders a loading card or an error card with a retry. Home has **no
+demo fallback** — a failed read is shown as a failure. The initial load is deferred to a post-frame
+callback because the controller notifies synchronously and notifying during a build throws.
+
+**S2 — organization context.** `BoutiqueProvider` keeps `organizationId` and `boutiqueRole` from the
+**same active membership** as the name it already read, so a screen can build `/orgs/{id}/…` for the
+shop it is naming. On the server, the new named org-scoped policy `BoutiqueCustomerAccess` was added
+(`OrganizationScopeRequirement(customers:view)`), with a test proving a named policy carries the
+requirement while a bare per-permission policy does not.
+
+**S3 — Blossom meter (D1 = b).** A distinct `billing:view:self` permission was added and granted to
+all four org roles; the balance route now requires the named `BoutiqueBillingSelfView` policy, so a
+`boutique_staff` token gets `200` where it used to get `403`, while `billing:view` itself is
+unchanged and still denied to `BoutiqueStaff`. `BlossomUsage` moved from `int` to `double` (fractions
+are normal: the conversion rule charges a 0.1 minimum), the card gained loading and
+error-with-retry states that never render `0`, and the low-water note reads the server's
+`lowBalanceThresholdPercent` instead of a hard-coded `0.8`.
+
+**S4 — focus deck and dismissal (D4 = B).** The focus feed is **derived**:
+`GET /orgs/{id}/stats/home` builds the deck from low stock (`wardrobe`), upcoming customer events
+(`patron`) and paused agent runs (`commerce`, only for a caller holding `stats:view:agent`), takes
+the day boundary from `Organization.TimeZone` and reports per-domain `dataQuality` — `logistics` is
+reported unavailable rather than counted as zero. Sign-off persists a `FocusDismissals` row keyed by
+`sourceKey` and bound to a server-computed content hash, so a changed fact reappears instead of
+staying suppressed. The client gained `dueAtUtc`/`sourceKey`, a feed repository, and a strip that
+takes "next" from the timestamp rather than regex-parsing a display string.
+
+**S5 — client row, picker and walk-in (D2 = a).** The tenant customer surface landed under the frozen
+`BoutiqueCustomerAccess` name: the book, the highlights (with `activity` generated from a real
+`Customer_Interactions` row) and walk-in creation. `Customer.Level` is a nullable grade with no
+default. The row ships **no** activity dot and no `hasNewActivity` field, and an ungraded client
+wears no badge. A walk-in now returns the server's id, and the row prepends that id rather than an
+invented one; the log-visit picker reads the real book.
+
+**S6 — visit record and counters.** `POST /orgs/{id}/customers/{customerId}/interactions` records an
+interaction and, for an inbound in-person one, moves `VisitCount`/`LastVisitAt`/`TotalSpent` and
+recomputes `Status`. The increment is a single `ExecuteUpdateAsync` statement on a relational
+provider (the in-memory provider tests the functional path), which closes the silent defect where
+those three fields had no writer and every client stayed `new`. `blossomsCharged` is always `0`: a
+visit is not billable.
+
+### Verification Performed
+
+- `dotnet test Aveline.Api/Aveline.Api.sln`: **1273 passed, 0 failed** (4 m 41 s), including the new
+  `HomeFeedEndpointsTests` (8) and `CustomerTenantEndpointsTests` (12).
+- `flutter analyze --no-fatal-infos`: **No issues found**.
+- `flutter test`: **844 passed, 0 failed**.
+- Two EF Core migrations added and verified: `AddFocusDismissals` (`Focus_Dismissals` table) and
+  `AddCustomerLevelColumn` (`Customers.Level`, nullable, no default).
+- `docs/api/openapi.yaml` re-parsed as YAML after every addition; all new paths and schemas resolve.
+- One existing backend test changed deliberately: `ApiKeyAuthenticationTests` asserted an API key
+  scoped `billing:view` could read the balance. Since D1(b) moved that route to
+  `billing:view:self`, the test now scopes the key with the new permission and a companion test pins
+  that management `billing:view` does **not** reach the self-service balance.
+
+### Important Architectural Decisions Applied
+
+- **Derived feed, persisted decision.** No focus-task table: the docket points at the fact, and only
+  the human decision is stored. A dismissal is keyed to the fact's `sourceKey` and bound to a content
+  hash, following `SignOffDecision`'s precedent.
+- **A distinct self-service permission, never a widened management read.** `billing:view:self` is
+  separate so that reading a balance does not make an associate a reader of statements and burn-rate.
+- **Named org-scoped policies.** Every new tenant route names a policy carrying
+  `OrganizationScopeRequirement`; a bare per-permission policy would authorize from possibly-stale
+  JWT claims and never check membership.
+- **The server owns the day.** The day boundary comes from `Organization.TimeZone`; the client sends
+  nothing, and the window used is echoed back.
+- **No page without an owner.** The tenant customer routes were built under the name the sibling
+  customer plans froze, so those plans can converge on them rather than Home owning a private surface.
+
+### Remaining Work / Known Deviations
+
+- The `logistics` domain still has no writer; the feed reports it unavailable. This stays a data
+  question (does `Delivery_Plans` hold rows?), not a schema change.
+- `blossom_usage_card`'s "Request additional blossoms" is still UI-only: the top-up-request endpoint
+  and an owner-side review surface were not built, so no approval record exists for an owner to act
+  on. The copy remains what it was.
+- The concurrency guarantee for the visit counter is carried by the SQL (`ExecuteUpdateAsync`); the
+  integration test runs on the in-memory provider, which does not support `ExecuteUpdate`, so a
+  Testcontainers-Postgres concurrency test is still owed.
+- The customers-domain `Customer.level` is non-nullable, so the log-visit picker maps an ungraded
+  client to `level1`. Home's own row reads the nullable wire value and hides the badge; making the
+  customers domain's level nullable is the follow-up.
+- `CustomerDetail` mapping was not built: Home's picker needs only the book, so the new repository
+  implements the narrow `CustomerBookSource` rather than the whole customers repository.
+
+## Session 2026-09-18 (cont.) — Conversations inbox: Flutter to backend (session start)
+
+**Task:** Execute the finalized conversations-inbox plan
+(`.agents/plans/flutter-to-backend-conversations-inbox-implementation.ignore.md`, strategy revision 4)
+end to end on the current branch `feature/flutter-to-backend-conversations-inbox`.
+**Tool used:** DeepSeek Harness (deepseek-flash) coding agent
+**Status:** In progress
+
+### Intended Work (session start)
+
+- Read both plan files in full, then execute the six slices (S0–S5) in order, staying on the current
+  branch (no branch creation, no switching).
+- **S0** — client truthfulness: remove the unread badge and summary (D2 = c), replace the demo fallback
+  with an explicit empty repository (D5 = b), fix the stale README line, convert seed assertions to
+  fakes.
+- **S1** — the list row tells the truth (backend): `customerName`, `externalRef`, block-aware
+  `lastMessagePreview`, `lastMessageBlock`, `lastMessageKind`, `lastMessageAuthor`,
+  `lastMessageAgentKey`, derived `markers` set; the completed SignOff write path; total ordering plus
+  index; inbound customer binding; OpenAPI and web mirror; client marker rendering.
+- **S2** — wire `ApiConversationRepository` into `app.dart` with the lazy org-id callback.
+- **S3** — paging (`ConversationPage` mirroring `ThreadPage`) and an honest footer.
+- **S4** — live list updates: org/user-targeted broadcasts, new-thread broadcast at the API's creation
+  sites, a `JoinSalon`-free connect for the inbox.
+- **S5** — metrics and documentation.
+- TDD throughout: failing test first, implement, refactor. One GitHub issue per phase. Documentation
+  (general, API, OpenAPI) updated at the end of every delivered phase. `kavindu.md` updated at session
+  start (this entry) and at session end.
+
+### Notes
+
+- Baseline: commit `ddc53f0` (`feat(home): wire the Home tab to the backend (S0-S6) (#281)`), HEAD
+  `015f7b0`. Only `frontend/aveline_mobile/android/gradle.properties` was dirty at session start.
+- Plan decisions applied without re-deriving: D1 = (c) axis separation; D2 = (c) no read state;
+  D3 = (B) load-more; D4 = (B) org broadcasts with a new-thread path; D5 = (b) empty repository;
+  §4.1 full marker infrastructure with the SignOff write path completed.
+
+### Work Delivered
+
+**GitHub issues, one per phase:** [#283](https://github.com/KavinduNirmal/aveline/issues/283) (S0),
+[#284](https://github.com/KavinduNirmal/aveline/issues/284) (S1),
+[#285](https://github.com/KavinduNirmal/aveline/issues/285) (S2),
+[#286](https://github.com/KavinduNirmal/aveline/issues/286) (S3),
+[#287](https://github.com/KavinduNirmal/aveline/issues/287) (S4),
+[#288](https://github.com/KavinduNirmal/aveline/issues/288) (S5). No branch was created or switched;
+everything is on `feature/flutter-to-backend-conversations-inbox`, uncommitted.
+
+**S0 — client truthfulness (D2 = c, D5 = b).** Removed the unread badge, the unread summary and the
+`unreadCount` / `isUnread` / `unreadTotal` fields; replaced the demo fallback with an
+`EmptyConversationRepository` on both the screen and the app route; converted the screen test from the
+demo seed to explicit fakes; fixed the stale "no search across threads" README line. TDD: the
+"summary is absent" and "registry-built screen renders the empty state" tests were written first, failed
+against the shipped code, then passed.
+
+**S1 — the list row tells the truth.** Backend: `ConversationDto` gained `customerName`, `externalRef`,
+`lastMessagePreview`, `lastMessageKind`, `lastMessageBlock`, `lastMessageAuthor`, `lastMessageAgentKey`
+and `markers`; one `ConversationTileMapper` derives the block-aware preview and the marker set
+(`approval | choice | draft`, sorted) so the list and the realtime tile share one derivation;
+`ListAsync` joins the newest message and the customer's name under the unchanged visibility predicate
+with a total ordering (`ThenByDescending(Id)`); migration `AddConversationListRowSupport` adds the
+`(OrganizationId, LastMessageAt DESC, Id DESC)` index; the inbound WhatsApp path resolves the customer
+from the phone at creation (`GetByPhoneAsync`) and binds `CustomerId`, leaving an unknown phone a
+rendered `externalRef` state; the SignOff write path now sets `MessageStatus.AwaitingSignOff` and
+`Conversation.Status = AwaitingSignOff` when a `SignOff` is persisted, so `DecideSignOffAsync`'s guard
+can finally pass. Client: D1's context axis is read first (`customerId`, then `externalRef`, then
+`kind == Salon`), the persona-aware preview prefix and the three marker labels render. OpenAPI and the
+web `ConversationDto` mirror extended.
+
+**S2 — wire the repository.** `app.dart` constructs
+`ApiConversationRepository(_dio, organizationId: () => _boutiqueProvider.organizationId)`; the
+repository reads the id at call time and raises the shared `OrgContextUnavailable` when it is null, which
+the controller keeps as a "not yet" loading state rather than the error card; the stale doc comments
+were corrected; `OrgContextUnavailable` moved to `core/network/org_context.dart` and is re-exported by
+Home so the distinction is made once.
+
+**S3 — paging.** `ConversationPage` mirrors `ThreadPage`; the repository returns it; the controller holds
+`total`, accumulates pages and exposes `hasMore` / `loadMore`; the footer prints
+`Showing <loaded> of <total>` with a load-more affordance and prints the end-of-list line only when
+everything is loaded; the no-matches copy states that search covers only what is loaded.
+
+**S4 — live list updates.** `IMessageBroadcaster` gained `BroadcastConversationChangedAsync` with the
+routing rule (org group when `OwnerUserId == null`, user group for a per-user general Salon, so a
+colleague's private thread never reaches the org group); the hub's documented client contract gained
+`ReceiveConversationChanged`; the two agent-event handlers and the API's own change sites (the webhook,
+`POST /conversations`, `select-customer`, a staff note) broadcast the tile; the Flutter
+`ConversationRealtimeService` gained a `JoinSalon`-free connect with an `onConversationChanged` callback,
+and the inbox opens its own connection while mounted and disconnects on dispose.
+
+**S5 — metrics and documentation.** The statistics catalog records the inbox metrics by name and formula
+with no `S-n` allocated, and withdraws `conversationUnreadTotal`; OpenAPI documents the new `lastMessage*`
+/ `markers` fields and the `ReceiveConversationChanged` contract; the feature README's "What the API
+carries today" and "Known gaps", `docs/architecture/inbox.md` (§5.2, §6.2, §6.3, §7) and
+`docs/backend/domain-model.md` §8.8 were rewritten.
+
+### Verification Performed
+
+- `dotnet test Aveline.Api/Aveline.Api.sln -c Release`: **1382 passed, 0 failed** (6 m 7 s), including the
+  new `ConversationTileMapperTests`, the extended `ConversationServiceTests`,
+  `ConversationRepositoryTests`, `SignalRMessageBroadcasterTests`, `ConversationEventSubscriberTests` and
+  `WebhookEndpointsIntegrationTests`.
+- `flutter analyze --no-fatal-infos`: **No issues found!**
+- `flutter test`: **871 passed, 1 failed**. The single failure is a pre-existing, environment-dependent
+  flake in the sibling client-thread plan's file
+  (`client_thread_screen_test.dart: ClientThreadScreen thread opens a day with the day it was`): its stub
+  thread is pinned to `DateTime.utc(2026, 9, 18, 12)` while `relativeDay` compares local calendar days,
+  so it fails whenever the local date is ahead of that UTC instant. Deliberately not modified (the
+  client-thread plan owns that screen).
+- `bun run build` and `bun run test` in `frontend/web`: build passes, **203 tests passed**.
+- `docs/api/openapi.yaml` re-parsed as YAML after every addition; the new migration was inspected
+  (index only, descending as intended).
+
+### Decisions Applied / Deviations
+
+- D1 = (c), D2 = (c), D3 = (B), D4 = (B), D5 = (b) and §4.1's full marker infrastructure were applied as
+  decided, without re-deriving.
+- `ApiConversationRepository.organizationId` became a `String? Function()` rather than a `String`: the
+  plan's S2 passes a callback, and only a call-time read lets a null id be a "not yet" instead of an
+  error. The strategy's "the constructor does not change" was read as "no new capability", not a literal
+  signature freeze.
+- S0 replaces the demo repository on the app route as well as the screen's fallback, so the plan's
+  `grep "DemoConversationRepository()" lib/` acceptance holds literally; S2 then swaps it for the API
+  repository.
+- S4 also broadcasts the tile after a staff note (the list's preview moves without waiting for the agent's
+  reply); the plan's trigger list did not name that site.
+- `conversation.created` was left unpublished. The API broadcasts from its own creation sites instead,
+  which is the plan's preferred option.
+
+### Remaining Work / Known Deviations
+
+- The `approval` marker stays unlit until the commerce approval flow (ADR-018) emits a `SignOff`. The read
+  derivation, the DTO field, the client rendering and the write-path statuses are all complete.
+- No statistics route is built; the catalog records the inbox metrics by name and formula only, and their
+  identifiers are left for central allocation at merge.
+- Nothing was committed; all changes are in the working tree on
+  `feature/flutter-to-backend-conversations-inbox`.
+
+## Session 2026-09-19
+
+**Task:** Implement the Flutter-to-backend **client threads** feature (plan slices T0-T11) on branch
+`feature/flutter-to-backend-conversation-threads`
+**Tool used:** DeepSeek Harness (deepseek-flash) AI coding agent
+**Status:** In progress (session start)
+
+### Intended Work (session start)
+
+- Execute the final, frozen plan in
+  `.agents/plans/flutter-to-backend-client-thread-implementation.ignore.md`, which is the executable form
+  of strategy revision 3 (`...-implementation-strategy.md`, D1-D8 all decided: D1 = B briefing renderer,
+  D2 = A note-to-record with outbound deferred, D3 = A `clientMessageId` idempotency, D4 = A hardened
+  realtime on `salon:{id}`, D5 = B thread-owned read state, D6 = hardened offset paging with `around`
+  deferred to the deep-link, D7 = A + supervisor revoke, D8 = attachments and images in scope both
+  directions).
+- TDD is mandatory: a failing test first, then implementation, then refactor, per slice.
+- One GitHub issue per phase (T0-T11), on the current branch; **no branch is created or switched**.
+- After each delivered phase, update general docs, API docs and `docs/api/openapi.yaml`.
+- Prerequisites already landed at HEAD `225a83c`: the inbox plan S0-S5 (the `ConversationDto` row fields,
+  the `customerId`-first classifier, the `externalRef` disclosure, the `AwaitingSignOff` write path, the
+  lazy-org-id wiring pattern, and the inbox realtime work).
+
+### GitHub Issues Created (session start)
+
+| Slice | Issue |
+|---|---|
+| T0 - thread truthfulness (client-only) | [#291](https://github.com/KavinduNirmal/aveline/issues/291) |
+| T1 - the message-history contract (backend) | [#292](https://github.com/KavinduNirmal/aveline/issues/292) |
+| T2 - wire `ApiThreadRepository` into the app | [#293](https://github.com/KavinduNirmal/aveline/issues/293) |
+| T3 - the thread tells the truth (block renderer) | [#294](https://github.com/KavinduNirmal/aveline/issues/294) |
+| T4 - realtime hardening and thread subscription | [#295](https://github.com/KavinduNirmal/aveline/issues/295) |
+| T5 - conversation read state | [#296](https://github.com/KavinduNirmal/aveline/issues/296) |
+| T6 - sign-off authorization and supervisor revoke | [#297](https://github.com/KavinduNirmal/aveline/issues/297) |
+| T7 - history depth and notification deep-link | [#298](https://github.com/KavinduNirmal/aveline/issues/298) |
+| T8 - thread metrics and documentation | [#299](https://github.com/KavinduNirmal/aveline/issues/299) |
+| T9 - attachments, staff side | [#300](https://github.com/KavinduNirmal/aveline/issues/300) |
+| T10 - attachments, customer side | [#301](https://github.com/KavinduNirmal/aveline/issues/301) |
+| T11 - Cloudinary adapter (recorded, not built) | [#302](https://github.com/KavinduNirmal/aveline/issues/302) |
+
+### Verification Performed (session start)
+
+- `git branch --show-current` -> `feature/flutter-to-backend-conversation-threads`; HEAD `225a83c`
+  ("feat(conversations): wire the Messages inbox to the backend (S0-S5)"). No branch created or switched.
+- `git status --short` -> only `android/gradle.properties`, the untracked `.agents/plans/` and report
+  artifacts are dirty; no source edits before this log entry.
+
+### Session end — what was delivered
+
+**T0 — thread truthfulness (client).** Added `EmptyThreadRepository` (serves
+`ThreadPage.empty`, refuses a send/decision with a readable `StateError`);
+`ConversationsScreen.threadRepository` falls back to it; `ClientThreadScreen.repository`
+became **required**; deleted `demo_thread_repository.dart` and its contract test, moving the
+seed into the widget test as explicit fakes (`_SeedThread`, `_StubThread`, `_DelayedThread`,
+`_FailingThread`); the latency-driven loading tests now use a `Completer` instead of a timer.
+Also fixed a real flake: the day-separator test pinned a UTC instant while `relativeDay`
+compares local calendar days, so it failed whenever the local date was ahead.
+
+**T1 — the message-history contract (backend).** `ThenBy(m => m.Id)` and the index
+`(ConversationId, CreatedAt, Id)` (migration `AddMessageHistoryIndex`, index only); the
+invisible-conversation `404` instead of the global 500; `clientMessageId` end to end
+(`SendMessageRequest`, `Message.ClientMessageId`, the filtered unique index, migration
+`AddMessageClientMessageId`, get-before-insert with a unique-violation re-read, replay `200`,
+conflict `409 code: message-idempotency-conflict`, agent-once). The two migrations were split
+by temporarily stubbing the model so each carries only its own change.
+
+**T2 — wire the thread (client).** `ApiThreadRepository` takes a late-bound
+`String? Function()` and raises the shared `OrgContextUnavailable`; constructed once in
+`app.dart` and passed at the route; the last page is computed from the **echoed** `pageSize`;
+UUID-shape validation before every path segment; the §4.6 error mapping (401/403/404/409/429
+plus the server's `{message}`); the header's `externalRef` stand-in.
+
+**T3 — the thread tells the truth (client).** `ThreadMessage` carries the ordered
+`ThreadBlock` list, the `client_message` text and channel handle, and the `clientMessageId`;
+`isInternalNote` excludes a `SignOff` (kind-first classification); the new `thread_blocks.dart`
+renderer (`suggestion` + copy, `choice` + options, one-line fallback for every other block);
+the quoted-parent line; `decideSignOff` reconciles the server's own status (fixing a latent
+duplicate-row bug in the old `_restore` path); `selectCustomer` on the contract; one UUIDv4
+send key reused by every retry; `MessageDto` now echoes `clientMessageId` and exposes
+`workflowRunId`. D2 is pinned by a test: a staff note still reads `NOTE · NOT SENT`.
+
+**T4 — the thread goes live (client).** `RealtimeConnection` gained
+`onReconnected`/`onClosed`; `ConversationRealtimeService` registers `ReceiveMessage`
+unconditionally, keeps listener **sets**, hands over the raw payload (so `core` no longer
+imports the Salon's model), re-joins `salon:{id}` after a reconnect, surfaces a join failure
+and validates both ids as UUIDs; `AgentStatePayload.tryFromJson` drops a malformed payload.
+The screen subscribes on `initState` and disconnects on `dispose`; `receive` dedupes by server
+id, adopts the in-flight optimistic row by `clientMessageId`, inserts older messages in
+`(createdAt, id)` order, replaces a delivery status in place and ignores `local_*` ids; an
+activity strip says only working/searching/tool-use, credited to the persona.
+
+**T5 — read state (backend + client).** `ConversationReadState` +
+`ConversationReadStateRepository` (upsert by the natural key) + migration
+`AddConversationReadStates`; `MarkReadAsync` returns `Recorded | Ignored | ConversationNotFound
+| MessageNotFound` with a monotonic `(CreatedAt, Id)` marker; `PATCH …/read` under
+`BoutiqueConversationAccessPolicy`; the client's `markRead` advances on open, after a send and
+on a newer arrival, never with a `local_*` id, and swallows a refusal.
+
+**T6 — sign-off authorization and supervisor revoke (backend + client).**
+`BoutiqueConversationApproval` = active membership + `approvals:approve`, applied on top of the
+group policy on decide **and** revoke, so a plain `Staff` member gets `403`;
+`SignOffDecision.Kind` replaces the `Approved` bool (migration `AddSignOffDecisionKind` adds,
+**backfills**, then drops); `RevokeSignOffAsync` appends a `revoked` row, returns both statuses
+to `AwaitingSignOff` and touches no workflow; the client only draws **Revoke** for a membership
+holding the permission.
+**Bug found and fixed:** `DecideSignOffAsync` re-inserted a loaded `Message` through
+`SaveAsync` (which `Add`s), so the first real decide through the repository answered `500` with
+a duplicate primary key. Decide and revoke now write via `UpdateAsync`, pinned by the new
+integration test.
+
+**T8 (partial) — metrics and documentation.** The statistics catalog records the thread-only
+metrics by name and formula with no `S-n`; OpenAPI documents every new field and route
+(115 paths); domain-model §8.9–§8.11 and the feature README carry the contracts.
+
+### GitHub Issues
+
+| Slice | Issue | State |
+|---|---|---|
+| T0 | [#291](https://github.com/KavinduNirmal/aveline/issues/291) | closed |
+| T1 | [#292](https://github.com/KavinduNirmal/aveline/issues/292) | closed |
+| T2 | [#293](https://github.com/KavinduNirmal/aveline/issues/293) | closed |
+| T3 | [#294](https://github.com/KavinduNirmal/aveline/issues/294) | closed |
+| T4 | [#295](https://github.com/KavinduNirmal/aveline/issues/295) | closed |
+| T5 | [#296](https://github.com/KavinduNirmal/aveline/issues/296) | closed |
+| T6 | [#297](https://github.com/KavinduNirmal/aveline/issues/297) | closed |
+| T7 | [#298](https://github.com/KavinduNirmal/aveline/issues/298) | open — conditional on the notification deep-link, which is not wired |
+| T8 | [#299](https://github.com/KavinduNirmal/aveline/issues/299) | open — delivered for T0–T6; the attachment documentation trails T9/T10 |
+| T9 | [#300](https://github.com/KavinduNirmal/aveline/issues/300) | open — not started |
+| T10 | [#301](https://github.com/KavinduNirmal/aveline/issues/301) | open — not started |
+| T11 | [#302](https://github.com/KavinduNirmal/aveline/issues/302) | closed as recorded; deliberately not built |
+
+### Verification Performed
+
+- `dotnet test Aveline.Api/Aveline.Api.sln -c Release`: **1410 passed, 0 failed** (6 m 23 s),
+  after **1403** at T5 and **1392** at T1.
+- `flutter analyze --no-fatal-infos`: **No issues found!**
+- `flutter test`: **931 passed, 0 failed** (174 conversations tests at T2, 203 at T3, 916 at T4,
+  923 at T5, 931 at T6).
+- `docs/api/openapi.yaml` re-parsed as YAML after every addition (now 115 paths).
+- `git branch --show-current` → `feature/flutter-to-backend-conversation-threads` throughout;
+  **no branch was created or switched**, per the instruction.
+
+### Remaining Work / Known Deviations
+
+- **T9 (attachments, staff side), T10 (inbound customer media) and the rest of T8 are not
+  delivered.** T9 was not begun rather than left half-built: an upload route with no composer
+  affordance would not make the screen strictly better, which is the plan's own merge rule.
+  The prerequisites are recorded on the issues, and the `attachment` switch arm in
+  `thread_blocks.dart` is marked so T9 can add it without restructuring.
+- **T7** waits on the notification deep-link (`Notification.Data` carrying
+  `{conversationId, messageId}`), which is outside this plan; OpenAPI documents `around` as
+  reserved-not-consumed.
+- **Two latent defects were found by the new tests and fixed**, and are worth recording:
+  `DecideSignOffAsync`'s duplicate-key insert (above), and the duplicate optimistic draft row
+  left by `ClientThreadController._restore` on a refused decision.
+- Nothing was committed; all changes are in the working tree on
+  `feature/flutter-to-backend-conversation-threads`.
+
+## Session 2026-09-19 (continued — goal round 1)
+
+**Task:** the same client-threads objective, continued: T9 (attachments, staff side), T10
+(inbound WhatsApp media), T7 (history depth and deep-link), and the rest of T8.
+
+### T9 — attachments, staff side (delivered except one detail)
+
+- **Policy promoted.** `Modules/VisualIntelligence/ImageContentTypes` became
+  `Common/Media/MediaContentTypes`, extended with `application/pdf`, and split into an
+  image-only rule for the catalog (`NormalizeImage`, whose behaviour is unchanged) and an
+  allow-list for attachments (`IsAllowed`, `Resolve`, `SafeServe`). The catalog and
+  `InventoryService` were rewired to it and the old file deleted.
+- **Storage behind a boundary.** `IAttachmentStore` (`StoreAsync`, `OpenReadAsync`,
+  `DeleteAsync`) with `DatabaseAttachmentStore` (bytes in a `bytea` row, key = the row id,
+  url = the authenticated conversations route). `MessageAttachment` +
+  `MessageAttachmentConfiguration` + `DbSet` + migration `AddMessageAttachments`, with the
+  `StorageProvider`/`StorageKey`/`Url` columns that keep a Cloudinary adapter a drop-in.
+- **Routes.** `POST …/attachments` (multipart or base64/`data:`-URL JSON) and the
+  authenticated `GET …/attachments/{id}`, both under `BoutiqueConversationAccessPolicy`;
+  5 MB per file, 5 per message, `nosniff`, and a refused upload never stored.
+- **Binding.** `SendMessageRequest.AttachmentIds`; the send resolves and validates them
+  **before** the insert (a bad id fails the whole send with 400), binds them after, and stores
+  the `attachment` blocks **with** the message, so a re-list and an idempotent replay both
+  carry them. The replay comparison moved from the whole block array to the note's own words,
+  so a retry that names the same text alongside its attachments replays rather than conflicts.
+- **Sweep.** `AttachmentSweepJob` (24 h TTL, hourly) tells the store first, then deletes the
+  rows.
+- **Client.** `uploadAttachment`/`fetchAttachmentBytes` (authenticated `Dio` + an
+  `attachmentId`-keyed cache), the controller's pending tray (per-file upload, remove, retry;
+  a failed upload holds the send rather than being silently dropped), the composer's paperclip
+  with a gallery/camera sheet, `image_picker` + iOS usage descriptions, client-side re-encode
+  under the cap, the image thumbnail → full-screen `InteractiveViewer`, and the document chip.
+- **Additive surfaces.** The web `BlockRenderer` gained `attachment`, and
+  `ConversationTileMapper` previews one by its file name.
+- **Not met:** a PDF does not open through the platform viewer (needs a temp file plus an OS
+  viewer dependency), so the chip is inert and shows the name and size. Issue #300 left open
+  for that reason.
+
+### T10 — attachments, customer side (delivered)
+
+`ExtractMessage` no longer filters to `type == "text"`: it returns a media descriptor
+`{id, mime_type, sha256, caption?}` with the caption as the client's words, so an image with no
+caption is recorded instead of `{status: "ignored"}`. `IWhatsAppService.GetMediaAsync` performs
+Meta's two-step fetch (resolve, then download) with the bearer on both hops; the webhook gets
+the tenant's credentials from `IIntegrationService`, stores the bytes through `IAttachmentStore`
+(`StoreInboundAttachmentAsync`, no uploader), keeps the caption in the `client_message` block,
+appends an `attachment` block, and publishes `message.received` carrying the `attachmentId`.
+Every failure path — missing integration, expired URL, failed download, type off the allow-list
+— logs and skips, so the caption is still recorded and the webhook still answers 200.
+
+### T7 — history depth and deep-link (two of three items delivered)
+
+The `around` contract was fixed rather than documented around: the repository counts the rows
+strictly before the anchor under the same `(CreatedAt, Id)` order, serves the **page that holds
+it**, and the endpoint echoes the served page, so `hasEarlier`/`hasMore` follow from the
+response — the old half-page window could not express either. The client consumes it end to end
+(`fetchMessages(around:)` → query parameter, `ClientThreadController.load(around:)`,
+`ClientThreadScreen.aroundMessageId`), and `ThreadDeepLink.fromNotificationData` reads
+`{conversationId, messageId}` out of `Notification.Data`. **Not met:** opening *from* a
+notification, because the shell has no notification-tap handler to hand the link to; issue #298
+left open with the seam in place and tested.
+
+### T8 — metrics and documentation (completed)
+
+The statistics catalog, the OpenAPI document (117 paths), the domain model (§8.9–§8.12), the
+inbox architecture note and the feature README now describe what shipped. The acceptance check
+was run mechanically: no document claims unread state ships on the inbox side, cites
+`ConversationKind.Customer` (only the note that it does not exist), describes the thread as
+plain-text-only, or calls attachments out of scope.
+
+### Verification Performed (round 1)
+
+- `dotnet test Aveline.Api/Aveline.Api.sln -c Release`: **1453 passed, 0 failed** (was 1410).
+- `flutter analyze --no-fatal-infos`: **No issues found!**
+- `flutter test`: **952 passed, 0 failed** (was 931).
+- `bun run test` (web): **203 passed**; `bun run build`: green.
+- `docs/api/openapi.yaml` re-parsed after every edit (117 paths); `ios/Runner/Info.plist`
+  re-parsed as a plist after adding the picker usage descriptions.
+- Branch: `feature/flutter-to-backend-conversation-threads` throughout; no branch created or
+  switched.
+
+### Remaining Work (round 1)
+
+- **#298 (T7):** the shell's notification-tap → thread navigation.
+- **#300 (T9):** the PDF platform viewer.
+- **#302 (T11):** the Cloudinary adapter, recorded and deliberately not built.
+
+## Session 2026-09-19 (continued — goal round 2)
+
+**Task:** close the two remaining acceptance gaps: T7's notification-tap navigation (#298) and
+T9's PDF platform viewer (#300).
+
+### T7 — the deep-link is now wired end to end
+
+- `ConversationRepository.fetchConversation(id)` (+ `ApiConversationRepository`, which maps 404
+  and 403 to `null` and rethrows anything else; `EmptyConversationRepository`; the demo fixture).
+- `AppNotification.conversationId`/`messageId`/`isOpenable` getters, and the **pure**
+  `notificationRouteFor` rule: a notification carrying a `conversationId` opens the thread
+  (anchored to its message), one carrying only a `customerId` opens the client book. Pure, so
+  the rule is tested without standing a router up.
+- `AppRoutes.threadPattern`/`thread(id, {messageId})` and the new `ThreadRouteScreen`, which
+  reads the row by id and then shows the same thread screen. Three outcomes are kept apart: the
+  row arrives (the thread), the row is gone or not visible (its own state with a retry), and the
+  organization id is not yet known (a "not yet" with a retry).
+
+### T9 — the PDF opens through the platform viewer
+
+`openWithPlatformViewer` (new `attachment_opener.dart`) writes the bytes to the temporary
+directory (`path_provider`) and hands the path to the OS viewer (`open_filex`). The document
+chip became an actionable tile, and the opener is injectable
+(`ClientThreadScreen.attachmentOpener`) so a widget test records the bytes and file name without
+touching the filesystem or leaving the app.
+
+### Verification Performed (round 2)
+
+- `dotnet test Aveline.Api/Aveline.Api.sln -c Release`: **1453 passed, 0 failed**.
+- `flutter analyze --no-fatal-infos`: **No issues found!**
+- `flutter test`: **966 passed, 0 failed** (was 952) — new: the routing rule (thread beats
+  client, anchored message, empty ids), the route screen (loads, anchors, not-found + retry,
+  waiting-for-org + retry), `fetchConversation` (path, 404/403 → null, 500 rethrows, org
+  unavailable) and the document opener.
+- Branch: `feature/flutter-to-backend-conversation-threads` throughout; no branch created or
+  switched.
+
+### Status: the plan's slices are all delivered
+
+T0–T10 ship; T11 (the Cloudinary adapter) is recorded and deliberately not built, which is its
+own acceptance. Every phase's documentation (general, API and OpenAPI) is updated, `kavindu.md`
+carries the start and end entries plus both round summaries, and every GitHub issue for the plan
+is closed.
+
+## Session 2026-09-19 (closing — applied, committed, PR opened)
+
+The two lines above that read "Nothing was committed; all changes are in the working tree" were
+true when they were written and are superseded here.
+
+- **Migrations applied** to the project's dev database (the `aveline_postgres` container, host
+  port 5433, database/user `aveline`). The database was 15 migrations behind, not five: its last
+  recorded migration was `20260913181825_AddConversationOwnerUserId`. All 15 were applied with
+  `dotnet ef database update --connection …`, verified with `dotnet ef migrations list` (no
+  pending) and by inspecting the schema — `Messages.ClientMessageId`, `ConversationReadStates`,
+  `MessageAttachments`, `SignOffDecisions.Kind` present, `SignOffDecisions.Approved` dropped, and
+  the filtered unique index and the new history index created. A `pg_dump` backup was taken first
+  (`/tmp/aveline_pre_threads_migrations_20260919_133425.sql`, 7.7 MB).
+- **Committed** as `cdcde08` — `feat(conversations): implement the client thread end to end
+  (T0-T11)`, 114 files, +33255/-935. All six pre-commit gates passed (no `.env`, bun-only
+  lockfiles, no secrets, `dotnet build`, no staged `.py`, `flutter analyze`).
+- **PR opened**: [#303](https://github.com/KavinduNirmal/aveline/pull/303) into `development`.
+- **Conflict resolved.** The first push produced a conflicting PR: `development` already carried
+  the inbox work as the squash `589f9d4` (PR #289), duplicating this branch's `225a83c`, so the two
+  sides disagreed on every file the thread commit also touched. `git diff 225a83c
+  origin/development` proved the two trees were byte-identical, so `development`'s content was
+  already wholly contained here; merging it with `-s ours` produced merge commit `ef8d1d7` whose
+  tree hash (`2a7f8fa61069d9929f90ccd5cae932afaa888533`) equals the pre-merge tree, proving nothing
+  was lost. The PR is now `MERGEABLE`, and its diff is exactly the thread commit.
+- **Deliberately not committed**: `docs/reports/SE3110_Compliance_and_Tool_Integration_Report.md`
+  (it was staged before this work began, so it stays staged-uncommitted for its author),
+  `docs/reports/PR-290-slice3-review.md`, `.agents/plans/` (the plan file is named
+  `*.ignore.md` on purpose), `.dsh-tools/`, `.screenshots/`, `.research-shots/`, and the
+  pre-existing `frontend/aveline_mobile/android/gradle.properties`.
+
+## Session 2026-09-19 (cont.) — Notifications inbox: Flutter to backend (session start)
+
+**Task:** Implement the notifications inbox Flutter-to-backend feature across the phases defined in
+`.agents/plans/flutter-to-backend-notifications-implementation.ignore.md` (S0–S9) and its design record
+`.agents/plans/flutter-to-backend-notifications-implementation-strategy.md` (revision 2, FINAL).
+**Tool used:** DeepSeek Harness (deepseek-flash) coding agent
+**Branch:** `feature/flutter-to-backend-notifications` (current branch; **no branch created or switched**)
+
+### Plan read and reconciled
+
+- Read both plan documents in full (847 + 921 lines) at the stated baseline HEAD `1e4bdb5`, which is the
+  current HEAD. The executable plan is the authority on files, contracts, order, gates and acceptance
+  criteria; the strategy is the design record and the source of every decision (D1–D12, Q1–Q9).
+- **D1 = B is the shape of the work:** this plan wires and enables the inbox and ships **no new producer**.
+  S0–S4 wire and enable; S5 repairs the one producer that exists and is broken (`SystemAlert` notifies
+  nobody); S6–S9 handle retention, the per-row label, metrics-by-name and docs. The five missing producers
+  (`NewMessage`, `NewMatch`, `VipAtRisk`, `ApprovalNeeded`, `PaymentConfirmed`) each have a named gate and
+  land with no client change.
+- **Verified against the live repository before starting:** the notification endpoints are live
+  (`Program.cs:155`); `app.dart:364` still selects `DemoNotificationRepository()` and the API repository's
+  import is absent; `NotificationDto` carries no `notificationId`/`unreadCount`; the `NotificationHub`
+  declares no client-callable re-subscribe method; `NotificationKind` has seven values (no
+  `IntegrationExpired`/`SystemAlert`); `EventReminderService.cs:58` requests `Realtime | Email`; and
+  `AlertService` writes a bare record without ever calling `INotificationDispatcher`.
+- **TDD is mandatory for every phase:** failing test first, then implementation, then refactor. Flutter
+  tests run under the SDK cache outside the workspace, so the DSH sandbox needed full access for
+  `flutter test` (the harness default was widened mid-session).
+
+### Issues created (one per phase)
+
+- S0 [#304](https://github.com/KavinduNirmal/aveline/issues/304) — wire the API notification repository
+- S1 [#305](https://github.com/KavinduNirmal/aveline/issues/305) — the two missing kind visuals
+- S2 [#306](https://github.com/KavinduNirmal/aveline/issues/306) — realtime recovery (hub re-subscribe + refresh)
+- S3 [#307](https://github.com/KavinduNirmal/aveline/issues/307) — payload identity and the badge
+- S4 [#308](https://github.com/KavinduNirmal/aveline/issues/308) — push truth, tap semantics, the reminder's push
+- S5 [#309](https://github.com/KavinduNirmal/aveline/issues/309) — repair and de-duplicate the alert path
+- S6 [#310](https://github.com/KavinduNirmal/aveline/issues/310) — notification retention job
+- S7 [#311](https://github.com/KavinduNirmal/aveline/issues/311) — per-row boutique label
+- S8 [#312](https://github.com/KavinduNirmal/aveline/issues/312) — record the notification metric family
+- S9 [#313](https://github.com/KavinduNirmal/aveline/issues/313) — docs truth
+
+### Summary of work done
+
+**Test-driven throughout.** Every phase started with failing tests (confirmed red), then
+implementation, then the phase's documentation. No branch was created or switched; all work
+is on `feature/flutter-to-backend-notifications`. Nothing was committed (the repo already
+carried unrelated staged reports, which were left untouched).
+
+**S0 + S1 — wiring and the two missing visuals (client-only; #304, #305).**
+`app.dart` now selects `ApiNotificationRepository(_dio)` and imports it; the stale "until the
+endpoints are live" comment is gone. New `EmptyNotificationRepository` is the screen's
+provider-less fallback (the `EmptyThreadRepository` rule), so a widget test mounting the
+screen alone draws the real empty state. `NotificationKind` gained `integrationExpired` and
+`systemAlert` with new icons/tints, and `kind_covers_every_backend_type` lists the eight
+`NotificationType` names explicitly as the drift guard. The demo fixture gained the two kinds
+so its own "covers every kind" contract stays true (11 rows, all read, so unread stays 4);
+`notifications_screen_test.dart`'s row-count assertion was updated deliberately. A new
+source-level guard (`test/app_notifications_wiring_test.dart`) pins the repository selection,
+since the shell cannot be driven to `/notifications` without Clerk + Dio + Firebase.
+
+**S2 — realtime recovery (#306).** `NotificationHub.SubscribeAsync` is a new idempotent
+client-callable re-join of `user:{id}` + active `org:{id}`, sharing `JoinGroupsAsync` with
+`OnConnectedAsync`. `RealtimeNotificationService` registers `onReconnected`/`onClosed`
+**before** `start()`, re-invokes `SubscribeAsync` on every reconnect, then calls the refresh
+seam; a failed re-join is surfaced. `app.dart` awaits the connect inside `_connectRealtime`
+(no unawaited async error). The web client re-subscribes in `onreconnected`.
+
+**S3 — payload identity and the badge (#307).** `NotificationDto` gained `notificationId` and
+`unreadCount`; `IRealtimeChannel.SendAsync` takes both, `IPushChannel.SendAsync` the id, and
+`NotificationDispatcher` computes the count per recipient **after** its inbox row is written.
+`NotificationPayload` (Dart) and the web interface widened, both defaulted. The controller
+gained `applyUnreadCount` (clamped, silent on unchanged); `_onNotificationReceived` applies the
+payload count and still refreshes, so `setUnreadCount` remains the only badge writer. The
+dispatcher test harness was rebuilt into per-interface recorders — one shared object matched
+the first `switch` arm and never exercised the push/email signatures.
+
+**S4 — push truth and tap semantics (#308).** `FcmPushChannel` merges `type` and
+`notificationId` into the FCM `data`; `EventReminderService` requests `Realtime | Push |
+Email`. New `PushMessageHandler` + `PushMessageSource` seam (with a
+`FirebasePushMessageSource` adapter) handle `onMessage` → the same arrival seam and
+`onMessageOpenedApp`/`getInitialMessage` → mark **that notification** read, then route through
+the one shared rule. The routing rule was factored into `notificationRouteForIds`, now used by
+both `notificationRouteFor` and the tap. The handler reads route ids from the flat FCM map
+**and** the nested hub `data` map; a cold-start tap whose mark-read fails still routes, and
+navigation is deferred a frame because the router may not be mounted.
+
+**S5 — alert path repaired and de-duplicated (#309).** `INotificationDispatcher.DispatchAsync`
+returns the `NotificationRecord` it wrote (or `null`); `AlertService` injects the dispatcher
+instead of `INotificationRepository` + `IRecipientResolver`, dispatches once and stores the
+returned id; the re-fire branch no longer clears `NotificationRecordId`. A Critical
+`SystemAlert` now creates one record and one inbox row per resolved recipient, and a sustained
+breach notifies once with the `system.alert.fired` event still published.
+
+**S6 — retention (#310).** New `NotificationRetentionJob` (module-local `BackgroundService`,
+`PeriodicTimer`, shared `IDistributedJobLock`, public `RunAsync`/`RunLockedAsync`) purges
+`UserNotifications` dismissed after `Notifications:DismissedRetentionDays` (30) or read after
+`Notifications:ReadRetentionDays` (180); the `NotificationRecord`/`NotificationDelivery` audit
+trail is untouched. Config keys added beside the existing retention keys; registered from
+`AddNotificationsModule`.
+
+**S7 — per-row boutique label (#311).** `UserNotificationDto` gained `organizationId` and
+`organizationName`. **Deviation from the plan:** the plan prescribed
+`.ThenInclude(r => r.Organization)`, but `NotificationRecord.OrganizationId` is a required FK
+and EF therefore treats the navigation as a required reference — its include uses inner-join
+semantics and **drops** every row whose organisation is absent, which failed both the existing
+repository tests (they seed random org ids) and the plan's own "a row with no organisation
+still lists" acceptance. The repository instead loads the names in a second query and attaches
+them, keeping rows and leaving the name null when absent. No column, no migration, no
+interface change; OpenAPI and the API README document the two new fields.
+
+**S8 — metric family recorded (#312).** A `notification*` block was added to
+`docs/backend/statistics-catalog.md` with all nine metrics, every required field, access per
+metric, the exposure rule, the two definitional notes (inbox backlog vs S-36's delivery
+backlog; percentiles null below the sample floor) and the proposed alert thresholds. No
+`S-n`, no endpoint, no code.
+
+**S9 — docs truth (#313).** Corrected the stale backend README Phase-6 deviation that still
+claimed the alert re-fire clears `NotificationRecordId`; added a notifications-inbox backend
+status section; updated `docs/architecture/inbox.md` §6.4 (the deep link is implemented) and
+§7 (the hub re-join); documented the four notification tables in
+`docs/backend/domain-model.md` §8.13; fixed the four OpenAPI drift items (`/read-all` 200 body,
+named `UnreadCountResponse`/`MarkAllReadResponse` schemas, device-registration empty body,
+device DELETE 404) and the matching API-README lines. The feature README now states the
+endpoints are live, the fallback is empty, Undo expires with the toast, the badge's single
+writer and what an arrival does.
+
+### Verification performed
+
+- **Flutter:** `flutter analyze --no-fatal-infos` → **No issues found**; `flutter test` →
+  **1005 passed**. New coverage: wiring guard, empty repository, kind coverage + tile visuals,
+  reconnect/re-join, payload defaults, badge-from-payload, push tap + cold start, routing.
+- **Backend:** `dotnet test Aveline.Api.Tests` (full suite, Docker up) → **1472 passed, 1
+  failed**, the failure being the pre-existing, unrelated
+  `PricingRuleCacheWarmerTests.WarmAsync_PopulatesCacheForEveryActiveScope` (it passes in
+  isolation; a timing flake in the parallel run, untouched by this work). The
+  notification/alert/retention filters are **fully green** (hub, dispatcher, channels, alert
+  evaluation, event reminder, endpoints, retention).
+- **Web:** `bun run test` → **204 passed**; `bun run build` succeeds (pre-existing chunk-size
+  warning); `bun run lint` → 0 errors (the 33 warnings are pre-existing, none in the touched
+  files).
+- `docs/api/openapi.yaml` parses (149 schemas; both new schemas present).
+- `grep -rn "not yet mapped on the server" docs lib/features/notifications` → nothing.
+
+### Deliberately not built (the plan's D1 = B and its gates)
+
+- **No notification producer ships.** `NewMessage`, `NewMatch`, `VipAtRisk`,
+  `ApprovalNeeded` and `PaymentConfirmed` remain gated on the modules that own their events
+  (§4.9); the inbox is now complete enough that each lands with no client or contract change.
+- **D12 fan-out schema, the append/update path and the count re-definition** stay frozen in
+  the plan, landing with the first fan-out producer.
+- **No metric endpoint, no local-notification stack, no restore route, no org filter, no
+  migration.** The four OpenAPI fixes are documentation only.
+
+### Notes / remaining work
+
+- The work is uncommitted by design (the user asked for issues + implementation on the current
+  branch, not for a commit), and the pre-existing staged reports and untracked scratch dirs
+  were left alone.
+- The demo fixture now seeds 11 rows (one per kind) instead of 9; this is the only place the
+  fixture's shape changed, and the README records it.
+- Local `flutter test` needs write access to the Flutter SDK's engine cache outside the
+  workspace; a workspace-write sandbox aborts every Flutter command, which the session's
+  wider file policy resolved.
+
+### Follow-up (same session) — deferred-work documentation, commit, push and PR
+
+On the user's instruction the deferred/not-built scope was written down, then the branch was
+committed, pushed and opened as a PR.
+
+- **Documented the deferred and not-built work** in
+  [`docs/backend/README.md`](../../docs/backend/README.md) §"Deferred and not built by this
+  work" — a gate table covering the five missing producers (`NewMessage`, `NewMatch`,
+  `VipAtRisk`, `ApprovalNeeded`, `PaymentConfirmed`), the D12 fan-out schema/append/count, the
+  D12 race guard, the metric endpoints, the hub's absence from OpenAPI, the restore route, the
+  org filter, the local-notification stack, the Commerce wiring defect and FCM provisioning —
+  and a matching "Deferred" section in
+  [`frontend/aveline_mobile/lib/features/notifications/README.md`](../../frontend/aveline_mobile/lib/features/notifications/README.md).
+- **Committed** only this feature's files, using an explicit pathspec so the two pre-existing
+  staged reports (`PR-290-slice3-review.md`, `SE3110_Compliance_and_Tool_Integration_Report.md`)
+  and the untracked scratch directories were **not** swept into the commit.
+- **Pushed** `feature/flutter-to-backend-notifications` and opened a PR against `development`.
+- Verification at commit time was unchanged from the session summary above: Flutter 1005 pass
+  and analyze clean, web 204 pass and build clean, backend notification/alert/retention suites
+  green (the full run's single failure is the unrelated `PricingRuleCacheWarmerTests` flake).
+
+## Session 2026-09-19 — Prometheus + Grafana metrics infrastructure
+
+**Task:** Implement the Prometheus + Grafana metrics infrastructure plan
+(`.agents/plans/prometheus-grafana-metrics-implementation.ignore.md`, Revision 4, plus its
+strategy document) on the current branch `feature/prometheus-and-grafana-monitoring`.
+**Tool used:** DeepSeek Harness (deepseek-flash coding agent)
+
+### Intended Work (session start)
+
+- Read both plan documents in full before touching code.
+- Create one GitHub issue per plan slice (1, 2, 3, 4a, 4b, 5, 6, 7, 8) using the repo's
+  `feature_request` template. **No branches created or switched** — all work stays on the
+  current branch, per the explicit instruction.
+- Strict TDD for every slice: failing test first, implement, refactor.
+- Documentation (general + API + OpenAPI) updated at the end of each delivered slice.
+- This log updated at session start (this entry) and again at session end.
+
+### Plan understanding recorded before implementation
+
+- **Slice 1** — a real `Metrics:ScrapeToken` (never the committed internal-token default), the
+  `prometheus` compose service at a pinned non-EOL version with retention in the config file
+  (never the deprecated flag), `prometheus.yml` + `rules/aveline.yml`, a startup guard, and the
+  **naming test** that turns the plan's §1 F-3 suffix table into an executed fact.
+- **Slice 2** — register the dropped meters (`Aveline.Api.Eventing`, `Npgsql`), extract
+  `MetricSnapshotReader.Flatten` from `BuildSamples` with a **differential** test (the plan's
+  own member-wise test would pass vacuously on `eventbus.backlog`), publish gauges **before**
+  the database write, and author every Prometheus series name in one `ExportedMetric` table.
+- **Slices 3/6** — Grafana provisioning and `postgres_exporter`, both pinned, both internal.
+- **Slices 4a/4b** — Python `MeterProvider` + OTLP through the collector, additive instruments
+  only (input/output token counts duplicate `gen_ai.client.token.usage`), the step-record
+  producer, and wiring the existing uncalled `AgentDataQualityDto.Derive`.
+- **Slice 5** — `.AddMeter("Npgsql")`, a collector-emitted saturation ratio, and the seeded
+  `db.pool.saturated` rule added in the same commit.
+- **Slice 7** — the notification metric family emitted (HTTP routes stay deferred).
+- **Slice 8** — the documentation commit, including restoring the 15 s overview-cache claim
+  (D7 = A) rather than deleting it, and `docs/backend/observability.md`.
+
+Reconnaissance confirmed the plan's load-bearing claims against the working tree: `/metrics` is
+mapped under `MetricsPolicy`, the exporter is registered with no options (so the default
+`UnderscoreEscapingWithSuffixes` translation applies), `ObservabilityConfiguration` registers
+only `"Aveline.Api"` while `EventBusMetrics` creates its instruments on `"Aveline.Api.Eventing"`,
+there is no `observability/` directory, and the collector config has a `traces:` pipeline only.
+
+### Notes
+
+- Plan documents reviewed: `prometheus-grafana-metrics-implementation.ignore.md` (1585 lines) and
+  `prometheus-grafana-metrics-implementation-strategy.md` (1798 lines).
+- The `.agents/` directory is untracked on this branch; the plans are read as sources of truth
+  for scope but are not modified by this work.
+
+### Session end — what was delivered
+
+All nine slices were implemented on the current branch
+`feature/prometheus-and-grafana-monitoring`. **No branch was created or switched**, as instructed,
+and nothing was committed (the user's standing pattern on this branch is issue + implementation on
+the branch, with the commit left to review).
+
+**GitHub issues created, one per slice:** #315 (Slice 1), #316 (Slice 2), #317 (Slice 3),
+#318 (Slice 4a), #319 (Slice 4b), #320 (Slice 5), #321 (Slice 6), #322 (Slice 7), #323 (Slice 8),
+all with acceptance criteria drawn from the plan.
+
+**TDD evidence.** Every slice began with failing tests. The most consequential example is Slice 1's
+naming test, which the plan predicted would turn its hand-derived suffix table into an executed
+fact — and which immediately proved the table wrong in **three of nineteen rows**. The exporter
+appends a unit suffix unless the sanitised name already ends with it, so:
+
+| dotted name (internal key) | exporter's real series | the plan's table said |
+| --- | --- | --- |
+| `aveline.process.cpu_seconds` | `aveline_process_cpu_seconds_total` | unchanged |
+| `aveline.api.error_rate` | `aveline_api_error_rate_ratio` | unchanged |
+| `aveline.agent.success_rate` | `aveline_agent_success_rate_ratio` | unchanged |
+
+Had the dashboards been written from the plan's table, three panels would have been silently empty.
+`MetricsCatalog` is now the single place a Prometheus name is authored and `MetricsNamingTests`
+asserts all 34 entries against a live scrape.
+
+**Other findings that changed the work.**
+
+- The plan's proposed `MetricSnapshotReader.Flatten` test would have passed vacuously. The shipped
+  test is differential against `BuildSamples`, and it pins the two behaviours the plan's own
+  analysis predicted a member-wise reader would get wrong: `eventbus.backlog` is derived from two
+  members and exists only when both are present, and the two currency metrics stay `decimal` in
+  Postgres while the gauge is a documented float64 approximation.
+- `NpgsqlDataSource.Statistics` is **internal** on the pinned Npgsql 10.0.3, so the plan's "the
+  collector can read pool saturation" needed a different mechanism. The collector now reads the
+  instruments through a `MeterListener` — instrument is the source, collector is the emitter, and
+  the seeded-rule guard still holds. `NpgsqlDataSourceBuilder.Name` is public, so S-11's pool-name
+  neutralisation works as written.
+- `MetricsSecurityGuard.EnsureScrapeTokenForProduction` (S-1) broke four pre-existing
+  Production-boot tests. The guard is correct; the tests were updated to configure the credential
+  a Production deployment must configure.
+- The scrape tests race through OpenTelemetry's process-global meter registry: a concurrently
+  running test that has created an `AvelineMetrics` instance contributes measurements to every
+  provider matching the meter name, which silently falsified an "absent series" assertion. They now
+  run in a non-parallel xUnit collection.
+- `docker-compose.yml` uses `${VAR:?required}` for three secrets, so `docker compose up` fails
+  rather than falling back to the committed internal token.
+
+**Verification performed (all on the current branch).**
+
+- `dotnet build` clean; full `dotnet test Aveline.Api/Aveline.Api.sln` run after every slice.
+- `promtool check config` **and** `check rules` executed against the real pinned
+  `prom/prometheus:v3.13.3` image: `SUCCESS: 1 rule files found` / `SUCCESS: 8 rules found`.
+- `grafana/grafana:13.2.2` booted with the provisioning files mounted: datasource `aveline-prometheus`
+  returned, both alert rules provisioned, both dashboards registered, contact point returned with
+  `provenance: file`.
+- `python3 scripts/validate_observability_config.py` passes; `docker compose config` parses.
+- Python agent suite: **428 passed, 2 skipped** (the single `test_config.py` failure reproduces only
+  because this shell exports `LLM_MODEL`/`AGENT_STATE_DELAY_MS`; with them unset it is 9/9),
+  coverage 91% against the 90% gate, ruff clean on every touched file.
+- Postgres-backed role test (Testcontainers): the `postgres_exporter` role holds `pg_monitor`, is
+  not a superuser, and **cannot** select from an application table.
+
+**Delivered, by slice.**
+
+1. **Slice 1** — real `Metrics:ScrapeToken` with no default, the startup guard, the pinned
+   `prometheus` service at `v3.13.3` (retention in the config file, never the deprecated flag),
+   `observability/prometheus/{prometheus.yml,rules/aveline.yml}`, the collector pinned to `0.161.0`,
+   the naming contract, the `observability-config` CI job, and the validator script.
+2. **Slice 2** — `AddMeter("Aveline.Api.Eventing")` and `AddMeter("Npgsql")` (closing M-1 and M-9's
+   premise), `MetricSnapshotReader.Flatten`, `AvelineMetrics` (guaranteed to omit rather than zero),
+   `PublishToMetrics` **before** the database write, the three-way consistency tests, and
+   `MetricsCardinalityTests` at both the instrument and scrape level.
+3. **Slice 3** — Grafana at `13.2.2`, file provisioning, the Overview and Business dashboards, one
+   contact point, one notification policy, the operator alerts and the Prometheus recording rules
+   (every expression using the translated name).
+4. **Slice 4a/4b** — the agent `MeterProvider` + OTLP with cumulative temporality, the collector
+   `metrics:` pipeline (and the `otlp_grpc`/`resource_constant_labels` deprecations fixed), the
+   additive instruments only, the step-record producer, the two dead call sites wired, and
+   `AgentDataQualityDto.Derive` called at its three hard-coded sites.
+5. **Slice 5** — the Npgsql meter, the neutralised pool label, the collector-emitted saturation
+   ratio, the seeded `db.pool.saturated` rule, its migration, and the scrape-level cardinality
+   assertion.
+6. **Slice 6** — `postgres_exporter` digest-pinned and internal, the least-privilege role, the
+   Database dashboard (honest replication signal, `clamp_min` cache ratio), and the role tests.
+7. **Slice 7** — the notification metric family emitted with its four constraints (inbox backlog ≠
+   S-36's delivery backlog, dispatcher-incremented delivery counter, FCM gauge 1/0, percentile
+   absent below the sample floor) and the Notifications dashboard.
+8. **Slice 8** — `docs/backend/observability.md`, the corrections commit (the 15 s overview-cache
+   claim **restored** per D7 = A rather than deleted, plus the billing-routes, `AgentStatsRollupJob`,
+   daily-rollup and k6 claims), the M-8 persist half for `publish_latency_ms`, the stale code
+   comments, `DocsConsistencyTests` keyed on code references, and the OQ-2 deployment note.
+
+**Docs updated per phase (general, API, OpenAPI).** `docs/api/README.md` §C.9 (the scrape
+credential, the two-name contract, the meter registrations) and the `/metrics` description in
+`docs/api/openapi.yaml` for Slice 1; `docs/backend/README.md` gained a metrics-infrastructure
+status section that grew with Slices 2–7; `docs/backend/observability.md` is the Slice 8 operator
+document; `docs/deployment.md` gained the observability-tier note. `openapi.yaml` otherwise
+deliberately unchanged — no public route was added, and the notification routes remain deferred
+with their contracts frozen.
+
+**Recorded deviations, so the next reader is not misled.** The three aggregating notification
+series the plan called counters (`failure_reasons`, `volume_by_type`, `push_dispatch_failures`) are
+exposed as 24-hour **windowed gauges**: deriving a monotonic Prometheus counter from a table needs
+delta bookkeeping across passes, and a counter that double-counts is worse than an honest gauge.
+The notification HTTP routes and the `inbound_message_backlog` schema change (M-7) remain deferred,
+as the plan's Revision 4 requires, and exposing them needs the catalog `S-n` allocation plus the
+OpenAPI paths in the same commit.
+
+**Environment notes.** A stale incremental build made one new member invisible to the test project
+until `dotnet build --no-incremental`; the same symptom is worth remembering. Slice 4a/4b were
+delegated to a subagent, which found a real contract defect worth recording: the Python step payload
+sent `stepKind: "NodeTransition"`, which is not a member of the .NET `AgentStepKind` enum, so the
+whole run report would have been rejected with a 400 once real steps went live. It was fixed on the
+Python side (`Decision`) without changing the backend contract, consistent with the rule that the
+backend is the source of truth.
+
+### Follow-up (same session) — the compose stack would not start: three secrets and two missing files
+
+Running `docker compose up -d --build` failed at **interpolation**, before any container was
+created:
+
+```
+error while interpolating services.api.environment.Metrics__ScrapeToken:
+  required variable METRICS_SCRAPE_TOKEN is missing a value
+error while interpolating services.grafana.environment.GF_SECURITY_ADMIN_PASSWORD: ...
+error while interpolating services.postgres.environment.POSTGRES_EXPORTER_PASSWORD: ...
+```
+
+This is the intended S-1 behaviour — an unset credential fails the stack rather than falling back to
+the committed internal service token — but the local `.env` had never been given the values, and two
+of the three must also exist as **files** that the containers mount.
+
+**What was done.**
+
+- Generated three independent 32-byte secrets (`secrets.token_hex(32)` = 64 hex characters, so no
+  shell/YAML-quoting hazards) and appended them to the gitignored `.env`: `METRICS_SCRAPE_TOKEN`,
+  `GRAFANA_ADMIN_PASSWORD`, `POSTGRES_EXPORTER_PASSWORD`, plus `POSTGRES_EXPORTER_USER` and the two
+  dev-only port mappings. The append is idempotent: it never rotates an existing value.
+- Wrote the two companion files the containers read — `observability/prometheus/secrets/scrape_token`
+  (Prometheus' `authorization.credentials_file`) and `./postgres-exporter-password`
+  (`DATA_SOURCE_PASS_FILE`) — with **no trailing newline**, because both are read verbatim. Confirmed
+  all three paths are gitignored.
+- Added `scripts/sync_observability_secrets.sh`, which derives both files from `.env` so the two
+  representations cannot drift; this is the script the `.env.example` comment now references.
+- Rewrote the `.env.example` observability block: values stay **empty** (never commit a secret), with
+  the `openssl rand -hex 32` instruction, the `:?` fail-fast rationale, and the companion-file mapping.
+- **Fixed a real defect in `role.sql` found by running it.** The `DO $$ … $$` block used
+  `format(… %L, :'exporter_password')`, but **psql does not substitute `:'variables'` inside
+  dollar-quoted strings**, so the script failed with `syntax error at or near ":"`. Rewritten with
+  `SELECT format(…) … \gexec` (create-if-absent, then rotate-if-present) — which also makes a secret
+  change apply by re-running the script.
+- The existing `aveline_postgres_data` volume means `docker-entrypoint-initdb.d` will never run
+  again on this machine, so the exporter role was created by running `role.sql` against the live
+  database. Verified: `rolsuper/rolcreatedb/rolcreaterole/rolbypassrls` all **false**,
+  `pg_has_role('postgres_exporter','pg_monitor','MEMBER')` **true**.
+
+**Verification (live stack).**
+
+- `docker compose config` resolves every required variable; `docker compose up -d` brought all nine
+  services up.
+- Prometheus `/api/v1/targets`: `aveline-api`, `aveline-agent`, `aveline-postgres` and `prometheus`
+  are **all `up`**; `/api/v1/rules` reports the `aveline.operator` group with 8 rules.
+- **T-3, the plan's one-curl risk (R-4), is resolved in the plan's favour:** a scrape of
+  `http://api:8080/metrics` from inside the compose network returns `HTTP/1.1 200 OK`, **not a 307**,
+  so `UseHttpsRedirection()` does not need the config gate. The body carries
+  `# TYPE http_server_request_duration_seconds histogram`.
+- `postgres_exporter` serves 70 of the expected server-side series, including
+  `pg_database_size_bytes` and the honest `pg_replication_is_replica 0`.
+- Grafana: `/api/health` 200; 1 datasource, 2 provisioned alert rules, 1 contact point, and all four
+  dashboards (`aveline-overview`, `aveline-business`, `aveline-database`, `aveline-notifications`).
+- `scripts/validate_observability_config.py` passes and the 23 config/role/docs tests stay green
+  after the `role.sql` rewrite.
+
+**One environment caveat, not a project defect.** `docker compose up -d --build` could not rebuild
+the API/agent images inside this sandbox: the BuildKit builder writes to `~/.docker/buildx/activity`,
+which is outside the workspace and blocked by the file sandbox (`read-only file system`). The stack
+was therefore verified against the images already present, which predate this session's code — so the
+`aveline_*` bridged series and the notification family will only appear after a rebuild on a machine
+where Docker can write its builder state.
+
+### Follow-up (same session) — the dashboards were empty, and designing the system dashboard
+
+**Symptom.** All four dashboards rendered without data.
+
+**Cause, established rather than guessed.** The running `aveline_api` image was built at 20:45 while
+this session's metrics code landed at 21:24, so the container predated the bridge entirely. Confirmed
+by scraping the live endpoint: **0** `aveline_*` series. `docker compose build` could not be re-run
+through BuildKit inside this sandbox (`~/.docker/buildx/activity` is outside the workspace), so the
+rebuild was done with the legacy builder — `DOCKER_BUILDKIT=0 docker compose build api` — after which
+the bridge came alive with real values (`aveline_blossom_balance_count 737.4`,
+`aveline_api_latency_p95_milliseconds 55`, working set 252 MB).
+
+**A real bug this exposed, which the test suite had missed.** With the rebuilt API, 18 of the 19
+expected business series appeared — `aveline_db_pool_saturation_ratio` did not. The Npgsql side looked
+perfect: 32 `db_client_*` series in the scrape and `db_client_connection_pool_name="aveline"`, which
+is S-11's pool-name neutralisation working live. The `NpgsqlPoolMetricsListener` was the suspect.
+
+Two hypotheses were tested and the first was **disproved**: I suspected `MeterListener` does not
+replay `InstrumentPublished` for instruments created before it starts, and wrote a probe. It **does**
+replay (`published=1 captured=1`). The actual cause: Npgsql's pool instruments are
+`ObservableUpDownCounter<T>` where **`T` is not `long`**, and the listener registered only a `long`
+callback — so it captured nothing at all while the instruments were plainly visible to the exporter.
+The listener now registers every numeric width OpenTelemetry can emit.
+
+The unit test could not have caught this: it created its own `long` instrument. Two new tests close
+that hole — `TryGetSaturation_CapturesInstrumentsWhoseNumericTypeIsNotLong` (a private meter name, so
+it is isolated from the process-global registry) and
+`NpgsqlPoolSaturationIntegrationTests`, which starts a real Postgres container, drives two concurrent
+connections, and asserts the ratio is reported **after traffic** — which is what the plan's Slice 5
+acceptance criterion actually asked for, and what the shipped test did not do. That class also proves
+the pool label carries `aveline` rather than the connection string.
+
+**Dashboard design.** The System overview was a flat twelve-panel grid; it is now a designed
+dashboard: five titled rows (Health, Traffic — RED, Saturation and runtime, Event bus, Agents),
+a `$job` template variable, shared crosshair, `$__rate_interval` instead of a hardcoded window,
+explicit `noValue` handling, cross-dashboard links, and per-panel descriptions that say when a gap is
+expected. The other three dashboards gained the same links, shared tooltip and gap discipline.
+
+The most useful addition is **Bridge freshness**
+(`time() - max(timestamp(aveline_process_cpu_seconds_total))`): because the bridged gauges are only
+written when a value exists, a stalled collector is indistinguishable from an omitted metric on every
+other panel, and this is the one tile that separates "the value is 0" from "the bridge stopped".
+
+**A second real defect, found by checking every panel against Prometheus.** The error-ratio panel was
+empty while the service was healthy. The cause is PromQL semantics: a division whose numerator is an
+empty vector returns **no series**, not `0`, so `sum(rate(…5xx…)) / clamp_min(sum(rate(…all…)), 1)`
+had no result during normal operation. Fixed with `or vector(0)` on the **numerator only**, which
+gives `0%` when there is traffic and no errors while still returning nothing when there is no traffic
+at all — so a total outage is never rendered as a healthy 0%. `promtool check rules` still reports
+`SUCCESS: 8 rules found`, and the reloaded rule now returns `0`.
+
+**Live verification after the fixes.** 22 of the 25 System-overview panels return data. The remaining
+three are honest omissions, not defects, and are now documented as such: `Published` (no events on the
+bus yet), `Publish latency p95` (below the 5-sample floor), and `Success rate` (no terminal agent runs
+in the window). `docs/backend/observability.md` gained a "why a panel is empty" table so the next
+reader does not have to re-derive this.
+
+**Also verified live and worth recording.**
+
+- All four Prometheus targets `up`; 8 rules healthy; all four Grafana dashboards provisioned with
+  `provenance: file`.
+- **T-3 resolves in the plan's favour:** a scrape of `http://api:8080/metrics` from inside the compose
+  network returns `HTTP/1.1 200 OK`, **not a 307** — `UseHttpsRedirection()` needs no config gate.
+- `db_client_connection_max 100`, `state="used" 0`, so the saturation gauge correctly reads `0`
+  rather than being absent once a pool exists.
+
+### Follow-up (same session) — dashboard review feedback: "template data" and "not a counter"
+
+Two defects reported from the rendered Database dashboard, both confirmed by querying Prometheus
+rather than by reading the JSON.
+
+**(1) `template0` / `template1` polluted every `datname`-grouped panel.** They are PostgreSQL's own
+template databases — constant, empty, and pure noise in the buffer-cache ratio, size, backend and
+connection-limit panels. The Database dashboard now carries a `$datname` multi-select variable sourced
+from `label_values(pg_database_size_bytes{datname!~"template.*"}, datname)`, which keeps them out of
+the variable itself so that "All" means the real databases. Every panel gained
+`datname=~"$datname"`. The variable resolves to `["aveline", "postgres"]` live, and the Database
+dashboard is now **8 of 8 panels with data**.
+
+**(2) Three bridged metrics were gauges but read with `rate()`.** `GET /api/v1/metadata` showed
+`aveline_process_cpu_seconds_count`, `aveline_api_telemetry_dropped_count` and
+`aveline_eventbus_failed_count` typed **gauge**, while the System overview called `rate()` on all
+three. That is wrong twice: Grafana flags a rate over a non-counter, and Prometheus can only handle a
+counter reset (an API restart) correctly when the series is typed as a counter. The plan's bridge
+published everything as an `ObservableGauge`, which is right for levels and rates but wrong for
+cumulative totals.
+
+Fixed in the model rather than the dashboard: `MetricsCatalog` gained a `BusinessCounter` helper, and
+`AvelineMetrics` now creates an `ObservableCounter` for those entries and an `ObservableGauge` for
+the rest. They carry **no unit** so the exporter renders the idiomatic `<name>_total` rather than
+`<name>_count_total`; the persistence path is untouched and `SystemMetricSamples` still stores unit
+`count`. Verified live: the exposition now reads
+
+```
+# TYPE aveline_process_cpu_seconds_total counter
+# TYPE aveline_api_telemetry_dropped_total counter
+# TYPE aveline_eventbus_failed_total counter
+```
+
+A genuinely surprising detail worth recording, because it looks like a bug and is not: Prometheus
+**normalises a counter family by stripping `_total`**, so `count(aveline_process_cpu_seconds_total)`
+is 1 while `/api/v1/metadata?metric=aveline_process_cpu_seconds_total` is empty and the metadata
+lives under `aveline_process_cpu_seconds` with `"type":"counter"`. `docs/backend/observability.md`
+§3.1 now carries the gauge-vs-counter rule, this normalisation note, and the fact that the
+`DocsConsistencyTests` series check accepts a normalised counter family name.
+
+**Audited the rest of the classification while there.** Every other bridged metric is correctly a
+gauge: levels that can fall (`blossom.balance`, `eventbus.backlog`, `db.pool.saturation`,
+`process.working_set_bytes`), and values that are already rates or percentiles
+(`api.requests_per_second`, `api.error_rate`, `api.latency_p95`). The event-bus counters and the
+notification delivery counter were already true `Counter<long>` instruments.
+
+**Remaining empty panels are honest omissions, not defects.** Of 59 panels across the four
+dashboards, the empty ones are all explained by an idle local stack: no agent runs
+(`Agent success rate`, `Agent steps per run`), no bus traffic (`Events published/received`,
+`Publish latency p95` — also below the 5-sample floor), no notification deliveries, and no blossom
+consumption in the window. The System overview is **22 of 25** with data, the Database **8 of 8**.
+`docs/backend/observability.md` §6.4 gained a "why a panel is empty" table so this is not re-derived.
+
+## Session 2026-09-19 (b) — Administrator Dashboard overhaul (slices A0–A9)
+
+**Task:** Implement the Admin frontend overhaul from
+`.agents/plans/admin-dashboard-overhaul-implementation-strategy.md` (revision 2, FINAL) and
+`.agents/plans/✅ admin-dashboard-overhaul-implementation.ignore.md` (the executable plan).
+**Tool used:** DeepSeek Harness (deepseek-flash) coding agent.
+
+### Session start
+
+- Read both plan documents in full, plus the executable plan's source audit. Recorded the answered
+  decisions **C1**–**C8** and **Q1**–**Q11**, and the slice cut **A0**–**A9** with the ordering rule
+  *"a slice may merge only when the console is strictly better than before it"*.
+- Confirmed the working branch is `feature/admin-frontend-ui-v3` and that **no branch will be created or
+  switched**; all work lands on the current branch.
+- Confirmed the environment facts the plan depends on: 30 test files / 23 `components/ui` primitives,
+  `recharts@3.10.1` installed but unused, `jsdom` and TanStack Query absent, both `bun.lock` and the
+  forbidden `pnpm-lock.yaml` present.
+- Created one GitHub issue per slice so each phase is independently tracked.
+- TDD is mandatory for every slice: the failing test is written and observed failing before its
+  implementation, then refactored green.
+
+*(End-of-session summary for this work is appended below when the session closes.)*
+
+### Work delivered
+
+Ten GitHub issues were created for the plan's slices — **#325–#334** — and work proceeded on the
+current branch `feature/admin-frontend-ui-v3` with no branch created or switched.
+
+**All ten slices are delivered**: A0–A7 and A9 in full, and A8 everywhere it can be verified in this
+environment. Commit history on the branch:
+
+- `965c555` — A0–A3: harness, truthfulness, identity, shell.
+- `1685cc8` — A9: the three backend defects unlocked by C7.
+- `862782c` — the console-URL identity fix plus A8's `traceId`/`ErrorState` and the doc corrections.
+- `cd660b2`, `2b6156d`, `42deba2`, `60521bd`, `b0c19fd` — roles matrix, the real TanStack Query
+  adoption, the price book, the E2E harness and the last two conformance rules.
+- A4 (dashboard V1–V11), A5 (core management), A6 (pricing and Blossom) and A7 (observability) each
+  committed with their own slice message.
+
+**What A8 does not cover, and why.** The axe sweep, the keyboard walkthrough and the contrast audit
+need a browser; `playwright install chromium` stalled against the CDN and no system browser exists
+here. The authenticated end-to-end walk needs a Clerk test session, which this environment has no
+credentials for. The Playwright suite is delivered and wired (`tests/e2e/admin-console/`,
+`bun run test:e2e`) and covers the signed-out path, but it was **not executed** — that is stated in
+`docs/frontend/admin-console.md` rather than implied.
+
+**Two routes in the plan's target tree are not built, deliberately.** `AdminUserDetail` and
+`AdminOrgDetail` would each need a by-id read the API does not have (`GET /admin/users/{id}`,
+`GET /admin/orgs/{id}`), and the search cannot substitute because `UserRepository` matches `q`
+against email, name, username and `clerkId` but not `id`. Adding those reads would be a fourth item
+in A9, which C7 forbids. The registry keeps both entries disabled, so nothing links to a page that
+cannot be built.
+
+Every slice followed TDD: the failing test was written and observed failing before its
+implementation. Highlights of the defects that are now pinned by a test:
+
+- The fabricated admin session and the two fabricated system fallbacks (a `Healthy` system with
+  `uptimeSeconds: 84200`) — a signed-out visitor previously rendered ten sections against six `401`s.
+- The permission mirror is now checked against `Aveline.Api/Authorization/Permissions.cs` by a
+  **generated** drift test, and the four role policies against `AuthorizationConfiguration.cs`.
+- `revoke` now sends `{ ledgerEntryId, reason }`; the delivered body could not be bound at all.
+- The Blossom `Idempotency-Key` is mandatory and belongs to the payload, so a retry cannot
+  double-apply.
+- Self-approval is keyed on the Clerk subject, not on an email that the captured payload returns as
+  `null` on `/auth/claims` and `""` on every request row.
+- `recompute` is gated on the `pricing:backdate` capability, not on the page's `pricing:manage`.
+
+**A9 (backend, TDD).** `GET /auth/claims` read the raw `email` claim while the JwtBearer pipeline
+maps it to `ClaimTypes.Email`, so every real token got `null`; the three team-only role policies now
+carry their permission requirement alongside the role requirement; and `AcknowledgeAsync` rejects an
+already-`Resolved` alert. `dotnet test` → **1640 passed, 0 failed**.
+
+**Coverage policy (C3).** The tenant surface keeps its exact `80/70/70/80` floor, now expressed as
+glob-scoped thresholds; the admin subtree is measured by its own run (`bun run test:coverage:admin`)
+whose floor started at 0 and ratcheted to **52.1 % lines / 40.4 % branches** by A6.
+
+**Deviations and gaps, stated rather than implied.**
+
+- oxlint 1.79 has no custom-JS-plugin API, so the two blocking conformance rules (raw palette/hex;
+  raw `<select>`/`<input>`) are enforced by `src/test/admin-conformance.test.ts`, which CI runs.
+- The admin-subtree coverage number is produced by a second Vitest config rather than by adding the
+  admin tree to the single global run, because a global number cannot both keep the tenant floor and
+  avoid blocking every admin slice. The tenant floor is untouched.
+- A8's remaining two conformance rules, the Playwright/axe harness, the keyboard walkthrough and the
+  contrast audit were **not** delivered. They are recorded as open in
+  `docs/frontend/admin-console.md`.
+
+### Verification performed
+
+- `bunx vitest run` — **73 files / 456 tests passed** (the baseline was 30 files / 214 tests).
+- `bunx tsc -b` — exit 0.
+- `bunx oxlint src` — 0 errors (51 warnings, all pre-existing).
+- `bun run test:coverage` — the tenant gate passes unchanged, at its original 80/70/70/80 floors.
+- `bun run test:coverage:admin` — the ratchet passes at 69.65 % lines / 57.12 % branches for the
+  admin subtree, 70.02 % lines on `routes/admin`, having started at a floor of 0 at A0.
+- `dotnet test Aveline.Api.Tests` (A9) — **1640 passed, 0 failed**.
+- All four C6 conformance rules plus the chart `connectNulls` rule are blocking, with exactly one
+  documented allow-list entry (the log viewer's virtualised row).
+- A reviewer reported the console rendering a dead-end "Console scope not available" card for a
+  real administrator's URL. Investigating it produced the most useful finding of the session, in
+  two parts.
+  **(a) Q1 is negative by construction.** `UserRepository.SearchAsync` filters on `Email`,
+  `FirstName`, `LastName`, `Username` and `ClerkId` — there is **no `Id` predicate** — so
+  `GET /admin/users?q=<GUID>` can never return an exact-`id` hit. The probe was never going to
+  succeed. C1 therefore degrades to option (c): `self`-only, the segment as a restatement of the
+  caller.
+  **(b) The URL and the session used different id spaces.** `AdminRootRedirect` builds
+  `/admin/<user.id>` from `GET /users/me`, the **database id** (a UUIDv7 `Guid`), while
+  `/auth/claims` returns the **Clerk subject** (`ClaimTypes.NameIdentifier ?? "sub"`). Comparing the
+  segment against only the latter could never match the console's own URL.
+  Fixed: `resolveAdminScope` matches `self` against every caller id (`selfUserIds`), `useAdminScope`
+  supplies the database id and the Clerk subject, `AdminRouteGuard` redirects an `unknown` scope to
+  the caller's own console rather than dead-ending, and a resolver that throws resolves to
+  `unknown` instead of leaving the console on a loader. Five tests pin it. The GUID version was
+  never the issue: UUIDv7 is a valid UUID and the shape check accepts it.
+
+## Session 2026-09-20 — Admin dashboard: Business KPIs (session start)
+
+**Task:** Implement the Business KPIs feature from
+`.agents/plans/admin-dashboard-business-kpis-implementation.ignore.md` — six phases (P1–P6), TDD
+throughout, documentation and OpenAPI updated at the end of every phase, one GitHub issue per phase.
+
+**Tool used:** DeepSeek Harness (deepseek-flash) coding agent.
+
+### Intended work (session start)
+
+The plan delivers a Postgres-first admin analytics family: six read endpoints under
+`/api/v1/admin/statistics/business/*`, one new daily subscription-snapshot table, the B1
+attribution fix (an in-memory `IClaimIdentityMap` refreshed off the request path, read
+synchronously by `RequestPrincipal.Resolve`), a new `analytics:business:read` permission with its
+five collateral mirror files, and a new console surface driven by a separate `B1…Bn` widget
+catalogue (`lib/admin/business-kpis.ts`) that leaves the pinned `V1…V11` catalogue untouched.
+
+Phases, as recorded in the plan's §6:
+
+1. **P1 — Foundations and truth plumbing.** `BusinessAnalyticsOptions`, `BusinessKpiValidation`,
+   the B1 claim-identity map plus refresher, `BusinessKpiCache` over `IDistributedCache`, three
+   EF indexes and a migration, the new permission and its mirror collateral.
+2. **P2 — Growth, active users and plan mix.** `GET business/{growth,active-users,plan-mix}` with
+   the `dataQuality` contract and the dense-bucket null-vs-zero rule.
+3. **P3 — Subscription history and usage.** The snapshot table, job and D-1-safe backfill, plus
+   `GET business/{subscriptions,usage,organizations}`.
+4. **P4 — Frontend foundation.** The `business` domain, two registry entries, the `B1…B12`
+   catalogue, six API wrappers, DTO types, four new components.
+5. **P5 — The Growth console.** `AdminBusinessGrowthView` at `/admin/:userId/business`.
+6. **P6 — Usage console, drill-down, documentation and the coverage ratchet.**
+
+### Constraints observed
+
+- One GitHub issue per phase; **no branch created or switched** — all work stays on
+  `feature/admin-frontend-ui-v3`.
+- TDD is mandatory: the failing test is written and observed failing before the implementation.
+- General docs, API docs and the OpenAPI specification are updated at the end of each phase.
+
+*(End-of-session summary for this work is appended below when the session closes.)*
+
+### Session end — what was delivered
+
+All six phases of the plan are delivered, on the current branch `feature/admin-frontend-ui-v3` with
+**no branch created or switched**. Six GitHub issues were opened, one per phase, and each phase
+followed TDD: the failing test was written and observed failing before its implementation.
+
+**Commits on the branch:**
+
+- `5897b58` — P1 + P2: foundations, the attribution fix, growth / active-users / plan-mix.
+- `5c8ecd7` — P3: the subscription snapshot table and job, the D-1-safe backfill, usage and the
+  organization ranking.
+- `671b39f` — P4 + P5: the `business` domain, the `B1…B12` catalogue, the pure series shaping, four
+  components, and the Growth console.
+- `221d04e` — P6: the usage console, the drill-down, the documentation pass and the ratchet.
+
+**The single most important fix is the attribution one (B1).** A Clerk `jwt-aveline-v1` token carries
+Clerk's native `user_…`/`org_…` ids while Aveline stores GUIDs, so every claim failed `Guid.TryParse`
+and `ApiRequestMetric.UserId` was `null` for all human traffic — DAU was not merely missing, it was
+unmeasurable. `IClaimIdentityMap` (two `FrozenDictionary`s, swapped whole) plus a five-minute
+`ClaimIdentityMapRefresher` now resolve the ids **off the request path**, so the telemetry middleware
+keeps its *"does no I/O, well under 1 ms to p99"* contract. A refresh failure keeps the previous map;
+an unmapped Clerk id increments `UnresolvedCount`, which the response surfaces as a visible
+undercount. `AttributionB1Tests` is the acceptance test: a real, signature-validated Clerk-shaped
+token — and this is where the work paid off, because the test **caught the claim mapping itself**.
+The bearer handler renames `sub` to `ClaimTypes.NameIdentifier` (`MapInboundClaims`), so the raw `sub`
+type does not survive; my first expectation asserted it did. Pinning the *mapped* type, not the raw
+one, is now the regression guard against anyone turning inbound claim mapping off.
+
+**Seven design questions the tests forced into the open**, each resolved and documented rather than
+quietly papered over:
+
+1. **The backfill can only start from the earliest parseable plan change.** There is no
+   pre-change evidence in the audit ledger, so before it the organization's live tier is reported
+   as the series' floor. My first test asserted a reconstructed `Seed` prefix that the code cannot
+   honestly produce.
+2. **A data-quality notice must merge every endpoint's caveats**, not pick one. The single-source
+   version silently dropped a note the server had taken the trouble to send; a test caught it.
+3. **A degenerate window still yields one bucket.** The server floors `CountBuckets` at one, so the
+   client returning an empty axis would disagree with the series it was sent.
+4. **An empty query value is "absent", not "invalid"** — matching `ApiStatisticsValidation`. The
+   implementation was right; my test encoded the opposite.
+5. **A leading bucket clipped by `from` is partial too**, not only the trailing open one.
+6. **`0` and `null` are different things on the wire and in the chart.** `business-series.ts` is the
+   one place that decides it, so it cannot drift.
+7. **`name` on a Recharts `<Bar>` is a type trap in v3** — it narrows `children` and rejects the
+   `<Cell>` list. That is the only new third-party trap this work hit.
+
+**Deliberately not built, and stated rather than implied.** The org-owner surface (OQ-1 puts it on
+the tenant tree, which the predecessor plan put out of scope); the seven Prometheus KPI gauges
+(§5.9 layer 3 — alerting plumbing rather than a console requirement, and the layer that reaches into
+`MetricsCatalog` and the seeded alert rules); and a `tests/load/k6-business-kpis.js`, so the
+`COUNT(DISTINCT)` query's real latency is **not measured here** and no budget is claimed for it.
+Two things could not be verified in this environment: the Playwright walk is written for both new
+routes but **not executed** (no browser installed), and the raw-path-vs-route-template check is a
+post-deploy runtime fact.
+
+### Verification performed
+
+- `dotnet test Aveline.Api.Tests` — **1857 passed, 0 failed** (1799 before this session's work, and
+  that baseline included the six new files added in P1–P3 plus the Postgres container tests, which
+  did run: `BusinessKpiPostgresTests` asserts `COUNT(DISTINCT)` correctness and index usage against
+  a real `pgvector/pgvector:pg16` container).
+- `bunx vitest run` — **85 files / 583 tests passed** (554 before the business work).
+- `bunx tsc -b` — exit 0. `bunx oxlint src` — 0 errors.
+- `bun run test:coverage:admin` — the raised ratchet passes: admin subtree **77.09 % lines /
+  64.88 % branches**; `routes/admin` **76.57 % / 62.52 %**.
+- The four frozen mechanical tests (`admin-conformance`, `admin-truthfulness`,
+  `admin-prometheus-boundary`, `admin-install`) pass **unchanged**. An edit to any of them would have
+  been a design failure.
+- `AdminDashboard.dom.test.tsx` continues to pass unchanged with `KpiTile`'s new optional `delta`
+  prop, which is the additivity claim tested rather than asserted.
+
+### Two defects found in the repository while working
+
+- **D-1, reproduced and then avoided.** `BillingStatisticsService.GetPlanChangesAsync` falls back to
+  `toTier = "Grow"` — a tier that does not exist in `PlanTier`. `SubscriptionBackfill.ReconstructTier`
+  returns `null` for an unparseable payload, a missing property, a non-string value, or a string
+  outside the enum, and `SubscriptionBackfillTests` pins each of those cases by name.
+- **D-2 and D-3, corrected in the catalog.** `UsageAccount.StaffCount`/`ActiveCustomerCount` **are**
+  written (by `EntitlementCountingJob`, every five minutes) and `DailyAgentMetrics` **does** have a
+  writer. Both stale claims came from grepping a column *name* rather than reading the *writer*.
+  `DailyAgentMetrics` now also has a reader: the S-48 usage read.
+
+### Process notes
+
+- The pre-commit hook was exercised on every commit. It fails on staged paths containing spaces
+  because it word-splits `$STAGED_FILES`; committing the local `.agents/plans/` directory tripped it,
+  so that directory is left untracked and the repository's source changes are committed normally.
+  The hook itself was **not** modified.
+- The plan file for this work is named `admin-dashboard-business-kpis-implementation.ignore.md`, so it
+  is git-ignored by the repository's own convention and does not appear in any commit.
+
+## Session 2026-09-21 — Cloudinary media migration and the Salon image pipeline (session start)
+
+**Task:** Orchestrate a subagent swarm to implement
+`.agents/plans/cloudinary-media-and-salon-image-implementation-strategy.md` (revision 3) and its
+execution plan `.agents/plans/cloudinary-media-and-salon-image-implementation-plan.md` (revision 1).
+**Tool used:** DeepSeek Harness (deepseek-flash) as the orchestrating agent, delegating to subagents.
+**Branch:** `cloudinary-media-and-salon-image` (no branch creation or switching).
+
+### Intended Work (session start)
+
+- **Orchestrate, do not implement.** The agent reads both plans, defines the goal, delegates each
+  phase to subagents, and verifies their output against the plan's gates. Implementation is written
+  by subagents under strict lane-based file ownership (plan §2).
+- **TDD is mandatory** (`.agents/rules/Rules.md:211-224`): the test is written, run, and observed to
+  fail for the expected reason before the production file exists. A unit's tests are its own lane's
+  files (plan §1 invariant 6).
+- **One writer per file.** Every file has exactly one owning lane; a lane never edits a file it does
+  not own, even to fix a compile error. A lane that needs a file it does not own raises a change
+  request instead (plan §1, §3).
+- **Documentation** (general, API and OpenAPI) updated at the end of each delivered phase, with each
+  doc change landing behind the slice that makes it true (S9, continuous).
+- **GitHub issues per phase**, created before implementation (plan §4's waves).
+- **No migrations outside lane L7**, and no parallel migration ever (plan §1 invariant 3).
+
+### The plan, as read
+
+Nine lanes (L1 MEDIA, L2 CATALOG, L3 SALON, L4 VISIONAPI, L5 PYTHON, L6 CLIENT, L7 MIGRATIONS,
+L8 DOCS, L9 SALON-FETCH conditional), six waves with explicit barriers, and a unit-level DAG.
+Critical path: `U0.1 → U0.4/U0.5 → U0.7 → U1.1 → U2.1 → U2.3 → U3.1 → U4.1`. Maximum useful
+concurrency is six agents; beyond that the constraint is review, not lanes (plan §5).
+
+The strategy's frozen contract (§3) is not re-opened anywhere: the three layers and four classes
+(§3.1), the provider-neutral `MediaMetadata` carrier (§3.2), the storage-key encoding and tier map
+(§3.3), the configuration table (§3.4), the two-tier access model (§3.5), the storable-versus-
+analysable split (§3.6), the single-width delivery rule (§3.7), the cache position (§3.8) and the
+"no third-party CDN" decision (§3.9).
+
+### Phases/issues created before implementation
+
+| Issue | Phase | Slice(s) | Units |
+|---|---|---|---|
+| [#361](https://github.com/KavinduNirmal/aveline/issues/361) | Wave 0a — the contract head | S0 | U0.1, U0.2, U0.3 |
+| [#362](https://github.com/KavinduNirmal/aveline/issues/362) | Wave 0b — the row seams | S0 | U0.4, U0.5, U0.6 |
+| [#363](https://github.com/KavinduNirmal/aveline/issues/363) | Wave 0c — the seam closes, then the schema | S0 | U0.7, U0.8 |
+| [#364](https://github.com/KavinduNirmal/aveline/issues/364) | Wave 1 — both tiers write to Cloudinary | S1 ∥ S2 | U1.1–U1.4 |
+| [#365](https://github.com/KavinduNirmal/aveline/issues/365) | Wave 2 — protected access, then the bridge | S3 → S4 | U2.1–U2.4 |
+| [#366](https://github.com/KavinduNirmal/aveline/issues/366) | Wave 3 — the reference contract | S5 | U3.1, U3.2 |
+| [#367](https://github.com/KavinduNirmal/aveline/issues/367) | Wave 4 — retention, fetcher, client delivery | S6 ∥ S7 | U4.1–U4.3 |
+| [#368](https://github.com/KavinduNirmal/aveline/issues/368) | Waves 5–6 — housekeeping and docs | S8, S9 | U5.1–U6.x |
+
+### Baseline established before any delegation
+
+- `dotnet build Aveline.Api/Aveline.Api.sln` — **0 errors**, 63 pre-existing warnings.
+- Last recorded full-suite baseline from the previous session (`docs/ai-usage/kavindu.md`,
+  business-KPIs entry): **1857 passed, 0 failed** for `Aveline.Api.Tests`.
+- `gh` authenticated as `KavinduNirmal` with `repo` scope; branch `cloudinary-media-and-salon-image`
+  at `88f1a5e`.
+
+### Deliberately not done at session start
+
+- No branch was created or switched (explicit constraint).
+- No code was written by the orchestrating agent; all implementation is delegated.
+- Wave 5 (S8) is left open and deferred by design: it is gated on production proof and on the
+  database owner's confirmation, and it contains the only irreversible step in the workstream.
+
+## Session 2026-09-21/22 — Cloudinary media migration and the Salon image pipeline (session end)
+
+**Task:** the same workstream, closed out. Orchestration of a subagent swarm against
+`.agents/plans/cloudinary-media-and-salon-image-implementation-strategy.md` (rev 3) and
+`.agents/plans/cloudinary-media-and-salon-image-implementation-plan.md` (rev 1).
+**Tool used:** DeepSeek Harness (deepseek-flash) orchestrating; implementation delegated to subagents.
+**Branch:** `cloudinary-media-and-salon-image` — no branch was created or switched, and every commit
+was made by the orchestrator, never by a subagent.
+
+### Result
+
+Six waves delivered, five commits, **2559 .NET tests / 427 Python tests / 1011 Flutter tests**, all
+green; a live Cloudinary smoke suite run against the real account; and a recorded security review.
+
+| Commit | Wave | Slice | What it established |
+|---|---|---|---|
+| `1dbb789` | 0a–0c | S0 | the seam, the provider-neutral metadata carrier, the two row seams, both caps, the vision content-type subset, the magic-byte sniff, the tagger, fail-fast config, and the two migrations |
+| `8b9d129` | 1 | S1 ∥ S2 | both tiers writing to Cloudinary; the one-width delivery contract; dual-write owned by the row seams; the live suite and the §3.7/§R8 measurements |
+| `0f9cd27` | 2 | S3 → S4 | the HMAC token machinery with a frozen vector, the streaming proxy, both mints, per-row dispatch, the reference DTO, the `primary_color` casing fix, the three `org_context` sites, the tenant fix, and the central credential redaction |
+| `74ff7f1` | 3 | S5 | the Python reference contract, the typed denied-vs-failed outcome, the dead path deleted, the cache re-keyed, and the capturing payload gate |
+| `8324fac` | 4 | S6 ∥ S7 | the 7-day retention job, the fourteen-behaviour SSRF fetcher with a pinned connect, the S6 security review, and the Flutter `Accept`/decode fix |
+
+### What the swarm found that no plan predicted
+
+The value of the orchestration was not the throughput; it was the number of real defects each gate
+surfaced because a unit was forced to prove its claim rather than assert it.
+
+- **A live bearer-credential leak.** U2.1 found that the pre-existing auth-audit middleware logs
+  `Request.Path` on **every** 401/403 — and for `/api/v1/media/{token}` that path *is* the token, so
+  every refused request was writing a live credential to the log. The same value could reach an
+  exported trace, because OpenTelemetry's ASP.NET Core instrumentation creates the request activity
+  before any middleware runs. The fix was made central (one `RequestPathRedaction` rule consulted by
+  the audit middleware, the exception handler and an `ActivityProcessor`) rather than route-local,
+  and it is verified through the real instrumentation with a real exporter.
+- **A second casualty of the `primary_color` casing defect, still live.** U3.2's capturing contract
+  test — the strategy's §7 check 7 — failed on `secondary_colors`, which the Python reader reads and
+  the wire was sending as `secondaryColors`. The test then failed on four counts when
+  `primary_color` was reverted, which is what makes it a gate rather than a formality.
+- **A `noeviction` prerequisite that was already satisfied but unverified.** Checked on the running
+  instance rather than assumed, because an evicted single-use nonce silently weakens the guarantee —
+  a fail-open in the one place the design requires fail-closed.
+- **A time-of-day-dependent pre-existing flake.** A full-suite run went red on
+  `ApiStatsRollupJobTests`; the diagnostic showed the job deliberately also writes a **day** row when
+  the just-closed hour is 23:00 UTC, so an unfiltered `SingleAsync()` saw two rows for one hour of
+  every UTC day. Both files were byte-identical to the pre-work commit, so it was latent and not
+  ours; the assertion is now scoped and the coexistence is asserted as a property.
+- **A PDF sniff that was too broad.** The security review's F9: searching the first 1024 bytes for
+  `%PDF-` misclassified an image carrying that marker deep in its payload. Narrowed to a header check
+  within 32 bytes, requiring `major.minor` and an EOL terminator, and made fail-closed on both paths.
+- **A Flutter stretch trap.** The prescribed `Image.network(cacheWidth:, cacheHeight:)` shorthand
+  builds `ResizeImage` with `ResizeImagePolicy.exact`, which stretches a portrait photo into the
+  landscape grid tile. Measured, then avoided with `ResizeImagePolicy.fit`.
+
+### The gates, and what each one caught
+
+- **Wave 0:** the whole existing suite green with **no expectation edited** — the falsifier for D1's
+  placement. It also forced the four production-host factories to declare the new override, which
+  is a configuration value, not a changed assertion.
+- **Wave 1:** the live suite ran against the real account on day one (A7.1 was closed), and produced
+  the two numbers the strategy said only a live run could: delivered size and derivation count.
+  **Two derivations per asset**, confirming §3.7's arithmetic; and for that high-frequency source
+  WebP was *larger* than JPEG, which is exactly the per-image trade `q_auto` exists to make.
+- **Wave 2:** the full status matrix, the replay, the splice, the expiry boundary, and the decisive
+  test a redirect could not pass. Plus the redaction verification above.
+- **Wave 3:** zero field loss across the .NET→Python boundary, which is what found `secondary_colors`.
+- **Wave 4:** the retention semantics (pinned: window from the attachment's own creation, ceiling 500,
+  a live conversation is swept), the store-before-row ordering asserted against the real Cloudinary
+  adapter, the untagged-asset detector **with a falsifiability control**, and a security review that
+  found no high or medium issue and recommended shipping.
+
+### Deliberate deviations, each with a reason
+
+- **`DatabaseMediaStorage` is an in-process pass-through, not a durable table.** The provider seam
+  owns no row and §3.1 forbids it from touching one, so durability stays with the row seams — which
+  is precisely what keeps `Provider=database` a free rollback.
+- **Dual-write lives on the row seams**, not the provider, for the same reason. U1.1 identified it,
+  U1.2/U1.3 implemented it, and both directions are asserted.
+- **`secondary_colors` was added** by the unit that owned the DTO, after the payload gate proved it
+  was a live defect and grep proved no consumer read the camelCase spelling.
+- **`ResizeImagePolicy.fit` instead of the prescribed shorthand**, because the shorthand stretches.
+- **The retention ceiling was added as `Conversations:AttachmentRetentionMaxPerRun = 500`**, which
+  the strategy's §3.4 table does not list; it mirrors the `CustomerSalonBackfill` pattern.
+
+### What is NOT done, stated plainly
+
+- **Wave 5 (S8) is deferred by design**: the catalog delete path, the orphan reconciler,
+  `Media:DualWrite=false` and the `ImageData` drop. It is gated on production proof **and** the
+  database owner's confirmation, and it contains the only irreversible step in the workstream. It is
+  documented as deferred, not shipped.
+- **The Flutter device check is outstanding.** The widget half is done and green; only a real iOS and
+  Android run proves WebP renders, and the strategy requires both halves. The documented fallback
+  (an explicit `f_jpg`) is a decision, not a patch, because it costs a second derivation set.
+- **No live run was recorded for A7.2** (PDF delivery on the product environment). The SDK-level PDF
+  round trip was proven in the live smoke suite; the product-environment toggle is untested.
+- **The analysis cache is re-keyed but deliberately not wired**, so the vision path is still uncached.
+- **`externalUrl` stays permissive** (Q7 deferred) and the ≤1250-asset item cap is still unenforced
+  (no `MaxCatalogItems` exists), so no cost statement is guaranteed until it is.
+- **`docs/frontend/tenant-dashboard.md` needs an owner decision.** The strategy's C21 says its
+  "No Cloudinary" note must be corrected, but the file does not exist on this branch; it exists only
+  on `development`, where it describes the tenant-dashboard slices (T0a–T7) that are **not** on this
+  branch. The media statements were corrected in a ported copy, but the document as a whole would
+  import stale claims about permissions, deleted files and services that do not exist here. Left for
+  the owner rather than silently shipped or silently dropped.
+- **A pre-existing dangling `$ref`** to `#/components/schemas/ErrorEnvelope` (six sites) in
+  `openapi.yaml`; not invented and not fixed, since it predates this workstream.
+
+### Citations that did not resolve (so the next reader does not chase them)
+
+`openapi.yaml` holds **133** path keys before this work, not the strategy's 146 (156 after the
+additions); the `AttachmentDto.url` sentence is at `:6007-6009`, not `:6826-6829`/`:7133-7136`; the
+catalog DELETE route is `:176-195`, not `:171-191`; the `CatalogEndpoints.cs` bytea banner is at
+`:547`, and the two `.WithSummary` texts the strategy calls stale were already corrected in U1.2;
+`docs/security/` held three files, not "exactly two"; and `CatalogWriteAuthorizationTests.cs` does
+not exist at this HEAD (the F-7 guard lives in `CatalogEndpointsIntegrationTests.cs`).
+
+### Process notes
+
+- **The lane rule earned its keep.** U0.1 hit a compile error caused by a sibling's in-flight file
+  and **raised a change request instead of editing it** — the plan's escalation contract, working as
+  designed. Two further cross-lane gaps (a stale 404 translation, a missing PDF arm) were sequenced
+  to their owners rather than patched in place.
+- **Concurrent full-suite runs were the main process cost.** Running 2500+ tests in more than one
+  lane at once produced load-induced ~3-minute timeouts that looked like failures; each passed in
+  isolation, and the fix was to stop concurrent full runs and give the gate one serial pass.
+- **One `git reset --mixed` was needed** to keep phase history honest: a commit had swept in five
+  unrelated `docs/ai-usage/*` and `scripts/*` files from a different workstream. They were left
+  uncommitted, and the media files were re-committed alone.
+- **One environment workaround, declared:** the sandbox's NuGet cache is read-only, so
+  `NUGET_PACKAGES`/`NUGET_HTTP_CACHE_PATH` point at a workspace-local cache for every build and test.
+  Nothing about that workaround is committed — `obj/` and the cache are untracked, so no sandbox
+  path can leak into history.
+- The orchestrator wrote no production code: every `.cs`, `.py` and `.dart` change came from a
+  subagent, and the orchestrator's own writes were the AI-usage log, the GitHub issue bodies and the
+  commit messages.
+
+## Session 2026-09-20 (c) — Tenant dashboard finalization: Flutter to backend (session start)
+
+**Task:** Implement the tenant dashboard finalization (the boutique dashboard at `/app/b/{slug}`) from
+`.agents/plans/tenant-dashboard-implementation.ignore.md` and its review
+`.agents/plans/tenant-dashboard-implementation-strategy.md`, on the current branch
+`feature/tenant-dashboard-v2`.
+
+**Tool used:** DeepSeek Harness (deepseek-flash) AI coding agent.
+
+### Session start — what was read and established
+
+- Read both plan documents in full (1781 + 1866 lines). The plan is a gap analysis plus a build
+  specification (E-1…E-13 new endpoints, one new append-only ledger, eight frontend sections); the
+  strategy re-cuts its seven phases into **eight `T`-slices** with dependency and exclusive-ownership
+  columns, and answers twelve open questions (TD1–TD17).
+- Verified the working tree state before starting: branch `feature/tenant-dashboard-v2`, HEAD `d9c3f24`,
+  `git status --porcelain` clean but for an untracked `docs/deployment/`.
+- Confirmed by inspection that **none of the plan has landed on this branch**: `Permissions.cs` still
+  holds the pre-plan 28 permissions with no `customers:manage` / `team:manage` / `orders:manage`, and
+  `frontend/web/src/components/dashboard/` still contains only the seven pre-plan files (no `income`,
+  `customers`, `billing`, `usage`, `settings`, `kpi` directories). The strategy's corrections therefore
+  apply verbatim rather than needing re-verification.
+
+### Session-start decisions recorded
+
+- **Slice order is the strategy's critical path:** `T0 → T1 → T2 → T3 → (T4 ‖ T5 ‖ T6) → T7`.
+- **TDD is mandatory and observed**: a failing test exists and is seen to fail for the expected reason
+  before any production file is written. The one generated artefact (the EF migration) has its
+  model-level assertions written first.
+- **No branch is created or switched.** All work lands on `feature/tenant-dashboard-v2`.
+- **Documentation is updated per delivered slice**, not batched at the end: general docs
+  (`docs/frontend/tenant-dashboard.md`), API docs (`docs/api/README.md`), the OpenAPI specification
+  (`docs/api/openapi.yaml`), and the statistics catalog (`docs/backend/statistics-catalog.md`
+  S-57…S-63 — landed in the slice that ships each endpoint, never before it exists).
+- A GitHub issue is created for every slice before that slice starts.
+
+### GitHub issues created (one per phase/slice)
+
+On branch `feature/tenant-dashboard-v2`, no branch was created or switched:
+
+| Issue | Slice |
+|---|---|
+| [#351](https://github.com/KavinduNirmal/aveline/issues/351) | T0a — Contracts and the permission family |
+| [#352](https://github.com/KavinduNirmal/aveline/issues/352) | T0b — Tenant conformance, truthfulness and coverage gates |
+| [#353](https://github.com/KavinduNirmal/aveline/issues/353) | T1 — Isolation and correctness (F-1, F-2, F-5, F-6, F-7, F-9, F-11) |
+| [#354](https://github.com/KavinduNirmal/aveline/issues/354) | T2 — Customer CRUD (E-6…E-9) |
+| [#355](https://github.com/KavinduNirmal/aveline/issues/355) | T3 — Income (`BoutiqueSaleEntry`) ledger — critical path |
+| [#356](https://github.com/KavinduNirmal/aveline/issues/356) | T4 — Tenant KPIs, reduced takings view, Overview rebuild |
+| [#357](https://github.com/KavinduNirmal/aveline/issues/357) | T5 — Usage and billing (E-11, E-12) |
+| [#358](https://github.com/KavinduNirmal/aveline/issues/358) | T6 — Approvals, Team, Settings (E-10) |
+| [#359](https://github.com/KavinduNirmal/aveline/issues/359) | T7 — Gates, docs and the coverage ratchet |
+
+### Work delivered in this session
+
+**T0a (issue #351) — complete, TDD observed.** The permission catalog went **28 → 31**:
+`customers:manage`, `team:manage` and `orders:manage` were added and granted to
+manager/supervisor/owner, and `approvals:approve` was granted to `org:boutique_staff` (Q8). Six new
+**named org-scoped** policies were registered, including the permission-free `BoutiqueMemberPolicy`,
+so a route that means "an active member" stops borrowing `catalog:view` as a proxy — that borrowing
+is what made `catalog:manage` unenforceable without also taking the camera away from staff. The
+eight team routes moved off `BoutiqueMembershipManage` (`settings:manage`, which also reaches
+Integrations and its WhatsApp/payment-gateway credentials) onto `BoutiqueTeamManage`
+(`team:manage`). `Endpoints/BusinessRulesEndpoints.cs` — unmapped dead code — was deleted.
+
+On the client, `src/lib/permissions.ts` now mirrors all 31 permissions, carries **only the four
+`org:boutique_*` roles** (deleting the phantom `org:principal` and the ten unreachable team-role
+branches, C-13), and gained a drift guard that reuses the same C#-source parser as the admin
+mirror. `isTenantAdmin` became `canOpenTenantDashboard`, derived from the presence of a permission
+rather than a hand-listed set of role strings. The admin mirror and its pinned count moved in the
+same commit, so the cross-tree test could not drift.
+
+**T0b (issue #352) — complete.** The tenant subtree's conformance pass: **~160 violations across 17
+files** fixed with the 30 primitives already present — no `shadcn add`, no CLI run, no new
+primitive. `test/tenant-conformance.test.ts` now walks the dashboard, catalogue, shared and
+tenant-route files with the admin rule set and an **empty** allow-list (stricter than the admin
+gate's one exception). Three further gates landed: `test/tenant-truthfulness.test.ts` (four literal
+rules), `test/tenant-sections.test.ts` (the nav table and the router cannot disagree), and
+`vitest.dashboard-coverage.config.ts` with a `test:coverage:dashboard` script. The section became
+part of the URL (`/app/b/:slug/:section`, bare slug redirects to `/overview`). `F-10` was done by
+deletion: the five dead `MOCK_*` seed arrays are gone while their types — the live contracts — stay.
+
+### Two judgement calls, recorded rather than hidden
+
+1. **The conformance scope excludes the public marketing/authentication pages.** The plan's §6.7
+   names four directories, but a naive non-admin `routes/*.tsx` glob pulled in ten more files
+   (`LandingPage`, `PlansPage`, `SignUpPage`, `SignInPage`, `TermsPage`, `ContactPage`,
+   `DownloadPage`, `InvitePage`, `AdminPendingPage`, `AdminSignUpPage`) carrying **~100 further
+   violations** against their own brand palette. That is a different surface with a different
+   migration plan, and folding it in would have tripled the slice without serving the dashboard.
+   The exclusion is written into the gate file with its reason.
+2. **The admin gate's "no raw `<svg>`" rule was not adopted.** The console suppresses it because its
+   only `<svg>` is a chart. In the tenant tree the only `<svg>` is `BrandIcons.tsx`, which draws
+   third-party payment marks whose geometry must match the provider's official asset. Vendored
+   third-party marks are a legitimate exception to a chart-integrity rule, so the truthful move was
+   to say so in the design record rather than to allow-list the file. The rule that actually matters
+   — `recharts` only through the chart wrapper, where the shared `connectNulls` decision lives — is
+   enforced.
+
+### Verification performed
+
+- `dotnet test Aveline.Api.Tests` (non-Postgres, non-integration): **1652 passed, 0 failed**.
+- `dotnet test` conversation integration suite: **18 passed, 0 failed** — reviewed rather than
+  edited around, see the finding below.
+- `dotnet build Aveline.Api.Tests`: succeeded, 0 errors.
+- `bunx vitest run`: **104 files / 734 tests passed**.
+- `bunx tsc -b`: exit 0. `bunx oxlint src`: **0 errors** (60 pre-existing warnings).
+- `bun run test:coverage:dashboard`: runs and walks the eight previously-unmeasured tenant files.
+- The four frozen admin mechanical tests (`admin-conformance`, `admin-truthfulness`,
+  `admin-prometheus-boundary`, `admin-install`) pass **unchanged**.
+
+### A finding the tests forced into the open
+
+Granting `org:boutique_staff` `approvals:approve` broke two conversation integration tests that
+asserted the *opposite* — that an ordinary staff member is refused the Salon sign-off release gate.
+That is a genuine consequence of the grant, not noise, and the honest resolution had two halves:
+the two tests now probe the gate with a membership whose role holds `conversations:view` but not
+`approvals:approve` (so the 403 path is still covered), and the staff member's new outcome is
+asserted as **404 rather than 200** — they pass the policy gate, then fail the visibility gate,
+because a conversation created by the owner is not in their Salon. The two gates are separate on
+purpose, and the test now says so. The same grant also lets staff `revoke` a salon sign-off; that is
+a deliberate consequence of a single-verb route and is recorded in the design record, because Q14's
+verb split was scoped to the order-approval controller.
+
+### Not delivered, and stated as such
+
+**T1 (issue #353) — complete, TDD observed.** This is the slice the strategy says must land first,
+because it closes a confirmed cross-tenant hole.
+
+- **F-1.** `OrdersController` and `BusinessRulesController` had **no `[Authorize]` at all** and used
+  the route token `{orgId:guid}`, which `OrganizationScopeAuthorizationHandler` never reads (it
+  matches `organizationId` exactly). The fallback policy is authenticated-only, so any authenticated
+  caller — including another boutique's staff — could read and write any organisation's orders and
+  business rules. Both controllers now authorise **and** rename the token, because both halves are
+  required: a policy alone would not bind on `{orgId}`. The policy split is TD11's: reads and
+  `POST /orders` at `BoutiqueMember` (the counter creates orders), and `PUT`, `PATCH /status`,
+  `/cancel`, `/recalculate` plus **every** business-rule route at `BoutiqueOrderManage`
+  (`orders:manage`). `BoutiqueAccess` (= `catalog:view`) was deliberately not used: it is held by
+  every role and would have let staff cancel orders and rewrite the discount rules.
+- **F-2.** The fourteen-route catalogue policy table. Four managed writes (create, edit, publish,
+  delete) take `BoutiqueCatalogManage`; the ten operational routes (search, QR label, scan, vision,
+  analysis, VIP matches, compose, sourcing, upload) take the permission-free `BoutiqueMember`. The
+  group policy is unchanged and the per-route attribute composes on top, which is house style. A
+  blanket `catalog:manage` was rejected because it would have taken the camera, the label printer and
+  the AI analysis away from `org:boutique_staff`.
+- **F-5.** The approval actor was parsed with `Guid.TryParse` from the Clerk `sub`. A real subject is
+  `user_2abc…`, so the parse always failed and **every decision recorded a null actor**. The one
+  passing test injected a GUID subject, which is why CI never caught it; that test has been rewritten
+  to use the shape production actually sends, and a new test pins the non-null actor.
+- **F-6.** `GET …/usage` moved from `BoutiqueAccess` to `BoutiqueBillingSelfView`; all four org roles
+  already held `billing:view:self`, so access is unchanged and the wire now matches the file's own
+  doc comment.
+- **F-7.** `AllowAnonymous` stays on the catalogue image route (Q4: imagery is public, direction is
+  Cloudinary) with the reason recorded on the attribute rather than inherited silently.
+- **F-9.** The catalogue panel's hardcoded tenant id is gone. This was not a cosmetic fallback:
+  `'00000000-0000-0000-0000-000000000001'` is a **real organisation id in this system**, so a save or
+  an image upload was being addressed at a different shop's tenant. A missing organisation is now a
+  hard error that sends no request. The write-after-failure is fixed too — a failed save used to log,
+  toast "Retaining local draft" and then fall through to `setInventory(...)`, rendering a piece the
+  server had rejected; the optimistic write now sits inside the success path. The never-populated
+  `matches` state (which made an inventory badge and a drawer fallback both read a hard zero) is
+  deleted.
+- **F-11.** Already done in T0a: the unmapped `BusinessRulesEndpoints.cs` is deleted.
+
+One thing I did **not** silently decide: the four approval verbs still share
+`approvals:approve`, so staff can `reject` (which cancels the order) and `revise` (which rewrites
+discount/total/margin) — exactly what Q8 denied. Strategy Q14 recommends the split and puts it in T6.
+Rather than pretend the grant is narrower than it is, the risk is written into
+`docs/api/README.md` B.19 and the design record, and T6 owns the change.
+
+### Verification performed (final)
+
+- `dotnet test Aveline.Api.Tests` (non-Postgres): **1992 passed, 0 failed**.
+- `dotnet build Aveline.Api.Tests`: succeeded, 0 errors.
+- `bunx vitest run`: **104 files / 736 tests passed**.
+- `bunx tsc -b`: exit 0. `bunx oxlint src`: 0 errors.
+- `bun run test:coverage:dashboard`: runs and walks the eight previously-unmeasured tenant files.
+- `docs/api/openapi.yaml` parses, with **141 paths** and **no dangling response references** (checked
+  programmatically, which is how an invented `DELETE /orders/{id}` verb and a reference to a
+  non-existent `BadRequest` component were caught and removed before shipping).
+- The four frozen admin mechanical tests pass unchanged.
+
+### Not delivered, and stated as such
+
+**T2–T7 remain: issues are filed, code is not written.** The critical path was
+`T0 → T1 → T2 → T3 → (T4 ‖ T5 ‖ T6) → T7`. T0a, T0b and T1 are delivered to the standard the prompt
+requires: failing test first, implementation, then documentation (general docs, API docs, OpenAPI).
+The remaining slices are substantial backend-and-frontend work — a new append-only ledger with its
+migration and four writers (T3), four new customer routes (T2), four new dashboard endpoints plus the
+reduced takings view (T4), two new billing reads and two sections (T5), and the Approvals/Team/
+Settings sections (T6) — and each is specified in its issue with its acceptance criteria, its TDD
+obligation and its documentation duties. T3 is the critical path and `BoutiqueSaleEntry` is already
+named and scoped by TD2/TD14.
+
+**No OpenAPI change was needed for T0a/T0b.** Neither slice adds or changes a route or a schema, and
+every affected path is already in the spec. T1 **did** change the contract surface, and for the
+better: the orders and business-rules routes had been documented **nowhere**, which is part of how
+F-1 survived review. They are now in both `docs/api/README.md` (new B.19) and `docs/api/openapi.yaml`,
+and the `GET …/usage` description now names its real policy.
+
+### Continuation — T2 delivered (issue #354)
+
+**T2 — customer CRUD — complete, TDD observed.**
+
+The tenant customer surface had only list, highlights, walk-in create and record-interaction. A
+customer detail page would have shown a visit count with nothing behind it, and
+`POST …/interactions` already emitted a `Location` header pointing at a route that **did not exist**.
+T2 added the four missing routes and the section that uses them.
+
+Backend:
+
+- **E-6** `GET …/customers/{id}` — the tenant-safe detail. Deliberately not the internal shape: no
+  memory, no extracted AI context, no internal-token field. `loyaltyTierIsDerived` is the constant
+  `1` so no client can render an editable tier control. The route also repairs the dangling
+  `Location` contract, and a test follows that header and asserts `200`.
+- **E-9** `GET …/customers/{id}/interactions` — paged history, newest first.
+- **E-7** `PATCH …/customers/{id}` — `customers:manage`, writable subset only. **`status` is absent
+  on purpose**: the loyalty rule derives it, so a writable field would let the UI contradict the
+  server, and a `status` sent in the body is ignored.
+- **E-8** `DELETE …/customers/{id}` — `customers:manage`, soft delete, **idempotent** (`204` twice).
+- **The 409 phone conflict now exists on create as well as update.** The unique
+  `(OrganizationId, PhoneNumber)` index had no `DbUpdateException` mapping on this surface, so a
+  collision returned a **500**. The fix is a pre-check in the service, not an exception filter, and
+  the reason is testability: the in-memory provider does not enforce the index, so an
+  exception-based mapping would have been invisible to every non-Postgres test and the behaviour a
+  client sees would have depended on the storage engine.
+- **A subtle bug the idempotent-delete test forced out.** The first implementation queried the
+  customer through the soft-delete filter, so a second delete found nothing and returned 404 while
+  the test expected 204. The fix reads through `IgnoreQueryFilters()` **with the tenant scope applied
+  explicitly** — the deleted row becomes reachable, and another organisation's row still does not.
+
+Frontend: `lib/customers-api.ts` with its 9-test suite; a money formatter (`lib/format-money.ts`,
+10 tests) whose whole purpose is the rule the dashboard rests on — `null` renders "not measured",
+a measured `0` renders as `0`; the Customers section (`CustomersPanel`, `CustomerDetailSheet`,
+`LogVisitDialog`, `WalkInDialog`) and an 8-test DOM suite.
+
+Four honesty rules the section keeps, each with a test:
+
+1. **A 404 renders a not-found state, not an empty one**, and says why the view cannot be more
+   specific: the server makes "deleted" and "in another boutique" indistinguishable.
+2. **Write affordances exist only where the server would accept them.** Add client, Edit and Remove
+   are absent for a role without `customers:manage`.
+3. **The amount field is labelled "amount taken"**, the copy says the amount joins the client's
+   lifetime spend and that **no Blossoms are charged**, and the dialog renders no income figure.
+4. **A duplicate walk-in says "already on file", not "created"** — the 200-vs-201 distinction is
+   honoured in the wording, because reporting a create that did not happen is how a client book
+   stops being trustworthy.
+
+Documentation: `docs/api/README.md` gained **B.20** (the shipped contract for all eight routes,
+including the two semantics the old Part C entry never stated) and the Part C entry now points at it
+instead of duplicating a stale plan; `docs/api/openapi.yaml` gained the four routes, three schemas
+and the 409 response — **142 paths, all references resolving**; `docs/frontend/tenant-dashboard.md`
+gained the Customers section.
+
+### Verification performed (after T2)
+
+- `dotnet test Aveline.Api.Tests` (non-Postgres): **2009 passed, 0 failed** (1992 before this round).
+- `bunx vitest run`: **107 files / 763 tests passed**.
+- `bunx tsc -b`: exit 0. `bunx oxlint src`: 0 errors.
+- The tenant gates (`conformance`, `truthfulness`, `sections`) pass with the new components inside
+  their walked scope, unchanged.
+- `docs/api/openapi.yaml` parses with **142 paths** and no dangling references.
+
+### Not delivered, and stated as such
+
+**T3–T7 remain.** T0a, T0b, T1 and T2 are delivered to the standard the prompt requires. T3 is the
+critical path and the largest remaining slice: the `BoutiqueSaleEntry` ledger, its EF configuration
+and the 51st migration, the four writers, the reconciliation job, the two reads and the Income
+section — specified in issue #355 with its schema, its actor rule (`null` actor iff
+`SourceKind == System`) and its TDD obligation already written down. T4–T6 depend on T3 or run in
+parallel with it; T7 closes the docs and raises the coverage ratchet.
+
+### Continuation — T3 write model delivered (issue #355, partially)
+
+**T3's ledger and all four writers are complete, TDD observed.** T3 also specified two read endpoints
+and the Income section; those are **not** done and are stated as such below.
+
+**The entity.** `BoutiqueSaleEntry` in `Modules/Commerce`, with `BoutiqueSaleEntryKind`
+(`Sale`/`PaymentReceived`/`Refund`/`Adjustment`), `BoutiqueSaleSourceKind`, `BoutiqueSaleChargeBasis`
+(`Derived`/`Verified`) and `BoutiqueSaleEntryStatus` (`Recorded`/`Voided`). Its doc comment names
+`Modules/Revenue/IncomeLedgerEntry` and states that it is **a different economy in a different
+table** — that comment plus a test asserting the service writes only its own table are the whole
+defence against R-12.
+
+**The rules, 21 unit tests:** `Amount > 0`; `Reason` 10–500; `SourceRef` required; the dedup identity
+per organization; a `Verified` entry supersedes its `Derived` counterpart (voided, never deleted,
+with the reference cleared so the filtered index releases the key); and the sign derived from `Kind`
+so `Amount` is always positive.
+
+**The actor rule, narrowed with a reason.** The strategy says to copy the sibling's rule verbatim:
+null actor **iff** `SourceKind == System`. Implementing it surfaced a fact the plan could not see —
+**nothing in the order or payment flow resolves an actor at all.** `OrdersController` passes
+`createdBy: null` and `PaymentsController` resolved none, so a verbatim copy would have meant either
+no `PaymentReceived` entry ever, or a fabricated user id. I split the difference honestly: the two
+**counter** sources (`CounterWalkIn`, `Refund`) require an actor, and the two **flow-written** sources
+(`OrderPayment`, `OrderSettlement`) permit an unattributed row. The row's `SourceKind` names the flow
+that wrote it, which is the true record. I also then **fixed the refund to actually have an actor**,
+since `payments:refund` guarantees a person: `PaymentsController` now resolves the caller through
+`IUserRepository` and the ledger attributes the refund to them.
+
+**The migration.** `20260920181820_AddBoutiqueSaleLedger` — the **49th** non-Designer migration (the
+strategy's "51st" was off by two; the tree's count is what it is). It carries the named CHECK
+`CK_BoutiqueSaleEntries_AmountPositive`, the **per-organization** filtered unique index
+`(OrganizationId, SourceKind, SourceRef) WHERE "SourceRef" IS NOT NULL`, and two read indexes.
+
+**`BoutiqueSaleLedgerPostgresTests` (8 tests, Testcontainers).** These are the tests that prove the
+*migration* enforces the rules, and they are where the one genuinely subtle bug lives: the filtered
+index is filtered on `"SourceRef" IS NOT NULL` and **not on `Status`**, so a voided row that keeps its
+reference still occupies the key and the takeover insert trips `23505`. EF also puts the INSERT ahead
+of the UPDATE, so the void must be flushed first inside a transaction. Both are observable only
+against real Postgres.
+
+**The four writers, 20 further tests:** the counter sale (`CustomerVisitService`, `Verified`, and it
+closes the plan's §2.4 gap where a cash sale left a `CustomerInteraction` with no amount column and a
+`Customer.TotalSpent` with no transaction behind it); payment confirmation (`Verified`); refund
+(`Verified`, and now with a destination for the `reason` parameter that was previously accepted and
+discarded); and the derived order entry on `completed`/`delivered` (`Derived`, skipped when the money
+was already collected so one sale is never counted twice).
+
+**Two fixture gaps the ledger exposed**, both fixed rather than worked around:
+`CommercePaymentsTests` used bare random GUIDs as `OrganizationId` with no `Organizations` row, which
+a real database could not hold either; and the refund tests supplied no actor, which is what led to
+the controller fix above.
+
+### Verification performed (after T3 write model)
+
+- `dotnet test` for the new suites: **41 passed, 0 failed** across
+  `BoutiqueSaleLedgerServiceTests` (21), `BoutiqueSaleLedgerPostgresTests` (8),
+  `CustomerVisitLedgerBridgeTests` (5), `PaymentLedgerBridgeTests` (9) and
+  `OrderLedgerBridgeTests` (7) — plus the pre-existing payment and order suites updated and green.
+
+### Not delivered in T3, and stated as such
+
+**The two read endpoints (E-4, E-5) and the Income section are not built.** S-57…S-61 are registered
+in the statistics catalog, and because that is the one place I documented ahead of the code, the
+catalog says so explicitly — "specified, not live", in the section itself, rather than leaving a
+reader to discover it. That is the S-56 mistake, and the honest response to having made it is to
+label it, not to delete the record of what the read slice must implement.
+
+### Continuation — T3 read half delivered (issue #355, completed)
+
+**E-4, E-5 and the Income section are now built, TDD observed.** With this the T3 critical path is
+complete except for the reconciliation job, which is stated below.
+
+**Backend.** `BoutiqueIncomeReadService` reads the register and the per-kind breakdown; two routes
+ship under the org-scoped `BoutiqueReportsView` policy (`reports:view`):
+`GET …/income/ledger` (S-60) and `GET …/income/accounts` (S-61). 19 unit tests and 12 integration
+tests. Five behaviours are load-bearing and each has a test:
+
+- **The two bases are reported separately and never summed.** `verifiedTotal` is money taken,
+  `derivedTotal` is billed value, `unverifiedGap` equals the derived total, and `isReconciled` is
+  true only when the gap is zero. Each `kind` also carries its own total, so a refund is never netted
+  into a sale figure without a label.
+- **The totals cover the whole window, not the page.** A page-scoped total would understate a busy
+  week by an order of magnitude, and the test pages with `pageSize: 2` over five sales to prove it.
+- **The window cap is echoed, never silent.** `windowCapped` plus the effective window plus a
+  data-quality note — a chart labelled "1 year" over 400 days of data is a lie about the series'
+  shape.
+- **An unknown `kind` or `basis` is a `400` naming the known values**, never a silently ignored
+  filter. A filter that quietly does nothing makes a reader conclude there were no refunds.
+- **The payment-method split is read from the payment rows**, joined on `paymentId`. A ledger entry
+  carries no method of its own, and inferring one would be the fabrication this surface exists to
+  prevent.
+
+The response carries its own `dataQuality` vocabulary — the sixth in the API — with
+`paymentRowsPresent: false` when the shop has no payment rows at all. That is the single most likely
+reason a real shop's cash figures read zero, and the notes say so rather than leaving the owner to
+conclude their shop took nothing.
+
+**Frontend.** `lib/income-api.ts` (7 tests), the Income nav section gated on `reports:view`, the
+reconciliation banner, the register table, and a 7-test DOM suite. Three honesty rules the screen
+keeps:
+
+1. **No single unlabelled "income" number exists on the screen.** Collected, Billed-unconfirmed and
+   Refunded are three labelled figures; the gap is presented as information to act on.
+2. **The two bases are distinguishable in text, not only in colour.** A `Derived` row reads "Billed,
+   unconfirmed", a `Verified` one reads "Money taken", and the sign is a character beside the label.
+   A colour-only distinction is invisible to a colour-blind reader and is lost in greyscale.
+3. **Unknown renders as unknown.** A banner that cannot measure the reconciliation says
+   "Reconciliation status unknown", never "Every sale is confirmed".
+
+**One pre-existing defect found and fixed while validating the spec.** `docs/api/openapi.yaml`
+referenced `#/components/schemas/ErrorEnvelope` from five responses and never defined it, so a strict
+tool could not resolve those responses. The schema is now defined to the shape those handlers
+actually return. The spec is at **144 paths with zero dangling schema or response references**,
+checked programmatically.
+
+**The statistics catalog's honesty note is now corrected rather than deleted.** S-57…S-59 (the three
+dashboard routes) are marked **not yet implemented** individually, and S-60/S-61 are marked **live**.
+The earlier block-level caveat is replaced by per-entry markers so the distinction survives a reader
+who lands on one entry rather than the section.
+
+### Verification performed (after the T3 read half)
+
+- `dotnet test` (non-Postgres): **2083 passed, 0 failed** (2052 before this round).
+- `bunx vitest run`: **108 files / 770 tests passed**.
+- `bunx tsc -b`: exit 0. The tenant gates (`conformance`, `truthfulness`, `sections`) pass with the
+  new components inside their walked scope.
+- `docs/api/openapi.yaml`: 144 paths, **zero dangling schema or response references**.
+
+### Not delivered for T3, and stated as such
+
+**The `IncomeLedgerReconciliationJob` is not built.** It is the one piece of T3's specification still
+outstanding: an hourly job that finds confirmed payments and purchase-carrying interactions in the
+last 7 days with no matching ledger row and appends the missing entry, reporting how many it
+repaired. The ledger's filtered unique index makes it idempotent by construction, which is what makes
+the backfill safe — but until it exists, `dataQuality.IncomeLedgerBackfilled` can only ever be
+`false`, and a writer that failed silently would leave a gap nobody repairs. That is the honest
+remaining risk, recorded rather than implied away.
+
+### Continuation — the reconciliation job delivered; T3 complete (issue #355)
+
+**The `IncomeLedgerReconciliationJob` is built, TDD observed, and T3's write model is now complete.**
+12 tests. It runs hourly, bounded to a 7-day window, and is idempotent by construction: every repair
+reuses the product writer's own `SourceRef`, so the ledger's filtered unique index turns a second
+attempt into a no-op rather than a duplicate row. It reports the repair count at **warning** level,
+because a job that quietly repairs rows every run is telling an operator that a writer upstream is
+broken — a bare success log would hide exactly the signal that matters. A race between the job and a
+late writer resolves to one row, not two.
+
+**Writing it disproved half the plan's own specification, and the test records the finding.**
+§5.6 described the job as repairing "confirmed payments **or** interactions carrying a purchase
+total". The second half is impossible: `CustomerInteraction` has **no amount column** — the purchase
+total is read from the request inside `CustomerVisitService`, folded into `Customer.TotalSpent`, and
+discarded, so nothing on the row records what was taken. The only "repair" available would be to
+invent an amount, and a fabricated figure in a money journal is worse than a known gap.
+`ACounterSaleInteraction_IsNotRepairedBecauseNoAmountWasPersisted` is the record: it asserts the job
+appends nothing for such an interaction, and its doc comment names the honest fix (a migration that
+persists the amount) and says the test should be inverted when that lands. The job now counts the
+interactions it could not repair and logs them, so the gap is visible rather than silent.
+
+**`incomeLedgerBackfilled` became a computed flag rather than a hardcoded `false`.** Last round I
+noted that until the job existed the flag could only ever be false; now that it exists, the read
+service computes it from the repaired rows and adds a note, so a reader knows the ledger begins at a
+date rather than claiming full history. The reason prefix the job writes is a shared constant, so the
+marker and its reader cannot drift apart. Two tests pin both directions: a register containing a
+repaired row reports `true` with the note, and a genuinely-written one reports `false`.
+
+### Verification performed (after the job)
+
+- `dotnet test` for the new and affected suites: **33 passed, 0 failed**
+  (`IncomeLedgerReconciliationJobTests` 12, `BoutiqueIncomeReadServiceTests` 21 after two additions).
+- The full non-Postgres backend suite is re-run and green (see the totals below).
+
+### T3 is complete
+
+Every element the plan and strategy specified for T3 now exists and is tested: the entity and its
+enums, the EF configuration with the named CHECK constraint and the per-organization filtered unique
+dedup index, the migration, the service with every rule, the four product writers, the reconciliation
+job with the honest statement of what it cannot repair, E-4/E-5, and the Income section. **The
+critical path is unblocked**: T4 (the dashboard KPIs and the reduced takings view), T5 (usage and
+billing) and T6 (approvals, team, settings) can now proceed, and T7 closes the docs and the ratchet.
+
+### Continuation — T4 backend half delivered (issue #356)
+
+**E-1, E-2, E-3 and E-13 are built, TDD observed.** Four routes on **two policies** — the split is
+TD13's rule that a section is visible when its cheapest panel is readable. `…/dashboard/takings`
+takes the permission-free `BoutiqueMemberPolicy`, because every boutique role may see two labelled
+figures; `…/dashboard/summary`, `…/revenue-series` and `…/top-items` take
+`BoutiqueReportsView` (`reports:view`), because they carry margin, catalogue splits and the series.
+36 unit tests and 9 integration tests.
+
+**The reduction is enforced by the response's shape, not by a UI convention.** `TenantTakingsDto`
+carries exactly `collected` and `billedUnconfirmed`; a test serialises it, enumerates the field names
+and fails if anything outside an explicit allowed set appears. A later change that leaked margin or a
+per-client split therefore fails a test rather than quietly shipping — and the forbidden names
+(`margin`, `topItems`, `points`, `customerId`, …) are listed so the intent is legible. Writing that
+test surfaced a small trap: the first version scanned the whole JSON for the word "sales" and fired on
+the quality notes' prose. It now compares **field names**, which is what the contract actually is.
+
+**Five provenance rules the aggregate had to get right, each with a test:**
+
+1. **`null` is not `0`.** An average order value over no orders does not exist, so it is `null`; a
+   margin percentage against zero revenue does not exist, so it is `null`. An order count of `0` *is*
+   a measurement and stays `0`. This is the plan's central honesty rule and it is why the empty-shop
+   test asserts both kinds of absence side by side.
+2. **The order-status classification is a named constant with a transition-map test.** C-5 asked for
+   exactly this. `payment_expired` is **counted** because it is not terminal — `ValidTransitions`
+   lets it return to `payment_requested` — and `confirmed` and `revised` are counted because the
+   approval path writes them and the model's own comment forgets they exist. I added
+   `OrderService.KnownOrderStatuses`, derived from the transition map rather than transcribed from the
+   comment, so adding a status without classifying it fails the test rather than silently changing
+   every KPI in the slice.
+3. **`marginCostsComplete` is `false` when any order carries a zero `WholesaleCost`**, because that
+   cost is caller-supplied rather than read from `InventoryItem.Cost`. The flag is how a reader finds
+   out the margin is only as good as what somebody typed.
+4. **Cash stays three figures.** Collected, outstanding and refunded are reported separately, so an
+   expiring payment request is never presented as a receivable.
+5. **A cache outage degrades, it never fails.** The summary is cached for 60s per
+   `(organizationId, window)`; a throwing `IDistributedCache` produces the figures anyway **and** a
+   `dataQuality` note saying the cache was unreachable. Surfacing it in the response rather than only
+   in the log is the point: an operator reading the dashboard during a Redis outage can tell the
+   numbers are current and only the caching is degraded.
+
+**Two mistakes I made and corrected rather than left in.** I wrote a reflection-based helper to read a
+bucket's `ChargeBasis` — indefensible in a strongly-typed codebase — and replaced it with a proper
+projection. And a test expectation of mine was simply wrong arithmetic (a 6,000 margin on 15,000 gross
+is 0.4, not 0.6); I corrected the test, not the code.
+
+### Verification performed (after T4's backend half)
+
+- New suites: **36 unit + 9 integration passed, 0 failed**.
+- Full backend suite: **2142 passed, 0 failed** (2097 before this round).
+- `docs/api/openapi.yaml`: **148 paths, zero dangling schema or response references**.
+- The statistics catalog marks S-57, S-58 and S-59 **live** individually, replacing the earlier
+  "specified, not live" caveat with per-entry markers.
+
+### Not delivered in T4, and stated as such
+
+**The charts and the `TenantTeamKpisDto.AllowedSeats` wiring are not built.** The revenue-trend and
+top-items charts are outstanding; the endpoints behind them (E-2, E-3) are shipped and tested, so
+they are a rendering task. `TenantTeamKpisDto.AllowedSeats` is deliberately `0` in this aggregate
+because the allowance lives on the entitlements surface — the Overview panel must read it there
+rather than treating `0` as a real limit, and until it does, no seat-utilisation tile is shown.
+
+### Continuation — T4 frontend half delivered (issue #356)
+
+**`lib/dashboard-api.ts`, `hooks/useDashboardWindow.ts`, `KpiCard`, `TakingsCard` and the Overview
+rebuild are built, TDD observed.** 6 hook tests, 8 `KpiCard` tests and 9 Overview DOM tests, all
+green, plus the three tenant gates passing with the new components inside their walked scope.
+
+**Four honesty rules the panels keep, each with a test:**
+
+1. **A measured `0` renders as `0`; a `null` renders "not measured".** `KpiCard` is the single place
+   that distinction becomes text, in a visually distinct style so a missing measurement cannot be
+   mistaken for a small one at a glance. `UsagePanel`'s old `?? 0` is what this makes impossible.
+2. **The reduced card renders for every role, with both figures labelled.** It shows what the server
+   sent and nothing else: no margin, no series, no per-client split, because the reduced read does
+   not carry them and inventing a client-side figure is the fabrication the reduction prevents.
+3. **The owner's preview issues no request.** Toggling "Preview the staff view" hides the strip
+   client-side; the test clears the summary mock, toggles, and asserts the call count is unchanged.
+   The reduced card stays visible, so an owner sees exactly what staff see.
+4. **A hidden strip says it is hidden.** A role without `reports:view` gets a stated line rather than
+   an empty region, so "hidden from you" is never read as "your shop has no activity".
+
+**One deviation from the strategy, recorded rather than substituted silently.** TD4 said to mount a
+`QueryClientProvider` inside `DashboardShell` and adopt `useQuery` for the new tenant surfaces. **I
+did not.** The new panels use the codebase's existing `useEffect` + `AbortController` loaders. The
+reason is architectural rather than expedient: the shell already carries React Context for
+conversations and notifications, and adding a second server-state system beside them would leave two
+owners of "is this fresh" in one subtree — which is the failure TD4's own rationale names. The
+deviation is written into the design record with the condition under which TD4's plan should be
+reinstated (the panels grow, or a mutation needs cache invalidation), so the next reader inherits a
+decision rather than an omission.
+
+### Verification performed (after T4's frontend half)
+
+- New tests: **23 passed, 0 failed** (6 window-hook, 8 `KpiCard`, 9 Overview).
+- Full frontend suite: **112 files / 800 tests passed** (109/777 before this round).
+- The three tenant gates pass unchanged with the new components in scope.
+- `bunx tsc -b` exit 0; `bunx oxlint src` **0 errors**.
+- `bun run test:coverage:dashboard`: `KpiCard` and `TakingsCard` at **100% lines**, `Overview` at
+  **96.8%**, and `useDashboardWindow` inside the run. `dashboard-api.ts` reads low because its routes
+  are exercised through the components rather than by a direct test — the field-set contract it
+  declares is enforced on the server side by `TenantTakings`' enumeration test.
+- Backend is unchanged this round and was green at **2142 passed / 0 failed**.
+
+### Session 2026-09-21 — T5 (Usage and billing), issue #357
+
+**Task:** Implement slice **T5 — Usage and billing** from
+`.agents/plans/tenant-dashboard-implementation.ignore.md` and
+`.agents/plans/tenant-dashboard-implementation-strategy.md`, following TDD, on the current branch
+(`feature/tenant-dashboard-v2`, no branch switch).
+
+**Intended work (session start).** T0a–T4 are delivered (per the entries above and the closed T-slice
+issues). T5 is the next unblocked slice: it depends on T3 (the income ledger) and owns:
+
+- **E-11** `GET /orgs/{organizationId}/blossoms/top-up-packs` at `billing:manage`, offering exactly the
+  SKUs the existing `POST …/blossoms/top-ups` purchase accepts, so the dialog cannot hardcode a SKU
+  (B-4 / TD9).
+- **E-12** `GET /orgs/{organizationId}/billing/periods?take=12` at `billing:view`, built from
+  `UsageAccount` + `OrganizationSubscriptionSnapshot` + the Blossom ledger top-ups, with
+  `PlanListPriceLkr` **null whenever `PriceLkr == 0`** and a `SubscriptionPricesConfigured` flag
+  (C-4 / TD8). `PriceLkr` is never assigned anywhere, so "no row ⇒ null, else the column" would print
+  `LKR 0` as a plan price.
+- The **Usage** section: Blossom balance, usage-vs-limits against the entitlement table, burn rate and
+  the tenant statistics families behind `stats:view` / `stats:view:agent`, each **hidden** (never
+  403'd) when the permission is absent; the `whatsapp.monthly` row renders **"not measured"** because
+  no outbound send log exists (C-10).
+- The **Billing** section: plan card, entitlements, period history (E-12), the Blossom **statement**
+  (a statement, never an invoice — D8/Q2) and the top-up dialog over E-11. The word "invoices" is
+  deleted from the shell placeholder copy.
+- **S-62/S-63** in the statistics catalog; general docs, API docs and the OpenAPI spec updated for the
+  two new routes.
+
+**Constraints carried into this session.** No branch creation or switching. TDD: the failing test is
+written first. Tenant-isolation rules (route token `{organizationId:guid}`, an org-scoped policy, an
+explicit `OrganizationId` filter on every query). Honesty rules: `null` is "not measured" and never
+`0`; no fabricated invoice, price or WhatsApp meter; every richer panel hidden rather than 403'd.
+The tenant conformance, truthfulness and coverage gates from T0b apply to everything added here.
+
+**State found at session start.** `Aveline.Api.Tests/TenantBillingReadsTests.cs` exists as the
+red-state TDD file for E-12 (it does not compile: `TenantBillingReadService`, `BillingPeriodDto` and
+two incorrect model references are still outstanding). No E-11/E-12 endpoint, no
+`billing-api.ts` / `statistics-api.ts` and no `components/dashboard/{usage,billing}/**` exist yet.
+
+### T5 delivered (issue #357)
+
+**The red test was repaired first, then the production types written to make it pass.** The
+outstanding `TenantBillingReadsTests.cs` contained three genuine mistakes rather than design intent:
+two references to a non-existent `BlossomLedgerEntryType.TopUp` (the enum value is `TopUpGrant`), two
+to a non-existent `OccurredAt` column (`BlossomLedgerEntry` records `CreatedAt`), and a namespace that
+does not resolve in the test project. I corrected the test to the real model rather than shaping the
+model to the test, and it went from 13 compile errors to **9 passing tests**.
+
+**E-12 — the billing-period history.** `TenantBillingReadService` merges three sources into one row
+per `UsageAccount`: the account itself (limit, granted, adjusted, used, remaining), the day's
+`OrganizationSubscriptionSnapshot` — falling back to the live `OrganizationSubscription` for the
+current period, because the snapshot job runs daily and a period opened today has no snapshot yet —
+and the `BlossomLedgerEntry` top-ups inside the period, counted **and summed** so a reader can tell
+one large grant from ten small ones. Seven unit tests pin the behaviours, including org scoping and
+the `take` clamp.
+
+**The zero-price rule is the reason the endpoint exists in the shape it does.** The test file's own
+comment records the trap: `OrganizationSubscription.PriceLkr` is never assigned anywhere, so "no row ⇒
+null, else the column" would print `LKR 0` as the plan price of **every** subscription. The DTO
+therefore carries `PlanListPriceLkr` (null whenever the stored price is zero) **and**
+`SubscriptionPricesConfigured`. I also made `PlanTier`/`HasSubscriptionRow` come from the snapshot
+rather than `Organization.PlanTier`, because the latter would report a subscription for an
+organization that never had a billing row — the test seeds exactly that case.
+
+**E-11 — the top-up catalogue.** `GET …/blossoms/top-up-packs` on `BillingManagePolicy`, the same
+permission as the purchase it feeds (TD9). It performs the identical price-book lookup as
+`POST …/blossoms/top-ups`, so a pack offered cannot be rejected and a pack accepted cannot be
+missing; the integration test asserts a `Draft` row is *not* offered and a manager is 403.
+
+**One deliberate deviation from the plan's DTO, recorded rather than substituted silently.** The plan
+typed `TopUpBlossoms` as `int`. I used `decimal`, because Blossoms are `decimal` everywhere else and
+an `int` would silently truncate a fractional ledger delta — exactly the class of invented precision
+this slice exists to remove. The unit test's assertion compiles against either.
+
+**Frontend — the permission split is the design.** `UsagePanel` asks four separate questions
+(`billing:view:self`, `billing:view`, `stats:view`, `stats:view:agent`) and **fetches nothing it may
+not read**, so a panel that would 403 is never rendered broken. A staff member sees the balance and a
+stated line; a manager sees the API panels and not the agent panels; an owner sees both. Four DOM
+tests pin the matrix, plus the two honesty rules that matter most: `whatsapp.monthly` renders "not
+measured / no outbound send log exists" rather than the zero the server must return (C-10), and the
+agent cost tile is gated on `dataQuality.costInstrumented` rather than on the number, because the
+server returns `0` with the flag `false`.
+
+**`BillingPanel` renders a statement and never an invoice.** The plan card refuses to print a `0`
+list price (the same C-4 rule), the period table says "not configured", and the reconciliation banner
+keeps three states — reconciled / unknown / drift — so a failed check cannot read as "consistent". I
+added **rule 7** to the tenant truthfulness gate so "invoice" cannot reappear in shipped copy; writing
+it caught my own first draft, which said "a statement of account, not an invoice" *on screen* and
+therefore failed the rule it was describing.
+
+**One small shared-primitive change.** `components/ui/chart.tsx` now re-exports `Area`, `AreaChart`,
+`Bar`, `BarChart`, `CartesianGrid`, `Line`, `LineChart`, `ReferenceLine`, `XAxis` and `YAxis`, so the
+burn chart imports every primitive through the wrapper the truthfulness gate points at instead of
+from `recharts` directly. `connectNulls={false}` and an explicit empty-series "not measured" state are
+both in the chart.
+
+### Verification performed (after T5)
+
+- New backend tests: **17 passed, 0 failed** (9 E-12 unit, 8 E-11/E-12 integration).
+- **Full backend suite: 2220 passed, 0 failed** (2142 before this round), including the Testcontainers
+  suites.
+- New frontend tests: **19 API tests + 9 DOM tests = 28 passed, 0 failed**. Full frontend suite:
+  **116 files / 829 tests passed** (112/800 before).
+- `bunx tsc -b` exit 0; `bunx oxlint src` **0 errors** (68 pre-existing warnings, none in the new
+  files); tenant conformance, truthfulness (now 8 rules) and section gates green.
+- `bun run test:coverage:dashboard`: `billing-api.ts` **93.1% lines**, `statistics-api.ts` **72.7%**,
+  the usage components at **100% lines** except the balance card at 83%, the billing components
+  57–100%. The floor is still 0; T7 owns the ratchet.
+- `docs/api/openapi.yaml`: **150 paths** (148 before), zero dangling schema/parameter/response refs.
+
+### Not delivered in T5, and stated as such
+
+- **The 19 statistics fetchers exist but only a subset are rendered.** The Usage panel renders API
+  requests/errors/throttling/p95 and the quota table, and agent runs/tokens/cost. The remaining
+  fetchers (`endpoints`, `users`, `slow-requests`, `billable`, `step-latency`, `tools`, `failures`,
+  `approvals`) are typed and available but have no panel yet; the permission gating that hides the
+  families is in place, so adding a panel later is a rendering task rather than an authorization one.
+- **T6 and T7 are untouched.** Approvals, the Team members tab, Settings, the authenticated E2E walk
+  and the coverage ratchet remain open in issues #358 and #359.
+
+### Session 2026-09-21 (continued) — T6 (Approvals, Team, Settings), issue #358
+
+**Task:** Implement slice **T6 — Approvals, Team, Settings** from the tenant-dashboard plan and
+strategy, TDD-first, on `feature/tenant-dashboard-v2` (no branch switch).
+
+**Intended work (session start).** T5 is delivered (see above). T6 depends on T1 (the approvals
+actor fix and the new permissions/policies, all landed) and owns:
+
+- **E-10** `POST /orgs/{organizationId}/invitations/bulk` at `team:manage`, with the
+  `IdempotencyEndpointFilter` on **both** invitation routes, a `[1,10]` clamp on `count`, a
+  `[1,720]` clamp on `validityHours`, and `sendSummaryToOwner` reporting honestly whether the notice
+  was sent. The single route gains `validityHours` / `sendSummaryToOwner` too (F-4: they are currently
+  silently dropped).
+- **Q14 — the approval-verb split.** Staff hold `approvals:approve`, but `reject` cancels the order
+  and `revise` rewrites its money fields, so the split is the control that stops a staff approver
+  becoming a canceller: `/decision` (for `approve`) and `/approve` stay on `approvals:approve`,
+  `/reject` and `/revise` move to `orders:manage`. Because `/decision` accepts a decision **string**,
+  it must also refuse a `reject`/`revise` body from a caller without `orders:manage`, or the split is
+  a route rename rather than a control.
+- The **Approvals** section (queue, detail, approve/reject/revise with reject/revise hidden without
+  `orders:manage`), the **Team** section's Members tab (list, promote, demote, suspend, activate,
+  remove, with the caller's own row disabled-with-reason) alongside the existing Invitations tab, and
+  the **Settings** section (profile via `PATCH /orgs/{organizationId}`, settings + entitlements read,
+  API keys).
+- General docs, `docs/api/README.md`, `docs/api/openapi.yaml` and this log.
+
+**Constraints carried in.** No branch creation or switching. TDD: failing test first. Tenant
+isolation (`{organizationId:guid}`, org-scoped policy, explicit `OrganizationId` filter). Honesty:
+`null` is "not measured"; a 409 from a role change renders the server's own message; a 403 renders a
+permission message; Integrations stays owner-only. `'Active Workspace'` is replaced by the real owner
+count.
+
+**State found at session start.** T0a–T5 delivered. `TeamRoutePolicyTests` (the T0a source-scan) is
+in place and `ApprovalsController` already resolves the actor through `IUserRepository` (F-5 landed).
+There is **no** bulk invitation route, no `BulkCreateInvitationResponse`, no `lib/team-api.ts`, and
+no Approvals or Settings panels. `TeamManagement.tsx` still has a dead `members` tab state and the
+hardcoded `'Active Workspace'` label.
+
+### T6 delivered (issue #358)
+
+**E-10 — bulk invitations, with the two dropped fields restored.** `POST …/invitations/bulk` did not
+exist (F-4); the tenant panel called it and got a `404`, and the single route accepted
+`validityHours`/`sendSummaryToOwner` in the body while the record did not declare them, so both
+vanished. The route now mints `count` codes for one role, **clamps `count` to `[1,10]`** and
+`validityHours` to `[1,720]`, and reports `requestedCount`, `createdCount` and
+`effectiveValidityHours` side by side so the clamp is visible rather than silent. A per-organization
+limiter (`Invitations:CreateRateLimit`, 10/min) is the backstop; the clamp is the control.
+
+**`sendSummaryToOwner` is three-valued, not boolean.** `NotRequested | Dispatched | NotSent`, plus a
+note. "Not asked for" and "asked for but not sent" are different facts, and the old boolean could
+express neither. `Dispatched` means the notice was handed to the configured `IEmailService`; the
+repository's sender records a dispatch rather than a delivery, and the note says so. The summary
+carries **no code** — an email is a durable, forwarded artefact and a one-time staff code does not
+belong in a mailbox. A missing owner address is reported as `NotSent` with the reason rather than
+silently dropped.
+
+**Both creation routes now require `Idempotency-Key`.** A double-clicked bulk create would mint a
+duplicate batch of staff codes. This is a contract change the strategy asked for, and it broke
+`InvitationManagementEndpointsIntegrationTests`' five POSTs; I updated their helper to present a
+fresh key per request rather than weakening the contract. A replay returns the stored body with
+`Idempotency-Replayed: true`, and a test asserts the second call returns the **same codes** and that
+the pending list still holds two invitations, not four.
+
+**Q14 — the approval verbs are split by verb, not only by route.** Staff hold `approvals:approve`
+after Q8, but `reject` cancels the order and `revise` rewrites its discount, total and margin.
+`/approve` stays on `BoutiqueApprovalDecision`; `/reject` and `/revise` moved to
+`BoutiqueOrderManage`. **The route split alone would have been theatre**, because `POST /decision`
+carries its verb in the body: a staff member could still post `{"decision":"reject"}`. I added a
+body check in `ProcessDecision` — a `reject`/`revise` body from a caller without `orders:manage` is
+`403 order-manage-required` — and put the classification in one named function
+(`ApprovalDecisions.RequiresOrderManage`), so a future verb cannot be added without being classified.
+Four `ApprovalVerbSplitTests` pin the controller's own branch through a `TestAuthorizationService`;
+the panel hides the verbs it may not use, so a staff approver sees only *Approve*.
+
+**Frontend — Team, Approvals, Settings.** `lib/team-api.ts` owns the member lifecycle and the
+`memberActionBlockedReason` rule (the caller's own row and every owner row are disabled **with the
+reason**, because the server would answer `409`/`400` and a dead control is worse than an explained
+one). `TeamManagement` gained a Members tab beside the existing Invitations generator and replaced
+the literal `'Active Workspace'` with the real owner count. `lib/approvals-api.ts` owns the queue and
+`availableDecisions`, which is the client half of Q14. `lib/settings-api.ts` owns the profile,
+settings/entitlements and API keys; the profile form sends **only the changed fields**, the API key
+secret is shown once beside a sentence saying only a hash is stored, and Integrations deliberately
+stays out of Settings (TD5.5).
+
+**Two edits to existing tests, both mechanical.** `CommerceApprovalsTests` constructs
+`ApprovalsController` directly, so its three constructions gained a `TestAuthorizationService` (an
+in-process `IAuthorizationService` double); and the invitation integration helper now sends an
+idempotency key. Neither weakens an assertion.
+
+### Verification performed (after T6)
+
+- New backend suites: `BulkInvitationEndpointsIntegrationTests` (13), `ApprovalVerbSplitTests` (7),
+  plus `TestAuthorizationService`.
+- Invitation/organization/approval subset: **271 passed, 0 failed**. Commerce/approvals subset:
+  **113 passed, 0 failed**.
+- **Full backend suite: 2247 passed, 0 failed** (clean run, no concurrent load). An earlier full run
+  reported 2246/1 on `AdminReconciliationPostgresTests`; that test **passes in isolation** (3/3) and
+  touches nothing T6 changed, and the failure was my own doing — I had started a second `dotnet test`
+  concurrently, and the two runs competed for Testcontainers resources. The clean re-run is the
+  authoritative number; the flake is recorded rather than hidden because a result that depended on
+  not running anything else is worth saying out loud.
+- New frontend tests: `team-api` (8), `approvals-api` (7), `settings-api` (4),
+  `MembersTab.dom` (4), `ApprovalsPanel.dom` (2), `SettingsPanel.dom` (2).
+- Full frontend suite: **121 files / 854 tests passed**; `tsc -b` exit 0; `oxlint` 0 errors; tenant
+  conformance, truthfulness and section gates green.
+- `docs/api/openapi.yaml`: **156 paths**, zero dangling refs; the approvals routes were missing
+  entirely before T6 and are now documented with the verb split.
+
+### Not delivered in T6, and stated as such
+
+- **The authenticated E2E walk remains outstanding** (it needs a Clerk test session); the role matrix
+  is pinned by the integration tests and the two new DOM tests instead.
+- **The coverage ratchet is still 0.** T7 owns raising it to the achieved value; `approvals-api`,
+  `settings-api` and `team-api` are all at 100% lines, `MembersTab` at 76%, `ApprovalsPanel` at 49%.
+
+### Session 2026-09-21 (continued) — T7 (gates, docs, the coverage ratchet), issue #359
+
+**Task:** Implement slice **T7 — Gates, docs and the coverage ratchet** from the tenant-dashboard plan
+and strategy, TDD-first, on `feature/tenant-dashboard-v2` (no branch switch).
+
+**Intended work (session start).** T0–T6 are delivered (working tree, uncommitted). T7 depends on all
+of them and exclusively owns `tests/e2e/tenant-dashboard/**`, `docs/**`, `docs/api/**` and
+`vitest.dashboard-coverage.config.ts`. The acceptance criteria in issue #359 are:
+
+1. `tests/e2e/tenant-dashboard/signed-out.spec.ts` runs and asserts **zero** `/api/v1/orgs/` requests,
+   modelled on `tests/e2e/admin-console/console-access.spec.ts:12-40`. Signed out, `/app/b/{slug}`
+   must reach sign-in and render no dashboard chrome.
+2. The authenticated E2E walk is delivered **or** explicitly recorded as not delivered with the
+   reason (a Clerk test session and a running API are the prerequisites).
+3. `bun run test:coverage:dashboard` runs in CI with the ratchet raised from 0 to the value the
+   shipped code actually achieves (raised, never lowered).
+4. `docs/frontend/tenant-dashboard.md`, the `docs/api/README.md` Part C section, `docs/api/openapi.yaml`
+   and the S-catalog are complete for every endpoint shipped in T1–T6.
+5. Every new endpoint appears in the catalog **and** the spec, made mechanical rather than a promise.
+
+**State found at session start.** T0a–T6 delivered in the working tree. Already present from T5/T6:
+`docs/frontend/tenant-dashboard.md`; the `docs/api/README.md` tenant section; `docs/api/openapi.yaml`'s
+new paths; S-57…S-63 in `docs/backend/statistics-catalog.md`; `vitest.dashboard-coverage.config.ts` at
+floor 0; the `test:coverage:dashboard` script. **Missing:** the E2E spec tree, the CI step for the
+dashboard ratchet, the raised ratchet floors, and any mechanical check that a mapped route appears in
+both the README catalogue and the OpenAPI spec.
+
+**Constraints carried in.** No branch creation or switching. TDD: the E2E spec and the
+documentation-completeness check are written first and observed to fail before they pass. No invented
+coverage number: the ratchet is set from a measured run. The authenticated walk is stated as not
+delivered rather than implied.
+
+### T7 delivered (issue #359)
+
+**Every acceptance criterion in the issue is met, and the two that could not be met are stated.**
+
+**1. `tests/e2e/tenant-dashboard/signed-out.spec.ts` — delivered and executed.** Six tests, modelled on
+the console's `console-access.spec.ts`: the bare slug, three per-section URLs, the bare `/app` org
+switcher, and the retired "Demo mode" claim. Each asserts the visitor reaches `/sign-in`, that none of
+the shell's chrome renders (`Switch boutique`, `Reporting window`, `Top up`) and that **zero**
+`/api/v1/orgs/` requests are issued.
+
+**The harness had never run, and this slice repaired it.** The specs sit in the repo-level
+`tests/e2e/` tree, above `frontend/web/`, so Node could not resolve `@playwright/test` from their
+directory and **every** spec — including the pre-existing admin one — failed before collection with
+`Cannot find module '@playwright/test'`. Fixes, all in `frontend/web`: `test:e2e` now sets
+`NODE_PATH=node_modules` and both scripts carry `PLAYWRIGHT_BROWSERS_PATH`; the config header records
+why. Running the tree in parallel also starved Clerk's first load against one cold vite server, so the
+config now pins `workers: 1` with a 15 s expect bound. Result: **15 passed** (9 admin + 6 tenant),
+serial, ~1.3 min. The admin suite had never been executed either; it runs now.
+
+**2. The authenticated walk is not delivered, and the reason is stated in two places.**
+`docs/frontend/tenant-dashboard.md` and `docs/tests/README.md` both record that it needs a Clerk test
+session and a running API, and name what pins the role matrix instead (the backend integration tests,
+the shell's `allowedSections` DOM tests, and the Approvals/Team verb tests).
+
+**3. `bun run test:coverage:dashboard` now runs in CI, with the ratchet at the achieved value.**
+A step was added to the `test-web` job beside the global and admin runs. The floors were raised from 0
+to the measured values, and the measurement found two modules were not meaningfully gated:
+
+- **`lib/dashboard-api.ts` was at 9 % lines.** The Overview DOM test mocks the module, so nothing
+  tested the request shapes it builds. Added `dashboard-api.test.ts` (8 tests) → **100 %**.
+- **`hooks/useDashboardWindow.ts` was at 25 % functions.** Its test file covered only the pure
+  `resolveWindowRange` helper and never rendered the hook. Added `useDashboardWindow.dom.test.tsx`
+  (4 tests, asserting that `setWindow` moves the window **and** its range together) → **100 %**.
+
+The second fix also repaired a **pre-existing failure in the global gate**: `bun run test:coverage`
+was exiting 1 on `src/hooks/**` (69.23 % functions < 70) because T4 added the hook under `src/hooks/`
+without a test. T0b/T4/T5/T6 never ran the global coverage command, so it went unnoticed; it is green
+now (124 files / 868 tests). I observed the ratchet bind by raising a floor to 99 % and watching the
+run fail with four threshold errors before reverting — a gate that has never failed is a gate nobody
+has tested.
+
+**4. Documentation.** `docs/frontend/tenant-dashboard.md` gained a T7 section and a measured coverage
+table, and its status moved from "in progress" to "delivered across T0a–T7" with the gaps named.
+`docs/tests/README.md` lost three stale claims (it still described a 13-file, node-only web suite, a
+"four" file gate list of five, and a `test-web` job with no ratchets), gained an E2E section and
+correct coverage/CI tables, and its backend count moved 2,247 → **2,294**.
+
+**5. Every new endpoint appears in the catalogue and the spec — and the check found a real defect.**
+`Aveline.Api.Tests/TenantDashboardDocumentationTests.cs` (47 tests) scans the endpoint sources for all
+thirteen T1–T6 routes and asserts each has a README method+path row and an OpenAPI `path` +
+`operation`. **On its first run it failed**: E-9's `GET …/customers/{customerId}/interactions` had a
+path item carrying only its `post` operation and an orphaned `CustomerInteractionPage` schema, so the
+read the client detail sheet depends on was documented as if it did not exist. The `get:` operation is
+now written (`openapi.yaml`: 156 paths, 240 refs, 0 dangling).
+
+**Two deliberate deviations, recorded rather than hidden.**
+
+- **Shipped endpoints are documented in `docs/api/README.md` Part B, not Part C.** The issue says
+  "the Part C section", but Part C is titled "Planned endpoints"; documenting live routes there would
+  reproduce exactly the documented-but-unimplemented defect the catalog warns about. The dashboard
+  routes live in **B.20–B.23** and the old C.10/C.11 entries point at them. T2 established this and
+  the new test pins it.
+- **`S-57…S-63` were already present** (each landed in the slice that shipped its endpoint, per the
+  strategy). The catalog now ends at **S-63**, with no renumbering and no pre-documented route.
+
+**Findings that are not T7's to fix, recorded here so they are not lost.** `E-2`
+(`…/dashboard/revenue-series`) and `E-3` (`…/dashboard/top-items`) are shipped, cached and documented,
+and `lib/dashboard-api.ts` has typed clients for both, but **no tenant component calls them** — the
+Overview rebuild shipped the KPI strip, the reduced takings card and the focus feed and stopped there.
+The doc's "revenue trend" and "top items" are target state, and `docs/frontend/tenant-dashboard.md`
+now says so explicitly. Six shell components also remain at 0 % coverage; they are named in the config
+rather than excluded.
+
+### Verification performed (after T7)
+
+- **Full backend suite: 2,294 passed, 0 failed** (11 m 53 s; 2,247 + the 47 new documentation tests).
+- **Global web coverage: 124 files / 868 tests passed**, thresholds met (the gate that was failing
+  before this slice).
+- **Dashboard coverage ratchet: 124 files / 868 tests passed**, floors raised and green; observed to
+  fail when a floor is set above the achieved value.
+- **Playwright: 15 passed** (9 admin + 6 tenant), serial.
+- `bunx tsc -b` exit 0; `bunx oxlint src` 0 errors (72 pre-existing warnings).
+- `docs/api/openapi.yaml` parses: 156 paths, 240 `$ref`s, 0 dangling; the interactions path item now
+  carries both `get` and `post`.
+
+### Not delivered in T7, and stated as such
+
+- **The authenticated E2E walk**, for the reason above (no Clerk test session, no running API).
+- **A CI step for Playwright.** It needs a browser download and, for the authenticated walks, a
+  secret; that is a workflow decision with its own cache/secret surface, not a line in T7.
+- **`components/shared/**` still does not exist.** T4 kept the shared primitives in
+  `components/dashboard/**`; the dashboard config keeps the glob and a floor of 0 so the directory is
+  measured from the moment it first exists. The TD6 promotion remains open and is recorded in the doc.
+
+## Session 2026-09-21 (d) — Tenant dashboard defect fixes 1–4 (session start)
+
+**Task:** Fix four reported defects in the delivered tenant dashboard: (1) every panel shows "Try again"
+on a cold load; (2) the Team section foregrounds code generation instead of the team; (3) Usage and
+Billing have no upgrade path; (4) two clients exist but their Salons were never created.
+**Tool used:** Claude (DeepSeek Harness) AI coding agent
+**Branch:** `feature/tenant-dashboard-v2` (unchanged, nothing committed)
+
+### Session start — what I recorded before touching code
+
+- **Read the plans' successors first.** T0a–T7 are all logged as delivered, so these four are
+  regressions and gaps against a shipped slice, not new scope. No plan file was rewritten for them.
+- **Established the live state instead of guessing.** The dev API (`:5091`), Vite (`:5173`) and the
+  compose Postgres (`:5433`) were all running, so I queried the actual demo tenant rather than
+  reasoning from fixtures: one organisation (`aveline-colombo-07`), two clients
+  (`Samantha Arias`, `Jason smith`), and **zero** conversation rows with a non-null `CustomerId` —
+  two general Salons, one per staff member. That is defect 4 reproduced against real data.
+- **Refused to guess defect 1.** It is a first-request-only failure, so its cause depends on what
+  that request actually returned. I asked for credentials and a HAR rather than shipping a fix for
+  an imagined cause. The HAR was decisive and is the reason this entry can name the cause at all.
+
+### Defect 1 — the cause, established from evidence
+
+The HAR showed the first `/customers` request **succeeded (200 with a full body)** and that only
+**one** such request was ever sent: the two StrictMode mounts issued one request between them. The
+request interceptor's diagnostic then showed the only rejection the API client ever produced was
+`CanceledError` / `ERR_CANCELED`, from a request that never reached the network. The first mount's
+effect cleanup aborts its in-flight request before it is dispatched; `load` recorded that
+cancellation as a load failure and set the error card, and "Try again" then worked because a click
+issues a request no cleanup aborts. That matches the reported shape exactly.
+
+Two defects, one root cause — a request that was cancelled or superseded still drove the UI:
+
+- cancellation rendered as a failure (`isCanceledError` now separates the two), and
+- a slow response could overwrite a newer one, which blanked a correct table and is why the error
+  survived a later *successful* load in my first reproduction.
+
+I also found and fixed a bug I introduced while refactoring: routing every panel through a stable
+loader stopped the panels refetching on a search or filter change, because the effect's dependency
+was the now-stable function. `usePanelLoad` takes an explicit dependency list, and a regression test
+pins that typing in the client search issues a second request.
+
+### Defects 2–4, and the two the operator found while reviewing
+
+**Defect 2 — Team was about codes, not people.** The page was titled "Team & Code Generation"; the
+generator, its batch controls and three code-count cards filled the fold above the roster. The page
+is now the member list with two actions (`Invite staff`, `Pending codes (n)`), and generation moved
+into `team/InvitationDrawer.tsx`. Building it surfaced a contract fact worth recording: `GET
+…/invitations` returns `PendingInvitationDto`, documented in the source as a **non-secret view**, so
+there is no `code` field. My first draft rendered a pending list with a copy button, and my test
+mocks encoded a payload the server cannot send; `tsc` caught it against the real type. The list now
+identifies each code by recipient, role and remaining lifetime and offers only Revoke.
+
+I also reworked the drawer twice. The first version was visually poor (wrapping pill groups that made
+the form jump); the second moved the two views behind one switch and set every field in a single
+column with the primary action at the end of the flow. The tenant conformance gate then rejected raw
+`<button>` elements I had used for the segmented controls, so the same review replaced all five with
+the design system's `ToggleGroup`. I rendered the result in a real browser through a throwaway Vite
+harness (dark tokens first by mistake, then light) rather than guessing at the layout, and deleted
+the harness afterwards.
+
+The operator also reported that the page rendered a card inside a card with the "Members" title
+twice. `MembersTab` already owns its card, so the page no longer wraps it.
+
+**Defect 3 — no upgrade path.** Usage and Billing carry an `Upgrade plan` button that routes to
+`/app/b/{slug}/upgrade`, a section that exists on the route but not in the nav. `UpgradePanel` takes
+no payment and says so: there is no payment-provider client and no invoice entity (TD8/Q2), so the
+deliverable the operator asked for is a page that hands the decision to `/contact`.
+
+**Defect 4 — clients had no Salons.** Confirmed against the live database before writing code: two
+clients, and zero conversations with a non-null `CustomerId`. `POST …/customers` now creates the
+client's organization-shared Salon and seeds Aveline's greeting, and `CustomerSalonBackfillJob`
+repairs clients that predate it at startup. The repair is deliberately **not** a SQL migration: the
+greeting is C# domain text, and duplicating it in SQL would give repaired Salons a different opening
+message from new ones.
+
+### The decoupling the operator demanded, and why it was necessary
+
+My first attempt at the drawer reported two further defects — it showed the last selected chat room
+instead of Aveline, and the client's chat header showed Aveline's blossom — and I fixed them the
+obvious way: force the drawer to Aveline's thread when it opens.
+
+**That broke the Salon section**: the operator could no longer switch to a client's thread, because
+the two surfaces were reading one `activeConversationId`. Forcing either one moved the other. The
+operator's response — "we have to seriously decouple this" — was correct.
+
+`ConversationsContext` now holds **two independent thread slots**. The drawer has its own
+conversation id, messages, agent state, activity, loading and sending flags, with `openAveline` /
+`sendToAveline` / `decideAveline`; `openAveline` never calls the section's `openConversation`. Both
+slots share the conversation list and the SignalR connection, both join their own group (`JoinSalon`
+adds without leaving, so one connection can carry two threads), and the realtime handlers demultiplex
+by `conversationId`. The newest-page paging rule became `loadNewestPage` so the two threads cannot
+disagree about which messages are recent.
+
+I re-verified the section: opening a client's Salon no longer moves the drawer, and opening the
+drawer no longer moves the section, with a test for each.
+
+### Documentation
+
+- `docs/api/README.md`: the client-create row now names its Salon side effect, with a subsection on
+  why it is load-bearing and how the repair works; the conversations section documents that a
+  client-less, channel-less thread is the general Salon and that `JoinSalon` is additive.
+- `docs/frontend/tenant-dashboard.md`: six fix sections — the first-load rule and `usePanelLoad`, the
+  Team/drawer split, the upgrade path, eager client Salons, and the Salon naming and decoupling.
+- `docs/tests/README.md`: backend count 2,294 → **2,298**.
+- `docs/api/openapi.yaml`: unchanged at **156 paths / 240 refs**, and re-validated. No route was added
+  or removed by any of these fixes, so there was nothing to add to the spec; the spec test that pins
+  every documented route to a mapping still passes.
+
+### Verification
+
+- **Full backend suite: 2,298 passed, 0 failed** (22 m 31 s; 2,294 + 4 new).
+- **Full web suite: 130 files / 918 tests passed** (was 124 / 868 before this work).
+- `bun run test:coverage:dashboard` green with the T7 floors unchanged.
+- `bunx tsc -b` exit 0; `bunx oxlint src` 0 errors, 73 warnings against 72 before (the one addition is
+  the data-fetch effect in `InvitationDrawer`, which reports the same `set-state-in-effect` class the
+  repository already carries).
+- Tenant conformance, truthfulness and sections gates: 20 passed.
+- `docs/api/openapi.yaml` parses: 156 paths, 240 `$ref`s.
+
+### Not delivered, stated as such
+
+- **The authenticated Playwright walk.** The headed browser cannot launch in this sandbox (crashpad
+  needs a database path it is not given), and Clerk's device verification blocked the headless
+  sign-in even after the operator disabled TOTP. Defect 1 was therefore pinned from the operator's
+  HAR plus request-level instrumentation rather than from a browser walk I ran myself; the two
+  surfaces I could exercise without a session (the drawer and the Team page) I rendered and inspected
+  through a throwaway harness.
+- **A CI step for the backfill.** It runs per boot and is capped and idempotent; scheduling it is
+  unnecessary while it is this cheap, and a job would need its own locking story.
+- **Eager Salon creation covers the create path only.** Clients created by other writers (the agent's
+  identify flow, for example) rely on the boot repair rather than creating their own Salon.
+
+## Session 2026-09-21 (e) — The tenant Catalog section: chrome, cards, and the drawer
+
+The Catalog panel was the one tenant section that never got the dashboard rebuild. It hung off the
+shell with its own ad-hoc header and a centred dialog, and it was the last surface still quoting
+prices with a hard-coded `$` after `formatMoney` landed. This round brings it into the same shape as
+the rest of the dashboard.
+
+### The starting point was a half-finished refactor
+
+The operator's previous pass had extracted the floor-tag tool into `FloorTagStudio.tsx` and moved the
+piece form to a shadcn `Sheet`, but the extraction was incomplete: `AddProductModal.tsx` rendered
+`<FloorTagStudio>` without importing it, still carried every line of the old QR-studio state and the
+old `$`-printing `handlePrintTag`, and its JSX was unbalanced (two `FormSection`s never closed). It
+did not parse — `Expected corresponding JSX closing tag for <div>. (1170:10)`. I finished the
+extraction rather than reverting it: added the import, deleted the dead state, handlers and print
+template, closed the sections, and moved the submit footer outside the scroll region so the primary
+action stays reachable.
+
+### What changed
+
+- **Chrome.** `CatalogPanel` has the standard eyebrow / serif-heading / description header with
+  Refresh and Add piece, one section switcher carrying counts, and four `CatalogStat` chips driven by
+  explicit measured flags: an unreturned list reads **"not measured"**, a measured empty list is a
+  real `0`.
+- **Cards.** `ProductCard` leads with the garment, the stock state as a word and tone, the price
+  through `formatMoney` and the visual attributes; row actions collapse into one menu; there is no
+  confidence badge, because the list payload carries no score.
+- **The drawer.** `AddProductModal` is a right-side `Sheet` with six numbered steps, a labelled
+  `ToggleGroup` for the upload/URL source, and `Input` for the file and colour pickers instead of raw
+  controls.
+- **Money.** The last hard-coded `$` renderers — `SourcingTab` (target price, atelier cost) and
+  `SuppliersTab` (MOQ, whose `DollarSign` glyph became `Coins`) — now call `formatMoney`; the print tag
+  prices through it as well. The sourcing design doc's `$1,800` example became `LKR 1,800`.
+- **Conformance.** `space-y-*` became `gap`; the print stylesheet uses CSS named colours; the colour
+  fallback moved to `DEFAULT_COLOR_HEX` in `lib/catalog-api.ts`, so no dashboard component spells a
+  hex literal of its own.
+- **F-9.** The drawer's backend analysis and image upload now require a real organisation id; with
+  none, the analysis falls back to the client-side extractor and the upload is skipped.
+
+### TDD
+
+`AddProductModal.dom.test.tsx` (5) and `FloorTagStudio.dom.test.tsx` (4) pin the finished shape: the
+drawer is `right-0` rather than `inset-x-0`, the titles are Add/Edit piece, the source control is a
+labelled radiogroup, no `$` renders, a missing organisation disables the downloads while printing
+still works, a missing price is "not measured", and submit passes the typed piece to `onSave`.
+
+### Verification
+
+- **Full web suite: 133 files / 931 tests passed**; this round added 2 files and 9 tests.
+- Tenant conformance, truthfulness and sections gates: **20 passed**.
+- `bunx tsc -b` exit 0; `bunx oxlint src` 0 errors (the catalog subtree keeps its 5 pre-existing
+  warnings, the `Math.random` SKU default and the form-reset effect).
+- No branch switch and no commit: the tree stays on `feature/tenant-dashboard-v2`, work in the
+  working tree only.
+
+### Documentation
+
+- `docs/frontend/tenant-dashboard.md`: a **Catalog** row in the section table and a new
+  "The Catalog section" section covering the chrome, the honest chips, the grid and cards, the drawer,
+  the one money formatter, F-9 and the tests.
+- This log.
+
+## Session 2026-09-21 (f) — The boutique reads Blossoms, not tokens
+
+The operator's instruction: "In the pricing and billing section tenant shouldn't have the ability to
+know the token usage, their primary usage statistics is blossom. The ai workflow reason should be also
+removed." They then chose the deepest option — a **full lockout, including permissions** — and, when
+the statement still had a Reason column, chose to replace it with the grant's expiry.
+
+### The lockout, at every layer
+
+Four layers each claimed the same thing, and three of them were only hiding it:
+
+- **The permission.** `stats:view:agent` was removed from `org:boutique_owner`. It is now held only by
+  the Aveline team roles (`moderator`, `admin`, `owner`), which is where the admin console reads the
+  same family from. The four boutique roles hold none of it.
+- **The routes.** `MapOrgEndpoints` was deleted from `AgentStatisticsEndpoints`, and with it the
+  `StatsAgentPolicy` ("StatsAgent") and its registration. Every
+  `/api/v1/orgs/{id}/statistics/agents/**` path answers **404**, not 401 and not 403 — the surface does
+  not exist for a tenant. The team-only `/admin/statistics/agents/{overview,runs,reliability}` subset
+  (behind `stats:system`) is untouched.
+- **The client.** `lib/statistics-api.ts` lost every agent type, every `fetchAgent*` and both
+  `canRead*Statistics` helpers; `AgentUsagePanel.tsx` was deleted and `UsagePanel` no longer fetches or
+  renders it. A test asserts the module exports no `fetchAgent*` at all, so a reintroduction fails
+  before a panel can call it.
+- **The statement.** The org-scoped Blossom statement now runs through a `ForBoutique` projection: a
+  consumption row's reason becomes `"Blossom consumption."`, and its source reference (the agent
+  workflow id), provider, model, normalized units and USD cost are nulled. The
+  `GET /api/v1/admin/orgs/{id}/blossoms/statement` route keeps the full detail, so the fact was
+  redacted at the tenant boundary rather than deleted. The server-side `q` filter still matches the
+  provider/model/workflow id, because that is how the row is found.
+
+### The statement column
+
+Neutralising the reason text left the column itself in place, and the operator wanted it gone: "it
+should be replaced with something else." **Reason became Expires** — a grant's expiry date, an em
+dash for a consumption row, which does not expire. The field already existed in `BlossomStatementItem`
+and no surface used it, so the replacement adds information rather than just removing some.
+
+### TDD
+
+- `AgentStatisticsEndpointsTests`: nine org paths asserted to return **404** for an owner token.
+- `BlossomEndpointsIntegrationTests`: the org statement hides operator detail (reason, sourceRef,
+  provider, model, units, cost), and the admin statement keeps it.
+- `PermissionsCatalogTests`: no boutique role holds `stats:view:agent`; the team roles still do.
+- `permissions.test.ts`: the same lockout in the client mirror.
+- `statistics-api.test.ts`: the module exports no agent surface.
+- `UsagePanel.dom.test.tsx`: an owner sees no "Agentic usage", no "total tokens", no "provider cost".
+- `BillingPanel.dom.test.tsx`: the statement shows **Expires** and never "AI workflow".
+
+### Verification
+
+- **Full backend suite: 2,305 passed, 0 failed** (18 m 10 s).
+- **Full web suite: 133 files / 930 tests passed.**
+- The affected backend suites alone: **75 passed** (permissions catalog, agent endpoints, blossom
+  endpoints); `dotnet build` of the API and the test project both 0 errors.
+- `tsc -b` exit 0; the dashboard coverage ratchet (`test:coverage:dashboard`) exit 0.
+- `openapi.yaml` parses at **146 paths / 231 refs, 0 dangling**.
+- No branch switch and no commit: the tree stays on `feature/tenant-dashboard-v2`.
+
+### Documentation
+
+- `docs/architecture/authorization.md`, `docs/api/README.md`: the `org:boutique_owner` grant row loses
+  `stats:view:agent`, §C.6 is banner-marked as removed, and the statement section documents the
+  redaction and the nulled fields.
+- `docs/backend/statistics-catalog.md`: §5 is banner-marked team-only.
+- `docs/frontend/tenant-dashboard.md`: the Usage permission table loses the agentic row, and the
+  Billing section documents the Expires column and the redaction.
+- `docs/api/openapi.yaml`: the ten `/api/v1/orgs/{organizationId}/statistics/agents/**` path items
+  were deleted, so the spec no longer advertises routes that are not mounted. It parses clean at
+  **146 paths / 231 `$ref`s, 0 dangling** (was 156 / 240).
+- `docs/backend/backend-requirements.md`: the route table and the permission table state the removal.
+- This log.
+
+## Session 2026-09-21 (g) — The Plan card explains itself
+
+The operator sent a screenshot of the Billing section's Plan card: a pill reading **"None"**, a
+**"no list price configured"** figure, and no icons. "I have no idea what the none means, or why the
+list price is not configured. Add some icons here too."
+
+Both are the same defect: the card rendered the server's vocabulary without the sentence that makes
+it mean something.
+
+- **"None" is not a plan state.** `SubscriptionService.GetSubscriptionAsync` returns the literal
+  `"None"` when no `OrganizationSubscriptions` row exists — the absence of a billing record, not a
+  subscription that is somehow off. The badge now reads **"No billing record"** with a
+  `CircleDashed` glyph, and a note under the figures says the plan and its limits are read from the
+  assigned tier and nothing is charged. The other enum values (`Active`, `Trialing`, `PastDue`,
+  `Cancelled`, `Expired`) each get their own label, tone and sentence; an unknown value is shown
+  verbatim with a statement that the dashboard has no plainer wording for it.
+- **"no list price configured" is a fact about the column, not the plan.** `SubscriptionView.PriceLkr`
+  is never assigned in the product, so it is permanently `0`; rendering it would print `LKR 0.00` as
+  the price of a paid plan. The label stays (the honesty rule is right) and the card now says why:
+  no LKR list price is on file, no amount is shown rather than a fabricated one, and no payment
+  provider is connected so nothing here is a charge.
+- **Icons.** The card leads with a `Gem` tile; the four facts carry `Tag` (list price), `Users`
+  (seats), `CalendarDays` (period start) and `CalendarCheck` (period end); the status badge carries
+  its state glyph; and the explanatory note carries `Info`.
+
+Tested in `BillingPanel.dom.test.tsx`: a `None` subscription renders "No billing record" and the
+"no subscription row exists" sentence and never the bare string `None`; and a zero list price renders
+both "no list price configured" and the "no LKR list price on file" explanation. The tenant
+conformance and truthfulness gates stay green.
+
+### Verification
+
+- `tsc -b` exit 0; **full web suite: 133 files / 932 tests passed** (the two new billing DOM tests).
+- Tenant conformance and truthfulness gates: **15 passed**; `oxlint` 0 errors on the billing tree.
+- `dotnet build` of the API and the test project: 0 errors.
+- No branch switch and no commit: the tree stays on `feature/tenant-dashboard-v2`.
+
+## Session 2026-09-22 — Web media picker and Salon attachments (session start)
+
+**Task:** a new workstream, approved by the product owner and driven from a strategy document
+rather than a plan: build the **media picker and file-attachment UI for the web dashboard**, which
+the Cloudinary media workstream deliberately did not include (it shipped the backend and the agent
+bridge; only Flutter had a picker).
+**Tool used:** DeepSeek Harness (deepseek-flash) orchestrating; implementation delegated to subagents.
+**Branch:** `cloudinary-media-and-salon-image` — no branch created or switched; the orchestrator makes
+every commit.
+
+### Why this exists
+
+The completed workstream left a real gap: `frontend/web/src/components/conversation/Composer.tsx` is
+text-only while `blocks.tsx` already renders an `AttachmentBlock`, so a boutique on the web dashboard
+can *see* an attachment and cannot *create* one. A subagent was asked to design the strategy; the
+result is `.agents/plans/web-media-picker-and-attachments-implementation-strategy.md` (899 lines,
+git-ignored by convention).
+
+### The owner's decisions, applied
+
+| # | Question | Answer |
+|---|---|---|
+| Q1 | Per-org/per-thread attachment cap | **Deferred**, with the residual recorded (`24 h × upload rate × 5 MB` per member, bounded in steady state by the 24 h unbound sweep and the 7 d retention job) |
+| Q2 | PDFs in v1 | **Yes** (accept, Open/Download) |
+| Q3 | HEIC over the cap in Chrome | **Accept** with a clear message; no server-side transcode |
+| Q4 | Pasted-URL field in the composer | **Leave it out** — the SSRF kill switch defaults `false`, so a field would always `400` |
+| Q5 | Analysability note | **Per file**, driven by the response's sniffed `contentType` |
+| Q6 | Retention clock | **On upload** (so a photo sent 23 h later is deleted ~6 d after send — accepted and to be documented) |
+| Q7 | Flutter parity | **Now**, not as follow-ups — this added slice **W7** to the strategy's six |
+
+### Slices and issues (created before implementation)
+
+| Issue | Slice | Lane | What |
+|---|---|---|---|
+| [#380](https://github.com/KavinduNirmal/aveline/issues/380) | W5 | L3 | the idempotent-retry backend fix (replay check before attachment resolution) |
+| [#381](https://github.com/KavinduNirmal/aveline/issues/381) | W1 | L6 | the web API-client seam (upload helper + send parameters), inert |
+| [#382](https://github.com/KavinduNirmal/aveline/issues/382) | W2 | L6 | `attachment-preparation` + pending-tray context state |
+| [#383](https://github.com/KavinduNirmal/aveline/issues/383) | W3 | L6 | the Composer affordance and `AttachmentTray` |
+| [#384](https://github.com/KavinduNirmal/aveline/issues/384) | W4 | L6 | interactive rendering (authenticated blob fetch, viewer) |
+| [#385](https://github.com/KavinduNirmal/aveline/issues/385) | W7 | L10 | Flutter parity: client-side 5-cap and rendered failures |
+| [#386](https://github.com/KavinduNirmal/aveline/issues/386) | W6 | L8 | documentation |
+
+### A real defect found by the design, and verified by the orchestrator
+
+`ConversationService.SendStaffNoteAsync` resolves and validates attachments (`:227`) **before** the
+`clientMessageId` replay check (`:233-241`). A retry of one composed message that carries attachments
+therefore re-resolves already-bound ids, throws `AttachmentBindingException`, and answers
+`400 "…already attached"` instead of returning the stored message — which is precisely what an
+idempotency key is for.
+
+Two things make it worse and both were confirmed in the code rather than assumed:
+
+- the suite cannot catch it: every replay case uses `null` attachments and every binding case uses a
+  `null` key;
+- **the web client never sends `clientMessageId` at all** (`conversations-api.ts:88-97` posts
+  `{ text }`), while Flutter does (`api_thread_repository.dart:104`). So a web timeout-retry already
+  duplicates the note silently today, and would become a hard `400` the moment attachments are added.
+
+W5 fixes the ordering and W3 passes the key; the pair is what makes retry-with-attachments safe.
+
+### Baseline before delegation
+
+- `dotnet build Aveline.Api/Aveline.Api.sln` — 0 errors (the Cloudinary workstream's last full run was
+  **2591 passed / 0 failed**).
+- `bun` 1.3.14 present; `cd frontend/web && bun run test` is the web gate.
+- The strategy's own finding: the repo's only existing multipart helper (`uploadCatalogImage`) is
+  **dead code**, so the multipart header pattern has never met the real API. W3 therefore carries a
+  browser check through the Vite proxy, and if a browser cannot be run here that must be reported as
+  outstanding rather than claimed.
+
+### Session end — the web media picker and Salon attachments, delivered
+
+All seven slices landed, one commit each by the orchestrator, and the owner's seven decisions applied.
+
+| Commit | Slice | What |
+|---|---|---|
+| `3b3ec72` | W5 | the idempotent-retry backend fix |
+| `43cf12a` | W1 | the web attachment API seam (inert) |
+| `4b55f30` | W2 | attachment preparation and the pending tray |
+| `3aace35` | W3+W4 | the composer affordance, the tray, and interactive rendering |
+| `efa6b09` | W7 | Flutter parity: the client-side 5-cap and rendered failures |
+
+**Verification at the end of this workstream:** 2591 .NET tests green (the full suite, re-run because W5
+touched `ConversationService`); 992 web tests across 138 files with no unhandled rejections; 1017
+Flutter tests; `flutter analyze` clean; `bun run lint` unchanged at its pre-existing warning count;
+`bun run build` passing.
+
+#### The two defects this workstream found, not wrote
+
+**1. The replay check ran after attachment resolution (fixed in W5).** A retry of one composed message
+that carried attachments answered `400 "…already attached"` instead of returning the stored row,
+because `ResolveAttachmentsAsync` ran before the `clientMessageId` lookup. The suite could not catch
+it: every replay case used `null` attachments and every binding case used a `null` key. The new case
+combines them and was observed failing first with the real `AttachmentBindingException`. One intended
+behaviour change: the same key with different words now answers `409` even when attachments are
+present, which is the correct answer for that condition.
+
+**2. `send` swallowed its failure (fixed in `3aace35`).** It marked the optimistic row `failed` and
+still resolved, so no caller could distinguish a failed send from a confirmed one — which would have
+made the composer clear the textarea on failure, contradicting the slice's own requirement that only
+a confirmed send clears it. It now rethrows. Fixing it surfaced two silent unhandled rejections in test
+harnesses, which were corrected the same way the real composer handles it.
+
+#### Deliberate deviations, each with a reason
+
+- **W7 was not in the strategy.** The owner chose parity *now* rather than as follow-ups, so the two
+  Flutter gaps became a slice: the client-side 5-cap (mirroring the server's sentence) and rendering
+  the failure states that were previously only `debugPrint`ed or left unrendered.
+- **Upload progress is indeterminate, not a percentage.** The API helper measures nothing, so a bar
+  would have been fabricated. The tray test asserts that no `%` is rendered.
+- **Rendering fetches through the authenticated client, never a token URL.** A minted attachment token
+  is anonymous with a 900 s TTL; caching one in an `<img src>` would go stale silently mid-session.
+- **The `retryable` flag replaced prose matching.** The tray had inferred "do not offer retry" by
+  matching two error sentences; the chip now carries the classification set where the HTTP status is
+  known, so the control cannot drift when the wording changes.
+- **A Kotlin compiler cache was committed and then removed.** `git add frontend/aveline_mobile` swept
+  in `android/.kotlin/sessions/*.salive`. The commit was amended to drop it and `.gitignore` gained
+  `frontend/aveline_mobile/android/.kotlin/`, alongside the already-ignored `.gradle/`.
+- **The branch received a merge of `origin/development`** (the owner's action, author
+  `KavinduNirmal`, 18:32). It brought the tenant-dashboard slices and thereby resolved away the
+  branch-staleness banner added earlier in the previous workstream, leaving the F-7 delivery note
+  correct. No action was needed, but it is worth recording that the branch is no longer a
+  develop-free fork.
+
+#### What is outstanding, stated plainly
+
+- **The authenticated end-to-end browser walk.** A real headless browser disproved the multipart-header
+  risk (the browser supplies the boundary; the shared client's JSON default does not leak, on the
+  direct path and through the Vite proxy), but the signed-in walk — pick a JPEG, send, see the bubble —
+  needs a Clerk session this environment does not provide. The exact eight steps are recorded in
+  `docs/security/media-access.md` §10.7.
+- **The web attachment response was never fetched against a real provider here**; the rendering tests
+  mock the authenticated client.
+- **The web byte cache is process-lifetime and unbounded per session** (mirroring mobile's documented
+  residual); acceptable now because rows are immutable, a reload clears it, object URLs are revoked on
+  unmount, and 7-day retention bounds the fetchable population.
+- **No per-org or per-thread attachment cap** (owner decision Q1): the residual is
+  `24 h × upload rate × 5 MB` per member, bounded in steady state by the 24 h sweep and the 7-day job.
+- **`conversations-api.test.ts` asserts the multipart header on a mocked client only.** The header's
+  real behaviour was proven separately in a browser, which is why the browser check mattered.
+
+## Session 2026-09-22 (b) — The catalog media tier, the vision image target, and the colour nobody read (session start)
+
+**Task:** the owner uploaded catalog pieces and reported that they went to the **local database instead
+of Cloudinary**, that the vision agent then could not read the image (the only URL for it was a
+localhost/in-network route), and later that the **colour identification was wrong** — first the chip
+said "Emerald Green" for a fuchsia dress, then the colour *dot* reverted to a default.
+**Tool used:** DeepSeek Harness (deepseek-flash). The previous workstream's agents had been terminated;
+two of the three dispatched here were also cut off mid-flight (one before reporting, one after its first
+follow-up), so their work was verified from the tree rather than from a report, and the remainder was
+finished directly.
+**Branch:** `cloudinary-media-and-salon-image` — no branch created or switched; the orchestrator commits.
+
+### The four causes, each reproduced rather than inferred
+
+**RC-1 — the Cloudinary write tier had never been selected.** `Media:Provider` defaults to `database`
+(`MediaOptions.cs:13`), and `docker-compose.yml` passed **none** of the `Media__*` keys (the `api`
+service has no `env_file:`). The operator's documented `Media__Provider=cloudinary` opt-in in
+`.env.example` was therefore inert: `docker inspect aveline_api` showed `Media__SigningKey` and
+`Media__PublicBaseUrl` but no `Media__Provider`, and all eight `InventoryImages` rows carried
+`StorageProvider='database'`, an empty `StorageKey` and the bytes in `ImageData`. The credential was
+also incomplete (`CLOUDINARY_CLOUD_NAME` and `CLOUDINARY_URL` both empty), and
+`MediaOptionsValidator.ValidateOrThrow` refuses the boot on an incomplete credential, so the switch
+could not have booted even with the pass-through.
+
+**RC-2 — a *relative* URL reached the vision provider.** `AddProductModal.handleProcessFile` uploads the
+compressed image and then does `setImageUrl(uploadRes.url)`; that `url` is the relative Aveline route
+`/api/v1/orgs/{orgId}/catalog/images/{id}` (the literal value stored in `InventoryImages.ImageUrl`). A
+later "Analyze" click posted that relative path, `VisionService` forwarded it verbatim into
+`image_url.url`, and the provider answered
+`400 {"error":{"message":".messages[0]: Unsupported image_url format"}}`. `VisionService` then logged
+and silently returned `GenerateDeterministicAnalysis(...)` — a filename-derived colour with
+`IsFallback=true` and a primed `ConfidenceScore=0.95`. The API log timestamp `16:08:30` matches the row
+created at `16:08:25`. Reproduced directly against the configured endpoint: a relative path gives that
+exact error, `http://localhost:5091/…` and `http://api:8080/…` give "Failed to download image", and a
+`data:` URL gives **200**.
+
+**RC-3 — the agent's `HTTP 500`.** `aveline_agent` logged `Image analysis failed: vision backend error
+(HTTP 500)` twice: the reference arm minted a media token and threw
+`Media:SigningKey must be configured`. Compose now passes `MEDIA_SIGNING_KEY`, and the reference arm no
+longer mints at all.
+
+**RC-4 — the colour was computed, sent, and dropped twice over.** Two independent faults, both found by
+following the owner's screenshot rather than by reading the tests:
+- the **wire name**: `ImageAnalysisResultDto.PrimaryColor` is pinned to snake_case `primary_color` (for
+  the Python consumer) while the web read `raw.primaryColor`, so the colour was always `undefined` and
+  the literal `|| 'Emerald Green'` in `normalizeVisionAnalysis` won. That is the Elle plan's G5, fixed on
+  the .NET→Python boundary and left broken on the .NET→web one. An existing test appeared to cover it,
+  but its sample value *was* the default literal, so it passed for the wrong reason.
+- the **hex had nowhere to live**: the model's real `colorHex` (`#D5006D` for the dress) reached
+  `AddProductModal`, was put on the item, and was then omitted from the API payload;
+  `InventoryItems` has no `ColorHex` column and `InventoryItemDto` has no such field, so
+  `normalizeInventoryItem`'s `raw.colorHex || '#4B5563'` — a hardcoded gray — became the dot.
+
+### A fifth defect, found while proving the fix portable
+
+`thinking = new { type = "disabled" }` was sent on every request because DeepSeek's reasoning tokens
+otherwise consume the whole output budget (measured: 2049 reasoning tokens and no JSON at 2048). The
+comment claimed "Providers that do not know the field ignore it". **That is false**: Gemini's
+OpenAI-compatible endpoint answers `400 Invalid JSON payload received. Unknown name "thinking": Cannot
+find field.` Together with `.env.example` recommending a Gemini key and a **retired** model id
+(`gemini-2.0-flash` now answers `404`), a deployment following the documentation would have 400'd on
+every analysis and silently shown the filename-derived fallback — the same failure class as RC-2, masked
+locally because `.env` overrides all three `VISION_*` values to DeepSeek.
+
+### Fixes, in order
+
+| Cause | Fix |
+|---|---|
+| RC-1 | `docker-compose.yml` now passes **every** documented `Media__*` key through (17 names), not only the three rollout flags: the same inert-switch class applied to the image-URL kill switch and the Production escape hatch. `.env` set to `cloudinary` / `true` / `false`; docs corrected |
+| RC-2 server | `VisionService` classifies the target before spending a call and **refuses** an unusable one with `ArgumentException`; both analyze-image endpoints map it to `400`, which also fixed a blank target being a `500` |
+| RC-2 client | the drawer remembers the uploaded row id and re-analyses by `imageRefKind=inventoryImage`, so the provider is handed the stored bytes inline; a relative path is never posted (the modal skips the backend entirely when it has no usable target) |
+| RC-4a | the web reads `primary_color`, and `normalizeVisionAnalysis` no longer invents `'Emerald Green'`, `'Pure Mulberry Silk'`, `'Gold Zari Brocade'`, `'Contemporary Luxe'` or a synthesized couture description |
+| RC-4b | `ColorHex` persisted on `InventoryItems` (model, DTOs, service, migration) and carried in the web payload; the client stops defaulting an unknown hex to gray |
+| RC-5 | `thinking` is sent only when the resolved provider is DeepSeek; the provider guidance and the compose/appsettings defaults were made coherent |
+| hygiene | `VisualService` no longer injects the mint service it stopped using, and its XML doc no longer claims it mints a tokenised URL |
+
+### Baseline, and what the gates said
+
+- Full .NET suite **2930 passed / 0 failed** (25 m 34 s), up from 2910, after the vision-target slice.
+- Web full suite 1013 passed with **one** failure, `tenant-conformance.test.ts` rule 2. That rule greps
+  the **raw source text**, and two new *comments* in `AddProductModal.tsx` contained the literal
+  `<input`; rewording them fixed it. Not a component regression, and worth recording because the rule
+  reads comments as code.
+- Python 427 passed / 2 skipped **only** with the session's leaked `.env` variables unset:
+  `test_config.py::test_defaults_are_sane` asserts library defaults and the ambient `LLM_MODEL` etc.
+  override them. Proven by running the file under `env -i` (9/9 green), so the failure was environment
+  contamination, not a regression.
+- `flutter analyze` could not be re-run in this session: the Flutter SDK's `bin/cache` is read-only
+  under the current sandbox policy and `update_engine_version.sh` fails there. This change set contains
+  **no Dart changes** (`git status` shows only the unrelated `android/app/build.gradle.kts` and
+  `android/gradle.properties`, which belong to another workstream and were deliberately left
+  uncommitted), so the Flutter gate is untouched; the previously verified 1017 tests / clean analyze
+  stand.
+
+### Live end-to-end proof against the running stack
+
+- `GET /api/v1/orgs/{org}/catalog/images/{id}` for a Cloudinary row answers **302** to
+  `https://res.cloudinary.com/dj4k3qu2n/image/upload/w_800,f_auto,q_auto/v…/aveline/{org}/catalog/{id}.jpg`.
+- `POST /internal/visual/analyze-image` with `imageRefKind=inventoryImage` returns **200** with
+  `isFallback: false`, `primary_color: "Fuchsia Pink"`, `colorHex: "#D5006D"` — read back from
+  Cloudinary with `DualWrite=false`, which is the new code path that matters.
+- The same row addressed by its relative URL returns **400** with the new refusal message; a blank
+  target returns **400** instead of the old 500.
+- A fresh write through `/internal/visual/inventory` stored `StorageProvider='cloudinary'` with a real
+  `StorageKey` and **no** `ImageData`, and the CDN asset resolved (verified, then destroyed and the test
+  item deleted).
+- Before the composer change, the inlined-bytes approach was proven safe at the ceiling: DeepSeek
+  accepts a **3.24 M-character** `data:` URL (a 2.43 MB PNG, above the 2 MB catalog cap) with HTTP 200
+  in ~10.5 s, so the documented 8192-character limit applies to external URLs, not base64.
+
+### Outstanding, stated plainly
+
+- **The four pre-existing items keep their fabricated colour.** Their `Color` was written as
+  "Emerald Green" before the fix and no re-analysis is triggered by editing an item; correcting them
+  means re-running the analysis per item and updating the row, which needs the owner's go-ahead.
+- The authenticated browser walk for the drawer still needs a Clerk session; the live proof above used
+  the internal agent routes, which exercise the same row seams.
+- `Media:VisionUsePrivateDownload` remains declared and unread; `Vision:TimeoutSeconds`/`MaxRetries`
+  from the Elle plan are still unimplemented; `detail: "original"` is still not sent.
+- `AddProductModal` still invents a few save-time fallbacks (`'Multicolor'`, `'Silk Blend'`,
+  `'Classic Luxury'`, `confidenceScore ?? 0.92`). They were left because the reported defect was the
+  colour, but they are the same class as the ones removed and are recorded here rather than forgotten.
+
+---
+
+## Session 2026-09-23 — Three ADR-023 follow-ups, and the handbook knowledge base
+
+Three requests, in order: implement the minimal-context plan; stop Aveline answering a customer with
+the routing note "Treated this as a general inquiry."; and give her a vector-searchable handbook.
+The first two were committed before the third was designed, on the owner's instruction, so the
+handbook work started from a clean tree.
+
+### The minimal-context plan, verified rather than assumed
+
+`.agents/plans/subagent-minimal-context-implementation.ignore.md` claimed a missing parameter at
+three call sites, made silent by a second defect. Both halves held up against the code:
+
+- `ConciergeState` carried `history`/`thread_summary`/`pinned_slots` and exactly one consumer read
+  them (the supervisor's prompt). The three specialist nodes built fixed dictionaries with no context
+  key, and **none of the three state schemas declared one**.
+- The plan's central trap was real and worth the experiment it demanded: LangGraph drops undeclared
+  state keys silently, so a fix that touched only the invocation sites would pass a mocked test and do
+  nothing in production.
+
+Two plan claims did **not** survive contact and were corrected in the implementation rather than
+copied:
+
+- **`parse_visual_intent` is rule-based**, not an LLM call, so forwarding history does not help it
+  resolve "the pink one". The context reaches Elle's styling prompt only. Documented as such instead
+  of claiming a behavioural gain that does not exist.
+- **`_CONTEXT_MAX_CHARS = 4000` would have been a second, tighter budget** than
+  `context_window_tokens` (2000 tokens ≈ 8000 characters), silently truncating context the window
+  deliberately kept. Omitted; the renderer adds no budget of its own.
+
+`_context_fields(state)` was introduced as one spread at all four call sites instead of writing the
+same three keys out four times, which is what stops the next sub-graph invocation from quietly
+omitting them.
+
+### Aveline answers, instead of describing her routing
+
+The screenshot was a real defect with a cheap fix, and the cheapest part was noticing that the LLM
+call already happened: the supervisor is consulted **exactly** for `general_inquiry`, and it was
+returning a routing plan while Aveline posted a note *about* the plan. Giving it a `reply` field uses
+the call that was already being paid for.
+
+Both bounds are enforced in code rather than requested in the prompt: a plan that routes
+`visual`/`commerce` never carries a reply, and a conversational message whose model answer did not
+arrive gets a deterministic fallback. The "Treated this as ..." template is deleted, and
+`build_aveline_blocks` now emits a reply only when no specialist produced content.
+
+### The handbook: hybrid, because one leg is not enough
+
+The corpus and the infrastructure both already existed — 15 pages, 1,879 lines, 104 `H2` sections, and
+ADR-017's pgvector pattern — so the interesting decision was retrieval. The plan's first draft had a
+dense-only index; the owner asked for BM25 as well, and the corpus proves why:
+
+- "How do I invite a staff member?" is answered by exact stems, which the dense leg ranks mediocrely.
+- "the page about people joining my shop" shares no vocabulary with the page, which the lexical leg
+  cannot see at all.
+- "Code Expiration" is a UI label: the query *is* the term.
+
+**Hybrid, fused with Reciprocal Rank Fusion in one SQL statement.** RRF is rank-based because cosine
+and `ts_rank_cd` are not on a comparable scale and their distributions move per query, so a raw-score
+blend can be skewed by whichever leg happens to produce large numbers. The claim is not taken on
+faith: the Testcontainers test builds a fixture where one chunk is **rank 2 on the dense leg and rank
+1 on the lexical leg**, and asserts it outranks the dense winner after fusion. Neither single leg can
+produce that ordering, which is the entire argument for the extra SQL.
+
+Two honesty adjustments went in rather than being papered over:
+
+- **Postgres `ts_rank_cd` is lexical, not BM25.** The code, the ADR and the architecture doc all say
+  "lexical"; ParadeDB `pg_search` is recorded as the upgrade path, confined to one CTE behind
+  `IHandbookRepository`.
+- **The intent is `aveline_help`, not `product_help`.** `product` already means the boutique's
+  inventory in this codebase — it is Elle's whole lane — so `product_help` would read as "help with
+  our products" to both the model and a human reading a trace.
+
+### Defects found by things that were already there
+
+Four were caught by existing guards rather than by review, which is the argument for having them:
+
+- **A precision bug in the help patterns.** `\bhelp me\b` classified "Can you help me with
+  something?" as a platform question. `test_infer_intent_calls_llm_on_ambiguous` failed, and the
+  pattern was removed rather than the test adjusted.
+- **The memory schema's intent vocabulary** must equal the gate's, so adding `aveline_help` broke
+  `test_parsed_intent_accepts_every_intent_the_gate_can_produce`. That guard exists because the same
+  drift once made every purchase-intent message fail validation.
+- **The bounded concierge node list** in `test_agent_step_records.py` gained `load_handbook`; the test
+  exists so a new node cannot silently escape the telemetry contract.
+- **A DELETE route that could not carry its own key.** `DELETE /internal/handbook/sources/{sourceKey}`
+  cannot match `web-docs/team` (the slash is a path separator), and the failure surfaced as a 401 in
+  the Postgres test. The route is now a catch-all segment.
+
+One design correction came out of the chunker work: the plan proposed prefixing each page's `H1` and
+intro onto **every** chunk. That was written before the hybrid decision and is actively harmful with a
+lexical leg — the intro's terms would appear in every chunk and match every query equally — so the
+intro is its own chunk and the heading trail reaches the lexical index through the weighted
+`SearchVector` instead.
+
+### TDD, and what each test is for
+
+- **10 .NET tests**, including a Testcontainers run against real `pgvector/pgvector:pg16` that asserts
+  the cosine ordering, the lexical-only hit, the fusion win, the audience filter, the inactive-chunk
+  filter, source-kind restriction, the source listing and the delete, and that both search columns and
+  indexes exist in the database rather than only in the model.
+- **78 new Python tests** across the chunker, the corpus manifest and seeder, retrieval and grounding,
+  the golden-query scoring, and the workflow lane. The chunker additionally runs against the **real
+  corpus** and asserts that not one table row is dropped, because the corpus carries its facts in
+  tables and a split table is a silently wrong answer.
+
+### Verification
+
+- Python: **733 passed, 2 skipped, 2 xfailed**; `ruff check app/ tests/ scripts/` clean.
+- .NET: the 10 handbook tests pass, including the seeded Postgres run.
+- The full .NET suite is **3079 passed / 28 failed**, and all 28 failures are media or Cloudinary
+  tests. They fail because the developer's own `.env` sets `Media__Provider=cloudinary` without a
+  signing key — `MediaProductionGuardIntegrationTests.TheDefaultHost_StartsWithNoMediaConfigurationAtAll`
+  fails against that file by definition. Supplying `Media__SigningKey`/`Media__PublicBaseUrl` turned a
+  sampled failure green, and CI reads no `.env`, so this is local configuration and not a regression.
+  It is recorded because "3079/3107" without that context reads like a broken branch.
+- The hybrid SQL was validated directly against the running `aveline_postgres` container before any
+  .NET code depended on it: the generated-column DDL, the HNSW and GIN indexes, and a hand-run of the
+  fusion query showing a chunk at dense-rank 2 and lexical-rank 1 outscoring the dense winner.
+
+### Documentation and artefacts
+
+- `ADR-023` is `Accepted`, its out-of-scope note now points at `ADR-025`, and its consequences record
+  the widened prompt surface and the two specialists that cannot consume context.
+- New: `ADR-025`, `docs/architecture/handbook.md`, `docs/architecture/agent-context.md`,
+  `handbook/README.md` and seven authored company pages. Updated: both READMEs and the ADR index.
+- Issue **#397** carries the feature, its acceptance criteria and the known input blocker.
+- Commits: `ad33786` (context + Aveline's reply), `a436c46` (store and ingestion), `b075220` (the
+  platform-question lane and docs).
+
+### Outstanding, stated plainly
+
+- **The golden set has now been scored**, against the seeded index (169 chunks, 22 sources, Gemini
+  embeddings): hybrid **recall@1 71.4% / recall@3 88.1%**, against 42.9%/52.4% for the lexical leg
+  alone and 66.7%/88.1% for the dense leg alone. The hybrid is not worse than either leg anywhere and
+  is the strongest at recall@1 on both query shapes, which is the claim the extra SQL had to earn. The
+  numbers and the two caveats that qualify them are in ADR-025.
+- **The lexical leg returned nothing at all for 13 of the 42 questions**, which is the leg working as
+  designed: `websearch_to_tsquery` ANDs its terms, so a paraphrase with no shared vocabulary matches
+  nothing. Those are the questions the dense leg carries. The eval now reports "returned no rows"
+  separately from a ranking miss, because a provider hiccup and a ranking error were otherwise
+  indistinguishable.
+- **One golden expectation is over-strict and the metric is pessimistic because of it.** "invitation
+  code lifetime" misses `web-docs/team` in every mode, because the corpus documents code lifetimes in
+  four places and three other pages outrank it - correctly. The retrieval is right; the labelled
+  single answer is too narrow. Recorded rather than tuned away.
+- **A real contract bug fell out of scoring it live**: the single-leg search modes ignored `topK` and
+  returned the whole 20-row candidate pool. Recall was unaffected (it is rank-based), but the endpoint
+  returned four times what a caller asked for. Fixed, with a Postgres test asserting the cap.
+- **The five source contradictions are fixed and the index has been re-seeded.** The owner resolved
+  them (Manager dropped from Reject/Revise to match the prose; the invite-code label now cross-refers
+  between its two names; the WhatsApp and Manager/Billing statements reconciled), rebuilt the API, and
+  the corpus was re-seeded on 2026-09-24. Spot checks against the live index return the corrected
+  answers, and the golden set now scores the reconciled text.
+- **The company facts that do not exist yet are stated as missing, not invented.** Refunds,
+  cancellation, data export and erasure, per-action Blossom costs and the account lifecycle have no
+  policy on file, so `what-the-handbook-does-not-cover.md` says so and points at support. A knowledge
+  base that guesses a refund policy is worse than one that admits it does not know.
+- **Blossom costs are deliberately not published.** The owner's instruction was to document that
+  unused Blossoms expire and to reveal no numbers; the prompt also forbids the model quoting amounts.
+- **The index is seeded in the local stack only.** 169 chunks across 22 sources, with the support
+  address substituted from `SUPPORT_EMAIL`; `GET /internal/handbook/sources` confirms the counts. No
+  shared environment has been seeded, and re-seeding stays a release step documented in
+  `handbook/README.md`. The plan file is untracked by design (`.agents/plans/*` is gitignored).
+
+---
+
+## Session 2026-09-24 — Aveline's voice, and citations you can click
+
+Two reports from a live screenshot of a handbook answer: she reads like a normal chatbot rather than
+Aveline, and the `Sources:` line is dead text.
+
+### The voice was nobody's job
+
+The universal prompt already asked for "quiet luxury", and the supervisor's own layer had **no tone
+section at all** - it was pure routing instructions, and the supervisor is the one who writes
+Aveline's `reply`. So the strongest voice guidance in the system sat several layers away from the
+prompt that actually produces her sentences, and the handbook instruction ("the only source you may
+answer from", "say plainly that the handbook does not cover it") pushed the model toward a clipped,
+manual-like register. The screenshot is what those three things produce together: a comma-separated
+recital of four plans, then a pointer to the entitlements table.
+
+Three changes, in the places that actually reach the model:
+
+- `agent_prompts.py` gains a **voice** section on the supervisor: first person, meet the question
+  before answering it, lead with the answer, never read the page aloud, never sound like software.
+  "Feminine, not fragile" is stated as poise rather than as decoration - she offers and takes care of
+  things, she does not apologise for existing.
+- `_SUPERVISOR_INSTRUCTION` now says to answer *as Aveline, in her own words*, never to recite an
+  excerpt or a table, and not to list sources in the text at all.
+- `SYSTEM_PROMPT.md` rule 9 (Tone) names her voice and forbids the software phrasings ("As an AI",
+  "I am unable to", "Please be advised"), so the specialists inherit it too.
+
+The two deterministic fallbacks were rewritten in the same voice, because they are the sentences
+users see when the model is unavailable: the greeting is now "Hello, I'm Aveline, the boutique's
+concierge..." and the miss is "That one isn't in my handbook, I'm afraid, and I'd rather not guess."
+
+### The citation had to become a block
+
+A link cannot be added to the existing line by finding it in the text: the reply is model-written
+prose, and the web renders a `text` block through `MentionText`, which is plain text with entity
+pills - no markdown, no link parsing. Options were to teach both frontends a markdown subset (and
+hope the model never rewrites a link), or to emit the citation as data.
+
+**A new `sources` block.** The agent already had the structured `handbook_sources` on the response
+and was flattening it into a string; it now emits `[text, sources]` with `{ title, url, heading }` per
+page. Checked before committing to it: `.NET` stores content blocks as JSON with **no type
+whitelist** (`ConversationBlockText` and `ConversationTileMapper` switch on a few types and ignore the
+rest), so a new type is additive and a build that has not learned it degrades to its one-line summary
+rather than a blank message - which is exactly the invariant `message_blocks.dart` already documents.
+
+- **Web**: a `SourcesBlock` renders each citation as an anchor, opening the docs in a new tab so
+  reading a reference does not lose the Salon. A plain anchor, not a router `Link`: the documentation
+  is its own public layout and the block renderer stays router-free. A citation with no URL renders as
+  plain text rather than a dead link.
+- **Flutter**: `ThreadBlock.sources` parses the items and `_SourcesBlock` draws them as tappable
+  entries, taking their ink from the bubble's own tone so the same block reads inside the associate's
+  filled bubble and the neutral agent bubble. `url_launcher` was promoted from a transitive
+  dependency of `clerk_flutter` to a named one, following the precedent the pubspec already sets for
+  `flutter_svg`.
+
+The mobile app had no web origin to resolve `/docs/team` against, and inventing one would send staff
+to a host nobody confirmed. `AVELINE_WEB_BASE_URL` is a new `--dart-define`, empty by default: with it
+set, tapping opens the page; without it, tapping shows the path instead.
+
+### Verification
+
+- Python: **745 passed, 2 skipped, 2 xfailed**; `ruff check app/ tests/ scripts/` clean.
+- Web: `tsc` clean, **199** conversation tests pass (4 new for the sources block), `oxlint` 0 errors.
+- Flutter: `dart analyze lib test` reports **no issues**.
+- **`flutter test` could not be run here** - the SDK's `bin/cache` is read-only under this sandbox, so
+  `flutter` and `dart test` both fail at the engine-version check. The new widget test is written and
+  analyzes clean, but it has not been executed; running `flutter test test/features/conversations`
+  locally is the outstanding check.
+
+
+## Session 2026-09-24 (b) — Tenant account awareness: Aveline can answer for the boutique itself
+
+**Task:** "give the agent tenant information awareness, so when the tenant asks, how much blossoms do
+I have left, how many customers do I have left, or how many seats I have left aveline can answer?"
+
+**What the questions were doing before.** Two of the three landed in the wrong lane, and neither
+failure was a crash, which is why neither had been noticed:
+
+- "How many Blossoms do I have left?" already classified as **`aveline_help`**, because
+  `_AVELINE_HELP_PATTERNS` claims any mention of "blossom" (`r"\bblossoms?\b"`). So it was answered
+  from the handbook - the page explaining what Blossoms *are* - under a rule that forbids quoting
+  Blossom amounts. A deflection, with a citation.
+- "How many customers do I have left?" matched **nothing** and fell through to `general_inquiry`,
+  which routes the customer-memory agent. Ava would have briefed on a customer, when the question is
+  a count of them. (`"how much"` is a pricing keyword; `"how many"` is not.)
+
+**The figures already existed and were already authoritative.** `IBlossomService.GetBalanceAsync`
+calls itself "the authoritative balance projection for one period", and
+`ISubscriptionService.GetEntitlementUsageAsync` already computes all three of exactly what was asked -
+Blossoms, `staff.max`, `customers.active.max` - for the tenant dashboard's usage panel. Nothing new
+had to be calculated; the work was transport, audience and authority.
+
+### The audience is the whole feature
+
+This is the first time the concierge states a fact about the boutique's money, and the same workflow
+answers inbound WhatsApp messages from **customers**. A customer asking "how many Blossoms do I have
+left?" must not be shown the tenant's balance.
+
+Tracing the two call sites settled it. `ConversationService` has exactly two `/agents/query` callers:
+`TriggerInboundDraftAsync`, which marks itself `direction = "inbound"`, and `TriggerAgentAsync`,
+which sends no direction at all and serves the Salon note, regeneration and the agent brief. The
+commerce lane already reads that asymmetry through `staff_query`.
+
+But that heuristic is **open by default** - an absent direction reads as staff - which is right for
+identity and wrong for money: a future channel that forgets to declare itself would open the lane. So
+the API now states the audience explicitly on **both** paths (`staff_query: true` / `false`), and the
+agent's gate requires it to be present and true. A missing declaration yields a missing answer, never
+a leaked balance.
+
+Tracing that turned up a pre-existing inconsistency worth recording: the workflow derives "is this
+staff?" in **two** places and they disagree. The memory node reads it as `not direction`, the visual
+node as `not direction or direction in ("outbound", "internal")`, so they differ on
+`direction="outbound"`. I deliberately did **not** add a third named helper to unify them: that would
+have been a behaviour change to the memory agent smuggled into a billing feature, and picking either
+semantics for the account gate would have reopened the default-open problem. The account gate instead
+requires the explicit flag and says why in its docstring. Consolidating the two is a follow-up.
+
+### Reuse, not a second formula
+
+`GET /internal/usage/tenant/{organizationId}` (in the existing `/internal/usage` group,
+`InternalServicePolicy`) composes what already exists:
+
+- the Blossom half is literally `BlossomBalanceDto.From(balance, threshold)` - the projection the
+  boutique's own meter renders - so `blossomRemaining` is the reconciled remainder rather than
+  `limit - used`;
+- the seat/customer half is `GetEntitlementUsageAsync`, with `remaining` assembled from it;
+- `blossomsAreLow` is computed server-side by the rule the clients already apply.
+
+The codebase treats a second copy of a formula as a defect (`LedgerDerivedBalance` is shared by the
+metric collector and the admin console for exactly this reason), so the test that matters uses an
+account whose stored remainder differs from *every* derivable one - 500 limit + 100 granted - 87.4
+used = 512.6 stored, against 662.6 from the entitlement limit and 412.6 from the bare limit. A future
+"simplification" to arithmetic now fails loudly.
+
+Entitlement usage is read **first**, because the balance read creates the period account on demand:
+asking it about an unknown organisation would leave a stray account row. Pinned by a test that
+asserts the 404 *and* that no account was created.
+
+### The number is enforced, not requested
+
+The reply is model-written, so "do not invent amounts" would have been a request. Instead
+`_with_a_bounded_reply` keeps the model's wording only while **every numeral in it appears in the
+rendered snapshot block**, normalising `1,234.50` against `1234.5`; anything else is discarded in
+favour of a deterministic reply built from the snapshot, with a warning logged. `_pin_authoritative_lane`
+stops the model re-routing an account question out of the lane, which would have removed the guard.
+
+Keying that guard on the rendered *block* rather than on the snapshot merely existing made it stronger
+than a numeral check, and the difference is worth stating: with no figures to show, the model may not
+word an account answer at all - not even one carrying no numerals, because "you have none left" is a
+claim about the account whether or not it contains a digit. The first version of the guard let that
+through.
+
+That settled a documented conflict honestly: ADR-025 and `SYSTEM_PROMPT.md` say the concierge must not
+quote Blossom amounts. That rule is about **published** amounts - pricing policy - and a boutique's own
+balance is a different thing, already shown to every boutique role by `billing:view:self`. The prompt
+rule was narrowed to published pricing rather than repealed, and the handbook's silence is untouched.
+
+### The noun is not the intent
+
+`tenant_account` had to be checked **before** `is_aveline_help` (or `\bblossoms?\b` claims every
+balance question) while still leaving the documentation lane intact. The discriminator is the shape of
+the ask: "what is a Blossom?", "how much does a Blossom cost?" and "how many seats does the Orchid
+plan include?" are all documentation, and none of them carry a "left / remaining / do I have" tail.
+
+The first version of the pattern was wrong in a way only an existing test could show:
+`tests/test_handbook_retrieval.py` already asserted that "Where can I see my Blossom balance?" is
+`aveline_help`, and the new possessive pattern claimed it. *Locating* a figure is documentation;
+asking for its value is not. `_is_interface_location_question` encodes that, and the locating cases
+are now pinned in both directions.
+
+### Verification
+
+- Python: **799 passed, 2 skipped, 2 xfailed**; `ruff check app/ tests/ scripts/` clean. 52 new tests
+  across intent/precedence, the audience helpers, the block renderer, the deterministic reply, the
+  numeral guard and the node's four gates.
+- `.NET`: 9 new/updated tests pass - the audience flag at all three trigger sites, and 7 for the
+  endpoint (401, 404-with-no-stray-account, the authoritative-balance property, agreement with the
+  billing summary the meter reads, allowances against plan limits, the low-water boundary, and a
+  raw-document assertion that no operator detail leaked into the shape).
+- One test-host wrinkle, local-only: the suite boots the real app, so a machine whose environment
+  selects `Media:Provider=cloudinary` fails the media options validator before any assertion runs.
+  Pinning the provider to `database` in the test host makes it hermetic; CI selects nothing and reads
+  no `.env`.
+- **No frontend change.** Both apps already send staff messages down the staff path and the reply is
+  an ordinary `text` block.
+
+### Worth knowing
+
+- `blossoms.planTier` is deliberately **not** rendered. It is the billing period's snapshot
+  (`PlanTierSnapshot` is written by the rollover job, not by a mid-period plan change), so quoting it
+  could name a plan the boutique has already left. Reporting the live plan needs a live read.
+- `customers.active.max` counts customers active in the last **90 days**, not the customer book, so
+  `customerCountBasis` travels into the prompt and an answer cannot call it "your customers".
+- Like `load_handbook`, a model-first classification of a novel phrasing fails **safe**: no fetch
+  happened, so the reply is the "couldn't reach your figures" admission rather than a guess.
+## Session 2026-09-24 (c) — Why Aveline went silent, and what "on file" was actually saying
+
+**Task, in three parts:** "does ava not have customer awareness?" (after "Who are our customers?"
+twice produced no reply at all), "also the dangling thinking bubble is back", and then "instead of
+whats on file: blah blah blah, ava should summarize it and then a content block of whats on file".
+
+### The silence was reproducible, and the database proved it
+
+The screenshot showed two identical questions and no answer. The thread in Postgres settled it:
+both turns wrote a **User** message and **no agent message at all**. The run itself succeeded
+(`AgentWorkflowRuns` `Succeeded`, 9 steps, `AgentsInvolved = {customer_memory, orchestrator}`), so
+nothing errored — nobody simply spoke.
+
+The path: "Who are our customers?" was classified `customer_preference` by the supervisor (the
+rules had said `general_inquiry`, and the memory agent has no tenant-wide read at all), so the plan
+routed `memory` only. Memory then skipped — a staff Salon message carries no customer to work on —
+`build_ava_blocks` returns `[]` for a skipped memory, and `_with_a_bounded_reply` had a fallback
+reply for `general_inquiry` and `aveline_help` but **not** for the other memory-only intents. No
+reply, no specialist content, no message.
+
+Two fixes, because the hole had two mouths:
+
+- `_fallback_reply` gives every plan that routes **no content specialist** a reply —
+  `_NO_CUSTOMER_REPLY` ("give me a name or a number") for the client-scoped intents,
+  `_HANDBOOK_MISS_REPLY` for a platform question, and `None` for `out_of_scope`, which carries its
+  own reason on the response status.
+- `supervise` returned a confident **rule** plan *unbounded*, so the same hole existed with an LLM
+  configured. It is now bounded too.
+
+Pinned by a property test over **every** `IntentType`: a resolved turn must publish at least one
+message. It immediately found that `out_of_scope` is answered by its status rather than a reply,
+which is now asserted separately.
+
+### The dangling bubble was a race that silence made deterministic
+
+The client sets "Aveline is working" optimistically on send, and clears it on an agent message or a
+terminal `agent.status`. The bug is the order: `ConversationEndpoints` **awaits** the whole agent
+run before returning, so the send promise resolves *after* the run's terminal state has already
+arrived. The optimistic set therefore lands last, with nothing left to clear it — and when the run
+produced no message, the other clearing condition never fires either. The two symptoms were one
+bug.
+
+`ConversationsContext` now tracks each thread slot's last observed state and declines to claim the
+indicator for a run that has already settled (`send`, `regenerate`, and their drawer twins).
+
+### "On file: X; X; X" was not a hallucination
+
+Ava's sentence looked fabricated. It was not: it came from `_staff_text`, a deterministic template
+that joined every retrieved memory into one line, and the store held:
+
+```
+The customer has a party   (22:06)
+The customer has a party   (22:16)
+Kasha vivian has a party   (22:19)
+The customer has a party   (2026-09-23 20:00)
+```
+
+Four rows, four repetitions, matching the screenshot exactly. **Nothing de-duplicates on write** —
+neither `_try_save_memory` in the agent nor `SaveMemoryAsync` in the API checks for an existing row —
+so the same fact was re-extracted and re-stored on four separate turns, once with the name lowercased.
+
+The shape is now split the way it was asked for: the sentence **summarises** ("One note is on file"),
+and the notes travel as their own `at_a_glance` block, collapsed by `normalise_memory_content` —
+one definition, living beside the memory models in `app/schemas/customer_memory.py`, because the
+agent that retrieves notes and the publisher that renders them must collapse the same pairs.
+That collapses three of the four rows; the reworded one still survives, which is the write-path gap
+recorded below rather than hidden here.
+
+### Customer awareness, as chosen
+
+"Who are our customers?" is now answered from the client **book**: `GET
+/internal/customers/book-summary` reuses the highlights read Home already uses (the earlier plan
+called this "a seventh thing to build" — it was not) plus a count of the book.
+
+It shares the account lane's audience gate and numeral guard but **never its data**: the allowance
+answers from a count against the plan and the book answers from the clients themselves, so
+`load_tenant_usage` fetches one or the other, never both. Two `"customers"` numbers in one prompt is
+exactly how the plan's active-customer allowance gets reported as the size of the book. `limit`
+bounds the named clients, not the book.
+
+### Verification
+
+- Python: **855 passed**, 2 skipped, 2 xfailed; `ruff check` clean.
+- `.NET`: 26 tests across the internal customer endpoints and the tenant snapshot pass, including
+  the book's size, ordering, limit, and cross-tenant exclusion.
+- Web: `tsc -b` clean, **1183** tests, `oxlint` 0 errors.
+
+### Left on the table, deliberately
+
+- **Write-time de-duplication is still missing**, so a reworded fact can still be stored twice. The
+  read path collapses what a reader would call one note; the write path needs a near-duplicate check
+  (the embedding is already computed at `SaveMemoryAsync`, so a cosine threshold against the
+  customer's existing rows is the obvious mechanism). That threshold is a judgement call, so it is
+  recorded rather than guessed.
+- **Client names are instructed, not guarded.** The guard is numeral-shaped: it proves a number came
+  from the data, not that a name did.
+- The four duplicate rows already in the local store are still there.
+## Session 2026-09-24 (d) — The Agents dashboard was telling the truth
+
+**Task:** "please fix these, and make sure the agent runs data saves to database as expected as well",
+after a screenshot of four flat Agents panels and the question "why are we missing workflow metrics?
+when you inspected the database, the table was empty too right?"
+
+### First, a correction
+
+The table was **not** empty, and the 0-row result I showed earlier was my own error:
+`AgentStepRuns.WorkflowRunId` references `AgentWorkflowRuns.Id` (the row's PK), not `WorkflowId` (the
+run id the agent sends). I compared the wrong column and moved on instead of chasing it. The join I
+ran next returned all 9 step rows for that run.
+
+With Postgres back up, the baseline took one query:
+
+```
+Status    | runs        step_rows
+Succeeded |   42            379
+```
+
+**42 runs, every one `Succeeded`.** No row had ever been in any other state. That is the whole bug.
+
+### `agent.runs_running` counted a state nothing could write
+
+The gauge is `COUNT(*) FROM AgentWorkflowRuns WHERE Status='Running'`. The agent reported a run
+exactly once, *after* it finished — `usage_reporter` literally describes its payload as "a **complete**
+agent workflow run and steps" — so every row was created already terminal.
+
+Everything downstream had been built for the missing half: `AgentWorkflowRun.Status` *defaults* to
+`Running`, `IsTerminal` treats it as non-terminal, `ValidateRun` permits it, and `PublishAsync` maps
+it to `agent.run.started` / `agent.run.resumed` — two event types nothing could ever emit. The design
+was always "open a row at the start, close it at the end"; only the first half was never wired.
+
+So the fix is the missing half: the agent posts a `Running` report before it works
+(`_report_run_started_best_effort`). It is **awaited with a 2 s timeout**, not fired and forgotten,
+because a start report that lost the race to the completion report would arrive at a terminal row and
+be refused as a conflict — which is the correct API behaviour, and exactly why the ordering must be
+deterministic rather than lucky. A new ingest test pins that refusal.
+
+### The sweep had to grow an arm, or the gauge would stick
+
+`StaleAgentRunJob` only reaped `PausedForApproval` past 72 hours. That was complete while every row
+was born terminal, and incomplete the moment a `Running` row could outlive its process. It now reaps
+both, with different error codes so an operator can tell them apart:
+
+| Abandonment | Cutoff | `ErrorCode` |
+| --- | --- | --- |
+| An approval nobody answered | `PausedAt`, 72 h | `approval_timeout` |
+| A process that died before reporting | `StartedAt`, 1 h | `run_abandoned` |
+
+Without it, one crash would hold `runs_running` above zero forever — a permanent false alarm on the
+only panel that is supposed to mean something.
+
+### The activity view had no metric at all
+
+Two instantaneous gauges and two ratios: nothing counted runs *over time*, so a healthy system and a
+dead one looked equally flat. `aveline.agent.runs_total` is the cumulative count of terminal runs,
+bridged as a Prometheus counter, with a **Runs completed** panel plotting `increase()`.
+
+It is cumulative over the **retention window**, not forever — runs are pruned after
+`RunRetentionDays` (400), so the value steps down when a day ages out. Prometheus reads that as a
+counter reset: the one interval spanning a prune under-reports, and no interval invents a spike.
+Recorded rather than glossed, and a DB-derived counter was preferred to an in-process one so the
+value survives an API restart.
+
+### Verified end to end, against the running stack
+
+Not "the tests pass" — the actual pipeline, with the images rebuilt:
+
+- A real `/agents/query` (`"How many customers do we have?"`) was fired while polling the database,
+  and a **`Running` row was observed mid-flight** (`Running=1`, ~1 s in). It then closed as
+  `Succeeded` with **7 step rows**, leaving no orphan. Run count 42 → 43.
+- Prometheus now reports all four: `aveline_agent_runs_total = 43` (matching the database exactly,
+  which proves DB → snapshot → bridge → Prometheus end to end), `runs_running_count = 0`,
+  `paused_count = 0`, `success_rate_ratio = 1`.
+- Grafana loaded the new panel (`sum(increase(aveline_agent_runs_total[$__rate_interval]))`).
+- The response also showed the ADR-026 book lane working live — and surfaced a wart worth recording:
+  the "most recently active" clients came back as **phone numbers**, because the highlights read falls
+  back to the number when a client has no name. Naming clients by phone number in a chat answer is
+  poor; the read's `DisplayName` is the place to decide it.
+
+### Also fixed while in there
+
+The Docker containers failed 12 hours earlier with exit 127 on a bind-mount error, which is why the
+observability stack was down when I looked. I tested a file bind-mount from this FUSE volume
+(`fuseblk` on `/run/media/...`) and it worked, so the failure was transient — consistent with the
+machine's restart behaviour the owner described — and `docker compose up -d` recovered everything.
+
+### Verification
+
+- Python: **861 passed**, 2 skipped, 2 xfailed; `ruff check` clean. 16 tests in the run-telemetry
+  suite, including the start report's shape, ordering, short timeout, and its failure never failing a
+  query.
+- `.NET`: 13 ingest tests, including the started-then-completed upsert (one row, not two) and the
+  late-start refusal; the stale sweep, rewritten to assert both arms and that a *recent* `Running`
+  run is left alone.
+- The bridge fixture and `MetricsNamingTests` were updated for the new series — both correctly failed
+  first, which is how the two sinks stay in step.
+
+## Session 2026-09-24 (e) — Tenant dashboard: in-card sparklines and monospaced numerals
+
+**Task:** "Begin implementation of `.agents/plans/tenant-dashboard-inline-card-charts-implementation-plan.md`
+and read the context `.agents/plans/tenant-dashboard-inline-card-charts-investigation-report.md`".
+
+The two documents were written in an earlier session and were **not** in git (untracked): an
+investigation report that establishes what data actually exists per card, and a five-slice
+implementation plan derived from it. The work was to execute the plan.
+
+### What the plan constrained, and why it mattered
+
+The feature is a reference-image idiom (a KPI tile with a value and a sparkline). The report's job was
+to say which parts of that idiom have an honest data source here, and the answer is **two cards, not
+eleven**: `revenue-series` is the only time-series read on the tenant surface, and only
+`Gross order value` and `Collected` read a metric it carries. The Takings card is refused by
+**contract**, not style — a field-enumeration test on the reduced read forbids `points`/`series`.
+
+Two gates ran over everything: `tenant-truthfulness` (no raw `recharts` import; no `?? 0` on a
+metric) and `tenant-conformance` (no bare hex, no raw palette utility, no raw control elements). Both
+were satisfied by importing chart primitives from `@/components/ui/chart` and colouring through
+`var(--chart-N)`.
+
+### The five slices
+
+- **T1 — monospaced numerals.** `KpiCard`'s measured branch, `TakingsCard`'s two figures and the
+  Blossoms balance moved from `font-serif` to `font-mono tabular-nums`. The `!measured` branch was
+  left exactly as it was, and a test now pins that: if "not measured" also read as mono, the
+  distinction the component exists to make would be lost. The measured-value test failed first
+  (`font-serif text-3xl font-medium`), as it should have.
+- **T2 — a tenant `CONNECT_NULLS`.** The report found the tenant tree had **no** shared constant:
+  `BlossomBurnChart` hardcoded `connectNulls={false}` while the admin tree enforced the constant
+  mechanically. Added `lib/dashboard-chart-rules.ts`, switched the chart to it, and added the mirror
+  of `admin-conformance`'s rule 5. The new gate was run **before** the fix and correctly failed on
+  `BlossomBurnChart.tsx` — otherwise the gate would have been theatre.
+- **T3 — `KpiSparkline`.** A fixed-size (`h-10 w-24`) glyph with a gradient area, no axes, no grid, no
+  tooltip, an `aria-label` describing direction and period, `connectNulls` from the shared constant,
+  and an explicit empty state rendered **outside** `ChartContainer` (recharts measures a `0×0` box and
+  would wrap prose one character per line). The gradient id is per-instance via `useId`, because a
+  data-key-derived id collides the moment two sparklines plot the same key.
+- **T4 — the wiring.** One `fetchRevenueSeries` call inside `Overview`'s existing load path, gated on
+  `reports:view`, feeding both cards. The client `fetchRevenueSeries` already existed and was called
+  by nothing but its own unit test. The range is **passed down from the shell** rather than recomputed
+  in `Overview`, so the glyph and the figure cannot describe different periods.
+- **T5 — the capped window.** Under `ytd` the server clamps the series to 92 days while the figures
+  cover the year, so both cards state that the trend is shorter than the figure. The caption names
+  **no day count**: the API docs describe that cap as a configuration setting that does not exist, so
+  the client encodes neither number.
+
+### Corrections made while implementing
+
+- **My own dead branch.** I first wrote an `if (!first || !last) return label` guard in the summary
+  helper that could never fire, and coverage showed it. Rather than ship untestable code I kept the
+  guard that *can* fire — `Intl.DateTimeFormat.format` **throws** on a non-finite date, verified, so
+  the unparseable-bucket fallback is load-bearing — and added a test for it.
+- **A test-only prop access.** `ORGANIZATION.id` is `as never` in the existing fixture, so asserting on
+  it after I added the new tests was a `TS2339`. Hoisted the id to its own constant rather than
+  loosening the fixture.
+- **Two over-broad assertions.** `getByText('Collected')` and `getByText(/18,500\.00/)` each matched
+  twice, because the same words appear on the reduced Takings card and the KPI strip. Scoped both.
+
+### The coverage ratchet
+
+`test:coverage:dashboard` measures `components/dashboard/**`, and the config's own rule is that the
+floor never exceeds the achieved value. Two consecutive runs over the final tree measured the glob at
+**53.01 % lines / 46.15 % branches / 42.70 % functions / 51.26 % statements** (was 45.05 / 42.75 /
+31.87 / 43.42). The floor was raised to 52 / 45 / 41 / 50 — just below the achieved value, so rounding
+noise cannot block a slice. `KpiSparkline.tsx` and `KpiCard.tsx` are at 100 %.
+
+### Verification
+
+- `bun run test` — **153 files, 1223 tests, all passing** (baseline before the work: 151 files, 1203).
+- `bun run test:coverage:dashboard` — exit 0, twice, at the raised floor.
+- `bun run build` (`tsc -b && vite build`) — clean.
+- `bun run lint` — 0 errors, 77 pre-existing warnings.
+- `docs/frontend/tenant-dashboard.md` corrected: it said `E-2`/`E-3` had no caller. `E-2` now has one,
+  and the page gained an *In-card sparklines* section stating the five honesty rules and the
+  knowingly accepted partial trailing bucket.
+
+### Not done, deliberately
+
+No backend change. Per-KPI series for the other nine cards, a previous-period delta chip, the
+`isPartial` trailing-edge defect and the inaccurate cap documentation all stay in §8 of the plan: they
+are backend work that would widen this feature's blast radius for no user-facing gain here.
+
+## Session 2026-09-24 (f) — "I don't see any graphs", and the tiles were bland
+
+**Task:** the owner reviewed the shipped Overview screenshot and reported two things: **"I dont see any
+graphs though"**, and that the cards were bland — asking for icons and colours, "theme adjacent,
+reference blossom aurora".
+
+### The graph was genuinely broken, and there were two causes
+
+Neither was visible to the test suite, because **jsdom reports every element as `0×0`**. The fix was to
+mount the real component in Chromium at 1122px with fixture data and measure it. That is how both
+causes were found rather than guessed, and it is the part of this session worth remembering.
+
+**Cause 1 — the glyph was squeezed to zero and clipped.** The strip is `lg:grid-cols-4`, so at 1122px a
+tile's text column is ~207px. `LKR 162,550.00` at `text-3xl` in a monospace face is *wider* than that,
+so the value filled the row and the shrunk-to-zero sparkline was clipped by the card's `overflow`. My
+first implementation had put the glyph beside the value because the reference image does; the reference
+image's tiles are wider than this grid's. Fixed by stacking the glyph under the value at full tile
+width and dropping the value to `text-2xl`. Measured after: `svg` 207×36, `.recharts-area` present,
+`scrollWidth - clientWidth` back to 0.
+
+**Cause 2 — a sparse series paints nothing, which is what the owner actually hit.** Even with the
+layout fixed, their data would have shown no line. With `connectNulls` false, recharts breaks the area
+at every gap, so a measured bucket whose neighbours are both `null` is a run of **one** point. Dumping
+the live SVG gave the proof:
+
+```
+d="M5,22.789L5,31ZM25.379,20.942L25.379,31Z…"   stroke="none"
+```
+
+A zero-length segment, and the stroke is drawn by a *second* curve that also has no length. Their
+boutique had **3 orders in 30 buckets**, so nearly every measurement was isolated: `grossOrderValue` is
+`null` in any bucket with no orders, and that is the server's documented rule, not a bug. The glyph
+occupied its box and painted nothing.
+
+Fixed with `canDrawSparkline`: **two measured buckets is the floor**. Below it the tile draws no glyph
+and says nothing about a trend. The honest reading, since an empty box is the same lie as an empty
+axis. This also means the real product shows the trend only for a boutique with enough daily order
+volume to have two populated days in the window — a real limitation of the current backend series, and
+it is now stated in the docs rather than discovered by the owner as a blank.
+
+### Blandness
+
+`KpiCard` gained optional `icon` and `accent` props. The eleven strip tiles now carry a Lucide mark in
+a tinted square plus a soft wash at the top of the card, grouped into **families** rather than eleven
+colours — billed/margin `--chart-1`, money that moves `--chart-2`, clients `--chart-3`, catalogue
+`--chart-4`, queues/refunds `--chart-5` — with `--primary` for the Takings and Blossoms cards. The
+"blossom aurora" reference resolved to the tokens already in `index.css`: the theme carries
+`--aveline-lavender`, `--aveline-coral`, `--aveline-blush` and a five-step chart ramp, so nothing new
+was invented and the animated `AuroraField` was not dragged onto a dashboard (it would have been a
+poster, not a card).
+
+Two constraints decided the implementation: `tenant-conformance` forbids a bare hex and a raw palette
+utility, so every accent is a **theme token passed as a string** (`var(--chart-2)`), never a literal —
+which is also why the reference image's orange was not adopted. `KpiCard` itself knows no palette: it
+publishes `--kpi-accent` on its own root, and the icon tint and the wash both read that one property,
+so "how strong is the brand here" is a single decision in a single place.
+
+### Verification
+
+- Chromium at 1122×900 with fixture data: 2 sparkline `svg`s at 207×36, `.recharts-area` on both
+  revenue tiles, no horizontal overflow on any card. Screenshot reviewed.
+- `bun run test` — **153 files, 1226 tests passing** (3 new: the sparse tile, the sparse sparkline,
+  and the `canDrawSparkline` threshold).
+- `bun run test:coverage:dashboard` — exit 0; the glob now measures 53.19 / 46.59 / 43.08 / 51.47
+  against the 52 / 45 / 41 / 50 floor raised earlier in the session. `KpiSparkline.tsx` at 100 %.
+- `bun run build` clean; `bunx tsc -b` clean; `bun run lint` 0 errors (78 warnings, one of which is
+  this work's `only-export-components` on `canDrawSparkline` — the same warning class the admin tree
+  already carries on `RangePresets.tsx`, so it matches precedent rather than setting one).
+
+### A process note worth keeping
+
+The one-shot probe (`layout-probe.html`, a Clerk stub aliased in by a `layout-probe` Vite mode, an
+axios adapter answering the API, and a Playwright measuring script) took about fifteen minutes and
+found a defect that the whole 1226-test suite could not see. It found the *second* cause too, which no
+amount of reading the code would have produced — I had already reasoned the sparse case "should" render
+a dot. It was **removed afterwards**, including the mode alias, and `vite.config.ts` is byte-identical
+to its committed state. The lesson is not "add a probe file to the repo"; it is that a claim about
+what a user *sees* has to be checked in a browser, and that a temporary harness is cheaper than
+shipping a blank chart twice.
+
+## Session 2026-09-24 (g) — Monospaced, accented figures on Income and Overview
+
+**Task:** "please update the income tab values to use monospaced fonts, and give it and the overview
+tab values a primary accented colour, plain black feels too dark".
+
+### What was actually being asked
+
+Two edits, and the second was the interesting one. The Income tab's money figures were still
+`font-serif text-2xl font-medium` (the reconciliation banner) and `font-serif text-xl font-medium` (the
+per-kind totals) — the Overview KPI tiles had already been moved to mono earlier in the session, but
+Income had not, so the two tabs disagreed about what a number looks like.
+
+The colour request is a design judgement I agreed with: a figure that inherits `text-card-foreground`
+is `#1e1b1b`, effectively black, and a screen of black numerals on white cards reads as a spreadsheet.
+The theme already has the answer — `--primary` is `#8b2e42`, the wine-rose the brand docs assign to
+Lina/commerce, at 5.4:1 on white, so it is a real accent rather than a decoration that costs
+readability.
+
+### One treatment, one place
+
+Rather than adding `font-mono tabular-nums text-primary` to five call sites, I added
+`components/dashboard/Money.tsx` and rendered every figure through it: `KpiCard`'s value, the Income
+reconciliation's three figures, the per-kind totals, and each register row. Three decisions are then
+made once — the figure set, the tabular digits, and the accent — and a caller can still change the
+*size* through `className`. A figure cannot now disagree with the figure beside it.
+
+The accent is `FIGURE_ACCENT_CLASS = 'text-primary'`, and that is a Tailwind **class**, not a token
+name, deliberately. Tailwind compiles classes statically, so a name assembled at runtime
+(`` `text-${token}` ``) would never be generated and the figure would silently lose its colour — the
+worst kind of failure, because it looks like a styling choice. `text-primary` resolves to `--primary`,
+which `index.css` defines for light and remaps in `.dark`, so the same code is correct in both themes.
+It also satisfies the tenant conformance gate, which forbids a raw palette utility (`text-rose-800`)
+and a bare hex.
+
+I folded the `--kpi-accent` custom-property name and its `style` into the same module
+(`KPI_ACCENT_VAR`, `accentStyle`), so the name is written once rather than in three components.
+
+### Deliberate exceptions
+
+`not measured` keeps its muted `italic font-sans` and takes **no** accent: it is the absence of a
+figure, and accenting it would make the two states read alike — the exact failure `KpiCard` exists to
+prevent. That is now asserted, not just commented.
+
+### Verification
+
+- Two tests added to `IncomePanel.dom.test.tsx`, both written first and **both failed for the stated
+  reason** (the register's `<td>` and the per-kind `<p>` carried `font-serif` and no accent). One test
+  asserts the mono/tabular treatment, the other walks every place a money figure appears — a register
+  row, a per-kind total and each reconciliation figure — because a single un-tinted figure is what
+  makes a screen look half-finished.
+- Two assertions added to `KpiCard.dom.test.tsx`: the value carries `text-primary`, and the
+  `not measured` branch carries neither the mono face nor the accent.
+- My first attempt at the income assertion targeted the *container* (`td`, `p`, `dd`) rather than the
+  figure; the treatment lives on the `Money` span, so it correctly failed. The helper now locates the
+  span through its container, which also stops an assertion drifting onto another amount with the same
+  text.
+- `bun run test` — **153 files, 1229 tests passing** (3 more than before this change).
+- `bun run test:coverage:dashboard` — exit 0; `Money.tsx` at 100 %, the glob at 53.22 / 46.49 / 43.20 /
+  51.50 against the 52 / 45 / 41 / 50 floor.
+- `bun run build` clean, and the compiled CSS checked directly rather than assumed:
+  `.text-primary{color:var(--primary)}`, with `font-mono` and `tabular-nums` present.
+- `bunx tsc -b` clean; `bun run lint` 0 errors, 78 warnings (unchanged).
+- `docs/frontend/tenant-dashboard.md` gained *The figure treatment, in one place*.
+
+**Not done, deliberately:** the Usage tab's `UsageBalanceCard` still has the one remaining
+`font-serif text-5xl` value in the tenant tree. It has the same problem, but it is a different tab
+from the two asked about, and the user has already pushed back once on scope — so it is recorded here
+as a known inconsistency rather than silently changed.
+
+## Session 2026-09-24 (h) — A discount question nobody answered, and the agent that was never asked
+
+**Task:** a screenshot of a Salon thread. Staff asked *"How much of a discount can we give this
+customer for +Champagne Rose satin midi dress?"* and the only reply was Ava's brief. "That's not
+supposed to happen right? what happened to elle? why isnt she replying?" — then the correction that
+matters: **"OH F, I mistyped the name IT SHOULD BE LINA, WHY DIDNT LINA REPLY"**.
+
+### The correction, first, because it changed what the answer was about
+
+I answered the literal word. "Elle is not broken, she was never dispatched" is true, and it was not
+the question: **Lina was dispatched** — the message classified `pricing_query` → `["memory",
+"commerce"]` — and she returned `skipped` in **56 ms** on her first branch. Elle's absence was a
+separate fact about the product half of the message, and leading with it named the wrong agent.
+
+The evidence was one query plus one replay, and it separated the two cleanly:
+
+```
+AgentWorkflowRuns  AgentsInvolved = {commerce, customer_memory, orchestrator}   -- no visual
+AgentStepRuns      no `visual_agent` step; `commerce_agent` 56 ms               -- an instant skip
+```
+
+### Three causes, in the order they are hit
+
+1. **The plan never included the piece.** `discount` is a pricing word and the keyword table is
+   first-match-wins with pricing above item search, so the message is `pricing_query`, which routed
+   `["memory", "commerce"]`. Measured on the running gate, not inferred.
+2. **Lina's only verb was "evaluate this deal".** A question carries no purchase signal, so
+   `OrderContextBuilder` resolved no line items — correctly, ADR-024's A1 — and `evaluate_deal`
+   short-circuited before reading a single rule. A skip meant silence.
+3. **So Ava's brief was the answer.** `build_aveline_blocks` stays silent once a specialist has
+   spoken, and the one specialist that produced content produced a customer recap.
+
+Cause 2 is the one worth remembering: the refusal was right and the *consequence* was never designed.
+Nothing errored, the run closed `Succeeded`, and the person's question sat in the thread.
+
+### What changed
+
+`agents_for(intent_type, message)` inserts `visual` when a pricing question names a garment, defined
+once so the rule path and the supervisor's fallback cannot disagree. Two read-only terminals answer
+the discount question: `explain_discount_ceiling` from the tier cap and the house rules with no basket
+(reading the policy cannot trip it — zero total, full margin, no requested discount), and
+`present_quote` for the pieces a pricing question named.
+
+A question can now be *priced* without being *bought*: the order context carries a `purpose`, always
+sent so a missing field reads as the conservative `"order"`, and `ConversationOrderBridge` refuses an
+order from a quote even if one arrives (new invariant **A7**). The quote is staff-only, and it states
+the discount the floor allows rather than the margin it computed — the Salon is used by roles without
+`pricing:view`.
+
+### The test found a real bug in the thing it was testing
+
+The property test beside the ceiling caught my own arithmetic: the exact algebraic bound sits **one
+ulp inside** the margin floor, so quoting it verbatim promised `73.33333333333334%` off a LKR 500
+piece whose margin then computed to `24.999999999999983%`. A ceiling disagreeing with the very check
+it exists to describe. Ceilings are now whole percent, rounded down, and the test asserts the claim
+holds and that one percent more does not. I fixed the arithmetic rather than loosening the assertion.
+
+### Verified against the running stack
+
+The reported message, replayed at the live agent with the images rebuilt:
+
+| Persona | Reply |
+| --- | --- |
+| Ava | "Kasha Vivian Perera is a new customer. 2 notes are on file." |
+| Elle | 3 pieces, including the dress at LKR 10,000 |
+| Lina | "…has no whole-percent room under the 25% margin floor, so any reduction on it needs the owner." |
+
+`Orders` 3→3, `ApprovalQueue` 3→3, `CustomerMemory` 7→7 — the quote committed nothing.
+
+Gates: 904 Python (43 new), 3123 .NET, ruff clean, six pre-commit checks.
+
+### Two things found along the way
+
+**A live trap.** This shell exports `VISION_BASE_URL=$LLM_BASE_URL` *unexpanded*, and compose gives
+shell env precedence over `.env`, so recreating the API container baked the literal string into
+`Vision__BaseUrl`. `new Uri()` throws at DI time and **every catalog GET answers 500** — Elle silently
+finds nothing. `.env` already warns about exactly this; I recreated with the literal values and the
+search returned 3 pieces again.
+
+**The API→agent hop was proven by test, not by HTTP.** Minting a Clerk token was not available here,
+so the live proof starts at `/agents/query` with the exact payload the new API sends. The payload
+shape itself is pinned per call site (`EveryTriggerSite_DeclaresThePurposeOfItsLineItems`), which is
+what the audience flag already does — stated plainly rather than implied.
+
+**Left deliberately:** Lina says "This customer" where Ava names Kasha, because `resolve_customer`
+returns no profile when the customer id is supplied explicitly, and a name is not worth an extra read
+per quote.
+
+## Session 2026-09-24
+
+**Task:** Orchestrate a subagent swarm to implement two approved plans end to end —
+`.agents/plans/payment-gateway-abstraction-implementation.ignore.md` (11 phases, P0–P10) and
+`.agents/plans/privacy-consent-data-deletion-implementation.ignore.md` (8 phases, Pr0–Pr7).
+**Tool used:** DeepSeek Harness — one orchestrator session plus delegated implementation subagents.
+**Branch:** `feature/payment-gateway-abstraction-and-privacy-consent` (created and stayed on; no new
+branches).
+**Status:** In progress (session-start entry).
+
+### Intended Work (session start)
+
+- Read both plans in full and extract every phase, deliverable, dependency, and exit criterion.
+- Create one GitHub issue per phase (19 issues: 11 payment, 8 privacy), linked back to the plan
+  section that defines them, before any implementation.
+- Delegate one subagent per phase, in dependency order, each required to:
+  - follow strict TDD (write the failing test first and show it failing for the expected reason,
+    implement the minimum, refactor);
+  - update general documentation, `docs/api/README.md`, and `docs/api/openapi.yaml` in the same
+    phase;
+  - run the full relevant gate (`dotnet test`, `pytest`, `vitest`, `flutter test` as applicable).
+- Verify each phase independently against the plan before marking it complete: the failing-test-first
+  evidence, the passing suite, the documentation diff, and a deliverables-versus-plan check.
+- Never write application code in the orchestrator; delegate and verify only.
+- Leave the working tree on the current branch; do not create or switch branches.
+
+### Constraints recorded for every delegate
+
+- `Rules.md` §7 mandates test-first; §5 fixes the dependency direction
+  (`Presentation -> Application -> Domain -> Infrastructure`) and requires infrastructure to
+  implement abstractions defined by an inner layer.
+- No card/PAN/CVV/token field may ever be introduced on the server (payment plan C11/G23).
+- The mock payment provider must never be reachable outside Development (payment plan §7.4).
+- Privacy erasure must use `IgnoreQueryFilters()` for `Customers`/`Customer_Memory`, because EF
+  global soft-delete filters silently skip rows that still hold PII (privacy plan R-16), and every
+  new query must carry an explicit `OrganizationId` predicate because there is no EF tenant filter
+  (privacy plan R-17).
+- OTP counters must fail closed; `DistributedRateLimiter` fails open and must not be reused for them
+  (privacy plan DR-6).
+- No new branch, no force-push, no commit unless explicitly requested at the end.
+
+### Plan decisions already recorded (so phases are not blocked)
+
+Payment plan §14: Q1 defer (onboarding does not require settlement), Q2 yes (immediate upgrade
+allowance, charge follows), Q3 approved dunning (day 1/3/7, `PastDue`, `Expired` at day 14),
+Q4 no trials/annual, Q5 provider decision deferred to Phase 8 (OnePay referenced),
+Q6 prices stand, Q7 Commerce in scope but separate and last.
+
+### Remaining Work
+
+- GitHub issue creation, then the 19 phase delegations with verification between each.
+
+---
+
+## Subagent session — Privacy/Consent Phase 1 (Pr1): consent enforcement
+
+### Work performed
+
+Delegated implementation of privacy/consent plan §11 Phase 1 (items 1.1-1.7) on the existing
+working tree, with TDD (failing test run and captured first) and a scoped verification pass.
+
+- **1.1** New `IConsentGateService` / `ConsentGateService` / `ConsentDecision` /
+  `ConsentGateReasons`. Rules: no customer ⇒ process; `revoked` ⇒ skip; anything else ⇒ process;
+  repository failure ⇒ fail closed without throwing.
+- **1.2** Wired the gate into `ConversationService.TriggerInboundDraftAsync` (no agent dispatch for
+  a revoked customer) and added the `aveline_message_skip_total{reason}` counter
+  (`ConsentMetrics`), registered in `CustomerConciergeModule` and `MetricsCatalog`.
+- **1.3** Promoted the guard to orchestrator scope: `ConciergeState.consent_status`,
+  `run_memory_agent` surfaces it, `_route_after_memory` short-circuits to `formulate_response`.
+- **1.4** `CustomerMemoryAgent.check_consent` wraps the registry call in try/except and fails closed
+  (`consent_status = "unavailable"`) instead of raising.
+- **1.5** `POST /agents/query/stream` got its own consent pre-check (it bypasses `run_concierge`):
+  one `consent_skipped` SSE frame and no graph run.
+- **1.6** `AgentStatus.skipped` added; `_run_status_from_response` maps it to `Skipped`; the C#
+  `AgentRunStatus` enum gained `Skipped` (no migration: stored as a bounded string).
+- **1.7** Consent-gated `SearchAsync`, `GenerateBriefAsync`, `RecordAsync`, `AddAsync`; the two
+  write endpoints answer 400 for a revoked customer, mirroring the existing memory endpoint.
+
+### Files created or modified
+
+.NET: `Modules/CustomerConcierge/Services/{IConsentGateService,ConsentGateService,CustomerMemoryService,CustomerInteractionService,CustomerEventService,ICustomerInteractionService,ICustomerEventService,ICustomerMemoryService}.cs`,
+`Modules/CustomerConcierge/Metrics/ConsentMetrics.cs`, `CustomerConciergeModule.cs`,
+`Modules/Conversations/Services/ConversationService.cs`, `Endpoints/CustomerConciergeEndpoints.cs`,
+`Configurations/MetricsConfiguration.cs`, `Modules/Statistics/Models/AgentWorkflowRun.cs`.
+Python: `app/agents/customer_memory/nodes.py`, `app/workflows/concierge_workflow.py`,
+`app/api/agents.py`, `app/schemas/response.py`.
+
+### Tests created or modified
+
+New: `Aveline.Api.Tests/ConsentGateServiceTests.cs`, `Aveline.Api.Tests/ConsentEnforcementTests.cs`,
+`agnet-service/tests/test_consent_enforcement.py`.
+Modified: `WebhookEndpointsIntegrationTests.cs`, `CustomerConciergeServiceTests.cs`,
+`AgentRunIngestTests.cs`, `MetricsNamingTests.cs`, `test_customer_memory_agent.py`,
+`test_response_schema.py`.
+
+### Important architectural decisions
+
+- One fail-closed decision point (`ConsentGateService`) shared by the ingress path and the four
+  customer-data services; the gate never throws.
+- The orchestrator blocks on both `revoked` and `unavailable` (fail closed covers the read failure,
+  not just the explicit objection).
+- `no_customer_context` is counted under `message_skip_total` even though the message proceeds,
+  because it was never consent-cleared; this keeps "processed without a consent decision" visible.
+- A `Skipped` run is terminal and excluded from the success-rate denominator; it is not added to the
+  daily rollup buckets (no migration in this phase).
+
+### Problems encountered
+
+- The shared test project was briefly uncompilable because a concurrent payment delegate's
+  `PaymentProviderContractTests.cs` referenced a not-yet-added enum member; it was fixed by that
+  delegate and the run proceeded.
+- `Media__Provider=database Media__ReadFromCloudinary=false` is required for every `dotnet test`
+  invocation (the shell exports `cloudinary` with no signing key).
+
+### Verification performed
+
+- `Media__Provider=database Media__ReadFromCloudinary=false dotnet test ... --filter <scoped>`:
+  228 passed / 0 failed across the consent, webhook, conversation, customer-endpoint, agent-run and
+  metrics/documentation groups (exact group counts recorded in the phase report).
+- `pytest tests/ --cov=app --cov-fail-under=90`: 916 passed, 2 skipped, 2 xfailed; coverage 93.22%.
+- `ruff check app/`: clean.
+
+### Remaining work
+
+- `identify_customer` still runs before `check_consent` inside the memory sub-graph (§8.2 defect 3);
+  unreachable for a revoked customer through the webhook (the API gate blocks dispatch first) but
+  still reachable for a direct `/agents/query` caller that supplies only a phone. Not in the Phase 1
+  deliverable list.
+- A `Skipped` run still publishes `agent.run.failed` through the pre-existing coarse fallback in
+  `AgentRunIngestService.PublishAsync`; changing the event vocabulary was out of scope.
+
+---
+
+## Subagent session — Privacy/Consent Phase 4 (Pr4): the OTP-verified opt-out flow
+
+### Work performed
+
+Delegated implementation of privacy/consent plan §11 Phase 4 (items 4.1-4.5) on the existing working
+tree, TDD-first, with scoped verification. No branch was created, nothing was committed, no migration
+was generated (the phase needs no schema change: revocation writes the existing `CustomerConsent`
+columns and `ConsentAuditEntry` rows), and no shared build file was touched.
+
+- **4.1** New `IOtpService` / `OtpService`: stores only
+  `base64(SHA-256(otp + ":" + handle + ":" + phone))` in `IDistributedCache` with a 300 s TTL, returns
+  a random opaque 32-byte base64url handle, verifies with `CryptographicOperations.FixedTimeEquals`,
+  is single-use (the key is deleted on success) and enforces a hard 5-attempt cap. Counters: 3 sends
+  per phone per 15 min, 10 starts per IP per hour, all implemented against `IDistributedCache`
+  directly and **fail closed** (DR-6; `IRateLimiter` is not reused). OTP-entropy reasoning recorded in
+  the service comment.
+- **4.2** `POST /api/v1/privacy/opt-out/start` (new `Endpoints/PrivacyEndpoints.cs`): anonymous,
+  re-verifies the signed link, normalizes with `ToE164`, charges per-IP and per-phone budgets,
+  resolves the customer, and always returns the identical `202 {"status":"accepted"}`. Sends the code
+  through `IOutboundMessagingService`; audits `privacy.otp.issued`.
+- **4.3** `POST /api/v1/privacy/opt-out/verify`: verifies the code, then revokes with
+  `scope: "org" | "all"` through the new `ConsentRevoker`. Writes a `ConsentAuditEntry` **and** an
+  `AuditLogEntry` per affected organisation, audits `privacy.otp.verified` and `consent.revoked`, and
+  returns `{status, scope, effectiveAtUtc}`. Invalid, expired, replayed and over-attempt answers are
+  byte-identical `400 otp-invalid`.
+- **4.4** `GET`/`POST /api/v1/orgs/{orgId}/customers/{id}/consent` under the existing
+  `BoutiqueCustomerAccessPolicy` (the write additionally requires `customers:manage`). The write
+  writes `ActorKind = User`, `Source = staff`, which is what distinguishes it from the customer OTP
+  path (`ActorKind = Customer`, `Source = otp_link`).
+- **4.5** `OptOutAcknowledgementService` + `DistributedOptOutAcknowledgementGate`: one
+  non-personalised acknowledgement per (boutique, number) per 24 h, sent through
+  `SendWhatsAppTextAsync` (never `SendTemplateAsync`), drained off the request path by the existing
+  `DisclosureDispatchWorker` (a second bounded channel), so it never re-enters the agent path.
+
+### Files created or modified
+
+Created: `Modules/Privacy/Services/{IOtpService,OtpService,OtpResults,OtpStoreUnavailableException,OtpDeliveryService,PhoneFingerprint,ConsentRevocation,ConsentRevoker,OptOutAcknowledgement,OptOutAcknowledgementService,OptOutAcknowledgementIntent}.cs`,
+`Modules/Privacy/Metrics/OtpMetrics.cs`, `Modules/Privacy/Metrics/PrivacyDeliveryMetrics.cs`,
+`Modules/Audit/Services/NullAuditService.cs`, `Endpoints/PrivacyEndpoints.cs`,
+`Aveline.Api.Tests/{OtpServiceTests,PrivacyOptOutStartTests,PrivacyOptOutVerifyTests,StaffConsentRevocationTests,OptOutAcknowledgementServiceTests}.cs`.
+
+Modified: `Modules/Privacy/PrivacyModule.cs`,
+`Modules/Privacy/Services/{IDisclosureDispatchQueue,DisclosureDispatchQueue}.cs`,
+`Modules/Privacy/Jobs/DisclosureDispatchWorker.cs`,
+`Modules/CustomerConcierge/Services/{CustomerConsentService,ICustomerConsentService}.cs`,
+`Modules/CustomerConcierge/CustomerConciergeModule.cs`,
+`Modules/CustomerConcierge/DTOs/CustomerTenantDtos.cs`, `Modules/Audit/Models/AuditAction.cs`,
+`Endpoints/CustomerTenantEndpoints.cs`, `Program.cs`, `Aveline.Api.Tests/DisclosureInboundIntegrationTests.cs`,
+`docs/api/README.md`, `docs/api/openapi.yaml`, `docs/architecture/customer-memory.md`.
+
+### Important architectural decisions
+
+- The verify result carries the phone the code was **issued for** (the number is part of the digest),
+  so the revocation never acts on a client-supplied number.
+- `TryStartAsync` returns `bool?` so the endpoint can tell "budget spent" (429) from "store down"
+  (503) without failing open. `IRateLimiter` is deliberately not reused (DR-6).
+- The acknowledgement window is a Redis key, not a column, so the phase needs no migration; a failed
+  send releases the key so the confirmation is delayed rather than lost.
+- `scope = all` resolves identity by phone through a privacy-owned `IPhoneSubjectLocator` rather than
+  widening the shared `ICustomerRepository` with an untenant-scoped query.
+- `GlobalSubjectId` is annotated from the phone fingerprint on a global opt-out; it is an annotation,
+  not a second identity model (Option 2 remains the eventual replacement).
+
+### Problems encountered
+
+- `IOtpDeliveryService` was first registered as a singleton and consumed the scoped
+  `IOutboundMessagingService`; the DI scope-validation build rejected it at host startup. It is now
+  scoped (the same trap Pr2 documented for the channel).
+- The in-memory `IDistributedCache` cannot simulate an outage, so the endpoint tests substitute a
+  faulting double to prove `503` rather than "allowed".
+- The shared `IDisclosureDispatchQueue` gained an acknowledgement method, which required updating the
+  one in-test double in `DisclosureInboundIntegrationTests`.
+
+### Verification performed
+
+- RED captured before each green step (compile-time `CS0246` for `OtpService`, then failing runs).
+- `Media__Provider=database Media__ReadFromCloudinary=false dotnet test Aveline.Api/Aveline.Api.sln
+  -c Release --nologo --filter <group>`:
+  - the five new Phase 4 classes: **47 passed / 0 failed**;
+  - regression across `Disclosure|Consent|Webhook|CustomerTenant|Privacy`: **257 passed / 0 failed**.
+- `docs/api/openapi.yaml` parsed with a YAML loader after the edit (183 path items; the three new path
+  items and their schemas resolve). No whole-suite run was attempted (it exhausts inotify instances).
+
+### Remaining work
+
+- The Phase 4 metrics are produced but not yet wired into `MetricsCatalog`; that is Phase 6.
+- `PrivacyOptionsValidator` still only validates the link signing key; no new config key was added by
+  this phase.
+- Pr5 (export/erasure) consumes `ConsentRevoker`'s actor model, the `phoneFingerprint` helper and the
+  `DataSubjectRequest`-shaped audit vocabulary (the `AuditAction` constants already exist).
+
+---
+
+## Subagent session — Privacy/Consent Phase 5 (Pr5): OTP-gated export and erasure
+
+**Date:** 2026-09-25
+**Scope:** privacy plan §11 Phase 5, items 5.1–5.7 (plan §7 in full, §3.3, DR-3, DR-4, Q-3, Q-4).
+Deliberately **not** Pr6 (notifications/metrics) and **not** Pr7 (`/privacy` pages).
+
+### Work performed
+
+- **5.4** `DataSubjectRequest` entity + EF configuration + migration
+  `20260924210757_AddDataSubjectRequestsAndErasureTombstones`: `UNIQUE (OrganizationId, Kind,
+  IdempotencyKey)`, `CustomerId` FK **SET NULL**, `OrganizationId` FK **RESTRICT**, `ResultJson`
+  jsonb, index on `CustomerId`.
+- **5.1** `IDataSubjectExportService` / `DataSubjectExportService`: assembles the §7.2 document
+  (customer, consent, consentHistory, memories, preferences, events, interactions, tags, matches,
+  sourcingRequests, conversations, messages, attachments) plus a `counts` object. Every query carries
+  an explicit `OrganizationId` predicate (no EF global tenant filter, R-17); the customer and memory
+  reads use `IgnoreQueryFilters()` so soft-deleted rows are still exported.
+- **5.2** `POST /api/v1/privacy/data/export`: anonymous, OTP verified inline, returns the document
+  inline (DR-4) with `Cache-Control: no-store` and
+  `Content-Disposition: attachment; filename="aveline-data-{orgSlug}-{yyyyMMdd}.json"`. `format=csv`
+  returns a ZIP of one CSV per collection plus `MANIFEST.json` (`DataSubjectExportCsv`), never one
+  flattened file.
+- **5.3** `IErasureService` / `ErasureService`: the §7.3 table in one Postgres transaction with
+  per-table counts. `Customers` and `CustomerMemory` are hard-deleted via `IgnoreQueryFilters()`
+  (R-16); preferences/events/interactions/tags/matches hard-deleted; `SourcingRequests.CustomerId`
+  nulled; `InboundMessageLogs` kept with `From`/`Content` nulled; `Conversations.ExternalRef` nulled.
+- **5.5** `POST /api/v1/privacy/data/delete`: `confirm: "DELETE"` checked before any OTP work; wrong
+  OTP ⇒ 400; happy path ⇒ 200 with counts; `409` when another erasure holds the lease.
+- **5.6** `CustomerCacheInvalidator`: evicts the Python `customer_profile:{customerId}` key and the
+  `customer:lookup:` entries for the erased identity after the commit; best-effort (a Redis outage
+  cannot turn a committed deletion into a 500).
+- **5.7** Q-4 implemented as a new `PrivacyErasureTombstone` (organisation + phone fingerprint +
+  terminal `revoked`), consulted by `ConsentGateService` through a new `IConsentTombstoneStore`; the
+  inbound dispatch site now passes the channel reference so an erased customer's repeat message is
+  refused even though the row is gone (R-3).
+
+### Files created or modified
+
+Created: `Modules/Privacy/Models/{DataSubjectRequest,PrivacyErasureTombstone}.cs`,
+`Infrastructure/Data/Configurations/{DataSubjectRequestConfiguration,PrivacyErasureTombstoneConfiguration}.cs`,
+`Modules/Privacy/Services/{DataSubjectExportService,DataSubjectExportCsv,ErasureService,
+ErasureTombstoneStore,CustomerCacheInvalidator,DataSubjectRequestLog}.cs`,
+`Modules/CustomerConcierge/Services/IConsentTombstoneStore.cs`,
+`Migrations/20260924210757_AddDataSubjectRequestsAndErasureTombstones.{cs,Designer.cs}`,
+`Aveline.Api.Tests/{PrivacyDataSubjectRightsTests,PrivacyErasurePostgresTests,ConsentTombstoneTests,
+CustomerCacheInvalidatorTests}.cs`.
+
+Modified: `Infrastructure/Data/AppDbContext.cs`, `Modules/Privacy/PrivacyModule.cs`,
+`Endpoints/PrivacyEndpoints.cs`, `Modules/CustomerConcierge/Services/{ConsentGateService,
+IConsentGateService}.cs`, `Modules/Conversations/Services/ConversationService.cs`,
+`Aveline.Api.Tests/TenantIsolationTests.cs`, `docs/api/README.md`, `docs/api/openapi.yaml`,
+`docs/backend/domain-model.md`.
+
+### Important architectural decisions
+
+- **Q-3 (messages):** delete the customer's own `ClientMessage` blocks (and their attachment bytes),
+  retain the thread skeleton with an anonymised `from`; staff/agent messages are the boutique's
+  operational record and are kept. Recorded in the XML docs and the API README.
+- **Q-4 (consent survives):** a dedicated `PrivacyErasureTombstones` table rather than an anonymised
+  `CustomerConsent` row, because `CustomerConsent.CustomerId` is `NOT NULL` with an FK cascade and
+  the tombstone carries no customer id at all. The gate treats a tombstone as a revocation unless the
+  live row is an explicit `granted` (a re-consenting customer is not locked out forever).
+- **OTP contract deviation:** the shipped `IOtpService.VerifyAsync` is keyed by the opaque `handle`,
+  so the export/delete bodies carry `handle` in addition to the plan's `{ phone_number, org_id, otp }`.
+- **Idempotency:** the completed-request replay is resolved *before* the code is re-verified, because
+  the OTP is single-use and a network retry carries a spent code. The replay performs no deletion and
+  returns counts only.
+- **`PhoneHash` is the deterministic `PhoneFingerprint.Of`**, unsalted by necessity (it must match
+  across requests/instances); the plan's Q-4 wording says "salted" and that difference is recorded.
+
+### Problems encountered
+
+- A concurrent stream's untracked test files (`PlanChangeProrationTests.cs`,
+  `SubscriptionServiceTests.cs`) did not compile for ~10 minutes and blocked the shared test
+  assembly. Reported to the parent and retried; not worked around in shared files.
+- Postgres `jsonb` canonicalises key order and whitespace, so `ResultJson` is not byte-identical to
+  the serialized dictionary. The tests compare counts semantically.
+- The original idempotency test minted a second OTP after the customer was erased, which the
+  anti-enumeration start path correctly refuses; the test now re-sends the same request.
+
+### Verification performed
+
+- RED captured first: the new test classes failed to compile with `CS0234`/`CS0246` for the
+  not-yet-existing `Modules.Privacy.Models`, `ErasureService`, `ErasureRequest`,
+  `ICustomerCacheInvalidator`, `CustomerCacheInvalidator`.
+- `Media__Provider=database Media__ReadFromCloudinary=false dotnet test Aveline.Api/Aveline.Api.sln -c
+  Release --nologo --filter <group>`:
+  the five Pr5 classes plus the extended `TenantIsolationTests` ran green.
+- Migration integrity: `AppDbContextModelSnapshot.cs` still contains `PaymentIntent`,
+  `PaymentProviderEvent`, `ConsentAuditEntry`, `CustomerConsent`, `OrganizationSubscription`,
+  `BlossomLedgerEntry`, and `dotnet ef migrations has-pending-model-changes` reported *"No changes
+  have been made to the model since the last migration."*
+- Postgres-backed proofs: zero non-null `embedding` rows for the erased customer; zero `Customers`
+  rows including soft-deleted; `SourcingRequests.CustomerId IS NULL` with the row retained;
+  `InboundMessageLogs` kept with nulled `From`/`Content`; cross-org isolation for both routes.
+
+### Remaining work
+
+- The agent service's `semantic_cache` is keyed by prompt + model and has no customer key, so it is
+  not invalidated per subject; recorded in `docs/backend/domain-model.md`.
+- Q-6 (retention) is recorded as **open**; no `PrivacyRetentionJob` is shipped (Phase 6).
+- Pr6 consumes: the erasure counts/`ResultJson` shape for the `DataDeleted` notification and the §9.1
+  metrics, and the `DataSubjectRequests` rows as the audit source.
+
+---
+
+## Session 2026-09-25 (a) — Privacy Phase 6: notification producers and the §9.1 metrics
+
+**Tool used:** DeepSeek Harness (agent), TDD.
+
+**Task:** Plan §11 Phase 6, items 6.1–6.4 — the three missing notification producers and the metric
+families, without touching the erasure/consent semantics or the frontend.
+
+### Work performed
+
+- **6.1** Added `ConsentRevoked`, `DataDeleted`, `PrivacyDeliveryFailed` to `NotificationType` and
+  introduced `NotificationRecipientRules` in the notifications module: the first central rule table
+  from type to recipient roles. `OrganizationRecipientResolver` now applies the rule when a target
+  names no roles, so the enum's "new value plus a recipient-resolver rule" promise is executable
+  rather than a convention at each producer. Privacy types map to owner+manager, except `DataDeleted`
+  (owner only — plan §8.5.4 calls it a legal event). The zero-recipient path still returns `null`.
+- **6.2** Added `IPrivacyNotificationService`/`PrivacyNotificationService` as the single producer
+  seam (one target rule, one bounded payload vocabulary, one best-effort failure path) and wired it
+  into `ConsentRevoker`, `CustomerConsentService`, `ErasureService` and `DisclosureDispatchService`,
+  plus the opt-out start route for the OTP half. Every payload carries identifiers, counts and a
+  bounded reason only — never a number, an OTP, a body or a provider error string.
+- **6.3** Authored the rights family (`RightsMetrics`: export/delete counters by bounded status, and
+  the deletion duration histogram) and the consent-state snapshot gauge (`ConsentMetrics` +
+  `ConsentMetricCollector`); renamed `aveline.otp.start_refused` to
+  `aveline.privacy.endpoint_rate_limited` so the start, verify and rights budgets share one series;
+  registered all twelve privacy series in `MetricsCatalog` and exercised every one in
+  `MetricsNamingTests`. Explicitly did **not** author a second name for the ratios,
+  `disclosure_delivery_failed_total`, `notification_delivery_total` or `agent_run_status_total`.
+- **6.4** Verified the consent-skip mapping end to end: `AgentStatus.skipped` → `_run_status_from_response`
+  → `AgentRunStatus.Skipped`, never `Succeeded`, with the named tests on both sides of the wire.
+- Docs: a "Privacy and consent metrics" section in `docs/backend/statistics-catalog.md`, the family's
+  two-name contract in `docs/backend/observability.md`, and the Q-6 retention note recorded as open.
+
+### Files created
+
+- `Aveline.Api/Modules/Notifications/Services/NotificationRecipientRules.cs`
+- `Aveline.Api/Modules/Privacy/Services/PrivacyNotificationService.cs`
+- `Aveline.Api/Modules/Privacy/Metrics/RightsMetrics.cs`
+- `Aveline.Api/Modules/CustomerConcierge/Jobs/ConsentMetricCollector.cs`
+- `Aveline.Api.Tests/PrivacyNotificationTests.cs`
+- `Aveline.Api.Tests/PrivacyMetricTests.cs`
+- `Aveline.Api.Tests/PrivacyOtpDeliveryFailureNotificationTests.cs`
+
+### Files modified
+
+`NotificationType.cs`, `OrganizationRecipientResolver.cs`, `ConsentRevoker.cs`,
+`CustomerConsentService.cs`, `ErasureService.cs`, `DisclosureDispatchService.cs`,
+`OtpDeliveryService.cs` (kind constant moved), `OtpMetrics.cs`, `ConsentMetrics.cs`,
+`PrivacyDeliveryMetrics.cs`, `OtpService.cs`, `PrivacyEndpoints.cs`, `PrivacyModule.cs`,
+`CustomerConciergeModule.cs`, `MetricsConfiguration.cs`, `MetricsNamingTests.cs`,
+`docs/backend/statistics-catalog.md`, `docs/backend/observability.md`.
+
+### Important architectural decisions
+
+- **The recipient rule is centralised, and only the three privacy types narrow it.** The resolver's
+  original "no filter means all active members" behaviour is preserved for every other type (it is
+  now the explicit `_ => Roles.StaffAccess` arm), so the change cannot silently narrow an operational
+  notification.
+- **A snapshot gauge, not a derived counter, for consent state.** Rebuilding a monotonic counter from
+  a table needs delta bookkeeping across collector passes; a counter that resets or double-counts is
+  worse than an honest gauge. This follows the deviation Slice 7 already recorded for the
+  notification family.
+- **`IPrivacyNotificationService` rather than four direct dispatcher calls**, so "who is told, and
+  with what" is one code path with one place to assert the no-PII contract.
+- **Not-configured is not an outage.** A boutique with no WhatsApp credentials logs and counts, but
+  does not page the owner; only a real provider refusal raises `PrivacyDeliveryFailed`.
+
+### Tests created
+
+`PrivacyNotificationTests` (recipient rules, zero-recipient, all three producers),
+`PrivacyDeliveryFailureNotificationTests`, `PrivacyOtpDeliveryFailureNotificationTests`,
+`PrivacyMetricTests` (each instrument, the collector, and the catalog assertions); `MetricsNamingTests`
+extended to exercise every new series.
+
+### Problems encountered
+
+- **A concurrent payments stream broke the shared test assembly** (`IncomeLedgerServiceTests`,
+  `PaymentIntentServiceTests`, `PaymentSettlementAtomicityPostgresTests`, `SubscriptionServiceTests`
+  referenced API types that were not in the working tree for long stretches). Reported rather than
+  worked around in shared files; local verification used a command-line-only MSBuild filter in
+  `.docker-tmp/` that excludes those files from a *local* build. Nothing in `*.csproj`, `*.sln` or
+  `Directory.Build.*` was touched, and a normal `dotnet test` is unaffected.
+- `PrivacyLinkSignerTests.BuildOptOutUrl_HasTheDocumentedShapeAndCarriesNoPhoneNumber` is flaky and
+  pre-existing: it asserts the URL matches no `\d{7,}`, and a random `Guid` sometimes contains seven
+  consecutive digits. It failed once in a regression run and passed on the final run. Not touched.
+
+### Verification performed
+
+- RED first: `PrivacyNotificationTests` failed to compile with `CS0117` for the three missing
+  `NotificationType` values; `PrivacyMetricTests` with `CS0246` for `RightsMetrics` and
+  `CS0117`/`CS0118` for the renamed OTP metric. Kept as the phase's RED evidence.
+- GREEN: 240 tests green in the final scoped run (phase-6 classes, every metrics class, the whole
+  notifications/privacy/consent families, and the Postgres erasure/revocation proofs).
+- A 474-test wider run was green except the naming guard, which correctly caught one wrong
+  Prometheus name I had authored for the consent gauge (`aveline_consent_state_total`); fixed to
+  `aveline_consent_state` and re-run green. That catch is the single-authoring-place rule working.
+- Python: `pytest tests/test_consent_enforcement.py` — 10 passed, including the two named item-6.4
+  tests.
+
+### Remaining work
+
+- `dpia_retention_breach_total` is **not** implemented: plan Q-6 (the retention window) is unanswered,
+  and a breach counter has no threshold without it. Recorded in the catalog as open.
+- `notification_delivery_total{type,channel,status}` keeps its Slice 7 shape; adding a `type` label to
+  the counter would be a schema change to an existing series, so the phase-6 delivery family only
+  confirms the existing series is catalogued.
+- Pr7 consumes: the `aveline_consent_state` series and the consent-state vocabulary if the policy page
+  wants a live figure; the `ConsentRevoked`/`DataDeleted`/`PrivacyDeliveryFailed` inbox items are what
+  the admin console's notification surface will render.
+
+## Subagent session — Payment gateway Phase 10 (P10): agent-service truthfulness, the dispute type, and the docs sweep
+
+**Task:** P10 of the payment-gateway plan (`.agents/plans/payment-gateway-abstraction-implementation.ignore.md` §9.8, §9.6, §15): remove the two Python payment fabrications, add an explicit provider-dispute event type with an append-only Revenue reversal, and sweep the §15 documents.
+**Tool used:** Claude (subagent) via the DSH harness
+
+### Summary of Activities
+
+- **Agent-service truthfulness (§9.8).** `generate_payment_request` no longer falls back to `https://pay.aveline.boutique/checkout/{ref}`: with no registry, an unreachable backend, or a body without a link it raises `PaymentGatewayUnavailableError` and produces no URL. `validate_payment` now calls a new `ToolRegistry.validate_payment` and returns the server's status, or an explicit `unknown` with `is_settled: False`; it can never report a settlement without a server answer. The Commerce `prepare_settlement` node turns the error into a visible `error` output with no payment and no courier booking.
+- **Chargeback/dispute.** Added `PaymentWebhookEventType.DisputeOpened` and the shared `PaymentWebhookEventTypes.Parse` in `Modules/Payments/Domain/`; `MockPaymentProvider.MapEventType` now delegates to it (a 2-line change, explicitly authorised by the orchestrator after I flagged the `Providers/` constraint conflict). `PaymentSettlementService` handles the new type with `ReverseDisputeAsync`: an append-only `Verified` `Refund` row through `IIncomeLedgerService`, keyed `payment-dispute:{providerIntentId}`, never mutating the settled charge, its grant or its receipt. `Unknown` keeps the fail-safe (stored unprocessed with `ProcessingError`).
+- **Documentation sweep.** Reconciled `docs/api/openapi.yaml` against the generated `/openapi/v1.json` (dumped from a throwaway host test, then deleted) and added the 29 shipped `/api/v1` routes it was missing, including the Commerce payment routes; zero dangling `$ref`s. Corrected the false "no payment provider" statements in `docs/api/README.md` (retaining the deliberate `manual`-default sentence at `:1649`), and updated `domain-model.md`, `implementation-plan.md` (R-5 and the config table), `assumptions-and-open-questions.md` (deployment condition + payment-plan A1–A3), `onboarding-flow.md` (defer answer), `pricing_plan.md` (Q1 shipped status), `statistics-catalog.md` (dynamic `revenueProviderSettlementAvailable`) and `ADR-029`.
+- **Onboarding honesty finding.** Verified in code that `SelectPlanAsync` persists `Organization.PlanTier` only: it does **not** create the `Status = Trialing` + resolved-`PriceLkr` subscription that plan §9.1 specifies. Documented that gap rather than repeating the claim.
+
+### Files created/modified
+
+`agnet-service/app/tools/commerce/payment_tools.py`, `app/tools/registry.py`, `app/agents/commerce/nodes.py`, `tests/test_payment_truthfulness.py` (new), `tests/_payment_fakes.py` (new), `tests/test_commerce_tools.py`, `test_commerce_agent.py`, `test_commerce_graph.py`, `test_commerce_discount_lane.py`, `test_hitl_resume.py`; `Aveline.Api/Modules/Payments/Domain/PaymentProviderModels.cs`, `Domain/PaymentWebhookEventTypes.cs` (new), `Services/PaymentSettlementService.cs`, `Services/IPaymentSettlementService.cs`, `Services/PaymentAuditActions.cs`, `Providers/MockPaymentProvider.cs`; `Aveline.Api.Tests/PaymentWebhookEventTypesTests.cs` (new), `PaymentSettlementServiceTests.cs`, `MockPaymentProviderTests.cs`; `docs/api/openapi.yaml`, `docs/api/README.md`, `docs/backend/{domain-model,implementation-plan,assumptions-and-open-questions,statistics-catalog}.md`, `docs/architecture/{onboarding-flow,pricing_plan}.md`, `docs/ADR/ADR-029-payment-gateway-abstraction.md`, `docs/ai-usage/kavindu.md`.
+
+### Tests created
+
+`test_payment_truthfulness.py` (16 cases: the absence sweep for fabricated links and settlements, plus the positive server-answered cases); `test_commerce_agent.py::test_an_unreachable_payment_backend_errors_instead_of_handing_out_a_link`; `PaymentWebhookEventTypesTests` (dispute spellings, unknown fallback); `PaymentSettlementServiceTests.Settle_ADisputeEvent_AppendsARefundReversal_AndMarksTheEventProcessed`, `Settle_AReversedCharge_ThatIsDisputedAgain_IsRefusedByTheLedgerIdentity`, and the re-pointed unknown-type test; `MockPaymentProviderTests.Webhook_ADisputeEvent_MapsToTheExplicitDisputeType` plus the re-pointed unknown test.
+
+### Verification performed
+
+- RED (Python): `tests/test_payment_truthfulness.py` — 13 failed / 3 passed, verbatim `AssertionError: a checkout URL was produced without a server answer` (`https://pay.aveline.boutique/checkout/123456`) and `AttributeError: module ... has no attribute 'PaymentGatewayUnavailableError'`.
+- RED (.NET): `dotnet build Aveline.Api.Tests/... -c Release` — `CS0117` for `SettlementOutcomeKind.Reversed` and `PaymentWebhookEventType.DisputeOpened`, `CS0103` for `PaymentWebhookEventTypes`.
+- GREEN (Python): `pytest tests/ --cov=app --cov-fail-under=90` → **933 passed, 2 skipped, 2 xfailed**, coverage **93.16 %**; `ruff check app/ tests/` clean.
+- GREEN (.NET, scoped): `--filter "FullyQualifiedName~Payment&FullyQualifiedName!~OnePay"` → **281 passed, 0 failed**.
+- OpenAPI: generated-vs-hand diff → 0 shipped `/api/v1` routes missing, 0 dangling refs.
+
+### Problems encountered / remaining work
+
+- 10 `OnePayPaymentProviderTests` / contract cases fail in a concurrent P8 adapter stream (`String` vs `Number` amount serialisation) — not touched, reported.
+- `docs/frontend/admin-console.md` and `docs/frontend/tenant-dashboard.md` still say "no payment-provider client"; left untouched per the instruction not to disturb the P4-intentionally-changed admin-console revenue copy and the frontend copy tests, because the shipped default provider is `manual`.
+- Onboarding does not yet create the `Trialing` subscription the defer answer describes (recorded above).
+
+## Subagent session — Payment gateway G8 / plan §9.1: onboarding plan-selection provisioning
+
+**Task:** close gap G8 / §9.1 (GitHub #422) — make onboarding plan selection resolve a price and create the organization's subscription, in defer mode (plan §14 Q1).
+**Tool used:** DeepSeek (subagent) via the DSH harness
+
+### Summary of Activities
+
+- **Provisioner.** Added `ISubscriptionProvisioner` / `SubscriptionProvisioner` in `Modules/Billing/Services/` (a separate service rather than a method on `SubscriptionService`, because this is the "a tier became the plan" write onboarding owns, not the change-plan lifecycle, and it keeps `SubscriptionService`'s seven-argument unit-test construction intact). It upserts the single `OrganizationSubscription`: `PriceLkr` from `ISubscriptionPriceResolver`, `Status = Trialing` for a new paid tier, and an explicit `PriceLkr = 0` / `Status = Active` free row for Seed. A missing price row leaves the existing value alone and reports `PriceLkr = null` (P1's rule); an existing row's status is never demoted back to `Trialing`.
+- **Wiring.** `OnboardingService.SelectPlanAsync` takes the provisioner as an **optional eighth constructor dependency** (after `IEntitlementResolver`) so existing positional constructions keep compiling, and calls it in the same request as the tier change. Idempotent: the second call updates the one row.
+- **DTO.** `OnboardingOrganizationDto` widened with `priceLkr`, `currency`, `subscriptionStatus`, `paymentIntentId`, `checkoutUrl` as optional members. The last two are always null (defer mode).
+- **Reads.** `MapToDtoAsync` reports the recorded price/status from the organization's subscription, so a wizard reload keeps the server price.
+- **Frontend.** `PlanSelectionStep` renders the server price on the selected card; `wizard-context` carries `planPriceLkr`/`planCurrency`/`planSubscriptionStatus`; `lib/onboarding.ts`'s `selectPlan` returns the widened fields. Demo banner unchanged (defer mode).
+- **Docs.** Corrected `docs/architecture/onboarding-flow.md` §4.5 (the previous agent had recorded the unshipped half), the plan-selection row and sequence diagram, and `docs/api/README.md` + `docs/api/openapi.yaml`.
+
+### Files created/modified
+
+Created: `Aveline.Api/Modules/Billing/Services/ISubscriptionProvisioner.cs`, `Aveline.Api/Modules/Billing/Services/SubscriptionProvisioner.cs`, `frontend/web/src/components/onboarding/steps/PlanSelectionStep.dom.test.tsx`.
+Modified: `Aveline.Api/Modules/Organizations/Services/OnboardingService.cs`, `DTOs/OnboardingDtos.cs`, `Repositories/IOrganizationRepository.cs`, `Repositories/OrganizationRepository.cs`, `Aveline.Api/Program.cs`, `Aveline.Api.Tests/OnboardingServiceTests.cs`, `Aveline.Api.Tests/OnboardingEndpointsIntegrationTests.cs`, `frontend/web/src/lib/onboarding.ts`, `frontend/web/src/lib/onboarding.test.ts`, `frontend/web/src/components/onboarding/plans.ts`, `frontend/web/src/components/onboarding/wizard-context.tsx`, `frontend/web/src/components/onboarding/steps/PlanSelectionStep.tsx`, `docs/architecture/onboarding-flow.md`, `docs/api/README.md`, `docs/api/openapi.yaml`.
+
+### Tests created
+
+`OnboardingServiceTests`: `SelectPlanAsync_ForABloomPlan_CreatesExactlyOneTrialingSubscriptionAtTheResolvedPrice`, `SelectPlanAsync_ForTheFreeSeedTier_CreatesNoPaidSubscription`, `SelectPlanAsync_SelectingTheSameTierTwice_IsIdempotent`, `SelectPlanAsync_WithNoPriceRow_ReportsANullPriceAndStillTrials`, `CompleteOnboardingAsync_WithAPaidTier_StillActivatesInDeferMode`. `OnboardingEndpointsIntegrationTests`: `SelectPlanEndpoint_WithAPricedBloomBook_ReturnsThePriceAndTrials`, `SelectPlanEndpoint_WithAnUnpricedTier_ReturnsANullPriceAndStillTrials`. Web: `PlanSelectionStep.dom.test.tsx` (3) and `onboarding.test.ts`'s `selectPlan returns the priced subscription fields from the server`.
+
+### Verification performed
+
+- RED (.NET): the scoped build failed with `CS1061` on every new field (`'OnboardingOrganizationDto' does not contain a definition for 'PriceLkr'` …) — verbatim evidence kept.
+- RED (web): `bun run test` — `PlanSelectionStep.dom.test.tsx` failed on `findByText('LKR 2,900/mo')` (the step rendered the hardcoded constant).
+- GREEN (.NET, scoped, `ArtifactsPath=.docker-tmp/artifacts-onboarding`): onboarding unit + endpoint tests 15 passed; `Onboarding|Subscription|DocsConsistency|TenantDashboardDocumentation` → 201 passed; `Organization|ConversationHubTests|NotificationHubTests|PriceBookSelection|Pricing` → 270 passed.
+- GREEN (web): `bun run test` → 164 files, 1340 tests passed; `bunx tsc -b` clean; `bun run lint` 0 errors.
+
+### Problems encountered / remaining work
+
+- `ISubscriptionProvisioner` is registered in `Program.cs`, not `BillingModule.cs`, because a concurrent task owns `Modules/Billing/` this round; the comment in `Program.cs` says so.
+- `IOrganizationRepository.GetSubscriptionAsync` has a default interface implementation returning `null` so the two narrow SignalR fakes keep compiling; the `OrganizationRepository` override is the real read.
+- Unpriced book consequence: `subscriptionPricesConfigured`/MRR stay `null` for that tenant (no charge is fabricated), which is the honest reading of "no price row".
+- No transition from `Trialing` to `Active` when the deferred payment is eventually collected; recorded as follow-up 7 in `docs/architecture/onboarding-flow.md`.
+- Only scoped suites were run; the full .NET suite was deliberately not executed (≈30 min, and a concurrent stream owns other modules).
+
+## Subagent session — Payment gateway Phase 9 (P9): Commerce order-checkout consolidation
+
+**Session start:** 2026-09-25 (beginning record written at the end of the same session; see the note below).
+**Tool used:** DeepSeek (subagent) via the DSH harness
+**Task:** plan §9.7 / §10 Phase 9, the riskiest phase (R6): replace the Commerce order checkout's fabricated URL with a `CommerceOrder` payment intent, make the confirmation route a poll of that intent, make `Payments.GatewayTransactionId` unique after a backfill proves no duplicates, map provider status onto the existing `Status` strings, keep `Payment.OrganizationId` as the isolation key, and keep the pre-Phase-9 path behind one config switch for one release.
+
+### Note on the beginning-of-session record
+
+`docs/ai-usage/README.md` and `.agents/rules/Rules.md` §2 ask for a beginning-of-session entry. This
+entry was written at the end instead, because the session was delegated with its full brief already
+written down (the task prompt) and the log was opened to append after the work was complete. The
+brief is reproduced in the Task line above, so nothing about the session's intent is lost; the
+process deviation is recorded here rather than hidden.
+
+### Summary of Activities
+
+- **Read first, as instructed:** plan §9.7, §8.4 S8, §10 Phase 9, §6.2 (`PaymentPurpose.CommerceOrder`), §6.6, §14 Q7, §13 R6; `PaymentService.cs`; `Payment.cs`; `PaymentsController.cs`; `IPaymentService.cs`; `CommerceModule.cs`; `PaymentConfiguration.cs`; `docs/reports/PR-290-slice3-review.md:269`; `CommercePaymentsTests.cs`; `IPaymentIntentService.cs`; `PaymentDtos.cs`; Rules §5 and §7.
+- **RED:** rewrote `CommercePaymentsTests` deliberately and ran the scoped filter before implementing. Build failed on exactly the missing API surface (`CS1729: 'PaymentService' does not contain a constructor that takes 5 arguments`, `CS0117: 'PaymentsOptions' does not contain a definition for 'Commerce'`, `CS1061` for `PaymentResponseDto.PaymentIntentId` / `Payment.PaymentIntentId`). A concurrent stream's broken `Modules/Organizations` and `Modules/Billing` files also failed the shared assembly at that moment; both were reported and retried, not worked around.
+- **Generation.** Deleted the fabricated URL construction from the provider path. `GeneratePaymentRequestAsync` now creates a `CommerceOrder` intent through `IPaymentIntentService.CreateAsync`, stores `Payment.PaymentIntentId`, and sets `Payment.PaymentLink` from `intent.CheckoutUrl` (null when the provider has no hosted page, which the `manual` adapter's `SupportsHostedCheckout = false` makes a real case).
+- **Confirmation.** `ConfirmPaymentAsync` now polls the intent (`GetAsync`) and maps the provider's verdict onto `Payment.Status`. The caller's `GatewayTransactionId` is never consulted, never stored and no longer `[Required]` on `ConfirmPaymentDto`. A `200` with `status: "pending"` is the honest answer for an unsettled charge.
+- **The manual counter path.** A payment whose `PaymentIntentId` is null is a counter payment: it keeps the operator's reference, because an operator asserting receipt is the honest `manual` adapter's semantics. This is what keeps `PaymentLedgerBridgeTests` (11 cases) meaningful without weakening the provider path.
+- **Status vocabulary.** Added `CommercePaymentStatus`, mapping the intent's provider status onto the column's shipped strings (`Succeeded` → `confirmed`, `Failed`/`Cancelled`/`Expired` → `failed`, `Refunded` → `refunded`, otherwise `pending`). One deliberate exception, `FromProviderStatusAtCreation`, leaves the row `pending` when the provider settles *at creation*, because on this row `confirmed` means "Aveline wrote the takings entry" and that is the confirmation poll's job.
+- **Schema.** Added `Payment.PaymentIntentId` (nullable, indexed, FK to `PaymentIntents`, `Restrict`) and made the `GatewayTransactionId` index unique. Migration `20260924230720_AddCommercePaymentIntentLinkAndUniqueGatewayIndex`.
+- **Rollback (plan §8.4 S8).** `Payments:Commerce:UseProviderIntents` (default `true`) restores the pre-Phase-9 path: `CounterGeneratePaymentRequestAsync` returns `FabricatedLegacyCheckoutUrl(shortRef)` (the one place a checkout URL is built from a payment id in the whole codebase) and `CounterConfirmPaymentAsync` believes the caller.
+- **Docs.** `docs/api/README.md` B.19's `payments/**` wildcard row replaced with a per-route table plus the Phase 9 behaviour, the counter-payment rule, the status mapping and the rollback; `docs/api/openapi.yaml`'s three Commerce payment operations rewritten (the confirm operation is now documented as a poll).
+
+### Files created/modified
+
+Created: `Aveline.Api/Modules/Commerce/Services/CommercePaymentStatus.cs`; `Aveline.Api.Tests/FakePaymentIntentService.cs`; `Aveline.Api.Tests/CommercePaymentSchemaPostgresTests.cs`; `Aveline.Api/Migrations/20260924230720_AddCommercePaymentIntentLinkAndUniqueGatewayIndex.cs` (+ `.Designer.cs`, and the regenerated `AppDbContextModelSnapshot.cs`).
+
+Modified: `Aveline.Api/Modules/Commerce/Services/PaymentService.cs`; `Aveline.Api/Modules/Commerce/Models/Payment.cs`; `Aveline.Api/Modules/Commerce/DTOs/PaymentResponseDto.cs`; `Aveline.Api/Modules/Commerce/DTOs/ConfirmPaymentDto.cs`; `Aveline.Api/Modules/Commerce/CommerceModule.cs`; `Aveline.Api/Infrastructure/Data/Configurations/PaymentConfiguration.cs`; `Aveline.Api/Modules/Payments/PaymentsOptions.cs`; `Aveline.Api.Tests/CommercePaymentsTests.cs`; `Aveline.Api.Tests/PaymentLedgerBridgeTests.cs`; `docs/api/README.md`; `docs/api/openapi.yaml`; `docs/ai-usage/kavindu.md`.
+
+### Tests created / rewritten
+
+Rewritten in `CommercePaymentsTests` (the assertions that encoded the removed behaviour are named in the report to the delegating agent): `PaymentService_GeneratePaymentRequest_ReturnsTheProvidersCheckoutUrl` (replaces `Assert.StartsWith("https://pay.aveline.boutique/checkout/", …)`), `..._TenantScopedUrl_IsTheIntentResourceNotAShortRef`, `..._CreatesACommerceOrderIntentThroughTheProvider`, `..._RecordsTheIntentIdOnThePaymentRow`, `..._LeavesTheLinkNullWhenTheProviderHasNoHostedPage`, `..._OfAnAdapterThatSettlesInPlace_SettlesTheLedgerOnce`, `PaymentService_ConfirmPayment_RefusesToSettleOnTheCallersTransactionId`, `..._SettlesWhenTheProviderSaysTheIntentSucceeded`, `..._PollsTheProviderState_AndMapsEveryTerminalStatus`, `..._IsIdempotentWhenTheIntentAlreadySettled`, `..._DoesNotSettleAnotherTenantsPayment`, `RollbackSwitch_WhenOn_...`, `RollbackSwitch_WhenOff_RestoresTheOldPath_ForExactlyOneRelease`, `NoPaymentUrlLiteralSurvivesOutsideTheRollbackBranchsOwnType`, plus the rewritten controller cases.
+
+New in `CommercePaymentSchemaPostgresTests`: `AGatewayTransactionId_CannotNameTwoPayments`, `ManyPayments_WithNoGatewayReference_AreStillAllowed`, `APaymentIntentLink_IsStoredAndScopedToItsTenant`.
+
+### Verification performed
+
+- RED (.NET, scoped): `dotnet test … --filter "FullyQualifiedName~CommercePaymentsTests"` → `Build FAILED`, verbatim `error CS1729: 'PaymentService' does not contain a constructor that takes 5 arguments`, `error CS0117: 'PaymentsOptions' does not contain a definition for 'Commerce'`, `error CS1061: 'PaymentResponseDto' does not contain a definition for 'PaymentIntentId'`, `error CS1061: 'Payment' does not contain a definition for 'PaymentIntentId'`.
+- GREEN (.NET, scoped): `Media__Provider=database Media__ReadFromCloudinary=false dotnet test Aveline.Api/Aveline.Api.sln -c Release --nologo --filter "FullyQualifiedName~Payment|FullyQualifiedName~CommercePayments|FullyQualifiedName~BoutiqueSale|FullyQualifiedName~BoutiqueIncome"` → **407 passed, 0 failed, 0 skipped**.
+- GREEN (.NET, scoped, rollback switch): `--filter "FullyQualifiedName~CommercePaymentsTests|FullyQualifiedName~PaymentLedgerBridgeTests"` → **30 passed, 0 failed**; the two `RollbackSwitch_*` cases are the on/off pair.
+- GREEN (.NET, PostgreSQL, new): `--filter "FullyQualifiedName~CommercePaymentSchemaPostgresTests"` → **3 passed, 0 failed** against a real `pgvector/pgvector:pg16` container with `MigrateAsync()` applied.
+- Migration integrity, verbatim: `dotnet ef migrations has-pending-model-changes --project Aveline.Api --startup-project Aveline.Api` → **"No changes have been made to the model since the last migration."**; the snapshot still contains `PaymentIntent`, `PaymentProviderEvent`, `ConsentAuditEntry`, `CustomerConsent`, `OrganizationSubscription`, `BlossomLedgerEntry` (and `Commerce.Models.Payment`), each verified by `grep`.
+- One debugging detour worth recording: a table-driven test read `nameof(@case.Provider)` inside a lambda, which is the compile-time string `"Provider"`, not the enum member. It made every provider status look unrecognised. The fix (`@case.Provider.ToString()`) was found by dumping the fake's stored view; the same mistake would silently weaken any future table-driven case.
+
+### Problems encountered / remaining work
+
+- A concurrent stream repeatedly broke the shared assembly (`Modules/Organizations/Repositories/OrganizationRepository.cs` missing `GetSubscriptionAsync`; `Modules/Billing/Services/SubscriptionProvisioner.cs` missing `PlanEntitlementDefaults`). Both were outside this phase's scope, were reported to the delegating agent, and cleared on retry.
+- **The brief's premise about the docs is partly stale, recorded honestly:** `docs/api/README.md:1305` did already carry a `payments/**` wildcard row (not per-route), and `docs/api/openapi.yaml:8029-8216` already carried all five Commerce payment operations. The wildcard is what was replaced; the OpenAPI descriptions were corrected rather than added.
+- `PaymentSettlementService` still stores a `CommerceOrder` settlement event unprocessed ("not implemented in this phase"); Phase 9 does not change that, and `PaymentService` writes only the boutique takings register, never the platform income ledger.
+- A provider that settles at creation reaches `confirmed` only after the first confirmation poll. The status column is left `pending` at creation deliberately (see `FromProviderStatusAtCreation`); a client that needs the provider's truth immediately should read the intent.
+- Only scoped suites were run; the full .NET suite was deliberately not executed (≈30 min, and concurrent streams own other modules).
+
+## Session 2026-09-24 (Part 2) — Orchestrated subagent swarm: payment gateway abstraction + privacy, consent & data-subject rights
+
+**Task:** Implement every feature in two approved plans by orchestrating delegated subagents, verifying each phase, and updating `kavindu.md` at session start and end.
+**Plans:** `.agents/plans/payment-gateway-abstraction-implementation.ignore.md` (11 phases, P0–P10) and `.agents/plans/privacy-consent-data-deletion-implementation.ignore.md` (8 phases, Pr0–Pr7).
+**Tool used:** DeepSeek Harness — one orchestrator session plus 24 delegated subagents. The orchestrator wrote **no application code**; it defined the work, delegated it, and verified the output.
+**Branch:** `feature/payment-gateway-abstraction-and-privacy-consent`. No branch was created or switched, and nothing was committed or stashed.
+
+### How the work was organised
+
+Both plans were read in full and every phase, deliverable, dependency and exit criterion was extracted. **20 GitHub issues** were created before any implementation: #403–#421 for the 19 planned phases, plus **#422** for a phase the plans turned out to be missing (below). Execution was deliberately **serialised for writers**: the repo has one working tree, one `obj`/`bin`, and one EF model snapshot, so concurrent `dotnet` writers corrupt builds and migrations. Two streams ran at once only where they owned disjoint modules and used isolated MSBuild artifacts paths, and migration creation was granted to **one** stream at a time.
+
+### Phases delivered and independently verified
+
+Every phase below was verified by the orchestrator re-running the same scoped commands the delegate used, not by accepting the delegate's summary.
+
+| Phase | Issue | Verification |
+| --- | --- | --- |
+| P0 pricing decisions + seed | #403 | 6 rows match documented prices; `PricingService.cs:387` confirmed to create rows `Draft`, so the PATCH-to-Active is required |
+| P1 price resolution → `PriceLkr` | #404 | 85/85 + 40/40; key test reads 3500 back from the DB |
+| P2 provider SPI, tables, mock, services, endpoints, settlement | #405 | per-part 31/31, 125/125, 98/98 + 227/227 shipped-infra regression |
+| P3 web `TopUpDialog` + Flutter purchase path + offline demo | #406 | web 1265, Flutter 1227, `flutter analyze` clean |
+| P3b onboarding provisions a priced subscription (gap G8) | #422 | 15/15; provisioner semantics read at source |
+| P4 renewal, `PastDue`, dunning, dynamic settlement flag | #407 | 100/100 incl. Postgres; migration adds 3 columns only |
+| P5 plan-change proration | #408 | 160/160; local formula documented with leap-month/zero-day/rounding rationale |
+| P6 cancellation, refunds, `VerifyAsync` extraction | #409 | 438/438; admin verify suite 21/21 unchanged proves the extraction behaviour-preserving |
+| P7 expiry sweep + reconciliation | #410 | 239/239; read and alert proven to share one derivation |
+| P8 external adapter (OnePay) | #411 | 220/220 incl. a third contract subclass |
+| P9 Commerce checkout consolidation | #409→#412 | 50/50 + Postgres schema; EF reports no pending model changes |
+| P10 agent-service truthfulness + chargeback + docs | #413 | Python 933 passed @ 93.16%, ruff clean |
+| Pr0 consent foundation + `ConsentAuditEntry` | #414 | 46/46 + 153/153 regression |
+| Pr1 consent enforcement (API gate + agent orchestrator) | #415 | 49/49 .NET, Python 916 @ 93.22% |
+| Pr2 outbound WhatsApp messaging | #416 | 103/103 |
+| Pr3 first-contact disclosure + signed opt-out link | #417 | 181/181 |
+| Pr4 OTP opt-out flow | #418 | 59 new tests; fail-closed counters proven |
+| Pr5 export + erasure | #419 | 49/49 incl. Postgres |
+| Pr6 privacy notifications + metrics | #420 | 240/240 combined with P6 |
+| Pr7 landing section + policy/opt-out pages | #421 | web 1333/1333; **Playwright ran** (4/4) |
+
+### Defects found by verification — and fixed
+
+The value of verifying rather than trusting was not theoretical; four real defects surfaced, three of them in work that had already been reported green.
+
+1. **A committed test broken in-session and mislabelled "pre-existing".** P1's refactor removed the `SkuCode == ` literal that `TenantBillingReadsTests.TheCatalogueAndThePurchaseUseTheSameLookup` greps. My own P1 verification filter never covered that class. Repaired by re-pointing the probe at the shared `PriceBookSelection.SelectActiveSku` selector, with a **mutation check** proving the new assertion fails if the lookup is re-duplicated.
+2. **An orphan payment intent committed on transport failure.** P2's `PaymentIntentService` left a failed create tracked as `Added`, so a later audit `SaveChangesAsync` in the same scope committed exactly the row §6.6 forbids. P2's own M4 test used a fresh context and never saw it; P5's test found it. Fixed by detaching in both catch blocks.
+3. **A probabilistic assertion.** Pr3's `BuildOptOutUrl_...` asserted `DoesNotMatch(@"\+?\d{7,}")` against a URL containing a random hex Guid, so it failed by chance. Replaced with a deterministic parameter-set assertion plus a 200-case repeated theory and a permanent mutation control.
+4. **An opt-out nobody could complete.** Pr7 found that `POST /privacy/opt-out/start` minted the OTP handle, used it to deliver the code, then **discarded** it — while `verify` requires it. Objective 3 was non-functional end to end. Every per-phase suite was green because start and verify were only ever tested in isolation. Fixed by returning the handle on every path, with the **joined-up start→verify test that was missing**; the anti-enumeration test was restated as an identical field set rather than byte-identity, which is the property that actually holds.
+5. **A latent twin of the same error-mapping bug.** Pr7's Playwright run exposed that `ApiError.code` carries axios's transport code, so business codes (`otp-invalid`, `payment-intent-state`) never matched. Pr7 fixed `privacy.ts`; the identical defect in P3's `payments.ts` was folded into P8 as a required fix with a failing-then-passing test, because a phase I had already verified was shipping a real bug.
+
+### A missing phase, found by reading the plan against the code
+
+The plans claim 19 phases. Testing them against the tree showed the §10 roadmap never assigns the **onboarding flow** to any phase, even though the executive summary scopes it into Phases 0–3 and §9.1 calls it "the deliverable's first flow". `OnboardingService.SelectPlanAsync` set only `PlanTier` — no subscription, no price. Gap **G8** was genuinely unclosed. Issue **#422** was created and the work done: a new `ISubscriptionProvisioner` (paid → `Trialing` at the resolved price; Seed → explicit `Active`/`0`; a missing price left alone and reported `null`, never coerced to zero), the `OnboardingOrganizationDto` widened, and the web plan step rendering the server's price.
+
+### Final gate
+
+`Aveline.Api.Tests/run-chunked-tests.sh` (6 chunks, fresh inotify budget each) with `Media__Provider=database Media__ReadFromCloudinary=false`, matching the CI configuration:
+
+**4078 passed, 1 failed.** The single failure is `EventingMetricsExporterTests.ExecuteAsync_LogsMetricsSnapshotWhenCountersAreRecorded`, which is **pre-existing and unrelated**: it races a 1.6 s `Task.Delay` against a 1 s periodic timer, passes in isolation, and neither `Infrastructure/Eventing/` nor `EventingTests.cs` was touched this session. It is a wall-clock flake, not a regression.
+
+Two environment facts worth recording for whoever runs this next:
+- `Aveline.Api.Tests/run-chunked-tests.sh` invokes `dotnet test` from the **current directory**, which has no solution file at the repo root, so it fails with `MSB1003` unless run from `Aveline.Api/`.
+- The repo's `.env` (and this shell) set `Media__Provider=cloudinary` with no usable credentials, which fails ~19 media/catalog tests. The script treats ambient values as a deliberate override, so the CI-equivalent run must force `Media__Provider=database`.
+
+### Remaining work / known limitations
+
+- **Live external-provider verification was not performed.** There is no OnePay sandbox account, so no live charge, no webhook registration and no live settlement. The status-mapping and refund rows are unverified against a real response; the `Processing` fallback is what keeps that safe. Appendix D of the payment plan lists exactly what a human must run. A1 (public webhook ingress) and A3 (LKR settlement) remain unverified.
+- **`Trialing` has no exit.** Nothing transitions `Trialing → Active` when a deferred payment is eventually collected, and no dunning applies to a never-paid trial. Recorded as follow-up 7 in `docs/architecture/onboarding-flow.md`.
+- **`PaymentSettlementService` still leaves `CommerceOrder` and some non-`BlossomTopUp` purposes unprocessed**, which is deliberate and visible rather than silently reconciled.
+- **The unique `GatewayTransactionId` backfill was not run against a live database.** The migration adds the unique index directly and will fail loudly on duplicates rather than deleting data; the operator dedup query is recorded in the P9 entry.
+- **Q-6 (retention window) remains open** and `dpia_retention_breach_total` was deliberately not implemented, because inventing a retention policy is not an engineering decision.
+- Pre-existing structure noted, not changed: `Modules/Organizations`, `Modules/Admin` and `Modules/Shared` have no `Add<Name>Module` extension, so ~11 of their services are registered inline in `Program.cs`. Moving them means inventing module extensions — a refactor, not a cleanup.

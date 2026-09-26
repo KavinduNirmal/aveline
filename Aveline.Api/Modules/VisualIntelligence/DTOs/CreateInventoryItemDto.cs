@@ -11,6 +11,7 @@ public class CreateInventoryItemDto
     public string ItemName { get; set; } = string.Empty;
     public string Category { get; set; } = string.Empty;
     public string Color { get; set; } = string.Empty;
+    public string? ColorHex { get; set; }
     public List<string> Sizes { get; set; } = new();
     public decimal Price { get; set; }
     public decimal Cost { get; set; }

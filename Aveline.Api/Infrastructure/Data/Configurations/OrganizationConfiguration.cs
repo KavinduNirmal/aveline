@@ -95,6 +95,10 @@ public class OrganizationConfiguration : IEntityTypeConfiguration<Organization>
         builder.Property(o => o.CreatedAt)
             .IsRequired();
 
+        // Supports the platform-wide new-boutique range scan (business KPIs S-44).
+        builder.HasIndex(o => o.CreatedAt)
+            .HasDatabaseName("IX_Organizations_CreatedAt");
+
         builder.Property(o => o.UpdatedAt)
             .IsRequired();
 

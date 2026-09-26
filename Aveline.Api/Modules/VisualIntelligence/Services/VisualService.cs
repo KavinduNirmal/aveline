@@ -3,9 +3,12 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Aveline.Api.Common.Media;
+using Aveline.Api.Modules.Media;
 using Aveline.Api.Modules.VisualIntelligence.DTOs;
 using Aveline.Api.Modules.VisualIntelligence.Models;
 using Aveline.Api.Modules.VisualIntelligence.Repositories;
+using Microsoft.Extensions.Logging;
 
 namespace Aveline.Api.Modules.VisualIntelligence.Services;
 
@@ -17,6 +20,10 @@ public class VisualService : IVisualService
     private readonly IOutfitRepository _outfitRepository;
     private readonly ISupplierRepository _supplierRepository;
     private readonly IVisionService _visionService;
+    private readonly IQrCodeService _qrCodeService;
+    private readonly IMediaAssetLocator _mediaAssets;
+    private readonly MediaAccessService _mediaAccess;
+    private readonly ILogger<VisualService> _logger;
 
     public VisualService(
         IInventoryService inventoryService,
@@ -24,7 +31,11 @@ public class VisualService : IVisualService
         ICustomerMatchRepository customerMatchRepository,
         IOutfitRepository outfitRepository,
         ISupplierRepository supplierRepository,
-        IVisionService visionService)
+        IVisionService visionService,
+        IQrCodeService qrCodeService,
+        IMediaAssetLocator mediaAssets,
+        MediaAccessService mediaAccess,
+        ILogger<VisualService> logger)
     {
         _inventoryService = inventoryService ?? throw new ArgumentNullException(nameof(inventoryService));
         _sourcingRequestRepository = sourcingRequestRepository ?? throw new ArgumentNullException(nameof(sourcingRequestRepository));
@@ -32,6 +43,10 @@ public class VisualService : IVisualService
         _outfitRepository = outfitRepository ?? throw new ArgumentNullException(nameof(outfitRepository));
         _supplierRepository = supplierRepository ?? throw new ArgumentNullException(nameof(supplierRepository));
         _visionService = visionService ?? throw new ArgumentNullException(nameof(visionService));
+        _qrCodeService = qrCodeService ?? throw new ArgumentNullException(nameof(qrCodeService));
+        _mediaAssets = mediaAssets ?? throw new ArgumentNullException(nameof(mediaAssets));
+        _mediaAccess = mediaAccess ?? throw new ArgumentNullException(nameof(mediaAccess));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
     public async Task<IReadOnlyList<InventoryItemDto>> SearchInventoryAsync(
@@ -39,6 +54,22 @@ public class VisualService : IVisualService
         CancellationToken cancellationToken = default)
     {
         return await _inventoryService.SearchInventoryAsync(dto, cancellationToken);
+    }
+
+    public async Task<CatalogPagedResponse> QueryCatalogAsync(
+        Guid orgId,
+        CatalogQueryRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        return await _inventoryService.QueryCatalogAsync(orgId, request, cancellationToken);
+    }
+
+    public async Task<CatalogFacetsResponse> GetFacetsAsync(
+        Guid orgId,
+        CatalogQueryRequest? currentNarrowing = null,
+        CancellationToken cancellationToken = default)
+    {
+        return await _inventoryService.GetFacetsAsync(orgId, currentNarrowing, cancellationToken);
     }
 
     public async Task<InventoryItemDto?> GetItemByIdAsync(
@@ -72,6 +103,14 @@ public class VisualService : IVisualService
         return await _inventoryService.UpdateStatusAsync(itemId, dto.OrgId, dto.Status, cancellationToken);
     }
 
+    public async Task<bool> DeleteInventoryItemAsync(
+        Guid itemId,
+        Guid orgId,
+        CancellationToken cancellationToken = default)
+    {
+        return await _inventoryService.DeleteItemAsync(itemId, orgId, cancellationToken);
+    }
+
     public async Task<IReadOnlyList<InventoryItemDto>> GetLowStockInventoryAsync(
         Guid orgId,
         int threshold = 5,
@@ -80,13 +119,156 @@ public class VisualService : IVisualService
         return await _inventoryService.GetLowStockItemsAsync(orgId, threshold, cancellationToken);
     }
 
+    /// <summary>
+    /// Analyses an image, either from a named reference (resolved, tenant-checked, validated and
+    /// minted here) or from a caller-supplied external URL (the permissive compatibility arm).
+    /// </summary>
+    /// <exception cref="KeyNotFoundException">
+    /// A named reference that is unknown, deleted or another organisation's. The caller maps it to
+    /// a <c>404</c> — a reference the caller cannot see never yields a token or an image
+    /// (strategy §3.5, migration plan §7.5).
+    /// </exception>
     public async Task<ImageAnalysisResultDto> AnalyzeImageAsync(
         AnalyzeImageDto dto,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(dto);
-        return await _visionService.AnalyzeAsync(dto.ImageUrl, dto.OrgId, dto.FileName, dto.ContextHint, cancellationToken);
+
+        // The reference arm is additive. `ImageUrl` is non-nullable and empty means absent
+        // (strategy §4 C14), so a stale "" never shadows a named reference; and `externalUrl` or an
+        // unknown kind deliberately falls through to the ImageUrl arm, which is the arm Q7 left
+        // permissive.
+        if (TryReadReference(dto, out var imageRefKind, out var imageRefId))
+        {
+            return await AnalyzeReferenceAsync(dto, imageRefKind, imageRefId, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return await _visionService
+            .AnalyzeAsync(dto.ImageUrl, dto.OrgId, dto.FileName, dto.ContextHint, cancellationToken)
+            .ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Resolves the reference, checks the organisation, validates the analysable subset, reads the
+    /// stored bytes and hands <see cref="IVisionService"/> them as an inline <c>data:</c> URL. No
+    /// media token is minted on this path, so nothing credential-bearing can leak into the caller's
+    /// request or response.
+    /// </summary>
+    private async Task<ImageAnalysisResultDto> AnalyzeReferenceAsync(
+        AnalyzeImageDto dto,
+        string imageRefKind,
+        Guid imageRefId,
+        CancellationToken cancellationToken)
+    {
+        // 1. Resolve. The lookup is tenant-scoped by construction (`IMediaAssetLocator` carries the
+        //    organisation in its predicate), so a cross-org reference is null here — the same
+        //    discipline CatalogEndpoints.cs:637 and ConversationService.cs:381 apply.
+        var asset = await _mediaAssets
+            .FindByReferenceAsync(dto.OrgId, imageRefKind, imageRefId, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (asset is null)
+        {
+            throw new KeyNotFoundException("The referenced image was not found.");
+        }
+
+        // 2. The analysable subset, checked BEFORE the mint (strategy §3.6). The store admits nine
+        //    image types; the provider reads four. An unreadable asset is recorded as such and left
+        //    alone — never minted for a fetch that would fail, never silently degraded.
+        if (!VisionContentTypes.IsAnalysable(asset.ContentType))
+        {
+            _logger.LogWarning(
+                "Vision analysis skipped for reference {ImageRefKind}/{ImageRefId}: stored content "
+                + "type {ContentType} is outside VisionContentTypes.IsAnalysable; recorded as not "
+                + "analysable (strategy §3.6).",
+                imageRefKind,
+                imageRefId,
+                asset.ContentType);
+
+            return NotAnalysable();
+        }
+
+        // 3. Hand the provider the bytes, as a `data:` URL.
+        //
+        // Not the tokenised media URL the module can mint: the provider fetches an `image_url`
+        // itself, and that minted URL is *this API* proxying the media. In a containerised
+        // deployment it is an internal hostname (`http://api:8080`) with no public DNS, so the
+        // provider answers 400 "Failed to download image" and the analysis is lost — the salon
+        // search then ran with no colour criterion and reported "No in-stock pieces matched" for a
+        // piece that was in stock. Inline bytes work for every media provider and need no reachable
+        // origin, and a Cloudinary-only row's bytes are read back server-side rather than proxied
+        // through a minted URL.
+        var bytes = await LoadAssetBytesAsync(asset, cancellationToken).ConfigureAwait(false);
+        var dataUrl = $"data:{asset.ContentType};base64,{Convert.ToBase64String(bytes)}";
+
+        return await _visionService
+            .AnalyzeAsync(dataUrl, dto.OrgId, dto.FileName, dto.ContextHint, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The reference asset's bytes, read through the media module's own access seam so the
+    /// per-row provider dispatch is applied exactly once and in one place.
+    /// </summary>
+    private async Task<byte[]> LoadAssetBytesAsync(
+        MediaAccessAsset asset,
+        CancellationToken cancellationToken)
+    {
+        // Deliberately NOT a shortcut on `asset.ImageData` first. `MediaAccessService.ServeAsync`
+        // owns the documented dispatch — the provider for a Cloudinary row while
+        // `Media:ReadFromCloudinary` is on, the row's own bytes otherwise — so taking the row's copy
+        // ahead of it would read a stale second copy and quietly defeat that flag.
+        var served = await _mediaAccess.ServeAsync(asset, cancellationToken).ConfigureAwait(false);
+        if (!served.IsSuccess || served.Grant is null)
+        {
+            if (served.Failure == MediaAccessFailure.NotFound)
+            {
+                throw new KeyNotFoundException("The referenced image was not found.");
+            }
+
+            _logger.LogWarning(
+                "Could not read referenced asset {AssetKey} for vision analysis: media provider "
+                + "refused the read ({Failure}).",
+                asset.AssetKey,
+                served.Failure);
+
+            throw new InvalidOperationException(
+                $"The referenced image could not be read from its media provider ({served.Failure}).");
+        }
+
+        await using var stream = served.Grant.Content;
+        using var buffer = new MemoryStream();
+        await stream.CopyToAsync(buffer, cancellationToken).ConfigureAwait(false);
+        return buffer.ToArray();
+    }
+
+    /// <summary>
+    /// Whether the request names a tokenisable reference. Only the two row kinds
+    /// <see cref="MediaReferenceKinds"/> names are references; every other kind (including
+    /// <c>externalUrl</c>) belongs to the compatibility arm.
+    /// </summary>
+    private static bool TryReadReference(AnalyzeImageDto dto, out string imageRefKind, out Guid imageRefId)
+    {
+        imageRefKind = dto.ImageRefKind?.Trim() ?? string.Empty;
+        imageRefId = dto.ImageRefId ?? Guid.Empty;
+
+        return imageRefId != Guid.Empty
+               && imageRefKind is MediaReferenceKinds.Attachment or MediaReferenceKinds.InventoryImage;
+    }
+
+    /// <summary>
+    /// The recorded outcome for a stored type the provider cannot read. A fresh instance each time:
+    /// the result DTO is a mutable wire model and must not be shared between responses.
+    /// </summary>
+    private static ImageAnalysisResultDto NotAnalysable() => new()
+    {
+        Category = "unknown",
+        PrimaryColor = "unknown",
+        ConfidenceScore = 0,
+        IsFallback = true,
+        NotAnalysable = true,
+    };
 
     public async Task<IReadOnlyList<CustomerMatchDto>> GetCustomerMatchesAsync(
         Guid itemId,
@@ -217,47 +399,103 @@ public class VisualService : IVisualService
 
         foreach (var outfit in outfits)
         {
-            var itemDetails = new List<OutfitItemDetailDto>();
-            string? heroImageUrl = null;
-
-            foreach (var item in outfit.Items)
-            {
-                var inv = await _inventoryService.GetItemByIdAsync(item.InventoryItemId, orgId, cancellationToken);
-                if (inv != null)
-                {
-                    if (item.Role == "primary" && heroImageUrl == null)
-                    {
-                        heroImageUrl = inv.ImageUrl;
-                    }
-                    itemDetails.Add(new OutfitItemDetailDto
-                    {
-                        Id = item.Id,
-                        InventoryItemId = item.InventoryItemId,
-                        Role = item.Role,
-                        ItemName = inv.ItemName,
-                        Category = inv.Category,
-                        Price = inv.Price,
-                        ImageUrl = inv.ImageUrl
-                    });
-                }
-            }
-
-            dtos.Add(new OutfitCompositionDto
-            {
-                Id = outfit.Id,
-                OrganizationId = outfit.OrgId,
-                CustomerId = outfit.CustomerId,
-                Name = outfit.Name,
-                Occasion = outfit.Occasion,
-                TotalPrice = outfit.TotalPrice,
-                StyleNotes = outfit.StyleNotes,
-                HeroImageUrl = heroImageUrl,
-                CreatedAtUtc = outfit.CreatedAtUtc,
-                Items = itemDetails
-            });
+            dtos.Add(await ToDtoAsync(outfit, orgId, cancellationToken));
         }
 
         return dtos;
+    }
+
+    public async Task<OutfitCompositionDto?> UpdateLookbookAsync(
+        Guid id,
+        Guid orgId,
+        UpdateOutfitCompositionDto dto,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(dto);
+
+        var outfit = await _outfitRepository.GetTrackedByIdAsync(id, orgId, cancellationToken);
+        if (outfit is null)
+        {
+            return null;
+        }
+
+        // Each field is applied only when the request supplied it, so a rename cannot clear the
+        // occasion or the stylist notes, exactly like `UpdateInventoryItemDto`.
+        if (!string.IsNullOrWhiteSpace(dto.Name)) outfit.Name = dto.Name.Trim();
+        if (!string.IsNullOrWhiteSpace(dto.Occasion)) outfit.Occasion = dto.Occasion.Trim();
+        // `StyleNotes` is nullable on the row and an explicit clear must be expressible, so it is
+        // applied whenever the caller sent the field at all (including an empty string) rather than
+        // only when non-empty. The other two columns are required, which is why they cannot clear.
+        if (dto.StyleNotes is not null) outfit.StyleNotes = dto.StyleNotes.Trim();
+
+        await _outfitRepository.UpdateAsync(outfit, cancellationToken);
+
+        return await ToDtoAsync(outfit, orgId, cancellationToken);
+    }
+
+    public async Task<bool> DeleteLookbookAsync(
+        Guid id,
+        Guid orgId,
+        CancellationToken cancellationToken = default)
+    {
+        var outfit = await _outfitRepository.GetTrackedByIdAsync(id, orgId, cancellationToken);
+        if (outfit is null)
+        {
+            return false;
+        }
+
+        await _outfitRepository.DeleteAsync(outfit, cancellationToken);
+        return true;
+    }
+
+    /// <summary>
+    /// Projects one composition and resolves each of its item rows against inventory. Shared by the
+    /// list, the update response and the create response so a lookbook reads the same wherever it is
+    /// returned.
+    /// </summary>
+    private async Task<OutfitCompositionDto> ToDtoAsync(
+        OutfitComposition outfit,
+        Guid orgId,
+        CancellationToken cancellationToken)
+    {
+        var itemDetails = new List<OutfitItemDetailDto>();
+        string? heroImageUrl = null;
+
+        foreach (var item in outfit.Items)
+        {
+            var inv = await _inventoryService.GetItemByIdAsync(item.InventoryItemId, orgId, cancellationToken);
+            if (inv != null)
+            {
+                if (item.Role == "primary" && heroImageUrl == null)
+                {
+                    heroImageUrl = inv.ImageUrl;
+                }
+                itemDetails.Add(new OutfitItemDetailDto
+                {
+                    Id = item.Id,
+                    InventoryItemId = item.InventoryItemId,
+                    Role = item.Role,
+                    ItemName = inv.ItemName,
+                    Category = inv.Category,
+                    Price = inv.Price,
+                    ImageUrl = inv.ImageUrl
+                });
+            }
+        }
+
+        return new OutfitCompositionDto
+        {
+            Id = outfit.Id,
+            OrganizationId = outfit.OrgId,
+            CustomerId = outfit.CustomerId,
+            Name = outfit.Name,
+            Occasion = outfit.Occasion,
+            TotalPrice = outfit.TotalPrice,
+            StyleNotes = outfit.StyleNotes,
+            HeroImageUrl = heroImageUrl,
+            CreatedAtUtc = outfit.CreatedAtUtc,
+            Items = itemDetails
+        };
     }
 
     public async Task<IReadOnlyList<SourcingRequestDto>> GetSourcingRequestsByOrgIdAsync(
@@ -393,5 +631,46 @@ public class VisualService : IVisualService
         }
 
         return query.ToList();
+    }
+
+    public async Task<QrCodeResponseDto> GenerateItemQrDtoAsync(
+        Guid orgId,
+        Guid itemId,
+        string format = "png",
+        int size = 300,
+        CancellationToken cancellationToken = default)
+    {
+        return await _qrCodeService.GenerateItemQrDtoAsync(orgId, itemId, format, size, cancellationToken);
+    }
+
+    public async Task<byte[]> GenerateItemQrBytesAsync(
+        Guid orgId,
+        Guid itemId,
+        string format = "png",
+        int size = 300,
+        CancellationToken cancellationToken = default)
+    {
+        return await _qrCodeService.GenerateItemQrBytesAsync(orgId, itemId, format, size, cancellationToken);
+    }
+
+    public QrCodeResponseDto GenerateQrResponse(GenerateQrDto dto)
+    {
+        return _qrCodeService.GenerateQrResponse(dto);
+    }
+
+    public async Task<QrScanResultDto> ScanAndResolveAsync(
+        Guid orgId,
+        ScanQrDto request,
+        CancellationToken cancellationToken = default)
+    {
+        return await _qrCodeService.ScanAndResolveAsync(orgId, request, cancellationToken);
+    }
+
+    public async Task<QrScanResultDto> ScanAndResolveImageBytesAsync(
+        Guid orgId,
+        byte[] imageBytes,
+        CancellationToken cancellationToken = default)
+    {
+        return await _qrCodeService.ScanAndResolveImageBytesAsync(orgId, imageBytes, cancellationToken);
     }
 }

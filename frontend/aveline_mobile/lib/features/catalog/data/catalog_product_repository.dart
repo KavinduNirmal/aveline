@@ -50,4 +50,23 @@ abstract interface class CatalogProductRepository {
   /// was handed: the router re-parses a location on every refresh, and the
   /// `extra` a push carried does not survive that.
   Future<CatalogProduct?> fetchProduct(String id);
+
+  /// Moves one piece to [status] and returns it as the server now holds it.
+  ///
+  /// The server's own row comes back rather than the local copy with a field swapped: the
+  /// status vocabulary and the `isAvailable` derivation live on the API
+  /// (`CatalogStatusVocabulary`), so a client that mirrored either would be a second place
+  /// to keep them right. It also means a change the API refused cannot draw as though it
+  /// had stuck.
+  Future<CatalogProduct> updateStatus(String id, CatalogItemStatus status);
+
+  /// Logs a sourcing request for a piece the shop does not carry, returning its id.
+  ///
+  /// The ticket's fields are the piece's own, so the caller names the piece and how many
+  /// are wanted rather than assembling the request body itself.
+  Future<String> requestSupply({
+    required CatalogProduct piece,
+    int quantityNeeded = 1,
+    String urgency = 'medium',
+  });
 }

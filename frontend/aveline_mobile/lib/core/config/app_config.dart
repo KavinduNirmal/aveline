@@ -30,6 +30,16 @@ class AppConfig {
   static const String _defaultClerkKey =
       'pk_test_aW5zcGlyZWQtd2FydGhvZy04MjA4LmNsZXJrLmFjY291bnRzLmRldiQ';
 
+  /// Public origin of the web app, used to turn a handbook citation's path (`/docs/team`) into a
+  /// link the mobile app can open (ADR-025).
+  ///
+  /// Supplied via `--dart-define=AVELINE_WEB_BASE_URL=https://...`.
+  ///
+  /// Empty by default on purpose: a guessed host would send staff to a page that may not exist, so
+  /// with no origin configured the citation is still shown and tapping tells the reader where it
+  /// lives instead of opening an address nobody confirmed.
+  static const String webBaseUrl = String.fromEnvironment('AVELINE_WEB_BASE_URL');
+
   /// Reads the app configuration from the compile-time environment.
   factory AppConfig.fromEnvironment() {
     final clerkPublishableKey = const String.fromEnvironment(

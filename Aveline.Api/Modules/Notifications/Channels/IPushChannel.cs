@@ -9,5 +9,13 @@ namespace Aveline.Api.Modules.Notifications.Channels;
 /// </summary>
 public interface IPushChannel
 {
-    Task SendAsync(ResolvedRecipient recipient, Notification notification, CancellationToken cancellationToken = default);
+    /// <param name="inboxItemId">
+    /// The recipient's inbox row, merged into the push data so a tap can mark that
+    /// notification read.
+    /// </param>
+    Task SendAsync(
+        ResolvedRecipient recipient,
+        Notification notification,
+        Guid inboxItemId,
+        CancellationToken cancellationToken = default);
 }

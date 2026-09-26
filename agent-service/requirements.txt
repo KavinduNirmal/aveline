@@ -1,0 +1,42 @@
+# Core runtime
+fastapi
+uvicorn
+
+# LangGraph & LangChain
+langgraph
+langgraph-checkpoint-postgres
+langchain
+langchain-openai
+langchain-deepseek
+langchain-community
+
+# Database
+psycopg[binary]
+psycopg2-binary
+pgvector
+sqlalchemy[asyncio]
+asyncpg
+
+# Config & validation
+pydantic
+pydantic-settings
+python-dotenv
+
+# HTTP client
+httpx
+
+# Redis (event bus, ADR-014)
+redis
+
+# LLM provider
+openai
+
+# Observability (OpenTelemetry)
+opentelemetry-sdk
+# Explicit pin (N-6): the agent's MeterProvider imports OTLPMetricExporter from this package,
+# which was previously a transitive dependency of opentelemetry-sdk. 1.44.0 is the version the
+# metric exporter and cumulative-temporality pin were verified against.
+opentelemetry-exporter-otlp-proto-http==1.44.0
+opentelemetry-instrumentation-fastapi
+opentelemetry-instrumentation-httpx
+opentelemetry-instrumentation-langchain

@@ -4,9 +4,15 @@ using System.Security.Cryptography;
 using System.Text;
 using Aveline.Api.Authorization;
 using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Infrastructure.Integrations;
 using Aveline.Api.Infrastructure.RateLimiting;
 using Aveline.Api.Modules.Integrations.Models;
 using Aveline.Api.Modules.Integrations.Services;
+using Aveline.Api.Modules.Integrations.Services.Providers;
+using Aveline.Api.Modules.Media;
+using Aveline.Api.Modules.Conversations.DTOs;
+using Aveline.Api.Modules.Conversations.Services;
+using Aveline.Api.Modules.CustomerConcierge.Models;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Shared.Models;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -14,6 +20,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.IdentityModel.Tokens;
 using Xunit;
 
@@ -34,6 +41,35 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
     private WebApplicationFactory<Program> _factory = null!;
     private HttpClient _client = null!;
     private readonly RecordingRateLimiter _rateLimiter = new();
+    private readonly RecordingBroadcaster _broadcaster = new();
+
+    private readonly StubWhatsAppService _whatsApp = new();
+
+    /// <summary>
+    /// Records the agent dispatches an inbound message triggers. The webhook's contract is that a
+    /// revoked customer's message is recorded and acknowledged but never handed to the agent
+    /// (plan §5.5, §8.4), and this is the seam that proves it: a real HTTP call cannot be asserted
+    /// on, and a connection failure would look the same as a deliberate skip.
+    /// </summary>
+    private readonly RecordingAgentClient _agentClient = new();
+
+    private sealed class RecordingAgentClient : IAgentServiceClient
+    {
+        private int _postCount;
+
+        public int PostCount => Volatile.Read(ref _postCount);
+
+        public Task<HttpResponseMessage> PostAsync(
+            string path, HttpContent content, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _postCount);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        }
+
+        public Task<HttpResponseMessage> GetAsync(
+            string path, CancellationToken cancellationToken = default)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+    }
 
     private sealed class RecordingRateLimiter : IRateLimiter
     {
@@ -51,6 +87,76 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
         }
     }
 
+    /// <summary>Records the inbox tiles the API broadcasts, so a new thread's arrival is visible
+    /// to a test without a live SignalR client.</summary>
+    /// <summary>A real 1x1 PNG, so a stored image is a plausible payload.</summary>
+    private static readonly byte[] TinyPng =
+    [
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+        0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+        0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
+        0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+        0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+
+    private sealed class StubWhatsAppService : IWhatsAppService
+    {
+        /// <summary>What the media fetch should answer; null means a failure.</summary>
+        public WhatsAppMediaResult? Media { get; set; }
+
+        public string? LastMediaId { get; private set; }
+
+        public Task<WhatsAppTestResult> TestConnectionAsync(
+            string accessToken, string phoneNumberId, CancellationToken cancellationToken = default)
+            => Task.FromResult(new WhatsAppTestResult(IsValid: true));
+
+        public Task<WhatsAppMediaResult> GetMediaAsync(
+            string accessToken, string mediaId, CancellationToken cancellationToken = default)
+        {
+            LastMediaId = mediaId;
+            return Task.FromResult(Media ?? new WhatsAppMediaResult(IsSuccess: false, Error: "no media"));
+        }
+
+        public Task<WhatsAppSendResult> SendMessageAsync(
+            string accessToken, string phoneNumberId, string to, string text,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new WhatsAppSendResult(IsSuccess: true));
+
+        public Task<WhatsAppSendResult> SendTemplateAsync(
+            string accessToken, string phoneNumberId, string to, string templateName,
+            string languageCode, IReadOnlyList<object>? components,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("This test double does not send templates.");
+    }
+
+    private sealed class RecordingBroadcaster : IMessageBroadcaster
+    {
+        public List<ConversationTile> ConversationChanged { get; } = [];
+
+        /// <summary>
+        /// Messages actually pushed to subscribers. Recording these is what pins the inbound
+        /// liveness contract: the tile alone refreshes the inbox list, so without the message frame
+        /// an open thread shows nothing new until the page is reloaded.
+        /// </summary>
+        public List<MessageDto> Messages { get; } = [];
+
+        public Task BroadcastMessageAsync(MessageDto message, CancellationToken cancellationToken = default)
+        {
+            Messages.Add(message);
+            return Task.CompletedTask;
+        }
+
+        public Task BroadcastAgentStateAsync(AgentStateDto state, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task BroadcastConversationChangedAsync(ConversationTile tile, CancellationToken cancellationToken = default)
+        {
+            ConversationChanged.Add(tile);
+            return Task.CompletedTask;
+        }
+    }
+
     public async Task InitializeAsync()
     {
         _signingKey = new RsaSecurityKey(RSA.Create(2048)) { KeyId = "test-kid" };
@@ -61,12 +167,23 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.UseSetting("Credentials:EncryptionKey", Base64Key);
                 builder.ConfigureTestServices(services =>
                 {
-                    // Observe whether a request ever reaches the rate limiter.
+                    // Observe whether a request ever reaches the rate limiter, and capture the
+                    // inbox tiles the API broadcasts.
                     services.AddSingleton<IRateLimiter>(_rateLimiter);
+                    services.AddSingleton<IMessageBroadcaster>(_broadcaster);
+                    // The Meta provider is a typed HttpClient; a test never calls Meta, so the
+                    // media fetch is stubbed and made configurable per test.
+                    services.RemoveAll<IWhatsAppService>();
+                    services.AddSingleton<IWhatsAppService>(_whatsApp);
+                    // Stub the agent transport so a test can assert whether the agent was called
+                    // at all (consent enforcement), and so no test depends on a live agent.
+                    services.RemoveAll<IAgentServiceClient>();
+                    services.AddSingleton<IAgentServiceClient>(_agentClient);
                 });
             });
         _client = _factory.CreateClient();
@@ -110,6 +227,240 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
           ]
         }
         """;
+
+    /// <summary>A Meta inbound payload carrying an image or a document.</summary>
+    /// <param name="sha256">
+    /// The channel's own content hash. <c>null</c> means "the real hash of <see cref="TinyPng"/>",
+    /// which is the honest case: Meta hashes the bytes it serves. Set
+    /// <paramref name="sha256Present"/> to <c>false</c> to model a channel that supplies none.
+    /// </param>
+    private static string MetaMediaPayload(
+        string kind,
+        string mediaId,
+        string? caption,
+        string mimeType,
+        string messageId = "wamid.MEDIA1",
+        string from = "+94771112222",
+        string? sha256 = null,
+        bool sha256Present = true)
+    {
+        var captionJson = caption is null ? string.Empty : $""", "caption": "{caption}" """;
+        var hashJson = sha256Present
+            ? $""", "sha256": "{sha256 ?? TinyPngSha256}" """
+            : string.Empty;
+        return $$"""
+        {
+          "object": "whatsapp_business_account",
+          "entry": [
+            {
+              "id": "WABA_ID",
+              "changes": [
+                {
+                  "value": {
+                    "messaging_product": "whatsapp",
+                    "metadata": { "display_phone_number": "15551234567", "phone_number_id": "111" },
+                    "contacts": [ { "profile": { "name": "Customer" }, "wa_id": "{{from}}" } ],
+                    "messages": [
+                      { "from": "{{from}}", "id": "{{messageId}}", "timestamp": "1720000000",
+                        "type": "{{kind}}",
+                        "{{kind}}": { "id": "{{mediaId}}", "mime_type": "{{mimeType}}"{{hashJson}}{{captionJson}} } }
+                    ]
+                  },
+                  "field": "messages"
+                }
+              ]
+            }
+          ]
+        }
+        """;
+    }
+
+    /// <summary>The lowercase-hex SHA-256 Meta would send for the bytes this fixture serves.</summary>
+    private static readonly string TinyPngSha256 = AttachmentContentHash.Compute(TinyPng);
+
+    private async Task<HttpResponseMessage> PostAsync(Guid orgId, string body)
+    {
+        var bytes = Encoding.UTF8.GetBytes(body);
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/webhooks/whatsapp/{orgId}")
+        {
+            Content = new ByteArrayContent(bytes),
+        };
+        request.Content.Headers.ContentType = new("application/json");
+        request.Headers.Add("X-Hub-Signature-256", Sign(bytes));
+        return await _client.SendAsync(request);
+    }
+
+    [Fact]
+    public async Task Post_WithAnImage_RecordsTheClientMessageAndTheImage()
+    {
+        var orgId = await SeedOrgWithWhatsAppAsync("wh_owner_img", "webhook-img");
+        _whatsApp.Media = new WhatsAppMediaResult(
+            IsSuccess: true, Bytes: TinyPng, ContentType: "image/png", SizeBytes: TinyPng.LongLength);
+
+        var response = await PostAsync(orgId, MetaMediaPayload(
+            "image", "media-1", "Look at this", "image/png", messageId: "wamid.IMG1", from: "+94771110001"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("media-1", _whatsApp.LastMediaId);
+
+        await using var context = CreateContext();
+        var conversation = await context.Conversations
+            .FirstOrDefaultAsync(c => c.OrganizationId == orgId && c.ExternalRef == "+94771110001");
+        Assert.NotNull(conversation);
+
+        var message = await context.Messages
+            .FirstOrDefaultAsync(m => m.ConversationId == conversation!.Id);
+        Assert.NotNull(message);
+        // The caption is the client's words, and the file is appended as its own block.
+        Assert.Contains("client_message", message!.ContentBlocksJson);
+        Assert.Contains("Look at this", message.ContentBlocksJson);
+        Assert.Contains("attachment", message.ContentBlocksJson);
+
+        var attachment = await context.MessageAttachments
+            .FirstOrDefaultAsync(a => a.ConversationId == conversation.Id);
+        Assert.NotNull(attachment);
+        Assert.Equal(message.Id, attachment!.MessageId);
+        Assert.Equal("image/png", attachment.ContentType);
+        Assert.Equal(new string('a', 0) + "database", attachment.StorageProvider);
+        Assert.Equal(TinyPng, attachment.ImageData);
+    }
+
+    [Fact]
+    public async Task Post_WithAnImageAndNoCaption_StillRecordsIt()
+    {
+        // Today this produced `{status: "ignored"}` and nothing in the thread.
+        var orgId = await SeedOrgWithWhatsAppAsync("wh_owner_img2", "webhook-img2");
+        _whatsApp.Media = new WhatsAppMediaResult(
+            IsSuccess: true, Bytes: TinyPng, ContentType: "image/png", SizeBytes: TinyPng.LongLength);
+
+        var response = await PostAsync(orgId, MetaMediaPayload(
+            "image", "media-2", null, "image/png", messageId: "wamid.IMG2", from: "+94771110002"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var context = CreateContext();
+        var conversation = await context.Conversations
+            .FirstOrDefaultAsync(c => c.OrganizationId == orgId && c.ExternalRef == "+94771110002");
+        var message = await context.Messages
+            .FirstOrDefaultAsync(m => m.ConversationId == conversation!.Id);
+        Assert.NotNull(message);
+        Assert.Contains("attachment", message!.ContentBlocksJson);
+    }
+
+    [Fact]
+    public async Task Post_WithAVideo_SkipsItAndStillAnswers200()
+    {
+        var orgId = await SeedOrgWithWhatsAppAsync("wh_owner_vid", "webhook-vid");
+        _whatsApp.Media = new WhatsAppMediaResult(
+            IsSuccess: true, Bytes: [1, 2, 3], ContentType: "video/mp4", SizeBytes: 3);
+
+        var response = await PostAsync(orgId, MetaMediaPayload(
+            "video", "media-3", "watch", "video/mp4", messageId: "wamid.VID1", from: "+94771110003"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var context = CreateContext();
+        // A type this build does not model has no media descriptor, so it is skipped rather
+        // than half-recorded: nothing stored, nothing surfaced, and the webhook still answers
+        // 200 so Meta does not retry a payload nothing will ever accept.
+        Assert.Empty(await context.MessageAttachments
+            .Where(a => a.OrganizationId == orgId)
+            .ToListAsync());
+        Assert.Null(await context.Conversations
+            .FirstOrDefaultAsync(c => c.OrganizationId == orgId && c.ExternalRef == "+94771110003"));
+    }
+
+    [Fact]
+    public async Task Post_WhenTheMediaDownloadFails_RecordsTheCaptionAndAnswers200()
+    {
+        // Meta's media URL expires; a retry would not fix it, so the webhook must not fail.
+        var orgId = await SeedOrgWithWhatsAppAsync("wh_owner_mediafail", "webhook-mediafail");
+        _whatsApp.Media = null;
+
+        var response = await PostAsync(orgId, MetaMediaPayload(
+            "image", "media-4", "gone", "image/png", messageId: "wamid.IMG4", from: "+94771110004"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var context = CreateContext();
+        var conversation = await context.Conversations
+            .FirstOrDefaultAsync(c => c.OrganizationId == orgId && c.ExternalRef == "+94771110004");
+        var message = await context.Messages
+            .FirstOrDefaultAsync(m => m.ConversationId == conversation!.Id);
+        Assert.NotNull(message);
+        Assert.Contains("gone", message!.ContentBlocksJson);
+        Assert.DoesNotContain("attachment", message.ContentBlocksJson);
+    }
+
+    [Fact]
+    public async Task Post_WithAnImage_PersistsTheChannelsSha256AsTheContentHash()
+    {
+        // U2.3: Meta's `sha256` used to be parsed and discarded (G7). It is the channel's own
+        // byte-level identity of what it served, and it must reach the column the Elle
+        // workstream reads as `ImageSha256` (strategy §9).
+        var orgId = await SeedOrgWithWhatsAppAsync("wh_owner_hash", "webhook-hash");
+        _whatsApp.Media = new WhatsAppMediaResult(
+            IsSuccess: true, Bytes: TinyPng, ContentType: "image/png", SizeBytes: TinyPng.LongLength);
+
+        var response = await PostAsync(orgId, MetaMediaPayload(
+            "image", "media-hash", "check this", "image/png",
+            messageId: "wamid.HASH1", from: "+94771110011"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var context = CreateContext();
+        var attachment = await context.MessageAttachments
+            .SingleAsync(a => a.OrganizationId == orgId);
+        Assert.Equal(TinyPngSha256, attachment.ContentHash);
+        Assert.Equal(AttachmentContentHash.Compute(TinyPng), attachment.ContentHash);
+    }
+
+    [Fact]
+    public async Task Post_WhenTheChannelsSha256DisagreesWithTheBytes_StoresNothingAndAnswers200()
+    {
+        // Our computed hash is of the bytes we downloaded; Meta's is of the bytes it served.
+        // They must agree, so a disagreement is a real integrity signal: the attachment is
+        // refused rather than stored under a hash that does not describe it. The webhook still
+        // answers 200, because a Meta retry would not change the answer.
+        var orgId = await SeedOrgWithWhatsAppAsync("wh_owner_hash_bad", "webhook-hash-bad");
+        _whatsApp.Media = new WhatsAppMediaResult(
+            IsSuccess: true, Bytes: TinyPng, ContentType: "image/png", SizeBytes: TinyPng.LongLength);
+
+        var response = await PostAsync(orgId, MetaMediaPayload(
+            "image", "media-hash-bad", "check this", "image/png",
+            messageId: "wamid.HASH2", from: "+94771110012", sha256: new string('a', 64)));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var context = CreateContext();
+        Assert.Empty(await context.MessageAttachments.Where(a => a.OrganizationId == orgId).ToListAsync());
+        // The customer's words are still recorded: the message is not lost with the file.
+        var conversation = await context.Conversations
+            .FirstOrDefaultAsync(c => c.OrganizationId == orgId && c.ExternalRef == "+94771110012");
+        Assert.NotNull(conversation);
+        var message = await context.Messages.SingleAsync(m => m.ConversationId == conversation!.Id);
+        Assert.Contains("check this", message.ContentBlocksJson);
+        Assert.DoesNotContain("attachment", message.ContentBlocksJson);
+    }
+
+    [Fact]
+    public async Task Post_WhenTheChannelSuppliesNoSha256_FallsBackToTheComputedHash()
+    {
+        var orgId = await SeedOrgWithWhatsAppAsync("wh_owner_hash_absent", "webhook-hash-absent");
+        _whatsApp.Media = new WhatsAppMediaResult(
+            IsSuccess: true, Bytes: TinyPng, ContentType: "image/png", SizeBytes: TinyPng.LongLength);
+
+        var response = await PostAsync(orgId, MetaMediaPayload(
+            "image", "media-hash-absent", null, "image/png",
+            messageId: "wamid.HASH3", from: "+94771110013", sha256Present: false));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var context = CreateContext();
+        var attachment = await context.MessageAttachments
+            .SingleAsync(a => a.OrganizationId == orgId);
+        Assert.Equal(TinyPngSha256, attachment.ContentHash);
+    }
 
     private async Task<Guid> SeedOrgWithWhatsAppAsync(string clerkId, string slug)
     {
@@ -319,12 +670,147 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
             .FirstOrDefaultAsync(c => c.OrganizationId == orgId && c.ExternalRef == "+94779998888");
         Assert.NotNull(conversation);
 
+        // D1: the phone is not on file, so the thread stays unbound but identifiable as a channel
+        // thread - the client renders it as an unnamed client rather than pinning it.
+        Assert.Null(conversation.CustomerId);
+
         var message = await context.Messages
             .FirstOrDefaultAsync(m => m.ConversationId == conversation.Id);
         Assert.NotNull(message);
         Assert.Equal("ClientMessage", message.Kind.ToString());
         Assert.Equal("System", message.AuthorKind.ToString());
         Assert.Contains("red", message.ContentBlocksJson);
+
+        // The new thread reaches an already-open inbox without a re-list: the API broadcasts its
+        // tile from the creation site, because `message.created` alone carries a message for a
+        // conversation the client may never have seen.
+        var tile = Assert.Single(_broadcaster.ConversationChanged);
+        Assert.Equal(orgId, tile.OrganizationId);
+        Assert.Null(tile.OwnerUserId);
+        Assert.Equal("+94779998888", tile.Tile.ExternalRef);
+        Assert.Null(tile.Tile.CustomerId);
+        Assert.Equal("client_message", tile.Tile.LastMessageBlock);
+        Assert.Contains("red", tile.Tile.LastMessagePreview);
+
+        // The message frame goes out too, not just the tile. The tile only refreshes the inbox
+        // list; an open thread needs the message itself or it shows nothing new until the page is
+        // reloaded. Agent and staff messages arrive live because they come through
+        // `message.created`; this path writes the row directly, so it must broadcast explicitly.
+        var broadcast = Assert.Single(_broadcaster.Messages);
+        Assert.Equal(conversation.Id, broadcast.ConversationId);
+        Assert.Equal(message.Id, broadcast.Id);
+        Assert.Contains("red", broadcast.ContentBlocks.GetRawText());
+    }
+
+    [Fact]
+    public async Task Post_ValidSignature_ForAPhoneOnFile_BindsTheCustomerToTheThread()
+    {
+        // D1: a thread created by the inbound path exists for the identified customer, so the
+        // server resolves the phone through the book and binds the context at creation.
+        var orgId = await SeedOrgWithWhatsAppAsync("wh_owner_h", "webhook-h");
+        const string phone = "+94771112222";
+        var customerId = await SeedCustomerAsync(orgId, phone, "Nadeesha Perera");
+
+        var body = MetaMessagePayload(messageId: "wamid.BIND1", from: phone);
+        var bytes = Encoding.UTF8.GetBytes(body);
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/webhooks/whatsapp/{orgId}")
+        {
+            Content = new ByteArrayContent(bytes),
+        };
+        request.Content.Headers.ContentType = new("application/json");
+        request.Headers.Add("X-Hub-Signature-256", Sign(bytes));
+
+        var response = await _client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var context = CreateContext();
+        var conversation = await context.Conversations
+            .FirstOrDefaultAsync(c => c.OrganizationId == orgId && c.ExternalRef == phone);
+        Assert.NotNull(conversation);
+        Assert.Equal(customerId, conversation.CustomerId);
+
+        // The broadcast tile carries the resolved client, so the list shows a name and not an
+        // unnamed channel thread.
+        var tile = Assert.Single(_broadcaster.ConversationChanged);
+        Assert.Equal(customerId, tile.Tile.CustomerId);
+        Assert.Equal("Nadeesha Perera", tile.Tile.CustomerName);
+    }
+
+    private static async Task<Guid> SeedCustomerAsync(Guid orgId, string phone, string fullName)
+    {
+        await using var context = CreateContext();
+        var customer = new Customer
+        {
+            Id = Guid.CreateVersion7(),
+            OrganizationId = orgId,
+            PhoneNumber = phone,
+            FullName = fullName,
+            Status = "returning",
+        };
+        context.Customers.Add(customer);
+        await context.SaveChangesAsync();
+        return customer.Id;
+    }
+
+    private static async Task SeedConsentAsync(Guid orgId, Guid customerId, string status)
+    {
+        await using var context = CreateContext();
+        context.CustomerConsents.Add(new CustomerConsent
+        {
+            Id = Guid.CreateVersion7(),
+            OrganizationId = orgId,
+            CustomerId = customerId,
+            ConsentStatus = status,
+        });
+        await context.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task Post_FromARevokedCustomer_RecordsTheMessageButDispatchesNoAgent()
+    {
+        // Plan §5.5's load-bearing row: the inbound message row is deliberately still written
+        // (§8.4 - it is the evidence the customer contacted us and that we honoured the choice),
+        // while the whole agent run is skipped.
+        var orgId = await SeedOrgWithWhatsAppAsync("wh_owner_revoked", "webhook-revoked");
+        var customerId = await SeedCustomerAsync(orgId, "+94771999001", "Revoked Rita");
+        await SeedConsentAsync(orgId, customerId, ConsentStatuses.Revoked);
+
+        var response = await PostAsync(orgId, MetaMessagePayload(
+            messageId: "wamid.REV1", from: "+94771999001"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var context = CreateContext();
+        Assert.True(await context.InboundMessageLogs.AnyAsync(
+            log => log.OrganizationId == orgId && log.ExternalId == "wamid.REV1"));
+
+        var conversation = await context.Conversations.FirstOrDefaultAsync(
+            c => c.OrganizationId == orgId && c.ExternalRef == "+94771999001");
+        Assert.NotNull(conversation);
+        Assert.Equal(customerId, conversation!.CustomerId);
+
+        var message = await context.Messages.FirstOrDefaultAsync(
+            m => m.ConversationId == conversation.Id);
+        Assert.NotNull(message);
+
+        // The point of the test: no `POST /agents/query` was issued for a revoked customer.
+        Assert.Equal(0, _agentClient.PostCount);
+    }
+
+    [Fact]
+    public async Task Post_FromAConsentingCustomer_StillDispatchesTheAgent()
+    {
+        // The positive control for the test above: without it, a broken transport would make the
+        // "zero dispatches" assertion pass vacuously.
+        var orgId = await SeedOrgWithWhatsAppAsync("wh_owner_granted", "webhook-granted");
+        var customerId = await SeedCustomerAsync(orgId, "+94771999002", "Consenting Chani");
+        await SeedConsentAsync(orgId, customerId, ConsentStatuses.Granted);
+
+        var response = await PostAsync(orgId, MetaMessagePayload(
+            messageId: "wamid.GRANT1", from: "+94771999002"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, _agentClient.PostCount);
     }
 
     [Fact]
@@ -357,7 +843,7 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
     private static AppDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options;
         return new AppDbContext(options);
     }

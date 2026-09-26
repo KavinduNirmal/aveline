@@ -27,8 +27,21 @@ public sealed record ChangePlanCommand(
     string? IdempotencyKey,
     string? IdempotencyScope);
 
+/// <summary>
+/// The outcome of a plan change. <paramref name="ProrationPaymentIntentId"/> and
+/// <paramref name="ProrationAmountLkr"/> are the invoice-like charge an immediate upgrade leaves
+/// behind (plan §9.3 F3, decision Q2); both are null when no money moves.
+/// </summary>
+/// <param name="ProrationAmountLkr">
+/// The prorated amount the charge was struck for. It is reported even when no intent could be
+/// created, because the obligation exists whether or not the provider was reachable (Q2).
+/// </param>
 public sealed record PlanChangeResult(
-    SubscriptionView Subscription, decimal BlossomDelta, decimal BlossomRemaining);
+    SubscriptionView Subscription,
+    decimal BlossomDelta,
+    decimal BlossomRemaining,
+    Guid? ProrationPaymentIntentId = null,
+    decimal? ProrationAmountLkr = null);
 
 public sealed record EntitlementItemView(
     string Key, string ValueType, object? Value, string Source, DateTime EffectiveFrom);
@@ -50,6 +63,18 @@ public interface ISubscriptionService
 
     Task<SubscriptionView> CancelAsync(
         Guid organizationId, string? reason, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Withdraws a scheduled cancellation (plan §9.5(c)). Only meaningful where the provider can be
+    /// asked to restore its recurring agreement, so a provider without
+    /// <c>SupportsCancelAtPeriodEnd</c> is refused with <c>501 payment-provider-capability-missing</c>.
+    /// </summary>
+    /// <exception cref="BlossomValidationException">The subscription is not scheduled for cancellation.</exception>
+    /// <exception cref="Modules.Payments.Domain.PaymentProviderNotSupportedException">
+    /// The configured provider cannot resume a scheduled cancellation.
+    /// </exception>
+    Task<SubscriptionView> ResumeAsync(
+        Guid organizationId, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<EntitlementItemView>> GetEntitlementsAsync(
         Guid organizationId, CancellationToken cancellationToken = default);

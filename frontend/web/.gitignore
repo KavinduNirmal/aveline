@@ -1,5 +1,9 @@
 # Logs
-logs
+# Anchored to this package root on purpose. An unanchored `logs` also matches
+# `src/**/logs/`, which silently swallowed `src/components/admin/logs/` — the
+# admin log viewer's components. It built on the machine that wrote them and
+# failed on every clean clone (Vercel, CI).
+/logs
 *.log
 npm-debug.log*
 yarn-debug.log*

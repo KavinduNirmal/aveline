@@ -11,17 +11,22 @@
     </ItemGroup>
 
     <ItemGroup>
+        <!-- Pinned exactly. The SDK is not vendor-supported on net10.0 and drags in
+             Newtonsoft.Json; risk R17's mitigation is this pin plus the four-operation live
+             smoke suite (CloudinaryLiveSmokeTests), not an assumption. The one package this
+             wave adds. -->
+        <PackageReference Include="CloudinaryDotNet" Version="1.29.3" />
         <PackageReference Include="FirebaseAdmin" Version="3.6.0" />
         <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.12" />
         <!-- 10.0.11+ pulls the patched Microsoft.OpenApi (>= 2.7.5), closing GHSA-v5pm-xwqc-g5wc. -->
         <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
-        <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.11" />
-        <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.11">
+        <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.12" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12">
           <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
           <PrivateAssets>all</PrivateAssets>
         </PackageReference>
         <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.12" />
-        <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.11" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.12" />
         <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.11" />
         <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.18.0" />
         <PackageReference Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" Version="1.18.0-beta.1" />
@@ -33,6 +38,8 @@
              (already a transitive dependency of Microsoft.Extensions.Caching.StackExchangeRedis). -->
         <PackageReference Include="StackExchange.Redis" Version="2.7.27" />
         <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+        <PackageReference Include="QRCoder" Version="1.6.0" />
+        <PackageReference Include="ZXing.Net" Version="0.16.10" />
     </ItemGroup>
 
 </Project>

@@ -41,4 +41,14 @@ class SignalRRealtimeConnection implements RealtimeConnection {
 
   @override
   Future<void> stop() => _connection.stop();
+
+  @override
+  void onReconnected(void Function() handler) {
+    _connection.onreconnected(({connectionId}) => handler());
+  }
+
+  @override
+  void onClosed(void Function(Object? error) handler) {
+    _connection.onclose(({error}) => handler(error));
+  }
 }

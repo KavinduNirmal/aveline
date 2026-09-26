@@ -46,6 +46,34 @@ void main() {
   });
 
   group('TodayStrip', () {
+    testWidgets('takes the next commitment from the due timestamp', (
+      tester,
+    ) async {
+      FocusTask withDue(String id, DateTime due, String label) => FocusTask(
+            id: id,
+            domain: FocusDomain.logistics,
+            title: 'Task $id',
+            detail: 'Detail',
+            timeLabel: label,
+            actionLabel: 'Sign Off',
+            doneMessage: 'Done',
+            dueAtUtc: due,
+          );
+
+      // The list is deliberately in the wrong order: the pile cycles, so the
+      // strip must read the timestamps rather than the order it was handed.
+      await tester.pumpWidget(
+        _bed([
+          withDue('later', DateTime.utc(2026, 9, 20, 17), '5:00 PM'),
+          withDue('earlier', DateTime.utc(2026, 9, 20, 9), '9:00 AM'),
+        ]),
+      );
+
+      expect(find.text('Next delivery'), findsOneWidget);
+      expect(find.text('9:00 AM'), findsOneWidget);
+      expect(find.text('5:00 PM'), findsNothing);
+    });
+
     testWidgets('counts the deck by kind of work', (tester) async {
       await tester.pumpWidget(
         _bed([

@@ -4,6 +4,7 @@ const getMock = vi.fn()
 const postMock = vi.fn()
 const putMock = vi.fn()
 const patchMock = vi.fn()
+const deleteMock = vi.fn()
 
 vi.mock('@/lib/api', () => ({
   apiClient: {
@@ -11,6 +12,7 @@ vi.mock('@/lib/api', () => ({
     post: (...args: unknown[]) => postMock(...args),
     put: (...args: unknown[]) => putMock(...args),
     patch: (...args: unknown[]) => patchMock(...args),
+    delete: (...args: unknown[]) => deleteMock(...args),
   },
 }))
 
@@ -26,6 +28,9 @@ import {
   generateCustomerMatches,
   fetchLookbooks,
   composeLookbook,
+  updateLookbook,
+  deleteLookbook,
+  recordCatalogSale,
   fetchSourcingRequests,
   createSourcingRequest,
   updateSourcingRequestStatus,
@@ -34,6 +39,7 @@ import {
   normalizeCategory,
   normalizeVisionAnalysis,
   normalizeOutfitComposition,
+  normalizeInventoryItem,
   getColorHex,
   uploadCatalogImage,
   uploadBase64Image,
@@ -48,6 +54,7 @@ describe('catalog API client', () => {
     postMock.mockReset()
     putMock.mockReset()
     patchMock.mockReset()
+    deleteMock.mockReset()
   })
 
   afterEach(() => {
@@ -168,6 +175,50 @@ describe('catalog API client', () => {
     expect(result.fabric).toBe('Mulberry Silk')
   })
 
+  it('analyzeProductImage addresses a stored upload by reference instead of by URL', async () => {
+    postMock.mockResolvedValue({ data: { category: 'saree', detectedColor: 'Emerald Green' } })
+
+    await analyzeProductImage(ORG, '', 'emerald_saree.jpg', undefined, 'img-1')
+
+    expect(postMock).toHaveBeenCalledWith(`/api/v1/orgs/${ORG}/catalog/analyze-image`, {
+      organizationId: ORG,
+      imageRefKind: 'inventoryImage',
+      imageRefId: 'img-1',
+      fileName: 'emerald_saree.jpg',
+      contextHint: undefined,
+    })
+  })
+
+  it('a reference request never also carries a stale imageUrl, even a relative one', async () => {
+    postMock.mockResolvedValue({ data: { category: 'saree' } })
+
+    await analyzeProductImage(
+      ORG,
+      `/api/v1/orgs/${ORG}/catalog/images/img-1`,
+      'emerald_saree.jpg',
+      undefined,
+      'img-1',
+    )
+
+    const body = postMock.mock.calls[0][1] as Record<string, unknown>
+    expect(body).not.toHaveProperty('imageUrl')
+    expect(body.imageRefKind).toBe('inventoryImage')
+    expect(body.imageRefId).toBe('img-1')
+  })
+
+  it('analyzeProductImage falls back to the URL arm for a blank reference id', async () => {
+    postMock.mockResolvedValue({ data: { category: 'saree' } })
+
+    await analyzeProductImage(ORG, 'https://example.com/saree.jpg', 'emerald_saree.jpg', undefined, '   ')
+
+    expect(postMock).toHaveBeenCalledWith(`/api/v1/orgs/${ORG}/catalog/analyze-image`, {
+      imageUrl: 'https://example.com/saree.jpg',
+      organizationId: ORG,
+      fileName: 'emerald_saree.jpg',
+      contextHint: undefined,
+    })
+  })
+
   it('fetchCustomerMatches requests matches for item', async () => {
     getMock.mockResolvedValue({
       data: [
@@ -260,6 +311,102 @@ describe('catalog API client', () => {
       notes: 'Style with gold jewelry',
     })
     expect(result.name).toBe('Festive Look')
+  })
+
+  it('updateLookbook puts only the supplied metadata fields', async () => {
+    putMock.mockResolvedValue({
+      data: {
+        id: 'look-1',
+        name: 'Royal Gala Ensemble',
+        occasion: 'Cocktail Reception & Gala',
+        totalPrice: 1500,
+        styleNotes: 'Pair with a statement choker.',
+        items: [],
+      },
+    })
+
+    const result = await updateLookbook(ORG, 'look-1', {
+      name: 'Royal Gala Ensemble',
+      occasion: 'Cocktail Reception & Gala',
+      styleNotes: 'Pair with a statement choker.',
+    })
+
+    expect(putMock).toHaveBeenCalledWith(`/api/v1/orgs/${ORG}/catalog/lookbooks/look-1`, {
+      name: 'Royal Gala Ensemble',
+      occasion: 'Cocktail Reception & Gala',
+      styleNotes: 'Pair with a statement choker.',
+    })
+    expect(result.name).toBe('Royal Gala Ensemble')
+    expect(result.occasion).toBe('Cocktail Reception & Gala')
+  })
+
+  it('deleteLookbook deletes the lookbook resource', async () => {
+    deleteMock.mockResolvedValue({ status: 204 })
+
+    await deleteLookbook(ORG, 'look-1')
+
+    expect(deleteMock).toHaveBeenCalledWith(`/api/v1/orgs/${ORG}/catalog/lookbooks/look-1`)
+  })
+
+  it('recordCatalogSale posts the quantity, price and note and reads the receipt back', async () => {
+    postMock.mockResolvedValue({
+      data: {
+        itemId: ITEM,
+        itemName: 'Kanjeevaram Silk Saree',
+        sku: 'AVL-001',
+        quantitySold: 2,
+        unitPrice: 450,
+        totalAmount: 900,
+        remainingStock: 3,
+        status: 'available',
+        ledgerEntryId: 'ledger-1',
+        recordedAtUtc: '2026-09-22T00:00:00Z',
+      },
+    })
+
+    const receipt = await recordCatalogSale(ORG, ITEM, { quantity: 2, unitPrice: 450, note: 'Gift wrap' })
+
+    expect(postMock).toHaveBeenCalledWith(`/api/v1/orgs/${ORG}/catalog/items/${ITEM}/sales`, {
+      quantity: 2,
+      unitPrice: 450,
+      customerId: undefined,
+      note: 'Gift wrap',
+    })
+    expect(receipt.remainingStock).toBe(3)
+    expect(receipt.totalAmount).toBe(900)
+    expect(receipt.ledgerEntryId).toBe('ledger-1')
+  })
+
+  it('normalizeOutfitComposition reads the composer shape as well as the stored-row shape', () => {
+    // `ComposedOutfitDto` names the ensemble `lookName` and splits pieces into
+    // `primaryItem`/`complementaryItems`; reading only `items` produced an empty ensemble under the
+    // default name, which is what a composed look used to look like before this mapping existed.
+    const composed = normalizeOutfitComposition({
+      lookName: 'Curated Royal Luxury Ensemble',
+      occasion: 'gala',
+      stylingNotes: 'Harmonized outfit pairing.',
+      totalLookPrice: 1500,
+      primaryItem: { id: 'it-1', itemName: 'Silk Saree', price: 1000, imageUrl: '/a.jpg' },
+      complementaryItems: [{ id: 'it-2', itemName: 'Gold Choker', price: 500, imageUrl: '/b.jpg' }],
+    })
+
+    expect(composed.name).toBe('Curated Royal Luxury Ensemble')
+    expect(composed.totalPrice).toBe(1500)
+    expect(composed.styleNotes).toBe('Harmonized outfit pairing.')
+    expect(composed.heroImageUrl).toBe('/a.jpg')
+    expect(composed.items).toHaveLength(2)
+    expect(composed.items[1].name).toBe('Gold Choker')
+  })
+
+  it('reads the stored item role as the slot it fills', () => {
+    const stored = normalizeOutfitComposition({
+      id: 'look-9',
+      name: 'Stored Look',
+      items: [{ id: 'oi-1', inventoryItemId: 'it-1', itemName: 'Saree', role: 'primary', price: 10 }],
+    })
+
+    expect(stored.items[0].itemId).toBe('it-1')
+    expect(stored.items[0].position).toBe('primary')
   })
 
   it('fetchSourcingRequests, createSourcingRequest, and updateSourcingRequestStatus work correctly', async () => {
@@ -376,13 +523,13 @@ describe('catalog API client', () => {
   })
 
   describe('normalizeVisionAnalysis', () => {
-    it('normalizes category, garmentType, suggestedItemName, and default description', () => {
+    it('normalizes category, garmentType, suggestedItemName, and the declared wire colour', () => {
       const raw = {
         category: 'saree',
         garment_type: 'Kanjeevaram Silk Saree',
-        suggested_item_name: 'Royal Emerald Zari Brocade Silk Saree',
-        primary_color: 'Emerald Green',
-        color_hex: '#0F5132',
+        suggested_item_name: 'Royal Fuchsia Zari Brocade Silk Saree',
+        primary_color: 'Fuchsia Magenta',
+        color_hex: '#FF00FF',
         fabric: 'Mulberry Silk',
         pattern: 'Gold Zari Brocade',
         style: 'Traditional Heirloom',
@@ -392,12 +539,62 @@ describe('catalog API client', () => {
 
       expect(normalized.category).toBe('Sarees')
       expect(normalized.garmentType).toBe('Kanjeevaram Silk Saree')
-      expect(normalized.suggestedItemName).toBe('Royal Emerald Zari Brocade Silk Saree')
-      expect(normalized.detectedColor).toBe('Emerald Green')
-      expect(normalized.colorHex).toBe('#0F5132')
+      expect(normalized.suggestedItemName).toBe('Royal Fuchsia Zari Brocade Silk Saree')
+      // The sample colour is deliberately not any default literal. When it was 'Emerald Green',
+      // the old hardcoded fallback made this assertion pass whether or not `primary_color` was
+      // read, so the test could not fail.
+      expect(normalized.detectedColor).toBe('Fuchsia Magenta')
+      expect(normalized.colorHex).toBe('#FF00FF')
       expect(normalized.fabric).toBe('Mulberry Silk')
       expect(normalized.pattern).toBe('Gold Zari Brocade')
-      expect(normalized.summary).toContain('Emerald Green')
+    })
+
+    it('reads the provider wire name primary_color for the detected colour', () => {
+      // The real production payload: the .NET DTO pins this property as `primary_color`. Reading
+      // camelCase `primaryColor` silently dropped the model's answer.
+      const normalized = normalizeVisionAnalysis({
+        category: 'Gowns',
+        primary_color: 'Fuchsia Magenta',
+        garmentType: 'Bodycon Mini Dress',
+        fabric: 'Stretch Jersey',
+      })
+
+      expect(normalized.detectedColor).toBe('Fuchsia Magenta')
+    })
+
+    it('returns no colour when the provider supplied none, never a fabricated default', () => {
+      const normalized = normalizeVisionAnalysis({ category: 'Gowns', garmentType: 'Bodycon Mini Dress' })
+
+      expect(normalized.detectedColor).toBeUndefined()
+      expect(normalized.colorHex).toBeUndefined()
+      expect(normalized.detectedColor).not.toBe('Emerald Green')
+      expect(normalized.colorHex).not.toBe(getColorHex('Emerald Green'))
+    })
+
+    it('does not invent fabric, pattern, style or a description the provider omitted', () => {
+      const normalized = normalizeVisionAnalysis({
+        category: 'Gowns',
+        primary_color: 'Fuchsia Magenta',
+      })
+
+      expect(normalized.fabric).toBeUndefined()
+      expect(normalized.pattern).toBeUndefined()
+      expect(normalized.style).toBeUndefined()
+      expect(normalized.description).toBeUndefined()
+      expect(normalized.summary).not.toContain('Exquisite')
+    })
+
+    it('keeps only genuinely present values in a visualAttributes fallback, with no undefined entries', () => {
+      const normalized = normalizeVisionAnalysis({ category: 'Gowns', primary_color: 'Fuchsia Magenta' })
+
+      expect(normalized.visualAttributes).toEqual(['Fuchsia Magenta'])
+      expect(normalized.visualAttributes).not.toContain(undefined)
+
+      const fromKeywords = normalizeVisionAnalysis({
+        category: 'Gowns',
+        suggestedKeywords: ['gown', 'fuchsia'],
+      })
+      expect(fromKeywords.visualAttributes).toEqual(['gown', 'fuchsia'])
     })
   })
 
@@ -448,6 +645,50 @@ describe('catalog API client', () => {
       )
       expect(result.id).toBe('img-2')
       expect(result.url).toBe(`/api/v1/orgs/${ORG}/catalog/images/img-2`)
+    })
+  })
+
+  describe('colorHex on the catalog wire', () => {
+    it('posts the analysed hex when creating an item and reads the API hex back', async () => {
+      const payload = {
+        itemName: 'Fuchsia Bodycon Dress',
+        category: 'Gowns',
+        color: 'Fuchsia Pink',
+        colorHex: '#D5006D',
+        sizes: ['S'],
+        price: 18000,
+        quantity: 2,
+      }
+      postMock.mockResolvedValue({ data: { id: 'new-1', ...payload } })
+
+      const result = await createCatalogItem(ORG, payload)
+
+      expect(postMock).toHaveBeenCalledWith(`/api/v1/orgs/${ORG}/catalog/items`, payload)
+      expect(result.colorHex).toBe('#D5006D')
+    })
+
+    it('reads the API hex through normalizeInventoryItem', () => {
+      const result = normalizeInventoryItem({
+        id: '1',
+        itemName: 'Fuchsia Bodycon Dress',
+        color: 'Fuchsia Pink',
+        colorHex: '#D5006D',
+      })
+
+      expect(result.colorHex).toBe('#D5006D')
+    })
+
+    it('normalizes an item response with no hex to undefined, never the grey placeholder', () => {
+      // `#4B5563` (Tailwind gray-600) used to stand in for a colour nobody measured. That literal
+      // is exactly the flat default dot the operator saw instead of the analysed garment colour.
+      const result = normalizeInventoryItem({
+        id: '1',
+        itemName: 'Fuchsia Bodycon Dress',
+        color: 'Fuchsia Pink',
+      })
+
+      expect(result.colorHex).toBeUndefined()
+      expect(result.colorHex).not.toBe('#4B5563')
     })
   })
 

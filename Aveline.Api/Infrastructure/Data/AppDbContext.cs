@@ -5,6 +5,7 @@ using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Commerce.Models;
 using Aveline.Api.Modules.Conversations.Models;
 using Aveline.Api.Modules.CustomerConcierge.Models;
+using Aveline.Api.Modules.Home.Models;
 using Aveline.Api.Modules.Integrations.Models;
 using Aveline.Api.Modules.Notifications.Models;
 using Aveline.Api.Modules.Organizations.Models;
@@ -39,6 +40,12 @@ public class AppDbContext : DbContext
     public DbSet<DeliveryPlan> DeliveryPlans => Set<DeliveryPlan>();
     public DbSet<BusinessRule> BusinessRules => Set<BusinessRule>();
 
+    /// <summary>
+    /// The boutique's own takings journal. Deliberately a **different table** from
+    /// <see cref="IncomeLedgerEntries"/>, which records what Aveline billed the shop.
+    /// </summary>
+    public DbSet<BoutiqueSaleEntry> BoutiqueSaleEntries => Set<BoutiqueSaleEntry>();
+
     public DbSet<AdminApprovalRequest> AdminApprovalRequests => Set<AdminApprovalRequest>();
 
     public DbSet<Organization> Organizations => Set<Organization>();
@@ -59,11 +66,27 @@ public class AppDbContext : DbContext
 
     public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
 
+    /// <summary>Aveline's own revenue journal (S-50). Append-only; see <c>IncomeLedgerEntry</c>.</summary>
+    public DbSet<Modules.Revenue.Models.IncomeLedgerEntry> IncomeLedgerEntries =>
+        Set<Modules.Revenue.Models.IncomeLedgerEntry>();
+
     public DbSet<PlanEntitlement> PlanEntitlements => Set<PlanEntitlement>();
 
     public DbSet<PlanEntitlementOverride> PlanEntitlementOverrides => Set<PlanEntitlementOverride>();
 
     public DbSet<OrganizationSubscription> OrganizationSubscriptions => Set<OrganizationSubscription>();
+
+    // Payments module (plan §6.3): the provider-neutral charge record and the webhook inbox.
+    public DbSet<Modules.Payments.Models.PaymentIntent> PaymentIntents =>
+        Set<Modules.Payments.Models.PaymentIntent>();
+
+    public DbSet<Modules.Payments.Models.PaymentProviderEvent> PaymentProviderEvents =>
+        Set<Modules.Payments.Models.PaymentProviderEvent>();
+
+    /// <summary>Daily per-organization subscription snapshot backing the S-47 trend.</summary>
+    public DbSet<Aveline.Api.Modules.Analytics.Models.OrganizationSubscriptionSnapshot>
+        OrganizationSubscriptionSnapshots =>
+        Set<Aveline.Api.Modules.Analytics.Models.OrganizationSubscriptionSnapshot>();
 
     public DbSet<DailyBillingMetric> DailyBillingMetrics => Set<DailyBillingMetric>();
 
@@ -121,6 +144,12 @@ public class AppDbContext : DbContext
 
     public DbSet<SignOffDecision> SignOffDecisions => Set<SignOffDecision>();
 
+    /// <summary>The thread's per-user read markers (D5 = B).</summary>
+    public DbSet<ConversationReadState> ConversationReadStates => Set<ConversationReadState>();
+
+    /// <summary>A thread message's attachments (D8).</summary>
+    public DbSet<MessageAttachment> MessageAttachments => Set<MessageAttachment>();
+
     // Customer Concierge Module (Slice 1)
     public DbSet<Customer> Customers => Set<Customer>();
     public DbSet<CustomerPreference> CustomerPreferences => Set<CustomerPreference>();
@@ -129,6 +158,24 @@ public class AppDbContext : DbContext
     public DbSet<CustomerInteraction> CustomerInteractions => Set<CustomerInteraction>();
     public DbSet<CustomerConsent> CustomerConsents => Set<CustomerConsent>();
     public DbSet<CustomerTag> CustomerTags => Set<CustomerTag>();
+
+    /// <summary>Append-only consent history (plan §3.2).</summary>
+    public DbSet<ConsentAuditEntry> ConsentAuditEntries => Set<ConsentAuditEntry>();
+
+    // Privacy module (plan §3.3, §7.3): the durable data-subject-request log and the consent
+    // tombstone that survives erasure (Q-4).
+    public DbSet<Modules.Privacy.Models.DataSubjectRequest> DataSubjectRequests =>
+        Set<Modules.Privacy.Models.DataSubjectRequest>();
+
+    public DbSet<Modules.Privacy.Models.PrivacyErasureTombstone> PrivacyErasureTombstones =>
+        Set<Modules.Privacy.Models.PrivacyErasureTombstone>();
+
+    // Home module: the persisted half of the derived focus feed.
+    public DbSet<FocusDismissal> FocusDismissals => Set<FocusDismissal>();
+
+    // Handbook module (ADR-025): the global, non-tenant knowledge corpus the agent retrieves from.
+    public DbSet<Modules.Handbook.Models.HandbookChunk> HandbookChunks =>
+        Set<Modules.Handbook.Models.HandbookChunk>();
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {

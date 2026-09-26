@@ -35,4 +35,14 @@ enum AgentState {
       this == AgentState.success ||
       this == AgentState.error ||
       this == AgentState.response;
+
+  /// True for states that mean the run has stopped, whether or not it finished its work.
+  ///
+  /// [waiting] is the agent service's terminal state for a run that paused for an owner
+  /// decision (ADR-024): `agents.py` publishes it in place of `success` when the run status is
+  /// `PausedForApproval`. It is not a *finished* state — the header should keep reading
+  /// "Awaiting your decision…" until the decision is made — but it is the end of the run, so
+  /// the live activity bubble has to collapse. Treating it as in-flight left a spinner in the
+  /// thread for as long as the approval was outstanding, which is indefinitely.
+  bool get endsRun => isTerminal || this == AgentState.waiting;
 }

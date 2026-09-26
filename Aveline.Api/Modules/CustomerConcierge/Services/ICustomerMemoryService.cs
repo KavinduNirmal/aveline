@@ -14,12 +14,14 @@ public interface ICustomerMemoryService
         SaveMemoryRequest request,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Semantically searches a customer's memories by free-text query.</summary>
+    /// <summary>Semantically searches a customer's memories by free-text query.
+    /// Returns an empty list when the customer's consent is revoked (or unreadable).</summary>
     Task<IReadOnlyList<MemorySearchResultDto>> SearchAsync(
         MemorySearchRequest request,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Builds a concise staff-facing interaction brief for a customer.</summary>
+    /// <summary>Builds a concise staff-facing interaction brief for a customer.
+    /// Returns null when the customer is unknown or their consent is revoked (or unreadable).</summary>
     Task<InteractionBriefDto?> GenerateBriefAsync(
         Guid orgId,
         Guid customerId,

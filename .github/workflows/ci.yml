@@ -141,20 +141,20 @@ jobs:
       - name: Install dependencies & linter
         run: |
           python -m pip install --upgrade pip
-          pip install -r agnet-service/requirements.txt -r agnet-service/requirements-dev.txt
+          pip install -r agent-service/requirements.txt -r agent-service/requirements-dev.txt
 
       - name: Run Ruff Lint
-        run: ruff check agnet-service/app/
+        run: ruff check agent-service/app/
 
       - name: Run Pytest (coverage gate >= 90%)
         run: pytest tests/ --cov=app --cov-report=xml:coverage.xml --cov-report=term --cov-fail-under=90
-        working-directory: agnet-service
+        working-directory: agent-service
 
       - name: Upload agent coverage report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aveline-agent-coverage
-          path: agnet-service/coverage.xml
+          path: agent-service/coverage.xml
 
   # ---------------------------------------------------------------------------
   # Job 4: Build, Test & Lint — Vite Web Dashboard
@@ -181,6 +181,21 @@ jobs:
 
       - name: "Test (coverage gate: lines >= 80%)"
         run: bun run test:coverage
+        working-directory: frontend/web
+
+      # The admin ratchet. It is its own run because the tenant gate's glob-scoped thresholds
+      # deliberately exclude the admin subtree (C3), which meant the admin floor only ever bound on a
+      # developer's laptop. This step is what makes it a gate.
+      - name: "Test (admin coverage ratchet)"
+        run: bun run test:coverage:admin
+        working-directory: frontend/web
+
+      # The tenant-dashboard ratchet (T7). The tenant subtree is excluded from the global run and
+      # from the admin run, so before this step its floor bound nowhere in CI either. It is a third
+      # run rather than a shared denominator because a tenant regression must never be blamed on the
+      # console, and an admin slice must never move the tenant number.
+      - name: "Test (tenant dashboard coverage ratchet)"
+        run: bun run test:coverage:dashboard
         working-directory: frontend/web
 
       - name: Upload web coverage report
@@ -293,8 +308,45 @@ jobs:
             || { echo "::error::google-services.json did not decode to JSON. Is the GOOGLE_SERVICES_JSON_BASE64 secret base64-encoded?"; exit 1; }
           echo "Wrote $(wc -c < google-services.json) bytes of Firebase config."
 
+      # The committed android/gradle.properties sizes the Gradle and Kotlin JVMs for a
+      # 15 GB development host with no swap, where a larger heap drew the kernel OOM
+      # killer: -Xmx1280m with -XX:MaxMetaspaceSize=448m, plus
+      # kotlin.compiler.execution.strategy=in-process, which runs Kotlin inside that
+      # same JVM. Those caps also apply here, and on the runner AGP 9 plus Kotlin
+      # exhausts 448m of metaspace and dies mid-build with
+      # "java.lang.OutOfMemoryError: Metaspace".
+      #
+      # This runner has ~16 GB, so the limits are raised for CI only rather than in the
+      # tracked file, which would put the developer's host back where it started.
+      - name: Raise the Gradle JVM limits for this runner
+        working-directory: frontend/aveline_mobile/android
+        run: |
+          set -euo pipefail
+          sed -i \
+            's|^org\.gradle\.jvmargs=.*|org.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g -XX:ReservedCodeCacheSize=256m -XX:+HeapDumpOnOutOfMemoryError|' \
+            gradle.properties
+          grep '^org.gradle.jvmargs=' gradle.properties
+
       - name: Build release APK
-        run: flutter build apk --release
+        # The --dart-define values are not optional. AppConfig reads every setting
+        # from String.fromEnvironment at COMPILE time, so a build without them
+        # bakes in the fallbacks: API_BASE_URL=http://10.0.2.2:5091 (the Android
+        # EMULATOR's loopback alias, unreachable from a real device) and the
+        # DEVELOPMENT Clerk instance. Every APK this job published before 0.2.0
+        # was therefore inert - it installed, then could not reach any backend.
+        # Read from Variables or Secrets so either location works.
+        #
+        # --build-number comes from the run number, so versionCode increases on every
+        # release. pubspec pins it at 1, which means Android cannot tell build 200
+        # from build 152 and will happily install the older one over the newer one.
+        # This also keeps versionCode aligned with the `build.<run_number>` suffix
+        # the release tag already carries.
+        run: |
+          flutter build apk --release \
+            --build-number="${{ github.run_number }}" \
+            --dart-define=API_BASE_URL="${{ vars.APK_API_BASE_URL || secrets.APK_API_BASE_URL }}" \
+            --dart-define=CLERK_PUBLISHABLE_KEY="${{ vars.APK_CLERK_PUBLISHABLE_KEY || secrets.APK_CLERK_PUBLISHABLE_KEY }}" \
+            --dart-define=AVELINE_WEB_BASE_URL="${{ vars.APK_WEB_BASE_URL || secrets.APK_WEB_BASE_URL }}"
         working-directory: frontend/aveline_mobile
 
       - name: Upload APK artifact
@@ -349,18 +401,16 @@ jobs:
         with:
           scan-type: fs
           scan-ref: .
-          skip-dirs: node_modules,.git,build,dist
+          skip-dirs: node_modules,.git,build,dist,.cache
           severity: CRITICAL,HIGH
           ignore-unfixed: true
-          limit-severities-for-sarif: true
-          format: sarif
-          output: trivy-results.sarif
+          format: table
           exit-code: "1"
 
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         # Best effort: requires "Code scanning" to be enabled in repo settings.
-        if: always()
+        if: always() && hashFiles('trivy-results.sarif') != ''
         continue-on-error: true
         with:
           sarif_file: trivy-results.sarif
@@ -539,7 +589,14 @@ jobs:
       # builds and archives the app but skips the export step, so the step below packages
       # the .ipa from the archive itself.
       - name: Build iOS archive
-        run: flutter build ipa --release --no-codesign
+        # Same compile-time configuration as the APK. Without these the IPA carries
+        # the emulator loopback API URL and the development Clerk instance, exactly
+        # as the APK did before 0.2.0.
+        run: |
+          flutter build ipa --release --no-codesign \
+            --dart-define=API_BASE_URL="${{ vars.APK_API_BASE_URL || secrets.APK_API_BASE_URL }}" \
+            --dart-define=CLERK_PUBLISHABLE_KEY="${{ vars.APK_CLERK_PUBLISHABLE_KEY || secrets.APK_CLERK_PUBLISHABLE_KEY }}" \
+            --dart-define=AVELINE_WEB_BASE_URL="${{ vars.APK_WEB_BASE_URL || secrets.APK_WEB_BASE_URL }}"
         working-directory: frontend/aveline_mobile
 
       - name: Package unsigned IPA
@@ -627,3 +684,36 @@ jobs:
             --notes-file "$NOTES_FILE" \
             --target master
 
+
+  # ---------------------------------------------------------------------------
+  # Job 8: Observability Configuration Validation (Prometheus + Grafana + collector)
+  #
+  # `promtool check config` and `check rules` are the validators Prometheus itself runs at
+  # startup, so a green job means the container will boot. Note that `check config` STATS the
+  # files it references, so the scrape-token file must exist even for a syntax check.
+  # ---------------------------------------------------------------------------
+  observability-config:
+    name: Observability Config Validation
+    runs-on: ubuntu-latest
+    needs: hygiene
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate Prometheus config and rules
+        run: |
+          # The token is gitignored; mount a placeholder so `check config` can stat it.
+          mkdir -p observability/prometheus/secrets
+          echo "ci-placeholder-scrape-token" > observability/prometheus/secrets/scrape_token
+          docker run --rm -v "$PWD/observability/prometheus:/etc/prometheus" \
+            --entrypoint promtool prom/prometheus:v3.13.3 \
+            check config /etc/prometheus/prometheus.yml
+          docker run --rm -v "$PWD/observability/prometheus:/etc/prometheus" \
+            --entrypoint promtool prom/prometheus:v3.13.3 \
+            check rules /etc/prometheus/rules/aveline.yml
+
+      - name: Validate compose, collector, env and Grafana provisioning
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 scripts/validate_observability_config.py

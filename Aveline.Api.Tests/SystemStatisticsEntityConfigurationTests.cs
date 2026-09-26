@@ -203,11 +203,11 @@ public class SystemStatisticsEntityConfigurationTests
     }
 
     [Fact]
-    public void SeededRules_ContainTheElevenDocumentedRulesWithStableGuids()
+    public void SeededRules_ContainTheTwelveDocumentedRulesWithStableGuids()
     {
-        Assert.Equal(11, SystemAlertRuleSeed.Rules.Count);
-        Assert.Equal(11, SystemAlertRuleSeed.Rules.Select(r => r.Id).Distinct().Count());
-        Assert.Equal(11, SystemAlertRuleSeed.Rules.Select(r => r.Name).Distinct().Count());
+        Assert.Equal(12, SystemAlertRuleSeed.Rules.Count);
+        Assert.Equal(12, SystemAlertRuleSeed.Rules.Select(r => r.Id).Distinct().Count());
+        Assert.Equal(12, SystemAlertRuleSeed.Rules.Select(r => r.Name).Distinct().Count());
 
         Assert.Contains(SystemAlertRuleSeed.Rules, r =>
             r.Name == "blossom.ledger.drift"
@@ -219,8 +219,13 @@ public class SystemStatisticsEntityConfigurationTests
             && r.MetricName == "aveline.api.error_rate"
             && r.Severity == AlertSeverity.Critical);
 
-        // The database connection-pool gauge is not instrumented, so the rule is not seeded.
-        Assert.DoesNotContain(SystemAlertRuleSeed.Rules, r => r.Name == "db.pool.saturated");
+        // M-9 closed (Slice 5): Npgsql's meter is registered and the collector emits the
+        // saturation ratio as a produced metric, so the rule finally has a producer path.
+        Assert.Contains(SystemAlertRuleSeed.Rules, r =>
+            r.Name == "db.pool.saturated"
+            && r.MetricName == "aveline.db.pool.saturation"
+            && r.Aggregation == AlertAggregation.Max
+            && r.ComparisonOperator == AlertComparisonOperator.Gt);
 
         Assert.Contains(SystemAlertRuleSeed.Rules, r =>
             r.Name == "eventbus.failed" && r.MetricName == "aveline.eventbus.failed");

@@ -1,13 +1,27 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 
+import '../../../../core/auth/permissions.dart';
+import '../../../../core/config/app_config.dart';
+import '../../../../core/network/auth_token_provider.dart';
+import '../../../../core/network/conversation_realtime_service.dart';
+import '../../../../core/notifications/realtime_connection_factory.dart';
+import '../../../../core/providers/agent_state_provider.dart';
+import '../../../../core/providers/boutique_provider.dart';
 import '../../../../shared/utils/date_formatter.dart';
 import '../../../../shared/widgets/app_toast.dart';
 import '../../../../shared/widgets/aurora_field.dart';
-import '../../data/demo_thread_repository.dart';
+import '../../../salon/domain/agent_state.dart';
+import '../../data/conversation_repository.dart';
 import '../../data/thread_repository.dart';
+import '../../domain/block_actions.dart';
 import '../../domain/conversation.dart';
 import '../../domain/thread_message.dart';
+import '../attachment_opener.dart';
+import '../attachment_picker.dart';
 import '../client_thread_controller.dart';
+import '../widgets/block_action_rail.dart';
 import '../widgets/conversation_avatar.dart';
 import '../widgets/thread_composer.dart';
 import '../widgets/thread_message_bubble.dart';
@@ -25,17 +39,33 @@ class ClientThreadScreen extends StatefulWidget {
   const ClientThreadScreen({
     super.key,
     required this.conversation,
-    this.repository,
+    required this.repository,
+    this.conversationRepository,
     this.pageSize = 50,
     this.onOpenClient,
+    this.realtimeService,
+    this.attachmentPicker,
+    this.attachmentOpener,
+    this.aroundMessageId,
   });
 
   /// The thread being read.
   final Conversation conversation;
 
-  /// Overrides the thread's source, for tests and previews. Defaults to the demo
-  /// repository, which holds the exchanges the inbox's previews promise.
-  final ThreadRepository? repository;
+  /// The thread's source.
+  ///
+  /// Required rather than defaulted: this screen is built by the inbox and by
+  /// tests, and both name what they are reading. It used to fall back to a demo
+  /// repository, which meant a wiring mistake rendered invented messages instead
+  /// of an error.
+  final ThreadRepository repository;
+
+  /// The inbox, when the caller has one.
+  ///
+  /// A forward can only be offered when there is another client thread to send to, and
+  /// the inbox is the only honest source for that list. `null` leaves Forward drawn
+  /// disabled with its reason rather than opening a picker that could not be filled.
+  final ConversationRepository? conversationRepository;
 
   /// How many messages a page holds. Injectable so a test can reach the history
   /// above the window without seeding a hundred messages.
@@ -44,6 +74,24 @@ class ClientThreadScreen extends StatefulWidget {
   /// Overrides what the header opens. When `null`, the header is inert.
   final VoidCallback? onOpenClient;
 
+  /// Overrides the realtime service, for tests. When `null` the screen builds one with the
+  /// default SignalR factory, so a test can watch connect/disconnect without a live hub.
+  final ConversationRealtimeService? realtimeService;
+
+  /// Overrides the platform picker, for tests. When `null` the shipped `image_picker` is used.
+  final AttachmentPicker? attachmentPicker;
+
+  /// Overrides the platform document viewer, for tests. When `null` the shipped OS viewer is
+  /// used: a PDF cannot be previewed in-process, so the bytes are written to a temporary file
+  /// and handed to the platform.
+  final AttachmentOpener? attachmentOpener;
+
+  /// The message a notification deep-linked to, when the screen was opened from one.
+  ///
+  /// The thread opens on the page that holds it rather than on the newest words; earlier history
+  /// stays reachable, and the anchor is where the associate was sent.
+  final String? aroundMessageId;
+
   @override
   State<ClientThreadScreen> createState() => _ClientThreadScreenState();
 }
@@ -51,24 +99,122 @@ class ClientThreadScreen extends StatefulWidget {
 class _ClientThreadScreenState extends State<ClientThreadScreen> {
   late final ClientThreadController _controller;
 
+  /// Aveline's live state, while the thread is open.
+  ///
+  /// Held here rather than provided app-wide: the Salon owns its own, and the two screens
+  /// are never on screen at once.
+  final AgentStateProvider _agentProvider = AgentStateProvider();
+
+  /// This screen's own hub connection, so a message that lands while the thread is open
+  /// appears without a reload.
+  ConversationRealtimeService? _realtimeService;
+
   @override
   void initState() {
     super.initState();
     _controller = ClientThreadController(
       widget.conversation,
-      widget.repository ?? DemoThreadRepository(),
+      widget.repository,
       pageSize: widget.pageSize,
+      conversationRepository: widget.conversationRepository,
     );
 
     // Started before the listener is attached: `load` notifies synchronously, and
     // that must not reach `setState` from `initState`. Nothing is lost, because
     // the first build already reads the loading state.
-    _controller.load();
+    _controller.load(around: widget.aroundMessageId);
+    // The forward picker's destinations, read once so the rail knows before a tap
+    // whether Forward has anywhere to go.
+    _controller.loadForwardTargets();
     _controller.addListener(_onControllerChanged);
+    _agentProvider.addListener(_onControllerChanged);
+
+    // Best-effort: with no providers above the screen (tests, previews) the thread simply
+    // stays as it was read.
+    _connectRealtime();
+  }
+
+  /// Opens this screen's own hub connection to `salon:{id}`.
+  ///
+  /// The service is hardened once and shared with the inbox: the handlers are registered
+  /// unconditionally, a reconnect re-joins the group, and a join failure is said out loud
+  /// rather than swallowed, because a thread that never joined looks exactly like a thread
+  /// nobody is writing in.
+  Future<void> _connectRealtime() async {
+    try {
+      final config = context.read<AppConfig>();
+      final authRepository = context.read<AuthTokenProvider>();
+      final service =
+          widget.realtimeService ??
+          ConversationRealtimeService(defaultRealtimeConnectionFactory);
+      _realtimeService = service;
+
+      await service.connect(
+        baseUrl: config.apiBaseUrl,
+        getToken: authRepository.getToken,
+        organizationId: _organizationId(),
+        conversationId: widget.conversation.id,
+        onMessage: (payload) =>
+            _controller.receive(ThreadMessage.fromJson(payload)),
+        onAgentState: (payload) => _agentProvider.apply(
+          AgentState.fromWire(payload.state),
+          agentKey: payload.agentKey,
+        ),
+        onJoinFailed: (error) {
+          debugPrint('[thread] realtime join failed: $error');
+          if (mounted) {
+            AppToast.show(context, 'Live updates are unavailable.', error: true);
+          }
+        },
+        // Anything said while the socket was down was never delivered, so the window is
+        // re-read rather than trusted.
+        onReconnected: _controller.load,
+      );
+    } catch (error) {
+      debugPrint('[thread] realtime connect skipped/failed: $error');
+    }
+  }
+
+  /// Opens the platform picker and uploads whatever came back.
+  ///
+  /// Each file is uploaded as it is picked, so the associate sees per-file progress and a
+  /// failure is retryable without re-picking; the send then binds the stored ids.
+  Future<void> _pickAttachments(AttachmentSource source) async {
+    final picker = widget.attachmentPicker ?? pickWithImagePicker;
+    try {
+      final picked = await picker(source);
+      for (final file in picked) {
+        await _controller.attach(
+          bytes: file.bytes,
+          contentType: file.contentType,
+          fileName: file.fileName,
+        );
+      }
+    } catch (error) {
+      // The platform picker refused, and that is still an outcome the associate is owed:
+      // a log line is not an answer. The thread is left exactly as it was.
+      debugPrint('[thread] picking an attachment failed: $error');
+      if (mounted) {
+        AppToast.show(context, 'That file could not be attached.', error: true);
+      }
+    }
+  }
+
+  /// The active membership's org id, or `null` when no provider is above the screen.
+  String? _organizationId() {
+    try {
+      return context.read<BoutiqueProvider>().organizationId;
+    } catch (_) {
+      return null;
+    }
   }
 
   @override
   void dispose() {
+    _realtimeService?.disconnect();
+    _agentProvider
+      ..removeListener(_onControllerChanged)
+      ..dispose();
     _controller
       ..removeListener(_onControllerChanged)
       ..dispose();
@@ -81,13 +227,116 @@ class _ClientThreadScreenState extends State<ClientThreadScreen> {
     }
     setState(() {});
 
-    // A refused send or decision is worth saying out loud: the message is still
-    // there, marked, and the toast says what happened to it.
+    // A refused send, decision or delivery is worth saying out loud: the message is
+    // still there, marked, and the toast says what happened to it.
     final error = _controller.actionError;
     if (error != null) {
       _controller.clearActionError();
       AppToast.show(context, error, error: true);
+      return;
     }
+
+    // A delivery or a forward happens in another thread the associate cannot see from
+    // here, so its success is spoken rather than left to be inferred.
+    final notice = _controller.actionNotice;
+    if (notice != null) {
+      _controller.clearActionNotice();
+      AppToast.show(context, notice);
+    }
+  }
+
+  /// The action rail's wiring, rebuilt with the thread.
+  ///
+  /// Whether the agent is busy is read here rather than stored, because it belongs to
+  /// the live provider above the screen; everything else comes from the controller.
+  BlockActionBridge get _blockActions => BlockActionBridge(
+    hasCustomerDestination: _controller.hasCustomerDestination,
+    hasForwardDestination: _controller.hasForwardDestination,
+    agentBusy: _agentProvider.isWorking,
+    pendingAction: _controller.pendingBlockAction,
+    onAction: _onBlockAction,
+  );
+
+  /// Runs one segment of a block's rail.
+  ///
+  /// Copy and the two confirmations are the screen's business because they are about
+  /// this device and this conversation; the network calls belong to the controller.
+  void _onBlockAction(
+    ThreadBlock block,
+    String messageId,
+    int blockIndex,
+    BlockActionId action,
+  ) {
+    switch (action) {
+      case BlockActionId.copy:
+        _copyBlock(block);
+      case BlockActionId.sendToCustomer:
+        _confirmSendToCustomer(block, messageId, blockIndex);
+      case BlockActionId.forward:
+        _pickForwardTarget(block, messageId, blockIndex);
+      case BlockActionId.regenerate:
+        _controller.regenerateBlock(messageId, block, blockIndex);
+    }
+  }
+
+  /// Copies the **block's** words, not the message's.
+  ///
+  /// A message can carry several cards, and Copy belongs to the one the associate
+  /// tapped, so the payload is [blockToText] of that block alone.
+  Future<void> _copyBlock(ThreadBlock block) async {
+    final text = blockToText(block);
+    if (text.isEmpty) {
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: text));
+    if (mounted) {
+      AppToast.show(context, '${blockTitle(block)} copied');
+    }
+  }
+
+  /// Confirms before words leave the app for the customer's channel.
+  ///
+  /// This cannot be unsent, so the dialog names the customer and shows the exact text
+  /// that will go — the block's own words, not the message's.
+  Future<void> _confirmSendToCustomer(
+    ThreadBlock block,
+    String messageId,
+    int blockIndex,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => _SendToCustomerDialog(
+        customer: widget.conversation.title,
+        text: blockToText(block),
+      ),
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+    await _controller.deliverBlock(messageId, block, blockIndex);
+  }
+
+  /// Opens the picker of other client threads and forwards into the chosen one.
+  Future<void> _pickForwardTarget(
+    ThreadBlock block,
+    String messageId,
+    int blockIndex,
+  ) async {
+    final target = await showModalBottomSheet<ForwardTarget>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => _ForwardPicker(targets: _controller.forwardTargets),
+    );
+    if (target == null || !mounted) {
+      return;
+    }
+    await _controller.forwardBlock(
+      messageId,
+      block,
+      blockIndex,
+      targetConversationId: target.id,
+      targetLabel: target.label,
+    );
   }
 
   /// The thread as a list of rows: each day opens with the day it was.
@@ -133,10 +382,16 @@ class _ClientThreadScreenState extends State<ClientThreadScreen> {
           Column(
             children: [
               Expanded(child: _thread()),
+              if (_agentProvider.isWorking) _AgentActivity(provider: _agentProvider),
               ThreadComposer(
                 enabled: _controller.hasLoadedOnce,
                 placeholder: 'Message ${widget.conversation.title}...',
                 onSend: _controller.send,
+                onAttach: _pickAttachments,
+                attachments: _controller.pendingAttachments,
+                sendReady: _controller.areAttachmentsReady,
+                onRemoveAttachment: _controller.removeAttachment,
+                onRetryAttachment: _controller.retryAttachment,
               ),
             ],
           ),
@@ -146,7 +401,10 @@ class _ClientThreadScreenState extends State<ClientThreadScreen> {
   }
 
   Widget _thread() {
-    if (_controller.isLoading && !_controller.hasLoadedOnce) {
+    // A missing organization id is a "not yet": the screen keeps its loading state rather
+    // than showing the refusal card, which is reserved for the server's own answer.
+    if (_controller.isWaitingForOrg ||
+        (_controller.isLoading && !_controller.hasLoadedOnce)) {
       return const Center(
         child: SizedBox(
           key: Key('thread_loading'),
@@ -199,6 +457,7 @@ class _ClientThreadScreenState extends State<ClientThreadScreen> {
         final message = row.message!;
         return ThreadMessageBubble(
           message: message,
+          quotedParent: _parentOf(message),
           onRetry: message.isFailed ? () => _controller.retry(message) : null,
           onApproveDraft: message.needsSignOff
               ? () => _controller.decideDraft(message, approved: true)
@@ -206,8 +465,180 @@ class _ClientThreadScreenState extends State<ClientThreadScreen> {
           onDismissDraft: message.needsSignOff
               ? () => _controller.decideDraft(message, approved: false)
               : null,
+          onSelectCustomer: (block, option) => _selectCustomer(option),
+          // Bytes come through the authenticated client, never `Image.network`.
+          loadAttachment: _controller.loadAttachmentBytes,
+          openAttachment: widget.attachmentOpener ?? openWithPlatformViewer,
+          // The API is authoritative; this is only about not offering a decision the caller
+          // cannot make.
+          onRevoke: _canApprove ? () => _controller.revokeSignOff(message) : null,
+          // The per-block action rail's wiring, drawn by the blocks inside the bubble.
+          bridge: _blockActions,
         );
       },
+    );
+  }
+
+  /// The message [message] replies to, when it is in the window.
+  ///
+  /// A parent the window does not hold is `null`: the quoted line is context the
+  /// thread already has, never a second read.
+  ThreadMessage? _parentOf(ThreadMessage message) {
+    final parentId = message.replyToMessageId;
+    if (parentId == null) {
+      return null;
+    }
+    for (final candidate in _controller.messages) {
+      if (candidate.id == parentId) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  /// Whether the signed-in membership holds `approvals:approve`.
+  ///
+  /// Read from the membership row's boutique role (the source the server authorizes against),
+  /// never from a JWT claim. No provider above the screen means no permission, which leaves
+  /// the Revoke action undrawn.
+  bool get _canApprove {
+    String? role;
+    try {
+      role = context.read<BoutiqueProvider>().boutiqueRole;
+    } catch (_) {
+      role = null;
+    }
+    return role != null && Permissions.isGranted(role, Permissions.approvalsApprove);
+  }
+
+  /// Binds the thread to the client a `choice` option named.
+  void _selectCustomer(Map<String, dynamic> option) {
+    final customerId = option['customerId'];
+    if (customerId is! String || customerId.isEmpty) {
+      return;
+    }
+    _controller.selectCustomer(customerId);
+  }
+}
+
+/// The confirmation that stands between a tap and a message reaching the customer.
+///
+/// It names who will receive it and prints the exact text, because a channel delivery
+/// cannot be unsent. The destructive weight is deliberate: this is the one action on the
+/// rail that leaves the app.
+class _SendToCustomerDialog extends StatelessWidget {
+  const _SendToCustomerDialog({required this.customer, required this.text});
+
+  final String customer;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return AlertDialog(
+      key: const Key('block_send_confirm'),
+      title: Text('Send to $customer?'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHigh,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(text, style: theme.textTheme.bodyMedium),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'This goes to $customer\u2019s channel now, and it cannot be unsent.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          key: const Key('block_send_cancel'),
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const Key('block_send_confirm_send'),
+          onPressed: () => Navigator.of(context).pop(true),
+          child: const Text('Send'),
+        ),
+      ],
+    );
+  }
+}
+
+/// The picker of other client threads a block can be forwarded into.
+///
+/// The list is the controller's already-filtered targets: only threads that can actually
+/// receive a delivery, which is what keeps the client-less concierge Salon off it.
+class _ForwardPicker extends StatelessWidget {
+  const _ForwardPicker({required this.targets});
+
+  final List<ForwardTarget> targets;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return SafeArea(
+      key: const Key('block_forward_picker'),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 10),
+            child: Text(
+              'Forward to',
+              style: theme.textTheme.titleMedium?.copyWith(
+                color: scheme.onSurface,
+              ),
+            ),
+          ),
+          if (targets.isEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+              child: Text(
+                BlockActionReasons.noForwardTarget,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            )
+          else
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: targets.length,
+                itemBuilder: (context, index) {
+                  final target = targets[index];
+                  return ListTile(
+                    key: ValueKey('block_forward_target_${target.id}'),
+                    leading: ConversationAvatar.client(name: target.label),
+                    title: Text(
+                      target.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    onTap: () => Navigator.of(context).pop(target),
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -419,6 +850,62 @@ class _ThreadError extends StatelessWidget {
             onPressed: onRetry,
             icon: const Icon(Icons.refresh_rounded, size: 16),
             label: const Text('Try again'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The live strip that says Aveline is working on this thread, and who is doing it.
+///
+/// It states only what the four-field `ReceiveAgentState` payload supports - working,
+/// searching, or using a tool - because anything more would be invented. A terminal state
+/// clears it rather than leaving a stale card behind.
+class _AgentActivity extends StatelessWidget {
+  const _AgentActivity({required this.provider});
+
+  final AgentStateProvider provider;
+
+  /// The persona's display name from its key, falling back to the umbrella brand.
+  String get _persona => switch (provider.agentKey) {
+    'ava' => 'Ava',
+    'elle' => 'Elle',
+    'lina' => 'Lina',
+    _ => 'Aveline',
+  };
+
+  /// Only what the payload supports.
+  String get _doing => switch (provider.state) {
+    AgentState.searching => 'is searching',
+    AgentState.toolCall => 'is using a tool',
+    _ => 'is working',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Container(
+      key: const Key('thread_agent_activity'),
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+      child: Row(
+        children: [
+          const SizedBox(
+            width: 12,
+            height: 12,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              '$_persona $_doing…',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
           ),
         ],
       ),

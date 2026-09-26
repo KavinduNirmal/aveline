@@ -31,6 +31,12 @@ public class InventoryItemConfiguration : IEntityTypeConfiguration<InventoryItem
             .IsRequired()
             .HasMaxLength(100);
 
+        // 9 characters is the longest standard CSS hex colour literal (`#` + 8 hex digits, the
+        // alpha form), so the column cannot truncate any colour a browser colour control can
+        // produce; the request gate still accepts only the 3- and 6-digit forms.
+        builder.Property(i => i.ColorHex)
+            .HasMaxLength(9);
+
         builder.Property(i => i.Fabric)
             .HasMaxLength(150);
 

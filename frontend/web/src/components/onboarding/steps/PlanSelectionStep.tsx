@@ -12,11 +12,16 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 
-import { PLANS } from '../plans'
+import { PLANS, formatServerPrice } from '../plans'
 import { useOwnerOnboardingWizard } from '../wizard-context'
 
 export function PlanSelectionStep() {
   const { draft, patch, goTo, isSubmitting, handleSelectPlan } = useOwnerOnboardingWizard()
+
+  // The server's price wins once plan selection has answered (plan §9.1 F1): the hardcoded
+  // `plan.price` is the collection copy, not a second source of truth. A `null` server price means
+  // "no price row exists", which is *not* the free plan's zero, so the copy stays in that case.
+  const serverPrice = formatServerPrice(draft.planPriceLkr, draft.planCurrency)
 
   return (
     <div className="flex flex-col gap-6">
@@ -30,52 +35,63 @@ export function PlanSelectionStep() {
       </Alert>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {PLANS.map((plan) => (
-          <Card
-            key={plan.tier}
-            className={`cursor-pointer transition-all border-2 relative ${
-              draft.selectedPlanTier === plan.tier
-                ? 'border-primary ring-2 ring-primary/20 shadow-md'
-                : plan.color
-            }`}
-            onClick={() => patch({ selectedPlanTier: plan.tier })}
-          >
-            {plan.badge && (
-              <Badge className="absolute top-3 right-3 text-[10px]" variant="secondary">
-                {plan.badge}
-              </Badge>
-            )}
-            <CardHeader className="pb-3">
-              <CardTitle className="font-serif text-xl flex items-center justify-between">
-                {plan.name}
-                <span className="text-sm font-sans font-semibold text-primary">{plan.price}</span>
-              </CardTitle>
-              <CardDescription>{plan.tagline}</CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-2.5 text-xs text-muted-foreground pb-4">
-              <div className="flex items-center justify-between py-1 border-b border-border/50">
-                <span className="font-medium text-foreground">Monthly Blossom Credits</span>
-                <span className="font-semibold text-primary">{plan.blossoms.toLocaleString()}</span>
-              </div>
-              <div className="flex items-center justify-between py-1 border-b border-border/50">
-                <span>Staff Seats</span>
-                <span className="text-foreground font-medium">{plan.staff}</span>
-              </div>
-              <div className="flex items-center justify-between py-1">
-                <span>Active Customer Limit</span>
-                <span className="text-foreground font-medium">{plan.customers.toLocaleString()}</span>
-              </div>
-            </CardContent>
-            <CardFooter className="pt-0">
-              <Badge
-                variant={draft.selectedPlanTier === plan.tier ? 'default' : 'outline'}
-                className="w-full justify-center py-1"
-              >
-                {draft.selectedPlanTier === plan.tier ? 'Selected Plan' : 'Select Plan'}
-              </Badge>
-            </CardFooter>
-          </Card>
-        ))}
+        {PLANS.map((plan) => {
+          const isSelected = draft.selectedPlanTier === plan.tier
+          const price =
+            isSelected && serverPrice !== null ? serverPrice : plan.price
+          return (
+            <Card
+              key={plan.tier}
+              className={`cursor-pointer transition-all border-2 relative ${
+                isSelected
+                  ? 'border-primary ring-2 ring-primary/20 shadow-md'
+                  : plan.color
+              }`}
+              onClick={() => patch({ selectedPlanTier: plan.tier })}
+            >
+              {plan.badge && (
+                <Badge className="absolute top-3 right-3 text-[10px]" variant="secondary">
+                  {plan.badge}
+                </Badge>
+              )}
+              <CardHeader className="pb-3">
+                <CardTitle className="font-serif text-xl flex items-center justify-between">
+                  {plan.name}
+                  <span
+                    className="text-sm font-sans font-semibold text-primary"
+                    data-testid={`plan-price-${plan.tier}`}
+                    title={isSelected && serverPrice !== null ? 'Priced by the server' : undefined}
+                  >
+                    {price}
+                  </span>
+                </CardTitle>
+                <CardDescription>{plan.tagline}</CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-2.5 text-xs text-muted-foreground pb-4">
+                <div className="flex items-center justify-between py-1 border-b border-border/50">
+                  <span className="font-medium text-foreground">Monthly Blossom Credits</span>
+                  <span className="font-semibold text-primary">{plan.blossoms.toLocaleString()}</span>
+                </div>
+                <div className="flex items-center justify-between py-1 border-b border-border/50">
+                  <span>Staff Seats</span>
+                  <span className="text-foreground font-medium">{plan.staff}</span>
+                </div>
+                <div className="flex items-center justify-between py-1">
+                  <span>Active Customer Limit</span>
+                  <span className="text-foreground font-medium">{plan.customers.toLocaleString()}</span>
+                </div>
+              </CardContent>
+              <CardFooter className="pt-0">
+                <Badge
+                  variant={isSelected ? 'default' : 'outline'}
+                  className="w-full justify-center py-1"
+                >
+                  {isSelected ? 'Selected Plan' : 'Select Plan'}
+                </Badge>
+              </CardFooter>
+            </Card>
+          )
+        })}
       </div>
 
       <div className="flex justify-between items-center">

@@ -1,5 +1,8 @@
+using Aveline.Api.Modules.CustomerConcierge.Jobs;
+using Aveline.Api.Modules.CustomerConcierge.Metrics;
 using Aveline.Api.Modules.CustomerConcierge.Repositories;
 using Aveline.Api.Modules.CustomerConcierge.Services;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Aveline.Api.Modules.CustomerConcierge;
 
@@ -32,12 +35,24 @@ public static class CustomerConciergeModule
         services.AddScoped<ICustomerTagRepository, CustomerTagRepository>();
 
         // Services
+        // The gate is a singleton instrument family plus a scoped read of the consent row: the
+        // service itself is scoped (it holds the scoped repository), the metric instrument is not.
+        services.AddSingleton<ConsentMetrics>();
+        // Phase 6 item 6.3: the consent-state snapshot gauge (see ConsentMetricCollector).
+        services.AddHostedService<ConsentMetricCollector>();
+        services.AddScoped<IConsentGateService, ConsentGateService>();
+        // The consent writer stamps its audit timestamps from an injectable clock and writes its
+        // audit rows through IAuditService/AppDbContext. TryAdd keeps the clock a single instance
+        // even though the privacy module also requests it.
+        services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<ICustomerService, CustomerService>();
         services.AddScoped<ICustomerMemoryService, CustomerMemoryService>();
         services.AddScoped<ICustomerInteractionService, CustomerInteractionService>();
         services.AddScoped<ICustomerConsentService, CustomerConsentService>();
         services.AddScoped<ICustomerEventService, CustomerEventService>();
         services.AddScoped<ICustomerLoyaltyService, CustomerLoyaltyService>();
+        services.AddScoped<ICustomerTenantService, CustomerTenantService>();
+        services.AddScoped<ICustomerVisitService, CustomerVisitService>();
         services.AddScoped<IEventReminderService, EventReminderService>();
         services.AddHostedService<EventReminderWorker>();
 

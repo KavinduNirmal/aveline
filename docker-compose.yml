@@ -7,6 +7,14 @@
 # to `[]`) so PostgreSQL/Redis are reachable only inside the compose network, and
 # front the API with a reverse proxy. The agent service is intentionally never
 # exposed to the host (it is reached only via http://agent:8000 internally).
+#
+# CONFIGURATION: every environment-specific value below (service endpoints, runtime
+# flags and published host ports) is interpolated from `.env`, and each key carries a
+# default that preserves the previous literal, so an unset `.env` still runs the stack
+# unchanged. `.env.example` documents the whole surface. In-network host/port keys must
+# match the port the target service actually listens on: the API and agent bind the port
+# named by `API_INTERNAL_PORT` / `AGENT_INTERNAL_PORT`, while PostgreSQL, Redis and the
+# collector listen on their image/config port (5432 / 6379 / 4318).
 # =============================================================================
 services:
   # ---------------------------------------------------------------------------
@@ -22,15 +30,46 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-aveline}
       POSTGRES_USER: ${POSTGRES_USER:-aveline}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      # Password for the least-privilege postgres_exporter role created on first init (S-10).
+      POSTGRES_EXPORTER_PASSWORD: ${POSTGRES_EXPORTER_PASSWORD:?POSTGRES_EXPORTER_PASSWORD is required}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./observability/postgres-exporter/role.sql:/docker-entrypoint-initdb.d/postgres-exporter-role.sql:ro
+      - ./observability/postgres-exporter/init-role.sh:/docker-entrypoint-initdb.d/10-postgres-exporter-role.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aveline}"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # ---------------------------------------------------------------------------
+  # postgres_exporter — server-side PostgreSQL metrics Npgsql cannot see: locks,
+  # buffer-cache hit ratio, database growth and backend counts (OQ-4). Internal
+  # only: no host port (S-2/S-10).
+  # ---------------------------------------------------------------------------
+  postgres-exporter:
+    # Digest-pinned: the same digest is published on Docker Hub, quay.io and GHCR, so the
+    # tag alone does not identify the artefact.
+    image: prometheuscommunity/postgres-exporter@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
+    container_name: aveline_postgres_exporter
+    restart: unless-stopped
+    environment:
+      # URI + PASS_FILE rather than one connection URL with the password inline.
+      DATA_SOURCE_URI: ${POSTGRES_HOST:-postgres}:${POSTGRES_INTERNAL_PORT:-5432}/${POSTGRES_DB:-aveline}?sslmode=${POSTGRES_SSLMODE:-disable}
+      DATA_SOURCE_USER: ${POSTGRES_EXPORTER_USER:-postgres_exporter}
+      DATA_SOURCE_PASS_FILE: /run/secrets/postgres_exporter_password
+      # NEVER set --metric-prefix (silently ignored by the standalone collectors since
+      # v0.20.0), --auto-discover-databases (deprecated) or --disable-settings-metrics
+      # (removed in v0.20.0). All five collectors this deployment needs are on by default.
+    volumes:
+      - ./postgres-exporter-password:/run/secrets/postgres_exporter_password:ro
+    expose:
+      - "9187"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   # ---------------------------------------------------------------------------
   # Redis — caching layer
@@ -59,16 +98,16 @@ services:
     # Host port 5091 matches the web client default (VITE_API_BASE_URL=http://localhost:5091)
     # and the local `dotnet run` port, so the frontend reaches the backend in either mode.
     ports:
-      - "${API_PORT:-5091}:8080"
+      - "${API_PORT:-5091}:${API_INTERNAL_PORT:-8080}"
     environment:
-      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_ENVIRONMENT: ${API_ENVIRONMENT:-Development}
       # Bind to 0.0.0.0:8080 inside the container so the published API is reachable on the
       # port the container EXPOSEs / that compose forwards to.
-      ASPNETCORE_URLS: http://+:8080
+      ASPNETCORE_URLS: http://+:${API_INTERNAL_PORT:-8080}
       ConnectionStrings__DefaultConnection: >-
-        Host=postgres;Port=5432;Database=${POSTGRES_DB:-aveline};
+        Host=${POSTGRES_HOST:-postgres};Port=${POSTGRES_INTERNAL_PORT:-5432};Database=${POSTGRES_DB:-aveline};
         Username=${POSTGRES_USER:-aveline};Password=${POSTGRES_PASSWORD}
-      Redis__ConnectionString: redis:6379
+      Redis__ConnectionString: ${REDIS_HOST:-redis}:${REDIS_INTERNAL_PORT:-6379}
       # Event types the API consumes from the agent service. The `:-` defaults keep the API
       # subscribed to the real event types even when the env vars are unset; an empty-string
       # override would silently disable the subscription and drop Salon messages/states.
@@ -76,20 +115,79 @@ services:
       Eventing__SubscribeEventTypes__1: ${EVENTING_SUBSCRIBE_EVENT_TYPES_1:-message.updated}
       Eventing__SubscribeEventTypes__2: ${EVENTING_SUBSCRIBE_EVENT_TYPES_2:-conversation.created}
       Eventing__SubscribeEventTypes__3: ${EVENTING_SUBSCRIBE_EVENT_TYPES_3:-agent.status}
-      AgentService__BaseUrl: http://agent:8000
+      AgentService__BaseUrl: http://${AGENT_HOST:-agent}:${AGENT_INTERNAL_PORT:-8000}
       AgentService__InternalToken: ${INTERNAL_API_TOKEN:-aveline-local-development-secret-token-2026}
       # Salt for the hashed client IP and user-agent telemetry dimensions. Required in
       # Production: the API refuses to boot without it (M-1). The local default keeps the
       # development profile salted too; set a high-entropy secret when deploying.
       Telemetry__IpHashSalt: ${TELEMETRY_IP_HASH_SALT:-local-development-telemetry-salt}
+      # Dedicated Prometheus scrape credential for /metrics (S-1/R-1). Always required: an
+      # unset value fails the stack rather than silently falling back to the committed
+      # internal service token. Generate with `openssl rand -hex 32`.
+      Metrics__ScrapeToken: ${METRICS_SCRAPE_TOKEN:?METRICS_SCRAPE_TOKEN is required}
       # OpenAI-compatible embeddings used by the Customer Memory agent (pgvector retrieval).
       Embeddings__ApiKey: ${EMBEDDINGS_API_KEY:-}
       Embeddings__BaseUrl: ${EMBEDDINGS_BASE_URL:-https://api.openai.com/v1}
       Embeddings__Model: ${EMBEDDINGS_MODEL:-text-embedding-3-small}
       # OpenAI-compatible vision provider for Visual Intelligence (Elle, Slice 2 image analysis).
+      # VISION_API_KEY is the vision provider's own credential and is intentionally not
+      # LLM_API_KEY (a text model such as DeepSeek): see .env.example. Leaving it unset is
+      # allowed - the API logs a warning and falls back to a filename-derived deterministic
+      # result instead of analysing the image.
       Vision__ApiKey: ${VISION_API_KEY:-}
-      Vision__BaseUrl: ${VISION_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai/}
-      Vision__Model: ${VISION_MODEL:-gemini-2.0-flash}
+      # These two fallbacks mirror the committed Aveline.Api/appsettings.json pair, so the no-.env
+      # default is coherent and currently valid. The model id must be a multimodal model that
+      # actually exists for the chosen provider; the previous Gemini fallback `gemini-2.0-flash`
+      # is retired and now answers 404. A non-DeepSeek provider must not be sent the DeepSeek-only
+      # `thinking` field (the code now sends it only when the resolved provider is DeepSeek).
+      Vision__BaseUrl: ${VISION_BASE_URL:-https://api.openai.com}
+      Vision__Model: ${VISION_MODEL:-gpt-4o-mini}
+      # Media storage rollout flags (docs/architecture/media-rollout-flags.md). .env.example
+      # documents these three keys as the operator's opt-in, but compose mapped none of them, so
+      # the documented switch was inert: the container always fell through to the `database`
+      # default in MediaOptions.cs and every catalog and attachment byte was written to the row.
+      # Media__Provider selects the byte-storage tier (database | cloudinary);
+      # Media__ReadFromCloudinary makes the protected read path honour a Cloudinary reference on a
+      # row that carries one; Media__DualWrite also keeps the bytes on the row.
+      Media__Provider: ${Media__Provider:-database}
+      Media__ReadFromCloudinary: ${Media__ReadFromCloudinary:-false}
+      Media__DualWrite: ${Media__DualWrite:-false}
+      # Media token signing. REQUIRED when Media__Provider=cloudinary: MediaOptionsValidator
+      # (ValidateSigningKey) refuses the boot on a blank, non-base64 or wrong-length value. The
+      # default database provider boots without it. Media__PublicBaseUrl is the absolute origin
+      # the minted media-token URLs are built from; when set it must be an absolute http(s) URL
+      # the caller can reach, not a localhost address.
+      Media__SigningKey: ${MEDIA_SIGNING_KEY:-}
+      Media__PublicBaseUrl: ${MEDIA_PUBLIC_BASE_URL:-http://api:8080}
+      # The rest of the `Media:*` surface, passed through under the same `Media__*` names. Their
+      # authoritative defaults live in Aveline.Api/appsettings.json (backed by MediaOptions.cs);
+      # they are repeated here as the compose fallback so the key an operator reads in
+      # .env.example is the key the container receives. An unset value keeps the safe default.
+      Media__AllowDatabaseProviderInProduction: ${Media__AllowDatabaseProviderInProduction:-false}
+      Media__VisionTokenTtlSeconds: ${Media__VisionTokenTtlSeconds:-600}
+      Media__AttachmentTokenTtlSeconds: ${Media__AttachmentTokenTtlSeconds:-900}
+      Media__ClockSkewToleranceSeconds: ${Media__ClockSkewToleranceSeconds:-30}
+      Media__VisionUsePrivateDownload: ${Media__VisionUsePrivateDownload:-false}
+      Media__ImageUrlUploadEnabled: ${Media__ImageUrlUploadEnabled:-false}
+      Media__ImageUrlAllowlist: ${Media__ImageUrlAllowlist:-}
+      Media__ImageUrlMaxRedirects: ${Media__ImageUrlMaxRedirects:-2}
+      Media__ImageUrlFetchTimeoutSeconds: ${Media__ImageUrlFetchTimeoutSeconds:-10}
+      Media__AllowInsecureImageFetch: ${Media__AllowInsecureImageFetch:-false}
+      Media__CatalogMaxFileBytes: ${Media__CatalogMaxFileBytes:-2097152}
+      Media__CatalogDisplayWidth: ${Media__CatalogDisplayWidth:-800}
+      # Cloudinary media provider credentials (strategy §3.4). Read as root configuration keys by
+      # CloudinaryUrlParser, so they keep their SDK names. Required only when Media:Provider is
+      # cloudinary; the pass-through default leaves them empty otherwise. CLOUDINARY_URL is the
+      # primary shape (cloudinary://<key>:<secret>@<cloud_name>); the discrete key/secret pair is
+      # the documented fallback. Passing these names is what makes the Wave 1 live suite
+      # ([Trait("Category","CloudinaryLive")]) runnable from compose (A7.1, closed by Q3).
+      CLOUDINARY_URL: ${CLOUDINARY_URL:-}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:-}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:-}
+      # The discrete fallback's cloud name. CLOUDINARY_URL already carries a cloud name, so this is
+      # read only when the deployment stores the credential as separate variables; it completes the
+      # fallback rather than adding a fourth credential.
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:-}
       # AES-256-GCM key for tenant integration credentials (base64, 32 bytes).
       Credentials__EncryptionKey: ${CREDENTIALS_ENCRYPTION_KEY:?CREDENTIALS_ENCRYPTION_KEY is required}
       # WhatsApp (Meta) integration gateway — base URL + API version (defaults used if unset).
@@ -97,8 +195,29 @@ services:
       WhatsApp__ApiVersion: ${WHATSAPP_API_VERSION:-v21.0}
       # Optional Meta webhook IP allow-list (comma-separated). Empty = any IP (HMAC still enforced).
       Webhook__AllowedIps: ${WEBHOOK_ALLOWED_IPS:-}
+      # Payment provider abstraction (PaymentsOptions, plan §6.5). `manual` is the safe default: it
+      # is the honest representation of today (an operator confirms receipt) and cannot invent
+      # settled money. The mock is Development-only; Validate refuses to start with it outside
+      # Development unless PAYMENTS_MOCK_ALLOW_IN_NON_DEVELOPMENT is deliberately true.
+      Payments__Provider: ${PAYMENTS_PROVIDER:-manual}
+      Payments__Mock__Enabled: ${PAYMENTS_MOCK_ENABLED:-false}
+      Payments__Mock__WebhookSigningSecret: ${PAYMENTS_MOCK_WEBHOOK_SIGNING_SECRET:-}
+      Payments__Mock__AllowInNonDevelopment: ${PAYMENTS_MOCK_ALLOW_IN_NON_DEVELOPMENT:-false}
+      # OnePay, the external adapter (plan Phase 8, Q5). Only the AppId and HashSalt are required,
+      # and only when PAYMENTS_PROVIDER=onepay: PaymentsOptions.Validate fails startup without them.
+      # HASH_SALT and APP_TOKEN are secrets - supply them from the deployment's secret store, never
+      # from a committed file. The paths default to the published API and are overridable so a
+      # confirmed sandbox path needs no code change.
+      Payments__OnePay__AppId: ${PAYMENTS_ONEPAY_APP_ID:-}
+      Payments__OnePay__HashSalt: ${PAYMENTS_ONEPAY_HASH_SALT:-}
+      Payments__OnePay__AppToken: ${PAYMENTS_ONEPAY_APP_TOKEN:-}
+      Payments__OnePay__BaseUrl: ${PAYMENTS_ONEPAY_BASE_URL:-https://api.onepay.lk}
       # Public base URL used to build staff-invitation links.
       App__BaseUrl: ${APP_BASE_URL:-http://localhost:5173}
+      # HMAC key for the permanent opt-out link in the first-contact disclosure (privacy plan §5.1).
+      # Optional here: omission only warns and the disclosure is retried on the next inbound
+      # message; a value that is set but unusable refuses to start the API.
+      Privacy__LinkSigningKey: ${PRIVACY_LINK_SIGNING_KEY:-}
       # Browser origin allowed to call the API. Defaults to the Vite dev server.
       Cors__AllowedOrigins__0: ${CORS_ORIGIN:-http://localhost:5173}
       # Firebase Cloud Messaging (push). ProjectId is also in appsettings.json; the
@@ -124,25 +243,28 @@ services:
   # ---------------------------------------------------------------------------
   agent:
     build:
-      context: ./agnet-service
+      context: ./agent-service
       dockerfile: Dockerfile
     container_name: aveline_agent
     restart: unless-stopped
     # NOTE: intentionally NOT exposed to the host — the agent is only reachable
     # within the compose network via http://agent:8000 (service-to-service auth).
+    # The listen port is overridden here (same value as the image default) so
+    # AGENT_INTERNAL_PORT genuinely drives both the bind and the API's base URL.
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "${AGENT_INTERNAL_PORT:-8000}"]
     expose:
-      - "8000"
+      - "${AGENT_INTERNAL_PORT:-8000}"
     environment:
       DATABASE_URL: >-
-        postgresql+asyncpg://${POSTGRES_USER:-aveline}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aveline}
+        postgresql+asyncpg://${POSTGRES_USER:-aveline}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:-postgres}:${POSTGRES_INTERNAL_PORT:-5432}/${POSTGRES_DB:-aveline}
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-aveline-local-development-secret-token-2026}
       # ASP.NET Core internal endpoints the agent calls (ADR-009). The API service listens on
       # 8080 inside the compose network (ASPNETCORE_URLS=http://+:8080) — NOT localhost.
       # Base URL of the ASP.NET Core API so agent tool calls hit the internal endpoints
       # (identify customer, memories, consent) used by the Customer Memory agent.
-      API_BASE_URL: http://api:8080
+      API_BASE_URL: http://${API_HOST:-api}:${API_INTERNAL_PORT:-8080}
       # Redis Pub/Sub event bus (ADR-014). The agent subscribes to aveline:*:<event_type>.
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://${REDIS_HOST:-redis}:${REDIS_INTERNAL_PORT:-6379}/0
       # Event types this service consumes from the API (empty until a consumer lands).
       SUBSCRIBE_EVENT_TYPES: ${SUBSCRIBE_EVENT_TYPES:-}
       # LLM provider (openai | deepseek), switched at runtime.
@@ -156,9 +278,15 @@ services:
       AGENT_LLM_ENABLED: ${AGENT_LLM_ENABLED:-true}
       # Artificial delay (ms) between emitted agent states for integration testing.
       AGENT_STATE_DELAY_MS: ${AGENT_STATE_DELAY_MS:-0}
+      # Whether Aveline may read this boutique's own account figures (Blossom balance, seat and
+      # customer allowances) to answer questions about its plan (ADR-026). The per-request audience
+      # check still applies on top of this: only a request that declared itself staff is served.
+      TENANT_AWARENESS_ENABLED: ${TENANT_AWARENESS_ENABLED:-true}
       # Observability (OpenTelemetry) — export traces to the otel-collector.
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
-      OTEL_SERVICE_NAME: aveline-agent-service
+      # The collector's in-network port is fixed by otel-collector-config.yaml; keep
+      # OTEL_COLLECTOR_PORT in step with that receiver endpoint if you change it.
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://${OTEL_COLLECTOR_HOST:-otel-collector}:${OTEL_COLLECTOR_PORT:-4318}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-aveline-agent-service}
       # Set to "false" in production to strip prompt/completion content from spans.
       OTEL_TRACE_CONTENT: ${OTEL_TRACE_CONTENT:-true}
     depends_on:
@@ -170,19 +298,75 @@ services:
         condition: service_started
 
   # ---------------------------------------------------------------------------
-  # OpenTelemetry Collector — receives OTLP traces from the agent service.
+  # OpenTelemetry Collector — receives OTLP traces and metrics from the agent
+  # service and exposes the metrics on a Prometheus scrape port.
   # ---------------------------------------------------------------------------
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
+    # Pinned: the project ships monthly breaking minors and the config below is a
+    # validated artifact.
+    image: otel/opentelemetry-collector-contrib:0.161.0
     container_name: aveline_otel_collector
     restart: unless-stopped
     command: ["--config=/etc/otelcol/config.yaml"]
     volumes:
       - ./otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
     ports:
-      - "4318:4318" # OTLP HTTP receiver
+      - "${OTEL_HTTP_PORT:-4318}:4318" # OTLP HTTP receiver (container port is fixed by the config file)
+    expose:
+      - "8889" # Prometheus exporter for agent metrics (compose network only)
     depends_on:
       - jaeger
+
+  # ---------------------------------------------------------------------------
+  # Prometheus — scrapes /metrics, the collector's exporter and postgres_exporter;
+  # evaluates the operator rules. DEV ONLY host port (S-2).
+  # ---------------------------------------------------------------------------
+  prometheus:
+    # LTS line. v3.5.0 exists but Prometheus 3.5 is End of life (2026-07-31).
+    image: prom/prometheus:v3.13.3
+    container_name: aveline_prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+      # NO --storage.tsdb.retention.time: it is [DEPRECATED] and the config-file field
+      # silently takes precedence. Retention lives in prometheus.yml.
+      # NO --web.enable-remote-write-receiver: k6 is out of scope (OQ-9).
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/rules:/etc/prometheus/rules:ro
+      - ./observability/prometheus/secrets:/etc/prometheus/secrets:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090" # DEV ONLY (S-2)
+    depends_on:
+      - api
+      - otel-collector
+
+  # ---------------------------------------------------------------------------
+  # Grafana — provisioned datasource, dashboards and operator alerting.
+  # Operator-only; DEV ONLY host port (S-2/S-3).
+  # ---------------------------------------------------------------------------
+  grafana:
+    # NOT 13.0.0: withdrawn after a unified-storage migration bug that could revert dashboards.
+    image: grafana/grafana:13.2.2
+    container_name: aveline_grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}
+      GF_AUTH_ANONYMOUS_ENABLED: "${GRAFANA_ANONYMOUS_ENABLED:-false}"
+      GF_USERS_ALLOW_SIGN_UP: "${GRAFANA_ALLOW_SIGN_UP:-false}"
+      # The console is out of scope and does not embed Grafana (D3), so embedding stays off.
+      GF_SECURITY_ALLOW_EMBEDDING: "${GRAFANA_ALLOW_EMBEDDING:-false}"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000" # DEV ONLY (S-2)
+    depends_on:
+      - prometheus
 
   # ---------------------------------------------------------------------------
   # Jaeger — trace visualization UI (localhost:16686).
@@ -192,9 +376,13 @@ services:
     container_name: aveline_jaeger
     restart: unless-stopped
     ports:
-      - "16686:16686" # Jaeger UI
-      - "4317:4317" # OTLP gRPC receiver (collector forwards here)
+      - "${JAEGER_UI_PORT:-16686}:16686" # Jaeger UI
+      - "${JAEGER_OTLP_GRPC_PORT:-4317}:4317" # OTLP gRPC receiver (collector forwards here)
 
 volumes:
   postgres_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
     driver: local

@@ -1,6 +1,9 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 
+import 'package:aveline_mobile/features/conversations/presentation/attachment_picker.dart';
 import 'package:aveline_mobile/features/salon/presentation/screens/salon_screen.dart';
+import 'package:aveline_mobile/features/salon/presentation/widgets/message_bubble.dart';
 import 'package:aveline_mobile/features/salon/presentation/widgets/salon_composer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -45,9 +48,15 @@ void main() {
       find.byType(TextField),
       'Please draft a note for Mrs. Perera.',
     );
+    // The send control enables from the field's `onChanged`, so the frame carrying
+    // the typed text has to land before the tap can reach it. Without this the tap
+    // hits a disabled button and the assertion below passes off the text still
+    // sitting in the field, which is not the thing being tested.
+    await tester.pump();
     await tester.tap(find.byTooltip('Send message'));
     await tester.pump();
 
+    expect(find.byType(MessageBubble), findsNWidgets(5));
     expect(
       find.text('Please draft a note for Mrs. Perera.'),
       findsOneWidget,
@@ -147,6 +156,97 @@ void main() {
     expect(
       controller.offset,
       moreOrLessEquals(controller.position.maxScrollExtent, epsilon: 0.5),
+    );
+  });
+
+  // A document rather than an image, so the tray draws an icon instead of decoding bytes.
+  PickedAttachment document(String name) => PickedAttachment(
+    bytes: Uint8List.fromList([1, 2, 3]),
+    contentType: 'application/pdf',
+    fileName: name,
+  );
+
+  Widget salonWithPicker(List<PickedAttachment> Function() files) => MaterialApp(
+    home: SalonScreen(attachmentPicker: (source) async => files()),
+  );
+
+  Future<void> pickFromGallery(WidgetTester tester) async {
+    await tester.tap(find.byKey(const Key('salon_attach')));
+    await settle(tester);
+    await tester.tap(find.byKey(const Key('salon_attach_gallery')));
+    await settle(tester);
+  }
+
+  testWidgets('the paperclip picks a file and holds it in the tray', (
+    tester,
+  ) async {
+    await tester.pumpWidget(salonWithPicker(() => [document('lookbook.pdf')]));
+    await settle(tester);
+
+    await pickFromGallery(tester);
+
+    // The web draws its Salon drawer with the same `Composer` as its threads, so the
+    // paperclip and the tray are the parity that was missing here.
+    expect(find.byKey(const Key('salon_attachment_tray')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('salon_pending_local_att_1')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('a held file can be removed before sending', (tester) async {
+    await tester.pumpWidget(salonWithPicker(() => [document('lookbook.pdf')]));
+    await settle(tester);
+    await pickFromGallery(tester);
+
+    await tester.tap(find.byKey(const ValueKey('salon_remove_local_att_1')));
+    await settle(tester);
+
+    expect(find.byKey(const Key('salon_attachment_tray')), findsNothing);
+  });
+
+  testWidgets('a sixth file is refused in the API\u2019s words', (tester) async {
+    await tester.pumpWidget(salonWithPicker(() => [document('lookbook.pdf')]));
+    await settle(tester);
+
+    for (var i = 0; i < 6; i++) {
+      await pickFromGallery(tester);
+    }
+
+    // Refused before a byte is uploaded, in the server's own sentence, so the client
+    // cannot drift from the API on either the rule or the wording.
+    expect(find.byKey(const Key('salon_attachment_notice')), findsOneWidget);
+    expect(
+      find.text('A message may carry at most 5 attachments.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('a note the associate types is drawn by the block renderer', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const MaterialApp(home: SalonScreen()));
+    await settle(tester);
+
+    await tester.enterText(
+      find.byType(TextField),
+      'Ask @Samantha Arias, she is collecting the saree.',
+    );
+    // The send control enables on the frame the typed text arrives.
+    await tester.pump();
+    await tester.tap(find.byTooltip('Send message'));
+    await settle(tester);
+
+    // End to end through the real screen: the composer's words become a message,
+    // the message becomes the block it would have arrived as, and the mention in it
+    // is lifted into the pill the resolver's grammar covers.
+    expect(find.byKey(const Key('mention_customer_4')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('mention_customer_4')),
+        matching: find.text('@Samantha Arias'),
+      ),
+      findsOneWidget,
     );
   });
 }

@@ -28,12 +28,12 @@ enum MessageAuthor {
   }
 }
 
-/// What a message is, which is what a renderer would switch on.
+/// What a message is, which is what a renderer switches on.
 ///
-/// Only `clientMessage` and `note` change how the thread draws anything today.
-/// The rest are the quiet-luxury block kinds the backend already emits - a look,
-/// a piece, a payment link - and a thread renders them from their text block
-/// until each gets the card it deserves.
+/// The kind is coarser than the content blocks: every persona message is
+/// published as `Note` whatever category its blocks hold, so the thread draws the
+/// blocks and uses the kind only for the three cases that are genuinely
+/// kind-shaped — a client message, a SignOff, and the plain note.
 enum MessageKind {
   note('Note'),
   clientMessage('ClientMessage'),
@@ -107,11 +107,205 @@ enum MessageStatus {
 /// owed an answer about whether their words went anywhere.
 enum MessageDeliveryStatus { sending, failed }
 
+/// One typed content block from the API's `contentBlocks` array.
+///
+/// The block vocabulary is Aveline's briefing model (`docs/architecture/inbox.md`
+/// §5): `text`, `piece`, `look`, `at_a_glance`, `sign_off`, `payment`, `courier`,
+/// `suggestion`, `client_message`, `choice`, plus the thread's own `attachment`.
+/// The block's type is the category, so the renderer switches on that rather than
+/// on the message's kind.
+///
+/// Fields are read through typed getters that tolerate an absent or badly-typed
+/// value, because a payload this build has not been taught must render as a
+/// one-line summary rather than throw.
+/// One citation from a `sources` block: a handbook page an answer was grounded in (ADR-025).
+class ThreadSource {
+  const ThreadSource({required this.title, this.url, this.heading});
+
+  /// The page title, as the handbook knows it.
+  final String title;
+
+  /// The page path (`/docs/team`), or absent when the answer was grounded in something
+  /// unaddressable.
+  final String? url;
+
+  /// The heading trail inside the page, when the chunk carried one.
+  final String? heading;
+}
+
+class ThreadBlock {
+  const ThreadBlock(this.type, this.data);
+
+  final String type;
+  final Map<String, dynamic> data;
+
+  /// The blocks in [raw], in the order the server sent them.
+  static List<ThreadBlock> listFrom(Object? raw) {
+    if (raw is! List) {
+      return const [];
+    }
+    final blocks = <ThreadBlock>[];
+    for (final item in raw) {
+      if (item is Map) {
+        final block = ThreadBlock(
+          item['type']?.toString() ?? '',
+          Map<String, dynamic>.from(item),
+        );
+        blocks.add(block);
+      }
+    }
+    return blocks;
+  }
+
+  String? get text => _string(data['text']);
+
+  /// The channel handle a `client_message` came from.
+  String? get from => _string(data['from']);
+
+  String? get name => _string(data['name']);
+
+  String? get status => _string(data['status']);
+
+  String? get carrier => _string(data['carrier']);
+
+  String? get reason => _string(data['reason']);
+
+  String? get prompt => _string(data['prompt']);
+
+  /// A `piece`/`look` tile's photograph. Absent is a state, not a broken image.
+  String? get imageUrl => _string(data['imageUrl']);
+
+  /// A `piece` tile's size label.
+  String? get size => _string(data['size']);
+
+  /// A `piece` tile's stock count.
+  int? get stock => _number('stock')?.toInt();
+
+  /// A `sources` block's citations (ADR-025): the pages an answer was grounded in.
+  ///
+  /// Emitted as a block of its own rather than as a line of prose, so the app can make each one
+  /// tappable. An entry with no title is dropped rather than drawn as an empty link.
+  List<ThreadSource> get sources {
+    final raw = data['items'];
+    if (raw is! List) {
+      return const [];
+    }
+
+    final citations = <ThreadSource>[];
+    for (final item in raw) {
+      if (item is! Map) {
+        continue;
+      }
+      final title = _string(item['title']);
+      if (title == null || title.isEmpty) {
+        continue;
+      }
+      citations.add(
+        ThreadSource(
+          title: title,
+          url: _string(item['url']),
+          heading: _string(item['heading']),
+        ),
+      );
+    }
+    return citations;
+  }
+
+  /// A copy of this block with its photograph dropped.
+  ///
+  /// Elle composes a look around the pieces it matched, and the composer used to
+  /// hand the look the first matched piece's photo as its own. New answers no
+  /// longer borrow one, but every message already stored carries the copy, so it is
+  /// dropped on the way to the renderer: the piece keeps its photograph, and the
+  /// look becomes the styling note it always was.
+  ThreadBlock withoutImageUrl() {
+    if (imageUrl == null) {
+      return this;
+    }
+    final copy = Map<String, dynamic>.from(data)..remove('imageUrl');
+    return ThreadBlock(type, copy);
+  }
+
+  /// The `payment`/`sign_off` amount, or a `piece`'s price.
+  num? get amount => _number('amount') ?? _number('price');
+
+  /// The `at_a_glance` header row.
+  List<String> get columns {
+    final raw = data['columns'];
+    if (raw is! List) {
+      return const [];
+    }
+    return [for (final value in raw) value?.toString() ?? ''];
+  }
+
+  /// The `at_a_glance` body rows.
+  List<List<String>> get rows {
+    final raw = data['rows'];
+    if (raw is! List) {
+      return const [];
+    }
+    return [
+      for (final row in raw)
+        if (row is List) [for (final value in row) value?.toString() ?? ''],
+    ];
+  }
+
+  /// The `choice` options, each a map with `customerId` and a display name.
+  List<Map<String, dynamic>> get options {
+    final raw = data['options'];
+    if (raw is! List) {
+      return const [];
+    }
+    return [
+      for (final option in raw)
+        if (option is Map) Map<String, dynamic>.from(option),
+    ];
+  }
+
+  /// An `attachment` block's id.
+  String? get attachmentId => _string(data['attachmentId']);
+
+  /// An `attachment` block's authenticated URL. Read for a CDN-backed store; the local provider
+  /// still needs the bytes fetched through the shared client.
+  String? get url => _string(data['url']);
+
+  String? get contentType => _string(data['contentType']);
+
+  String? get fileName => _string(data['fileName']);
+
+  int? get sizeBytes => _number('sizeBytes')?.toInt();
+
+  int? get width => _number('width')?.toInt();
+
+  int? get height => _number('height')?.toInt();
+
+  /// Whether an `attachment` block is an image rather than a document.
+  bool get isImage => (contentType ?? '').startsWith('image/');
+
+  static String? _string(Object? raw) {
+    if (raw is! String || raw.isEmpty) {
+      return null;
+    }
+    return raw;
+  }
+
+  num? _number(String key) {
+    final raw = data[key];
+    return raw is num ? raw : null;
+  }
+
+  @override
+  String toString() => 'ThreadBlock($type)';
+}
+
 /// One message in a thread with a client.
 ///
-/// Mirrors the API's `MessageDto`, with the first `text` content block promoted
-/// to [text] the way the Salon's model does. The richer block kinds are carried
-/// by [kind] and rendered from [text] for now.
+/// Mirrors the API's `MessageDto`. A plain message is a `text` block, and a
+/// client's forwarded words are a `client_message` block whose own field is
+/// `text`; the domain promotes both to [text]. The richer block kinds carry the
+/// product's briefing cards and are rendered from [blocks], not from [kind]
+/// alone, because an agent message is published as `Note` whatever category its
+/// blocks hold.
 class ThreadMessage {
   const ThreadMessage({
     required this.id,
@@ -124,6 +318,9 @@ class ThreadMessage {
     this.contentHash,
     this.deliveryStatus,
     this.replyToMessageId,
+    this.blocks = const [],
+    this.clientMessageFrom,
+    this.clientMessageId,
   });
 
   final String id;
@@ -147,21 +344,55 @@ class ThreadMessage {
 
   final String? replyToMessageId;
 
+  /// The ordered content blocks the renderer draws.
+  final List<ThreadBlock> blocks;
+
+  /// The channel handle a `client_message` came from, when it carried one.
+  final String? clientMessageFrom;
+
+  /// The idempotency key one composed message carries across its send and every
+  /// retry. A server message echoes the key it was stored under, which is what
+  /// lets a realtime echo reconcile the optimistic row.
+  final String? clientMessageId;
+
   /// The client's own message.
   bool get isFromClient => author == MessageAuthor.client;
 
-  /// The boutique's side of the conversation, which is drawn on the right.
+  /// The associate's own message, which is the side the thread draws on the right.
+  ///
+  /// This, not [isFromClient], is the side test. The wire's `AuthorKind` has no
+  /// `Client` member — a client's forwarded content arrives authored by `System` —
+  /// so `!isFromClient` is true of every agent reply too, and testing it puts the
+  /// associate and every persona on the same side of the thread.
+  bool get isFromStaff => author == MessageAuthor.staff;
+
+  /// Whether an agent persona wrote this, which is what credits the bubble to a
+  /// persona name rather than to the shop.
+  bool get isFromAgent => author == MessageAuthor.agent;
+
+  /// The boutique's side of the conversation.
   bool get isFromBoutique => author != MessageAuthor.client && author != MessageAuthor.system;
 
-  /// A message the client never saw.
+  /// A note the associate wrote into the record that reached no customer channel.
   ///
   /// The backend marks an internal note `Published`: it is visible in the
   /// conversation and went nowhere. A client's forwarded message is published too,
-  /// which is why the author is checked as well.
-  bool get isInternalNote => !isFromClient && status == MessageStatus.published;
+  /// and so is an approved `SignOff` — which is a decision that was made, not a
+  /// note — so both are excluded. An agent's published reply is not a note either:
+  /// the thread draws it as the reply it is, credited to its persona.
+  bool get isInternalNote =>
+      isFromStaff && kind != MessageKind.signOff && status == MessageStatus.published;
 
   /// A reply staged by an agent and waiting on the associate to release it.
   bool get needsSignOff => status == MessageStatus.awaitingSignOff;
+
+  /// A SignOff the associate released.
+  bool get isApprovedSignOff =>
+      kind == MessageKind.signOff && status == MessageStatus.published;
+
+  /// A SignOff the associate dropped.
+  bool get isDismissedSignOff =>
+      kind == MessageKind.signOff && status == MessageStatus.cancelled;
 
   bool get isSending => deliveryStatus == MessageDeliveryStatus.sending;
 
@@ -174,8 +405,32 @@ class ThreadMessage {
   /// Whether the client has opened it.
   bool get isRead => status == MessageStatus.read;
 
+  /// The `sign_off` block, when this message carries one.
+  ThreadBlock? get signOffBlock {
+    for (final block in blocks) {
+      if (block.type == 'sign_off') {
+        return block;
+      }
+    }
+    return null;
+  }
+
+  /// The blocks the bubble draws below its own words.
+  ///
+  /// The three the bubble already accounts for are left out: the `text` and
+  /// `client_message` blocks *are* the bubble's words, and `sign_off` is drawn by
+  /// the overline and the decision row rather than as a card.
+  List<ThreadBlock> get bodyBlocks => [
+    for (final block in blocks)
+      if (block.type != 'text' &&
+          block.type != 'client_message' &&
+          block.type != 'sign_off')
+        block,
+  ];
+
   factory ThreadMessage.fromJson(Map<String, dynamic> json) {
     final kind = MessageKind.fromJson(json['kind']);
+    final blocks = ThreadBlock.listFrom(json['contentBlocks']);
     return ThreadMessage(
       id: json['id']?.toString() ?? '',
       // A forwarded client message is authored by `System` on the wire and by the
@@ -184,7 +439,7 @@ class ThreadMessage {
           ? MessageAuthor.client
           : MessageAuthor.fromJson(json['authorKind']),
       kind: kind,
-      text: _textFrom(json['contentBlocks']),
+      text: _textFrom(blocks),
       createdAt:
           DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.now().toUtc(),
@@ -193,23 +448,29 @@ class ThreadMessage {
       contentHash: _nonEmpty(json['contentHash']),
       deliveryStatus: null,
       replyToMessageId: _nonEmpty(json['replyToMessageId']),
+      blocks: blocks,
+      clientMessageFrom: _fromOf(blocks),
+      clientMessageId: _nonEmpty(json['clientMessageId']),
     );
   }
 
-  /// A copy with the delivery state or the status changed.
+  /// A copy with the state this device owns changed.
   ///
-  /// Only the fields the device owns are copyable: the delivery state it is
-  /// tracking, and the status of a draft it has just decided.
+  /// Only the fields a device may revise travel: the delivery state it is
+  /// tracking, the status of a message a decision just changed, and the blocks of
+  /// one the server has replaced.
   ThreadMessage copyWith({
     MessageStatus? status,
     MessageDeliveryStatus? deliveryStatus,
     bool clearDeliveryStatus = false,
+    List<ThreadBlock>? blocks,
+    String? text,
   }) {
     return ThreadMessage(
       id: id,
       author: author,
       kind: kind,
-      text: text,
+      text: text ?? this.text,
       createdAt: createdAt,
       agentKey: agentKey,
       status: status ?? this.status,
@@ -218,21 +479,36 @@ class ThreadMessage {
           ? null
           : (deliveryStatus ?? this.deliveryStatus),
       replyToMessageId: replyToMessageId,
+      blocks: blocks ?? this.blocks,
+      clientMessageFrom: clientMessageFrom,
+      clientMessageId: clientMessageId,
     );
   }
 
-  /// The first `text` block, which is the whole message for anything but a rich
-  /// card. A payload with no text block reads as empty rather than throwing.
-  static String _textFrom(Object? raw) {
-    if (raw is! List) {
-      return '';
+  /// The message's own words: the `client_message` block's text, else the first
+  /// `text` block. A payload with neither reads as empty rather than throwing.
+  static String _textFrom(List<ThreadBlock> blocks) {
+    for (final block in blocks) {
+      if (block.type == 'client_message' && block.text != null) {
+        return block.text!;
+      }
     }
-    for (final block in raw) {
-      if (block is Map && block['type'] == 'text' && block['text'] is String) {
-        return block['text'] as String;
+    for (final block in blocks) {
+      if (block.type == 'text' && block.text != null) {
+        return block.text!;
       }
     }
     return '';
+  }
+
+  /// The channel handle of the message's `client_message` block, when it has one.
+  static String? _fromOf(List<ThreadBlock> blocks) {
+    for (final block in blocks) {
+      if (block.type == 'client_message') {
+        return block.from;
+      }
+    }
+    return null;
   }
 
   static String? _nonEmpty(Object? raw) {

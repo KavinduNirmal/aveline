@@ -22,7 +22,6 @@ namespace Aveline.Api.Tests;
 /// </summary>
 public class OrganizationSettingsTests : IAsyncLifetime
 {
-    private const string DatabaseName = "AvelineInMemoryDb";
 
     private RsaSecurityKey _signingKey = null!;
     private StubAuthServer _authServer = null!;
@@ -39,6 +38,7 @@ public class OrganizationSettingsTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
             });
 
@@ -54,7 +54,7 @@ public class OrganizationSettingsTests : IAsyncLifetime
 
     private static AppDbContext CreateContext() =>
         new(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: DatabaseName)
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
     private static async Task<(Guid OrgId, string OwnerClerkId, string StaffClerkId)> SeedBoutiqueAsync(
@@ -106,10 +106,11 @@ public class OrganizationSettingsTests : IAsyncLifetime
         };
     }
 
-    private string CreateToken(string clerkId, string? orgRole = null)
+    private string CreateToken(string clerkId, string? orgRole = null, string? userRole = null)
     {
         var claims = new List<Claim> { new("sub", clerkId) };
         if (orgRole is not null) claims.Add(new Claim("org_role", orgRole));
+        if (userRole is not null) claims.Add(new Claim("user_role", userRole));
 
         var handler = new JsonWebTokenHandler();
         var descriptor = new SecurityTokenDescriptor
@@ -210,10 +211,26 @@ public class OrganizationSettingsTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = await BodyAsync(response);
+        // The response stays `{ settings, entitlements }`: the web's `settings-api.ts` reads
+        // `response.settings`, so the branch's flattened `organization` shape would leave the
+        // tenant Settings page reading undefined.
         Assert.True(body.TryGetProperty("settings", out var settings));
         Assert.True(settings.TryGetProperty("brandVoice", out _));
         Assert.True(body.TryGetProperty("entitlements", out var entitlements));
         Assert.True(entitlements.GetArrayLength() > 0);
+    }
+
+    [Fact]
+    public async Task GetSettings_ReturnsForbidden_ForTeamAdminWithoutOwnerMembership()
+    {
+        var (orgId, _, _) = await SeedBoutiqueAsync("admin-forbidden");
+        // A user holding team admin user role, but with non-owner boutique membership
+        var nonOwnerToken = CreateToken("clerk_admin_without_owner", Roles.BoutiqueStaff, userRole: Roles.Admin);
+
+        var response = await _client.SendAsync(Authorized(
+            HttpMethod.Get, $"/api/v1/orgs/{orgId}/settings", nonOwnerToken));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
     [Fact]

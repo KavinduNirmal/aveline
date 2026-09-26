@@ -1,7 +1,7 @@
 # Aveline Backend — Requirements Specification
 
 **Status:** Proposed — for review before implementation
-**Scope:** Backend only (`Aveline.Api`, `agnet-service`). No frontend, no screens, no UX flows.
+**Scope:** Backend only (`Aveline.Api`, `agent-service`). No frontend, no screens, no UX flows.
 **Baseline commit:** `902f27f` (merge of `integration/slice-2-to-slice-1`)
 **Companion documents:**
 [Domain Model](domain-model.md) ·
@@ -24,7 +24,7 @@ load-bearing sources are:
 | Pricing intent | `docs/architecture/pricing_plan.md`, `docs/ADR/ADR-010-usage-tracking-architecture.md`, `pricing_implementation_plan.ignore.md` |
 | Auth / authz | `Aveline.Api/Configurations/AuthorizationConfiguration.cs`, `Aveline.Api/Authorization/**`, `docs/architecture/authorization.md` |
 | Org / user / invitations | `Aveline.Api/Modules/Organizations/**`, `Aveline.Api/Modules/Shared/**`, `Aveline.Api/Endpoints/OrganizationEndpoints.cs` |
-| Agent service | `agnet-service/app/**` |
+| Agent service | `agent-service/app/**` |
 | Conventions | `docs/tests/README.md`, `.github/`, `Aveline.Api/Program.cs` |
 
 Where a claim is an inference rather than a verified reading, it is marked
@@ -85,11 +85,11 @@ place. Each is addressed by a requirement below.
 | **D-1** | **Plan limit is ignored on lazy ledger creation.** `GetOrCreateCurrentAccountAsync` always uses the *Seed* limit, regardless of the org's tier. | `Aveline.Api/Modules/Billing/Services/UsageTrackerService.cs:34,80` — `DefaultBlossomLimits[DefaultNewAccountTier]` where `DefaultNewAccountTier = PlanTier.Seed` |
 | **D-2** | **Same defect hardcoded in the repository.** When the ledger row is auto-created during a usage write it is seeded at 150 Blossoms with a comment admitting it. | `Aveline.Api/Modules/Billing/Repositories/UsageRepository.cs:44-53` |
 | **D-3** | **Lost-update race on the Blossom balance.** The balance update is a read-modify-write with no concurrency token and no row lock; concurrent workflows for one org will lose increments. No `IsConcurrencyToken`, `RowVersion`, `xmin`, or `FromSql` usage exists anywhere in the API. | `Aveline.Api/Modules/Billing/Repositories/UsageRepository.cs:36-61`; grep for concurrency tokens returns zero matches |
-| **D-4** | **The `visual_insight` usage report is mis-attributed.** It hardcodes `workflow_id="visual_insight"`, `provider="openai"`, `model="visual-llm"`, and passes `customer_id` as `request_id`. Those rows are unattributable and unusable for statistics. | `agnet-service/app/agents/visual_insight/nodes.py:371-388` |
-| **D-5** | **The LangGraph checkpointer is not effective.** `build_concierge_graph` documents itself as "(no checkpointer)" and returns `graph.compile()` with no checkpointer; the saver is instead created at the call site and passed as a call-time kwarg, which `langgraph 1.2.11` silently discards. Persisted workflow state — and therefore cross-approval pause/resume — does not survive. | Structural defect **confirmed by direct read**: `agnet-service/app/workflows/concierge_workflow.py:348-367` (`"""... (no checkpointer)."""`, `return graph.compile()`) and `:408-431` (`checkpointer=checkpointer` passed to `ainvoke`/`run_graph_with_states`). The claim that the kwarg is *discarded* rather than honoured was confirmed by an in-memory runtime repro in this investigation's agent-service workstream, not re-run by the author |
-| **D-6** | **Streaming runs emit no usage at all.** `POST /agents/query/stream` has no thread config, no checkpointer, and no usage report. | `agnet-service/app/api/agents.py:227-244` |
-| **D-7** | **Usage reporting is skipped when the org id is absent or not a UUID**, so those workflows produce zero telemetry. | `agnet-service/app/api/agents.py:120,139-149` |
-| **D-8** | **`cached_tokens` and `actual_cost_usd` are never sent by any caller**, so both are permanently zero on the wire and the cost-anomaly detector can never fire. | `agnet-service/app/services/usage_reporter.py:19-20`; no caller supplies them |
+| **D-4** | **The `visual_insight` usage report is mis-attributed.** It hardcodes `workflow_id="visual_insight"`, `provider="openai"`, `model="visual-llm"`, and passes `customer_id` as `request_id`. Those rows are unattributable and unusable for statistics. | `agent-service/app/agents/visual_insight/nodes.py:371-388` |
+| **D-5** | **The LangGraph checkpointer is not effective.** `build_concierge_graph` documents itself as "(no checkpointer)" and returns `graph.compile()` with no checkpointer; the saver is instead created at the call site and passed as a call-time kwarg, which `langgraph 1.2.11` silently discards. Persisted workflow state — and therefore cross-approval pause/resume — does not survive. | Structural defect **confirmed by direct read**: `agent-service/app/workflows/concierge_workflow.py:348-367` (`"""... (no checkpointer)."""`, `return graph.compile()`) and `:408-431` (`checkpointer=checkpointer` passed to `ainvoke`/`run_graph_with_states`). The claim that the kwarg is *discarded* rather than honoured was confirmed by an in-memory runtime repro in this investigation's agent-service workstream, not re-run by the author |
+| **D-6** | **Streaming runs emit no usage at all.** `POST /agents/query/stream` has no thread config, no checkpointer, and no usage report. | `agent-service/app/api/agents.py:227-244` |
+| **D-7** | **Usage reporting is skipped when the org id is absent or not a UUID**, so those workflows produce zero telemetry. | `agent-service/app/api/agents.py:120,139-149` |
+| **D-8** | **`cached_tokens` and `actual_cost_usd` are never sent by any caller**, so both are permanently zero on the wire and the cost-anomaly detector can never fire. | `agent-service/app/services/usage_reporter.py:19-20`; no caller supplies them |
 | **D-9** | **Doc/code drift in the permission catalog.** `docs/architecture/authorization.md:51-62` omits `conversations:view` from two role rows and from the catalog list; the code grants it. `Aveline.Api/Common/Exceptions/README.md` documents a `GlobalExceptionHandler.cs` that does not exist. `OnboardingService.cs:266` writes the literal `"org:principal"`, a value absent from `Aveline.Api/Authorization/Roles.cs` and therefore granted nothing. | Three separate files |
 | **D-10** | **Inconsistent error envelope.** `/internal/*` endpoints return `{ "error": ... }` while every other endpoint returns `{ "message": ... }`; 401/403 return empty bodies. | `Aveline.Api/Modules/Billing/Endpoints/UsageEndpoints.cs:58` vs `Aveline.Api/Endpoints/OrganizationEndpoints.cs:49` |
 | **D-11** | **No request correlation ID exists.** `HttpContext.TraceIdentifier` is never read and no correlation header is emitted or accepted, so API-consumption statistics cannot correlate a request to a workflow. | grep across `Aveline.Api` |
@@ -374,11 +374,16 @@ alternative.
 | Permission | Grant to | Purpose |
 | --- | --- | --- |
 | `billing:view` | `admin`, `owner`, `moderator`, `org:boutique_owner`, `org:boutique_manager` | Read balance, statement, and usage |
+| `billing:view:self` | `org:boutique_staff`, `org:boutique_manager`, `org:boutique_supervisor`, `org:boutique_owner` | Read the shop's Blossom balance only (the self-service read). Deliberately separate from `billing:view` so the associate who needs to know what the shop has left does not become a reader of statements and burn-rate. |
 | `billing:manage` | `admin`, `owner`, `org:boutique_owner` | Change own plan, purchase top-ups |
 | `billing:adjust` | `admin`, `owner` | Credit, debit, revoke, close a period, override entitlements |
 
-`org:boutique_supervisor` and below hold `billing:view` **not at all** — Blossom
-balance is commercially sensitive and there is no operational need.
+`org:boutique_supervisor` and below hold `billing:view` **not at all** — the
+management read (statement, burn-rate) is commercially sensitive and there is no
+operational need. The **balance** is different: an associate needs to know how
+many Blossoms the shop has left before asking the assistant for something
+expensive, so the balance route is gated by `billing:view:self` on a named
+org-scoped policy (`BoutiqueBillingSelfView`), not by `billing:view`.
 
 ### 4.7 Events, jobs, and webhooks
 
@@ -459,6 +464,35 @@ These are grouped because they share entities, permissions, and endpoints.
 | `GET`/`PUT`/`POST`/`DELETE` | `/api/v1/orgs/{organizationId:guid}/integrations...` | `BoutiqueMembershipManage` | `Endpoints/IntegrationEndpoints.cs:24-105` |
 | `GET`/`POST` | `/api/v1/onboarding/{status,owner,plan,customize,complete}` | authenticated | `Endpoints/OnboardingEndpoints.cs:16-124` |
 | `GET`/`POST`/`DELETE` | `/api/v1/users/me/devices...` | authenticated | `Endpoints/DeviceTokenEndpoints.cs:18-55` |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/stats/home` | `BoutiqueAccess` (`catalog:view` on an active membership) | `Modules/Home/Endpoints/HomeEndpoints.cs` |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/focus/dismissals` | `BoutiqueAccess` + required `Idempotency-Key` | `Modules/Home/Endpoints/HomeEndpoints.cs` |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/customers` | `BoutiqueCustomerAccess` (`customers:view` on an active membership) | `Endpoints/CustomerTenantEndpoints.cs` |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/customers/highlights` | `BoutiqueCustomerAccess` | `Endpoints/CustomerTenantEndpoints.cs` |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/customers` | `BoutiqueCustomerAccess` + required `Idempotency-Key` | `Endpoints/CustomerTenantEndpoints.cs` |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/interactions` | `BoutiqueCustomerAccess` + required `Idempotency-Key` | `Endpoints/CustomerTenantEndpoints.cs` |
+
+### 5.1b Functional requirements — Home focus surface
+
+| ID | Requirement |
+| --- | --- |
+| FR-8.1 | The focus feed is **derived on every read** from facts that already exist: `wardrobe` from inventory at or below the reorder line (`Home:LowStockThreshold`, default 5), `patron` from active customer events inside `Home:PatronWindowDays` (default 7), and `commerce` from `AgentWorkflowRuns` paused for approval — the last only when the caller's role holds `stats:view:agent`. |
+| FR-8.2 | `logistics` has no writer in the product. The feed reports `dataQuality.logisticsAvailable = false` rather than counting the domain as zero, so an absent column is explained rather than measured. |
+| FR-8.3 | The day boundary comes from `Organization.TimeZone` (IANA), never from the device. The window actually used is echoed as `window.localDate` / `window.timeZone`. |
+| FR-8.4 | A sign-off persists a **dismissal**, not a task state: `(OrganizationId, UserId, Domain, SourceKey)` with the decision and a server-computed content hash. The feed suppresses a docket only while the source key matches and the content hash is unchanged, so a changed fact reappears. |
+| FR-8.5 | A dismissal must name a docket present in the caller's own feed. A docket from another organization returns `404`, indistinguishable from one that does not exist, and an outsider gets `403` from the org-scope requirement before the lookup. |
+| FR-8.6 | A dismissal is idempotent by nature (dismissing twice is the same end state) and requires `Idempotency-Key`; a replay with the same body returns the stored response, and an unreachable lease store is `503`, never a silent apply. |
+
+### 5.1c Functional requirements — tenant customer surface
+
+| ID | Requirement |
+| --- | --- |
+| FR-8.7 | `GET /orgs/{organizationId}/customers` returns the whole narrowing in one call (the alphabet index must reach every letter), under `BoutiqueCustomerAccess`. The route is **not** in `/internal/customers`: that group accepts only the internal-token scheme and is for the agent service. |
+| FR-8.8 | `GET /orgs/{organizationId}/customers/highlights` returns the clients with something happening, with `activity` generated from a real `Customer_Interactions` row. There is **no** `hasNewActivity` flag: no read marker exists, and a dot that can never clear must not ship. |
+| FR-8.9 | `Customer.Level` is a nullable grade (`vip | level3 | level2 | level1`) with no default and no backfill; consumers omit the badge when it is null. |
+| FR-8.10 | `POST /orgs/{organizationId}/customers` creates a counter walk-in from a name alone (phone optional), de-duplicating on the normalised name within the organization. A duplicate answers `200` with `duplicateOfCustomerId` rather than creating a second client, and requires `Idempotency-Key`. |
+| FR-8.11 | `POST /orgs/{organizationId}/customers/{customerId}/interactions` records the interaction and, for an **inbound in-person** one, moves `VisitCount`, `LastVisitAt` and (when a purchase is given) `TotalSpent`, then recomputes `Status` through `CustomerLoyaltyService.RecommendStatus`. A message on another channel is recorded but does not count as a visit. |
+| FR-8.12 | The counter increment is a single atomic statement on a relational provider (`ExecuteUpdateAsync`), so two concurrent visits at the counter cannot lose one. `CustomerRepository.SaveAsync`'s read-modify-write must not be used for it. |
+| FR-8.13 | A visit is **not billable**: `blossomsCharged` is always `0`, and the response states it so the client cannot invent a charge. Consumption is an `AiUsageRecord` written after an agent workflow, and no rule debits a Blossom for a visit. |
 
 ### 5.2 Functional requirements — user management
 
@@ -546,7 +580,7 @@ Rose tier advertises "API Access" (`docs/architecture/pricing_plan.md:303`) and
 | `apikeys:view` | `admin`, `owner`, `org:boutique_owner` | List/read API keys |
 | `apikeys:manage` | `admin`, `owner`, `org:boutique_owner` | Create/revoke/delete API keys |
 | `stats:view` | `admin`, `owner`, `moderator`, `org:boutique_owner`, `org:boutique_manager`, `org:boutique_supervisor` | All statistics endpoints |
-| `stats:view:agent` | `admin`, `owner`, `moderator`, `org:boutique_owner` | Agentic statistics (reveals prompt/cost internals) |
+| `stats:view:agent` | `admin`, `owner`, `moderator` | Agentic statistics (reveals prompt/cost internals). **Not held by any boutique role**, and the org-scoped route group is removed |
 | `stats:system` | `admin`, `owner` | System statistics and alerts |
 | `admin:users:read` / `admin:users:manage` | `admin`, `owner` | Cross-org user administration |
 | `admin:orgs:read` | `admin`, `owner`, `moderator` | Cross-org org search |
@@ -619,7 +653,7 @@ Confirmed absent:
 
 - Any per-agent or per-node run record — `NOT FOUND`.
 - Any latency measurement. `AgentMetadata.duration_ms` is **declared but never
-  populated** by production code (`agnet-service/app/schemas/response.py:28`; only
+  populated** by production code (`agent-service/app/schemas/response.py:28`; only
   tests set it).
 - Any tool-call record.
 - Any retry counting — no retry logic exists in the agent service at all.
@@ -630,7 +664,7 @@ Confirmed absent:
   with that id exists.
 - Any attribution of tokens to a specific agent: the concierge orchestrator folds
   every agent's usage into a single total
-  (`agnet-service/app/workflows/concierge_workflow.py:267-287`).
+  (`agent-service/app/workflows/concierge_workflow.py:267-287`).
 
 ### 6.2 Instrumentation gaps and their exact hook points
 
@@ -639,7 +673,7 @@ service must make for the statistics to be real.
 
 | # | Missing datum | Hook |
 | --- | --- | --- |
-| G-1 | Per-node run records (node name, start/end) | Wrap nodes in `build_concierge_graph` (`agnet-service/app/workflows/concierge_workflow.py:352-357`) or handle `on_chain_end` in `state_events.py:63-74`, which already observes `metadata.langgraph_node` per node |
+| G-1 | Per-node run records (node name, start/end) | Wrap nodes in `build_concierge_graph` (`agent-service/app/workflows/concierge_workflow.py:352-357`) or handle `on_chain_end` in `state_events.py:63-74`, which already observes `metadata.langgraph_node` per node |
 | G-2 | Per-node success/failure | `state_events.py:65-74` handles only `on_chain_start`; node errors are currently swallowed (`customer_memory/nodes.py:407-409`, `visual_insight/nodes.py:223-239`) |
 | G-3 | Per-node and per-workflow latency | Timers in `state_events.py:63-74`; populate the unused `AgentMetadata.duration_ms` in `formulate_response` (`concierge_workflow.py:227-264`) |
 | G-4 | Per-LLM-call token usage including model and cached tokens | Capture at each `ainvoke` (`customer_memory/nodes.py:404-406`, `visual_insight/nodes.py:260`); carry through state (`state.py:36-37`) and `AgentMetadata` (`concierge_workflow.py:267-287`) |
@@ -667,7 +701,7 @@ service must make for the statistics to be real.
 | FR-5.7 | Success rate, failure rate, p50/p95/p99 latency, token usage, and cost must be computable for each of those dimensions. |
 | FR-5.8 | Runs that fail before the org is resolvable must still be recorded, attributed to organisation `NULL`, and flagged `unattributed`. |
 | FR-5.9 | No prompt text, tool arguments, tool results, or customer PII may be stored in telemetry. Only hashes and byte counts. |
-| FR-5.10 | The run-record state machine must be `Running -> Succeeded | Failed | Cancelled | TimedOut | PausedForApproval`, and `PausedForApproval -> Running -> terminal`. Once terminal, a run is immutable. |
+| FR-5.10 | The run-record state machine must be `Running -> Succeeded | Failed | Cancelled | TimedOut | Skipped | PausedForApproval`, and `PausedForApproval -> Running -> terminal`. Once terminal, a run is immutable. `Skipped` is a deliberate non-run (a consent skip), never reported as `Succeeded`. |
 | FR-5.11 | A run paused for human approval must record `PausedAt`, `ResumedAt`, and `ApprovalWaitMs` so approval latency is measurable. |
 | FR-5.12 | Ingestion must be idempotent on `(OrganizationId, WorkflowId)`; a re-report updates a non-terminal run, or is rejected if terminal and byte-identical. |
 
@@ -708,7 +742,7 @@ Key design decisions:
 
 | Endpoint group | Permission |
 | --- | --- |
-| `GET /api/v1/orgs/{organizationId}/statistics/agents*` | `stats:view:agent` |
+| ~~`GET /api/v1/orgs/{organizationId}/statistics/agents*`~~ | **removed** — a boutique reads its usage in Blossoms |
 | `GET /api/v1/admin/statistics/agents*` | `stats:system` |
 | `POST /internal/agent-runs` | `InternalServicePolicy` |
 

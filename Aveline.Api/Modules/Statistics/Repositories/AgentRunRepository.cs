@@ -175,11 +175,22 @@ public sealed class AgentRunRepository(AppDbContext db) : IAgentRunRepository
             .ToListAsync(cancellationToken);
 
     public async Task<int> MarkTimedOutAsync(
-        DateTime pausedBefore, DateTime completedAt, CancellationToken cancellationToken)
+        DateTime pausedBefore,
+        DateTime runningStartedBefore,
+        DateTime completedAt,
+        CancellationToken cancellationToken)
     {
+        // Two ways a run can be abandoned, and both must be swept or the row sits non-terminal
+        // forever: an approval nobody answered, and a run whose process died before it reported.
+        // The second became reachable once the agent started opening a `Running` row at the start
+        // of a run (see ADR-027) - before that no `Running` row was ever written, so there was
+        // nothing to reap.
         var stale = await db.AgentWorkflowRuns
-            .Where(run => run.Status == AgentRunStatus.PausedForApproval)
-            .Where(run => run.PausedAt != null && run.PausedAt < pausedBefore)
+            .Where(run =>
+                (run.Status == AgentRunStatus.PausedForApproval
+                 && run.PausedAt != null
+                 && run.PausedAt < pausedBefore)
+                || (run.Status == AgentRunStatus.Running && run.StartedAt < runningStartedBefore))
             .ToListAsync(cancellationToken);
 
         if (stale.Count == 0)
@@ -189,6 +200,8 @@ public sealed class AgentRunRepository(AppDbContext db) : IAgentRunRepository
 
         foreach (var run in stale)
         {
+            var wasPaused = run.Status == AgentRunStatus.PausedForApproval;
+
             run.Status = AgentRunStatus.TimedOut;
             run.CompletedAt = completedAt;
             run.DurationMs = (int)Math.Max(0, (completedAt - run.StartedAt).TotalMilliseconds);
@@ -197,7 +210,9 @@ public sealed class AgentRunRepository(AppDbContext db) : IAgentRunRepository
                 run.ApprovalWaitMs = (int)Math.Max(0, (completedAt - pausedAt).TotalMilliseconds);
             }
 
-            run.ErrorCode ??= "approval_timeout";
+            // The reason differs: one waited on a person, the other on a process that never came
+            // back. An operator reading the row needs to be able to tell them apart.
+            run.ErrorCode ??= wasPaused ? "approval_timeout" : "run_abandoned";
             run.UpdatedAt = completedAt;
         }
 

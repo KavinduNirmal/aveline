@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   X,
   Sparkles,
@@ -12,7 +12,15 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { composeLookbook } from '@/lib/catalog-api'
+import { formatMoney } from '@/lib/format-money'
 import type {
   InventoryItemMock,
   OutfitCompositionMock,
@@ -52,6 +60,23 @@ export function ComposeOutfitModal({
   const [composedItems, setComposedItems] = useState<OutfitItemMock[]>([])
   const [styleNotes, setStyleNotes] = useState<string>('')
   const [lookName, setLookName] = useState<string>('')
+  // The persisted row's id, when the server composed the look. Saving then reuses it rather than
+  // minting a second id, so the list does not show one look twice when it is refetched.
+  const [composedId, setComposedId] = useState<string>('')
+
+  // The hero can change between openings (a "Style look" on one piece, then another), and this
+  // component stays mounted while it is closed, so the selection is re-seeded each time it opens.
+  // Keyed on `open` alone: re-seeding on every inventory identity change would wipe a look the
+  // operator is midway through composing.
+  useEffect(() => {
+    if (!open) return
+    setSelectedHeroId(heroItem?.id ?? inventory[0]?.id ?? '')
+    setComposedItems([])
+    setStyleNotes('')
+    setLookName('')
+    setComposedId('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
 
   if (!open) return null
 
@@ -72,6 +97,7 @@ export function ComposeOutfitModal({
         if (result) {
           setLookName(result.name || `${occasion} - ${activeHero.color} Edition`)
           setStyleNotes(result.styleNotes || `Styling recommendations curated for ${occasion}.`)
+          setComposedId(result.id || '')
           if (result.items && result.items.length > 0) {
             setComposedItems(result.items as unknown as OutfitItemMock[])
             setComposing(false)
@@ -136,7 +162,7 @@ export function ComposeOutfitModal({
     }
 
     const newOutfit: OutfitCompositionMock = {
-      id: `outfit-${Date.now()}`,
+      id: composedId || `outfit-${Date.now()}`,
       name: lookName || `${occasion} Ensemble`,
       occasion,
       totalPrice,
@@ -177,37 +203,39 @@ export function ComposeOutfitModal({
           </Button>
         </div>
 
-        <div className="p-6 space-y-5">
+        <div className="flex flex-col p-6 gap-5">
           {/* Hero Item & Occasion Selection */}
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
+            <div className="flex flex-col gap-1.5">
               <Label className="text-xs">Primary Hero Piece</Label>
-              <select
-                value={selectedHeroId}
-                onChange={(e) => setSelectedHeroId(e.target.value)}
-                className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-xs text-foreground"
-              >
-                {inventory.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name} (${item.price})
-                  </option>
-                ))}
-              </select>
+              <Select value={selectedHeroId} onValueChange={setSelectedHeroId}>
+                <SelectTrigger aria-label="Primary hero piece" className="w-full text-xs">
+                  <SelectValue placeholder="Choose a piece" />
+                </SelectTrigger>
+                <SelectContent>
+                  {inventory.map((item) => (
+                    <SelectItem key={item.id} value={item.id}>
+                      {item.name} (${item.price})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
-            <div className="space-y-1.5">
+            <div className="flex flex-col gap-1.5">
               <Label className="text-xs">Target Occasion</Label>
-              <select
-                value={occasion}
-                onChange={(e) => setOccasion(e.target.value)}
-                className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-xs text-foreground"
-              >
-                {OCCASIONS.map((occ) => (
-                  <option key={occ} value={occ}>
-                    {occ}
-                  </option>
-                ))}
-              </select>
+              <Select value={occasion} onValueChange={setOccasion}>
+                <SelectTrigger aria-label="Target occasion" className="w-full text-xs">
+                  <SelectValue placeholder="Choose an occasion" />
+                </SelectTrigger>
+                <SelectContent>
+                  {OCCASIONS.map((occ) => (
+                    <SelectItem key={occ} value={occ}>
+                      {occ}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
 
@@ -239,13 +267,13 @@ export function ComposeOutfitModal({
 
           {/* Composed Look Preview */}
           {composedItems.length > 0 && (
-            <div className="space-y-4 rounded-xl border border-border p-4 bg-muted/20">
+            <div className="flex flex-col gap-4 rounded-xl border border-border p-4 bg-muted/20">
               <div className="flex items-center justify-between border-b border-border pb-2.5">
                 <h4 className="font-serif text-sm font-semibold">{lookName}</h4>
                 <div className="text-right">
                   <span className="text-[11px] text-muted-foreground mr-1.5">Total Look:</span>
                   <span className="font-serif text-base font-bold text-primary">
-                    ${totalPrice.toLocaleString()}
+                    {formatMoney(totalPrice)}
                   </span>
                 </div>
               </div>
@@ -257,11 +285,17 @@ export function ComposeOutfitModal({
                     key={item.id}
                     className="flex items-center gap-2.5 rounded-lg border border-border/70 bg-card p-2.5 shadow-2xs"
                   >
-                    <img
-                      src={item.imageUrl}
-                      alt={item.name}
-                      className="size-12 rounded object-cover border border-border"
-                    />
+                    {item.imageUrl ? (
+                      <img
+                        src={item.imageUrl}
+                        alt={item.name}
+                        className="size-12 rounded object-cover border border-border"
+                      />
+                    ) : (
+                      <div className="flex size-12 shrink-0 items-center justify-center rounded border border-border bg-muted text-[8px] text-muted-foreground">
+                        No photo
+                      </div>
+                    )}
                     <div className="min-w-0 flex-1">
                       <Badge variant="outline" className="text-[9px] uppercase tracking-wider py-0">
                         {item.position}
@@ -270,7 +304,7 @@ export function ComposeOutfitModal({
                         {item.name}
                       </p>
                       <p className="text-[11px] font-semibold text-primary">
-                        ${item.price.toLocaleString()}
+                        {formatMoney(item.price)}
                       </p>
                     </div>
                   </div>

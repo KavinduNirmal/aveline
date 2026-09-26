@@ -27,7 +27,11 @@ public static class AuthEndpoints
             return Results.Ok(new
             {
                 UserId = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? user.FindFirstValue("sub"),
-                Email = user.FindFirstValue("email"),
+                // The JwtBearer pipeline maps the token's `email` claim to ClaimTypes.Email
+                // on the way in (MapInboundClaims defaults to true), so reading the raw
+                // "email" name alone returns null for every real bearer token. Try the
+                // mapped type first and fall back to the raw name when mapping is disabled.
+                Email = user.FindFirstValue(ClaimTypes.Email) ?? user.FindFirstValue("email"),
                 Roles = user.FindAll(ClaimTypes.Role).Select(c => c.Value).ToArray(),
                 Claims = rawClaims,
                 Account = new

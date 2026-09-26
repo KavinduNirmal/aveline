@@ -3,10 +3,11 @@ import 'conversation_repository.dart';
 
 /// A boutique's message inbox, held in memory.
 ///
-/// Stands in for the conversations endpoint while the messaging slice is being
-/// built, and fills the three fields the endpoint does not carry yet - the
-/// client's name, the last message and the unread count - so the inbox can be
-/// designed against a realistic column rather than against empty rows.
+/// Stands in as a *fixture*: it fills the fields the real endpoint carried before
+/// the row contract landed - the client's name and the last message - so tests
+/// can drive the inbox against a realistic column rather than against empty rows.
+/// It is deliberately not reachable from a production path (D5): the screen and
+/// the app fall back to [EmptyConversationRepository] instead.
 ///
 /// Ages are measured from an injectable [clock] rather than from the wall clock,
 /// so "40 minutes ago" means the same thing in a test as it does on screen. The
@@ -28,13 +29,32 @@ class DemoConversationRepository implements ConversationRepository {
   final Duration latency;
 
   @override
-  Future<List<Conversation>> fetchConversations() async {
+  Future<ConversationPage> fetchConversations({int page = 1}) async {
     if (latency > Duration.zero) {
       await Future<void>.delayed(latency);
     }
     // Unmodifiable: the inbox is a read, and a caller that could reorder this
     // list in place would be reordering the source of truth.
-    return List.unmodifiable(_buildInbox());
+    final inbox = _buildInbox();
+    return ConversationPage(
+      items: List.unmodifiable(inbox),
+      total: inbox.length,
+      page: page,
+      pageSize: inbox.length,
+    );
+  }
+
+  @override
+  Future<Conversation?> fetchConversation(String id) async {
+    if (latency > Duration.zero) {
+      await Future<void>.delayed(latency);
+    }
+    for (final conversation in _buildInbox()) {
+      if (conversation.id == id) {
+        return conversation;
+      }
+    }
+    return null;
   }
 
   /// Where a thread stood [age] ago.
@@ -63,7 +83,6 @@ class DemoConversationRepository implements ConversationRepository {
       lastMessagePreview:
           'Can the wine silk saree be taken in before Friday evening?',
       lastMessageAuthor: ConversationAuthor.customer,
-      unreadCount: 2,
     ),
     Conversation(
       id: 'cnv_chathurika',
@@ -88,7 +107,6 @@ class DemoConversationRepository implements ConversationRepository {
           'The 12% goodwill discount on order #4821 needs a signature before I '
           'can release it.',
       lastMessageAuthor: ConversationAuthor.agent,
-      unreadCount: 1,
     ),
     Conversation(
       id: 'cnv_kasun',
@@ -99,7 +117,6 @@ class DemoConversationRepository implements ConversationRepository {
       lastMessageAt: _at(const Duration(hours: 3)),
       lastMessagePreview: 'Does this one come in a second colour?',
       lastMessageAuthor: ConversationAuthor.customer,
-      unreadCount: 1,
     ),
     Conversation(
       id: 'cnv_hasini',

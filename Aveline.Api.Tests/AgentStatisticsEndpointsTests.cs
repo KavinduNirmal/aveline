@@ -16,9 +16,9 @@ using Microsoft.IdentityModel.Tokens;
 namespace Aveline.Api.Tests;
 
 /// <summary>
-/// Issue #211 — the agent statistics endpoints (docs/api/README.md §C.6). Verifies
-/// organisation scoping, the <c>dataQuality</c> envelope, input validation and policy
-/// enforcement including the team-only admin subset.
+/// Issue #211 / the tenant lockout — the team-only agent statistics subset
+/// (docs/api/README.md §C.6). Verifies that the org-scoped routes are gone and that the admin
+/// subset still enforces <c>stats:system</c>.
 /// </summary>
 public class AgentStatisticsEndpointsTests : IAsyncLifetime
 {
@@ -37,6 +37,7 @@ public class AgentStatisticsEndpointsTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.UseSetting("AgentStats:MinSampleForPercentile", "3");
             });
@@ -80,7 +81,7 @@ public class AgentStatisticsEndpointsTests : IAsyncLifetime
 
     private static AppDbContext Context() =>
         new(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
     private static async Task<(Guid OrgId, string OwnerClerkId)> SeedOwnerAsync(string suffix)
@@ -185,121 +186,28 @@ public class AgentStatisticsEndpointsTests : IAsyncLifetime
         return run.Id;
     }
 
-    [Fact]
-    public async Task Runs_WithoutToken_Returns401()
-    {
-        var response = await _client.GetAsync(
-            $"/api/v1/orgs/{Guid.CreateVersion7()}/statistics/agents/runs");
-
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task Runs_ReturnOnlyTheCallersOrganizationAndDataQualityFlags()
-    {
-        var suffix = Guid.NewGuid().ToString("N");
-        var (orgA, ownerA) = await SeedOwnerAsync($"a{suffix}");
-        var (orgB, _) = await SeedOwnerAsync($"b{suffix}");
-        await SeedRunAsync(orgA, $"wf-a-{suffix}", AgentRunStatus.Succeeded, 120, ["customer_memory"]);
-        await SeedRunAsync(orgB, $"wf-b-{suffix}", AgentRunStatus.Failed, 500, ["visual_insight"], "llm_error");
-        await SeedRunAsync(null, $"wf-u-{suffix}", AgentRunStatus.Succeeded, 90, ["commerce"]);
-
-        var token = CreateToken(ownerA, orgRole: Roles.BoutiqueOwner);
-        var response = await GetAsync($"/api/v1/orgs/{orgA}/statistics/agents/runs", token);
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
-        var items = body.GetProperty("items").EnumerateArray().ToArray();
-
-        Assert.Single(items);
-        Assert.Equal($"wf-a-{suffix}", items[0].GetProperty("workflowId").GetString());
-        Assert.Equal(1, body.GetProperty("total").GetInt32());
-
-        var quality = body.GetProperty("dataQuality");
-        Assert.False(quality.GetProperty("latencyInstrumented").GetBoolean());
-        Assert.False(quality.GetProperty("nodeFailuresObserved").GetBoolean());
-        Assert.False(quality.GetProperty("perStepAttribution").GetBoolean());
-        Assert.False(quality.GetProperty("toolInstrumented").GetBoolean());
-        Assert.False(quality.GetProperty("costInstrumented").GetBoolean());
-    }
-
-    [Fact]
-    public async Task Runs_AsOutsider_Returns403()
-    {
-        var suffix = Guid.NewGuid().ToString("N");
-        var (orgA, _) = await SeedOwnerAsync($"owner{suffix}");
-        await SeedAdminAsync($"agentstats_outsider_{suffix}");
-        var token = CreateToken($"agentstats_outsider_{suffix}", orgRole: Roles.BoutiqueOwner);
-
-        var response = await GetAsync($"/api/v1/orgs/{orgA}/statistics/agents/runs", token);
-
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-    }
-
+    /// <summary>
+    /// The lockout. A boutique reads its usage in Blossoms; the org-scoped agent statistics routes
+    /// were removed rather than merely denied, so every one of them answers 404 for an owner token
+    /// — not 401, not 403, and not 200. Only the team-only admin subset remains.
+    /// </summary>
     [Theory]
-    [InlineData("status=not-a-status")]
-    [InlineData("triggerKind=not-a-trigger")]
-    public async Task Runs_WithAnInvalidEnum_Returns400WithMessage(string query)
+    [InlineData("runs")]
+    [InlineData("reliability")]
+    [InlineData("latency")]
+    [InlineData("steps")]
+    [InlineData("tokens")]
+    [InlineData("cost")]
+    [InlineData("tools")]
+    [InlineData("failures")]
+    [InlineData("approvals")]
+    public async Task OrgAgentStatisticsRoutes_AreNotMounted(string segment)
     {
         var suffix = Guid.NewGuid().ToString("N");
-        var (orgA, ownerA) = await SeedOwnerAsync($"invalid{suffix}");
+        var (orgA, ownerA) = await SeedOwnerAsync($"gone{suffix}");
         var token = CreateToken(ownerA, orgRole: Roles.BoutiqueOwner);
 
-        var response = await GetAsync(
-            $"/api/v1/orgs/{orgA}/statistics/agents/runs?{query}", token);
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
-        Assert.True(body.TryGetProperty("message", out var message));
-        Assert.False(string.IsNullOrWhiteSpace(message.GetString()));
-    }
-
-    [Fact]
-    public async Task Reliability_ExcludesRunningAndPausedFromTheDenominator()
-    {
-        var suffix = Guid.NewGuid().ToString("N");
-        var (orgA, ownerA) = await SeedOwnerAsync($"rel{suffix}");
-        await SeedRunAsync(orgA, $"wf-rel-ok-{suffix}", AgentRunStatus.Succeeded, 100, ["orchestrator"]);
-        await SeedRunAsync(orgA, $"wf-rel-bad-{suffix}", AgentRunStatus.Failed, 200, ["orchestrator"], "agent_error");
-        await SeedRunAsync(orgA, $"wf-rel-run-{suffix}", AgentRunStatus.Running, 0, ["orchestrator"]);
-
-        var token = CreateToken(ownerA, orgRole: Roles.BoutiqueOwner);
-        var response = await GetAsync($"/api/v1/orgs/{orgA}/statistics/agents/reliability", token);
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
-        Assert.Equal(2, body.GetProperty("denominator").GetInt32());
-        Assert.Equal(0.5, body.GetProperty("successRate").GetDouble());
-        Assert.False(body.GetProperty("dataQuality").GetProperty("nodeFailuresObserved").GetBoolean());
-    }
-
-    [Fact]
-    public async Task Latency_IsAllNullWhenDurationsAreNotInstrumented()
-    {
-        var suffix = Guid.NewGuid().ToString("N");
-        var (orgA, ownerA) = await SeedOwnerAsync($"lat{suffix}");
-        await SeedRunAsync(orgA, $"wf-lat-{suffix}", AgentRunStatus.Succeeded, 120, ["orchestrator"]);
-
-        var token = CreateToken(ownerA, orgRole: Roles.BoutiqueOwner);
-        var response = await GetAsync($"/api/v1/orgs/{orgA}/statistics/agents/latency", token);
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
-        Assert.Equal(JsonValueKind.Null, body.GetProperty("p50Ms").ValueKind);
-        Assert.Equal(JsonValueKind.Null, body.GetProperty("p95Ms").ValueKind);
-        Assert.False(body.GetProperty("dataQuality").GetProperty("latencyInstrumented").GetBoolean());
-    }
-
-    [Fact]
-    public async Task RunDetail_ForAnotherOrganization_Returns404()
-    {
-        var suffix = Guid.NewGuid().ToString("N");
-        var (orgA, ownerA) = await SeedOwnerAsync($"detail{suffix}");
-        var (orgB, _) = await SeedOwnerAsync($"other{suffix}");
-        var runId = await SeedRunAsync(orgB, $"wf-secret-{suffix}", AgentRunStatus.Succeeded, 100, ["orchestrator"]);
-
-        var token = CreateToken(ownerA, orgRole: Roles.BoutiqueOwner);
-        var response = await GetAsync($"/api/v1/orgs/{orgA}/statistics/agents/runs/{runId}", token);
+        var response = await GetAsync($"/api/v1/orgs/{orgA}/statistics/agents/{segment}", token);
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }

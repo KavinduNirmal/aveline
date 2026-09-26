@@ -9,7 +9,7 @@ public class CustomerMemoryService : ICustomerMemoryService
     private readonly ICustomerMemoryRepository _memories;
     private readonly ICustomerRepository _customers;
     private readonly ICustomerEventRepository _events;
-    private readonly ICustomerConsentRepository _consent;
+    private readonly IConsentGateService _consentGate;
     private readonly ICustomerTagRepository _tags;
     private readonly IEmbeddingService _embedding;
 
@@ -17,14 +17,14 @@ public class CustomerMemoryService : ICustomerMemoryService
         ICustomerMemoryRepository memories,
         ICustomerRepository customers,
         ICustomerEventRepository events,
-        ICustomerConsentRepository consent,
+        IConsentGateService consentGate,
         ICustomerTagRepository tags,
         IEmbeddingService embedding)
     {
         _memories = memories;
         _customers = customers;
         _events = events;
-        _consent = consent;
+        _consentGate = consentGate;
         _tags = tags;
         _embedding = embedding;
     }
@@ -34,9 +34,10 @@ public class CustomerMemoryService : ICustomerMemoryService
         SaveMemoryRequest request,
         CancellationToken cancellationToken = default)
     {
-        // Do not store memories for customers who have opted out.
-        var consent = await _consent.GetForCustomerAsync(request.OrganizationId, customerId, cancellationToken);
-        if (consent?.ConsentStatus == "revoked")
+        // Do not store memories for customers who have opted out, or whose consent could not be
+        // read (the gate fails closed - plan §8.3).
+        var decision = await _consentGate.CheckAsync(request.OrganizationId, customerId, cancellationToken);
+        if (!decision.ShouldProcess)
         {
             return null;
         }
@@ -63,6 +64,16 @@ public class CustomerMemoryService : ICustomerMemoryService
         MemorySearchRequest request,
         CancellationToken cancellationToken = default)
     {
+        // §5.5: a revoked customer's memories must not be read back, whichever agent asks. The
+        // gate is checked before the embedding call so a blocked read costs nothing and never
+        // reaches the store.
+        var decision = await _consentGate.CheckAsync(
+            request.OrganizationId, request.CustomerId, cancellationToken);
+        if (!decision.ShouldProcess)
+        {
+            return [];
+        }
+
         var queryEmbedding = await _embedding.GenerateAsync(request.Query, cancellationToken);
         var results = await _memories.SearchSemanticAsync(
             request.OrganizationId,
@@ -78,6 +89,15 @@ public class CustomerMemoryService : ICustomerMemoryService
         Guid customerId,
         CancellationToken cancellationToken = default)
     {
+        // §5.5: brief generation reads the profile, tags and events, so it is personalization and
+        // is refused outright for a revoked customer (or an unreadable consent store). The caller
+        // gets null, exactly as it does for an unknown customer: no data is returned either way.
+        var decision = await _consentGate.CheckAsync(orgId, customerId, cancellationToken);
+        if (!decision.ShouldProcess)
+        {
+            return null;
+        }
+
         var customer = await _customers.GetAsync(orgId, customerId, cancellationToken);
         if (customer is null)
         {
@@ -85,8 +105,8 @@ public class CustomerMemoryService : ICustomerMemoryService
         }
 
         var tags = await _tags.ListByCustomerAsync(orgId, customerId, cancellationToken);
-        var consent = await _consent.GetForCustomerAsync(orgId, customerId, cancellationToken);
-        var profile = CustomerProfileDto.From(customer, tags, consent?.ConsentStatus ?? "unknown");
+        // D-2: the absent row has one value across every call site; the gate is now the one reader.
+        var profile = CustomerProfileDto.From(customer, tags, decision.Status);
         var events = (await _events.ListByCustomerAsync(orgId, customerId, cancellationToken))
             .Select(CustomerEventDto.From)
             .ToList();

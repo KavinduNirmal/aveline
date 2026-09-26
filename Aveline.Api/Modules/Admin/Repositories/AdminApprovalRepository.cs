@@ -38,6 +38,14 @@ public class AdminApprovalRepository : IAdminApprovalRepository
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyList<AdminApprovalRequest>> ListAllAsync(CancellationToken cancellationToken = default)
+    {
+        return await _context.AdminApprovalRequests
+            .AsNoTracking()
+            .OrderByDescending(r => r.RequestedAt)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<AdminApprovalRequest> CreateAsync(AdminApprovalRequest request, CancellationToken cancellationToken = default)
     {
         _context.AdminApprovalRequests.Add(request);

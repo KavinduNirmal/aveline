@@ -73,6 +73,7 @@ public sealed class ConversationEventSubscriber : IHostedService
 
         var message = await conversations.ApplyAgentMessageAsync(evt, cancellationToken);
         await broadcaster.BroadcastMessageAsync(message, cancellationToken);
+        await BroadcastTileAsync(conversations, broadcaster, message.ConversationId, cancellationToken);
     }
 
     private async Task OnAgentStatusAsync(EventEnvelope envelope, CancellationToken cancellationToken)
@@ -125,6 +126,24 @@ public sealed class ConversationEventSubscriber : IHostedService
         }
 
         await broadcaster.BroadcastMessageAsync(updated, cancellationToken);
+        await BroadcastTileAsync(conversations, broadcaster, updated.ConversationId, cancellationToken);
+    }
+
+    /// <summary>
+    /// Broadcasts the conversation's inbox tile so an open list updates without a re-list. A
+    /// conversation this instance cannot resolve is skipped rather than failing the listener.
+    /// </summary>
+    private static async Task BroadcastTileAsync(
+        IConversationService conversations,
+        IMessageBroadcaster broadcaster,
+        Guid conversationId,
+        CancellationToken cancellationToken)
+    {
+        var tile = await conversations.GetTileAsync(conversationId, cancellationToken);
+        if (tile is not null)
+        {
+            await broadcaster.BroadcastConversationChangedAsync(tile, cancellationToken);
+        }
     }
 
     private Task OnConversationCreatedAsync(EventEnvelope envelope, CancellationToken cancellationToken)

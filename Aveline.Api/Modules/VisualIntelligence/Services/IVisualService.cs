@@ -8,6 +8,16 @@ public interface IVisualService
         SearchInventoryDto dto,
         CancellationToken cancellationToken = default);
 
+    Task<CatalogPagedResponse> QueryCatalogAsync(
+        Guid orgId,
+        CatalogQueryRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<CatalogFacetsResponse> GetFacetsAsync(
+        Guid orgId,
+        CatalogQueryRequest? currentNarrowing = null,
+        CancellationToken cancellationToken = default);
+
     Task<InventoryItemDto?> GetItemByIdAsync(
         Guid itemId,
         Guid orgId,
@@ -25,6 +35,11 @@ public interface IVisualService
     Task<InventoryItemDto?> UpdateInventoryStatusAsync(
         Guid itemId,
         UpdateInventoryStatusDto dto,
+        CancellationToken cancellationToken = default);
+
+    Task<bool> DeleteInventoryItemAsync(
+        Guid itemId,
+        Guid orgId,
         CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<InventoryItemDto>> GetLowStockInventoryAsync(
@@ -55,6 +70,25 @@ public interface IVisualService
         Guid orgId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Renames or re-occasions a composed lookbook. Returns <c>null</c> when the id does not name a
+    /// lookbook in this organisation, so a cross-tenant edit is a 404 rather than a silent write.
+    /// </summary>
+    Task<OutfitCompositionDto?> UpdateLookbookAsync(
+        Guid id,
+        Guid orgId,
+        UpdateOutfitCompositionDto dto,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Removes a composed lookbook (and, by cascade, its item rows). Returns <c>false</c> when the
+    /// id does not name a lookbook in this organisation.
+    /// </summary>
+    Task<bool> DeleteLookbookAsync(
+        Guid id,
+        Guid orgId,
+        CancellationToken cancellationToken = default);
+
     Task<SourcingRequestDto> CreateSourcingRequestAsync(
         CreateSourcingRequestDto dto,
         CancellationToken cancellationToken = default);
@@ -80,5 +114,31 @@ public interface IVisualService
         string? category = null,
         string? color = null,
         decimal? maxPrice = null,
+        CancellationToken cancellationToken = default);
+
+    Task<QrCodeResponseDto> GenerateItemQrDtoAsync(
+        Guid orgId,
+        Guid itemId,
+        string format = "png",
+        int size = 300,
+        CancellationToken cancellationToken = default);
+
+    Task<byte[]> GenerateItemQrBytesAsync(
+        Guid orgId,
+        Guid itemId,
+        string format = "png",
+        int size = 300,
+        CancellationToken cancellationToken = default);
+
+    QrCodeResponseDto GenerateQrResponse(GenerateQrDto dto);
+
+    Task<QrScanResultDto> ScanAndResolveAsync(
+        Guid orgId,
+        ScanQrDto request,
+        CancellationToken cancellationToken = default);
+
+    Task<QrScanResultDto> ScanAndResolveImageBytesAsync(
+        Guid orgId,
+        byte[] imageBytes,
         CancellationToken cancellationToken = default);
 }

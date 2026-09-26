@@ -1,0 +1,63 @@
+# =============================================================================
+# Aveline — Prometheus scrape configuration.
+#
+# This file is the production artifact as well as the local one (plan OQ-2): the
+# same scrape config and the same rules run in both places. It is validated by
+# `promtool check config` in the `observability-config` CI job against the real
+# pinned image, and `check config` stats the files it references — so the
+# credentials file below must exist (CI creates a placeholder; an operator
+# creates the real one).
+#
+# Retention lives in this file, NOT in a --storage.tsdb.retention.time flag:
+# the flag is [DEPRECATED] and this field silently takes precedence over it.
+# Never enable --web.enable-remote-write-receiver (k6 is out of scope, OQ-9).
+# =============================================================================
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 30s
+
+storage:
+  tsdb:
+    retention:
+      time: 15d
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  # The API's own exposition. `Authorization` is a reserved header name in
+  # Prometheus' header config, so the credential must go through
+  # `authorization.credentials_file`, not `http_headers`.
+  - job_name: aveline-api
+    metrics_path: /metrics
+    scheme: http
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/scrape_token
+    static_configs:
+      - targets: ["api:8080"]
+        labels: { service: aveline-api }
+
+  # The agent service's metrics land on the OpenTelemetry collector's Prometheus
+  # exporter, not on the agent itself (the agent has no inbound metrics port).
+  - job_name: aveline-agent
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets: ["otel-collector:8889"]
+        labels: { service: aveline-agent }
+
+  # Server-side PostgreSQL metrics that Npgsql cannot see: locks, buffer-cache
+  # hit ratio, growth and backend counts.
+  - job_name: aveline-postgres
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+        labels: { service: aveline-postgres }
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

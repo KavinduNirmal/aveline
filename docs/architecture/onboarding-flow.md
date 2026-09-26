@@ -16,7 +16,8 @@ The flow:
 
 1. Confirms the account holder's role (Owner vs Staff).
 2. Captures boutique identity and contact details.
-3. Selects a subscription plan (demo mode — no payment).
+3. Selects a subscription plan (**defer** — no payment is taken at onboarding; the accepted answer
+   to Q1 of the payment-gateway plan).
 4. Customizes the AI concierge context, with fields unlocking by plan tier.
 5. Optionally connects third-party channels (WhatsApp, Instagram, payment gateway) —
    credentials stored encrypted and tenant-scoped.
@@ -93,10 +94,11 @@ sequenceDiagram
     end
 
     rect rgb(250, 250, 250)
-    Note over W: Step 4 — Plan Selection (demo mode)
+    Note over W: Step 4 — Plan Selection (defer; no payment)
     W->>A: POST /plan { planTier }
     A->>DB: set PlanTier (OnboardingStep=4)
-    A-->>W: org dto
+    A->>DB: upsert OrganizationSubscription (PriceLkr resolved, Trialing / free Seed)
+    A-->>W: org dto { priceLkr, currency, subscriptionStatus, paymentIntentId=null, checkoutUrl=null }
     end
 
     rect rgb(250, 250, 250)
@@ -166,7 +168,7 @@ to find the owner's single draft organization.
 | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GetStatusAsync`                | Reads the user and their draft org; derives the current wizard step (defaults to 2).                                                                     |
 | `SaveBoutiqueDetailsAsync`      | Creates (or updates) the draft org with the user as owner, slugifies the name, and adds an `org:boutique_owner` membership. Advances to step 3.           |
-| `SelectPlanAsync`               | Persists `PlanTier`; requires the org to exist first. Advances to step 4.                                                                                |
+| `SelectPlanAsync`               | Persists `PlanTier`; requires the org to exist first. Provisions the organization's `OrganizationSubscription` (resolved `PriceLkr`, `Trialing` for a paid tier, free/`Active` for Seed) through `ISubscriptionProvisioner`, idempotently. Advances to step 4. Creates **no** payment intent, returns **no** checkout URL, and collects no card data (defer answer, Q1 of the payment-gateway plan). |
 | `SaveAiCustomizationAsync`      | Validates input against the tier (below), persists AI context, advances to step 5.                                                                       |
 | `CompleteOnboardingAsync`       | Activates org (`HasCompletedOnboarding=true`), sets the user to `owner` / `org:boutique_owner` / `Active`, provisions the `UsageAccount` Blossom allowance, invalidates user cache, and (resiliently) warms up agents. |
 
@@ -185,10 +187,29 @@ Enforcement aligns with `pricing_plan.md`:
 The React wizard mirrors this by sending only the permitted fields per tier; the backend
 re-validates independently.
 
-### 4.5 Demo-mode Blossom provisioning
+### 4.5 Blossom provisioning and the defer answer
 
-Plans currently run in **demo mode — no payment**. On completion the service provisions the
-monthly allowance for the chosen plan into a `UsageAccount` for the current billing period:
+Q1 of the payment-gateway plan asked whether selecting a paid tier during onboarding requires a
+settled payment before activation. The **accepted answer is defer (Option A)**: onboarding does not
+block on payment, so the demo banner stays and no checkout is shown. No payment intent is created, no
+card data is collected (constraint C11), and `CompleteOnboardingAsync` activates the organization
+without waiting for a settlement.
+
+Plan selection does, however, record the commercial agreement it implies (plan §9.1 F1, gap G8):
+`SelectPlanAsync` persists `Organization.PlanTier` **and** provisions the organization's single
+`OrganizationSubscription` through `ISubscriptionProvisioner`. The resolver prices the tier from the
+plan-allowance book (`ISubscriptionPriceResolver`), and the row opens `Status = Trialing` for a paid
+tier. Seed is a real free plan: it is written with `PriceLkr = 0` and `Status = Active`. A missing
+price row is **not** coerced to zero — the response reports `priceLkr = null`, no charge is written,
+and MRR stays `null`, exactly as before this slice.
+
+The widened `OnboardingOrganizationDto` carries what was recorded: `priceLkr`, `currency`,
+`subscriptionStatus`, and `paymentIntentId` / `checkoutUrl`, both of which are **always `null` in defer
+mode**. Selecting the same tier twice is idempotent: it updates the one row rather than adding a
+second.
+
+On completion the service provisions the monthly allowance for the chosen plan into a `UsageAccount`
+for the current billing period:
 
 | PlanTier | Monthly Blossom limit |
 | -------- | ---------------------:|
@@ -200,6 +221,12 @@ monthly allowance for the chosen plan into a `UsageAccount` for the current bill
 
 The owner is informed with a luxury notice: _"Your account is in demo mode. You'll be
 contacted for payment."_
+
+**What "defer" does and does not ship.** The accepted answer is implemented as "onboarding never
+touches money": it creates no payment intent, requires no settlement, and returns no checkout URL.
+It **does** create the `OrganizationSubscription` row with a resolved `PriceLkr` and
+`Status = Trialing` (paid) or `PriceLkr = 0` / `Status = Active` (Seed), which is what the billing and
+revenue reads report. Collecting the money is a later, separate step.
 
 ---
 
@@ -257,7 +284,7 @@ After the organization is finalized, `OnboardingService` calls
 
 - The call is **resilient / non-fatal** — a warm-up failure logs a warning but does not fail
   onboarding.
-- The Agent Service endpoint (`agnet-service/app/api/agents.py`) is protected by
+- The Agent Service endpoint (`agent-service/app/api/agents.py`) is protected by
   `require_internal_token` and logs a structured `agent_warmup` event, returning
   `{ "status": "warmed", "ready": true, ... }`.
 
@@ -293,7 +320,7 @@ After the organization is finalized, `OnboardingService` calls
 | ---- | ------------------------ | ---------------------------------------------------------------------- |
 | 2    | `AccountTypeStep`        | Owner vs Staff; staff path accepts an invitation code to join an org.  |
 | 3    | `BoutiqueDetailsStep`    | Boutique name (with live slug preview), address, phone, description, logo. |
-| 4    | `PlanSelectionStep`      | Seed / Bloom / Orchid / Rose cards; demo-mode banner.                  |
+| 4    | `PlanSelectionStep`      | Seed / Bloom / Orchid / Rose cards; demo-mode banner. After plan selection the selected card renders the **server's** `priceLkr`, falling back to the collection copy when the book has no price. |
 | 5    | `AiCustomizationStep`    | Fields unlock per tier (Seed = locked; Bloom basic; Orchid/Rose full). |
 | 6    | `IntegrationsStep`       | Optional: connect WhatsApp / Instagram / payment gateway (encrypted, masked status). |
 | 7    | `InviteStaffStep`        | Optional: invite staff by email, generated code, or copyable link; pending list + revoke. |
@@ -333,13 +360,17 @@ link land on `routes/InvitePage.tsx` (`/invite?code=…`).
 - **.NET:** `Aveline.Api.Tests/OnboardingServiceTests.cs` and
   `OnboardingEndpointsIntegrationTests.cs` exercise the full onboarding flow end-to-end
   (step transitions, Seed/Bloom/Orchid tier gating, completion, Blossom provisioning,
-  status resumption). The integrations slice is covered by `CredentialEncryptionServiceTests`,
+  status resumption, and — since plan §9.1 F1 — the provisioned subscription: a priced tier, an
+  unpriced tier reporting `priceLkr = null` with `subscriptionStatus = "Trialing"`, Seed staying
+  free, and re-selecting a tier staying idempotent). The integrations slice is covered by `CredentialEncryptionServiceTests`,
   `IntegrationServiceTests`, and `IntegrationEndpointsIntegrationTests`; the team-invitation
   slice by `OrganizationInvitationLifecycleTests`, `InvitationManagementEndpointsIntegrationTests`,
   `EmailServiceTests`, `DistributedInvitationCodeStoreTests`, `DistributedRateLimiterTests`, and
   `InvitationAcceptRateLimitIntegrationTests`. `dotnet test Aveline.Api.Tests` passes (206 tests).
-- **Agent Service:** `agnet-service/tests/test_agents_warmup.py` covers warmup auth and payload.
+- **Agent Service:** `agent-service/tests/test_agents_warmup.py` covers warmup auth and payload.
 - **Frontend:** `vitest run` (onboarding/integration/invitation contracts), `tsc -b`, `oxlint`, and `vite build`.
+  `PlanSelectionStep.dom.test.tsx` asserts the step renders the server price, and
+  `lib/onboarding.test.ts` asserts `selectPlan` returns the widened subscription fields.
 
 ---
 
@@ -358,3 +389,7 @@ link land on `routes/InvitePage.tsx` (`/invite?code=…`).
 5. `IEmailService` is a logging/no-op sender; wire a real provider (SMTP/SendGrid) before launch.
 6. Instagram connection currently uses manual credential entry; a full Meta OAuth redirect flow
    is a follow-up.
+7. Onboarding now opens a paid subscription in `Status = Trialing` (plan §9.1 F1, defer answer Q1),
+   but nothing yet transitions it to `Active` when the deferred payment is collected, and no dunning
+   applies to a trial that is never paid. The `SubscriptionInitial` payment path and that transition
+   are the follow-up obligation this slice leaves outstanding.

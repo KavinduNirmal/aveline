@@ -96,6 +96,7 @@ public sealed class StubAgentServer : IAsyncDisposable
             ReceivedInternalToken = context.Request.Headers[InternalTokenHeaderName].FirstOrDefault();
             using var reader = new StreamReader(context.Request.Body);
             ReceivedBody = await reader.ReadToEndAsync();
+            QueryCount++;
             return Results.Json(new { status = "ok", thread_id = "stub" }, statusCode: StatusCodes.Status200OK);
         });
 
@@ -107,6 +108,13 @@ public sealed class StubAgentServer : IAsyncDisposable
     public string BaseUrl { get; private set; } = string.Empty;
     public string? ReceivedInternalToken { get; private set; }
     public string? ReceivedBody { get; private set; }
+
+    /// <summary>
+    /// How many times the agent has been asked to run. A trigger is the only observable effect of
+    /// an action like Regenerate — the fresh content arrives over the hub, not in the response —
+    /// so the count is what a test asserts against.
+    /// </summary>
+    public int QueryCount { get; private set; }
 
     public async Task StartAsync()
     {

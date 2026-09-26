@@ -84,7 +84,7 @@ export function OrgSetupPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-background px-4 py-12 sm:px-6 lg:px-8">
+    <div className="flex min-h-dvh flex-col items-center justify-center bg-background px-4 py-12 sm:px-6 lg:px-8">
       <div className="flex w-full max-w-3xl flex-col gap-6">
         <div className="text-center flex flex-col gap-2">
           <span className="text-xs uppercase tracking-[0.25em] font-semibold text-muted-foreground">

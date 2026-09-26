@@ -148,7 +148,7 @@ function ShellFallback({
   children: React.ReactNode
 }) {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-4 px-6 text-center">
+    <div className="flex min-h-dvh flex-col items-center justify-center gap-4 px-6 text-center">
       <h1 className="font-serif text-3xl font-medium tracking-tight">{title}</h1>
       <div className="max-w-md">{children}</div>
     </div>

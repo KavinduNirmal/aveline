@@ -19,12 +19,16 @@ so every number here is laboratory.
 
 | | Before | After | Change |
 |---|---|---|---|
-| Eager JS+CSS (gzip) | 925,563 B | 197,886 B | **−78.6 %** |
-| Eager JS+CSS (raw) | 3,463,566 B | 772,835 B | −77.7 % |
+| Eager JS+CSS (gzip) | 925,563 B | 197,991 B | **−78.6 %** |
+| Eager JS+CSS (raw) | 3,463,566 B | 773,828 B | −77.7 % |
 | Entry chunk (raw) | 2,731,826 B | 513,869 B | **−81.2 %** |
 | Eager files | 16 | 6 | −62.5 % |
 | `modulepreload` set | 14 files / 501 KB | 4 files / 37,463 B | −92.5 % |
 | First-party JS transferred (mobile) | 717,404 B | 232,257 B | **−67.6 %** |
+
+The byte figures are as measured on the tree at `24ea72e`. The entry chunk is byte-identical; the
+eager gzip total moved 105 B between the first measurement and this one because of the Lina accent
+tokens and the restored `blur` utility, which is below the precision of every percentage above.
 
 Measured on the Lighthouse mobile profile over CDP with applied throttling
 (`150 ms RTT / 1638 kbps / 4× CPU`, median of 3 cold runs):

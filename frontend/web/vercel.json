@@ -12,7 +12,6 @@
   ],
   "headers": [
     {
-      "//": "Vite emits content-hashed filenames under /assets, so those bytes can never change under a given URL. Immutable caching is what makes the hashed names worth having: the browser skips revalidation entirely on a repeat visit.",
       "source": "/assets/(.*)",
       "headers": [
         {
@@ -22,7 +21,6 @@
       ]
     },
     {
-      "//": "index.html is the one unhashed file that points at hashed chunks. It must be revalidated on every navigation: a cached shell referencing a deleted chunk is a white screen, and that is the failure mode hashed assets + long TTLs would otherwise create.",
       "source": "/index.html",
       "headers": [
         {
@@ -32,7 +30,6 @@
       ]
     },
     {
-      "//": "The three root SVGs live in public/ and keep a stable name across builds, so they cannot be immutable. A short TTL with revalidation is the safe middle ground.",
       "source": "/(favicon.svg|icons.svg|logo.svg)",
       "headers": [
         {

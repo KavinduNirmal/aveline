@@ -82,6 +82,24 @@ The token getter and 401/403 handlers are registered from the Clerk context by
 `src/lib/AuthApiBridge.tsx` (mounted in `App.tsx`), so the client itself stays
 React-free.
 
+## Deployment and caching
+
+Deployed on Vercel with **Root Directory `frontend/web`**. `vercel.json` holds the
+build settings and the `Cache-Control` policy.
+
+Vercel validates that file against a **strict schema**: a `headers` entry accepts only
+`source`, `headers`, `has` and `missing` (`additionalProperties: false`). Explanatory
+notes therefore **cannot** live in it — a `"//"` comment key fails the build with
+``headers[0] should NOT have additional property `//` ``. The reasoning lives here.
+
+| Path | `Cache-Control` | Why |
+|---|---|---|
+| `/assets/(.*)` | `max-age=31536000, immutable` | Vite emits content-hashed filenames there, so the bytes behind a given URL can never change. Immutable caching is what makes the hashed names worth having: the browser skips revalidation entirely on a repeat visit. |
+| `/index.html` | `max-age=0, must-revalidate` | The one unhashed file that points at hashed chunks, so it must be revalidated on every navigation. A cached shell referencing a deleted chunk is a white screen — the exact failure mode that hashed assets plus long TTLs would otherwise create. |
+| `/(favicon.svg\|icons.svg\|logo.svg)` | `max-age=3600, must-revalidate` | These live in `public/` and keep a stable name across builds, so they cannot be immutable. A short TTL with revalidation is the safe middle ground. |
+
+If a caching rule needs explaining, add it to this table rather than to `vercel.json`.
+
 ## Testing
 
 `bun run test` runs Vitest unit tests:

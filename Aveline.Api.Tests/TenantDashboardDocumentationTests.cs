@@ -49,7 +49,8 @@ public class TenantDashboardDocumentationTests
         return File.ReadAllText(path);
     }
 
-    private static string Normalize(string text) => GuidToken.Replace(text, "{$1}");
+    private static string Normalize(string text) =>
+        GuidToken.Replace(text.Replace("\r\n", "\n"), "{$1}");
 
     /// <summary>
     /// Method, normalised path, source file, and a route literal that file must still contain.

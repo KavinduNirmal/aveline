@@ -1,4 +1,103 @@
 
+## Session 2026-09-25 (Client Thread & Mobile App Shell Live API Repository Integration)
+
+**Task:** Execute remaining phases of the approved Client Thread & Staff App Shell implementation plan (`client_thread_implementation_plan.md`), replacing mobile demo/mock fallbacks with live `ApiCustomerRepository` calling tenant endpoints (`GET /api/v1/orgs/{orgId}/customers`, `GET .../customers/{id}`), verifying full-stack test suites across Flutter and ASP.NET Core.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Flutter Live Customer Repository (`frontend/aveline_mobile/lib/features/customers/data/api_customer_repository.dart`)**:
+   - Implemented `ApiCustomerRepository` implementing the `CustomerRepository` / `CustomerBookSource` interface.
+   - Connected `fetchBook` to `GET /api/v1/orgs/{organizationId}/customers` with `search`, `level`, and `pageSize` query parameter mapping, parsing responses into alphabetical letter-indexed `CustomerBook` with `CustomerSection` groups.
+   - Connected `fetchCustomer` to `GET /api/v1/orgs/{organizationId}/customers/{id}`, with concurrent/graceful fetching of `GET .../customers/{id}/consent` and `GET .../customers/{id}/interactions`.
+   - Handled `404 Not Found` gracefully, mapping to `null`.
+
+2. **Mobile App Shell Wiring (`frontend/aveline_mobile/lib/app.dart`)**:
+   - Replaced `DemoCustomerRepository()` with `ApiCustomerRepository(_dio, organizationId: () => _boutiqueProvider.organizationId)`.
+   - Verified that `CustomersScreen` and `CustomerScreen` routes receive the live `_customerRepository` instance scoped to the active boutique membership.
+
+3. **Automated Unit & Integration Testing**:
+   - Extended `frontend/aveline_mobile/test/features/customers/api_customer_repository_test.dart` with unit tests for `fetchBook` (letter sectioning, '#' fallback for unnamed clients, empty org fallback) and `fetchCustomer` (combining detail, consent, and interaction streams).
+   - Ran `flutter test test/features/customers/` (124/124 tests passed).
+   - Ran `flutter test test/features/conversations/` (393/393 tests passed).
+   - Ran full `flutter test` suite across all mobile modules (1,231/1,231 tests passed).
+   - Fixed Windows URI parsing difference in `Aveline.Api.Tests/ImageUrlFetcherTests.cs` (122/122 passed).
+   - Ran .NET integration tests for Conversation, Customer Tenant, and Search endpoints (62/62 passed).
+
+### Files Created or Modified
+
+- `frontend/aveline_mobile/lib/features/customers/data/api_customer_repository.dart` [NEW]
+- `frontend/aveline_mobile/lib/app.dart`
+- `frontend/aveline_mobile/test/features/customers/api_customer_repository_test.dart`
+- `Aveline.Api.Tests/ImageUrlFetcherTests.cs`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `flutter test test/features/customers/`: 124/124 tests passed.
+- `flutter test test/features/conversations/`: 393/393 tests passed.
+- `flutter test`: 1,231/1,231 tests passed across all mobile features.
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~ImageUrlFetcherTests"`: 122/122 passed.
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~ConversationEndpoints|FullyQualifiedName~CustomerTenant|FullyQualifiedName~SearchEndpoints"`: 62/62 passed.
+
+---
+
+## Session 2026-09-25 (Global Cross-Entity Search Endpoint & Integration Tests)
+
+**Task:** Design and implement the global cross-entity search endpoint (`GET /api/v1/orgs/{organizationId}/search`) in `Aveline.Api` with tenant isolation, granular per-entity authorization (Catalog, Customers, Conversations), ranking and pagination, along with automated integration tests and OpenAPI contract updates.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **DTO Design (`Aveline.Api/Modules/Shared/DTOs/SearchDtos.cs`)**:
+   - Created `SearchEntityType` enum (`customer`, `catalogItem`, `conversation`) with `JsonStringEnumConverter` and string member mappings.
+   - Created `GlobalSearchResultItemDto` containing `Type`, `Id`, `Title`, `Subtitle`, `ThumbnailUrl`, `Href`, and relevance `Score`.
+   - Created `GlobalSearchResponseDto` paginated response envelope (`Items`, `Total`, `Page`, `PageSize`).
+
+2. **Endpoint Implementation (`Aveline.Api/Endpoints/SearchEndpoints.cs`)**:
+   - Implemented `GET /api/v1/orgs/{organizationId}/search` guarded by `BoutiqueMemberPolicy`.
+   - Evaluated caller's active boutique membership and granular permissions: `catalog:view`, `customers:view`, and `conversations:view`.
+   - Added support for `q` (minimum 2 characters), `scope` (`all`, `catalog`, `customers`, `conversations`), `page`, and `pageSize`.
+   - Queried catalog items via `IInventoryRepository.QueryAsync`, customers via tenant-scoped `AppDbContext.Customers` (matching name, phone, email), and conversation salons via `AppDbContext.Conversations` with customer / message content joins.
+   - Implemented relevance ranking and pagination.
+   - Registered endpoint in `Program.cs` via `v1.MapSearchEndpoints()`.
+
+3. **Automated Integration Testing (`Aveline.Api.Tests/SearchEndpointsIntegrationTests.cs`)**:
+   - Built 6 automated integration tests against in-memory WebApplicationFactory:
+     - `Search_WithValidQuery_ReturnsAggregatedResultsAcrossAllEntities`
+     - `Search_WithScopeCatalog_ReturnsOnlyCatalogItems`
+     - `Search_WithScopeCustomers_ReturnsOnlyCustomers`
+     - `Search_WithShortQuery_Returns400BadRequest`
+     - `Search_WithNonExistentQuery_Returns200WithEmptyList`
+     - `Search_WithCrossTenantOrgId_Returns403Forbidden`
+   - All tests passed.
+
+4. **API Specification & Documentation**:
+   - Added `Search` tag, `/api/v1/orgs/{organizationId}/search` path, and schemas to `docs/api/openapi.yaml`.
+   - Documented endpoint under `### B.28 Global cross-entity search` in `docs/api/README.md`.
+   - Normalized CRLF line endings in `TenantDashboardDocumentationTests.cs`.
+
+### Files Created or Modified
+
+- `Aveline.Api/Modules/Shared/DTOs/SearchDtos.cs` [NEW]
+- `Aveline.Api/Endpoints/SearchEndpoints.cs` [NEW]
+- `Aveline.Api/Program.cs`
+- `Aveline.Api.Tests/SearchEndpointsIntegrationTests.cs` [NEW]
+- `Aveline.Api.Tests/TenantDashboardDocumentationTests.cs`
+- `docs/api/openapi.yaml`
+- `docs/api/README.md`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj --filter "FullyQualifiedName~SearchEndpointsIntegrationTests"`: 6/6 tests passed.
+- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj --filter "FullyQualifiedName~TenantDashboardDocumentationTests"`: 62/62 tests passed.
+- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj --filter "FullyQualifiedName!~Postgres"`: 1,442/1,442 tests passed.
+
+---
+
 ## Session 2026-09-18 (Catalog Item Delete Feature - Frontend & Backend)
 
 **Task:** Design and implement catalog inventory item deletion across ASP.NET Core backend (Soft Delete endpoint, services, integration tests) and React frontend (ProductCard delete button, Edit modal delete action, confirmation dialog, optimistic state updates).

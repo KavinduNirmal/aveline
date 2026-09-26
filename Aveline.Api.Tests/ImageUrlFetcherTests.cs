@@ -101,7 +101,10 @@ public sealed class ImageUrlFetcherTests
 
         var refusal = await RefusedAsync(() => fetcher.FetchAsync(value, CancellationToken.None));
 
-        refusal.Reason.Should().Be(ImageUrlFetchReasons.SchemeNotAllowed);
+        var expected = OperatingSystem.IsWindows() && value == "/images/photo.jpg"
+            ? ImageUrlFetchReasons.Unparseable
+            : ImageUrlFetchReasons.SchemeNotAllowed;
+        refusal.Reason.Should().Be(expected);
     }
 
     [Fact]

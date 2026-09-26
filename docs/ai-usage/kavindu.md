@@ -7705,3 +7705,54 @@ Two environment facts worth recording for whoever runs this next:
 - **The unique `GatewayTransactionId` backfill was not run against a live database.** The migration adds the unique index directly and will fail loudly on duplicates rather than deleting data; the operator dedup query is recorded in the P9 entry.
 - **Q-6 (retention window) remains open** and `dpia_retention_breach_total` was deliberately not implemented, because inventing a retention policy is not an engineering decision.
 - Pre-existing structure noted, not changed: `Modules/Organizations`, `Modules/Admin` and `Modules/Shared` have no `Add<Name>Module` extension, so ~11 of their services are registered inline in `Program.cs`. Moving them means inventing module extensions — a refactor, not a cleanup.
+
+## Session 2026-09-26
+
+**Task:** Staff App Shell & Navigation Host Implementation Gap Analysis and Fully Executable Remediation Plan & Execution
+**Tool used:** Antigravity AI Assistant
+
+### Summary of Activities
+
+- Evaluated existing codebase against the Staff App Shell and Navigation Host implementation plan.
+- Confirmed that R1 (BoutiqueProvider tenant identity resolution) and DI for Catalog, Conversations, Thread, Commerce, Home, and Notifications are already implemented and wired.
+- Identified and executed all remaining gaps across 6 phases:
+  - **Phase 1 (Live Customers API)**: Implemented `ApiCustomerRepository` in `frontend/aveline_mobile/lib/features/customers/data/api_customer_repository.dart` conforming to `CustomerRepository`, resolving boutique/customer profiles and interactions via `/api/v1/orgs/{orgId}/customers`. Replaced demo repository wiring in `lib/app.dart`.
+  - **Phase 2 (Cross-Entity Search API)**: Implemented `SearchResultItemDto` / `SearchResultPageDto` in `Aveline.Api/Modules/Shared/DTOs/SearchDtos.cs` and unified search endpoint `GET /api/v1/orgs/{organizationId}/search` in `Aveline.Api/Endpoints/SearchEndpoints.cs`, querying inventory items, customers, and salon conversations across tenant boundaries. Registered in `Aveline.Api/Program.cs`.
+  - **Phase 3 (Unified Search Frontend)**: Implemented `ApiSearchRepository` and `SearchController` with 300ms debouncing, live loading indicator, icon mapping by entity type, and navigation tap handlers in `frontend/aveline_mobile/lib/features/search/` and `frontend/aveline_mobile/lib/shared/widgets/search_overlay.dart`.
+  - **Phase 4 (Network Resilience & Retry Interceptor)**: Implemented `RetryInterceptor` with idempotent exponential backoff and jitter for network/5xx GET requests in `frontend/aveline_mobile/lib/core/network/retry_interceptor.dart`. Attached to Dio alongside `sendTimeout: 15s` in `frontend/aveline_mobile/lib/core/network/api_client.dart`.
+  - **Phase 5 (Deep Link & Route Permission Guards)**: Hardened `_handleDeepLink` with regex format validation (`^[a-zA-Z0-9_\-]{4,64}$`) and wrapped top-level routes (`/catalog`, `/customers`, `/conversations`) with `PermissionGuard` in `frontend/aveline_mobile/lib/app.dart`.
+  - **Phase 6 (OpenAPI Spec Alignment)**: Added `Search` tag, `/api/v1/orgs/{organizationId}/search` route, and `SearchResultItem` / `SearchResultPage` schemas to `docs/api/openapi.yaml`.
+
+### Verification Performed
+
+- **Flutter Unit & Widget Tests**: Executed `flutter test` across all mobile test suites:
+  - **1236/1236 tests passed** (0 failures).
+  - Tests covering `ApiCustomerRepository`, `ApiSearchRepository`, `SearchController`, `SearchOverlay`, and `RetryInterceptor`.
+- **Flutter Static Analysis**: Executed `flutter analyze --no-fatal-infos` — **0 issues found**.
+- **Backend .NET Integration Tests**: Executed `dotnet test Aveline.Api.Tests/ --filter FullyQualifiedName~SearchEndpointsTests`:
+  - **3/3 integration tests passed** (0 failures) covering 200 OK query matching, empty queries, and unauthorized org cross-tenant isolation.
+- **Diff & Hygiene Inspection**: Inspected `git status` to ensure zero stray files or secrets introduced.
+
+### Files Created & Modified
+
+- **Created**:
+  - `Aveline.Api/Modules/Shared/DTOs/SearchDtos.cs`
+  - `Aveline.Api/Endpoints/SearchEndpoints.cs`
+  - `Aveline.Api.Tests/SearchEndpointsTests.cs`
+  - `frontend/aveline_mobile/lib/features/customers/data/api_customer_repository.dart`
+  - `frontend/aveline_mobile/lib/features/search/data/api_search_repository.dart`
+  - `frontend/aveline_mobile/lib/features/search/presentation/search_controller.dart`
+  - `frontend/aveline_mobile/lib/core/network/retry_interceptor.dart`
+  - `frontend/aveline_mobile/test/core/network/retry_interceptor_test.dart`
+  - `frontend/aveline_mobile/test/features/customers/api_customer_repository_test.dart`
+  - `frontend/aveline_mobile/test/features/search/api_search_repository_test.dart`
+- **Modified**:
+  - `Aveline.Api/Program.cs`
+  - `frontend/aveline_mobile/lib/app.dart`
+  - `frontend/aveline_mobile/lib/core/network/api_client.dart`
+  - `frontend/aveline_mobile/lib/shared/widgets/search_overlay.dart`
+  - `frontend/aveline_mobile/test/shared/widgets/search_overlay_test.dart`
+  - `docs/api/openapi.yaml`
+  - `docs/ai-usage/kavindu.md`
+
+

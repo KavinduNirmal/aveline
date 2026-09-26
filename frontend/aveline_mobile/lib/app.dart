@@ -48,8 +48,8 @@ import 'features/conversations/data/conversation_repository.dart';
 import 'features/conversations/data/thread_repository.dart';
 import 'features/conversations/presentation/screens/conversations_screen.dart';
 import 'features/conversations/presentation/screens/thread_route_screen.dart';
+import 'features/customers/data/api_customer_repository.dart';
 import 'features/customers/data/customer_repository.dart';
-import 'features/customers/data/demo_customer_repository.dart';
 import 'features/customers/presentation/screens/customer_screen.dart';
 import 'features/customers/presentation/screens/customers_screen.dart';
 import 'features/home/data/api_home_repository.dart';
@@ -355,7 +355,10 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
       _dio,
       organizationId: () => _boutiqueProvider.organizationId,
     );
-    _customerRepository = DemoCustomerRepository();
+    _customerRepository = ApiCustomerRepository(
+      _dio,
+      organizationId: () => _boutiqueProvider.organizationId,
+    );
     // The inbox reads the API through one repository, the same way Home does. The
     // organization id is read at call time because it arrives with `/orgs/my`,
     // after this controller is built; until then the screen stays in its loading
@@ -436,8 +439,18 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
     if (uri.scheme != 'aveline' || uri.host != 'invite') {
       return;
     }
-    final code = uri.queryParameters['code'];
-    _onboardingProvider.setPendingInviteCode(code);
+    final rawCode = uri.queryParameters['code']?.trim();
+    if (rawCode == null || rawCode.isEmpty) {
+      debugPrint('[deep-link] Rejected invite link with missing code.');
+      return;
+    }
+    final codeRegex = RegExp(r'^[a-zA-Z0-9_\-]{4,64}$');
+    if (!codeRegex.hasMatch(rawCode)) {
+      debugPrint('[deep-link] Rejected invalid invite code format: $rawCode');
+      return;
+    }
+
+    _onboardingProvider.setPendingInviteCode(rawCode);
     _router.go(AppRoutes.invite);
   }
 
@@ -685,8 +698,11 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
         GoRoute(
           path: AppRoutes.catalog,
           name: 'catalog',
-          builder: (context, state) => MainShell(
-            child: CatalogScreen(repository: _catalogRepository),
+          builder: (context, state) => PermissionGuard(
+            permission: Permissions.catalogView,
+            child: MainShell(
+              child: CatalogScreen(repository: _catalogRepository),
+            ),
           ),
         ),
         GoRoute(
@@ -718,16 +734,22 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
           // re-parses its location whenever the auth or profile listenable
           // fires, and `extra` does not survive that, so the screen resolves
           // the piece from the id the location already carries.
-          builder: (context, state) => CatalogProductScreen(
-            productId: state.pathParameters['productId'] ?? '',
-            repository: _catalogRepository,
+          builder: (context, state) => PermissionGuard(
+            permission: Permissions.catalogView,
+            child: CatalogProductScreen(
+              productId: state.pathParameters['productId'] ?? '',
+              repository: _catalogRepository,
+            ),
           ),
         ),
         GoRoute(
           path: AppRoutes.customers,
           name: 'customers',
-          builder: (context, state) => MainShell(
-            child: CustomersScreen(repository: _customerRepository),
+          builder: (context, state) => PermissionGuard(
+            permission: Permissions.customersView,
+            child: MainShell(
+              child: CustomersScreen(repository: _customerRepository),
+            ),
           ),
         ),
         GoRoute(
@@ -740,18 +762,24 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
           // re-parses its location whenever the auth or profile listenable
           // fires, and `extra` does not survive that, so the screen resolves the
           // profile from the id the location already carries.
-          builder: (context, state) => CustomerScreen(
-            customerId: state.pathParameters['customerId'] ?? '',
-            repository: _customerRepository,
+          builder: (context, state) => PermissionGuard(
+            permission: Permissions.customersView,
+            child: CustomerScreen(
+              customerId: state.pathParameters['customerId'] ?? '',
+              repository: _customerRepository,
+            ),
           ),
         ),
         GoRoute(
           path: AppRoutes.conversations,
           name: 'conversations',
-          builder: (context, state) => MainShell(
-            child: ConversationsScreen(
-              repository: _conversationRepository,
-              threadRepository: _threadRepository,
+          builder: (context, state) => PermissionGuard(
+            permission: Permissions.conversationsView,
+            child: MainShell(
+              child: ConversationsScreen(
+                repository: _conversationRepository,
+                threadRepository: _threadRepository,
+              ),
             ),
           ),
         ),

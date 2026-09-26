@@ -43,9 +43,17 @@ param agentImage string
 
 // --- non-secret application configuration ------------------------------------
 param clerkAuthority string = 'https://clerk.aveline.gravora.dev'
+// The single web origin: the SPA's production alias. `spaOrigins` below and
+// `appBaseUrl` must agree, because one is the CORS allow-list and the other is where
+// customer-facing links resolve - the privacy opt-out and data-policy URLs and the
+// staff-invitation URL are all built from it.
+//
+// It was set by hand on the container app rather than here, which is how it sat at a
+// host that does not resolve (`app.aveline.gravora.dev`) and put a dead opt-out link in
+// every first-contact disclosure (2026-09-26).
+param appBaseUrl string = 'https://aveline.gravora.dev'
 param spaOrigins array = [
   'https://aveline.gravora.dev'
-  'https://app.aveline.gravora.dev'
 ]
 param firebaseProjectId string = 'aveline-e35a5'
 param embeddingsBaseUrl string = 'https://generativelanguage.googleapis.com'
@@ -342,6 +350,7 @@ resource apiApp 'Microsoft.App/containerApps@2026-01-01' = {
             { name: 'Media__PublicBaseUrl', value: 'https://${apiAppName}.${apiFqdnSuffix}' }
             { name: 'Privacy__LinkSigningKey', secretRef: 'privacy-link-signing-key' }
             { name: 'Clerk__Authority', value: clerkAuthority }
+            { name: 'App__BaseUrl', value: appBaseUrl }
             { name: 'Clerk__SecretKey', secretRef: 'clerk-secret-key' }
             { name: 'Credentials__EncryptionKey', secretRef: 'credentials-encryption-key' }
             { name: 'CLOUDINARY_URL', secretRef: 'cloudinary-url' }
@@ -359,8 +368,9 @@ resource apiApp 'Microsoft.App/containerApps@2026-01-01' = {
             { name: 'Firebase__CredentialsPath', value: '/mnt/secrets/firebase-json' }
             { name: 'Payments__Provider', value: 'manual' }
             // An empty CORS allow-list THROWS at startup (CorsConfiguration).
+            // Indexed by hand, so the count here has to match `spaOrigins`. There is one
+            // origin today; adding a second to the parameter means adding `__1` back.
             { name: 'Cors__AllowedOrigins__0', value: spaOrigins[0] }
-            { name: 'Cors__AllowedOrigins__1', value: spaOrigins[1] }
             { name: 'Eventing__SubscribeEventTypes__0', value: 'message.created' }
             { name: 'Eventing__SubscribeEventTypes__1', value: 'message.updated' }
             { name: 'Eventing__SubscribeEventTypes__2', value: 'conversation.created' }

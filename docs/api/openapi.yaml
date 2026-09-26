@@ -128,9 +128,7 @@ tags:
       The staff-side consent write lives on the tenant customer surface under `customers:manage` and
       is distinguishable in the audit by `ActorKind`.
   - name: Search
-    description: >
-      Tenant-scoped cross-entity search endpoint aggregating inventory catalog items,
-      customer profiles, and conversation threads.
+    description: Unified cross-entity search across catalog products, customers, and salon conversations.
 
 security:
   - bearerAuth: []

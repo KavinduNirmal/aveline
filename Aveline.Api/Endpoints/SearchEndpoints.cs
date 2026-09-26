@@ -1,24 +1,17 @@
 using System.Security.Claims;
-using Aveline.Api.Authorization;
 using Aveline.Api.Configurations;
-using Aveline.Api.Infrastructure.Data;
-using Aveline.Api.Modules.CustomerConcierge.Repositories;
-using Aveline.Api.Modules.Organizations.Models;
-using Aveline.Api.Modules.Organizations.Repositories;
+using Aveline.Api.Modules.Conversations.Services;
+using Aveline.Api.Modules.CustomerConcierge.Services;
 using Aveline.Api.Modules.Shared.DTOs;
 using Aveline.Api.Modules.Shared.Repositories;
 using Aveline.Api.Modules.VisualIntelligence.DTOs;
-using Aveline.Api.Modules.VisualIntelligence.Repositories;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
+using Aveline.Api.Modules.VisualIntelligence.Services;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 
 namespace Aveline.Api.Endpoints;
 
 /// <summary>
-/// Tenant-scoped cross-entity search endpoint aggregating catalog inventory items,
-/// customer profiles, and conversation threads.
+/// Cross-entity search endpoint for the global SearchOverlay.
 /// </summary>
 public static class SearchEndpoints
 {
@@ -27,200 +20,146 @@ public static class SearchEndpoints
         var group = endpoints
             .MapGroup("/orgs/{organizationId:guid}/search")
             .WithTags("Search")
-            .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
+            .RequireAuthorization(AuthorizationConfiguration.BoutiqueAccessPolicy);
 
-        group.MapGet(string.Empty, SearchAsync)
-            .WithName("GlobalSearch")
-            .WithSummary("Search across catalog pieces, customer book, and conversation threads.")
-            .Produces<GlobalSearchResponseDto>(StatusCodes.Status200OK)
-            .Produces(StatusCodes.Status400BadRequest)
-            .Produces(StatusCodes.Status401Unauthorized)
-            .Produces(StatusCodes.Status403Forbidden);
+        group.MapGet(string.Empty, async (
+            Guid organizationId,
+            [FromQuery] string? q,
+            [FromQuery] string? scope,
+            [FromQuery] int? page,
+            [FromQuery] int? pageSize,
+            ClaimsPrincipal principal,
+            ICustomerTenantService customers,
+            IVisualService visual,
+            IConversationService conversations,
+            IUserRepository users,
+            CancellationToken ct) =>
+        {
+            var query = (q ?? string.Empty).Trim();
+            if (query.Length < 2)
+            {
+                return Results.BadRequest(new
+                {
+                    message = "Query 'q' must be at least 2 characters.",
+                });
+            }
+
+            var selectedScope = (scope ?? "all").Trim().ToLowerInvariant();
+            var results = new List<SearchResultItemDto>();
+            var p = Math.Max(1, page ?? 1);
+            var ps = Math.Clamp(pageSize ?? 20, 1, 100);
+
+            // 1. Catalog Search
+            if (selectedScope is "all" or "catalog")
+            {
+                try
+                {
+                    var catalogHits = await visual.QueryCatalogAsync(
+                        organizationId,
+                        new CatalogQueryRequest
+                        {
+                            Search = query,
+                            Page = 1,
+                            PageSize = 20,
+                        },
+                        ct);
+
+                    results.AddRange(catalogHits.Items.Select(c => new SearchResultItemDto(
+                        "catalogItem",
+                        c.Id,
+                        c.ItemName,
+                        $"SKU: {c.Sku} · {c.Price:N0} LKR",
+                        1.0,
+                        $"/catalog/{c.Id}")));
+                }
+                catch
+                {
+                    // Swallowed if catalog search fails
+                }
+            }
+
+            // 2. Customers Search
+            if (selectedScope is "all" or "customers")
+            {
+                try
+                {
+                    var customerHits = await customers.GetBookAsync(
+                        organizationId,
+                        search: query,
+                        level: null,
+                        page: 1,
+                        pageSize: 20,
+                        cancellationToken: ct);
+
+                    results.AddRange(customerHits.Items.Select(c => new SearchResultItemDto(
+                        "customer",
+                        c.CustomerId,
+                        c.FullName ?? "Client",
+                        c.PhoneNumber ?? c.Level,
+                        0.9,
+                        $"/customers/{c.CustomerId}")));
+                }
+                catch
+                {
+                    // Swallowed if customer lookup fails
+                }
+            }
+
+            // 3. Conversations Search
+            if (selectedScope is "all" or "conversations")
+            {
+                try
+                {
+                    var userId = await ResolveUserIdAsync(principal, users, ct);
+                    if (userId != Guid.Empty)
+                    {
+                        var (convList, _) = await conversations.ListAsync(
+                            organizationId,
+                            userId,
+                            1,
+                            50,
+                            ct);
+
+                        var matchingConvs = convList
+                            .Where(cv => (cv.CustomerName?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false)
+                                      || (cv.LastMessagePreview?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false))
+                            .Take(20);
+
+                        results.AddRange(matchingConvs.Select(cv => new SearchResultItemDto(
+                            "conversation",
+                            cv.Id,
+                            cv.CustomerName ?? "Message Thread",
+                            cv.LastMessagePreview,
+                            0.8,
+                            $"/conversations/thread/{cv.Id}")));
+                    }
+                }
+                catch
+                {
+                    // Swallowed if conversations lookup fails
+                }
+            }
+
+            var sorted = results.OrderByDescending(r => r.Score).ToList();
+            var paged = sorted.Skip((p - 1) * ps).Take(ps).ToList();
+
+            return Results.Ok(new SearchResultPageDto(paged, sorted.Count, p, ps));
+        });
 
         return endpoints;
     }
 
-    private static async Task<IResult> SearchAsync(
-        Guid organizationId,
-        [FromQuery] string? q,
-        [FromQuery] string? scope,
-        [FromQuery] int? page,
-        [FromQuery] int? pageSize,
-        ClaimsPrincipal principal,
-        IUserRepository users,
-        IOrganizationRepository orgs,
-        IInventoryRepository inventory,
-        ICustomerRepository customers,
-        AppDbContext dbContext,
-        CancellationToken ct)
+    private static async Task<Guid> ResolveUserIdAsync(
+        ClaimsPrincipal principal, IUserRepository users, CancellationToken ct)
     {
-        var query = q?.Trim();
-        if (string.IsNullOrWhiteSpace(query) || query.Length < 2)
-        {
-            return Results.BadRequest(new
-            {
-                message = "Search query must be at least 2 characters.",
-            });
-        }
-
         var clerkId = principal.FindFirstValue(ClaimTypes.NameIdentifier)
                       ?? principal.FindFirstValue("sub");
         if (string.IsNullOrEmpty(clerkId))
         {
-            return Results.Unauthorized();
+            return Guid.Empty;
         }
 
         var user = await users.GetByClerkIdAsync(clerkId, ct);
-        if (user is null)
-        {
-            return Results.Unauthorized();
-        }
-
-        var membership = await orgs.GetMembershipAsync(organizationId, user.Id, ct);
-        if (membership is null || membership.Status != MembershipStatus.Active)
-        {
-            return Results.Forbid();
-        }
-
-        var role = membership.BoutiqueRole;
-        var canViewCatalog = Permissions.IsGranted(role, Permissions.CatalogView);
-        var canViewCustomers = Permissions.IsGranted(role, Permissions.CustomersView);
-        var canViewConversations = Permissions.IsGranted(role, Permissions.ConversationsView);
-
-        var normScope = (scope ?? "all").Trim().ToLowerInvariant();
-        var includeCatalog = canViewCatalog && (normScope is "all" or "catalog");
-        var includeCustomers = canViewCustomers && (normScope is "all" or "customers");
-        var includeConversations = canViewConversations && (normScope is "all" or "conversations");
-
-        var pageNum = Math.Max(1, page ?? 1);
-        var pageSizeNum = Math.Clamp(pageSize ?? 20, 1, 100);
-
-        var allHits = new List<GlobalSearchResultItemDto>();
-        var lowerQuery = query.ToLowerInvariant();
-
-        // 1. Search Catalog Pieces
-        if (includeCatalog)
-        {
-            var (items, _) = await inventory.QueryAsync(
-                organizationId,
-                new CatalogQueryRequest
-                {
-                    Search = query,
-                    Page = 1,
-                    PageSize = 50,
-                },
-                ct);
-
-            foreach (var item in items)
-            {
-                var isExactSku = !string.IsNullOrWhiteSpace(item.Sku) &&
-                                 string.Equals(item.Sku.Trim(), query, StringComparison.OrdinalIgnoreCase);
-                var isNameMatch = item.ItemName.ToLowerInvariant().Contains(lowerQuery);
-                var score = isExactSku ? 1.0 : (isNameMatch ? 0.9 : 0.75);
-
-                var subtitleParts = new[]
-                {
-                    item.Sku,
-                    item.Category,
-                    item.Price > 0 ? $"Rs {item.Price:N0}" : null,
-                }.Where(s => !string.IsNullOrWhiteSpace(s));
-
-                allHits.Add(new GlobalSearchResultItemDto(
-                    SearchEntityType.CatalogItem,
-                    item.Id,
-                    item.ItemName,
-                    string.Join(" · ", subtitleParts),
-                    item.ImageUrl,
-                    $"/catalog/{item.Id}",
-                    score));
-            }
-        }
-
-        // 2. Search Customers
-        if (includeCustomers)
-        {
-            var matchedCustomers = await dbContext.Customers
-                .Where(c => c.OrganizationId == organizationId
-                            && c.DeletedAt == null
-                            && ((c.FullName != null && c.FullName.ToLower().Contains(lowerQuery))
-                                || (c.PhoneNumber != null && c.PhoneNumber.Contains(query))
-                                || (c.Email != null && c.Email.ToLower().Contains(lowerQuery))))
-                .OrderBy(c => c.FullName)
-                .Take(50)
-                .ToListAsync(ct);
-
-            foreach (var cust in matchedCustomers)
-            {
-                var isPhoneExact = !string.IsNullOrWhiteSpace(cust.PhoneNumber) &&
-                                   cust.PhoneNumber.Contains(query, StringComparison.OrdinalIgnoreCase);
-                var isNameMatch = !string.IsNullOrWhiteSpace(cust.FullName) &&
-                                  cust.FullName.ToLowerInvariant().Contains(lowerQuery);
-                var score = isPhoneExact ? 1.0 : (isNameMatch ? 0.9 : 0.8);
-
-                var subtitleParts = new[]
-                {
-                    cust.PhoneNumber,
-                    cust.Status,
-                }.Where(s => !string.IsNullOrWhiteSpace(s));
-
-                allHits.Add(new GlobalSearchResultItemDto(
-                    SearchEntityType.Customer,
-                    cust.Id,
-                    cust.FullName ?? cust.PhoneNumber,
-                    string.Join(" · ", subtitleParts),
-                    null,
-                    $"/customers/{cust.Id}",
-                    score));
-            }
-        }
-
-        // 3. Search Conversations
-        if (includeConversations)
-        {
-            var matchingConvs = await (
-                from c in dbContext.Conversations
-                where c.OrganizationId == organizationId
-                      && (c.OwnerUserId == null || c.OwnerUserId == user.Id)
-                join cust in dbContext.Customers on c.CustomerId equals cust.Id into custGroup
-                from cust in custGroup.DefaultIfEmpty()
-                join msg in dbContext.Messages on c.Id equals msg.ConversationId into msgGroup
-                from msg in msgGroup.OrderByDescending(m => m.CreatedAt).Take(1).DefaultIfEmpty()
-                where (c.ExternalRef != null && c.ExternalRef.ToLower().Contains(lowerQuery))
-                      || (cust != null && cust.FullName != null && cust.FullName.ToLower().Contains(lowerQuery))
-                      || (msg != null && msg.ContentBlocksJson != null && msg.ContentBlocksJson.ToLower().Contains(lowerQuery))
-                select new
-                {
-                    c.Id,
-                    Title = cust != null && cust.FullName != null ? cust.FullName : (c.ExternalRef ?? "The Salon"),
-                    LastMessage = msg != null ? msg.ContentBlocksJson : null,
-                    c.LastMessageAt,
-                    c.CreatedAt,
-                }
-            ).Take(50).ToListAsync(ct);
-
-            foreach (var conv in matchingConvs)
-            {
-                allHits.Add(new GlobalSearchResultItemDto(
-                    SearchEntityType.Conversation,
-                    conv.Id,
-                    conv.Title,
-                    "Conversation thread",
-                    null,
-                    $"/conversations/thread/{conv.Id}",
-                    0.75));
-            }
-        }
-
-        // Rank and Paginate
-        var total = allHits.Count;
-        var pagedHits = allHits
-            .OrderByDescending(h => h.Score)
-            .ThenBy(h => h.Title)
-            .ThenBy(h => h.Id)
-            .Skip((pageNum - 1) * pageSizeNum)
-            .Take(pageSizeNum)
-            .ToList();
-
-        return Results.Ok(new GlobalSearchResponseDto(pagedHits, total, pageNum, pageSizeNum));
+        return user?.Id ?? Guid.Empty;
     }
 }

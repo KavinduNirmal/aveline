@@ -176,12 +176,12 @@ public class SearchEndpointsIntegrationTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        var body = await response.Content.ReadFromJsonAsync<GlobalSearchResponseDto>();
+        var body = await response.Content.ReadFromJsonAsync<SearchResultPageDto>();
         Assert.NotNull(body);
         Assert.True(body.Total >= 3);
-        Assert.Contains(body.Items, i => i.Type == SearchEntityType.CatalogItem && i.Id == data.ItemId);
-        Assert.Contains(body.Items, i => i.Type == SearchEntityType.Customer && i.Id == data.CustomerId);
-        Assert.Contains(body.Items, i => i.Type == SearchEntityType.Conversation && i.Id == data.ConversationId);
+        Assert.Contains(body.Items, i => i.Type == "catalogItem" && i.Id == data.ItemId);
+        Assert.Contains(body.Items, i => i.Type == "customer" && i.Id == data.CustomerId);
+        Assert.Contains(body.Items, i => i.Type == "conversation" && i.Id == data.ConversationId);
     }
 
     [Fact]
@@ -195,10 +195,10 @@ public class SearchEndpointsIntegrationTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        var body = await response.Content.ReadFromJsonAsync<GlobalSearchResponseDto>();
+        var body = await response.Content.ReadFromJsonAsync<SearchResultPageDto>();
         Assert.NotNull(body);
         Assert.NotEmpty(body.Items);
-        Assert.All(body.Items, i => Assert.Equal(SearchEntityType.CatalogItem, i.Type));
+        Assert.All(body.Items, i => Assert.Equal("catalogItem", i.Type));
     }
 
     [Fact]
@@ -212,10 +212,10 @@ public class SearchEndpointsIntegrationTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        var body = await response.Content.ReadFromJsonAsync<GlobalSearchResponseDto>();
+        var body = await response.Content.ReadFromJsonAsync<SearchResultPageDto>();
         Assert.NotNull(body);
         Assert.NotEmpty(body.Items);
-        Assert.All(body.Items, i => Assert.Equal(SearchEntityType.Customer, i.Type));
+        Assert.All(body.Items, i => Assert.Equal("customer", i.Type));
     }
 
     [Fact]
@@ -241,7 +241,7 @@ public class SearchEndpointsIntegrationTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        var body = await response.Content.ReadFromJsonAsync<GlobalSearchResponseDto>();
+        var body = await response.Content.ReadFromJsonAsync<SearchResultPageDto>();
         Assert.NotNull(body);
         Assert.Equal(0, body.Total);
         Assert.Empty(body.Items);

@@ -285,6 +285,8 @@ function PieceBlock({ block, messageId, bridge }: BlockRendererProps) {
     >
       {block.imageUrl ? (
         <img
+          loading="lazy"
+          decoding="async"
           src={block.imageUrl}
           alt={name}
           className="aspect-4/3 w-full bg-muted object-cover"
@@ -568,6 +570,8 @@ function LookBlock({ block, persona, tone, messageId, bridge }: BlockRendererPro
       className="rounded-xl border border-border/70 bg-card"
     >
       <img
+        loading="lazy"
+        decoding="async"
         src={block.imageUrl}
         alt={block.name ?? 'Look'}
         className="aspect-4/3 w-full bg-muted object-cover"
@@ -864,7 +868,7 @@ function AttachmentViewer({
           />
         ) : (
           <div className="max-h-[70vh] overflow-auto">
-            <img src={objectUrl} alt={fileName} className="mx-auto max-w-full" />
+            <img loading="lazy" decoding="async" src={objectUrl} alt={fileName} className="mx-auto max-w-full" />
           </div>
         )}
       </DialogContent>
@@ -1061,6 +1065,8 @@ function AttachmentBlock({
           <img
             src={objectUrl}
             alt={fileName}
+            loading="lazy"
+            decoding="async"
             className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
             // Mirrors mobile's `errorBuilder`: bytes that arrive but will not decode fall back to
             // the chip rather than to a broken-image glyph.

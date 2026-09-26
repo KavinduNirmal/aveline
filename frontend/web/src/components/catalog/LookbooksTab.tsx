@@ -170,6 +170,8 @@ export function LookbooksTab({
                     >
                       {item.imageUrl ? (
                         <img
+                          loading="lazy"
+                          decoding="async"
                           src={item.imageUrl}
                           alt={item.name}
                           className="size-14 rounded-lg object-cover border border-border shrink-0"

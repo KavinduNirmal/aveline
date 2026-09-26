@@ -1,7 +1,19 @@
 import { useState, useEffect } from 'react'
-import { motion, AnimatePresence } from 'motion/react'
+import { motion, AnimatePresence, useReducedMotion } from 'motion/react'
 import { Blossom } from '@/components/auth/Blossom'
 import { cn } from '@/lib/utils'
+
+/**
+ * The same Pexels asset at a different width.
+ *
+ * Pexels resizes server-side from the `w` query parameter, so this is a genuine downscale and not
+ * a renamed URL. The hero box is at most 672 px wide (`max-w-2xl` in `LandingPage.tsx`), yet the
+ * slides asked for `w=1400` — roughly 3.6x more pixels than any layout could use, decoded on the
+ * main thread and paid for on mobile data.
+ */
+function pexelsAt(url: string, width: number) {
+  return url.replace(/w=\d+/, `w=${width}`)
+}
 
 interface Slide {
   id: number
@@ -22,7 +34,7 @@ interface Slide {
 const SLIDES: Slide[] = [
   {
     id: 1,
-    imageUrl: 'https://images.pexels.com/photos/1884581/pexels-photo-1884581.jpeg?auto=compress&cs=tinysrgb&w=1400',
+    imageUrl: 'https://images.pexels.com/photos/1884581/pexels-photo-1884581.jpeg?auto=compress&cs=tinysrgb&w=800',
     title: 'The Silk & Linen Atelier',
     boutique: 'Maison Galle Fort',
     location: 'Lighthouse Street, Galle',
@@ -37,7 +49,7 @@ const SLIDES: Slide[] = [
   },
   {
     id: 2,
-    imageUrl: 'https://images.pexels.com/photos/974911/pexels-photo-974911.jpeg?auto=compress&cs=tinysrgb&w=1400',
+    imageUrl: 'https://images.pexels.com/photos/974911/pexels-photo-974911.jpeg?auto=compress&cs=tinysrgb&w=800',
     title: 'Couture Fitting Studio',
     boutique: 'Cinnamon Row Tailors',
     location: 'Colombo 07',
@@ -52,7 +64,7 @@ const SLIDES: Slide[] = [
   },
   {
     id: 3,
-    imageUrl: 'https://images.pexels.com/photos/3755706/pexels-photo-3755706.jpeg?auto=compress&cs=tinysrgb&w=1400',
+    imageUrl: 'https://images.pexels.com/photos/3755706/pexels-photo-3755706.jpeg?auto=compress&cs=tinysrgb&w=800',
     title: 'Artisanal Ready-To-Wear',
     boutique: 'Studio Nine Colombo',
     location: 'Horton Place, Colombo',
@@ -69,15 +81,47 @@ const SLIDES: Slide[] = [
 
 export function HeroSlideshow({ className }: { className?: string }) {
   const [currentIndex, setCurrentIndex] = useState(0)
+  const reduceMotion = useReducedMotion()
 
+  /**
+   * Advance the slideshow only while it can be seen.
+   *
+   * The 5.5 s interval used to run in a backgrounded tab, waking the CPU to re-render a slide
+   * nobody was looking at. `prefers-reduced-motion` additionally stops the auto-advance
+   * altogether: an element that changes on its own is the exact thing that preference asks us
+   * not to do. The dots still let a reader move through the slides by hand.
+   */
   useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentIndex((prev) => (prev + 1) % SLIDES.length)
-    }, 5500)
-    return () => clearInterval(timer)
-  }, [])
+    if (reduceMotion) return
+
+    let timer: ReturnType<typeof setInterval> | undefined
+    const stop = () => {
+      if (timer !== undefined) {
+        clearInterval(timer)
+        timer = undefined
+      }
+    }
+    const start = () => {
+      stop()
+      timer = setInterval(() => {
+        setCurrentIndex((prev) => (prev + 1) % SLIDES.length)
+      }, 5500)
+    }
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') stop()
+      else start()
+    }
+
+    if (document.visibilityState !== 'hidden') start()
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      stop()
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [reduceMotion])
 
   const current = SLIDES[currentIndex]
+  const transitionDuration = reduceMotion ? 0 : 1.1
 
   return (
     <div
@@ -90,15 +134,26 @@ export function HeroSlideshow({ className }: { className?: string }) {
       <AnimatePresence mode="wait">
         <motion.div
           key={current.id}
-          initial={{ opacity: 0, scale: 1.04 }}
+          initial={reduceMotion ? false : { opacity: 0, scale: 1.04 }}
           animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.98 }}
-          transition={{ duration: 1.1, ease: [0.22, 1, 0.36, 1] }}
+          exit={reduceMotion ? { opacity: 1 } : { opacity: 0, scale: 0.98 }}
+          transition={{ duration: transitionDuration, ease: [0.22, 1, 0.36, 1] }}
           className="absolute inset-0"
         >
           <img
             src={current.imageUrl}
+            srcSet={[
+              `${pexelsAt(current.imageUrl, 480)} 480w`,
+              `${pexelsAt(current.imageUrl, 800)} 800w`,
+              `${pexelsAt(current.imageUrl, 1200)} 1200w`,
+            ].join(', ')}
+            // The slideshow sits inside `max-w-2xl` (672 px). Below that breakpoint the section is
+            // the viewport minus its `px-5` gutter, so a phone picks the 480w candidate at 1x and
+            // the 800w one at 1.75x/2x — never the 1400 px original this used to request.
+            sizes="(min-width: 768px) 672px, calc(100vw - 2.5rem)"
             alt={current.title}
+            loading="lazy"
+            decoding="async"
             className="h-full w-full object-cover object-center"
           />
           {/* Rich luxury darkening and gradient overlays */}

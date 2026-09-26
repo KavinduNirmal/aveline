@@ -364,6 +364,8 @@ export function PhoneMockup() {
 
                     <div className="flex gap-3 items-center">
                       <img
+                        loading="lazy"
+                        decoding="async"
                         src="https://images.pexels.com/photos/291759/pexels-photo-291759.jpeg?auto=compress&cs=tinysrgb&w=200"
                         alt="Peony Drape Gown"
                         className="size-14 shrink-0 rounded-xl object-cover border border-neutral-200/80 shadow-2xs"
@@ -412,6 +414,8 @@ export function PhoneMockup() {
 
                     <div className="flex items-center gap-2 mb-2.5">
                       <img
+                        loading="lazy"
+                        decoding="async"
                         src="https://images.pexels.com/photos/1239291/pexels-photo-1239291.jpeg?auto=compress&cs=tinysrgb&w=150"
                         alt="Sarah Alwis"
                         className="size-7 rounded-full object-cover border border-emerald-300/80"
@@ -553,6 +557,8 @@ export function PhoneMockup() {
                       <div className="rounded-xl bg-rose-50/60 p-2 border border-rose-100">
                         <span className="text-[9px] text-neutral-500 block mb-1">Store Inventory</span>
                         <img
+                          loading="lazy"
+                          decoding="async"
                           src="https://images.pexels.com/photos/1755428/pexels-photo-1755428.jpeg?auto=compress&cs=tinysrgb&w=200"
                           alt="Store stock"
                           className="h-16 w-full rounded-lg object-cover"
@@ -562,6 +568,8 @@ export function PhoneMockup() {
                       <div className="rounded-xl bg-amber-50/60 p-2 border border-amber-100">
                         <span className="text-[9px] text-neutral-500 block mb-1">Sarah’s Moodboard</span>
                         <img
+                          loading="lazy"
+                          decoding="async"
                           src="https://images.pexels.com/photos/985635/pexels-photo-985635.jpeg?auto=compress&cs=tinysrgb&w=200"
                           alt="Sarah's moodboard"
                           className="h-16 w-full rounded-lg object-cover"
@@ -681,6 +689,8 @@ export function PhoneMockup() {
                   {/* WhatsApp chat header */}
                   <div className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 border border-neutral-200/80 shadow-xs">
                     <img
+                      loading="lazy"
+                      decoding="async"
                       src="https://images.pexels.com/photos/1239291/pexels-photo-1239291.jpeg?auto=compress&cs=tinysrgb&w=150"
                       alt="Sarah Alwis"
                       className="size-7 rounded-full object-cover border border-emerald-300"

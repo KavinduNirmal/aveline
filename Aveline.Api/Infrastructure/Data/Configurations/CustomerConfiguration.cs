@@ -26,6 +26,9 @@ public class CustomerConfiguration : IEntityTypeConfiguration<Customer>
         builder.Property(c => c.FullName)
             .HasMaxLength(200);
 
+        builder.Property(c => c.Nickname)
+            .HasMaxLength(200);
+
         builder.Property(c => c.Status)
             .IsRequired()
             .HasMaxLength(32)

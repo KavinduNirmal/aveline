@@ -124,6 +124,9 @@ public class HealthEndpointsIntegrationTests : IAsyncLifetime
                 // boots the safe default (Media:Provider=database), which Production refuses
                 // unless the escape hatch is set explicitly.
                 builder.UseSetting("Media:AllowDatabaseProviderInProduction", "true");
+                // Required by the Production database guard: this host deliberately runs on the
+                // in-memory provider, which Production refuses without the documented escape hatch.
+                builder.UseSetting("Database:AllowInMemoryInProduction", "true");
                 builder.UseSetting("AgentService:BaseUrl", _agentServer.BaseUrl);
                 builder.UseSetting("AgentService:InternalToken", "test-internal-token");
                 builder.UseSetting("Observability:AgentIsCritical", "false");

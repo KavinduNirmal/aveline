@@ -267,7 +267,7 @@ public class CustomerConciergeEndpointsIntegrationTests : IAsyncLifetime
     public async Task Consent_SerialisesTheWidenedPayloadInCamelCase()
     {
         // D-2 / 0.3: the Python agent reads the camelCase `consentStatus` field
-        // (agnet-service/app/agents/customer_memory/nodes.py:112) and docs/api/openapi.yaml
+        // (agent-service/app/agents/customer_memory/nodes.py:112) and docs/api/openapi.yaml
         // documents it. Widening the DTO must not rename or re-case what the agent parses.
         var orgId = Guid.NewGuid();
         var identify = await InternalPostAsync("/internal/customers/identify",

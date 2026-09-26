@@ -44,6 +44,7 @@ public class FullAuthFlowIntegrationTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.UseSetting("AgentService:BaseUrl", _agentServer.BaseUrl + "/");
                 builder.UseSetting("AgentService:InternalToken", InternalToken);
@@ -228,6 +229,7 @@ public class FullAuthFlowIntegrationTests : IAsyncLifetime
             {
                 builder.UseEnvironment("Development");
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.UseSetting("AgentService:BaseUrl", _agentServer.BaseUrl + "/");
                 builder.UseSetting("AgentService:InternalToken", InternalToken);
@@ -255,7 +257,7 @@ public class FullAuthFlowIntegrationTests : IAsyncLifetime
     private static async Task SeedActiveUserAsync(string clerkId)
     {
         await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
         if (await context.Users.AnyAsync(user => user.ClerkId == clerkId))

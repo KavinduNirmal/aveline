@@ -44,6 +44,7 @@ public class TenantDashboardEndpointsTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
             });
 
@@ -80,7 +81,7 @@ public class TenantDashboardEndpointsTests : IAsyncLifetime
     private static async Task<(Guid OrgId, string ManagerClerk, string StaffClerk)> SeedAsync(string suffix)
     {
         await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
         var manager = new User

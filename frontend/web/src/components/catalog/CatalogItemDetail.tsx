@@ -159,7 +159,7 @@ export function CatalogItemDetail({
         <Card className="overflow-hidden border-border/80 bg-card p-0">
           <div className="relative aspect-4/3 w-full overflow-hidden bg-muted">
             {item.imageUrl ? (
-              <img src={item.imageUrl} alt={item.name} className="h-full w-full object-cover" />
+              <img loading="lazy" decoding="async" src={item.imageUrl} alt={item.name} className="h-full w-full object-cover" />
             ) : (
               <div className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">
                 No photograph

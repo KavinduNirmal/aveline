@@ -36,7 +36,7 @@ stacked, so a curated set reads as a set.
 the resolver read (ADR-019).
 
 - `lib/features/salon/domain/mentions.dart` — a mirror of the resolver's grammar
-  (`agnet-service/app/customer_resolution/mentions.py`), case-for-case with the
+  (`agent-service/app/customer_resolution/mentions.py`), case-for-case with the
   web's `lib/mentions.ts`, including the resolver's own `#` (single backslash) vs
   `@` (odd run) escaping asymmetry.
 - `lib/features/salon/presentation/widgets/mention_text.dart` — the paragraph, with

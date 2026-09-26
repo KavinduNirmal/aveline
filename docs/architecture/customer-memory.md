@@ -18,10 +18,10 @@ Python agent orchestrates via internal endpoints.
 WhatsApp message
       │
       ▼
-Intent Gate (agnet-service/app/gate.py)
+Intent Gate (agent-service/app/gate.py)
       │  intent_type + routing
       ▼
-Customer Memory Agent sub-graph (agnet-service/app/agents/customer_memory/)
+Customer Memory Agent sub-graph (agent-service/app/agents/customer_memory/)
   resolve_customer → check_consent → parse → retrieve → persist → compose_output
       │                (ToolRegistry → HTTP → ASP.NET Core internal endpoints)
       ▼
@@ -37,9 +37,9 @@ Customer Memory Agent sub-graph (agnet-service/app/agents/customer_memory/)
 | Services (identify, memory, consent, interactions, events, brief, loyalty, reminders) | `Aveline.Api/Modules/CustomerConcierge/Services` |
 | Embedding generation (`IEmbeddingService`) | `Aveline.Api/Modules/CustomerConcierge/Services` |
 | Internal endpoints (`/internal/customers/*`) | `Aveline.Api/Endpoints/CustomerConciergeEndpoints.cs` |
-| Typed I/O schemas | `agnet-service/app/schemas/customer_memory.py` |
-| Backend client (`ToolRegistry`) | `agnet-service/app/tools/registry.py` |
-| LangGraph sub-graph (nodes, state, parsing) | `agnet-service/app/agents/customer_memory/` |
+| Typed I/O schemas | `agent-service/app/schemas/customer_memory.py` |
+| Backend client (`ToolRegistry`) | `agent-service/app/tools/registry.py` |
+| LangGraph sub-graph (nodes, state, parsing) | `agent-service/app/agents/customer_memory/` |
 
 The Python agent never writes to the database and never calls third parties directly — it calls
 the API's internal endpoints guarded by the `X-Internal-Token` header (ADR-009).
@@ -307,7 +307,7 @@ The metrics are `aveline_otp_{issued,verified,failed,start_refused}_total`
 When staff type natural language into the **General Salon** (e.g. "Any events for Samantha
 Arias?") there is no `customer_id`/phone in context. The concierge orchestrator resolves the
 customer **once** before dispatching specialists via the shared module
-`agnet-service/app/customer_resolution/`:
+`agent-service/app/customer_resolution/`:
 
 - Deterministic extraction (`extract_phone`, `extract_customer_name`) finds a phone or a
   capitalized proper-name phrase in the message.

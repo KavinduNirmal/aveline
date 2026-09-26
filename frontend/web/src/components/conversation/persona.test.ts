@@ -19,6 +19,35 @@ describe('personaForAgent', () => {
     expect(personaForAgent('lina').name).toBe('Lina')
   })
 
+  /**
+   * Lina's accent must not go through `commerce`.
+   *
+   * `commerce` is the brand wine-rose and is also what paints the documentation section, the
+   * pricing CTA and the orders/payments surfaces. Routing her accent through it meant an
+   * agent-colour change would recolour all of those, and it also made her avatar identical to
+   * Aveline's, who uses `primary` - the same value. She has her own lilac token instead.
+   */
+  describe("Lina's accent", () => {
+    it('uses the lilac token rather than commerce or primary', () => {
+      const lina = personaForAgent('lina')
+      expect(lina.bg).toBe('bg-lilac')
+      expect(lina.text).toBe('text-lilac')
+      expect(lina.bgSoft).toBe('bg-lilac/10')
+      expect(lina.ring).toBe('ring-lilac/20')
+    })
+
+    it('is distinct from every other persona accent', () => {
+      const accents = ['aveline', 'ava', 'elle', 'lina'].map((key) => personaForAgent(key).bg)
+      expect(new Set(accents).size).toBe(4)
+    })
+
+    it('leaves Aveline on the brand primary and the others on their own tokens', () => {
+      expect(personaForAgent('aveline').bg).toBe('bg-primary')
+      expect(personaForAgent('ava').bg).toBe('bg-memory')
+      expect(personaForAgent('elle').bg).toBe('bg-visual')
+    })
+  })
+
   it('defaults to Aveline for an unknown key', () => {
     expect(personaForAgent('unknown').name).toBe('Aveline')
   })

@@ -167,6 +167,7 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.UseSetting("Credentials:EncryptionKey", Base64Key);
                 builder.ConfigureTestServices(services =>
@@ -842,7 +843,7 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
     private static AppDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options;
         return new AppDbContext(options);
     }

@@ -38,6 +38,7 @@ public class SystemStatisticsEndpointsTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.UseSetting("Telemetry:Enabled", "false");
             });
@@ -81,7 +82,7 @@ public class SystemStatisticsEndpointsTests : IAsyncLifetime
 
     private static AppDbContext Context() => new(
         new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
     private static async Task SeedOwnerAsync(string suffix)

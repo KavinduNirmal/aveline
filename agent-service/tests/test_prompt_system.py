@@ -1,7 +1,7 @@
 """Tests for the 3-layer prompt system (app/prompts/).
 
 The universal system prompt is the single source of truth shipped with the agent
-service at ``agnet-service/app/prompts/SYSTEM_PROMPT.md``; the loader reads it
+service at ``agent-service/app/prompts/SYSTEM_PROMPT.md``; the loader reads it
 once and caches it. Agent-specific prompts are placeholders owned by the slice
 students.
 """
@@ -12,7 +12,7 @@ import pytest
 
 from app.prompts import agent_prompts, assembly, context, loader
 
-# tests/test_prompt_system.py -> agnet-service/app/prompts/SYSTEM_PROMPT.md
+# tests/test_prompt_system.py -> agent-service/app/prompts/SYSTEM_PROMPT.md
 CANONICAL_PROMPT = Path(__file__).resolve().parents[1] / "app" / "prompts" / "SYSTEM_PROMPT.md"
 
 

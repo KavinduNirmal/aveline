@@ -113,7 +113,7 @@ in ADR-023.
 ## 6. Related
 
 - [ADR-023](../ADR/ADR-023-conversation-context-and-supervisor.md) — the decision and the layer model
-- [`app/context/__init__.py`](../../agnet-service/app/context/__init__.py) — window, compaction, rendering
+- [`app/context/__init__.py`](../../agent-service/app/context/__init__.py) — window, compaction, rendering
 - [`inbox.md`](./inbox.md) — the conversation surface the context is drawn from
 - [`integrations.md`](./integrations.md) — the `.NET` to agent-service contract
 - [`handbook.md`](./handbook.md) — the documentation lane, and [`tenant-awareness.md`](./tenant-awareness.md)

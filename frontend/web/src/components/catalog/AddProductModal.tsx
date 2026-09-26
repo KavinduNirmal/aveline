@@ -688,6 +688,8 @@ export function AddProductModal({
                   <div className="flex items-center justify-between gap-3 p-3 rounded-xl border border-border bg-card">
                     <div className="flex items-center gap-3 min-w-0">
                       <img
+                        loading="lazy"
+                        decoding="async"
                         src={imageUrl}
                         alt="Garment preview"
                         className="size-14 rounded-lg object-cover border border-border shrink-0 shadow-2xs"

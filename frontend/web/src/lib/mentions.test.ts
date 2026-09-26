@@ -5,7 +5,7 @@ import { findMentions, splitMentions } from './mentions'
 /**
  * The rule this file exists to enforce: **a pill covers exactly what the resolver read.**
  *
- * The parser here is a mirror of `agnet-service/app/customer_resolution/mentions.py`, and the Salon
+ * The parser here is a mirror of `agent-service/app/customer_resolution/mentions.py`, and the Salon
  * draws a pill over the span it returns. If the two drift, the UI starts claiming the lookup used
  * an entity it never saw — a mention that ends a word early, or swallows the prose after a name.
  * The cases below are the resolver's own examples plus the edges its grammar turns on.

@@ -3,7 +3,7 @@
 > This directory no longer holds per-tool Python files.
 
 The Customer Memory Agent (Slice 1) calls the ASP.NET Core backend through a single shared
-**`ToolRegistry`** (`agnet-service/app/tools/registry.py`) which is a thin, authenticated wrapper
+**`ToolRegistry`** (`agent-service/app/tools/registry.py`) which is a thin, authenticated wrapper
 over the backend internal endpoints. There is intentionally **no** `@tool`/per-tool file split —
 the registry methods map 1:1 onto the `/internal/customers/*` endpoints.
 

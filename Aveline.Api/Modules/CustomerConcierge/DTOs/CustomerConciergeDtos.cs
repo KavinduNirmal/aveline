@@ -59,7 +59,7 @@ public sealed record CustomerTagDto(string Tag);
 
 /// <summary>
 /// A customer's consent state. The property names serialise to camelCase, and the Python agent
-/// reads <c>consentStatus</c> from this payload (<c>agnet-service/app/agents/customer_memory/nodes.py</c>);
+/// reads <c>consentStatus</c> from this payload (<c>agent-service/app/agents/customer_memory/nodes.py</c>);
 /// do not rename or re-case them.
 /// </summary>
 public sealed record CustomerConsentDto(

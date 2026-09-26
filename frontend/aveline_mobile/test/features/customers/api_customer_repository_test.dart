@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:aveline_mobile/features/customers/data/api_customer_repository.dart';
+import 'package:aveline_mobile/features/customers/data/customer_repository.dart';
 import 'package:aveline_mobile/features/customers/domain/customer_detail.dart';
 import 'package:aveline_mobile/features/customers/domain/customer_level.dart';
 import 'package:aveline_mobile/features/home/data/api_customer_tenant_repository.dart';
@@ -17,6 +18,8 @@ class _StubAdapter implements HttpClientAdapter {
   int statusCode = 200;
   String? lastPath;
   Object? lastBody;
+  Map<String, dynamic>? lastQueryParameters;
+  Map<String, dynamic>? lastHeaders;
 
   @override
   Future<ResponseBody> fetch(
@@ -26,6 +29,8 @@ class _StubAdapter implements HttpClientAdapter {
   ) async {
     lastPath = options.path;
     lastBody = options.data;
+    lastQueryParameters = options.queryParameters;
+    lastHeaders = options.headers;
     if (statusCode != 200 && statusCode != 201) {
       return ResponseBody.fromString('{}', statusCode);
     }
@@ -101,6 +106,16 @@ void main() {
       final book = await unattachedRepo.fetchBook();
       expect(book.isEmpty, isTrue);
     });
+
+    test('passes the search text and level filter through', () async {
+      await repository.fetchBook(
+        query: const CustomerQuery(search: 'Anjali', level: CustomerLevel.vip),
+      );
+
+      expect(adapter.lastPath, '/api/v1/orgs/org-1/customers');
+      expect(adapter.lastQueryParameters?['search'], 'Anjali');
+      expect(adapter.lastQueryParameters?['level'], 'vip');
+    });
   });
 
   group('ApiCustomerRepository.fetchCustomer', () {
@@ -160,6 +175,115 @@ void main() {
       adapter.statusCode = 404;
       final detail = await repository.fetchCustomer('nonexistent');
       expect(detail, isNull);
+    });
+
+    test('reads memories, events and preferences into the profile', () async {
+      adapter.routeResponses = {
+        '/api/v1/orgs/org-1/customers/sub-1': {
+          'customerId': 'sub-1',
+          'fullName': 'Chamari Silva',
+          'nickname': 'Chami',
+          'phoneNumber': '+94711223344',
+          'email': 'chami@example.com',
+          'level': 'vip',
+          'status': 'vip',
+          'totalSpent': 150000.0,
+          'visitCount': 12,
+          'lastVisitAtUtc': '2026-09-12T14:30:00Z',
+          'createdAtUtc': '2025-05-01T08:00:00Z',
+          'tags': ['silk-lover', 'formal'],
+          'preferences': [
+            {
+              'id': 'p1',
+              'preferenceKey': 'Fabric',
+              'preferenceValue': 'Raw silk',
+              'isExplicit': true,
+              'confidence': 1.0,
+            }
+          ],
+        },
+        '/api/v1/orgs/org-1/customers/sub-1/consent': {
+          'id': 'consent-1',
+          'status': 'granted',
+          'grantedAtUtc': '2026-08-03T10:00:00Z',
+          'revokedAtUtc': null,
+        },
+        '/api/v1/orgs/org-1/customers/sub-1/memories': [
+          {
+            'id': 'm1',
+            'customerId': 'sub-1',
+            'content': 'Prefers dark jewel tones for evening wear.',
+            'category': 'preference',
+            'source': 'conversation',
+            'isExplicit': true,
+            'confidence': 0.95,
+            'createdAtUtc': '2026-09-01T12:00:00Z',
+          }
+        ],
+        '/api/v1/orgs/org-1/customers/sub-1/events': [
+          {
+            'id': 'e1',
+            'eventType': 'wedding',
+            'eventDate': '2026-12-15T00:00:00Z',
+            'description': 'Wedding reception',
+            'isActive': true,
+          }
+        ],
+        '/api/v1/orgs/org-1/customers/sub-1/interactions': {
+          'items': [
+            {
+              'interactionId': 'i1',
+              'channel': 'in_person',
+              'direction': 'inbound',
+              'occurredAtUtc': '2026-09-12T14:30:00Z',
+              'note': 'Walked in to discuss wedding attire options.',
+              'countedAsVisit': true,
+            }
+          ],
+          'total': 1,
+          'page': 1,
+          'pageSize': 50,
+        },
+      };
+
+      final detail = await repository.fetchCustomer('sub-1');
+
+      expect(detail, isNotNull);
+      expect(detail!.consent.status, ConsentStatus.granted);
+      expect(detail.preferences, hasLength(1));
+      expect(detail.preferences.first.key, 'Fabric');
+      expect(detail.memories, hasLength(1));
+      expect(detail.memories.first.content, contains('dark jewel tones'));
+      expect(detail.events, hasLength(1));
+      expect(detail.events.first.type, CustomerEventType.wedding);
+      expect(detail.interactions, hasLength(1));
+      expect(detail.interactions.first.channel, InteractionChannel.inPerson);
+    });
+  });
+
+  group('ApiCustomerRepository mutations', () {
+    test('recordVisit posts an inbound in-person interaction with an idempotency key', () async {
+      await repository.recordVisit('cus-1');
+
+      expect(adapter.lastPath, '/api/v1/orgs/org-1/customers/cus-1/interactions');
+      final body = adapter.lastBody as Map;
+      expect(body['channel'], 'in_person');
+      expect(body['direction'], 'inbound');
+      expect(adapter.lastHeaders?['Idempotency-Key'], isNotEmpty);
+    });
+
+    test('recomputeTier posts to the status endpoint and returns the new status', () async {
+      adapter.routeResponses = {
+        '/api/v1/orgs/org-1/customers/cus-1/status': {
+          'customerId': 'cus-1',
+          'status': 'vip',
+        },
+      };
+
+      final status = await repository.recomputeTier('cus-1');
+
+      expect(adapter.lastPath, '/api/v1/orgs/org-1/customers/cus-1/status');
+      expect(status, 'vip');
     });
   });
 

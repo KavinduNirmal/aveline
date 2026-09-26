@@ -79,6 +79,8 @@ export function ProductCard({
   // the card also carries its own buttons, and nesting them would be invalid markup.
   const garment = item.imageUrl ? (
     <img
+      loading="lazy"
+      decoding="async"
       src={item.imageUrl}
       alt={item.name}
       className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"

@@ -21,7 +21,6 @@ namespace Aveline.Api.Tests;
 /// </summary>
 public class AdminOrganizationEndpointsIntegrationTests : IAsyncLifetime
 {
-    private const string DatabaseName = "AvelineInMemoryDb";
 
     private RsaSecurityKey _signingKey = null!;
     private StubAuthServer _authServer = null!;
@@ -38,6 +37,7 @@ public class AdminOrganizationEndpointsIntegrationTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
             });
 
@@ -53,7 +53,7 @@ public class AdminOrganizationEndpointsIntegrationTests : IAsyncLifetime
 
     private static AppDbContext CreateContext() =>
         new(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: DatabaseName)
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
     private static async Task<Guid> SeedOrganizationAsync(

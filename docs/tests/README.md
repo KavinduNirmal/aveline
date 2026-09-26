@@ -12,7 +12,7 @@ Aveline tests four independent codebases, one per technology stack:
 | Layer | Stack | Tools | Location |
 |---|---|---|---|
 | **Backend API** | ASP.NET Core 10 (C#) | xUnit + Moq + `WebApplicationFactory` + Coverlet | `Aveline.Api.Tests/` |
-| **Agent Service** | Python 3.12 + FastAPI + LangGraph | pytest + `pytest-asyncio` + `pytest-cov` + respx + fakeredis | `agnet-service/tests/` |
+| **Agent Service** | Python 3.12 + FastAPI + LangGraph | pytest + `pytest-asyncio` + `pytest-cov` + respx + fakeredis | `agent-service/tests/` |
 | **Web Dashboard** | React 19 + TypeScript (Vite) | Vitest + `@vitest/coverage-v8` | `frontend/web/src/**/*.test.ts(x)` |
 | **Mobile App** | Flutter (Dart) | `flutter_test` | `frontend/aveline_mobile/test/` |
 
@@ -77,7 +77,7 @@ Reports are written to `Aveline.Api.Tests/TestResults/` (gitignored).
 
 ---
 
-## 3. Python Tests (`agnet-service/tests/`)
+## 3. Python Tests (`agent-service/tests/`)
 
 381 test functions across agent graphs, tool registries, orchestrators, and schemas.
 
@@ -93,10 +93,10 @@ Approach:
 ### Run
 
 ```bash
-pytest agnet-service/tests/ -v
+pytest agent-service/tests/ -v
 ```
 
-Configuration lives in `agnet-service/pyproject.toml` (`[tool.pytest.ini_options]`:
+Configuration lives in `agent-service/pyproject.toml` (`[tool.pytest.ini_options]`:
 `testpaths = ["tests"]`, `pythonpath = ["."]`, `asyncio_mode = "auto"`).
 
 ### Files
@@ -227,7 +227,7 @@ Clerk-style JWT  →  Aveline.Api (real JwtBearer + JWKS pipeline)
   document + a test JWKS, so `AddJwtBearer` runs its full discovery → signature →
   issuer → lifetime pipeline offline.
 - A **stub agent server** records the `X-Internal-Token` header and echoes the payload,
-  mirroring `agnet-service/app/api/agents.py`.
+  mirroring `agent-service/app/api/agents.py`.
 - The API is booted via `WebApplicationFactory<Program>` with `Clerk:Authority`,
   `AgentService:BaseUrl`, and `AgentService:InternalToken` overridden.
 
@@ -298,7 +298,7 @@ Each stack instruments coverage with its own tooling and enforces a threshold in
 Local coverage reports:
 
 - **Backend**: `Aveline.Api.Tests/TestResults/` (gitignored).
-- **Agent Service**: `agnet-service/coverage.xml` (XML) + terminal summary.
+- **Agent Service**: `agent-service/coverage.xml` (XML) + terminal summary.
 - **Web**: `frontend/web/coverage/` (text, JSON summary, and HTML reporters).
 - **Mobile**: `frontend/aveline_mobile/coverage/lcov.info`.
 

@@ -30,5 +30,5 @@ the `InternalServiceAuthHandler` (fails closed if unconfigured); the agent's
 ## Consequences
 - The agent is unreachable by clients: it trusts only the API.
 - The API propagates the authenticated `userId` + roles to the agent in the payload.
-- Rotation = updating both `Aveline.Api` and `agnet-service` env config.
+- Rotation = updating both `Aveline.Api` and `agent-service` env config.
 - Transport is HTTPS in deployment (Azure Container Apps).

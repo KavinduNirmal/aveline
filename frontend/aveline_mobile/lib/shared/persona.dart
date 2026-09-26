@@ -23,8 +23,15 @@ const Color _avaAccent = Color(0xFFB0566B);
 /// Visual's soft gold/brass.
 const Color _elleAccent = Color(0xFFB08D57);
 
-/// Commerce's wine-rose (same as primary).
-const Color _linaAccent = Color(0xFF8B2E42);
+/// Commerce's lilac.
+///
+/// Lina used to share Aveline's wine-rose (`0xFF8B2E42`), which is also the theme seed and the
+/// colour the docs chrome and the pricing CTA are built on — so her avatar was indistinguishable
+/// from the app's own accent. She now has her own lilac, matching `--aveline-lilac` in the web
+/// palette. It is deliberately deeper than the decorative lavender (`0xFF8E7CC3`) because her
+/// name label and avatar glyphs sit on this colour at 11px, where lavender is only ~3.6:1 against
+/// white; this clears WCAG AA at ~5.9:1.
+const Color _linaAccent = Color(0xFF6B5A9E);
 
 const Map<String, Persona> _personas = {
   'aveline': Persona(name: 'Aveline', accent: _avelineAccent, role: 'Your concierge'),

@@ -832,6 +832,8 @@ export function CatalogPanel({
               <div className="flex items-center gap-3.5 p-3 rounded-xl border border-border/80 bg-muted/20">
                 {itemToDelete.imageUrl && (
                   <img
+                    loading="lazy"
+                    decoding="async"
                     src={itemToDelete.imageUrl}
                     alt={itemToDelete.name}
                     className="size-16 rounded-lg object-cover border border-border shrink-0 shadow-2xs"

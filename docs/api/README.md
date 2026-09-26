@@ -955,7 +955,7 @@ book. `limit` bounds the *named* clients, not the book, and is clamped by the se
 - `consentStatus` is one of `pending | granted | revoked`. **An absent row reads as `pending`**
   on this route *and* on `GET …/profile` — one value for one database state (defect D-2). The
   Python agent parses this exact field
-  (`agnet-service/app/agents/customer_memory/nodes.py`), so the property name is part of the
+  (`agent-service/app/agents/customer_memory/nodes.py`), so the property name is part of the
   contract.
 - `POST` accepts `pending`, `granted` and `revoked`. Re-granting clears `consentRevokedAt`, and
   the first update for a customer with no row inserts a row and stamps
@@ -1393,9 +1393,13 @@ nothing correct to gate a write on).
 | `GET` | `/api/v1/orgs/{organizationId:guid}/customers/highlights` | `customers:view` | Home's client row; `activity` is generated from a real interaction, and there is deliberately **no** `hasNewActivity` flag — no read marker exists in the schema |
 | `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}` | `customers:view` | **E-6.** The tenant-safe detail |
 | `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/interactions` | `customers:view` | **E-9.** Paged history, newest first |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/consent` | `customers:view` | Tenant-safe consent read (returns `unknown` when no row exists) |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/memories` | `customers:view` | Tenant-safe customer memories |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/events` | `customers:view` | Customer life/boutique events list |
 | `POST` | `/api/v1/orgs/{organizationId:guid}/customers` | `customers:view` | Walk-in creation; requires `Idempotency-Key`. Also creates the client's organization-shared Salon, seeded with Aveline's greeting (see below) |
 | `POST` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/interactions` | `customers:view` | Records an interaction; requires `Idempotency-Key` |
-| `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/consent` | `customers:view` | Reads the client's consent status. A client in another boutique is `404`, indistinguishable from a missing one |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/events` | **`customers:manage`** | Add a customer event |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/status` | **`customers:manage`** | Recomputes derived loyalty tier from spend/visits |
 | `POST` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/consent` | **`customers:manage`** | **Phase 4 (item 4.4).** Sets `pending` \| `granted` \| `revoked`. This is the **staff** surface: the audit records `ActorKind = User` and `Source = staff`, which is what distinguishes it from the anonymous customer OTP path (§B.25). There is deliberately no `scope` field — a staff action always revokes this boutique's row only |
 | `PATCH` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}` | **`customers:manage`** | **E-7.** Partial update of the writable subset |
 | `DELETE` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}` | **`customers:manage`** | **E-8.** Soft delete |

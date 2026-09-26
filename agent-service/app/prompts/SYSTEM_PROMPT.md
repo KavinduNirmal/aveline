@@ -1,7 +1,7 @@
 # Aveline — Universal System Prompt
 
 > Single source of truth for the agent service's universal prompt layer.
-> Loaded at runtime by `agnet-service/app/prompts/loader.py`. Do not duplicate
+> Loaded at runtime by `agent-service/app/prompts/loader.py`. Do not duplicate
 > this content elsewhere; edit it here only.
 
 ---

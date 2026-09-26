@@ -8,7 +8,7 @@ statistics, and system statistics and alerts) are **implemented** on
 ledger, M4 entitlements, M5 API access, M6 agent statistics, M7 API consumption and
 M8 system statistics are all applied. No further migration is planned by this document.
 **Baseline:** commit `902f27f` (`integration/slice-2-to-slice-1`)
-**Scope:** backend only — `Aveline.Api` and `agnet-service`. No frontend, no
+**Scope:** backend only — `Aveline.Api` and `agent-service`. No frontend, no
 screens, no UX flows.
 
 ---
@@ -242,7 +242,7 @@ entitlements.
 
 1. **The Python instrumentation (gaps G-1…G-14) is deferred per risk R-1.** The
    C# ingest, storage, endpoints and jobs are complete and covered by tests, but
-   nothing in `agnet-service/` emits run/step telemetry yet, so every live response
+   nothing in `agent-service/` emits run/step telemetry yet, so every live response
    carries `dataQuality` with `latencyInstrumented`, `nodeFailuresObserved`,
    `perStepAttribution`, `toolInstrumented` and `costInstrumented` **all `false`**.
    `GET /latency` returns a null series rather than zeros. The catalog's §8 flag
@@ -471,7 +471,7 @@ half.
    `aveline.agent.llm.tokens.cached`. There is deliberately **no input/output token counter**:
    the LangChain instrumentor already emits `gen_ai.client.token.usage`, and a second measure
    of the same quantity is a defect (R-15). `opentelemetry-exporter-otlp-proto-http` is an
-   explicit pin in `agnet-service/requirements.txt` (N-6).
+   explicit pin in `agent-service/requirements.txt` (N-6).
 5. **`workflow` is a bounded name, never an id.** `runId`/`stepIndex` are row columns, never
    metric labels (plan §7.3). `test_agent_step_records.py` asserts no forbidden label key and
    that `workflow` is always `concierge`.

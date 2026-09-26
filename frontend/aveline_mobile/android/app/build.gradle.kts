@@ -1,3 +1,6 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -9,12 +12,36 @@ plugins {
 // checkout without it must still build: fork pull requests never receive secrets, and a local
 // release build should not require Firebase credentials. The app then starts without FCM, which
 // the NoopPushTokenSource fallback already handles.
+//
+// NOTE: the package_name inside that file must match `applicationId` below. The Google Services
+// plugin fails the build with "No matching client found for package name" when they disagree, so
+// changing the id means registering the new one in the Firebase project first.
 if (file("google-services.json").exists()) {
     apply(plugin = "com.google.gms.google-services")
 }
 
+// ---------------------------------------------------------------------------------------------
+// Release signing.
+//
+// `key.properties` and the keystore it points at are both gitignored: the release workflow
+// materialises them from repository secrets, and neither a local checkout nor a fork PR has them.
+// So the release signing config is created only when the file is actually present, and the release
+// build type falls back to the debug key otherwise - the Flutter template's behaviour, which keeps
+// `flutter run --release` working locally without any signing setup.
+//
+// That fallback is exactly why release-apk.yml asserts the certificate before publishing: an APK
+// that quietly fell back is debug-signed, and the debug key is public and password-free.
+// ---------------------------------------------------------------------------------------------
+val keystorePropertiesFile = rootProject.file("key.properties")
+val hasReleaseSigning = keystorePropertiesFile.exists()
+val keystoreProperties = Properties().apply {
+    if (hasReleaseSigning) {
+        FileInputStream(keystorePropertiesFile).use { load(it) }
+    }
+}
+
 android {
-    namespace = "com.example.aveline_mobile"
+    namespace = "dev.gravora.aveline"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -24,8 +51,7 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.aveline_mobile"
+        applicationId = "dev.gravora.aveline"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -38,11 +64,24 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (hasReleaseSigning) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 }

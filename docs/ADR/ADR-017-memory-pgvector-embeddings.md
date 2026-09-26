@@ -74,7 +74,7 @@ The LLM is now live in the running path (previously the memory agent was rule-ba
 and `create_chat_model` was dead code):
 
 - **Draft generation** uses `create_chat_model` when `AGENT_LLM_ENABLED` and an `LLM_API_KEY` +
-  `LLM_MODEL` are configured (`agnet-service/app/llm/runtime.py`). A deterministic template is the
+  `LLM_MODEL` are configured (`agent-service/app/llm/runtime.py`). A deterministic template is the
   fallback whenever no model/key is present or the provider call fails, so CI and keyless local
   dev stay green and production degrades gracefully.
 - **Usage / Blossoms** are reported for every completed workflow run to `/internal/usage/record`

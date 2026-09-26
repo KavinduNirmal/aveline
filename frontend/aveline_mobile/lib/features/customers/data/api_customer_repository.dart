@@ -12,7 +12,10 @@ import 'customer_repository.dart';
 /// - `GET /api/v1/orgs/{organizationId}/customers` (the book)
 /// - `GET /api/v1/orgs/{organizationId}/customers/{customerId}` (detail profile)
 /// - `GET /api/v1/orgs/{organizationId}/customers/{customerId}/consent` (consent)
+/// - `GET /api/v1/orgs/{organizationId}/customers/{customerId}/memories` (saved memories)
+/// - `GET /api/v1/orgs/{organizationId}/customers/{customerId}/events` (occasions)
 /// - `GET /api/v1/orgs/{organizationId}/customers/{customerId}/interactions` (interactions history)
+/// - `POST /api/v1/orgs/{organizationId}/customers/{customerId}/status` (tier recompute)
 class ApiCustomerRepository implements CustomerRepository {
   ApiCustomerRepository(
     this._dio, {
@@ -84,48 +87,22 @@ class ApiCustomerRepository implements CustomerRepository {
 
       final customer = _toCustomerFromDetail(detailData, orgId);
 
-      // Fetch consent
-      CustomerConsent consent = CustomerConsent.unknown;
-      try {
-        final consentResponse = await _dio.get<Map<String, dynamic>>(
-          '/api/v1/orgs/$orgId/customers/$id/consent',
-        );
-        if (consentResponse.data != null) {
-          consent = _toConsent(consentResponse.data!);
-        }
-      } catch (_) {
-        // Tolerates absent consent row or transient network issue
-      }
-
-      // Fetch interactions
-      final interactions = <CustomerInteraction>[];
-      try {
-        final interactionsResponse = await _dio.get<Map<String, dynamic>>(
-          '/api/v1/orgs/$orgId/customers/$id/interactions',
-          queryParameters: {'page': 1, 'pageSize': 50},
-        );
-        final rawItems = interactionsResponse.data?['items'];
-        if (rawItems is List) {
-          for (final raw in rawItems) {
-            if (raw is Map<String, dynamic>) {
-              final interaction = _toInteraction(raw);
-              if (interaction != null) {
-                interactions.add(interaction);
-              }
-            }
-          }
-        }
-      } catch (_) {
-        // Tolerates absent interaction history
-      }
+      // The sub-resources are separate reads, so they run together; each one
+      // degrades to its empty value rather than failing the whole profile.
+      final results = await Future.wait([
+        _fetchConsent(orgId, id),
+        _fetchMemories(orgId, id),
+        _fetchEvents(orgId, id),
+        _fetchInteractions(orgId, id),
+      ]);
 
       return CustomerDetail(
         customer: customer,
-        consent: consent,
-        interactions: interactions,
-        preferences: const [],
-        memories: const [],
-        events: const [],
+        consent: results[0] as CustomerConsent,
+        memories: results[1] as List<CustomerMemory>,
+        events: results[2] as List<CustomerEvent>,
+        interactions: results[3] as List<CustomerInteraction>,
+        preferences: _parsePreferences(detailData['preferences']),
       );
     } on DioException catch (error) {
       if (error.response?.statusCode == 404) {
@@ -133,6 +110,172 @@ class ApiCustomerRepository implements CustomerRepository {
       }
       rethrow;
     }
+  }
+
+  /// Records an in-person walk-in visit at the counter.
+  Future<void> recordVisit(String customerId) async {
+    final orgId = organizationId();
+    if (orgId == null || orgId.isEmpty) {
+      return;
+    }
+
+    await _dio.post(
+      '/api/v1/orgs/$orgId/customers/$customerId/interactions',
+      data: {
+        'occurredAtUtc': DateTime.now().toUtc().toIso8601String(),
+        'channel': 'in_person',
+        'direction': 'inbound',
+        'note': 'Walked in; logged at the counter.',
+        'purchaseTotal': null,
+      },
+      options: Options(
+        headers: {
+          'Idempotency-Key': 'visit-${DateTime.now().microsecondsSinceEpoch}',
+        },
+      ),
+    );
+  }
+
+  /// Recomputes the client's loyalty tier from spend, visits, and recency.
+  Future<String?> recomputeTier(String customerId) async {
+    final orgId = organizationId();
+    if (orgId == null || orgId.isEmpty) {
+      return null;
+    }
+
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/api/v1/orgs/$orgId/customers/$customerId/status',
+      data: const <String, dynamic>{},
+    );
+    return response.data?['status'] as String?;
+  }
+
+  /// Reads the consent row, falling back to `unknown` when the client has none
+  /// or the read fails.
+  Future<CustomerConsent> _fetchConsent(String orgId, String id) async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/api/v1/orgs/$orgId/customers/$id/consent',
+      );
+      final data = response.data;
+      if (data != null) {
+        return _toConsent(data);
+      }
+    } catch (_) {
+      // Tolerates an absent consent row or a transient read failure.
+    }
+    return CustomerConsent.unknown;
+  }
+
+  /// Reads the saved memories, newest first.
+  Future<List<CustomerMemory>> _fetchMemories(String orgId, String id) async {
+    try {
+      final response = await _dio.get<dynamic>(
+        '/api/v1/orgs/$orgId/customers/$id/memories',
+      );
+      final data = response.data;
+      if (data is List) {
+        return data
+            .whereType<Map<String, dynamic>>()
+            .map(_toMemory)
+            .toList();
+      }
+    } catch (_) {
+      // Tolerates an absent memory list or a transient read failure.
+    }
+    return const [];
+  }
+
+  /// Reads the client's occasions, which is a bare array on the wire.
+  Future<List<CustomerEvent>> _fetchEvents(String orgId, String id) async {
+    try {
+      final response = await _dio.get<dynamic>(
+        '/api/v1/orgs/$orgId/customers/$id/events',
+      );
+      final data = response.data;
+      if (data is List) {
+        return data
+            .whereType<Map<String, dynamic>>()
+            .map(_toEvent)
+            .whereType<CustomerEvent>()
+            .toList();
+      }
+    } catch (_) {
+      // Tolerates an absent event list or a transient read failure.
+    }
+    return const [];
+  }
+
+  /// Reads the interaction history, which is paged on the wire.
+  Future<List<CustomerInteraction>> _fetchInteractions(
+    String orgId,
+    String id,
+  ) async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/api/v1/orgs/$orgId/customers/$id/interactions',
+        queryParameters: {'page': 1, 'pageSize': 50},
+      );
+      final rawItems = response.data?['items'];
+      if (rawItems is List) {
+        return rawItems
+            .whereType<Map<String, dynamic>>()
+            .map(_toInteraction)
+            .whereType<CustomerInteraction>()
+            .toList();
+      }
+    } catch (_) {
+      // Tolerates an absent interaction history or a transient read failure.
+    }
+    return const [];
+  }
+
+  CustomerMemory _toMemory(Map<String, dynamic> raw) {
+    return CustomerMemory(
+      id: raw['id'] as String? ?? '',
+      content: raw['content'] as String? ?? '',
+      category: MemoryCategory.parse(raw['category'] as String?),
+      source: MemorySource.parse(raw['source'] as String?),
+      createdAtUtc: _parseUtc(raw['createdAtUtc']) ?? DateTime.now().toUtc(),
+      isExplicit: raw['isExplicit'] as bool? ?? false,
+      confidence: (raw['confidence'] as num?)?.toDouble() ?? 1.0,
+    );
+  }
+
+  /// Returns `null` for an event the API gave no usable date for: an occasion
+  /// that cannot be placed on the calendar is not one the screen can show.
+  CustomerEvent? _toEvent(Map<String, dynamic> raw) {
+    final date = _parseUtc(raw['eventDate']);
+    if (date == null) {
+      return null;
+    }
+
+    return CustomerEvent(
+      id: raw['id'] as String? ?? '',
+      type: CustomerEventType.parse(raw['eventType'] as String?),
+      dateUtc: date,
+      description: raw['description'] as String?,
+      isActive: raw['isActive'] as bool? ?? true,
+    );
+  }
+
+  List<CustomerPreference> _parsePreferences(Object? raw) {
+    if (raw is! List) {
+      return const [];
+    }
+
+    return raw
+        .whereType<Map<String, dynamic>>()
+        .map(
+          (item) => CustomerPreference(
+            id: item['id'] as String? ?? '',
+            key: item['preferenceKey'] as String? ?? '',
+            value: item['preferenceValue'] as String? ?? '',
+            isExplicit: item['isExplicit'] as bool? ?? true,
+            confidence: (item['confidence'] as num?)?.toDouble() ?? 1.0,
+          ),
+        )
+        .toList();
   }
 
   Customer? _toCustomer(Map<String, dynamic> raw, String orgId) {
@@ -179,11 +322,14 @@ class ApiCustomerRepository implements CustomerRepository {
     );
   }
 
+  /// `TenantCustomerConsentDto` carries both the record's own `Status`/`GrantedAtUtc`
+  /// and its `ConsentStatus`/`ConsentGrantedAt` aliases, so either spelling is read.
   CustomerConsent _toConsent(Map<String, dynamic> raw) {
+    final status = raw['status'] ?? raw['consentStatus'];
     return CustomerConsent(
-      status: ConsentStatus.parse(raw['consentStatus'] as String?),
-      grantedAtUtc: _parseUtc(raw['consentGrantedAt']),
-      revokedAtUtc: _parseUtc(raw['consentRevokedAt']),
+      status: ConsentStatus.parse(status is String ? status : null),
+      grantedAtUtc: _parseUtc(raw['grantedAtUtc'] ?? raw['consentGrantedAt']),
+      revokedAtUtc: _parseUtc(raw['revokedAtUtc'] ?? raw['consentRevokedAt']),
     );
   }
 

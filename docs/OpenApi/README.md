@@ -31,4 +31,4 @@ This folder contains the OpenAPI (Swagger) specification files for the Aveline A
 
 - Never hand-edit the exported spec — it is generated from the code
 - Do commit the spec to version control — it serves as the API contract
-- The agent service (`agnet-service/`) is internal and does not need a public spec
+- The agent service (`agent-service/`) is internal and does not need a public spec

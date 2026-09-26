@@ -372,7 +372,7 @@ export function AddProductModal({
         const modelNamedColour = Boolean(backendResult.detectedColor)
         resolvedColor = backendResult.detectedColor || visualClientAnalysis?.colorName || ''
         resolvedHex = modelNamedColour
-          ? backendResult.colorHex || ''
+          ? backendResult.colorHex || getColorHex(backendResult.detectedColor, '') || visualClientAnalysis?.hex || ''
           : visualClientAnalysis?.hex || ''
         resolvedCategory = normalizeCategory(backendResult.category)
         resolvedGarment = backendResult.garmentType || `${resolvedColor} ${resolvedCategory}`
@@ -406,10 +406,10 @@ export function AddProductModal({
       } else if (backendResult) {
         // The backend's deterministic fallback with no client measurement to arbitrate. Its answer
         // is filename-derived and `isFallback` is set, so nothing here is a reading: only a colour
-        // the fallback actually named is carried, and no hex is derived from that name.
+        // the fallback actually named is carried.
         resolvedColor = backendResult.detectedColor || ''
-        // Same rule as the live branch: only the model's own hex is a measurement.
-        resolvedHex = backendResult.colorHex || ''
+        // Derive hex from the colour name if known, otherwise leave empty.
+        resolvedHex = backendResult.colorHex || getColorHex(backendResult.detectedColor, '') || ''
         resolvedCategory = normalizeCategory(backendResult.category)
         resolvedGarment = backendResult.garmentType || `${resolvedColor} ${resolvedCategory}`
         resolvedFabric = backendResult.fabric || ''
@@ -611,421 +611,420 @@ export function AddProductModal({
         <form onSubmit={handleSave} className="flex min-h-0 flex-1 flex-col">
           <div className="flex flex-1 flex-col gap-5 overflow-y-auto px-6 py-5">
             {/* Piece Image & Vision AI Analysis Import Area */}
-          <FormSection
-            step={1}
-            title="The photograph"
-            description="Aveline reads the garment from this image. Every value it returns stays editable."
-          >
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                Source
-              </span>
-              <ToggleGroup
-                type="single"
-                value={inputMode}
-                onValueChange={(value) => {
-                  if (value) setInputMode(value as 'upload' | 'url')
-                }}
-                variant="outline"
-                aria-label="Photograph source"
-                className="rounded-md border border-border bg-muted/30 p-0.5"
-              >
-                <ToggleGroupItem
-                  value="upload"
-                  className="h-6 gap-1 px-2.5 text-[11px] data-[state=on]:bg-background data-[state=on]:font-semibold"
-                >
-                  <Upload className="size-3" aria-hidden />
-                  <span>Upload File</span>
-                </ToggleGroupItem>
-                <ToggleGroupItem
-                  value="url"
-                  className="h-6 gap-1 px-2.5 text-[11px] data-[state=on]:bg-background data-[state=on]:font-semibold"
-                >
-                  <LinkIcon className="size-3" aria-hidden />
-                  <span>Image URL</span>
-                </ToggleGroupItem>
-              </ToggleGroup>
-            </div>
-
-            {/* Upload File Mode */}
-            {inputMode === 'upload' ? (
-              <div>
-                <Input
-                  type="file"
-                  ref={fileInputRef}
-                  accept="image/*"
-                  onChange={handleFileChange}
-                  aria-label="Choose a garment photograph"
-                  className="hidden"
-                />
-
-                {!imageUrl ? (
-                  <div
-                    onDrop={handleDrop}
-                    onDragOver={handleDragOver}
-                    onDragLeave={handleDragLeave}
-                    onClick={() => fileInputRef.current?.click()}
-                    className={`flex flex-col items-center justify-center gap-2 p-6 rounded-xl border-2 border-dashed transition-all cursor-pointer ${
-                      isDragging
-                        ? 'border-primary bg-primary/10 scale-[0.99]'
-                        : 'border-border/80 hover:border-primary/50 hover:bg-muted/30 bg-muted/10'
-                    }`}
+            <FormSection
+              step={1}
+              title="The photograph"
+              description="Aveline reads the garment from this image. Every value it returns stays editable."
+            >
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                    Source
+                  </span>
+                  <ToggleGroup
+                    type="single"
+                    value={inputMode}
+                    onValueChange={(value) => {
+                      if (value) setInputMode(value as 'upload' | 'url')
+                    }}
+                    variant="outline"
+                    aria-label="Photograph source"
+                    className="rounded-md border border-border bg-muted/30 p-0.5"
                   >
-                    <div className="flex size-10 items-center justify-center rounded-full bg-primary/10 text-primary">
-                      <Upload className="size-5" />
-                    </div>
-                    <div className="flex flex-col gap-0.5 text-center">
-                      <p className="text-xs font-medium text-foreground">
-                        Drag & drop garment photo here, or <span className="text-primary font-semibold underline underline-offset-2">Browse Files</span>
-                      </p>
-                      <p className="text-[11px] text-muted-foreground">
-                        Supports JPEG, PNG, WebP, HEIC · Auto-analyzed by Gemini Vision AI
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-between gap-3 p-3 rounded-xl border border-border bg-card">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <img
-                        src={imageUrl}
-                        alt="Garment preview"
-                        className="size-14 rounded-lg object-cover border border-border shrink-0 shadow-2xs"
-                      />
-                      <div className="min-w-0">
-                        <p className="text-xs font-medium text-foreground truncate">
-                          {selectedFileName || 'Garment Photograph'}
-                        </p>
-                        <div className="flex items-center gap-1.5 mt-0.5">
-                          {selectedFileSize && (
-                            <span className="text-[10px] text-muted-foreground font-mono">
-                              {formatFileSize(selectedFileSize)}
-                            </span>
-                          )}
-                          <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-primary/30 text-primary">
-                            {analyzing ? 'Analyzing...' : 'Vision AI Ready'}
-                          </Badge>
+                    <ToggleGroupItem
+                      value="upload"
+                      className="h-6 gap-1 px-2.5 text-[11px] data-[state=on]:bg-background data-[state=on]:font-semibold"
+                    >
+                      <Upload className="size-3" aria-hidden />
+                      <span>Upload File</span>
+                    </ToggleGroupItem>
+                    <ToggleGroupItem
+                      value="url"
+                      className="h-6 gap-1 px-2.5 text-[11px] data-[state=on]:bg-background data-[state=on]:font-semibold"
+                    >
+                      <LinkIcon className="size-3" aria-hidden />
+                      <span>Image URL</span>
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+                </div>
+
+                {/* Upload File Mode */}
+                {inputMode === 'upload' ? (
+                  <div>
+                    <Input
+                      type="file"
+                      ref={fileInputRef}
+                      accept="image/*"
+                      onChange={handleFileChange}
+                      aria-label="Choose a garment photograph"
+                      className="hidden"
+                    />
+
+                    {!imageUrl ? (
+                      <div
+                        onDrop={handleDrop}
+                        onDragOver={handleDragOver}
+                        onDragLeave={handleDragLeave}
+                        onClick={() => fileInputRef.current?.click()}
+                        className={`flex flex-col items-center justify-center gap-2 p-6 rounded-xl border-2 border-dashed transition-all cursor-pointer ${isDragging
+                            ? 'border-primary bg-primary/10 scale-[0.99]'
+                            : 'border-border/80 hover:border-primary/50 hover:bg-muted/30 bg-muted/10'
+                          }`}
+                      >
+                        <div className="flex size-10 items-center justify-center rounded-full bg-primary/10 text-primary">
+                          <Upload className="size-5" />
+                        </div>
+                        <div className="flex flex-col gap-0.5 text-center">
+                          <p className="text-xs font-medium text-foreground">
+                            Drag & drop garment photo here, or <span className="text-primary font-semibold underline underline-offset-2">Browse Files</span>
+                          </p>
+                          <p className="text-[11px] text-muted-foreground">
+                            Supports JPEG, PNG, WebP, HEIC · Auto-analyzed by Gemini Vision AI
+                          </p>
                         </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="flex items-center justify-between gap-3 p-3 rounded-xl border border-border bg-card">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <img
+                            src={imageUrl}
+                            alt="Garment preview"
+                            className="size-14 rounded-lg object-cover border border-border shrink-0 shadow-2xs"
+                          />
+                          <div className="min-w-0">
+                            <p className="text-xs font-medium text-foreground truncate">
+                              {selectedFileName || 'Garment Photograph'}
+                            </p>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              {selectedFileSize && (
+                                <span className="text-[10px] text-muted-foreground font-mono">
+                                  {formatFileSize(selectedFileSize)}
+                                </span>
+                              )}
+                              <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-primary/30 text-primary">
+                                {analyzing ? 'Analyzing...' : 'Vision AI Ready'}
+                              </Badge>
+                            </div>
+                          </div>
+                        </div>
 
-                    <div className="flex items-center gap-1.5 shrink-0">
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            disabled={analyzing}
+                            onClick={() => runVisionAnalysis(imageUrl)}
+                            className="gap-1 h-7 text-xs border border-primary/20 bg-primary/10 text-primary hover:bg-primary/20"
+                          >
+                            {analyzing ? (
+                              <Loader2 className="size-3.5 animate-spin" />
+                            ) : (
+                              <Sparkles className="size-3.5" />
+                            )}
+                            <span>{analyzing ? 'Analyzing...' : 'Re-analyze'}</span>
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => fileInputRef.current?.click()}
+                            className="h-7 text-xs px-2.5"
+                          >
+                            <RotateCw className="size-3" />
+                            <span>Change</span>
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={handleClearImage}
+                            aria-label="Remove photograph"
+                            className="size-7 p-0 text-muted-foreground hover:text-destructive"
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  /* URL Mode */
+                  <div className="flex flex-col gap-2">
+                    <div className="flex gap-2">
+                      <Input
+                        value={imageUrl}
+                        onChange={(e) => {
+                          setImageUrl(e.target.value)
+                          // Typing a URL abandons any stored upload, so its row id must not survive.
+                          setUploadedImageId(null)
+                          setSelectedFileName(null)
+                          setSelectedFileSize(null)
+                        }}
+                        placeholder="https://... image URL"
+                        className="text-xs"
+                      />
                       <Button
                         type="button"
                         variant="secondary"
-                        size="sm"
-                        disabled={analyzing}
                         onClick={() => runVisionAnalysis(imageUrl)}
-                        className="gap-1 h-7 text-xs border border-primary/20 bg-primary/10 text-primary hover:bg-primary/20"
+                        disabled={analyzing || !imageUrl.trim()}
+                        className="gap-1.5 shrink-0 text-xs border border-primary/20 bg-primary/10 text-primary hover:bg-primary/20"
                       >
                         {analyzing ? (
                           <Loader2 className="size-3.5 animate-spin" />
                         ) : (
                           <Sparkles className="size-3.5" />
                         )}
-                        <span>{analyzing ? 'Analyzing...' : 'Re-analyze'}</span>
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => fileInputRef.current?.click()}
-                        className="h-7 text-xs px-2.5"
-                      >
-                        <RotateCw className="size-3" />
-                        <span>Change</span>
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={handleClearImage}
-                        aria-label="Remove photograph"
-                        className="size-7 p-0 text-muted-foreground hover:text-destructive"
-                      >
-                        <Trash2 className="size-3.5" />
+                        <span>{analyzing ? 'Analyzing...' : 'Extract with Vision AI'}</span>
                       </Button>
                     </div>
+                    {imageUrl && (
+                      <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                        <ImageIcon className="size-3 text-primary" />
+                        <span className="truncate">{imageUrl}</span>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-            ) : (
-              /* URL Mode */
-              <div className="flex flex-col gap-2">
-                <div className="flex gap-2">
+
+            </FormSection>
+
+            <FormSection
+              step={2}
+              title="The piece"
+              description="How it is named and priced. Cost is the atelier's price, not the customer's."
+            >
+
+              {/* Core Info Grid */}
+              <div className="grid gap-3.5 sm:grid-cols-2">
+                <Field label="Item name" htmlFor="piece-name">
                   <Input
-                    value={imageUrl}
-                    onChange={(e) => {
-                      setImageUrl(e.target.value)
-                      // Typing a URL abandons any stored upload, so its row id must not survive.
-                      setUploadedImageId(null)
-                      setSelectedFileName(null)
-                      setSelectedFileSize(null)
-                    }}
-                    placeholder="https://... image URL"
-                    className="text-xs"
+                    id="piece-name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="e.g. Royal Emerald Silk Saree"
+                    required
                   />
+                </Field>
+                <Field label="SKU code" htmlFor="piece-sku" hint="Appears on the floor tag.">
+                  <Input
+                    id="piece-sku"
+                    value={sku}
+                    onChange={(e) => setSku(e.target.value)}
+                    placeholder="AVL-SAR-001"
+                    className="font-mono"
+                    required
+                  />
+                </Field>
+              </div>
+
+              <div className="grid gap-3.5 sm:grid-cols-3">
+                <Field label="Category">
+                  <Select value={category} onValueChange={setCategory}>
+                    <SelectTrigger aria-label="Category" className="w-full">
+                      <SelectValue placeholder="Choose a category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CATEGORIES.map((cat) => (
+                        <SelectItem key={cat} value={cat}>
+                          {cat}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+
+                <Field label="Retail price (LKR)">
+                  <Input
+                    type="number"
+                    value={price}
+                    onChange={(e) => setPrice(e.target.value)}
+                    placeholder="1450"
+                    required
+                  />
+                </Field>
+
+                <Field label="Atelier cost (LKR)">
+                  <Input
+                    type="number"
+                    value={cost}
+                    onChange={(e) => setCost(e.target.value)}
+                    placeholder="650"
+                  />
+                </Field>
+              </div>
+            </FormSection>
+
+
+            <FormSection
+              step={3}
+              title="What Aveline read"
+              description="Filled from the photograph and editable. A value below was returned by the analysis, not guessed."
+            >
+              <div className="flex flex-col gap-3 rounded-xl border border-primary/20 bg-primary/5 p-3.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-primary">
+                    <Sparkles className="size-3.5" />
+                    <span>Visual AI Extracted Attributes</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {garmentType && (
+                      <Badge variant="secondary" className="text-[10px] bg-primary/10 text-primary border border-primary/30">
+                        {garmentType}
+                      </Badge>
+                    )}
+                    {aiConfidence && (
+                      <Badge variant="outline" className="text-[10px] border-primary/30 text-primary">
+                        {Math.round(aiConfidence * 100)}% Confidence
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-4 gap-3">
+                  <div className="flex flex-col gap-1">
+                    <Label className="text-[11px] text-muted-foreground">Cloth / Garment</Label>
+                    <Input
+                      value={garmentType || category}
+                      onChange={(e) => setGarmentType(e.target.value)}
+                      placeholder="e.g. Silk Saree"
+                      className="h-7 text-xs"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <Label className="text-[11px] text-muted-foreground">Dominant Color</Label>
+                    <div className="flex items-center gap-1.5">
+                      <Input
+                        type="color"
+                        aria-label="Dominant colour"
+                        value={colorHex || DEFAULT_COLOR_HEX}
+                        onChange={(e) => setColorHex(e.target.value)}
+                        className="size-6 shrink-0 cursor-pointer rounded border border-border p-0"
+                      />
+                      <Input
+                        value={color}
+                        aria-label="Colour name"
+                        onChange={(e) => {
+                          const val = e.target.value
+                          setColor(val)
+                          const hex = getColorHex(val, '')
+                          if (hex) setColorHex(hex)
+                        }}
+                        placeholder="Enter colour name"
+                        className="h-7 text-xs min-w-0"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <Label className="text-[11px] text-muted-foreground">Detected Fabric</Label>
+                    <Input
+                      value={fabric}
+                      onChange={(e) => setFabric(e.target.value)}
+                      aria-label="Detected fabric"
+                      placeholder="Pure Mulberry Silk"
+                      className="h-7 text-xs"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <Label className="text-[11px] text-muted-foreground">Style / Pattern</Label>
+                    <Input
+                      value={pattern || style}
+                      onChange={(e) => {
+                        setPattern(e.target.value)
+                        setStyle(e.target.value)
+                      }}
+                      aria-label="Style and pattern"
+                      placeholder="Zari Brocade"
+                      className="h-7 text-xs"
+                    />
+                  </div>
+                </div>
+              </div>
+
+            </FormSection>
+
+            <FormSection
+              step={4}
+              title="Stock and sizes"
+              description="A piece at zero shows as reserved; two or fewer shows as low stock."
+            >
+              <div className="grid gap-3.5 sm:grid-cols-2">
+                <Field label="Initial stock quantity">
+                  <Input
+                    type="number"
+                    value={stockQuantity}
+                    onChange={(e) => setStockQuantity(e.target.value)}
+                    placeholder="4"
+                    required
+                  />
+                </Field>
+                <Field label="Available sizes" hint="Comma-separated, e.g. 36, 38, Free Size.">
+                  <Input
+                    value={sizesInput}
+                    onChange={(e) => setSizesInput(e.target.value)}
+                    placeholder="36, 38, 40, Free Size"
+                  />
+                </Field>
+              </div>
+            </FormSection>
+
+            <FormSection
+              step={5}
+              title="Description"
+              description="What the piece is and how to style it. Aveline can draft it from the photograph."
+            >
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-medium">Description / Styling Notes</Label>
                   <Button
                     type="button"
-                    variant="secondary"
-                    onClick={() => runVisionAnalysis(imageUrl)}
-                    disabled={analyzing || !imageUrl.trim()}
-                    className="gap-1.5 shrink-0 text-xs border border-primary/20 bg-primary/10 text-primary hover:bg-primary/20"
+                    variant="ghost"
+                    size="sm"
+                    disabled={generatingDescription}
+                    onClick={handleGenerateDescriptionWithAi}
+                    className="h-6 px-2 text-[11px] gap-1 text-primary hover:text-primary hover:bg-primary/10 transition-colors"
+                    title="Generate bespoke haute-couture description and styling recommendations using AI"
                   >
-                    {analyzing ? (
-                      <Loader2 className="size-3.5 animate-spin" />
+                    {generatingDescription ? (
+                      <Loader2 className="size-3 animate-spin" />
                     ) : (
-                      <Sparkles className="size-3.5" />
+                      <Sparkles className="size-3 text-primary" />
                     )}
-                    <span>{analyzing ? 'Analyzing...' : 'Extract with Vision AI'}</span>
+                    <span>{generatingDescription ? 'Generating...' : 'Generate with AI'}</span>
                   </Button>
                 </div>
-                {imageUrl && (
-                  <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                    <ImageIcon className="size-3 text-primary" />
-                    <span className="truncate">{imageUrl}</span>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          </FormSection>
-
-          <FormSection
-            step={2}
-            title="The piece"
-            description="How it is named and priced. Cost is the atelier's price, not the customer's."
-          >
-
-          {/* Core Info Grid */}
-          <div className="grid gap-3.5 sm:grid-cols-2">
-            <Field label="Item name" htmlFor="piece-name">
-              <Input
-                id="piece-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Royal Emerald Silk Saree"
-                required
-              />
-            </Field>
-            <Field label="SKU code" htmlFor="piece-sku" hint="Appears on the floor tag.">
-              <Input
-                id="piece-sku"
-                value={sku}
-                onChange={(e) => setSku(e.target.value)}
-                placeholder="AVL-SAR-001"
-                className="font-mono"
-                required
-              />
-            </Field>
-          </div>
-
-          <div className="grid gap-3.5 sm:grid-cols-3">
-            <Field label="Category">
-              <Select value={category} onValueChange={setCategory}>
-                <SelectTrigger aria-label="Category" className="w-full">
-                  <SelectValue placeholder="Choose a category" />
-                </SelectTrigger>
-                <SelectContent>
-                  {CATEGORIES.map((cat) => (
-                    <SelectItem key={cat} value={cat}>
-                      {cat}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-
-            <Field label="Retail price (LKR)">
-              <Input
-                type="number"
-                value={price}
-                onChange={(e) => setPrice(e.target.value)}
-                placeholder="1450"
-                required
-              />
-            </Field>
-
-            <Field label="Atelier cost (LKR)">
-              <Input
-                type="number"
-                value={cost}
-                onChange={(e) => setCost(e.target.value)}
-                placeholder="650"
-              />
-            </Field>
-          </div>
-          </FormSection>
-
-
-          <FormSection
-            step={3}
-            title="What Aveline read"
-            description="Filled from the photograph and editable. A value below was returned by the analysis, not guessed."
-          >
-          <div className="flex flex-col gap-3 rounded-xl border border-primary/20 bg-primary/5 p-3.5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-primary">
-                <Sparkles className="size-3.5" />
-                <span>Visual AI Extracted Attributes</span>
-              </div>
-              <div className="flex items-center gap-2">
-                {garmentType && (
-                  <Badge variant="secondary" className="text-[10px] bg-primary/10 text-primary border border-primary/30">
-                    {garmentType}
-                  </Badge>
-                )}
-                {aiConfidence && (
-                  <Badge variant="outline" className="text-[10px] border-primary/30 text-primary">
-                    {Math.round(aiConfidence * 100)}% Confidence
-                  </Badge>
-                )}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-4 gap-3">
-              <div className="flex flex-col gap-1">
-                <Label className="text-[11px] text-muted-foreground">Cloth / Garment</Label>
-                <Input
-                  value={garmentType || category}
-                  onChange={(e) => setGarmentType(e.target.value)}
-                  placeholder="e.g. Silk Saree"
-                  className="h-7 text-xs"
+                <Textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Detailed description, weave information, styling recommendations..."
+                  rows={4}
+                  className="text-[13px] leading-relaxed"
                 />
               </div>
+            </FormSection>
 
-              <div className="flex flex-col gap-1">
-                <Label className="text-[11px] text-muted-foreground">Dominant Color</Label>
-                <div className="flex items-center gap-1.5">
-                  <Input
-                    type="color"
-                    aria-label="Dominant colour"
-                    value={colorHex || DEFAULT_COLOR_HEX}
-                    onChange={(e) => setColorHex(e.target.value)}
-                    className="size-6 shrink-0 cursor-pointer rounded border border-border p-0"
-                  />
-                  <Input
-                    value={color}
-                    aria-label="Colour name"
-                    onChange={(e) => {
-                      const val = e.target.value
-                      setColor(val)
-                      const hex = getColorHex(val, '')
-                      if (hex) setColorHex(hex)
-                    }}
-                    placeholder="Enter colour name"
-                    className="h-7 text-xs min-w-0"
-                  />
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <Label className="text-[11px] text-muted-foreground">Detected Fabric</Label>
-                <Input
-                  value={fabric}
-                  onChange={(e) => setFabric(e.target.value)}
-                  aria-label="Detected fabric"
-                  placeholder="Pure Mulberry Silk"
-                  className="h-7 text-xs"
-                />
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <Label className="text-[11px] text-muted-foreground">Style / Pattern</Label>
-                <Input
-                  value={pattern || style}
-                  onChange={(e) => {
-                    setPattern(e.target.value)
-                    setStyle(e.target.value)
-                  }}
-                  aria-label="Style and pattern"
-                  placeholder="Zari Brocade"
-                  className="h-7 text-xs"
-                />
-              </div>
-            </div>
-          </div>
-
-          </FormSection>
-
-          <FormSection
-            step={4}
-            title="Stock and sizes"
-            description="A piece at zero shows as reserved; two or fewer shows as low stock."
-          >
-          <div className="grid gap-3.5 sm:grid-cols-2">
-            <Field label="Initial stock quantity">
-              <Input
-                type="number"
-                value={stockQuantity}
-                onChange={(e) => setStockQuantity(e.target.value)}
-                placeholder="4"
-                required
+            <FormSection
+              step={6}
+              title="Floor tag"
+              description="A scannable tag for the garment rail, fitting room or POS."
+            >
+              <FloorTagStudio
+                organizationId={organizationId}
+                organizationSlug={organizationSlug}
+                itemId={effectiveItemId}
+                sku={sku}
+                name={name}
+                price={price}
+                category={category}
+                color={color}
+                fabric={fabric}
               />
-            </Field>
-            <Field label="Available sizes" hint="Comma-separated, e.g. 36, 38, Free Size.">
-              <Input
-                value={sizesInput}
-                onChange={(e) => setSizesInput(e.target.value)}
-                placeholder="36, 38, 40, Free Size"
-              />
-            </Field>
-          </div>
-          </FormSection>
-
-          <FormSection
-            step={5}
-            title="Description"
-            description="What the piece is and how to style it. Aveline can draft it from the photograph."
-          >
-          <div className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs font-medium">Description / Styling Notes</Label>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={generatingDescription}
-                onClick={handleGenerateDescriptionWithAi}
-                className="h-6 px-2 text-[11px] gap-1 text-primary hover:text-primary hover:bg-primary/10 transition-colors"
-                title="Generate bespoke haute-couture description and styling recommendations using AI"
-              >
-                {generatingDescription ? (
-                  <Loader2 className="size-3 animate-spin" />
-                ) : (
-                  <Sparkles className="size-3 text-primary" />
-                )}
-                <span>{generatingDescription ? 'Generating...' : 'Generate with AI'}</span>
-              </Button>
-            </div>
-            <Textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Detailed description, weave information, styling recommendations..."
-              rows={4}
-              className="text-[13px] leading-relaxed"
-            />
-          </div>
-          </FormSection>
-
-          <FormSection
-            step={6}
-            title="Floor tag"
-            description="A scannable tag for the garment rail, fitting room or POS."
-          >
-            <FloorTagStudio
-              organizationId={organizationId}
-              organizationSlug={organizationSlug}
-              itemId={effectiveItemId}
-              sku={sku}
-              name={name}
-              price={price}
-              category={category}
-              color={color}
-              fabric={fabric}
-            />
-          </FormSection>
+            </FormSection>
           </div>
 
           {/* The footer stays put while the form scrolls, so the primary action is always reachable. */}

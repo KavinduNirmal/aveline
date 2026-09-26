@@ -112,8 +112,11 @@ function lightnessOf(r: number, g: number, b: number): number {
 
 function saturationOf(r: number, g: number, b: number): number {
   const max = Math.max(r, g, b)
+  if (max === 0) return 0
   const min = Math.min(r, g, b)
-  return max === 0 ? 0 : (max - min) / max
+  const sat = (max - min) / max
+  // Dampen saturation heavily for dark pixels where noise/ambient tint creates false saturation
+  return max < 120 ? sat * (max / 120) : sat
 }
 
 /**
@@ -157,15 +160,15 @@ export function getClosestColorName(r: number, g: number, b: number): string {
       closestAchromatic = item.name
     }
 
-    // When either side is effectively grey, hue comparison is meaningless: only greys compete.
-    // The floor is 0.15, matching the swatch guard above, because severe dark-end quantisation
-    // leaves `rgb(12,12,14)` at saturation 0.14 - enough to look "chromatic" to a 0.08 gate and
-    // take Navy Blue on a hue that is an artefact of two levels of blue.
-    if (saturation < 0.15 || itemSaturation < 0.15) {
-      if (saturation < 0.15 && achromaticSwatch && achromaticDistance < minDistance) {
-        minDistance = achromaticDistance
-        closest = item.name
-      }
+    // If the swatch is achromatic, it can only compete on lightness.
+    // If the pixel itself is effectively grey (saturation < 0.15), it ALSO only competes on lightness
+    // against other achromatic swatches. It should not be compared against chromatic swatches using hue.
+    if (achromaticSwatch) {
+      // We already tracked it in closestAchromatic. We don't evaluate hue distance for it.
+      continue
+    }
+    if (saturation < 0.15) {
+      // The pixel is grey. It has no hue. We don't compare it against chromatic swatches.
       continue
     }
 
@@ -222,13 +225,12 @@ export interface IsolatedGarmentColor {
 function isBackdropPixel(r: number, g: number, b: number): boolean {
   const saturation = saturationOf(r, g, b)
   const luminance = 0.299 * r + 0.587 * g + 0.114 * b
-  // Neutral studio backdrops (white, light grey, textured walls, studio floors) and ambient
-  // shadows/glare. Everything else stays in the running.
+  // Neutral studio backdrops (white, light grey) and extreme glare/shadow.
+  // Aggressively filtering blacks (luminance < 14) or greys caused black/grey 
+  // garments to be ignored, leaving only skin tones (Dusty Rose) to be detected.
   return (
-    (saturation < 0.12 && luminance > 200) ||
-    luminance > 245 ||
-    luminance < 14 ||
-    (saturation < 0.06 && luminance > 60 && luminance < 195)
+    (saturation < 0.12 && luminance > 220) ||
+    luminance > 250
   )
 }
 
@@ -416,7 +418,9 @@ function strongestSegment(
           const dg = data[qi + 1] - data[pi + 1]
           const db = data[qi + 2] - data[pi + 2]
           // Grow across folds and shading, but not across a colour boundary.
-          if (dr * dr + dg * dg + db * db > 110 * 110) continue
+          // A strict limit is required so contrasting embroidery (like gold motifs on black)
+          // does not merge into the base fabric and hijack the hue extraction.
+          if (dr * dr + dg * dg + db * db > 90 * 90) continue
           labels[q] = id
           stack.push(q)
         }
@@ -457,9 +461,17 @@ function strongestSegment(
     centreRatio: number
     fillRatio: number
   }): number => {
+    // A background wall forms a ring/horseshoe around the model, meaning it has huge count 
+    // but almost no pixels in the dead center (since the model blocks it).
+    if (c.centreRatio < 0.15) return 0
+    
     const dx = (c.cx - 0.5) / 0.42
     const dy = (c.cy - 0.62) / 0.45
-    return c.count * Math.exp(-(dx * dx + dy * dy)) * (0.35 + c.centreRatio) * (0.3 + c.fillRatio)
+    // Cubing centreRatio brutally destroys background walls that wrap around the model.
+    // They have a huge pixel count and a perfectly centered centroid, but their actual pixels
+    // are distributed outside the center ellipse, so centreRatio is tiny (e.g. 0.15).
+    // A true garment sits squarely in the center and has a centreRatio near 1.0.
+    return c.count * Math.exp(-(dx * dx + dy * dy)) * Math.pow(c.centreRatio, 3) * c.fillRatio
   }
 
   let best = components[0]
@@ -569,7 +581,6 @@ function isolateAchromaticColor(
       const r = data[i]
       const g = data[i + 1]
       const b = data[i + 2]
-      if (0.299 * r + 0.587 * g + 0.114 * b < 14) continue
       const nx = (x / width - 0.5) / 0.28
       const ny = (y / height - 0.55) / 0.35
       if (nx * nx + ny * ny <= 1) centre.push([r, g, b])

@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:aveline_mobile/core/network/org_context.dart';
+import 'package:aveline_mobile/features/customers/data/api_customer_repository.dart';
 import 'package:aveline_mobile/features/customers/domain/customer_level.dart';
 import 'package:aveline_mobile/features/home/data/api_customer_tenant_repository.dart';
 import 'package:aveline_mobile/features/home/domain/client_highlight.dart';
@@ -191,6 +193,68 @@ void main() {
       expect(highlights.first.tier, ClientTier.vip);
       expect(highlights.last.tier, isNull);
       expect(highlights.first.activity, 'Visited the boutique today.');
+    });
+  });
+
+  group('ApiCustomerRepository', () {
+    test('fetchBook fetches and sorts customers into sections', () async {
+      adapter.body = {
+        'items': [
+          _bookItem(id: 'c2', fullName: 'Bhavan Silva', level: 'level1'),
+          _bookItem(id: 'c1', fullName: 'Aruni Peiris', level: 'vip'),
+        ],
+        'total': 2,
+        'page': 1,
+        'pageSize': 200,
+      };
+
+      final customerRepo = ApiCustomerRepository(dio, organizationId: () => 'org-1');
+      final book = await customerRepo.fetchBook();
+
+      expect(adapter.lastPath, '/api/v1/orgs/org-1/customers');
+      expect(book.letters, ['A', 'B']);
+      expect(book.sections.first.customers.first.fullName, 'Aruni Peiris');
+    });
+
+    test('fetchCustomer parses customer detail', () async {
+      adapter.body = {
+        'customerId': 'c1',
+        'fullName': 'Eleanor Vane',
+        'nickname': 'Ellie',
+        'phoneNumber': '+94771234567',
+        'email': 'eleanor@example.com',
+        'level': 'level3',
+        'status': 'vip',
+        'totalSpent': 75000.0,
+        'visitCount': 8,
+        'lastVisitAtUtc': '2026-09-20T10:00:00Z',
+        'createdAtUtc': '2026-01-01T10:00:00Z',
+        'tags': ['high_value', 'bridal'],
+      };
+
+      final customerRepo = ApiCustomerRepository(dio, organizationId: () => 'org-1');
+      final detail = await customerRepo.fetchCustomer('c1');
+
+      expect(adapter.lastPath, '/api/v1/orgs/org-1/customers/c1');
+      expect(detail, isNotNull);
+      expect(detail!.customer.fullName, 'Eleanor Vane');
+      expect(detail.customer.nickname, 'Ellie');
+      expect(detail.customer.tags, contains('bridal'));
+      expect(detail.customer.totalSpent, 75000.0);
+    });
+
+    test('fetchCustomer returns null on 404', () async {
+      adapter.statusCode = 404;
+      final customerRepo = ApiCustomerRepository(dio, organizationId: () => 'org-1');
+      final detail = await customerRepo.fetchCustomer('missing-id');
+
+      expect(detail, isNull);
+    });
+
+    test('throws OrgContextUnavailable when organizationId is missing', () async {
+      final customerRepo = ApiCustomerRepository(dio, organizationId: () => null);
+      expect(() => customerRepo.fetchBook(), throwsA(isA<OrgContextUnavailable>()));
+      expect(() => customerRepo.fetchCustomer('c1'), throwsA(isA<OrgContextUnavailable>()));
     });
   });
 }

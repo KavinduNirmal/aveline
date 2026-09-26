@@ -234,6 +234,7 @@ v1.MapRevenueModuleEndpoints();
 v1.MapCatalogEndpoints();
 v1.MapHomeEndpoints();
 v1.MapCustomerTenantEndpoints();
+v1.MapSearchEndpoints();
         v1.MapIncomeEndpoints();
         v1.MapDashboardEndpoints();
 

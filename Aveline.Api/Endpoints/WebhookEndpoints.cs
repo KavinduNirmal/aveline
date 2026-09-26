@@ -149,7 +149,19 @@ public static class WebhookEndpoints
             var message = ExtractMessage(payload);
             if (message is null)
             {
-                // Not a message event (e.g. status/read receipt) — acknowledge without error.
+                // Not a message event (e.g. status/read receipt) - acknowledge without error.
+                //
+                // Logged because this branch is otherwise invisible, and that invisibility cost a
+                // diagnosis on 2026-09-26: a delivery that arrives and is dropped here looked
+                // exactly like a delivery Meta never made, so a missing field subscription in the
+                // Meta console could not be told apart from a webhook that was working. `field` is
+                // the webhook field Meta addressed and is the value to compare against the
+                // subscription list in that console.
+                logger.LogInformation(
+                    "Ignored WhatsApp webhook: the payload carries no message. organizationId={OrganizationId} field={Field} entries={EntryCount}",
+                    organizationId,
+                    payload?.Entry?.FirstOrDefault()?.Changes?.FirstOrDefault()?.Field,
+                    payload?.Entry?.Length ?? 0);
                 return Results.Ok(new { status = "ignored" });
             }
 
@@ -521,7 +533,7 @@ public static class WebhookEndpoints
 
     private sealed record WhatsAppWebhookPayload(WhatsAppEntry[]? Entry);
     private sealed record WhatsAppEntry(WhatsAppChange[]? Changes);
-    private sealed record WhatsAppChange(WhatsAppValue? Value);
+    private sealed record WhatsAppChange(string? Field, WhatsAppValue? Value);
     private sealed record WhatsAppValue(
         WhatsAppMessage[]? Messages,
         WhatsAppContact[]? Contacts,

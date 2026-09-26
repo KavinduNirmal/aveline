@@ -46,6 +46,7 @@ public class TenantUsageEndpointTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.UseSetting("AgentService:InternalToken", InternalToken);
                 // This suite boots the real app, so the media options validator runs. Pinning the
@@ -70,7 +71,7 @@ public class TenantUsageEndpointTests : IAsyncLifetime
 
     private static AppDbContext Db() => new(
         new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
     private async Task<HttpResponseMessage> GetTenantUsageAsync(Guid orgId, string? token = InternalToken)

@@ -48,6 +48,7 @@ public class PaymentWebhookEndpointsIntegrationTests : IAsyncLifetime
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+            builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
             builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
             builder.UseSetting("Payments:Provider", "mock");
             builder.UseSetting("Payments:Mock:Enabled", "true");
@@ -85,7 +86,7 @@ public class PaymentWebhookEndpointsIntegrationTests : IAsyncLifetime
     }
 
     private static AppDbContext Context() => new(new DbContextOptionsBuilder<AppDbContext>()
-        .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+        .UseInMemoryDatabase(databaseName: TestDatabase.Name())
         .Options);
 
     private static async Task<(Guid OrgId, string ClerkId)> SeedBoutiqueAsync(string suffix)

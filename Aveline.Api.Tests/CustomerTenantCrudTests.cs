@@ -45,6 +45,7 @@ public class CustomerTenantCrudTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
             });
 
@@ -103,7 +104,7 @@ public class CustomerTenantCrudTests : IAsyncLifetime
     private static async Task<Seeded> SeedAsync(string suffix, string? openOrderStatus = null)
     {
         await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
         var manager = new User
@@ -237,7 +238,7 @@ public class CustomerTenantCrudTests : IAsyncLifetime
     private static async Task<Guid> ManagerIdAsync(string clerkId)
     {
         await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
         var user = await context.Users.AsNoTracking().FirstAsync(u => u.ClerkId == clerkId);
         return user.Id;
@@ -486,7 +487,7 @@ public class CustomerTenantCrudTests : IAsyncLifetime
 
         // The row still exists (soft delete), it is merely invisible.
         await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
         var row = await context.Customers.IgnoreQueryFilters()
             .AsNoTracking()
@@ -592,7 +593,7 @@ public class CustomerTenantCrudTests : IAsyncLifetime
         var customerId = created.GetProperty("customerId").GetGuid();
 
         await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
         var salon = await context.Conversations

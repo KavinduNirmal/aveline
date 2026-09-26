@@ -38,6 +38,7 @@ public class HomeFeedEndpointsTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
             });
 
@@ -100,7 +101,7 @@ public class HomeFeedEndpointsTests : IAsyncLifetime
         string suffix, string timeZone = "UTC", string itemName = "Raw silk")
     {
         await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
         var member = new User
@@ -301,7 +302,7 @@ public class HomeFeedEndpointsTests : IAsyncLifetime
         // The fact behind the docket changes (the item is renamed), so the hash no
         // longer matches and the docket must come back rather than stay suppressed.
         await using (var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options))
         {
             var item = await context.InventoryItems.FindAsync(seeded.ItemId);

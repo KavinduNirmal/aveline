@@ -37,6 +37,7 @@ public class CustomerTenantEndpointsTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
             });
 
@@ -94,7 +95,7 @@ public class CustomerTenantEndpointsTests : IAsyncLifetime
     private static async Task<Seeded> SeedAsync(string suffix)
     {
         await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
         var member = new User
@@ -303,7 +304,7 @@ public class CustomerTenantEndpointsTests : IAsyncLifetime
         Assert.Equal("pending", body.GetProperty("consentStatus").GetString());
 
         await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
         var row = await context.CustomerConsents.SingleOrDefaultAsync(
             candidate => candidate.OrganizationId == seeded.OrgId && candidate.CustomerId == customerId);
@@ -319,7 +320,7 @@ public class CustomerTenantEndpointsTests : IAsyncLifetime
         // client actually has, so a revoked duplicate is not shown as pending.
         var seeded = await SeedAsync("duplicate_consent");
         await using (var seedContext = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options))
         {
             seedContext.CustomerConsents.Add(new CustomerConsent

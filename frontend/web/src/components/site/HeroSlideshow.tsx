@@ -72,9 +72,9 @@ const SLIDES: Slide[] = [
       agent: 'lina',
       text: 'Lina validated margin',
       subtext: 'LKR 45,000 order prepared with 24h hold',
-      color: 'border-primary/30 bg-white/95 text-neutral-900',
-      badgeBg: 'bg-commerce text-white',
-      textColor: 'text-commerce',
+      color: 'border-lilac/30 bg-white/95 text-neutral-900',
+      badgeBg: 'bg-lilac text-white',
+      textColor: 'text-lilac',
     },
   },
 ]

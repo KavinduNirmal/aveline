@@ -313,8 +313,8 @@ export function PhoneMockup() {
                       <span className="flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-medium text-amber-800 border border-amber-200/80 shadow-2xs">
                         <span className="size-1.5 rounded-full bg-visual" /> Elle
                       </span>
-                      <span className="flex items-center gap-1 rounded-full bg-rose-100/70 px-2.5 py-1 text-[10px] font-medium text-rose-900 border border-rose-200 shadow-2xs">
-                        <span className="size-1.5 rounded-full bg-commerce" /> Lina
+                      <span className="flex items-center gap-1 rounded-full bg-lilac-soft px-2.5 py-1 text-[10px] font-medium text-lilac border border-lilac/30 shadow-2xs">
+                        <span className="size-1.5 rounded-full bg-lilac" /> Lina
                       </span>
                     </div>
                   </div>
@@ -603,31 +603,31 @@ export function PhoneMockup() {
                   className="flex flex-col gap-3 py-2"
                 >
                   <div className="flex items-center gap-2">
-                    <span className="flex size-7 items-center justify-center rounded-full bg-commerce text-white shadow-2xs">
+                    <span className="flex size-7 items-center justify-center rounded-full bg-lilac text-white shadow-2xs">
                       <Blossom className="size-4" />
                     </span>
                     <div>
                       <div className="flex items-center gap-1.5">
                         <span className="text-xs font-semibold text-neutral-900">Lina (Commerce Agent)</span>
-                        <span className="size-1.5 rounded-full bg-commerce animate-pulse" />
+                        <span className="size-1.5 rounded-full bg-lilac animate-pulse" />
                       </div>
                       <span className="text-[10px] text-neutral-500">Replying to Elle</span>
                     </div>
                   </div>
 
                   {/* Lina's Message Bubble */}
-                  <div className="rounded-2xl border border-rose-200 bg-[#fff2f4] p-4 text-[12px] leading-relaxed text-neutral-800 shadow-sm">
+                  <div className="rounded-2xl border border-lilac/30 bg-lilac-soft p-4 text-[12px] leading-relaxed text-neutral-800 shadow-sm">
                     <p>
                       I have found <span className="font-semibold text-neutral-900">3 suppliers</span> with matching dresses, with a <span className="font-semibold text-emerald-700">40% profit margin</span>.
                     </p>
                     <p className="mt-2">
-                      I suggest ordering from <span className="font-semibold text-rose-900">XYZ Atelier Studio</span> (Cost: LKR 24,000 · Retail: LKR 42,000). Should I create an order?
+                      I suggest ordering from <span className="font-semibold text-lilac">XYZ Atelier Studio</span> (Cost: LKR 24,000 · Retail: LKR 42,000). Should I create an order?
                     </p>
                   </div>
 
                   {/* Supplier Card */}
                   <div className="rounded-2xl border border-neutral-200/80 bg-white p-3 text-xs shadow-sm">
-                    <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-rose-900 font-semibold mb-2">
+                    <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-lilac font-semibold mb-2">
                       <span>Order Proposal #PO-881</span>
                       <span className="text-emerald-700 font-bold">+40% Margin</span>
                     </div>
@@ -637,7 +637,7 @@ export function PhoneMockup() {
                     </div>
                     <div className="flex items-center justify-between text-[11px] text-neutral-700">
                       <span>Retail Price for Sarah:</span>
-                      <span className="font-bold text-rose-900">LKR 42,000</span>
+                      <span className="font-bold text-lilac">LKR 42,000</span>
                     </div>
                   </div>
 

@@ -47,10 +47,13 @@ const AGENT_PERSONAS: Record<AgentKey, Persona> = {
   [AGENT_KEYS.lina]: {
     key: AGENT_KEYS.lina,
     name: 'Lina',
-    text: 'text-commerce',
-    bg: 'bg-commerce',
-    bgSoft: 'bg-commerce/10',
-    ring: 'ring-commerce/20',
+    // Lina's accent is her own lilac (`--aveline-lilac`), not `commerce`. `commerce` is the brand
+    // wine-rose and also paints the docs section and the pricing CTA, so an agent-colour change
+    // must not go through it.
+    text: 'text-lilac',
+    bg: 'bg-lilac',
+    bgSoft: 'bg-lilac/10',
+    ring: 'ring-lilac/20',
     role: 'Commerce',
   },
 }

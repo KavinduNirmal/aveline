@@ -486,7 +486,7 @@ function CourierBlock({ block }: BlockRendererProps) {
 }
 
 /**
- * The tinted surface an editorial note wears: Elle's gold, Ava's rose, Lina's wine, and the app's
+ * The tinted surface an editorial note wears: Elle's gold, Ava's rose, Lina's lilac, and the app's
  * accent when the note is not attributed to an agent.
  */
 function personaSurface(persona: Persona | null | undefined) {
@@ -496,7 +496,7 @@ function personaSurface(persona: Persona | null | undefined) {
       : persona?.key === 'elle'
         ? 'border-visual/20'
         : persona?.key === 'lina'
-          ? 'border-commerce/20'
+          ? 'border-lilac/20'
           : 'border-primary/20'
 
   const bg =
@@ -505,7 +505,7 @@ function personaSurface(persona: Persona | null | undefined) {
       : persona?.key === 'elle'
         ? 'bg-visual/5'
         : persona?.key === 'lina'
-          ? 'bg-commerce/5'
+          ? 'bg-lilac/5'
           : 'bg-primary/5'
 
   return { border, bg, text: persona?.text ?? 'text-primary' }

@@ -27,16 +27,42 @@
 #      PRINCIPAL=$(az identity show -g rg-aveline -n id-aveline-github --query principalId -o tsv)
 #
 #      az identity federated-credential create \
-#        --identity-name id-aveline-github -g rg-aveline --name gh-master \
+#        --identity-name id-aveline-github -g rg-aveline --name gh-master-immutable \
 #        --issuer https://token.actions.githubusercontent.com \
-#        --subject repo:KavinduNirmal/aveline:ref:refs/heads/master \
+#        --subject 'repo:KavinduNirmal@65773645/aveline@1345130828:ref:refs/heads/master' \
 #        --audiences api://AzureADTokenExchange
 #
-#    Add one credential per ref that may deploy (master, and the release branch):
-#      --subject repo:KavinduNirmal/aveline:ref:refs/heads/release/version-beta-0.1.0
+#    Add one credential per branch that may deploy:
+#      --subject 'repo:KavinduNirmal@65773645/aveline@1345130828:ref:refs/heads/release/version-beta-0.2.0'
 #
 #    A workflow triggered from a ref with no matching subject cannot log in. That
 #    is the intended restriction.
+#
+#    THE SUBJECT IS NOT repo:OWNER/REPO. This repository receives GitHub's
+#    "immutable" subject claims, which bake the owner and repository *numeric ids*
+#    into the claim. A credential written as
+#    repo:KavinduNirmal/aveline:ref:refs/heads/master therefore never matches, and
+#    the login dies with
+#
+#      AADSTS700213: No matching federated identity record found for presented
+#      assertion subject 'repo:KavinduNirmal@65773645/aveline@1345130828:...'
+#
+#    which is exactly how the first run of this workflow failed (2026-09-26). The
+#    incorrect subject is accepted silently when the credential is created - Azure
+#    does not validate the format against the IdP - so read the prefix from GitHub
+#    before writing a credential:
+#
+#      gh api repos/KavinduNirmal/aveline/actions/oidc/customization/sub
+#
+#        {"use_default":true,"use_immutable_subject":true,
+#         "sub_claim_prefix":"repo:KavinduNirmal@65773645/aveline@1345130828"}
+#
+#    The subject is that prefix, then ":ref:refs/heads/<branch>". If the repository
+#    is ever transferred or renamed, both ids change and every credential has to be
+#    rewritten. That is the point of the immutable form: a rename cannot silently
+#    inherit this deploy identity. Turning it off instead (PUT the same endpoint
+#    with use_immutable_subject=false) makes the name-only form match again, at the
+#    cost of that guarantee. Prefer the explicit id form.
 #
 # 2. Grant it exactly what it needs (all three already granted for rg-aveline):
 #      AcrPush                        on avelineacr     push images
@@ -170,6 +196,12 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      # `dotnet ef` builds the project, so it needs the NuGet assets file. Without
+      # this the bundle step dies on NETSDK1004 - "project.assets.json not found" -
+      # because `dotnet tool restore` restores the *tool*, not the project.
+      - name: Restore dependencies
+        run: dotnet restore Aveline.Api/Aveline.Api.sln
+
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
@@ -212,7 +244,17 @@ jobs:
   # ---------------------------------------------------------------------------
   deploy:
     name: Roll Container Apps revisions
-    needs: build-and-push
+    # `migrate` is only in play when run_migrations is true, so this cannot be a
+    # plain `needs`: a skipped job takes its dependents down with it. The condition
+    # keeps the free-standing behaviour when migrations were not requested, and
+    # refuses to roll new code onto an un-migrated database when they were
+    # requested and failed - which is exactly what shipped against postgres on
+    # 2026-09-26, when a failed migration job still let revision 0000007 reach
+    # 100% of traffic and the API began failing with
+    # "42703: column c0.Nickname does not exist". `always()` is what lets the
+    # skipped case be evaluated at all.
+    needs: [build-and-push, migrate]
+    if: ${{ always() && needs.build-and-push.result == 'success' && (!inputs.run_migrations || needs.migrate.result == 'success') }}
     runs-on: ubuntu-latest
     steps:
       - name: Azure login (OIDC)

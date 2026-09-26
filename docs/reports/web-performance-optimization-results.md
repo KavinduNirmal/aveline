@@ -31,16 +31,21 @@ Measured on the Lighthouse mobile profile over CDP with applied throttling
 
 | Metric | Before | After | Change |
 |---|---|---|---|
-| First Contentful Paint | 9,704 ms | 5,888 ms | −39.3 % |
-| Largest Contentful Paint | 10,636 ms | 6,720 ms | −36.8 % |
-| Total Blocking Time | 2,155 ms | 1,032 ms | **−52.1 %** |
-| Main-thread busy | 5,355 ms | 2,182 ms | −59.3 % |
-| Long tasks (count) | 58 | 23 | −60.3 % |
-| Load event | 8,588 ms | 3,713 ms | −56.8 % |
+| First Contentful Paint | 9,704 ms | 4,064 ms | −58.1 % |
+| Largest Contentful Paint | 10,636 ms | 4,932 ms | **−53.6 %** |
+| Total Blocking Time | 2,155 ms | 1,050 ms | **−51.3 %** |
+| Main-thread busy | 5,355 ms | 2,450 ms | −54.2 % |
+| Long tasks (count) | 58 | 28 | −51.7 % |
+| Load event | 8,588 ms | 1,847 ms | −78.5 % |
 | CLS | 0.0327 | 0.0327 | 0.0 % |
 
-On good 4G with the same 4× CPU throttle the improvement is larger: LCP 11,932 → **3,036 ms**
-(−74.6 %), TBT 3,589 → **903 ms** (−74.8 %). Desktop unthrottled: TBT 2,920 → **286 ms** (−90.2 %).
+On good 4G with the same 4× CPU throttle: LCP 11,932 → **3,204 ms** (−73.1 %), TBT 3,589 →
+**1,084 ms** (−69.8 %). Warm cache: LCP −65.7 %, transferred −65.9 %. Desktop unthrottled:
+LCP −62.2 %, TBT 2,920 → **815 ms** (−72.1 %).
+
+> **These figures were re-measured.** The first version of this table was taken on a build where
+> the aurora's `blur(70px)` was silently missing (see §4.4). The correction moved the after-run by
+> a few percent and the direction is unchanged; the numbers above are from the corrected build.
 
 ---
 
@@ -143,24 +148,62 @@ through the component's own gate and changes nothing else:
 | Landing page, mobile-slow4g profile | Long tasks | Main-thread busy |
 |---|---|---|
 | Framer Motion animations (before) | 80 | 3,240 ms |
-| CSS animations (after) | **18** | **1,014 ms** |
+| CSS animations (after) | **20** | **1,089 ms** |
 | Animation off, before | 9 | 630 ms |
-| Animation off, after | 7 | 592 ms |
+| Animation off, after | 7 | 623 ms |
 
 **Two thirds of the landing page's main-thread busy was ~140 JavaScript animations**, and moving the
 same keyframes into CSS removed them without changing the DOM: the animated page mounts 2,620 nodes
 both before and after. This is also the first *direct* measurement of the plan's §3.6, which had
-reasoned from Lighthouse's 4,431 ms of "Style & Layout".
+reasoned from Lighthouse's 4,431 ms of "Style & Layout". (The after-row was re-measured after the
+defect in §4.4 was fixed; see that section.)
 
 ### 4.3 Metrics that did not improve, reported as such
 
-- **CLS on good 4G moved 0.0192 → 0.0322.** It remains inside the "good" band (< 0.1) and matches
+- **CLS on good 4G moved 0.0192 → 0.0327.** It remains inside the "good" band (< 0.1) and matches
   the value the same page already showed under Slow 4G (0.0327) at baseline, so nothing here
   introduced a layout-stability problem — but it is not an improvement and is not presented as one.
 - **Requests rose, 28 → 53.** Splitting the entry means the landing page fetches its own chunk and
   its shared dependencies. Total bytes fell 32 %, so this is a byte-for-request trade that is
   unambiguous over HTTP/2 (what Vercel serves) and less clearly positive over the harness's
   HTTP/1.1 server. See §6.
+
+### 4.4 A defect this work shipped, and the gate that now catches it
+
+The aurora blur was silently lost for one commit, and the byte- and metric-based evidence above did
+not notice. It is recorded here because the failure mode is more instructive than the fix.
+
+`AuroraField`'s blur layer was written as a template literal:
+
+```jsx
+className={`absolute rounded-full blur-[70px]${staticOnly ? '' : ' aveline-aurora-blob'}`}
+```
+
+Tailwind v4 finds candidates by scanning source text. With no separator between the utility and the
+interpolation, the candidate reads as `blur-[70px]${staticOnly`, which matches nothing — so
+`.blur-\[70px\]` was **never emitted into the stylesheet**. TypeScript passed, lint passed, all 1364
+tests passed, `bun run build` succeeded, and the byte budgets improved. The only symptom was visual:
+six 700 px gradient blobs rendered as hard-edged circles instead of a soft aurora. It was caught by
+looking at the deployed page against a local build, not by any gate.
+
+Diagnosis was `getComputedStyle(el).filter === 'none'` on the blob elements, while a sibling class in
+`FlowerAuroraBackground` written as a plain `"blur-[110px]"` literal was emitted normally — which is
+why exactly one component was affected.
+
+Two things follow:
+
+- **The fix** keeps the utility as a standalone literal, via the project's `cn()`, and the CSS now
+  emits `.blur-\[70px\]{--tw-blur:blur(70px);filter:var(--tw-blur,) …}` with a computed
+  `filter: blur(70px)`.
+- **A gate**, `src/tailwind-candidates.test.ts`, scans `className` template literals and fails if any
+  `${` is glued to a preceding character. It is deliberately narrow so it cannot cry wolf: `cn()`,
+  plain literals and `\`${base} ${extra}\`` all pass.
+
+The honest lesson for the measurements: a byte budget cannot see a class that was never generated,
+and neither can a unit test that never renders the component. `testing/performance/ab-aurora.cjs`
+was written for this and reports the **computed** `filter` on the blur layers under both motion
+preferences — it is the check that would have caught this immediately, and the one to run after any
+change to that component.
 
 ---
 
@@ -174,9 +217,10 @@ reasoned from Lighthouse's 4,431 ms of "Style & Layout".
 | `Blossom` injects no `<style>` and carries its duration as a custom property | `src/components/auth/Blossom.test.tsx` (new) | 5 passed |
 | `useConstrainedDevice` fires on each signal and only on those | `src/hooks/useConstrainedDevice.test.ts` + `.dom.test.ts` (new) | 11 passed |
 | Tenant + admin design-conformance rules | existing | 15 passed |
+| No Tailwind candidate glued to `${` in a `className` template literal (§4.4) | `src/tailwind-candidates.test.ts` (new) | 2 passed |
 | Byte budgets, promoted Mermaid gate, entry-chunk assertions, mobile landing assertions | `testing/performance/budgets.spec.ts` | 10 passed |
 
-Full suite: **169 files / 1364 tests passed**; all three coverage runs (global, admin ratchet,
+Full suite: **170 files / 1369 tests passed**; all three coverage runs (global, admin ratchet,
 tenant-dashboard ratchet) green at 87.7 % lines. Signed-out Playwright e2e: **19 passed, 1 skipped**.
 
 Two existing gates earned their keep during this work:

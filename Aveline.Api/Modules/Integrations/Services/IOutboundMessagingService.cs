@@ -57,6 +57,20 @@ public interface IOutboundMessagingService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Sends a reply-path WhatsApp image with <paramref name="caption"/> as its text, on behalf of the
+    /// boutique. Same contract as <see cref="SendWhatsAppTextAsync"/>: never throws for a provider or
+    /// configuration failure, and the same key never produces a second provider call.
+    /// </summary>
+    /// <param name="imageUrl">A publicly reachable, stable URL; the provider fetches it itself.</param>
+    Task<OutboundMessageResult> SendWhatsAppImageAsync(
+        Guid organizationId,
+        string toE164,
+        string imageUrl,
+        string caption,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Whether the organization can actually send on the given channel key today. False when the
     /// channel is absent <i>and</i> when its provider does not exist (Instagram).
     /// </summary>

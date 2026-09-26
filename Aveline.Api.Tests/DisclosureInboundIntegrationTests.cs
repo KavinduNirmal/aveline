@@ -67,7 +67,17 @@ public class DisclosureInboundIntegrationTests : IAsyncLifetime
             string languageCode, IReadOnlyList<object>? components,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
-    }
+    
+        public Task<WhatsAppSendResult> SendImageAsync(
+            string accessToken,
+            string phoneNumberId,
+            string to,
+            string imageUrl,
+            string caption,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new WhatsAppSendResult(
+                IsSuccess: true, MessageId: "wamid.TESTIMAGE", HttpStatus: 200));
+}
 
     /// <summary>
     /// The production queue is a channel drained by a background worker; a test cannot wait on that
@@ -329,7 +339,7 @@ public class DisclosureInboundIntegrationTests : IAsyncLifetime
 
             var consent = await context.CustomerConsents.SingleAsync(c => c.CustomerId == customerId);
             Assert.NotNull(consent.DisclosureShownAt);
-            Assert.Equal("v1", consent.DisclosureVersion);
+            Assert.Equal("v2", consent.DisclosureVersion);
 
             // The inbound message itself was still recorded (the webhook's own contract).
             Assert.True(await context.InboundMessageLogs.AnyAsync(

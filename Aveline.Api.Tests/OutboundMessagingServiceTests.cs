@@ -436,7 +436,17 @@ public class OutboundMessagingServiceTests
             var id = MintFreshMessageIds ? $"wamid.OUT{++_minted}" : "wamid.OUT1";
             return Task.FromResult(new WhatsAppSendResult(IsSuccess: true, MessageId: id, HttpStatus: 200));
         }
-    }
+    
+        public Task<WhatsAppSendResult> SendImageAsync(
+            string accessToken,
+            string phoneNumberId,
+            string to,
+            string imageUrl,
+            string caption,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new WhatsAppSendResult(
+                IsSuccess: true, MessageId: "wamid.TESTIMAGE", HttpStatus: 200));
+}
 
     private sealed record Attempt(
         string AccessToken, string PhoneNumberId, string To, string? Text,

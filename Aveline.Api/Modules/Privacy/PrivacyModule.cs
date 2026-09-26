@@ -29,6 +29,12 @@ public static class PrivacyModule
         services.AddSingleton<OtpMetrics>();
         services.AddScoped<IDisclosureDispatchService, DisclosureDispatchService>();
 
+        // The disclosure image. The composer is a singleton because it holds three loaded typefaces
+        // and is otherwise stateless; the provider is scoped alongside the Cloudinary client and the
+        // distributed cache it uses.
+        services.AddSingleton<IDisclosureImageComposer, DisclosureImageComposer>();
+        services.AddScoped<IDisclosureImageProvider, DisclosureImageProvider>();
+
         // The OTP service is stateless apart from the distributed cache, so it is a singleton and
         // safe to resolve from any scope. TimeProvider.System is the production clock; tests swap it.
         services.TryAddSingleton(TimeProvider.System);

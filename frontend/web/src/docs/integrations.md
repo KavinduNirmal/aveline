@@ -59,6 +59,30 @@ This is a one-time step, and it is what makes inbound customer messages arrive i
 
 3. Set the verify token to the same value you entered as **Webhook Verify Token** in Aveline.
 4. Verify and save, then subscribe to the **messages** field.
+5. **Subscribe the app to the WhatsApp Business Account itself.** This is a separate step and
+   nothing on the page tells you it is missing.
+
+   Verifying the callback URL and ticking a field are not enough: until an app is subscribed to the
+   account, Meta sends nothing to anyone, and the field list still shows **Subscribed** in blue. That
+   green light describes the field, not the pipe.
+
+   You need the **WhatsApp Business Account ID** from **WhatsApp → API Setup** - it is not the phone
+   number ID, and an ID copied from anywhere else answers `(#100) Tried accessing nonexisting field`.
+
+   ```bash
+   export WA_TOKEN='<your access token>'
+   export WABA_ID='<WhatsApp Business Account ID from API Setup>'
+
+   # Ask first. {"data":[]} means no app is subscribed and nothing will ever arrive.
+   curl -sS "https://graph.facebook.com/v21.0/${WABA_ID}/subscribed_apps?access_token=${WA_TOKEN}"
+
+   # Subscribe. Expect {"success":true}, then send yourself a message.
+   curl -sS -X POST "https://graph.facebook.com/v21.0/${WABA_ID}/subscribed_apps?access_token=${WA_TOKEN}"
+   ```
+
+   The token needs the `whatsapp_business_management` scope for this; `whatsapp_business_messaging`
+   alone is enough to send but not to subscribe. Check what yours carries with
+   `curl -sS "https://graph.facebook.com/v21.0/me/permissions?access_token=${WA_TOKEN}"`.
 
 Aveline verifies every inbound request with Meta's `X-Hub-Signature-256` signature, so only
 genuine Meta traffic is accepted.

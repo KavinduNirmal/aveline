@@ -1,4 +1,5 @@
 import { apiClient } from '@/lib/api'
+import { apiBaseUrl } from '@/lib/env'
 import type {
   InboundMessageLogDto,
   IntegrationStatusDto,
@@ -68,4 +69,39 @@ export async function deleteIntegration(
   type: IntegrationType,
 ): Promise<void> {
   await apiClient.delete(`${integrationBase(organizationId)}/${type.toLowerCase()}`)
+}
+
+/**
+ * The URL Meta must call for a boutique's inbound WhatsApp events.
+ *
+ * The webhook is mapped on the API's `/api/v1` group rather than under the org-scoped integration
+ * routes, so this is built from the API origin and not from `integrationBase`. `baseUrl` is
+ * injectable for tests.
+ */
+export function whatsappWebhookUrl(
+  organizationId: string,
+  baseUrl: string = apiBaseUrl,
+): string {
+  return `${baseUrl.replace(/\/+$/, '')}/api/v1/webhooks/whatsapp/${organizationId}`
+}
+
+/** Bytes of randomness behind a suggested verify token. */
+const VERIFY_TOKEN_BYTES = 24
+
+/**
+ * A verify token the boutique can hand to Meta.
+ *
+ * Meta only echoes the token back on the subscription handshake, so a random URL-safe string is
+ * both sufficient and far less error-prone than one typed by hand: the backend compares it
+ * verbatim against the stored `webhookVerifyToken`. Base64url keeps it safe to paste into a form
+ * or a query string.
+ */
+export function suggestWebhookVerifyToken(byteLength: number = VERIFY_TOKEN_BYTES): string {
+  const bytes = new Uint8Array(byteLength)
+  crypto.getRandomValues(bytes)
+  let binary = ''
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte)
+  }
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
 }

@@ -285,4 +285,35 @@ public class OrderContextBuilderTests
 
         Assert.Empty(context.Items);
     }
+
+    [Theory]
+    [InlineData("Order confirm for Kaveesha", "Kaveesha")]
+    [InlineData("Create order for Tharindi", "Tharindi")]
+    [InlineData("Place order for client Kaveesha Tharindi", "Kaveesha Tharindi")]
+    [InlineData("Order for 0779037760", "0779037760")]
+    [InlineData("customer is Tharindi Mahindarathne", "Tharindi Mahindarathne")]
+    public void CustomerHintFrom_ExtractsCustomerNameOrPhone(string message, string expected)
+    {
+        var hint = OrderContextBuilder.CustomerHintFrom(message);
+        Assert.Equal(expected, hint);
+    }
+
+    [Fact]
+    public async Task OrderConfirmWithoutItemName_ResolvesItemFromPrecedingTurn()
+    {
+        var recentHistory = new List<string>
+        {
+            "Here is the Crimson piece you asked about: Emerald Green Georgette Saree priced at LKR 75,000.",
+            "Can you show me what green sarees you have?"
+        };
+
+        var context = await Builder(EmeraldSaree, FuchsiaDress)
+            .BuildAsync(Guid.NewGuid(), "Order confirm for Kaveesha", recentHistory);
+
+        var item = Assert.Single(context.Items);
+        Assert.Equal(EmeraldSaree.Id, item.ItemId);
+        Assert.Equal("Emerald Green Georgette Saree", item.ItemName);
+        Assert.Equal("Kaveesha", context.CustomerHint);
+        Assert.False(context.IsQuote);
+    }
 }

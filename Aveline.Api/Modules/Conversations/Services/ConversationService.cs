@@ -1044,7 +1044,7 @@ public class ConversationService : IConversationService
                 conversation.OrganizationId,
                 attachment is null ? Array.Empty<MessageAttachment>() : new[] { attachment });
 
-            var orderContext = await BuildOrderContextAsync(conversation.OrganizationId, text, cancellationToken);
+            var orderContext = await BuildOrderContextAsync(conversation.OrganizationId, text, null, cancellationToken);
 
             var payload = new
             {
@@ -1088,7 +1088,7 @@ public class ConversationService : IConversationService
             // replies arrive later as message.created events.
             var response = await _agentClient.PostAsync("/agents/query", content, cancellationToken);
             await HandleAgentOutcomeAsync(
-                conversation, response, orderContext, from, customerName: null, cancellationToken);
+                conversation, response, orderContext, from, customerName: orderContext.CustomerHint, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -1108,6 +1108,7 @@ public class ConversationService : IConversationService
     private async Task<OrderContext> BuildOrderContextAsync(
         Guid organizationId,
         string? message,
+        IReadOnlyList<string>? recentMessages,
         CancellationToken cancellationToken)
     {
         if (_orderContext is null)
@@ -1117,7 +1118,7 @@ public class ConversationService : IConversationService
 
         try
         {
-            return await _orderContext.BuildAsync(organizationId, message, cancellationToken);
+            return await _orderContext.BuildAsync(organizationId, message, recentMessages, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -1247,7 +1248,23 @@ public class ConversationService : IConversationService
             var (described, imageUrl) = DescribeAttachments(
                 conversation.OrganizationId, attachments ?? Array.Empty<MessageAttachment>());
 
-            var orderContext = await BuildOrderContextAsync(conversation.OrganizationId, query, cancellationToken);
+            // Retrieve recent messages to support context fallback (e.g. pieces showcased by Elle)
+            IReadOnlyList<string>? recentTexts = null;
+            try
+            {
+                var recentMessages = await _messages.ListLatestAsync(conversation.Id, 10, cancellationToken);
+                recentTexts = recentMessages
+                    .OrderByDescending(m => m.CreatedAt)
+                    .Select(m => ConversationBlockText.Flatten(m.ContentBlocksJson))
+                    .Where(t => !string.IsNullOrWhiteSpace(t))
+                    .ToList();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not load recent messages for order context in conversation {ConversationId}", conversation.Id);
+            }
+
+            var orderContext = await BuildOrderContextAsync(conversation.OrganizationId, query, recentTexts, cancellationToken);
 
             var payload = new
             {
@@ -1259,6 +1276,7 @@ public class ConversationService : IConversationService
                     // See TriggerInboundDraftAsync: the transcript window is keyed by this id.
                     conversation_id = conversation.Id,
                     customer_id = customerId,
+                    customer_name = orderContext.CustomerHint,
                     // The staff path (Salon note, regeneration, agent brief), so the tenant's own
                     // account figures are in scope: "how many Blossoms do I have left?" is a
                     // question about this boutique, not about a customer (ADR-026). This flag is
@@ -1281,7 +1299,7 @@ public class ConversationService : IConversationService
             // agent replies arrive later as message.created events.
             var response = await _agentClient.PostAsync("/agents/query", content, cancellationToken);
             await HandleAgentOutcomeAsync(
-                conversation, response, orderContext, phoneNumber: null, customerName: null, cancellationToken);
+                conversation, response, orderContext, phoneNumber: null, customerName: orderContext.CustomerHint, cancellationToken);
         }
         catch (Exception ex)
         {

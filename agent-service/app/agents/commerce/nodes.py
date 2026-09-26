@@ -373,6 +373,8 @@ class CommerceAgent:
         items = state.get("items") or []
         proposed_discount = float(state.get("proposed_discount") or 0.0)
         customer_id = state.get("customer_id")
+        customer_name = state.get("customer_name")
+        purpose = state.get("purpose")
 
         # 1. Tally line items and costs
         if not items:
@@ -396,6 +398,30 @@ class CommerceAgent:
                     "status": SKIPPED,
                     "reason": "no items in order context to evaluate",
                 },
+            }
+
+        # 1b. Missing registered customer for an order intent: prompt the boutique owner
+        if purpose != QUOTE_PURPOSE and not customer_name and not customer_id and items:
+            first_item = items[0]
+            item_name = first_item.get("name") or first_item.get("item_name") or "this item"
+            unit_price = float(first_item.get("unit_price") or 0.0)
+            qty = int(first_item.get("quantity") or 1)
+            item_label = f"{qty}x {item_name}" if qty > 1 else str(item_name)
+            prompt_text = (
+                f"I'm ready to prepare the order for **{item_label}** ({_money(unit_price * qty)}). "
+                f"Which registered client is this for? You can provide their first name or phone number."
+            )
+            output = CommerceAgentOutput(
+                status=SUCCESS,
+                summary=prompt_text,
+                needs_approval=False,
+                action_required="Awaiting client name or phone number from staff.",
+            )
+            return {
+                "status": SUCCESS,
+                "summary": prompt_text,
+                "output": output.model_dump(),
+                "requires_approval": False,
             }
 
         subtotal = sum(float(item.get("total_price") or (float(item.get("unit_price", 0.0)) * int(item.get("quantity", 1)))) for item in items)
@@ -441,6 +467,13 @@ class CommerceAgent:
             elif "DISCOUNT_LIMIT_EXCEEDED" in triggered_rules:
                 approval_type = "discount"
                 approval_reason = f"Requested discount {proposed_discount:.1%} exceeds {tier} tier cap"
+
+        # Orders placed via conversational flow always queue for owner review and manual sign-off
+        if purpose != QUOTE_PURPOSE:
+            requires_approval = True
+            is_auto_approved = False
+            approval_type = approval_type or "order_approval"
+            approval_reason = approval_reason or f"Order for {customer_name or 'customer'} awaiting owner review and approval"
 
         logger.info(
             "Evaluated deal for org %s: subtotal=%.2f total=%.2f margin=%.4f requires_approval=%s",
@@ -583,8 +616,17 @@ class CommerceAgent:
         reason = state.get("approval_reason") or "Order requires manager sign-off"
         approval_type = state.get("approval_type") or "high_value_order"
         total = state.get("total", 0.0)
+        customer_name = state.get("customer_name")
+        tier = state.get("loyalty_tier") or "Regular"
 
-        fallback_summary = f"Deal requires owner approval: {reason} (Total: LKR {total:,.2f}). Workflow paused."
+        if customer_name:
+            fallback_summary = (
+                f"Order queued for **{customer_name}** ({tier} Tier)! Total: {_money(total)}. "
+                f"The order is now live on your Live Orders page awaiting your manual review and approval."
+            )
+        else:
+            fallback_summary = f"Deal requires owner approval: {reason} (Total: {_money(total)}). Workflow paused."
+
         summary, usage = await self._compose_narrative(state, "approval_required", fallback_summary)
 
         deal_eval = DealEvaluation(

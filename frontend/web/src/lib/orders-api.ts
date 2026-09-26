@@ -140,3 +140,27 @@ export async function recalculateOrder(
   )
   return response.data
 }
+
+export interface UpdateOrderPayload {
+  customerId?: string
+  customerName?: string
+  orderType?: string
+  items?: OrderItemDto[]
+  discount?: number
+  customerTier?: string
+  notes?: string
+}
+
+export async function updateOrder(
+  organizationId: string,
+  orderId: string,
+  payload: UpdateOrderPayload,
+  signal?: AbortSignal,
+): Promise<OrderResponseDto> {
+  const response = await apiClient.put<OrderResponseDto>(
+    `${ordersBase(organizationId)}/${orderId}`,
+    payload,
+    { signal },
+  )
+  return response.data
+}

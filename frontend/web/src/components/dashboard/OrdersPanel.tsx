@@ -3,6 +3,7 @@ import {
   Ban,
   CheckCircle2,
   Clock,
+  Edit2,
   Eye,
   Package,
   RefreshCw,
@@ -46,6 +47,7 @@ import {
   cancelOrder,
   fetchOrders,
   recalculateOrder,
+  updateOrder,
   updateOrderStatus,
   type OrderResponseDto,
 } from '@/lib/orders-api'
@@ -97,6 +99,7 @@ const STATUS_BADGE_VARIANTS: Record<
  * Anything else the server refuses with "Invalid status transition".
  */
 const NEXT_TRANSITION: Record<string, { next: string; label: string }> = {
+  pending_approval: { next: 'approved', label: 'Approve Order' },
   approved: { next: 'payment_requested', label: 'Request Payment' },
   confirmed: { next: 'payment_requested', label: 'Request Payment' },
   revised: { next: 'payment_requested', label: 'Request Payment' },
@@ -121,6 +124,10 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
   const [selectedOrder, setSelectedOrder] = useState<OrderResponseDto | null>(null)
   const [detailsLoading, setDetailsLoading] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+
+  // Order Revision state
+  const [isEditing, setIsEditing] = useState(false)
+  const [editDiscountPct, setEditDiscountPct] = useState<string>('')
 
   // Cancel reason prompt
   const [cancelModalOpen, setCancelModalOpen] = useState(false)
@@ -166,8 +173,62 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
   useEffect(() => {
     const controller = new AbortController()
     void runLoad(controller.signal)
-    return () => controller.abort()
-  }, [runLoad])
+
+    // Periodic live sync (every 6s) so agent orders appear live without manual reload
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void load()
+      }
+    }, 6000)
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void load()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+
+    return () => {
+      controller.abort()
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [runLoad, load])
+
+  useEffect(() => {
+    if (selectedOrder) {
+      const currentPct = selectedOrder.subtotal > 0
+        ? Math.round((selectedOrder.discount / selectedOrder.subtotal) * 100)
+        : 0
+      setEditDiscountPct(currentPct.toString())
+      setIsEditing(false)
+    }
+  }, [selectedOrder?.id])
+
+  const handleSaveRevision = async () => {
+    if (!selectedOrder || !canManageOrders) return
+    setDetailsLoading(true)
+    setActionError(null)
+    try {
+      const pct = Math.max(0, Math.min(100, parseFloat(editDiscountPct) || 0))
+      const discountAmount = Math.round((selectedOrder.subtotal * (pct / 100)) * 100) / 100
+      const updated = await updateOrder(organization.id, selectedOrder.id, {
+        customerId: selectedOrder.customerId,
+        customerName: selectedOrder.customerName,
+        orderType: selectedOrder.orderType,
+        items: selectedOrder.items,
+        discount: discountAmount,
+      })
+      toast.success('Order discount revised.')
+      setSelectedOrder(updated)
+      setIsEditing(false)
+      await runLoad()
+    } catch (err) {
+      setActionError(toApiError(err).message || 'Failed to update order.')
+    } finally {
+      setDetailsLoading(false)
+    }
+  }
 
   // Aggregate summary metrics on current list
   const grossRevenue = orders.reduce((sum, o) => sum + (o.status !== 'cancelled' ? o.total : 0), 0)
@@ -505,6 +566,53 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
                 </Table>
               </div>
 
+              {/* In-Line Revision Section for pending_approval orders */}
+              {isEditing && (
+                <div className="flex flex-col gap-2 rounded-lg border p-3 bg-muted/30">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="edit-discount-input" className="text-xs font-semibold">
+                      Revise Custom Discount (%)
+                    </Label>
+                    <span className="text-xs text-muted-foreground">
+                      Subtotal: {formatMoney(selectedOrder.subtotal)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <Input
+                        id="edit-discount-input"
+                        type="number"
+                        min="0"
+                        max="100"
+                        value={editDiscountPct}
+                        onChange={(e) => setEditDiscountPct(e.target.value)}
+                        placeholder="e.g. 10"
+                        className="h-8 text-sm pr-6"
+                      />
+                      <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                        %
+                      </span>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={detailsLoading}
+                      onClick={() => void handleSaveRevision()}
+                    >
+                      Apply & Recalculate
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setIsEditing(false)}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              )}
+
               {/* Financial summary */}
               <div className="flex justify-end">
                 <div className="w-64 flex flex-col gap-1.5 text-sm">
@@ -539,6 +647,17 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
 
           <DialogFooter className="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
             <div className="flex gap-2">
+              {canManageOrders && selectedOrder && selectedOrder.status === 'pending_approval' && !isEditing && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={detailsLoading}
+                  onClick={() => setIsEditing(true)}
+                >
+                  <Edit2 className="size-3.5 mr-1" /> Revise Discount
+                </Button>
+              )}
               {canManageOrders && selectedOrder && selectedOrder.status !== 'cancelled' && (
                 <Button
                   type="button"

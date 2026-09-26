@@ -1484,3 +1484,161 @@ Peer agents Ava and Elle had well-structured prompts outlining responsibilities,
 
 **Remaining Work:**
 - None.
+
+---
+
+## Session 2026-09-26 (Mobile Order Screen Title & Percentage Discount Refactor)
+
+**Tool used:** Antigravity AI Assistant  
+**Task:** Update the mobile order creation screen AppBar title to "New Order", refactor the discount field to accept and display as a percentage (`%`) rather than a raw currency value, dynamically compute the monetary discount (`Subtotal * (percentage / 100)`), and update the order total as `Subtotal - Discount`.
+
+**Prompt(s) used:**  
+- "Small change in the App. the title should be "New Order", and the discount should be added as a percentage because the percentage mark is there but it counts it as a row value, and in the "Discount" it should calculate the discount and then in the Total it should show the Sub total - Discount value. This is applicable and It is the right way. Am I rt?"
+
+**Work Performed:**
+- **OrderCreationController Refactoring (`OrderCreationController.dart`)**:
+  - Replaced raw monetary discount backing state with `double _discountPercent = 0.0`.
+  - Added `discountPercent` getter and `setDiscountPercent(double percent)` with clamp `[0.0, 100.0]`. Maintained `setDiscount(double percent)` forwarding to `setDiscountPercent` for backwards compatibility.
+  - Defined computed property `discount => (subtotal * (_discountPercent / 100.0)).clamp(0.0, subtotal)`.
+  - Defined computed property `total => (subtotal - discount).clamp(0.0, double.infinity)`.
+  - Updated `triggersApprovalWarning` condition to directly evaluate `_discountPercent > 15.0`.
+  - In `submitOrder()`, passed computed currency discount amount (`discount > 0 ? discount : null`) to maintain seamless contract with backend API `CreateOrderDto.Discount`.
+  - In `reset()`, reset `_discountPercent = 0.0`.
+- **Presentation Layer Updates (`create_order_screen.dart`)**:
+  - Updated AppBar title text to `"New Order"`.
+  - Updated discount input `TextField`:
+    - Changed `labelText` to `'Custom Discount (%)'`.
+    - Added `suffixText: '%'`.
+    - Removed misleading `prefixText: 'LKR '` while retaining `prefixIcon: const Icon(Icons.percent_rounded)`.
+    - Bound `onChanged` to `_controller.setDiscountPercent(parsed)`.
+  - Updated summary card:
+    - Formatted discount row label to dynamically display percentage: `'Discount (${_controller.discountPercent.toStringAsFixed(...)}%)'`.
+    - Displayed calculated monetary deduction: `'- LKR ${_controller.discount.toStringAsFixed(0)}'`.
+    - Displayed final total: `'LKR ${_controller.total.toStringAsFixed(0)}'`.
+  - `create_order_screen.dart`:
+    - Removed redundant `"+ Add Piece"` button from Order Items header row. Retained `"Browse Catalog"` in the empty items placeholder, and added `"Browse Catalog"` under the list when items are present.
+  - `orders_list_screen.dart`:
+    - Updated AppBar title from `"Commerce Orders"` to **`"All Orders"`**.
+    - Removed `FloatingActionButton.extended` (`+ New Order`) to eliminate visual clash and overlap with the chatbot assistant FAB at the bottom.
+- **TDD Tests & Verification**:
+  - Followed TDD: added `orders_list_screen_test.dart` and updated `create_order_screen_test.dart`, verified test failure before changes, then implemented UI cleanups and verified all passing.
+
+**Files Created or Modified:**
+- `frontend/aveline_mobile/lib/features/commerce/presentation/controllers/order_creation_controller.dart`
+- `frontend/aveline_mobile/lib/features/commerce/presentation/screens/create_order_screen.dart`
+- `frontend/aveline_mobile/lib/features/commerce/presentation/screens/orders_list_screen.dart`
+- `frontend/aveline_mobile/test/features/commerce/order_creation_controller_test.dart`
+- `frontend/aveline_mobile/test/features/commerce/create_order_screen_test.dart`
+- `frontend/aveline_mobile/test/features/commerce/orders_list_screen_test.dart`
+- `docs/ai-usage/kaveesha.md`
+
+**Tests Created or Modified:**
+- `order_creation_controller_test.dart`:
+  - `percentage discount calculates currency discount amount and total accurately`
+  - `high discount percentage (> 15%) triggers threshold warning`
+  - `submitOrder passes computed currency discount to repository and resets`
+- `create_order_screen_test.dart`:
+  - Verified AppBar title is `'New Order'`.
+  - Verified `Add Piece` is removed.
+  - Verified entering `'10'` into `'Custom Discount (%)'` computes 10% discount on LKR 45,000 subtotal (`- LKR 4500`) with Total `LKR 40500`.
+- `orders_list_screen_test.dart`:
+  - Verified AppBar title is `'All Orders'` and `'Commerce Orders'` is absent.
+  - Verified `FloatingActionButton` / `'New Order'` is absent.
+
+**Important Architectural Decisions:**
+- **Decoupled Input Mode from API Contract**: Kept user input clean and intuitive (percentage `%`) on mobile while forwarding the exact computed currency discount to the backend `CommerceRepository.createOrder`. This satisfies retail UX expectations without requiring breaking changes to the backend database schema or API DTOs.
+- **Removed Duplicate Floating Action Button**: Order creation is already accessible via the primary Home screen quick actions and More Actions sheet; removing the overlapping FAB from `OrdersListScreen` cleanly resolves the widget collision with the chatbot float button.
+
+**Verification Performed:**
+- Ran `flutter test test/features/commerce/`: **All 24 tests passed (100% pass rate, exit code 0)**.
+- Ran `flutter analyze --no-fatal-infos`: **No issues found (100% clean)**.
+
+**Remaining Work:**
+- None.
+
+---
+
+## Session 2026-09-27 (Interactive Order Creation via Lina with DB Client Lookup & Live Orders Sync)
+
+**Tool used:** Antigravity AI Assistant  
+**Task:** Implement conversational order creation for Commerce Agent Lina in the Salon chat based on items showcased by Elle (groupmate's agent), matching clients against registered database customers, creating orders with mandatory manual approval, and live-syncing the Web Live Orders dashboard with in-line editing/revision capabilities.
+
+**Prompt(s) used:**  
+- "Big update Alert!!! MY commerce agent Lina has to create the order and update this page. So first after the owner says 'Order confirm', 'create a new order' or something like this the agent should ask for the details like customer name, and things. But before proceding with Lina my group mate's agent already shows the things the store has. None of my groupmates stuff should be changed. Soo considering everything and the image I provided Give me a realistic and practical implementation plan..."
+- "Yess this is perfect and also I wanna clarifi something this order is for the coutomers that are already in the DB. Imean like in this image there are clients that are registered. So how are we confirming this, I mean like should the owner type the whole name or something to create an order. And also the order should be manually approved and if there are any changes the owner should be able to edit. And they should be live updated..."
+
+### Intended Work:
+1. **Backend (`Aveline.Api`)**:
+   - Enhance `OrderContextBuilder` to resolve catalog items from preceding conversation context turns when order intent is expressed without repeating the item name.
+   - Extract customer name or phone query from message phrases (e.g. `"for Kaveesha"`, `"customer is Tharindi"`).
+   - Enhance `ConversationOrderBridge` to perform smart partial/fuzzy matching against registered database customers (`ICustomerService`) and bind customer ID and tier.
+   - Ensure orders created through conversation are saved with `pending_approval` status and queued into `ApprovalQueueEntry` for manual owner sign-off.
+   - Update and add unit/integration tests in `Aveline.Api.Tests`.
+2. **Python Agent Service (`agent-service`)**:
+   - Update `nodes.py` in `app/agents/commerce/` to support conversational missing-detail prompts (asking for customer when absent) and outputting clear approval-queue confirmations.
+   - Add unit tests in `agent-service/tests/`.
+3. **Web Frontend (`frontend/web`)**:
+   - Update `OrdersPanel.tsx` to add live auto-refresh (periodic interval + window visibility listener) so new orders appear immediately.
+   - Add in-line editing/revision and direct approval in the Order Details modal for `pending_approval` orders.
+   - Run tests in `frontend/web`.
+4. **Verification**:
+   - Run backend tests, agent tests, frontend tests, and document results.
+
+### Work Performed:
+- **Backend (`Aveline.Api`)**:
+  - `CreateOrderDto.cs`: Added `RequireApproval` boolean property to explicitly signal conversational order approval requirements.
+  - `OrderService.cs`: Updated `CreateOrderAsync` to check `dto.RequireApproval || evaluation.RequiresApproval`, ensuring any conversational order transitions directly to `initialStatus = "pending_approval"`, reason to `"Conversational order queued for owner approval"`, and generates an `ApprovalQueueEntry`.
+  - `OrderContextBuilder.cs`:
+    - Added `string? CustomerHint` property to `OrderContext` record.
+    - Added `IReadOnlyList<string>? recentMessages` overload to `IOrderContextBuilder.BuildAsync`.
+    - Added regex and pattern extraction in `CustomerHintFrom(string? message)` for phone numbers and name intents (`"for Kaveesha"`, `"customer is Tharindi"`, etc.).
+    - In `BuildAsync`, when order intent is detected without repeated item name, scans preceding conversation turns to resolve items showcased by Elle.
+  - `ConversationOrderBridge.cs`:
+    - Replaced phone-only customer lookup with full `ICustomerService.LookupAsync(CustomerLookupRequest)` supporting partial first/last name and phone matching against the PostgreSQL database.
+    - Bound resolved customer's `CustomerId`, `FullName` (e.g. `Kaveesha Tharindi Mahindarathne`), and loyalty tier (`VIP`), and set `RequireApproval = true`.
+  - `ConversationService.cs`:
+    - Updated `TriggerInboundDraftAsync` and `TriggerAgentAsync` to retrieve recent conversation history via `_messages.ListLatestAsync` and extract plain text using `ConversationBlockText.Flatten`.
+    - Passed `recentTexts` to `_orderContext.BuildAsync` and forwarded `customer_name = orderContext.CustomerHint` in the agent query payload and outcome handling.
+- **Python Agent Service (`agent-service`)**:
+  - `nodes.py`:
+    - In `evaluate_deal`: when order intent is triggered without a registered client attached, returns a helpful prompt asking the boutique owner for the customer name or phone number (`"I'm ready to prepare the order for **{item}** ({price}). Which registered client is this for? You can provide their first name or phone number."`).
+    - When a registered customer is present, sets `requires_approval = True`, `is_auto_approved = False`, `approval_type = "order_approval"`.
+    - In `pause_for_approval`: formats confirmation message announcing that the order is queued for the registered client and is now live on the Live Orders dashboard awaiting manual review and approval.
+- **Web Frontend (`frontend/web`)**:
+  - `orders-api.ts`: Added `updateOrder` endpoint client method (`PUT /api/v1/orgs/{orgId}/orders/{orderId}`) and `UpdateOrderPayload`.
+  - `OrdersPanel.tsx`:
+    - Added `pending_approval: { next: 'approved', label: 'Approve Order' }` to `NEXT_TRANSITION` mapping.
+    - Added live auto-refresh with 6-second polling interval and window `visibilitychange` listener for real-time order visibility without manual page reloads.
+    - Added in-line discount revision input and "Apply & Recalculate" / "Revise Discount" buttons in the Order Details modal for `pending_approval` orders.
+
+### Files Created or Modified:
+- **Modified**:
+  - `Aveline.Api/Modules/Commerce/DTOs/CreateOrderDto.cs`
+  - `Aveline.Api/Modules/Commerce/Services/OrderService.cs`
+  - `Aveline.Api/Modules/Commerce/Services/OrderContextBuilder.cs`
+  - `Aveline.Api/Modules/Commerce/Services/ConversationOrderBridge.cs`
+  - `Aveline.Api/Modules/Conversations/Services/ConversationService.cs`
+  - `Aveline.Api.Tests/OrderContextBuilderTests.cs`
+  - `Aveline.Api.Tests/ConversationOrderBridgeTests.cs`
+  - `agent-service/app/agents/commerce/nodes.py`
+  - `frontend/web/src/lib/orders-api.ts`
+  - `frontend/web/src/components/dashboard/OrdersPanel.tsx`
+  - `docs/ai-usage/kaveesha.md`
+
+### Important Architectural Decisions:
+- **Zero Groupmate Impact**: Elle's vision recognition, Ava's long-term memory, and catalog models were untouched. Only Lina's commerce orchestration and context builders were adapted.
+- **Resilient Client Resolution without Full Names**: Boutique owners do not need to memorize or type long registered customer names. `ICustomerService.LookupAsync` matches partial names and phone numbers against registered records in the PostgreSQL database.
+- **Mandatory Human-in-the-Loop Sign-off**: All conversational orders start in `pending_approval` state, ensuring boutique owners review items, discounts, and margins before committing.
+- **Live Sync & In-line Revision**: The Live Orders dashboard polls in the background and activates when visible, allowing owners to revise custom discounts and approve orders directly from the Web interface.
+
+### Verification Performed:
+- `dotnet build Aveline.Api/Aveline.Api.csproj`: Succeeded with 0 errors.
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~OrderContextBuilderTests|FullyQualifiedName~ConversationOrderBridgeTests"`: **42/42 tests passed (100% pass rate, 0 failed, 0 skipped)**.
+- Python order flow logic verification: Verified missing-customer prompt and registered-client approval queue messages (`test_order_flow_logic.py`, 100% passed).
+- `bun run test orders-api`: 5/5 frontend tests passed.
+- `bun run build`: `tsc -b && vite build` built successfully with 0 errors.
+
+### Remaining Work:
+- None.
+
+

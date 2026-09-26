@@ -52,7 +52,8 @@ public enum OrderContextPurpose
 public sealed record OrderContext(
     IReadOnlyList<OrderContextItem> Items,
     OrderContextPurpose Purpose = OrderContextPurpose.Order,
-    decimal? ProposedDiscount = null)
+    decimal? ProposedDiscount = null,
+    string? CustomerHint = null)
 {
     /// <summary>The context of a message that named no resolvable item.</summary>
     public static readonly OrderContext Empty = new(Array.Empty<OrderContextItem>());
@@ -73,6 +74,17 @@ public interface IOrderContextBuilder
     Task<OrderContext> BuildAsync(
         Guid organizationId,
         string? message,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Return the inventory-resolved line items a message asks to buy, considering preceding
+    /// conversation history as fallback when the current message confirms an order for an item
+    /// recently presented in the chat thread.
+    /// </summary>
+    Task<OrderContext> BuildAsync(
+        Guid organizationId,
+        string? message,
+        IReadOnlyList<string>? recentMessages,
         CancellationToken cancellationToken = default);
 }
 
@@ -158,9 +170,17 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
     };
 
     /// <inheritdoc />
+    public Task<OrderContext> BuildAsync(
+        Guid organizationId,
+        string? message,
+        CancellationToken cancellationToken = default)
+        => BuildAsync(organizationId, message, null, cancellationToken);
+
+    /// <inheritdoc />
     public async Task<OrderContext> BuildAsync(
         Guid organizationId,
         string? message,
+        IReadOnlyList<string>? recentMessages,
         CancellationToken cancellationToken = default)
     {
         if (organizationId == Guid.Empty || string.IsNullOrWhiteSpace(message))
@@ -170,6 +190,7 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
 
         var normalized = Normalize(message);
         var proposedDiscount = DiscountFrom(message);
+        var customerHint = CustomerHintFrom(message);
         var isOrder = HasPurchaseSignal(normalized);
         var isQuote = !isOrder && (IsPricingQuestion(normalized) || proposedDiscount is not null);
         if (!isOrder && !isQuote)
@@ -178,11 +199,6 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
         }
 
         var messageTokens = Tokenize(normalized);
-        if (messageTokens.Count == 0)
-        {
-            return OrderContext.Empty;
-        }
-
         var catalog = await LoadCatalogAsync(organizationId, cancellationToken);
         if (catalog.Count == 0)
         {
@@ -190,12 +206,51 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
         }
 
         var matches = new List<Match>();
-        foreach (var item in catalog)
+        if (messageTokens.Count > 0)
         {
-            var match = MatchItem(item, messageTokens);
-            if (match is not null)
+            foreach (var item in catalog)
             {
-                matches.Add(match);
+                var match = MatchItem(item, messageTokens);
+                if (match is not null)
+                {
+                    matches.Add(match);
+                }
+            }
+        }
+
+        // If this is an order purchase signal and no item was named in this message, check recent messages
+        // (e.g. from Elle or preceding messages showcasing a piece).
+        if (matches.Count == 0 && isOrder && recentMessages is { Count: > 0 })
+        {
+            foreach (var recent in recentMessages)
+            {
+                if (string.IsNullOrWhiteSpace(recent))
+                {
+                    continue;
+                }
+
+                var recentNormalized = Normalize(recent);
+                var recentTokens = Tokenize(recentNormalized);
+                if (recentTokens.Count == 0)
+                {
+                    continue;
+                }
+
+                foreach (var item in catalog)
+                {
+                    var match = MatchItem(item, recentTokens);
+                    if (match is not null)
+                    {
+                        matches.Add(match);
+                    }
+                }
+
+                if (matches.Count > 0)
+                {
+                    customerHint ??= CustomerHintFrom(recent);
+                    proposedDiscount ??= DiscountFrom(recent);
+                    break;
+                }
             }
         }
 
@@ -225,7 +280,8 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
         return new OrderContext(
             items,
             isOrder ? OrderContextPurpose.Order : OrderContextPurpose.Quote,
-            proposedDiscount);
+            proposedDiscount,
+            customerHint);
     }
 
     private async Task<IReadOnlyList<InventoryItemDto>> LoadCatalogAsync(
@@ -362,6 +418,49 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
             if (pct is > 0m and <= 100m)
             {
                 return Math.Round(pct / 100m, 4);
+            }
+        }
+
+        return null;
+    }
+
+    private static readonly Regex PhoneHintRegex = new(
+        @"(?:\+94|0)\d{9}\b",
+        RegexOptions.Compiled);
+
+    private static readonly Regex CustomerNameHintRegex = new(
+        @"\b(?:for\s+(?:client\s+|customer\s+)?|(?:client|customer)(?:\s+is)?\s+)(?<name>[A-Za-z]{2,}(?:\s+[A-Za-z]{2,})*)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// Extract a customer hint (name or phone) if provided in the message (e.g. "for Kaveesha",
+    /// "for client Tharindi", "customer is 0779037760").
+    /// </summary>
+    internal static string? CustomerHintFrom(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return null;
+        }
+
+        var phoneMatch = PhoneHintRegex.Match(message);
+        if (phoneMatch.Success)
+        {
+            return phoneMatch.Value;
+        }
+
+        var match = CustomerNameHintRegex.Match(message);
+        if (match.Success)
+        {
+            var name = match.Groups["name"].Value.Trim();
+            var lower = name.ToLowerInvariant();
+            if (lower is not "the" and not "this" and not "a" and not "an" and not "order" and not "approval")
+            {
+                var cleaned = Regex.Replace(name, @"\s+(?:please|order|saree|dress|gown)$", "", RegexOptions.IgnoreCase).Trim();
+                if (!string.IsNullOrWhiteSpace(cleaned))
+                {
+                    return cleaned;
+                }
             }
         }
 

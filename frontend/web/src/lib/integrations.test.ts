@@ -6,6 +6,8 @@ import type {
   SaveIntegrationRequest,
 } from '../types/integration'
 import { integrationRouteSegment } from '../types/integration'
+import { apiBaseUrl } from './env'
+import { suggestWebhookVerifyToken, whatsappWebhookUrl } from './integrations'
 
 describe('Integrations Contracts', () => {
   it('maps integration types to lowercase route segments', () => {
@@ -71,5 +73,38 @@ describe('Integrations Contracts', () => {
     expect(log.channel).toBe('whatsapp')
     expect(log.direction).toBe('inbound')
     expect(log).not.toHaveProperty('credentials')
+  })
+})
+
+describe('WhatsApp webhook setup', () => {
+  it('points Meta at the org route on the API root group', () => {
+    expect(whatsappWebhookUrl('org-1', 'https://api.aveline.lk')).toBe(
+      'https://api.aveline.lk/api/v1/webhooks/whatsapp/org-1',
+    )
+  })
+
+  it('tolerates a trailing slash on the configured base URL', () => {
+    expect(whatsappWebhookUrl('org-1', 'https://api.aveline.lk/')).toBe(
+      'https://api.aveline.lk/api/v1/webhooks/whatsapp/org-1',
+    )
+  })
+
+  it('defaults to the configured API base URL', () => {
+    expect(whatsappWebhookUrl('org-1')).toBe(
+      `${apiBaseUrl}/api/v1/webhooks/whatsapp/org-1`,
+    )
+  })
+
+  it('suggests an unpadded base64url token Meta can echo back', () => {
+    // 24 bytes of randomness is 32 base64 characters, with no `=` to escape in a query string.
+    expect(suggestWebhookVerifyToken()).toMatch(/^[A-Za-z0-9_-]{32}$/)
+  })
+
+  it('suggests a fresh token every time', () => {
+    expect(suggestWebhookVerifyToken()).not.toBe(suggestWebhookVerifyToken())
+  })
+
+  it('honours a shorter requested length', () => {
+    expect(suggestWebhookVerifyToken(12)).toHaveLength(16)
   })
 })

@@ -308,6 +308,25 @@ jobs:
             || { echo "::error::google-services.json did not decode to JSON. Is the GOOGLE_SERVICES_JSON_BASE64 secret base64-encoded?"; exit 1; }
           echo "Wrote $(wc -c < google-services.json) bytes of Firebase config."
 
+      # The committed android/gradle.properties sizes the Gradle and Kotlin JVMs for a
+      # 15 GB development host with no swap, where a larger heap drew the kernel OOM
+      # killer: -Xmx1280m with -XX:MaxMetaspaceSize=448m, plus
+      # kotlin.compiler.execution.strategy=in-process, which runs Kotlin inside that
+      # same JVM. Those caps also apply here, and on the runner AGP 9 plus Kotlin
+      # exhausts 448m of metaspace and dies mid-build with
+      # "java.lang.OutOfMemoryError: Metaspace".
+      #
+      # This runner has ~16 GB, so the limits are raised for CI only rather than in the
+      # tracked file, which would put the developer's host back where it started.
+      - name: Raise the Gradle JVM limits for this runner
+        working-directory: frontend/aveline_mobile/android
+        run: |
+          set -euo pipefail
+          sed -i \
+            's|^org\.gradle\.jvmargs=.*|org.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g -XX:ReservedCodeCacheSize=256m -XX:+HeapDumpOnOutOfMemoryError|' \
+            gradle.properties
+          grep '^org.gradle.jvmargs=' gradle.properties
+
       - name: Build release APK
         # The --dart-define values are not optional. AppConfig reads every setting
         # from String.fromEnvironment at COMPILE time, so a build without them

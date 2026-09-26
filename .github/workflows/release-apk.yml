@@ -183,6 +183,24 @@ jobs:
         working-directory: frontend/aveline_mobile
         run: flutter pub get
 
+      # The committed android/gradle.properties caps the Gradle and Kotlin JVMs for a
+      # 15 GB development host with no swap, where a larger heap drew the kernel OOM
+      # killer: -Xmx1280m with -XX:MaxMetaspaceSize=448m, plus
+      # kotlin.compiler.execution.strategy=in-process, which runs Kotlin in that same
+      # JVM. Those caps also apply here, and on the runner AGP 9 plus Kotlin exhausts
+      # 448m of metaspace and dies with "java.lang.OutOfMemoryError: Metaspace".
+      #
+      # Raised for CI only, so the developer's host keeps the tuning that made it
+      # buildable in the first place.
+      - name: Raise the Gradle JVM limits for this runner
+        working-directory: frontend/aveline_mobile/android
+        run: |
+          set -euo pipefail
+          sed -i \
+            's|^org\.gradle\.jvmargs=.*|org.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g -XX:ReservedCodeCacheSize=256m -XX:+HeapDumpOnOutOfMemoryError|' \
+            gradle.properties
+          grep '^org.gradle.jvmargs=' gradle.properties
+
       # --- build --------------------------------------------------------------
       # The three --dart-define values are the entire point of this workflow:
       # AppConfig reads every setting from String.fromEnvironment at COMPILE time,

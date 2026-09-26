@@ -8,8 +8,17 @@
       name="description"
       content="Aveline — the assistant that remembers. Ava, Elle and Lina keep your boutique’s customers, products and deals moving."
     />
+    <!-- The public marketing surface (`SitePage`) paints `#fdfaf8`; the app shell uses the dark
+         `--background`. A declared `theme-color` stops the mobile browser chrome from painting a
+         mismatched default bar above the page. -->
+    <meta name="theme-color" content="#fdfaf8" />
+    <meta name="theme-color" content="#1e1b1b" media="(prefers-color-scheme: dark)" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- The landing page's hero slideshow and the phone mockup are hot-linked from Pexels. They
+         are `loading="lazy"`, so their fetch starts only after React has mounted — the handshake
+         this preconnect finishes is otherwise paid for at exactly the wrong moment. -->
+    <link rel="preconnect" href="https://images.pexels.com" />
     <link
       href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Geist+Mono:wght@100..900&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap"
       rel="stylesheet"

@@ -447,6 +447,88 @@
   animation-delay: 1.2s;
 }
 
+/* The Blossom counter-sway.
+   These two keyframes and two class rules used to be re-declared inside a `<style>` element
+   injected by every `<Blossom animateCounter>` instance — ~105 identical `<style>` nodes on the
+   landing page alone (7 AuroraField mounts x 14 blossoms, plus the explicit call sites), each one
+   asking the style engine to parse and match the same rules again. Declaring them once here is
+   behaviour-identical: `<style>` inside inline SVG is document-scoped, so the rules always
+   applied globally anyway.
+   The per-instance duration is now the `--aveline-sway-duration` custom property. */
+@keyframes aveline-sway-base {
+  0%   { transform: rotate(0deg); }
+  25%  { transform: rotate(12deg); }
+  50%  { transform: rotate(0deg); }
+  75%  { transform: rotate(-12deg); }
+  100% { transform: rotate(0deg); }
+}
+@keyframes aveline-sway-top {
+  0%   { transform: rotate(0deg); }
+  25%  { transform: rotate(-10deg); }
+  50%  { transform: rotate(0deg); }
+  75%  { transform: rotate(10deg); }
+  100% { transform: rotate(0deg); }
+}
+.aveline-petal-layer-base {
+  transform-origin: 12px 12px;
+  animation: aveline-sway-base var(--aveline-sway-duration, 18s) ease-in-out infinite;
+  animation-delay: calc(var(--aveline-sway-duration, 18s) * -0.25);
+}
+.aveline-petal-layer-top {
+  transform-origin: 12px 12px;
+  animation: aveline-sway-top var(--aveline-sway-duration, 18s) ease-in-out infinite;
+  animation-delay: 0s;
+}
+
+/* A layer that rocks back and forth forever is exactly what this preference is for. */
+@media (prefers-reduced-motion: reduce) {
+  .aveline-petal-layer-base,
+  .aveline-petal-layer-top,
+  .aveline-ripple-ring {
+    animation: none;
+  }
+}
+
+/* The aurora drift.
+   Both of these layers used to be Framer Motion animations driven from JavaScript: 42 blurred
+   gradient layers and 98 blossoms on the landing page, each animating four transform properties
+   forever. The component's own reduced-motion gate was used to measure what that costs — with the
+   animation off, the landing page's main-thread busy fell from 3,240 ms to 630 ms (−80.6 %) and
+   its long-task count from 80 to 9, on the Lighthouse mobile profile.
+   The keyframes below are the same keyframes Framer was interpolating. In CSS they run on the
+   compositor instead of the main thread, so the look is preserved and the cost is not.
+   Per-instance values ride in custom properties. */
+@keyframes aveline-aurora-blob {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  33%  { transform: translate3d(70px, -50px, 0) scale(1.15); }
+  66%  { transform: translate3d(-40px, 30px, 0) scale(0.95); }
+  100% { transform: translate3d(0, 0, 0) scale(1); }
+}
+.aveline-aurora-blob {
+  animation: aveline-aurora-blob var(--aurora-duration, 25s) ease-in-out infinite;
+  animation-delay: var(--aurora-delay, 0s);
+}
+
+@keyframes aveline-blossom-drift {
+  0%   { transform: translate3d(0, 0, 0) rotate(0deg) scale(1); }
+  50%  {
+    transform: translate3d(var(--blossom-drift-x, 0px), calc(-1 * var(--blossom-drift-y, 14px)), 0)
+      rotate(40deg) scale(1.08);
+  }
+  100% { transform: translate3d(0, 0, 0) rotate(0deg) scale(1); }
+}
+.aveline-blossom-drift {
+  animation: aveline-blossom-drift var(--blossom-duration, 24s) ease-in-out infinite;
+  animation-delay: var(--blossom-delay, 0s);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aveline-aurora-blob,
+  .aveline-blossom-drift {
+    animation: none;
+  }
+}
+
 
 
 

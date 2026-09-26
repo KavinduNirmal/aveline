@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { motion, useReducedMotion } from 'motion/react'
 
 import { Blossom } from './Blossom'
+import { useConstrainedDevice } from '@/hooks/useConstrainedDevice'
 
 interface FlowerSeed {
   x: number // percent
@@ -37,10 +38,15 @@ const ORB_PALETTE = ['#7a303f', '#b0566b', '#5d1a29', '#c9a227']
 /**
  * Full-bleed animated background for the auth screens: deep warm base, drifting
  * aurora orbs, slowly swaying/falling blossoms and a faint film grain.
- * Motion is disabled for users who prefer reduced motion.
+ * Motion is disabled for users who prefer reduced motion, and for a device that cannot afford it
+ * (see `useConstrainedDevice`) — this background stacks four `blur(110px)` orbs, 14 drifting
+ * blossoms, six rising petals and a full-viewport `feTurbulence` filter, and it renders behind
+ * the sign-in form where `AuthSplitLayout` adds a `backdrop-blur-2xl` on top of it.
  */
 export function FlowerAuroraBackground() {
   const reduceMotion = useReducedMotion()
+  const constrained = useConstrainedDevice()
+  const staticOnly = reduceMotion || constrained
   const flowers = useMemo(() => randomSeeds(14, FLOWER_PALETTE), [])
 
   const base = {
@@ -69,7 +75,7 @@ export function FlowerAuroraBackground() {
             opacity: 0.28,
           }}
           animate={
-            reduceMotion
+            staticOnly
               ? base
               : {
                   y: [-40, 60, -30, 0],
@@ -86,7 +92,7 @@ export function FlowerAuroraBackground() {
       ))}
 
       {/* Flowers */}
-      {!reduceMotion &&
+      {!staticOnly &&
         flowers.map((f, i) => (
           <motion.div
             key={i}
@@ -118,7 +124,7 @@ export function FlowerAuroraBackground() {
         ))}
 
       {/* Slow-rising sparkle petals */}
-      {!reduceMotion &&
+      {!staticOnly &&
         flowers.slice(0, 6).map((_, i) => (
           <motion.span
             key={`petal-${i}`}

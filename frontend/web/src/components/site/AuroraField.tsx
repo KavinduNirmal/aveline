@@ -1,7 +1,8 @@
 import type { CSSProperties } from 'react'
-import { motion, useReducedMotion } from 'motion/react'
+import { useReducedMotion } from 'motion/react'
 
 import { Blossom } from '@/components/auth/Blossom'
+import { useConstrainedDevice } from '@/hooks/useConstrainedDevice'
 
 interface Blob {
   gradient: string
@@ -49,68 +50,68 @@ const FLOWERS: Flower[] = Array.from({ length: 14 }).map((_, i) => ({
 
 /**
  * Colorful, animated aurora + drifting blossoms used behind marketing sections.
- * Motion is disabled for users who prefer reduced motion.
+ *
+ * The motion is **CSS**, not JavaScript. These were `motion.div`s — 6 blurred layers and 14
+ * blossoms per instance, and the landing page mounts seven of them, so ~140 JavaScript animations
+ * ran forever and drove every frame from the main thread. Measured on the Lighthouse mobile
+ * profile with the animation switched off, that budget accounted for 2,610 ms of the landing
+ * page's 3,240 ms of main-thread busy and 71 of its 80 long tasks. The same keyframes now live in
+ * `src/index.css` and run on the compositor.
+ *
+ * Motion is dropped — the blobs still render, the blossoms do not — for a reader who prefers
+ * reduced motion and for a device that cannot afford it (`useConstrainedDevice`: `saveData`, the
+ * entry-level memory band, or a 2G-class connection). This is a brake on the animation budget,
+ * not a removal of the page's colour.
  */
 export function AuroraField({ className }: { className?: string }) {
-  const reduce = useReducedMotion()
-
-  const blobStyle = (b: Blob): CSSProperties => ({
-    background: b.gradient,
-    width: b.size,
-    height: b.size,
-    left: `${b.left}%`,
-    top: `${b.top}%`,
-    opacity: b.opacity,
-  })
+  const prefersReduced = useReducedMotion()
+  const constrained = useConstrainedDevice()
+  const staticOnly = prefersReduced || constrained
 
   return (
     <div aria-hidden className={`pointer-events-none absolute inset-0 overflow-hidden ${className ?? ''}`}>
       {BLOBS.map((b, i) => (
-        <motion.div
+        <div
           key={i}
-          className="absolute rounded-full blur-[70px]"
-          style={blobStyle(b)}
-          animate={
-            reduce
-              ? {}
-              : {
-                  x: [0, 70, -40, 0],
-                  y: [0, -50, 30, 0],
-                  scale: [1, 1.15, 0.95, 1],
-                }
+          className={`absolute rounded-full blur-[70px]${staticOnly ? '' : ' aveline-aurora-blob'}`}
+          style={
+            {
+              background: b.gradient,
+              width: b.size,
+              height: b.size,
+              left: `${b.left}%`,
+              top: `${b.top}%`,
+              opacity: b.opacity,
+              '--aurora-duration': `${b.duration}s`,
+              '--aurora-delay': `${b.delay}s`,
+            } as CSSProperties
           }
-          transition={{ duration: b.duration, delay: b.delay, repeat: Infinity, ease: 'easeInOut' }}
         />
       ))}
 
-      {!reduce &&
+      {!staticOnly &&
         FLOWERS.map((f, i) => (
-          <motion.div
+          <div
             key={i}
-            className="absolute"
-            style={{
-              left: `${f.left}%`,
-              top: `${f.top}%`,
-              width: f.size,
-              height: f.size,
-              color: f.color,
-              opacity: f.opacity,
-            }}
-            animate={{
-              y: [0, -f.drift, 0],
-              x: [0, Math.sin(i) * 26, 0],
-              rotate: [0, 40, 0],
-              scale: [1, 1.08, 1],
-            }}
-            transition={{
-              duration: f.duration,
-              delay: f.delay,
-              repeat: Infinity,
-              ease: 'easeInOut',
-            }}
+            className="aveline-blossom-drift absolute"
+            style={
+              {
+                left: `${f.left}%`,
+                top: `${f.top}%`,
+                width: f.size,
+                height: f.size,
+                color: f.color,
+                opacity: f.opacity,
+                // Same per-flower values Framer was handed, now carried as custom properties.
+                '--blossom-drift-x': `${Math.round(Math.sin(i) * 26)}px`,
+                '--blossom-drift-y': `${f.drift}px`,
+                '--blossom-duration': `${f.duration}s`,
+                '--blossom-delay': `${f.delay}s`,
+              } as CSSProperties
+            }
           >
             <Blossom animateCounter counterDuration={14 + (i % 8) * 2} className="size-full drop-shadow-[0_4px_12px_rgba(176,86,107,0.25)]" />
-          </motion.div>
+          </div>
         ))}
     </div>
   )

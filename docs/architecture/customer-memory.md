@@ -51,10 +51,10 @@ All entities are tenant-scoped (`OrganizationId`) and created by the
 
 | Table | Purpose | Notes |
 |---|---|---|
-| `Customers` | Customer identity | unique `(OrganizationId, PhoneNumber)`, status `new/returning/vip/dormant/deleted`, soft-delete |
+| `Customers` | Customer identity | unique `(OrganizationId, PhoneNumber)`, status `new/returning/vip/dormant/deleted`, optional staff-written `Description`, soft-delete |
 | `Customer_Preferences` | Stated / inferred preferences | `preference_key/value`, `is_explicit`, `confidence` |
 | `Customer_Events` | Weddings, birthdays, parties… | `event_type`, `event_date`, `is_active` |
-| `Customer_Memory` | Semantic memory | `embedding vector(1536)` + HNSW cosine index (raw SQL, ADR-017) |
+| `Customer_Memory` | Semantic memory | `embedding vector(1536)` + HNSW cosine index (raw SQL, ADR-017); normalised `ContentKey` with a partial unique index over `(OrganizationId, CustomerId, ContentKey)` where `DeletedAt IS NULL`; optional `ExpiresAt` |
 | `Customer_Interactions` | Inbound/outbound log | `channel`, `direction`, `parsed_intent` (jsonb) |
 | `Customer_Consent` | Data-processing consent | one row per org + customer |
 | `Customer_Tags` | Free-form labels | unique per customer |
@@ -69,9 +69,13 @@ Routed under `/internal/customers`, all require the `InternalServicePolicy`
 | POST | `/identify` | Look up a customer by phone, creating a `new` profile when absent |
 | POST | `/lookup` | Read-only lookup by name and/or phone/email (never creates) - used to resolve a customer from free text |
 | GET | `/{id}/profile` | Full profile (preferences, tags, consent) |
-| POST | `/{id}/memories` | Persist a semantic memory (embeds content) |
-| POST | `/memories/search` | pgvector cosine search over a customer's memories |
-| GET | `/{id}/brief` | Staff-facing interaction brief (real events/tags/preferences) |
+| POST | `/{id}/memories` | Persist a semantic memory with its provenance (embeds content) |
+| GET | `/{id}/memories` | List a customer's live memories, newest first |
+| PATCH | `/{id}/memories/{memoryId}` | Correct one memory's statement and re-embed it (409 on a collapse) |
+| DELETE | `/{id}/memories/{memoryId}` | Withdraw one memory (soft delete) |
+| POST | `/memories/search` | pgvector cosine search with a `minSimilarity` floor |
+| POST | `/{id}/preferences` | Record a stated preference in the preferences table |
+| GET | `/{id}/brief` | Staff-facing interaction brief (description/events/tags/preferences) |
 | POST | `/{id}/interactions` | Record an interaction (with parsed-intent JSON) |
 | GET/POST | `/{id}/consent` | Read / update consent |
 | GET/POST | `/{id}/events` | List / add customer events |
@@ -94,6 +98,10 @@ honoured), but no agent runs.
 | Orchestrator routing (visual / commerce) | `_route_after_memory` on `ConciergeState.consent_status` | Short-circuits to `formulate_response`; `run_visual_agent` and `run_commerce_agent` never run. |
 | Agent sub-graph (memory) | `CustomerMemoryAgent.check_consent` | `skipped`; nothing retrieved, parsed, persisted or drafted. |
 | Memory write | `CustomerMemoryService.SaveMemoryAsync` | Returns `null`; nothing stored. |
+| Memory correction / withdrawal | `CustomerMemoryService.CorrectMemoryAsync` / `RemoveMemoryAsync` | Returns `null` / `false`; the row is untouched. |
+| Preference write | `CustomerMemoryService.SavePreferenceAsync` | Returns `null`; nothing stored. |
+| Memory list | `CustomerMemoryService.ListMemoriesAsync` | **Deliberately ungated.** The customer's own memory panel is what this backs and the tenant route behind it was never gated; gating it would empty a panel whose notes are already on screen. |
+| Outbound customer delivery | `CustomerDeliveryService` via `IConsentGateService` | `DeliveryOutcome.Refused(ConsentRevoked, …)`; nothing leaves and no message row is written. |
 | Memory read (semantic search) | `CustomerMemoryService.SearchAsync` | Returns an empty list; the embedding call and the store are never reached. |
 | Brief generation | `CustomerMemoryService.GenerateBriefAsync` | Returns `null`; profile, tags and events are not read. |
 | Interaction log write | `CustomerInteractionService.RecordAsync` | Returns `null`; endpoint answers 400, nothing written. |
@@ -286,11 +294,16 @@ The metrics are `aveline_otp_{issued,verified,failed,start_refused}_total`
    above. The resolved status is promoted to the orchestrator, which stops the visual and commerce
    agents too.
 3. **parse** — deterministic rule parsing extracts intent (occasion/colour/size/budget), explicit
-   preferences ("I like/prefer/love/hate …"), and event signals.
-4. **retrieve** — semantic search over prior memories for context.
-5. **persist** — saves explicit preferences and detected events as `Customer_Memory` rows, records
-   the inbound interaction with its parsed intent (`Customer_Interactions`), and creates a
-   **structured `Customer_Event` row** for each dated event (undated signals stay text-only).
+   preferences ("I like/prefer/love/hate …"), event signals, and a complaint or sentiment signal.
+4. **retrieve** — semantic search over prior memories for context, with a similarity floor
+   (`MEMORY_SIMILARITY_FLOOR = 0.25`) so an unrelated note is not handed back as context, and with
+   each hit's `source`, `isExplicit`, `confidence` and `similarity` preserved.
+5. **persist** — saves explicit preferences, detected events and the quoted complaint/sentiment as
+   `Customer_Memory` rows **with their provenance** (`source="conversation"`, `IsExplicit=true`,
+   `confidence=0.90`), mirrors a stated preference into `Customer_Preferences` (the table the
+   brief's summary is assembled from), records the inbound interaction with its parsed intent
+   (`Customer_Interactions`), and creates a **structured `Customer_Event` row** for each dated
+   event (undated signals stay text-only).
 6. **compose_output** — enriches the `interaction_brief` from the backend
    `CustomerMemoryService.GenerateBriefAsync` (real events/tags/status) plus semantic context,
    generates a draft reply via the LLM (falling back to a deterministic template when no LLM/key
@@ -345,8 +358,9 @@ The graph is a dependency-injected `ToolRegistry` consumer, so it is fully testa
 
 - **.NET in-memory** — entities/EF config, repository CRUD, service logic, endpoint auth + happy
   paths (stubbed `IEmbeddingService`).
-- **.NET Testcontainers Postgres** — real `vector(1536)` column, HNSW index, cosine ordering, and
-  the end-to-end search path (`pgvector/pgvector:pg16`).
+- **.NET Testcontainers Postgres** — real `vector(1536)` column, HNSW index, cosine ordering, the
+  similarity floor as a predicate, and the end-to-end search path plus the live `/brief` payload
+  shape (`pgvector/pgvector:pg16`).
 - **Python pytest** — schema validation, `ToolRegistry` routing against a mocked client, the
   sub-graph golden cases (wedding inquiry, revoked consent, missing context, preference
   extraction), and rule-based parsing — all plain assertions.

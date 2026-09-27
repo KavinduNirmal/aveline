@@ -64,12 +64,21 @@ class OnFileMemory(BaseModel):
     Distinct from :class:`ExtractedMemory`, which is what the agent decided to persist *this* turn:
     these are what the boutique already had, and they are the ones a "what do we know about this
     customer?" answer is actually about.
+
+    The provenance fields are carried because the search now returns them. They used to be dropped
+    on the way in, so the one surface that shows a reader what is on file could not distinguish a
+    fact the customer stated from one the agent inferred (gaps B2, B3).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     content: str = Field(..., min_length=1, max_length=2000)
     category: str = "memory"
+    source: str | None = None
+    is_explicit: bool | None = None
+    confidence: float | None = None
+    #: Cosine similarity to the query that retrieved this note, when it was retrieved by search.
+    similarity: float | None = None
 
 
 def normalise_memory_content(content: str) -> str:

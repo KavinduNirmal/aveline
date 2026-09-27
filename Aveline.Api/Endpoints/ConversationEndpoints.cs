@@ -741,6 +741,10 @@ public static class ConversationEndpoints
         return outcome.Refusal switch
         {
             DeliveryRefusal.ConversationNotFound => Results.NotFound(body),
+            // 403, not 409: the associate's request is well-formed and the thread is theirs - the
+            // platform is refusing on the customer's behalf, which is a different thing to say and
+            // a different thing for the console to show.
+            DeliveryRefusal.ConsentRevoked => Results.Json(body, statusCode: StatusCodes.Status403Forbidden),
             DeliveryRefusal.ProviderRefused => Results.Json(body, statusCode: StatusCodes.Status502BadGateway),
             _ => Results.Json(body, statusCode: StatusCodes.Status409Conflict),
         };
@@ -783,6 +787,7 @@ public static class ConversationEndpoints
         DeliveryRefusal.NoChannelHandle => "no_channel_handle",
         DeliveryRefusal.ChannelNotConnected => "channel_not_connected",
         DeliveryRefusal.ChannelUnsupported => "channel_unsupported",
+        DeliveryRefusal.ConsentRevoked => "consent_revoked",
         DeliveryRefusal.ProviderRefused => "provider_refused",
         _ => null,
     };

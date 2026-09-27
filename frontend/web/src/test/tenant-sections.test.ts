@@ -36,16 +36,19 @@ describe('tenant dashboard section routing (Q6)', () => {
     expect(app).toMatch(
       /path="\/app\/b\/:slug"[\s\S]{0,120}<Navigate to="overview" replace \/>/,
     )
-    // One catalogue piece is a section of its own, so its information page is linkable (Q6's rule
-    // applied one level deeper).
+    // Two sections are reachable one level deeper: a catalogue piece and a client record. Both are
+    // literal segments with a second param, so both are linkable without a `:section` value.
     expect(app).toMatch(/path="\/app\/b\/:slug\/catalog\/:itemId"/)
+    expect(app).toMatch(/path="\/app\/b\/:slug\/customers\/:customerId"/)
   })
 
   it('routes every nav section through the URL rather than local state', () => {
     // The shell must not keep a `useState<SectionId>` for the section any more.
     expect(shell).not.toMatch(/useState<SectionId>/)
-    // The section, plus the optional piece id the catalog's information route carries.
-    expect(shell).toMatch(/useParams<\{\s*section\?: string\s+itemId\?: string\s*\}>/)
+    // The section, plus the optional second params the two literal routes carry.
+    expect(shell).toMatch(/useParams<\{/)
+    expect(shell).toMatch(/itemId\?: string/)
+    expect(shell).toMatch(/customerId\?: string/)
     expect(shell).toMatch(/navigate\(`\/app\/b\/\$\{organization\.slug\}\/\$\{next\}`\)/)
   })
 
@@ -54,6 +57,12 @@ describe('tenant dashboard section routing (Q6)', () => {
     // `itemId` and **no** `section`. Keying the section only on `sectionParam` therefore resolved
     // a piece URL to `overview`, which is what the shell actually rendered.
     expect(shell).toMatch(/catalogItemId\s*\?\s*'catalog'/)
+  })
+
+  it('reads a client URL as the customers section, for the same reason', () => {
+    // `/app/b/:slug/customers/:customerId` spells `customers` literally, so the section has to be
+    // resolved from the presence of the `customerId` param rather than from `:section`.
+    expect(shell).toMatch(/customerId\s*\?\s*'customers'/)
   })
 
   it('declares a unique, non-empty section id for every nav entry', () => {

@@ -3,6 +3,7 @@ using Aveline.Api.Modules.Conversations.DTOs;
 using Aveline.Api.Modules.Conversations.Models;
 using Aveline.Api.Modules.Conversations.Repositories;
 using Aveline.Api.Modules.CustomerConcierge.Repositories;
+using Aveline.Api.Modules.CustomerConcierge.Services;
 using Aveline.Api.Modules.Integrations.Models;
 using Aveline.Api.Modules.Integrations.Services;
 using Aveline.Api.Modules.Integrations.Services.Providers;
@@ -42,6 +43,7 @@ public sealed class CustomerDeliveryService : ICustomerDeliveryService
     private readonly IIntegrationService _integrations;
     private readonly IWhatsAppService _whatsApp;
     private readonly IMessageBroadcaster _broadcaster;
+    private readonly IConsentGateService _consentGate;
     private readonly ILogger<CustomerDeliveryService> _logger;
 
     public CustomerDeliveryService(
@@ -51,6 +53,7 @@ public sealed class CustomerDeliveryService : ICustomerDeliveryService
         IIntegrationService integrations,
         IWhatsAppService whatsApp,
         IMessageBroadcaster broadcaster,
+        IConsentGateService consentGate,
         ILogger<CustomerDeliveryService> logger)
     {
         _conversations = conversations;
@@ -59,6 +62,7 @@ public sealed class CustomerDeliveryService : ICustomerDeliveryService
         _integrations = integrations;
         _whatsApp = whatsApp;
         _broadcaster = broadcaster;
+        _consentGate = consentGate;
         _logger = logger;
     }
 
@@ -114,6 +118,25 @@ public sealed class CustomerDeliveryService : ICustomerDeliveryService
 
         var customer = await _customers.GetAsync(
             organizationId, conversation.CustomerId.Value, cancellationToken);
+
+        // Consent is checked before the handle and the channel: a revoked customer has no delivery
+        // path at all, so resolving one would only produce a less accurate refusal. The gate fails
+        // closed - a store that cannot be read refuses the send rather than risking a message to
+        // somebody who opted out (gap D1).
+        var consent = await _consentGate.CheckAsync(
+            organizationId, conversation.CustomerId.Value, cancellationToken);
+        if (!consent.ShouldProcess)
+        {
+            _logger.LogInformation(
+                "Outbound delivery refused: consent did not clear. organizationId={OrganizationId} conversationId={ConversationId} reason={Reason}",
+                organizationId, conversationId, consent.Reason);
+            return DeliveryOutcome.Refused(
+                DeliveryRefusal.ConsentRevoked,
+                consent.Status == ConsentDecision.UnavailableStatus
+                    ? "This client's consent could not be checked, so nothing was sent."
+                    : "This client has opted out of messages, so nothing was sent.");
+        }
+
         var handle = ResolveHandle(conversation.ExternalRef, customer?.PhoneNumber);
         if (handle is null)
         {

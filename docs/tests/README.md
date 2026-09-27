@@ -66,7 +66,7 @@ Reports are written to `Aveline.Api.Tests/TestResults/` (gitignored).
 | **Onboarding** | `OnboardingServiceTests`, `OnboardingMiddlewareTests`, `OnboardingEndpointsIntegrationTests` |
 | **Users** | `UserServiceTests`, `UserRepositoryTests`, `UserCacheServiceTests`, `UserEndpointsIntegrationTests` |
 | **Commerce / Approvals** | `AdminApprovalFlowIntegrationTests` |
-| **Customer Concierge & Memory (Slice 1)** | `CustomerConciergeEntityConfigurationTests`, `CustomerConciergeRepositoryTests`, `CustomerConciergeServiceTests`, `CustomerConciergeEndpointsIntegrationTests`, `CustomerMemoryRepositoryPostgresTests` (Testcontainers), `CustomerConciergeSearchPostgresTests` (Testcontainers) |
+| **Customer Concierge & Memory (Slice 1)** | `CustomerConciergeEntityConfigurationTests`, `CustomerConciergeRepositoryTests`, `CustomerConciergeServiceTests`, `CustomerMemoryWriteIntegrityTests` (provenance, de-duplication, metadata, expiry), `CustomerMemoryCorrectionTests` (correction, withdrawal, preference upsert), `ConsentEnforcementTests`, `CustomerConciergeEndpointsIntegrationTests`, `CustomerDeliveryServiceTests` (incl. the outbound consent refusal), `CustomerMemoryRepositoryPostgresTests` (Testcontainers), `CustomerConciergeSearchPostgresTests` (Testcontainers, incl. the similarity floor and the live `/brief` payload shape) |
 | **Visual Intelligence & Sourcing (Slice 2)** | `VisionServiceTests`, `VisualIntelligenceEntityConfigurationTests`, `VisualIntelligencePostgresTests` (Testcontainers), `CustomerMatchRepositoryTests`, `VisualEndpointsIntegrationTests` |
 | **Notifications** | `NotificationDispatcherTests`, `NotificationRepositoryTests`, `UserNotificationRepositoryTests`, `ChannelRouterTests`, `EmailServiceTests`, `FcmPushChannelTests`, `LoggingNotificationChannelsTests`, `NotificationHubTests`, `SignalRRealtimeChannelTests`, `NotificationEndpointsIntegrationTests`, `NotificationHubIntegrationTests`, `DeviceTokenEndpointsIntegrationTests`, `DeviceTokenRepositoryTests` |
 | **Eventing** | `EventingTests`, `EventingRedisTests` |
@@ -109,6 +109,7 @@ Configuration lives in `agent-service/pyproject.toml` (`[tool.pytest.ini_options
 | `test_usage_reporter.py` | `report_usage` success path and error handling with `respx`-mocked HTTP |
 | `test_customer_memory_schemas.py` | Memory-agent Pydantic I/O schemas (intent, memories, events, output) + extra-field rejection |
 | `test_customer_memory_agent.py` | Memory sub-graph golden cases against a fake `ToolRegistry` (wedding, revoked consent, missing context, preference extraction) + rule parsing |
+| `customer_memory_golden_cases.py` | The plan's memory golden set — wedding, discount, out-of-scope and revoked consent — asserting the **write contract** (provenance carried, nothing written when it should not be) and the retrieval contract (the similarity floor, provenance preserved into the output) |
 | `test_visual_insight_schemas.py` | Visual agent Pydantic schemas (`ImageAttributes`, `PieceItem`, `LookDto`, `SourcingRequestDto`, `VisualAgentOutput`) |
 | `test_visual_insight_graph.py` | Visual Insight LangGraph sub-graph execution, conditional look composition vs. sourcing routing |
 | `test_visual_intent_gate.py` | Elle visual intent classification and confidence gating |

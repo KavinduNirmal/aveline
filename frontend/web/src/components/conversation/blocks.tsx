@@ -12,6 +12,7 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import {
+  DIALOG_CONTENT_WIDE,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -851,7 +852,7 @@ function AttachmentViewer({
   const isPdf = contentType === 'application/pdf'
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent className={DIALOG_CONTENT_WIDE}>
         <DialogHeader>
           <DialogTitle className="truncate pr-6 text-sm">{fileName}</DialogTitle>
           <DialogDescription className="flex items-center gap-2">

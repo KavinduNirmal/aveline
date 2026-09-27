@@ -63,6 +63,7 @@
 
 - `pytest tests/services/test_scraper_security.py tests/services/test_atelier_scraper.py tests/tools/test_supplier_scraper_tool.py`: 10/10 passed.
 - `pytest tests/test_visual_agent.py tests/test_visual_insight_schemas.py tests/test_visual_routing.py tests/tools/test_visual_tools.py tests/tools/test_inventory_tools.py`: 66/66 passed.
+- `pytest tests/ --cov=app --cov-fail-under=90`: 963/963 passed (92.43% coverage).
 - `ruff check app/ tests/`: 0 errors.
 
 ---

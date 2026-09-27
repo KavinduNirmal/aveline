@@ -44,9 +44,10 @@ public class InventoryRepository : IInventoryRepository
         bool inStockOnly = true,
         int page = 1,
         int pageSize = 20,
+        string? query = null,
         CancellationToken cancellationToken = default)
     {
-        var query = _db.InventoryItems
+        var dbQuery = _db.InventoryItems
             .AsNoTracking()
             .Where(x =>
                 x.OrgId == orgId &&
@@ -56,34 +57,127 @@ public class InventoryRepository : IInventoryRepository
         if (!string.IsNullOrWhiteSpace(category))
         {
             var trimmedCategory = category.Trim().ToLower();
-            query = query.Where(x => x.Category.ToLower().Contains(trimmedCategory));
+            var singularCategory = trimmedCategory.EndsWith("s") && trimmedCategory.Length > 3
+                ? trimmedCategory[..^1]
+                : trimmedCategory;
+
+            dbQuery = dbQuery.Where(x =>
+                x.Category.ToLower().Contains(trimmedCategory) ||
+                x.Category.ToLower().Contains(singularCategory) ||
+                trimmedCategory.Contains(x.Category.ToLower()) ||
+                (x.ItemName != null && (x.ItemName.ToLower().Contains(trimmedCategory) || x.ItemName.ToLower().Contains(singularCategory))));
+        }
+
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            var rawTerms = query.Trim().ToLower()
+                .Split(new[] { ' ', ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            var stopWords = new HashSet<string> { "do", "we", "have", "any", "in", "stock", "is", "there", "are", "the", "a", "an", "for", "with", "please", "show", "me", "can", "you", "find", "tell", "check", "available", "of", "u", "some" };
+            var terms = rawTerms.Where(t => t.Length > 1 && !stopWords.Contains(t)).ToList();
+            if (terms.Count == 0)
+            {
+                terms = rawTerms.ToList();
+            }
+
+            foreach (var term in terms)
+            {
+                var singularTerm = term.EndsWith("s") && term.Length > 3 ? term[..^1] : term;
+                dbQuery = dbQuery.Where(x =>
+                    x.ItemName.ToLower().Contains(term) ||
+                    x.ItemName.ToLower().Contains(singularTerm) ||
+                    (x.Category != null && (x.Category.ToLower().Contains(term) || x.Category.ToLower().Contains(singularTerm))) ||
+                    (x.Description != null && x.Description.ToLower().Contains(term)) ||
+                    (x.Fabric != null && x.Fabric.ToLower().Contains(term)) ||
+                    (x.Color != null && x.Color.ToLower().Contains(term)) ||
+                    (x.Sku != null && x.Sku.ToLower().Contains(term)));
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(color))
         {
             var trimmedColor = color.Trim().ToLower();
-            query = query.Where(x =>
-                x.Color.ToLower().Contains(trimmedColor) ||
-                (x.ItemName != null && x.ItemName.ToLower().Contains(trimmedColor)) ||
-                (x.Description != null && x.Description.ToLower().Contains(trimmedColor)));
+            if (trimmedColor == "red")
+            {
+                dbQuery = dbQuery.Where(x =>
+                    x.Color.ToLower().Contains("red") ||
+                    x.Color.ToLower().Contains("crimson") ||
+                    x.Color.ToLower().Contains("maroon") ||
+                    x.Color.ToLower().Contains("ruby") ||
+                    x.Color.ToLower().Contains("burgundy") ||
+                    x.Color.ToLower().Contains("scarlet") ||
+                    (x.ItemName != null && (
+                        x.ItemName.ToLower().Contains("red") ||
+                        x.ItemName.ToLower().Contains("crimson") ||
+                        x.ItemName.ToLower().Contains("maroon") ||
+                        x.ItemName.ToLower().Contains("ruby") ||
+                        x.ItemName.ToLower().Contains("burgundy") ||
+                        x.ItemName.ToLower().Contains("scarlet"))));
+            }
+            else if (trimmedColor == "blue")
+            {
+                dbQuery = dbQuery.Where(x =>
+                    x.Color.ToLower().Contains("blue") ||
+                    x.Color.ToLower().Contains("navy") ||
+                    x.Color.ToLower().Contains("sapphire") ||
+                    x.Color.ToLower().Contains("cobalt") ||
+                    x.Color.ToLower().Contains("indigo") ||
+                    x.Color.ToLower().Contains("teal") ||
+                    x.Color.ToLower().Contains("aqua") ||
+                    (x.ItemName != null && (
+                        x.ItemName.ToLower().Contains("blue") ||
+                        x.ItemName.ToLower().Contains("navy") ||
+                        x.ItemName.ToLower().Contains("sapphire") ||
+                        x.ItemName.ToLower().Contains("cobalt") ||
+                        x.ItemName.ToLower().Contains("indigo") ||
+                        x.ItemName.ToLower().Contains("teal") ||
+                        x.ItemName.ToLower().Contains("aqua"))));
+            }
+            else if (trimmedColor == "green")
+            {
+                dbQuery = dbQuery.Where(x =>
+                    x.Color.ToLower().Contains("green") ||
+                    x.Color.ToLower().Contains("emerald") ||
+                    x.Color.ToLower().Contains("forest") ||
+                    x.Color.ToLower().Contains("bottle") ||
+                    x.Color.ToLower().Contains("sage") ||
+                    x.Color.ToLower().Contains("mint") ||
+                    x.Color.ToLower().Contains("olive") ||
+                    x.Color.ToLower().Contains("jade") ||
+                    (x.ItemName != null && (
+                        x.ItemName.ToLower().Contains("green") ||
+                        x.ItemName.ToLower().Contains("emerald") ||
+                        x.ItemName.ToLower().Contains("forest") ||
+                        x.ItemName.ToLower().Contains("bottle") ||
+                        x.ItemName.ToLower().Contains("sage") ||
+                        x.ItemName.ToLower().Contains("mint") ||
+                        x.ItemName.ToLower().Contains("olive") ||
+                        x.ItemName.ToLower().Contains("jade"))));
+            }
+            else
+            {
+                dbQuery = dbQuery.Where(x =>
+                    x.Color.ToLower().Contains(trimmedColor) ||
+                    (x.ItemName != null && x.ItemName.ToLower().Contains(trimmedColor)));
+            }
         }
 
         if (minPrice.HasValue)
         {
-            query = query.Where(x => x.Price >= minPrice.Value);
+            dbQuery = dbQuery.Where(x => x.Price >= minPrice.Value);
         }
 
         if (maxPrice.HasValue)
         {
-            query = query.Where(x => x.Price <= maxPrice.Value);
+            dbQuery = dbQuery.Where(x => x.Price <= maxPrice.Value);
         }
 
         if (inStockOnly)
         {
-            query = query.Where(x => x.StockQuantity > 0);
+            dbQuery = dbQuery.Where(x => x.StockQuantity > 0);
         }
 
-        var results = await query
+        var results = await dbQuery
             .OrderBy(x => x.ItemName)
             .ToListAsync(cancellationToken);
 

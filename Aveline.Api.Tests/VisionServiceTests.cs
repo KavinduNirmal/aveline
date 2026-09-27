@@ -405,6 +405,321 @@ public class VisionServiceTests
         jewelryResult.GarmentType.Should().Be("Heirloom Kundan Necklace");
     }
 
+    [Fact]
+    public async Task AnalyzeAsync_SimpleShirt_ExtractsSingleGarmentWithPrimaryColorAndCategory()
+    {
+        var orgId = Guid.NewGuid();
+        var inMemorySettings = new Dictionary<string, string?>
+        {
+            { "Vision:ApiKey", "test-key" }
+        };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(inMemorySettings).Build();
+
+        var jsonResponse = """
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "{\"success\":true,\"items\":[{\"clothing_type\":\"Shirt\",\"category\":\"top\",\"primary_color\":\"Sky Blue\",\"color_hex\":\"#87CEEB\",\"secondary_colors\":[],\"pattern\":\"solid\",\"material\":\"cotton\",\"style\":\"casual\",\"confidence\":0.97,\"suggested_item_name\":\"Sky Blue Cotton Shirt\",\"description\":\"A classic casual shirt.\"}]}"
+                    }
+                }
+            ],
+            "usage": { "prompt_tokens": 100, "completion_tokens": 50 }
+        }
+        """;
+
+        var fakeHandler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(jsonResponse, Encoding.UTF8, "application/json")
+        });
+        var httpClient = new HttpClient(fakeHandler) { BaseAddress = new Uri("https://api.openai.com") };
+
+        var service = new VisionService(httpClient, config, NullLogger<VisionService>.Instance);
+        var result = await service.AnalyzeAsync("https://example.com/blue-shirt.jpg", orgId);
+
+        result.Should().NotBeNull();
+        result.Success.Should().BeTrue();
+        result.Items.Should().HaveCount(1);
+        result.Items[0].ClothingType.Should().Be("Shirt");
+        result.Items[0].Category.Should().Be("top");
+        result.Items[0].PrimaryColor.Should().Be("Sky Blue");
+        result.Items[0].Material.Should().Be("cotton");
+        result.PrimaryColor.Should().Be("Sky Blue");
+        result.Category.Should().Be("top");
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_Jeans_ExtractsBottomGarmentWithDenimFabric()
+    {
+        var orgId = Guid.NewGuid();
+        var inMemorySettings = new Dictionary<string, string?>
+        {
+            { "Vision:ApiKey", "test-key" }
+        };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(inMemorySettings).Build();
+
+        var jsonResponse = """
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "{\"success\":true,\"items\":[{\"clothing_type\":\"Jeans\",\"category\":\"bottom\",\"primary_color\":\"Indigo Blue\",\"color_hex\":\"#1A237E\",\"secondary_colors\":[],\"pattern\":\"solid\",\"material\":\"denim\",\"style\":\"casual\",\"confidence\":0.96,\"suggested_item_name\":\"Classic Indigo Denim Jeans\",\"description\":\"Timeless regular-fit denim jeans.\"}]}"
+                    }
+                }
+            ],
+            "usage": { "prompt_tokens": 100, "completion_tokens": 50 }
+        }
+        """;
+
+        var fakeHandler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(jsonResponse, Encoding.UTF8, "application/json")
+        });
+        var httpClient = new HttpClient(fakeHandler) { BaseAddress = new Uri("https://api.openai.com") };
+
+        var service = new VisionService(httpClient, config, NullLogger<VisionService>.Instance);
+        var result = await service.AnalyzeAsync("https://example.com/blue-jeans.jpg", orgId);
+
+        result.Should().NotBeNull();
+        result.Success.Should().BeTrue();
+        result.Items.Should().HaveCount(1);
+        result.Items[0].ClothingType.Should().Be("Jeans");
+        result.Items[0].Category.Should().Be("bottom");
+        result.Items[0].Material.Should().Be("denim");
+        result.Fabric.Should().Be("denim");
+        result.Category.Should().Be("bottom");
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_MultipleGarments_DecomposesTopAndBottomOutfit()
+    {
+        var orgId = Guid.NewGuid();
+        var inMemorySettings = new Dictionary<string, string?>
+        {
+            { "Vision:ApiKey", "test-key" }
+        };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(inMemorySettings).Build();
+
+        var jsonResponse = """
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "{\"success\":true,\"items\":[{\"clothing_type\":\"Tailored Blazer\",\"category\":\"outerwear\",\"primary_color\":\"Navy Blue\",\"color_hex\":\"#1E293B\",\"secondary_colors\":[\"gold\"],\"pattern\":\"solid\",\"material\":\"wool\",\"style\":\"formal\",\"confidence\":0.98},{\"clothing_type\":\"Pleated Trousers\",\"category\":\"bottom\",\"primary_color\":\"Charcoal Grey\",\"color_hex\":\"#334155\",\"secondary_colors\":[],\"pattern\":\"solid\",\"material\":\"linen\",\"style\":\"formal\",\"confidence\":0.95}]}"
+                    }
+                }
+            ],
+            "usage": { "prompt_tokens": 120, "completion_tokens": 80 }
+        }
+        """;
+
+        var fakeHandler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(jsonResponse, Encoding.UTF8, "application/json")
+        });
+        var httpClient = new HttpClient(fakeHandler) { BaseAddress = new Uri("https://api.openai.com") };
+
+        var service = new VisionService(httpClient, config, NullLogger<VisionService>.Instance);
+        var result = await service.AnalyzeAsync("https://example.com/suit-outfit.jpg", orgId);
+
+        result.Should().NotBeNull();
+        result.Success.Should().BeTrue();
+        result.Items.Should().HaveCount(2);
+        result.Items[0].ClothingType.Should().Be("Tailored Blazer");
+        result.Items[0].Category.Should().Be("outerwear");
+        result.Items[0].PrimaryColor.Should().Be("Navy Blue");
+        result.Items[1].ClothingType.Should().Be("Pleated Trousers");
+        result.Items[1].Category.Should().Be("bottom");
+        result.Items[1].PrimaryColor.Should().Be("Charcoal Grey");
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_BackgroundInterference_StrictlyExcludesBackdropStudioWall()
+    {
+        var orgId = Guid.NewGuid();
+        var inMemorySettings = new Dictionary<string, string?>
+        {
+            { "Vision:ApiKey", "test-key" }
+        };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(inMemorySettings).Build();
+
+        // Model prompt strictly instructs excluding yellow/red studio backdrop wall
+        var jsonResponse = """
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "{\"success\":true,\"items\":[{\"clothing_type\":\"Evening Gown\",\"category\":\"dress\",\"primary_color\":\"Emerald Green\",\"color_hex\":\"#0F5132\",\"secondary_colors\":[\"gold\"],\"pattern\":\"solid\",\"material\":\"silk\",\"style\":\"formal\",\"confidence\":0.99}]}"
+                    }
+                }
+            ],
+            "usage": { "prompt_tokens": 100, "completion_tokens": 50 }
+        }
+        """;
+
+        var fakeHandler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(jsonResponse, Encoding.UTF8, "application/json")
+        });
+        var httpClient = new HttpClient(fakeHandler) { BaseAddress = new Uri("https://api.openai.com") };
+
+        var service = new VisionService(httpClient, config, NullLogger<VisionService>.Instance);
+        var result = await service.AnalyzeAsync("https://example.com/dress-against-yellow-wall.jpg", orgId);
+
+        result.Should().NotBeNull();
+        result.PrimaryColor.Should().Be("Emerald Green");
+        result.PrimaryColor.Should().NotBe("Yellow");
+        result.ColorHex.Should().Be("#0F5132");
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_NonClothingImage_ReturnsSuccessFalseWithDescriptiveError()
+    {
+        var orgId = Guid.NewGuid();
+        var inMemorySettings = new Dictionary<string, string?>
+        {
+            { "Vision:ApiKey", "test-key" }
+        };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(inMemorySettings).Build();
+
+        var jsonResponse = """
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "{\"success\":false,\"error\":\"No recognizable clothing items detected in image\",\"items\":[]}"
+                    }
+                }
+            ],
+            "usage": { "prompt_tokens": 80, "completion_tokens": 20 }
+        }
+        """;
+
+        var fakeHandler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(jsonResponse, Encoding.UTF8, "application/json")
+        });
+        var httpClient = new HttpClient(fakeHandler) { BaseAddress = new Uri("https://api.openai.com") };
+
+        var service = new VisionService(httpClient, config, NullLogger<VisionService>.Instance);
+        var result = await service.AnalyzeAsync("https://example.com/sports-car.jpg", orgId);
+
+        result.Should().NotBeNull();
+        result.Success.Should().BeFalse();
+        result.Error.Should().Contain("No recognizable clothing");
+        result.Items.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_BlurryImage_HandlesDegradedConfidenceGracefully()
+    {
+        var orgId = Guid.NewGuid();
+        var inMemorySettings = new Dictionary<string, string?>
+        {
+            { "Vision:ApiKey", "test-key" }
+        };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(inMemorySettings).Build();
+
+        var jsonResponse = """
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "{\"success\":true,\"items\":[{\"clothing_type\":\"T-shirt\",\"category\":\"top\",\"primary_color\":\"White\",\"confidence\":0.35,\"description\":\"Low confidence due to motion blur.\"}]}"
+                    }
+                }
+            ],
+            "usage": { "prompt_tokens": 80, "completion_tokens": 30 }
+        }
+        """;
+
+        var fakeHandler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(jsonResponse, Encoding.UTF8, "application/json")
+        });
+        var httpClient = new HttpClient(fakeHandler) { BaseAddress = new Uri("https://api.openai.com") };
+
+        var service = new VisionService(httpClient, config, NullLogger<VisionService>.Instance);
+        var result = await service.AnalyzeAsync("https://example.com/blurry-photo.jpg", orgId);
+
+        result.Should().NotBeNull();
+        result.ConfidenceScore.Should().Be(0.35);
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Confidence.Should().Be(0.35);
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_MalformedOrTruncatedJson_RepairsGracefullyWithoutThrowing()
+    {
+        var orgId = Guid.NewGuid();
+        var inMemorySettings = new Dictionary<string, string?>
+        {
+            { "Vision:ApiKey", "test-key" }
+        };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(inMemorySettings).Build();
+
+        // Truncated JSON ending mid-string
+        var truncatedContent = "{\"success\":true,\"items\":[{\"clothing_type\":\"Kanjeevaram Silk Saree\",\"category\":\"ethnic_couture\",\"primary_color\":\"Crimson Red\",\"styling_notes\":\"Pair with heirloom gold zari";
+
+        var jsonResponse = $$"""
+        {
+            "choices": [
+                {
+                    "finish_reason": "length",
+                    "message": {
+                        "content": {{System.Text.Json.JsonSerializer.Serialize(truncatedContent)}}
+                    }
+                }
+            ],
+            "usage": { "prompt_tokens": 100, "completion_tokens": 80 }
+        }
+        """;
+
+        var fakeHandler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(jsonResponse, Encoding.UTF8, "application/json")
+        });
+        var httpClient = new HttpClient(fakeHandler) { BaseAddress = new Uri("https://api.openai.com") };
+
+        var service = new VisionService(httpClient, config, NullLogger<VisionService>.Instance);
+        var result = await service.AnalyzeAsync("https://example.com/truncated-sample.jpg", orgId);
+
+        result.Should().NotBeNull();
+        result.Success.Should().BeTrue();
+        result.Items.Should().NotBeEmpty();
+        result.PrimaryColor.Should().Be("Crimson Red");
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_DeterministicAnalysis_WithOvercoat_DetectsOuterwearAndWoolBlend()
+    {
+        var config = new ConfigurationBuilder().Build();
+        var service = new VisionService(new HttpClient(), config, NullLogger<VisionService>.Instance);
+        var result = await service.AnalyzeAsync("https://example.com/forest_green_long_wool_overcoat.jpg", Guid.NewGuid());
+
+        result.Should().NotBeNull();
+        result.Category.Should().Be("outerwear");
+        result.GarmentType.Should().Be("Tailored Long Overcoat");
+        result.PrimaryColor.Should().Be("forest green");
+        result.Fabric.Should().Be("Wool / Cashmere Blend");
+        result.Items.Should().HaveCount(1);
+        result.Items[0].ClothingType.Should().Be("Tailored Long Overcoat");
+        result.Items[0].Category.Should().Be("outerwear");
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_DeterministicAnalysis_WithTrenchCoat_DetectsTrench()
+    {
+        var config = new ConfigurationBuilder().Build();
+        var service = new VisionService(new HttpClient(), config, NullLogger<VisionService>.Instance);
+        var result = await service.AnalyzeAsync("https://example.com/double-breasted-trench-coat.jpg", Guid.NewGuid());
+
+        result.Should().NotBeNull();
+        result.Category.Should().Be("outerwear");
+        result.GarmentType.Should().Be("Double-Breasted Trench Coat");
+        result.Fabric.Should().Be("Wool / Cashmere Blend");
+    }
+
     private sealed class FakeHttpMessageHandler(HttpResponseMessage response) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)

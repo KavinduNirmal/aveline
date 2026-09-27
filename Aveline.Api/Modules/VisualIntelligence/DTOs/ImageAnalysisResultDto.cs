@@ -48,6 +48,15 @@ public class ImageAnalysisResultDto
     public string? SuggestedItemName { get; set; }
     public string? Description { get; set; }
     public string? StylingNotes { get; set; }
+    [JsonPropertyName("success")]
+    public bool Success { get; set; } = true;
+
+    [JsonPropertyName("error")]
+    public string? Error { get; set; }
+
+    [JsonPropertyName("items")]
+    public List<DetectedClothingItemDto> Items { get; set; } = new();
+
     public double ConfidenceScore { get; set; } = 0.95;
     public bool IsFallback { get; set; } = false;
 

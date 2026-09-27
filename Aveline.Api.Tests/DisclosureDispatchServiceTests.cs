@@ -46,7 +46,8 @@ public class DisclosureDispatchServiceTests
         };
     }
 
-    private DisclosureDispatchService CreateService(string? signingKey = null)
+    private DisclosureDispatchService CreateService(
+        string? signingKey = null, IDisclosureImageProvider? imageProvider = null)
     {
         var settings = new Dictionary<string, string?>
         {
@@ -72,7 +73,9 @@ public class DisclosureDispatchServiceTests
             new DisclosureBodyBuilder(),
             new PrivacyLinkSigner(configuration),
             _metrics,
-            NullLogger<DisclosureDispatchService>.Instance);
+            NullLogger<DisclosureDispatchService>.Instance,
+            notifications: null,
+            imageProvider: imageProvider);
     }
 
     [Fact]
@@ -93,6 +96,51 @@ public class DisclosureDispatchServiceTests
         var row = _consent.Rows[(_orgId, _customerId)];
         Assert.NotNull(row.DisclosureShownAt);
         Assert.Equal(DisclosureBodyBuilder.CurrentVersionValue, row.DisclosureVersion);
+    }
+
+    [Fact]
+    public async Task Dispatch_WhenAnImageIsAvailable_SendsTheNoticeAsItsCaption()
+    {
+        // The approved shape: one message, the co-branded image carrying the notice as its caption.
+        // If this regressed, a customer would receive a picture with no consent notice on it.
+        _outbound.ImageNext = OutboundMessageResult.Sent("wamid.IMAGE1");
+        var service = CreateService(
+            SigningKey, imageProvider: new StubImageProvider("https://example.test/disclosure.jpg"));
+
+        var result = await service.DispatchAsync(_orgId, _customerId, To);
+
+        Assert.Equal(DisclosureDispatchOutcome.Sent, result.Outcome);
+        Assert.Equal("wamid.IMAGE1", result.ProviderMessageId);
+
+        var image = Assert.Single(_outbound.SentImages);
+        Assert.Equal("https://example.test/disclosure.jpg", image.ImageUrl);
+        Assert.Equal(To, image.ToE164);
+        Assert.Contains("Aveline, an AI assistant", image.Caption, StringComparison.Ordinal);
+        Assert.Contains("Opt out permanently", image.Caption, StringComparison.Ordinal);
+
+        // One message, not two: the caption shape exists so the notice travels with the image.
+        Assert.Empty(_outbound.Sent);
+    }
+
+    [Fact]
+    public async Task Dispatch_WhenTheImageIsRefused_FallsBackToTheTextNotice()
+    {
+        // The safety net. The image is decoration on a consent notice, so a provider refusing it, an
+        // image host being unreachable or a malformed URL must never be the reason a customer is not
+        // told what is stored about them. Note the same idempotency key: it is one logical message,
+        // and the channel only replays a prior *success*.
+        _outbound.ImageNext = OutboundMessageResult.Failed("(#131026) media could not be fetched");
+        var service = CreateService(
+            SigningKey, imageProvider: new StubImageProvider("https://example.test/disclosure.jpg"));
+
+        var result = await service.DispatchAsync(_orgId, _customerId, To);
+
+        Assert.Equal(DisclosureDispatchOutcome.Sent, result.Outcome);
+
+        var text = Assert.Single(_outbound.Sent);
+        Assert.Contains("Aveline, an AI assistant", text.Text, StringComparison.Ordinal);
+        Assert.Contains("Opt out permanently", text.Text, StringComparison.Ordinal);
+        Assert.Equal(_outbound.SentImages[0].IdempotencyKey, text.IdempotencyKey);
     }
 
     [Fact]
@@ -179,7 +227,7 @@ public class DisclosureDispatchServiceTests
         var sent = Assert.Single(_outbound.Sent);
         Assert.Contains("Emerald Boutique", sent.Text, StringComparison.Ordinal);
         Assert.Contains("Aveline, an AI assistant", sent.Text, StringComparison.Ordinal);
-        Assert.Contains("A real member of our team reads every conversation", sent.Text, StringComparison.Ordinal);
+        Assert.Contains("a real member of our team reads every conversation", sent.Text, StringComparison.Ordinal);
         Assert.Contains("https://app.aveline.lk/privacy?org=emerald-boutique", sent.Text, StringComparison.Ordinal);
         Assert.Contains($"https://app.aveline.lk/privacy/opt-out?o={_orgId:D}&v=1&s=", sent.Text, StringComparison.Ordinal);
         Assert.Contains("Reply STOP", sent.Text, StringComparison.Ordinal);
@@ -205,7 +253,7 @@ public class DisclosureDispatchServiceTests
         Assert.DoesNotContain(To, entry.EvidenceJson, StringComparison.Ordinal);
         Assert.DoesNotContain("Hello", entry.EvidenceJson, StringComparison.Ordinal);
         Assert.DoesNotContain("Reply STOP", entry.EvidenceJson, StringComparison.Ordinal);
-        Assert.Contains("v1", entry.EvidenceJson, StringComparison.Ordinal);
+        Assert.Contains("v2", entry.EvidenceJson, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -327,8 +375,41 @@ public class DisclosureDispatchServiceTests
         public Task<bool> IsChannelConfiguredAsync(
             Guid organizationId, string channelKey, CancellationToken cancellationToken = default)
             => Task.FromResult(true);
+    
+        public Task<OutboundMessageResult> SendWhatsAppImageAsync(
+            Guid organizationId,
+            string toE164,
+            string imageUrl,
+            string caption,
+            string idempotencyKey,
+            CancellationToken cancellationToken = default)
+        {
+            SentImages.Add(new SentImage(organizationId, toE164, imageUrl, caption, idempotencyKey));
+            return Task.FromResult(ImageNext);
+        }
+
+        /// <summary>Images this fake was asked to send, with the caption that carried the notice.</summary>
+        public List<SentImage> SentImages { get; } = [];
+
+        /// <summary>
+        /// What an image send answers. Defaults to a refusal, so a test that is not about images
+        /// exercises the text fallback - which is the path that has to work when images cannot.
+        /// </summary>
+        public OutboundMessageResult ImageNext { get; set; } =
+            OutboundMessageResult.Failed("the provider refused the image");
+    }
+
+    /// <summary>Supplies a fixed image URL, standing in for the renderer plus Cloudinary.</summary>
+    private sealed class StubImageProvider(string url) : IDisclosureImageProvider
+    {
+        public Task<string?> GetUrlAsync(
+            Guid organizationId, string boutiqueDisplayName, CancellationToken cancellationToken = default)
+            => Task.FromResult<string?>(url);
     }
 
     private sealed record SentDisclosure(
         Guid OrganizationId, string ToE164, string Text, string IdempotencyKey);
+
+    private sealed record SentImage(
+        Guid OrganizationId, string ToE164, string ImageUrl, string Caption, string IdempotencyKey);
 }

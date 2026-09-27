@@ -39,7 +39,31 @@
         <PackageReference Include="StackExchange.Redis" Version="2.7.27" />
         <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
         <PackageReference Include="QRCoder" Version="1.6.0" />
+        <!-- The first-contact disclosure carries a composed image, so the API rasterises it.
+             SkiaSharp is MIT. The NoDependencies native build is the one that does not need
+             fontconfig: the runtime image is noble-chiseled with no shell and no font packages,
+             and the fonts are embedded here rather than loaded from the system. ImageSharp was
+             the other candidate and was rejected for its split licence, which is a commercial-use
+             question this project should not be taking on for a decorative image. -->
+        <PackageReference Include="SkiaSharp" Version="4.152.1" />
+        <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.152.1" />
         <PackageReference Include="ZXing.Net" Version="0.16.10" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- The brand faces ship inside the assembly. A path relative to the repo would work on a
+             developer machine and fail in the container, and the failure mode is a disclosure image
+             with no text on it. LogicalName is set explicitly because MSBuild's default resource
+             naming is easy to get subtly wrong and impossible to notice until a font fails to load.
+             The OFL licences travel with them, as both fonts require. -->
+        <EmbeddedResource Include="Assets/Fonts/PlayfairDisplay-SemiBold.ttf"
+                          LogicalName="Aveline.Api.Fonts.PlayfairDisplay-SemiBold.ttf" />
+        <EmbeddedResource Include="Assets/Fonts/DMSans-SemiBold.ttf"
+                          LogicalName="Aveline.Api.Fonts.DMSans-SemiBold.ttf" />
+        <EmbeddedResource Include="Assets/Fonts/DMSans-Regular.ttf"
+                          LogicalName="Aveline.Api.Fonts.DMSans-Regular.ttf" />
+        <None Include="Assets/Fonts/OFL-PlayfairDisplay.txt" CopyToOutputDirectory="PreserveNewest" />
+        <None Include="Assets/Fonts/OFL-DMSans.txt" CopyToOutputDirectory="PreserveNewest" />
     </ItemGroup>
 
 </Project>

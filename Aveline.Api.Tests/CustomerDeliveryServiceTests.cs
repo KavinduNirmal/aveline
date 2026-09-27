@@ -160,7 +160,17 @@ public class CustomerDeliveryServiceTests
 
         public Task<WhatsAppMediaResult> GetMediaAsync(string accessToken, string mediaId, CancellationToken ct)
             => throw new NotImplementedException();
-    }
+    
+        public Task<WhatsAppSendResult> SendImageAsync(
+            string accessToken,
+            string phoneNumberId,
+            string to,
+            string imageUrl,
+            string caption,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new WhatsAppSendResult(
+                IsSuccess: true, MessageId: "wamid.TESTIMAGE", HttpStatus: 200));
+}
 
     private sealed class FakeBroadcaster : IMessageBroadcaster
     {

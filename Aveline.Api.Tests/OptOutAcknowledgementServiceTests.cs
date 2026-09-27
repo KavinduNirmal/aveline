@@ -227,5 +227,14 @@ public class OptOutAcknowledgementServiceTests
         public Task<bool> IsChannelConfiguredAsync(
             Guid organizationId, string channelKey, CancellationToken cancellationToken = default)
             => Task.FromResult(true);
-    }
+    
+        public Task<OutboundMessageResult> SendWhatsAppImageAsync(
+            Guid organizationId,
+            string toE164,
+            string imageUrl,
+            string caption,
+            string idempotencyKey,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(OutboundMessageResult.Sent("wamid.TESTIMAGE"));
+}
 }

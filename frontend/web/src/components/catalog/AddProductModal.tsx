@@ -249,7 +249,6 @@ export function AddProductModal({
     const gFabric = garment.material || ''
     const gPattern = garment.pattern && garment.pattern.toLowerCase() !== 'unknown' ? garment.pattern : ''
     const gStyle = garment.style && garment.style.toLowerCase() !== 'unknown' ? garment.style : ''
-    const gName = garment.suggestedItemName || [gColor, gFabric, gType].filter(Boolean).join(' ').trim()
     const gDesc = garment.description || ''
 
     setColor(gColor)
@@ -274,7 +273,7 @@ export function AddProductModal({
     targetCategory: string,
     targetColor?: string,
     targetFabric?: string,
-    targetGarmentType?: string,
+    targetGarmentType?: string | null,
     targetPattern?: string,
   ): string => {
     const activeCategory = targetCategory || 'Sarees'
@@ -510,7 +509,6 @@ export function AddProductModal({
       let resolvedPattern: string
       let resolvedStyle: string
       let resolvedConfidence: number | null
-      let resolvedName: string
       let resolvedDesc: string
 
       // 3. Precedence. A real multimodal analysis of this image beats the client-side heuristic,
@@ -539,7 +537,6 @@ export function AddProductModal({
         resolvedPattern = backendResult.pattern || ''
         resolvedStyle = backendResult.style || ''
         resolvedConfidence = backendResult.confidenceScore ?? null
-        resolvedName = backendResult.suggestedItemName || [resolvedColor, resolvedFabric, resolvedGarment].filter(Boolean).join(' ').trim()
         // Only the provider's own copy. A synthesized sentence built from absent attributes would
         // invent a weave and a finish the analysis never observed; the drawer's explicit
         // "generate description" action is where prose is composed, and it is the operator's call.
@@ -557,7 +554,6 @@ export function AddProductModal({
         resolvedPattern = visualClientAnalysis.pattern
         resolvedStyle = visualClientAnalysis.style
         resolvedConfidence = visualClientAnalysis.confidenceScore ?? null
-        resolvedName = visualClientAnalysis.suggestedItemName
         resolvedDesc = visualClientAnalysis.description
       } else if (backendResult) {
         // The backend's deterministic fallback with no client measurement to arbitrate. Its answer
@@ -573,7 +569,6 @@ export function AddProductModal({
         resolvedPattern = backendResult.pattern || ''
         resolvedStyle = backendResult.style || ''
         resolvedConfidence = backendResult.confidenceScore ?? null
-        resolvedName = backendResult.suggestedItemName || [resolvedColor, resolvedFabric, resolvedGarment].filter(Boolean).join(' ').trim()
         resolvedDesc = backendResult.description || ''
       } else {
         throw new Error('Analysis yielded no attributes')

@@ -48,7 +48,6 @@ const CATEGORY_PILLS = [
 
 export function InventoryTab({
   inventory,
-  onAddNewPiece,
   onOpenItem,
   onViewMatches,
   onComposeOutfit,

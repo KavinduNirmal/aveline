@@ -6,6 +6,7 @@ import type {
   SourcingRequest,
   Supplier,
   SupplierCatalogItem,
+  DetectedClothingItem,
   VisionAnalysisResult,
   SearchInventoryParams,
   CreateInventoryItemPayload,

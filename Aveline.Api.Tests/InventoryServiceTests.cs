@@ -29,19 +29,21 @@ public class InventoryServiceTests
                 It.IsAny<bool>(),
                 It.IsAny<int>(),
                 It.IsAny<int>(),
+                It.IsAny<string?>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Guid orgId, string? cat, string? col, string? size, decimal? minP, decimal? maxP, bool inStock, int page, int pageSize, CancellationToken ct) =>
+            .ReturnsAsync((Guid orgId, string? cat, string? col, string? size, decimal? minP, decimal? maxP, bool inStock, int page, int pageSize, string? q, CancellationToken ct) =>
             {
                 var query = _inMemoryItems.Where(x =>
                     x.OrgId == orgId &&
                     x.DeletedAt == null &&
                     x.Status == "available" &&
-                    (col == null || x.Color.Equals(col, StringComparison.OrdinalIgnoreCase)) &&
-                    (cat == null || x.Category.Equals(cat, StringComparison.OrdinalIgnoreCase)) &&
+                    (col == null || x.Color.Equals(col, StringComparison.OrdinalIgnoreCase) || (x.ItemName != null && x.ItemName.Contains(col, StringComparison.OrdinalIgnoreCase))) &&
+                    (cat == null || x.Category.Equals(cat, StringComparison.OrdinalIgnoreCase) || (x.ItemName != null && x.ItemName.Contains(cat, StringComparison.OrdinalIgnoreCase))) &&
                     (size == null || x.Sizes.Any(s => s.Equals(size, StringComparison.OrdinalIgnoreCase))) &&
                     (!minP.HasValue || x.Price >= minP.Value) &&
                     (!maxP.HasValue || x.Price <= maxP.Value) &&
-                    (!inStock || x.Quantity > 0)
+                    (!inStock || x.Quantity > 0) &&
+                    (q == null || (x.ItemName != null && x.ItemName.Contains(q, StringComparison.OrdinalIgnoreCase)))
                 );
 
                 return query
@@ -459,5 +461,28 @@ public class InventoryServiceTests
     public void NormalizeColorHex_AcceptsOnlyCssHexLiterals(string? input, string? expected)
     {
         InventoryService.NormalizeColorHex(input).Should().Be(expected);
+    }
+
+    [Fact]
+    public async Task SearchInventory_WhenSearchingBlueSaree_DoesNotReturnBlueGown()
+    {
+        // Arrange
+        var orgId = Guid.NewGuid();
+        await SeedInventory(orgId, "Powder Blue Duchess Satin Luminous Evening Gown", "Gowns", "Powder Blue", 1250, 4);
+        await SeedInventory(orgId, "Royal Blue Kanjivaram Silk Saree", "Sarees", "Royal Blue", 35000, 2);
+
+        // Act - Search for Blue Saree
+        var request = new SearchInventoryDto
+        {
+            OrgId = orgId,
+            Color = "Blue",
+            Category = "Sarees"
+        };
+        var results = await _service.SearchInventoryAsync(request);
+
+        // Assert
+        results.Should().HaveCount(1);
+        results[0].ItemName.Should().Be("Royal Blue Kanjivaram Silk Saree");
+        results.Should().NotContain(x => x.ItemName.Contains("Evening Gown"));
     }
 }

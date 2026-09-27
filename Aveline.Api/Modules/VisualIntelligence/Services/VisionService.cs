@@ -116,31 +116,46 @@ public class VisionService : IVisionService
                 ? string.Empty
                 : $" Image reference context hint: '{fileName ?? string.Empty} {contextHint ?? string.Empty}'. ";
 
-            var prompt = "You are a haute couture luxury boutique master AI stylist, textile connoisseur, and garment classification expert. " +
-                         "Analyze the clothing/garment in this image with meticulous aesthetic and textile fidelity." + hintSection + " " +
-                         "CRITICAL STEP 1 - BACKGROUND EXCLUSION & FOREGROUND ISOLATION: " +
-                         "First segment and isolate the garment from all non-clothing elements. Strictly ignore and exclude: neutral studio backdrops (white, gray, textured walls, studio floors), props (mannequins, hangers, stands, racks, furniture), ambient shadows/glare, and human anatomy (skin tones, hair, face, hands). All color, fabric, and silhouette extractions MUST be sampled exclusively from the primary garment textile. " +
-                         "CRITICAL STEP 2 - BORDER & EMBROIDERY SEPARATION: " +
-                         "Many ethnic garments (like Sarees) have heavily contrasting borders, pallus, or zaris (e.g. thick gold borders on a black saree). You MUST NOT confuse the border color, motif color, or embroidery color with the primary base color. The primary color is strictly the base background color of the main body of the garment. " +
-                         "CRITICAL STEP 3 - GARMENT SILHOUETTE & CLOTH IDENTIFICATION: " +
-                         "Clearly identify the exact garment structure, silhouette drape, and textile weave. Determine whether the garment is a Saree (e.g. Kanjeevaram Silk, Banarasi Brocade, Chanderi, Georgette), a Lehenga (Bridal Flared, A-Line, Chevron), a Gown (Luminous Evening Gown, Ballgown, Mermaid, Cocktail Maxi Dress), a Kurta & Tunic (Anarkali Kurta, Straight-cut Kurta, Angrakha, Tunic top, Blouse), Outerwear (Tailored Blazer, Embroidered Cape, Jacket), a Drape & Shawl (Cashmere Pashmina Shawl, Silk Dupatta, Stole), or Jewelry/Accessory. " +
-                         "CRITICAL STEP 4 - HAUTE COUTURE ATTRIBUTES & AUTO-POPULATION: " +
-                         "Return a JSON object with properties: " +
-                         "category (string - EXACTLY one of: 'Sarees', 'Lehengas', 'Gowns', 'Kurtas & Tunics', 'Outerwear', 'Drapes & Shawls', or 'Jewelry & Accessories'), " +
-                         "garment_type (string - specific luxury garment silhouette e.g. 'Kanjeevaram Silk Saree', 'Embroidered Bridal Lehenga', 'Luminous Evening Gown', 'Anarkali Kurta & Tunic', 'Tailored Boutique Blazer', 'Handwoven Cashmere Shawl'), " +
-                         "primary_color (string - precise authentic luxury color name sampled exclusively from the BASE FABRIC BODY of the garment, IGNORING all contrasting borders, zari, and embroidery. e.g. 'Midnight Black', 'Emerald Green', 'Royal Burgundy', 'Burnt Terracotta', 'Powder Blue', 'Champagne Gold', 'Dusty Sage'), " +
-                         "color_hex (string - exact 6-character hex code sampled directly from the BASE fabric pixels, ignoring the border e.g. '#000000', '#0F5132'), " +
-                         "color_theme (string - 'Jewel Tones', 'Pastels', 'Earthy Neutrals', 'Classic Monochrome', 'Festive Metallics', 'Rich Berries', or 'Oceanic Spectrum'), " +
-                         "undertone (string - 'Warm', 'Cool', or 'Neutral'), " +
-                         "secondary_colors (array of strings - accent colors, border trims, zari, embroidery, lining, or print hues), " +
-                         "fabric (string - exact fabric/weave e.g. 'Pure Mulberry Silk', 'Banarasi Brocade', 'Micro Velvet', 'Chanderi Silk', 'Raw Silk', 'Pure Organza', 'Pure Chiffon', 'Georgette', 'Handloom Linen', 'Handloom Cotton', 'Duchess Satin'), " +
-                         "pattern (string - weave or decorative technique e.g. 'Gold Zari Brocade', 'French Knot Embroidery', 'Chikankari Motif', 'Handloom Weave', 'Botanical Floral Print', 'Solid Satin Sheen', 'Sequined Embellishment', 'Mirror Work'), " +
-                         "style (string - e.g. 'Traditional Heirloom', 'Contemporary Luxe', 'Festive Statement', 'Bohemian Minimalist', 'Royal Bridal'), " +
-                         "suggested_item_name (string - an elegant 3 to 6 word boutique title e.g. 'Royal Emerald Zari Brocade Silk Saree', 'Burgundy Velvet Embroidered Bridal Lehenga', 'Dusty Rose Luminous Organza Evening Gown'), " +
-                         "description (string - 2 to 3 sentences of haute-couture catalog copy highlighting silhouette drape, textile craftsmanship, color story, and occasion wear), " +
-                         "styling_notes (string - curated styling advice with recommended fine jewelry, footwear, and accessory pairings), " +
-                         "confidence_score (number 0.0-1.0), " +
-                         "suggested_keywords (array of strings - include category, garment_type, color, color theme, fabric, pattern, occasion).";
+            var prompt = "You are a master AI fashion intelligence stylist, visual intelligence agent, and haute couture textile expert. " +
+                         "Analyze the uploaded image with meticulous visual fidelity to identify all distinct clothing items/garments and their attributes." + hintSection + "\n\n" +
+                         "CRITICAL MANDATES & CONSTRAINTS:\n" +
+                         "1. MULTI-ITEM EXTRACTION: If the image contains multiple separate garments (e.g. a model wearing a top + trousers + jacket, or a two-piece suit), decompose each piece into a separate entry in the 'items' array. If only one item is present, return an array of 1 item.\n" +
+                         "2. STRICT BACKGROUND & PROBING EXCLUSION: Strictly ignore and exclude: studio backdrop walls (white, gray, cream, beige, peach, textured walls, studio paper, seamless floors), room furniture, props (mannequins, hangers, stands, racks), shadows/lighting glare, and human anatomy (skin tones, hair, face, hands). All color, fabric, and silhouette extractions MUST be sampled exclusively from the clothing textile.\n" +
+                         "3. NON-CLOTHING & BLURRY IMAGES: If the image does not contain any wearable clothing/garments (e.g. a car, animal, furniture, scenery) or is too blurry/corrupted to identify garments, set \"success\": false, \"error\": \"No recognizable clothing items detected in image\", and \"items\": [].\n" +
+                         "4. ATTRIBUTE PRECISION & ANTI-HALLUCINATION:\n" +
+                         "   - clothing_type: The most specific reasonable clothing type (e.g. 'T-shirt', 'Shirt', 'Blouse', 'Jeans', 'Trousers', 'Kanjeevaram Saree', 'Bridal Lehenga', 'Evening Gown', 'Tailored Blazer', 'Cashmere Shawl', 'Denim Jacket', 'Pleated Skirt', 'Hoodie', 'Sweater', 'Shorts'). Avoid vague terms like 'clothes' or 'garment'.\n" +
+                         "   - category: EXACTLY one of: 'top', 'bottom', 'dress', 'outerwear', 'ethnic_couture', 'accessory', 'footwear'.\n" +
+                         "   - primary_color: Precise dominant color name sampled strictly from the base textile body (e.g. 'Midnight Blue', 'Emerald Green', 'Black', 'White', 'Crimson Red', 'Terracotta').\n" +
+                         "   - color_hex: 6-character hex code (e.g. '#1e293b', '#0f5132').\n" +
+                         "   - secondary_colors: Array of accent colors, border trims, zari, embroidery, or print hues.\n" +
+                         "   - pattern: 'solid', 'striped', 'floral', 'plaid', 'brocade_zari', 'chikankari', 'polka_dot', 'embroidery', or 'unknown' if uncertain.\n" +
+                         "   - material: 'cotton', 'denim', 'mulberry_silk', 'wool', 'linen', 'velvet', 'leather', 'chiffon', 'organza', 'polyester', or 'unknown' if not visually inferable.\n" +
+                         "   - style: 'casual', 'formal', 'streetwear', 'business', 'traditional_heirloom', 'contemporary_luxe', 'bohemian', 'sportswear'.\n" +
+                         "   - confidence: Numeric confidence level between 0.0 and 1.0.\n" +
+                         "   - suggested_item_name: Elegant 3-6 word descriptive title.\n" +
+                         "   - description: 1-3 sentences describing the garment, silhouette, weave, and styling.\n" +
+                         "   - styling_notes: Recommended styling, pairings, and occasions.\n\n" +
+                         "RESPONSE JSON SCHEMA:\n" +
+                         "{\n" +
+                         "  \"success\": true,\n" +
+                         "  \"error\": null,\n" +
+                         "  \"items\": [\n" +
+                         "    {\n" +
+                         "      \"clothing_type\": \"...\",\n" +
+                         "      \"category\": \"top|bottom|dress|outerwear|ethnic_couture|accessory|footwear\",\n" +
+                         "      \"primary_color\": \"...\",\n" +
+                         "      \"color_hex\": \"#...\",\n" +
+                         "      \"secondary_colors\": [\"...\"],\n" +
+                         "      \"pattern\": \"...\",\n" +
+                         "      \"material\": \"...\",\n" +
+                         "      \"style\": \"...\",\n" +
+                         "      \"confidence\": 0.95,\n" +
+                         "      \"suggested_item_name\": \"...\",\n" +
+                         "      \"description\": \"...\",\n" +
+                         "      \"styling_notes\": \"...\"\n" +
+                         "    }\n" +
+                         "  ]\n" +
+                         "}";
 
             // A dictionary rather than an anonymous type for one reason: `thinking` below is a
             // DeepSeek-only field that must be OMITTED, not sent as null, for every other provider.
@@ -542,29 +557,117 @@ public class VisionService : IVisionService
     {
         var trimmed = content.TrimEnd();
 
-        // Cut back to the last complete key/value pair, then close the object.
+        // 1. Array + object endings (common in multi-item schemas)
+        yield return trimmed + "\"}]}";
+        yield return trimmed + "\"}}";
+        yield return trimmed + "\"}";
+        yield return trimmed + "}]}";
+        yield return trimmed + "}}";
+        yield return trimmed + "}";
+
+        // 2. Cut back to the last complete key/value pair, then close open structures.
         var lastComma = trimmed.LastIndexOf(',');
         if (lastComma > 0)
         {
-            yield return trimmed[..lastComma] + "}";
+            var prefix = trimmed[..lastComma];
+            yield return prefix + "}]}";
+            yield return prefix + "}}";
+            yield return prefix + "}";
         }
-
-        // The truncation landed inside the final string: close the string, then the object.
-        yield return trimmed + "\"}";
-        yield return trimmed + "\"}}";
-
-        // Some providers also lose the closing brace only.
-        yield return trimmed + "}";
     }
 
     private static ImageAnalysisResultDto BuildResultFromParsed(VisionApiResponse parsed)
     {
-        var desc = parsed.Description;
-        if (!string.IsNullOrWhiteSpace(parsed.StylingNotes))
+        if (parsed.Success == false)
         {
-            desc = string.IsNullOrWhiteSpace(desc)
-                ? parsed.StylingNotes
-                : $"{desc} Styling Notes: {parsed.StylingNotes}";
+            return new ImageAnalysisResultDto
+            {
+                Success = false,
+                Error = parsed.Error ?? "No recognizable clothing items detected in image",
+                Category = "unknown",
+                PrimaryColor = "unknown",
+                ConfidenceScore = 0.0,
+                Items = new List<DetectedClothingItemDto>()
+            };
+        }
+
+        var dtoList = new List<DetectedClothingItemDto>();
+        if (parsed.Items != null && parsed.Items.Count > 0)
+        {
+            foreach (var item in parsed.Items)
+            {
+                var clothingType = item.ClothingType ?? item.GarmentType ?? "Garment";
+                var category = item.Category ?? "top";
+                var primaryColor = item.PrimaryColor ?? item.Color ?? "unknown";
+                var hex = item.ColorHex;
+                var secColors = item.SecondaryColors ?? new List<string>();
+                var pattern = item.Pattern ?? "unknown";
+                var mat = item.Material ?? item.Fabric ?? "unknown";
+                var style = item.Style ?? "contemporary";
+                var conf = item.Confidence ?? item.ConfidenceScore ?? (parsed.ConfidenceScore > 0 ? parsed.ConfidenceScore : (parsed.Confidence ?? 0.95));
+                var itemName = item.SuggestedItemName ?? $"{primaryColor} {clothingType}".Trim();
+                var itemDesc = item.Description ?? parsed.Description;
+                var itemStyling = item.StylingNotes ?? parsed.StylingNotes;
+
+                dtoList.Add(new DetectedClothingItemDto
+                {
+                    ClothingType = clothingType,
+                    Category = category,
+                    PrimaryColor = primaryColor,
+                    ColorHex = hex,
+                    SecondaryColors = secColors,
+                    Pattern = pattern,
+                    Material = mat,
+                    Style = style,
+                    Confidence = conf ?? 0.95,
+                    BoundingBox = item.BoundingBox,
+                    SuggestedItemName = itemName,
+                    Description = itemDesc,
+                    StylingNotes = itemStyling
+                });
+            }
+        }
+        else
+        {
+            // Flat response fallback
+            var clothingType = parsed.GarmentType ?? parsed.ClothingType ?? "Garment";
+            var category = parsed.Category ?? "garment";
+            var primaryColor = parsed.PrimaryColor ?? parsed.Color ?? "unknown";
+            var hex = parsed.ColorHex;
+            var secColors = parsed.SecondaryColors ?? new List<string>();
+            var pattern = parsed.Pattern;
+            var mat = parsed.Fabric ?? parsed.Material;
+            var style = parsed.Style;
+            var conf = parsed.ConfidenceScore > 0 ? parsed.ConfidenceScore : (parsed.Confidence ?? 0.95);
+            var itemName = parsed.SuggestedItemName ?? $"{primaryColor} {clothingType}".Trim();
+            var itemDesc = parsed.Description;
+            var itemStyling = parsed.StylingNotes;
+
+            dtoList.Add(new DetectedClothingItemDto
+            {
+                ClothingType = clothingType,
+                Category = category,
+                PrimaryColor = primaryColor,
+                ColorHex = hex,
+                SecondaryColors = secColors,
+                Pattern = pattern,
+                Material = mat,
+                Style = style,
+                Confidence = conf ?? 0.95,
+                SuggestedItemName = itemName,
+                Description = itemDesc,
+                StylingNotes = itemStyling
+            });
+        }
+
+        var primaryItem = dtoList[0];
+        var combinedDesc = primaryItem.Description ?? parsed.Description;
+        if (!string.IsNullOrWhiteSpace(primaryItem.StylingNotes ?? parsed.StylingNotes))
+        {
+            var note = primaryItem.StylingNotes ?? parsed.StylingNotes;
+            combinedDesc = string.IsNullOrWhiteSpace(combinedDesc)
+                ? note
+                : $"{combinedDesc} Styling Notes: {note}";
         }
 
         var keywords = parsed.SuggestedKeywords ?? new List<string>();
@@ -576,25 +679,36 @@ public class VisionService : IVisionService
         {
             keywords.Add($"{parsed.Undertone} Undertone");
         }
-        if (!string.IsNullOrWhiteSpace(parsed.GarmentType) && !keywords.Exists(k => string.Equals(k, parsed.GarmentType, StringComparison.OrdinalIgnoreCase)))
+        if (!string.IsNullOrWhiteSpace(primaryItem.ClothingType) && !keywords.Exists(k => string.Equals(k, primaryItem.ClothingType, StringComparison.OrdinalIgnoreCase)))
         {
-            keywords.Add(parsed.GarmentType);
+            keywords.Add(primaryItem.ClothingType);
+        }
+        if (!string.IsNullOrWhiteSpace(primaryItem.Category) && !keywords.Exists(k => string.Equals(k, primaryItem.Category, StringComparison.OrdinalIgnoreCase)))
+        {
+            keywords.Add(primaryItem.Category);
+        }
+        if (!string.IsNullOrWhiteSpace(primaryItem.PrimaryColor) && !keywords.Exists(k => string.Equals(k, primaryItem.PrimaryColor, StringComparison.OrdinalIgnoreCase)))
+        {
+            keywords.Add(primaryItem.PrimaryColor);
         }
 
         return new ImageAnalysisResultDto
         {
-            Category = parsed.Category ?? "garment",
-            PrimaryColor = parsed.PrimaryColor ?? "unknown",
-            ColorHex = parsed.ColorHex,
-            SecondaryColors = parsed.SecondaryColors ?? new List<string>(),
-            Pattern = parsed.Pattern,
-            Style = parsed.Style,
-            Fabric = parsed.Fabric,
-            GarmentType = parsed.GarmentType,
-            SuggestedItemName = parsed.SuggestedItemName,
-            Description = desc,
-            StylingNotes = parsed.StylingNotes,
-            ConfidenceScore = parsed.ConfidenceScore > 0 ? parsed.ConfidenceScore : 0.95,
+            Category = primaryItem.Category,
+            PrimaryColor = primaryItem.PrimaryColor,
+            ColorHex = primaryItem.ColorHex ?? parsed.ColorHex,
+            SecondaryColors = primaryItem.SecondaryColors.Count > 0 ? primaryItem.SecondaryColors : (parsed.SecondaryColors ?? new List<string>()),
+            Pattern = primaryItem.Pattern ?? parsed.Pattern,
+            Style = primaryItem.Style ?? parsed.Style,
+            Fabric = primaryItem.Material ?? parsed.Fabric,
+            GarmentType = primaryItem.ClothingType,
+            SuggestedItemName = primaryItem.SuggestedItemName ?? parsed.SuggestedItemName,
+            Description = combinedDesc,
+            StylingNotes = primaryItem.StylingNotes ?? parsed.StylingNotes,
+            ConfidenceScore = primaryItem.Confidence,
+            Success = true,
+            Error = null,
+            Items = dtoList,
             SuggestedKeywords = keywords
         };
     }
@@ -642,11 +756,14 @@ public class VisionService : IVisionService
                 : combined.Contains("blouse") ? "Embroidered Silk Blouse"
                 : "Straight Handloom Kurti";
         }
-        else if (combined.Contains("blazer") || combined.Contains("jacket") || combined.Contains("coat") || combined.Contains("outerwear") || combined.Contains("cape") || combined.Contains("suit"))
+        else if (combined.Contains("blazer") || combined.Contains("jacket") || combined.Contains("coat") || combined.Contains("overcoat") || combined.Contains("trench") || combined.Contains("outerwear") || combined.Contains("cape") || combined.Contains("suit") || combined.Contains("duster"))
         {
-            category = "blazer";
-            garmentType = combined.Contains("cape") ? "Embroidered Cape"
+            category = combined.Contains("coat") || combined.Contains("trench") || combined.Contains("overcoat") || combined.Contains("duster") ? "outerwear" : "blazer";
+            garmentType = combined.Contains("overcoat") || (combined.Contains("long") && combined.Contains("coat")) ? "Tailored Long Overcoat"
+                : combined.Contains("trench") ? "Double-Breasted Trench Coat"
+                : combined.Contains("cape") ? "Embroidered Cape"
                 : combined.Contains("velvet") ? "Structured Velvet Jacket"
+                : combined.Contains("coat") ? "Woolen Long Coat"
                 : "Tailored Boutique Blazer";
         }
         else if (combined.Contains("shawl") || combined.Contains("dupatta") || combined.Contains("stole") || combined.Contains("scarf") || combined.Contains("drape") || combined.Contains("pashmina"))
@@ -827,10 +944,10 @@ public class VisionService : IVisionService
             theme = combined.Contains("sapphire") ? "Jewel Tones" : "Classic Monochrome";
             secondaryColors = new List<string> { "gold", "silver" };
         }
-        else if (combined.Contains("emerald") || combined.Contains("green") || combined.Contains("jade"))
+        else if (combined.Contains("emerald") || combined.Contains("forest") || combined.Contains("bottle green") || combined.Contains("green") || combined.Contains("jade"))
         {
-            color = "emerald";
-            hex = "#0f5132";
+            color = combined.Contains("forest") ? "forest green" : combined.Contains("bottle") ? "bottle green" : "emerald";
+            hex = combined.Contains("forest") ? "#228b22" : combined.Contains("bottle") ? "#004225" : "#0f5132";
             theme = "Jewel Tones";
             secondaryColors = new List<string> { "gold", "zari" };
         }
@@ -867,6 +984,10 @@ public class VisionService : IVisionService
         else if (combined.Contains("pashmina") || combined.Contains("cashmere"))
         {
             fabric = "Cashmere Pashmina";
+        }
+        else if (combined.Contains("wool") || combined.Contains("overcoat") || combined.Contains("coat") || combined.Contains("trench"))
+        {
+            fabric = "Wool / Cashmere Blend";
         }
         else if (combined.Contains("organza"))
         {
@@ -951,6 +1072,22 @@ public class VisionService : IVisionService
 
         var suggestedName = $"{formattedColor} {formattedFabric} {garmentType}".Replace("  ", " ").Trim();
 
+        var detectedItem = new DetectedClothingItemDto
+        {
+            ClothingType = garmentType,
+            Category = category,
+            PrimaryColor = color,
+            ColorHex = hex,
+            SecondaryColors = secondaryColors,
+            Pattern = pattern,
+            Material = fabric,
+            Style = "Contemporary Luxe",
+            Confidence = 0.95,
+            SuggestedItemName = suggestedName,
+            Description = description,
+            StylingNotes = stylingNotes
+        };
+
         return new ImageAnalysisResultDto
         {
             Category = category,
@@ -973,14 +1110,28 @@ public class VisionService : IVisionService
             // the `isFallback` flag was the signal that mattered and was discarded.
             ConfidenceScore = 0.95,
             IsFallback = true,
+            Success = true,
+            Items = new List<DetectedClothingItemDto> { detectedItem },
             SuggestedKeywords = new List<string> { category, garmentType, color, theme, fabric, pattern }
         };
     }
 
     private sealed class VisionApiResponse
     {
+        [JsonPropertyName("success")]
+        public bool? Success { get; set; }
+
+        [JsonPropertyName("error")]
+        public string? Error { get; set; }
+
+        [JsonPropertyName("items")]
+        public List<DetectedClothingItemResponse>? Items { get; set; }
+
         [JsonPropertyName("category")]
         public string? Category { get; set; }
+
+        [JsonPropertyName("clothing_type")]
+        public string? ClothingType { get; set; }
 
         [JsonPropertyName("garment_type")]
         public string? GarmentType { get; set; }
@@ -990,6 +1141,9 @@ public class VisionService : IVisionService
 
         [JsonPropertyName("primary_color")]
         public string? PrimaryColor { get; set; }
+
+        [JsonPropertyName("color")]
+        public string? Color { get; set; }
 
         [JsonPropertyName("color_hex")]
         public string? ColorHex { get; set; }
@@ -1009,6 +1163,9 @@ public class VisionService : IVisionService
         [JsonPropertyName("style")]
         public string? Style { get; set; }
 
+        [JsonPropertyName("material")]
+        public string? Material { get; set; }
+
         [JsonPropertyName("fabric")]
         public string? Fabric { get; set; }
 
@@ -1019,9 +1176,66 @@ public class VisionService : IVisionService
         public string? StylingNotes { get; set; }
 
         [JsonPropertyName("confidence_score")]
-        public double ConfidenceScore { get; set; }
+        public double? ConfidenceScore { get; set; }
+
+        [JsonPropertyName("confidence")]
+        public double? Confidence { get; set; }
 
         [JsonPropertyName("suggested_keywords")]
         public List<string>? SuggestedKeywords { get; set; }
+    }
+
+    private sealed class DetectedClothingItemResponse
+    {
+        [JsonPropertyName("clothing_type")]
+        public string? ClothingType { get; set; }
+
+        [JsonPropertyName("garment_type")]
+        public string? GarmentType { get; set; }
+
+        [JsonPropertyName("category")]
+        public string? Category { get; set; }
+
+        [JsonPropertyName("primary_color")]
+        public string? PrimaryColor { get; set; }
+
+        [JsonPropertyName("color")]
+        public string? Color { get; set; }
+
+        [JsonPropertyName("color_hex")]
+        public string? ColorHex { get; set; }
+
+        [JsonPropertyName("secondary_colors")]
+        public List<string>? SecondaryColors { get; set; }
+
+        [JsonPropertyName("pattern")]
+        public string? Pattern { get; set; }
+
+        [JsonPropertyName("material")]
+        public string? Material { get; set; }
+
+        [JsonPropertyName("fabric")]
+        public string? Fabric { get; set; }
+
+        [JsonPropertyName("style")]
+        public string? Style { get; set; }
+
+        [JsonPropertyName("confidence")]
+        public double? Confidence { get; set; }
+
+        [JsonPropertyName("confidence_score")]
+        public double? ConfidenceScore { get; set; }
+
+        [JsonPropertyName("bounding_box")]
+        public List<double>? BoundingBox { get; set; }
+
+        [JsonPropertyName("suggested_item_name")]
+        public string? SuggestedItemName { get; set; }
+
+        [JsonPropertyName("description")]
+        public string? Description { get; set; }
+
+        [JsonPropertyName("styling_notes")]
+        public string? StylingNotes { get; set; }
     }
 }

@@ -1,3 +1,36 @@
+## Session 2026-09-27 (Vercel Production Build & TypeScript Verification)
+
+**Task:** Diagnose and resolve Vercel deployment build failure caused by strict TypeScript compiler checks (`tsc -b && vite build`) in `frontend/web`.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **TypeScript Compiler Resolutions (`frontend/web`)**:
+   - Fixed missing `DetectedClothingItem` type import in [catalog-api.ts](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/lib/catalog-api.ts).
+   - Cleaned up unused `gName` and `resolvedName` variable declarations in [AddProductModal.tsx](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/components/catalog/AddProductModal.tsx).
+   - Updated `buildBespokeDescription` type signature to accept `targetGarmentType?: string | null` to eliminate TS2345 type errors.
+   - Removed unused `onAddNewPiece` from destructured component props in [InventoryTab.tsx](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/components/catalog/InventoryTab.tsx).
+
+2. **Automated Testing & Build Verification**:
+   - Executed `npm run build` (`tsc -b && vite build`): built cleanly with 0 TypeScript/build errors.
+   - Executed `npx vitest run src/components/catalog/ src/lib/catalog-api.test.ts src/test/tenant-conformance.test.ts`: 95/95 tests passed across 9 suites.
+   - Pushed fix commit to `origin/feature/visual-insight-agent`.
+
+### Files Created or Modified
+
+- `frontend/web/src/lib/catalog-api.ts`
+- `frontend/web/src/components/catalog/AddProductModal.tsx`
+- `frontend/web/src/components/catalog/InventoryTab.tsx`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `npm run build`: Success (0 errors, 2.21s).
+- `npx vitest run src/components/catalog/ src/lib/catalog-api.test.ts src/test/tenant-conformance.test.ts`: 95/95 passed.
+
+---
+
 ## Session 2026-09-27 (Removal of Default Pricing in Add Product Drawer)
 
 **Task:** Remove default hardcoded pricing values (`price: 1250`, `cost: 550`) so both **Retail price (LKR)** and **Atelier cost (LKR)** start blank for user input.

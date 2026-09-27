@@ -369,12 +369,20 @@ async def test_a_no_items_skip_that_is_not_a_discount_question_is_still_silent()
     assert result["output"]["reason"] == "no items in order context to evaluate"
 
 
-async def test_an_order_still_settles_and_pauses_exactly_as_before():
+async def test_an_approved_order_still_settles():
+    """The settlement arm is unchanged; what changed is how an order reaches it.
+
+    A conversational order now always queues for owner review, so this is the state *after* that
+    review: the decision is checked before the rules, which is what routes an approved deal to
+    settlement rather than back into another pause. The ADR-028 lanes above never settle, and this
+    is the assertion that they have not swallowed the one lane that does.
+    """
     settled = await _graph().ainvoke(
         {
             "org_id": ORG,
             "order_id": "ord-1",
             "customer_name": "Sophia",
+            "approval_decision": "approved",
             "items": [
                 {
                     "item_id": "item-1",

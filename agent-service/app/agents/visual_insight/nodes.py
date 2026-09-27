@@ -41,6 +41,8 @@ _COLOR_FAMILIES: dict[str, set[str]] = {
     "brown": {"brown", "terracotta", "burnt terracotta", "rust", "camel", "taupe", "sand", "khaki", "espresso"},
 }
 
+_MAX_COMMENTARY_CHARS = 900
+
 
 class VisualInsightAgent:
     """LangGraph node suite for Elle (Visual Intelligence & Sourcing)."""

@@ -1,3 +1,31 @@
+## Session 2026-09-27 (Python Agent Service CI Lint & Test Resolution)
+
+**Task:** Resolve GitHub Actions CI failure on `Aveline CI / Lint & Test Python Agent Service (pull_request)` caused by `ruff check` detecting `F821 Undefined name _MAX_COMMENTARY_CHARS` in `agent-service/app/agents/visual_insight/nodes.py`.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Defined Missing Module Constant (`agent-service/app/agents/visual_insight/nodes.py`)**:
+   - Added module-level constant `_MAX_COMMENTARY_CHARS = 900` referenced during commentary formatting.
+
+2. **Automated Linting & Test Coverage Verification**:
+   - Ran `ruff check app/`: Passed with 0 errors.
+   - Ran `pytest tests/ --cov=app --cov-report=term --cov-fail-under=90`: 161/161 tests passed across all agent test suites with **96.47% coverage** (exceeding the 90% CI threshold).
+   - Pushed fix commit to `origin/feature/visual-insight-agent`.
+
+### Files Created or Modified
+
+- `agent-service/app/agents/visual_insight/nodes.py`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `ruff check app/`: 0 errors.
+- `pytest tests/ --cov=app --cov-report=term --cov-fail-under=90`: 161/161 passed (96.47% coverage).
+
+---
+
 ## Session 2026-09-27 (Vercel Production Build & TypeScript Verification)
 
 **Task:** Diagnose and resolve Vercel deployment build failure caused by strict TypeScript compiler checks (`tsc -b && vite build`) in `frontend/web`.

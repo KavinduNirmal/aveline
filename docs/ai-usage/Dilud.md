@@ -1,3 +1,125 @@
+## Session 2026-09-27 (Dynamic Atelier Web Scraper & Search Tool Implementation)
+
+**Task:** Implement the Dynamic Website Scraping & Search Tool (Atelier Web Scraper Tool) and integrate it into the Visual Insight Agent (Elle) sub-graph in `agent-service`, with SSRF security guardrails, zero-dependency HTML catalog parsing, fabric match verification, and automated test coverage.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Architecture & Threat Model Implementation**:
+   - Implemented `AtelierScraperService` in [atelier_scraper.py](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/agent-service/app/services/atelier_scraper.py) with SSRF validation: strict domain whitelisting, rejection of loopback (`127.0.0.1`, `::1`), private RFC1918 subnets (`10.0.0.0/8`, `192.168.0.0/16`), and AWS/GCP cloud metadata endpoints.
+   - Built zero-dependency `_ProductCardHTMLParser` on Python's built-in `html.parser.HTMLParser` with OpenGraph and JSON-LD Schema.org product fallback.
+   - Created `ScrapedAtelierProduct` schema in [atelier_scraper.py](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/agent-service/app/schemas/atelier_scraper.py).
+
+2. **Fabric & Garment Match Verification (`FabricVerifierService`)**:
+   - Built [fabric_verifier.py](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/agent-service/app/services/fabric_verifier.py) ranking scraped partner products based on customer query tokens, detected fabric weaves (silk, crepe, satin, tweed), and color hues.
+
+3. **Tool Registry & Subgraph Integration**:
+   - Implemented `scrape_atelier_catalog` in [supplier_tools.py](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/agent-service/app/tools/inventory/supplier_tools.py) querying partner ateliers asynchronously.
+   - Added `get_suppliers` to `ToolRegistry` in [registry.py](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/agent-service/app/tools/registry.py).
+   - Extended `VisualAgentState` and `VisualAgentOutput` with `partner_sourcing_options`.
+   - Wired `check_sourcing()` in [nodes.py](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/agent-service/app/agents/visual_insight/nodes.py) to automatically trigger partner atelier scraping upon inventory misses.
+
+4. **Web Frontend & UI Components Synchronized (`frontend/web`)**:
+   - Updated [AddSupplierModal.tsx](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/components/catalog/AddSupplierModal.tsx) with **Storefront / Catalog Website URL** input field (`Globe` icon) allowing stylists to link external atelier websites for scraping.
+   - Updated [SuppliersTab.tsx](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/components/catalog/SuppliersTab.tsx) displaying the connected Storefront URL and an **AI Scraper Ready** status badge on atelier cards.
+   - Updated [catalog-api.ts](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/lib/catalog-api.ts), [types/catalog.ts](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/types/catalog.ts), and [mockData.ts](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/components/catalog/mockData.ts) with `websiteUrl` and `apiEndpoint` support.
+   - Updated backend DTOs [CreateSupplierDto.cs](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/Aveline.Api/Modules/VisualIntelligence/DTOs/CreateSupplierDto.cs), [SupplierDto.cs](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/Aveline.Api/Modules/VisualIntelligence/DTOs/SupplierDto.cs), and [VisualService.cs](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/Aveline.Api/Modules/VisualIntelligence/Services/VisualService.cs).
+
+5. **Automated Testing & Verification**:
+   - Created `test_scraper_security.py` (5 tests) verifying SSRF protection.
+   - Created `test_atelier_scraper.py` (3 tests) verifying product card, JSON-LD, and OpenGraph extraction.
+   - Created `test_supplier_scraper_tool.py` (2 tests) verifying tool aggregation and ranking.
+   - Verified 76/76 visual intelligence tests pass in Python.
+   - Verified 91/91 catalog tests pass in Vitest.
+   - Verified `npm run build` passes with 0 TypeScript/build errors.
+   - Verified 31/31 catalog integration tests pass in .NET.
+   - Verified ruff linter clean with 0 errors.
+
+### Files Created or Modified
+
+- `agent-service/app/schemas/atelier_scraper.py` [NEW]
+- `agent-service/app/services/atelier_scraper.py` [NEW]
+- `agent-service/app/services/fabric_verifier.py` [NEW]
+- `agent-service/app/tools/inventory/supplier_tools.py`
+- `agent-service/app/tools/registry.py`
+- `agent-service/app/agents/visual_insight/nodes.py`
+- `agent-service/app/agents/visual_insight/state.py`
+- `agent-service/app/schemas/visual_insight.py`
+- `agent-service/tests/services/test_scraper_security.py` [NEW]
+- `agent-service/tests/services/test_atelier_scraper.py` [NEW]
+- `agent-service/tests/tools/test_supplier_scraper_tool.py` [NEW]
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/CreateSupplierDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/SupplierDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/VisualService.cs`
+- `frontend/web/src/types/catalog.ts`
+- `frontend/web/src/lib/catalog-api.ts`
+- `frontend/web/src/components/catalog/mockData.ts`
+- `frontend/web/src/components/catalog/AddSupplierModal.tsx`
+- `frontend/web/src/components/catalog/SuppliersTab.tsx`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `pytest tests/services/test_scraper_security.py tests/services/test_atelier_scraper.py tests/tools/test_supplier_scraper_tool.py`: 10/10 passed.
+- `pytest tests/test_visual_agent.py tests/test_visual_insight_schemas.py tests/test_visual_routing.py tests/tools/test_visual_tools.py tests/tools/test_inventory_tools.py`: 66/66 passed.
+- `pytest tests/ --cov=app --cov-fail-under=90`: 963/963 passed (92.43% coverage).
+- `ruff check app/ tests/`: 0 errors.
+- `npx vitest run src/test/admin-install.test.ts src/test/admin-conformance.test.ts src/test/tenant-conformance.test.ts`: 20/20 passed.
+- `npm run build`: 0 errors (built in <1s).
+
+---
+
+## Session 2026-09-27 (Partner Atelier & Supplier Onboarding Implementation)
+
+**Task:** Design and implement Partner Atelier & Supplier onboarding across ASP.NET Core backend (DTOs, service layer, endpoints, integration tests) and React frontend Web UI (AddSupplierModal, SuppliersTab actions, CatalogPanel state wiring, and SourcingTab integration).
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Architecture & Planning**:
+   - Authored approved full-stack implementation plan (`add_atelier_implementation_plan.md`).
+   - Defined end-to-end data flow connecting `SuppliersTab`, `AddSupplierModal`, `CatalogEndpoints`, `VisualService`, `SupplierRepository`, and `SourcingTab`.
+
+2. **Backend API & Service Implementation (`Aveline.Api`)**:
+   - Created [CreateSupplierDto.cs](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/Aveline.Api/Modules/VisualIntelligence/DTOs/CreateSupplierDto.cs) for supplier registration.
+   - Updated [SupplierDto.cs](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/Aveline.Api/Modules/VisualIntelligence/DTOs/SupplierDto.cs) with `Specialty` and `Location`.
+   - Updated [IVisualService.cs](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/Aveline.Api/Modules/VisualIntelligence/Services/IVisualService.cs) and [VisualService.cs](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/Aveline.Api/Modules/VisualIntelligence/Services/VisualService.cs) implementing `CreateSupplierAsync` with persistence via `ISupplierRepository.AddAsync`.
+   - Added `POST /api/v1/orgs/{organizationId}/catalog/suppliers` route in [CatalogEndpoints.cs](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/Aveline.Api/Endpoints/CatalogEndpoints.cs) guarded by `BoutiqueMemberPolicy`.
+   - Added automated integration test cases in [CatalogEndpointsIntegrationTests.cs](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/Aveline.Api.Tests/CatalogEndpointsIntegrationTests.cs) verifying `201 Created` responses, field persistence, and validation.
+
+3. **Frontend Web UI (`frontend/web`)**:
+   - Added `CreateSupplierPayload` and `createSupplier()` API helper in [catalog-api.ts](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/lib/catalog-api.ts).
+   - Created [AddSupplierModal.tsx](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/components/catalog/AddSupplierModal.tsx) modal using shadcn/ui components (`Dialog`, `Input`, `Label`, `Button`, `Textarea`).
+   - Updated [SuppliersTab.tsx](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/components/catalog/SuppliersTab.tsx) adding `+ Add Partner Atelier` in header and empty state call-to-action button.
+   - Wired `onAddSupplier` in [CatalogPanel.tsx](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/components/catalog/CatalogPanel.tsx) with optimistic local state updates and live synchronization across tabs.
+   - Added DOM unit tests in [SuppliersTab.dom.test.tsx](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/components/catalog/SuppliersTab.dom.test.tsx).
+
+### Files Created or Modified
+
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/CreateSupplierDto.cs` [NEW]
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/SupplierDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/IVisualService.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/VisualService.cs`
+- `Aveline.Api/Endpoints/CatalogEndpoints.cs`
+- `Aveline.Api.Tests/CatalogEndpointsIntegrationTests.cs`
+- `frontend/web/src/lib/catalog-api.ts`
+- `frontend/web/src/components/catalog/AddSupplierModal.tsx` [NEW]
+- `frontend/web/src/components/catalog/SuppliersTab.tsx`
+- `frontend/web/src/components/catalog/CatalogPanel.tsx`
+- `frontend/web/src/components/catalog/SuppliersTab.dom.test.tsx` [NEW]
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~CatalogEndpointsIntegrationTests"`: 31/31 passed.
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~VisionServiceTests|FullyQualifiedName~CatalogEndpointsIntegrationTests"`: 54/54 passed.
+- `npx vitest run src/components/catalog/ src/lib/catalog-api.test.ts`: 91/91 passed across 9 test suites.
+- `npm run build` (`tsc -b && vite build`): Built in 2.20s with 0 errors.
+
+---
+
 ## Session 2026-09-27 (Python Agent Service CI Lint & Test Resolution)
 
 **Task:** Resolve GitHub Actions CI failure on `Aveline CI / Lint & Test Python Agent Service (pull_request)` caused by `ruff check` detecting `F821 Undefined name _MAX_COMMENTARY_CHARS` in `agent-service/app/agents/visual_insight/nodes.py`.

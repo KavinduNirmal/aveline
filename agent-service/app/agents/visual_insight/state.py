@@ -45,6 +45,7 @@ class VisualAgentState(TypedDict, total=False):
     search_error: str | None
     composed_looks: list[dict[str, Any]]
     sourcing_request: dict[str, Any] | None
+    partner_sourcing_options: list[dict[str, Any]] | None
     suggestion: str | None
     summary: str | None
     text: str | None

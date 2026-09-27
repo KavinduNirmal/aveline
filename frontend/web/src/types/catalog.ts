@@ -103,12 +103,27 @@ export interface Supplier {
   contactEmail: string
   contactPhone: string
   location: string
+  websiteUrl?: string
+  apiEndpoint?: string
   minimumOrder: number
   deliveryTimeDays: number
   isActive: boolean
   sampleCatalogCount: number
   catalogItems?: SupplierCatalogItem[]
   organizationId?: string
+}
+
+export interface CreateSupplierPayload {
+  name: string
+  specialty?: string
+  location?: string
+  contactEmail?: string
+  contactPhone?: string
+  websiteUrl?: string
+  apiEndpoint?: string
+  minimumOrder?: number
+  deliveryTimeDays?: number
+  isActive?: boolean
 }
 
 export interface DetectedClothingItem {

@@ -89,6 +89,7 @@ class Customer {
     this.lastVisitAtUtc,
     this.createdAtUtc,
     this.tags = const <String>{},
+    this.description,
   });
 
   /// `CustomerProfileDto.CustomerId`.
@@ -121,6 +122,16 @@ class Customer {
 
   /// The boutique's own tags for this client.
   final Set<String> tags;
+
+  /// The staff-facing description: who this client is, in the boutique's own words.
+  ///
+  /// Distinct from the memories, which are per-fact statements the agent extracts. This is the one
+  /// prose field an associate writes, and it is what the pre-contact brief leads with, so a client
+  /// whose facts are all on file still reads as a person rather than as a list of tags.
+  final String? description;
+
+  /// Whether an associate has written a description for this client.
+  bool get hasDescription => _present(description) != null;
 
   /// What the row prints as their name: the full name when the boutique has one,
   /// else the nickname, else the number they are reached on.

@@ -7854,3 +7854,465 @@ suggested reply never mentioned the saree and instead asked the customer to desc
 - Kept PR #460 out of the fix branch after pulling it in, per §9, so the inbound-image fix does not depend
   on an unmerged feature branch.
 
+
+## Session 2026-09-27
+
+**Task:** Close the AVA (Customer Memory Agent) gap analysis — `.agents/plans/AVA-gap-analysis.md` — plus the reviewer's follow-up findings (client-visible brief, a customer description artifact, and a real decision on the agent's send path).
+**Tool used:** DeepSeek Harness (deepseek-flash) AI coding agent
+
+### Summary of Activities
+
+Worked the plan's own recommended fix order, test-first where the change was behavioural.
+
+- **A1 + C3 — the write path stopped discarding provenance.** `ToolRegistry.save_customer_memory` now
+  accepts `source`, `isExplicit`, `confidence`, `metadataJson` and (on the request DTO) `expiresAt`,
+  and sends each only when the caller knows it. `CustomerMemoryAgent.persist` sends all three for a
+  stated preference or a stated event, so an agent-written memory is no longer an unvouched-for
+  inference. No migration was needed: the DTO and service already accepted and assigned the fields.
+- **A3 — write-time de-duplication.** Added `MemoryContentKey` (the statement normalised to lower
+  case, collapsed whitespace, no trailing punctuation), a `ContentKey` column, and a partial unique
+  index over `(OrganizationId, CustomerId, ContentKey)` where `DeletedAt IS NULL`.
+  `SaveMemoryAsync` reads the key first and answers a restatement with the existing row, so the
+  duplicate is never embedded. `CustomerMemoryRepository.AddAsync`/`SaveAsync` derive the key when a
+  direct caller omits it, so the constraint cannot fire on an empty key that has nothing to do with
+  the content.
+- **A4 + A5 + A6 — expiry, correction and withdrawal.** `ExpiresAt` (filtered by the search, indexed
+  with the customer), `PATCH …/memories/{id}` (rewrite, recompute key, re-embed, 409 rather than a
+  silent collapse onto another note) and `DELETE …/memories/{id}` (assigns the soft-delete column
+  that every read path already respected and nothing had ever written).
+- **B1 + B2 + B3 + B5 — retrieval quality and the provenance the reader sees.** `MemorySearchRequest`
+  gained `MinSimilarity`, applied as a predicate before the ordering; the agent passes 0.25 on every
+  recall. The search projection now carries `Source` as well as `IsExplicit`/`Confidence`, and the
+  agent's `OnFileMemory` keeps `source`/`is_explicit`/`confidence`/`similarity` instead of dropping
+  them. The `at_a_glance` block gained a third column, `Known`, reading `Stated` or `Inferred`.
+- **C4 — stated preferences now reach the table the brief reads.** A new internal
+  `POST /internal/customers/{id}/preferences` and a `save_customer_preference` registry method; the
+  persist node mirrors each stated preference into it. The memory row stays as the searchable, dated
+  record. This is the gap that made the brief's own preference summary empty while the store held the
+  fact.
+- **A7 — complaint and sentiment are written.** `parsing.detect_experience_signal` (complaint wins
+  over sentiment when both match, because a fault is the actionable one) and a persist branch that
+  stores the customer's own words quoted rather than paraphrased.
+- **D1 + D2 — outbound delivery is consent-gated.** New `DeliveryRefusal.ConsentRevoked`, checked in
+  `CustomerDeliveryService` before the handle and the channel are even resolved, mapped to a `403`
+  with `code: "consent_revoked"` and to a mobile sentence that says the client opted out rather than
+  that something failed. Unreadable consent refuses the send exactly as revoked does.
+- **B (verdict) — a customer description exists, and the brief is client-visible.** `Customer.Description`
+  (nullable, 1000 chars) with EF configuration, a migration, validation in `CustomerTenantService.UpdateAsync`,
+  and a new tenant route `GET …/customers/{id}/brief` serving `TenantCustomerBriefDto`. `InteractionBriefDto`
+  gained `Description`, `Tags` became a real list (the contract mismatch that made the agent drop every
+  backend tag), and `UpcomingEvents` now filters out dates that have already passed.
+- **Clients.** Dashboard: a `CustomerBriefSection` mounted in the client sheet ("Before you make contact")
+  plus a description field in the edit form; `customers-api.ts` gained the brief read and the new types.
+  Mobile: `Customer.description` parsed from the tenant detail and rendered as a card above the client's
+  facts.
+- **C1 — the send path is a decision, recorded.** No send tool: `agent-service/app/tools/customer/README.md`
+  now states that AVA advises and `ICustomerDeliveryService` (approval-gated, consent-gated) delivers.
+- **C7 — the plan's memory golden cases exist**: `agent-service/tests/customer_memory_golden_cases.py`
+  (wedding, discount, out-of-scope, revoked consent) asserting the write contract and the retrieval floor.
+- **E1–E8 — the chapter corrected, E5 deleted.** `07-slice-memory.md` re-counts the routes (33: 15 tenant,
+  18 internal), rewrites the "thrown away" finding as closed, documents de-duplication, expiry, correction
+  and the similarity floor as present, corrects the brief's shape (a typed DTO with a description, not
+  "typed blocks rather than prose"), deletes the refuted empty-embedding gap, and updates the client and
+  testing sections. `10-client-apps.md` and `14-evaluation.md` record the pre-contact brief as implemented
+  with the screenshot still outstanding. The API README, ADR-017, the architecture doc and the tests README
+  were updated to match.
+- **A latent test-fixture defect fixed in passing.** `CustomerConciergeSearchPostgresTests` never configured
+  `Media:SigningKey`, so every `WebApplicationFactory` test in it failed at host startup — which is why the
+  gap analysis could not run the integration test it wanted. Adding the same development default the other
+  integration factories use unblocked it, and the live `/brief` payload test now runs and pins the tags type.
+
+### Files Created & Modified
+
+- **Created**: `Aveline.Api/Modules/CustomerConcierge/Repositories/MemoryContentKey.cs`,
+  `Aveline.Api/Migrations/20260927170000_AddCustomerMemoryIntegrity.cs` (+ `.Designer.cs`),
+  `Aveline.Api.Tests/CustomerMemoryWriteIntegrityTests.cs`, `Aveline.Api.Tests/CustomerMemoryCorrectionTests.cs`,
+  `agent-service/tests/customer_memory_golden_cases.py`,
+  `frontend/web/src/components/dashboard/customers/CustomerBriefSection.tsx`.
+- **Modified (API)**: `CustomerMemory.cs`, `Customer.cs`, `ICustomerMemoryRepository.cs`,
+  `CustomerMemoryRepository.cs`, `ICustomerMemoryService.cs`, `CustomerMemoryService.cs`,
+  `CustomerConciergeDtos.cs`, `CustomerTenantDtos.cs`, `CustomerTenantService.cs`,
+  `CustomerMemoryConfiguration.cs`, `CustomerConfiguration.cs`, `CustomerConciergeEndpoints.cs`,
+  `CustomerTenantEndpoints.cs`, `ConversationEndpoints.cs`, `ICustomerDeliveryService.cs`,
+  `CustomerDeliveryService.cs`, `AppDbContextModelSnapshot.cs`.
+- **Modified (agent)**: `agents/customer_memory/{nodes,parsing,state}.py`, `events/block_builders.py`,
+  `schemas/customer_memory.py`, `tools/registry.py`, `tools/customer/README.md`.
+- **Modified (clients)**: `frontend/web/src/lib/customers-api.ts`,
+  `frontend/web/src/components/dashboard/customers/CustomerDetailSheet.tsx`,
+  `frontend/web/src/components/dashboard/CustomersPanel.dom.test.tsx`,
+  `frontend/aveline_mobile/lib/features/customers/domain/customer.dart`,
+  `frontend/aveline_mobile/lib/features/customers/data/api_customer_repository.dart`,
+  `frontend/aveline_mobile/lib/features/customers/presentation/screens/customer_screen.dart`,
+  `frontend/aveline_mobile/lib/features/conversations/{data/thread_repository,presentation/client_thread_controller}.dart`.
+- **Modified (tests/docs)**: `Aveline.Api.Tests/{ConsentEnforcementTests,ConversationOrderBridgeTests,CustomerConciergeSearchPostgresTests,CustomerConciergeServiceTests,CustomerDeliveryServiceTests}.cs`,
+  `agent-service/tests/{test_customer_memory_agent,test_block_builders}.py`,
+  `docs/api/README.md`, `docs/ADR/ADR-017-memory-pgvector-embeddings.md`,
+  `docs/architecture/customer-memory.md`, `docs/tests/README.md`,
+  `docs/final_document/draft/{07-slice-memory,10-client-apps,14-evaluation}.md`.
+
+### Important Architectural Decisions
+
+- **The store owns the statement key, not the caller.** A derived column that a constraint depends on
+  cannot be left to each writer to remember, so the repository derives it when it is empty; the service
+  still sets it explicitly because it must read it before inserting.
+- **Withdrawal is a tombstone, not a delete.** The soft-delete column was always the intended mechanism
+  and the GDPR erase remains the only path that destroys the text; a note restated after withdrawal
+  becomes a new row.
+- **A correction that would collapse onto another note is refused (409), not merged.** Silently dropping
+  one of two notes is the failure this surface exists to prevent.
+- **The tenant brief is not the internal brief.** The staff route returns the boutique's own record of
+  the client and reports consent status, while the internal one is the consent-gated personalization
+  artefact; conflating them would either leak derived data or hide the boutique's own notes.
+- **The memory list stays ungated.** Gating it would empty a customer panel whose notes are already on
+  screen on a route that was never gated; the gate belongs on reads and writes the caller did not
+  already have.
+- **No send tool for AVA.** The send is the approval-gated backend step; an agent that could message a
+  customer inside its own turn would defeat the human-in-the-loop posture the slice is assessed on.
+
+### Problems Encountered
+
+- **The .NET build was failing on a read-only NuGet cache, not on code.** `dotnet build`/`dotnet test`
+  without `--no-restore` fails on `/home/kavindu/.nuget/packages` in this sandbox; every build and test
+  run in this session used `--no-restore` against the existing `project.assets.json`.
+- **The EF tooling used the Debug assembly.** `dotnet ef migrations add --no-build` defaults to Debug, so
+  the first generated migration was empty (it diffed a stale DLL) and `migrations remove` reverted the
+  model snapshot to a state that predated the `AddCustomerNicknameColumn` migration. Recovered by
+  rebuilding Debug, generating the migration, then hand-writing the migration body (backfill +
+  de-duplicate before creating the unique index, and no `Nickname` column, since that migration already
+  exists) and repairing the snapshot by hand. `dotnet ef migrations has-pending-model-changes` now
+  reports no drift.
+- **A unique index over a derived column breaks callers that bypass the service**, which the Postgres
+  repository tests do. Fixed in the repository rather than the tests, because the test was right about
+  what a caller may reasonably omit.
+- **The .NET suite cannot complete in this sandbox.** Every `WebApplicationFactory`-based test fails with
+  `IOException: The configured user limit (1024) on the number of inotify instances has been reached`
+  when it calls `WebApplication.CreateBuilder()` with a reload-on-change configuration source. The limit
+  is 1024, it cannot be raised without root, and it is consumed for the life of a run rather than
+  released — so a single test method in a class that uses the pattern can pass on a fresh run and a later
+  class in the same run cannot. It is environmental and unrelated to this work: the failing classes are
+  ones this change does not touch (`PaymentEndpointsIntegrationTests`,
+  `RevenueEndpointsIntegrationTests`, `MediaTokenEndpointTests`), and every affected class passes when it
+  is the first thing run. Serialising with `xUnit.ParallelizeTestCollections=false` and splitting the
+  suite into per-class batches both made it worse, not better, because the limit is per-user and global
+  rather than per-collection.
+- **Flutter cannot run here**: the Flutter SDK cache is read-only, so `flutter`/`dart test` cannot write
+  their engine stamps. `dart analyze` on the changed feature directories is clean, and the Flutter cache
+  write errors are suppressed rather than the analysis result.
+
+### Verification Performed
+
+- `pytest tests/ -q` — **952 passed, 2 skipped, 2 xfailed**.
+- `dotnet test Aveline.Api.Tests … --no-build --no-restore --filter CustomerMemory|CustomerDeliveryService|ConsentEnforcement|CustomerConciergeService` — **59 passed**.
+- `dotnet test … --filter CustomerConciergeSearchPostgresTests|CustomerMemoryRepositoryPostgresTests` —
+  **6 passed** against live `pgvector/pgvector:pg16` containers, including the new similarity-floor test
+  and the live `/brief` payload test. That file's `WebApplicationFactory` had never been able to start
+  (missing `Media:SigningKey`, fixed here), so the integration test the gap analysis asked for had never
+  actually run before.
+- `dotnet test … --filter CustomerConciergeEntityConfigurationTests` — the model-shape tests, run first in
+  a fresh process, confirm the new `Description`, `ContentKey` and `ExpiresAt` columns and both indexes.
+  The rest of the .NET suite is blocked by the inotify limit above and is recorded as an environment
+  limitation, not as a pass.
+- `dotnet ef migrations has-pending-model-changes` — "No changes have been made to the model since the
+  last migration"; `dotnet ef migrations script --idempotent` emits the new columns, backfill,
+  de-duplication and both indexes.
+- `bunx vitest run` on the dashboard panel — **12 passed**, including the two new brief tests; the full
+  web suite was green earlier (**172 files, 1390 tests**).
+- `tsc -b` (web) — clean. `dart analyze lib/features/customers lib/features/conversations` — clean.
+- `git status`/`git diff --stat` reviewed; no secrets, `.env` files or generated artifacts introduced,
+  and the two pre-existing untracked `docs/architecture/eraser-*.md` files were left untouched.
+
+### What I Changed From the AI Output
+
+- Rejected a similarity floor of 0.35 in favour of 0.25 after reading what the threshold actually has to
+  separate; kept the repository's own default at 0 so a review surface can still ask for the nearest rows.
+- Kept the memory list route ungated after noticing the tenant route behind the same panel was never
+  gated, rather than gating it for symmetry with the other memory paths.
+- Kept `screen-brief.png` marked as missing rather than deleting the figure: the brief is implemented, the
+  capture is not, and a chapter that claims a screenshot it does not have is worse than one that says so.
+- Declined to add a send tool or a Flutter memory-write form; both were recorded as decisions with
+  reasons instead, because each would cut against an existing design position.
+
+### Remaining Work
+
+- `screen-brief.png` (and `screen-customer.png`) still need a signed-in capture against a deployed API.
+- The slice's reflection section in `07-slice-memory.md` remains the slice owner's to write.
+- Near-identical *reworded* memories are still two rows: the key is a normaliser, not a similarity
+  measure, and collapsing a paraphrase needs an embedding threshold rather than an index.
+- The `inferred` value in the memory source vocabulary is still written by no code path (recorded in the
+  chapter as a declared-but-unused value rather than as a symptom).
+- No cross-service end-to-end test (client → API → agent → database) exists for this slice; the seam is
+  still covered by nothing.
+
+## Session 2026-09-27 (follow-up) — order approval flow 400
+
+**Task:** Fix the reported approval failure: `400 {"errors":{"Decision":["The Decision field is required."]}}`.
+**Tool used:** DeepSeek Harness (deepseek-flash) AI coding agent
+
+### Diagnosis
+
+`ApprovalDecisionDto.Decision` carried `[Required]`, and `ApprovalsController` is an
+`[ApiController]`. Automatic model validation therefore ran on the request body **before** any action
+method: the dashboard posts `POST /approvals/{id}/approve` with `{reason, revisedDiscount}` and the
+verb in the URL, so the body had no `decision` and the request was rejected before
+`ApprovalsController.Approve` could execute its own `decisionDto.Decision = "approve"`. All three
+verb routes (`/approve`, `/reject`, `/revise`) were unusable; only `/decision`, which does carry the
+verb in its body, worked.
+
+The attribute was redundant as well as harmful: `ApprovalService.ProcessDecisionAsync` already
+refused a blank decision. The reason no test caught it is that every existing approval test calls
+the controller method **directly** (`ApprovalVerbSplitTests`, `CommerceApprovalsTests`,
+`ApprovalResumeTests`, `ApprovalDecisionVocabularyTests`), so none of them passed through model
+binding. The tests and the DTO agreed with each other; only the client disagreed.
+
+### The fix
+
+- Removed `[Required]` from `ApprovalDecisionDto.Decision` (kept `[MaxLength(32)]`) and documented on
+  the type why: three of the four routes supply the verb and must be able to lend it to the DTO.
+- Left the requirement in `ApprovalService.ProcessDecisionAsync`, which is the one boundary that is
+  correct for the `/decision` route and harmless for the other three.
+- Documented the per-route body contract in `docs/api/README.md` next to the approvals route table,
+  including that the verb routes overwrite a `decision` smuggled into the body (so Q14's permission
+  split cannot be bypassed through `/approve`).
+
+### Tests
+
+Extended `ApprovalVerbSplitTests` (the file that owns the verb/permission split):
+
+- A theory over the exact bodies `approvals-api.ts` sends asserting `Validator.TryValidateObject`
+  passes. This is the same validation the MVC model binder runs, so it fails on the attribute that
+  caused the 400 — it was written first and did fail before the fix.
+- `TheDecision_IsNotARequiredBodyField`, a narrow guard against re-adding the attribute.
+- `TheGenericDecisionBody_StillRequiresADecisionAtTheService` and
+  `..._RejectsAnUnknownVerbAtTheService`: removing the shape rule must not leave `/decision`
+  unvalidated.
+- `TheApproveRoute_SuppliesTheVerbTheClientOmits` and
+  `TheApproveRoute_IgnoresAVerbTheBodyTriesToSmuggleIn`.
+
+### Verification
+
+- `dotnet test --filter ApprovalVerbSplitTests` before the fix: **1 failed** (the 400 reproduced).
+  After: **0 failed**.
+- `dotnet test --filter ApprovalVerbSplitTests|ApprovalDecisionVocabularyTests|ApprovalResumeTests|CommerceApprovalsTests|OrderTests|ConversationOrderBridge`: **62 passed, 0 failed**.
+- `dotnet build` of the API and test project: clean.
+
+### Known gap
+
+The client and the API now agree, but the agreement is still not pinned **through the HTTP pipeline**:
+this repository has no integration test that posts to `/approvals/{id}/approve`, which is the surface
+that broke. The `Validator.TryValidateObject` test covers the same attribute path and would catch a
+regression, but a real `WebApplicationFactory` test over the three verb routes would be strictly
+better. It could not be added-and-verified in this session because every `WebApplicationFactory` test
+in this sandbox fails on the inotify instance limit (recorded in the previous entry), so an HTTP test
+here would have been unverifiable. This is a follow-up worth doing on CI.
+
+### Files Modified
+
+- `Aveline.Api/Modules/Commerce/DTOs/ApprovalDecisionDto.cs`
+- `Aveline.Api.Tests/ApprovalVerbSplitTests.cs`
+- `docs/api/README.md`
+
+## Session 2026-09-27 (follow-up) — customer record as a page
+
+**Task:** Redesign the customer screen as `/app/b/:slug/customers/:customer_id`, carrying the detail the mobile app shows, instead of a side sheet.
+**Tool used:** DeepSeek Harness (deepseek-flash) AI coding agent
+
+### Why
+
+The record was opened in a `Sheet`. A sheet is only ever as wide as the viewport it slides over, it
+cannot be linked to, and "look at this client" had to be an instruction rather than a URL. The mobile
+screen already carried far more: identity with the grade and consent, the boutique's own description,
+the brief, taste, tags, what Aveline remembers with the stated/inferred distinction, the exchange
+history, the occasions ahead and behind, and the actions.
+
+### What changed
+
+- **New route** `/app/b/:slug/customers/:customerId` in `App.tsx`, declared beside the existing
+  `catalog/:itemId` route. `DashboardShell` reads the `customerId` param and resolves the section
+  from it, exactly as it already did for a catalogue piece.
+- **New `CustomerDetailPanel`**, composed in the mobile screen's order: identity (initials, grade,
+  status, consent, id), the pre-contact brief, the next occasion as its own band, then a two-column
+  body - taste, what Aveline remembers, recent activity and past occasions on the left; contact,
+  tags, the relationship ledger and the full "coming up" list on the right. `Edit` swaps the record
+  for the form rather than sitting beside it, so there is one source of truth for the client.
+- **`CustomersPanel` is now one component over two URLs.** A row navigates instead of disclosing; the
+  book is not fetched while a record is open, because a list load behind an open page is work nothing
+  on screen can use.
+- **`customers-api.ts`** gained `fetchCustomerMemories` and `fetchCustomerEvents`, plus `consentStatus`
+  and `preferences` on the detail type. Both new reads are best-effort: a refused read of either
+  degrades to its empty value rather than failing a page whose identity and history did load.
+- **Deleted `CustomerDetailSheet.tsx`** and the `CustomerDetailSheet` export. It had no importers left;
+  leaving a second, weaker rendering of the same record is how two surfaces drift apart.
+- **The activity rail is a fixed-height scroll box** (`ScrollArea`, `h-80`). An unbounded list pushed
+  every section below it off the page. `h-` rather than `max-h-` deliberately: Radix's viewport is
+  `size-full`, so a max-height on the root leaves the viewport unresolvable and the list grows again.
+
+### Two guard tests caught real defects in my own work
+
+- `tenant-conformance.test.ts` **rule 1a** rejected `bg-emerald-600/15 text-emerald-700` in my consent
+  badge. The tenant tree must use semantic tokens; the theme already defines `--success`, so the badge
+  now reads `bg-success/15 text-success`. Without that test I would have shipped a raw palette utility
+  that no reviewer would have spotted.
+- `tenant-sections.test.ts` pinned the exact `useParams<{ section?: string; itemId?: string }>` shape,
+  so adding a third param failed it. The guard now names both literal-section routes and asserts the
+  client URL resolves to `customers` from its own param, which is the invariant the file exists for.
+
+### Verification
+
+- `bunx tsc -b` - clean.
+- `bun run test` - **172 files, 1403 tests passed**. The panel file went from 17 to 22 tests.
+- `bun run lint` - 0 errors (warnings 80 -> 79, since the deleted sheet carried one).
+- New coverage, because the sheet being replaced had **none** for its two writes: the edit form posts
+  the writable subset including `description`; a 409 phone conflict is reported in the server's own
+  terms and leaves the form open; a removal refused for live orders is reported and does not leave the
+  page; an accepted removal does; the book is not fetched behind an open record; the memory panel
+  separates stated from inferred and keeps a complaint as a complaint; a past occasion is not called
+  upcoming; the activity rail is bounded and still contains every row.
+
+### Files Created & Modified
+
+- **Created**: `frontend/web/src/components/dashboard/customers/CustomerDetailPanel.tsx`.
+- **Modified**: `frontend/web/src/App.tsx`, `components/dashboard/DashboardShell.tsx`,
+  `components/dashboard/CustomersPanel.tsx`, `components/dashboard/CustomersPanel.dom.test.tsx`,
+  `lib/customers-api.ts`, `test/tenant-sections.test.ts`, `docs/ai-usage/kavindu.md`.
+- **Deleted**: `frontend/web/src/components/dashboard/customers/CustomerDetailSheet.tsx`.
+
+### Remaining work
+
+- The page is DOM-tested but has not been rendered against a live API in this sandbox; the chapter's
+  `screen-brief.png` and `screen-customer.png` captures are still outstanding, and this page is the
+  obvious subject for the second one.
+- Mobile still does not call `GET …/brief`; it assembles the same facts from the reads it already
+  makes. Unchanged from the previous session and still a deliberate call.
+
+## Session 2026-09-27 (follow-up) — order detail dialog was clipped
+
+**Task:** "order detail screen is broken" — the order detail dialog rendered with its right-hand columns and the created date cut off.
+**Tool used:** DeepSeek Harness (deepseek-flash) AI coding agent
+
+### Diagnosis
+
+The screenshot showed the item table's `Price` / `Cost` / `Total` columns past the right edge of the
+dialog and the `Created:` date pushed outside its bordered box. Both are the same defect.
+
+`DialogContent` is a **grid**, and a grid item defaults to `min-width: auto`. The items table's
+min-content width — a long product name plus three money columns — therefore widened its grid track
+instead of being bounded by it, the grid grew past the dialog's `max-w-2xl`, and the overflow was
+clipped by the viewport rather than being reachable. `Table` already ships
+`overflow-x-auto` on its own container, but the panel wrapped it in `overflow-hidden`, which
+cancelled that scroll and made the clipped columns unreachable.
+
+The dialog's own width was not the bug: `cn` is `twMerge`, so `max-w-2xl` does override the
+primitive's `sm:max-w-lg`. Widening the dialog would have moved the clipping, not fixed it.
+
+### The fix
+
+- **`components/ui/dialog.tsx`** — `min-w-0` on the content plus `[&>*]:min-w-0` on its children, with
+  a comment saying why. This is the cause, so it is fixed once, at the primitive.
+- **`OrdersPanel.tsx`** — dropped the `overflow-hidden` wrapper (it cancelled the table's own scroll),
+  gave the Item column `min-w-[12rem]` so the one free-text column wraps rather than forcing width,
+  and made the status banner `flex-wrap` with a `gap` so the badge and the date cannot push each other
+  out of the box.
+
+### Blast radius
+
+Five dialogs put a `<Table>` inside a `DialogContent` (`OrdersPanel`, `ApprovalsPanel`,
+`BusinessRulesTable`, `ApiKeysPanel`, `MembersTab`). All five had the same latent clipping; the
+primitive fix covers them together. That is why it is fixed in `dialog.tsx` rather than in
+`OrdersPanel`: a per-dialog `min-w-0` would have to be remembered at every future call site.
+
+### Verification
+
+- New `OrdersPanel.dom.test.tsx` — the panel had **no tests at all**, which is why this shipped. Five
+  tests: the dialog content keeps `min-w-0` on itself and its children; no ancestor between the table
+  and the dialog clips the container the table scrolls in; all five column headers plus the line item
+  and the margin percentage render; the status banner can wrap; the destructive cancel goes through
+  its confirmation.
+- The layout assertions pin the class contract rather than geometry, because jsdom does not lay out.
+  Stated in the test so a later reader knows what it does and does not prove.
+- `bunx tsc -b` clean, `bun run test` **173 files / 1408 tests passed**, `bun run lint` 0 errors.
+
+### Caveat
+
+The class contract is verified; the rendered geometry is not, because jsdom does not compute layout
+and there is no browser run in this sandbox. The fix is causally sound (`min-width: auto` on a grid
+item is the documented behaviour being removed), but the visual confirmation is a human check against
+a running API — the same gap recorded for the customer page.
+
+### Files Modified
+
+- `frontend/web/src/components/ui/dialog.tsx`
+- `frontend/web/src/components/dashboard/OrdersPanel.tsx`
+- `frontend/web/src/components/dashboard/OrdersPanel.dom.test.tsx` (new)
+
+## Session 2026-09-27 (follow-up) — dialog width, and the guard I broke
+
+**Task:** "shadcn dialog component has a fixed width, use dialog primitives from the base ui to design a bigger dialog box" — plus "use radix ui primitives instead of adding new dependency".
+**Tool used:** DeepSeek Harness (deepseek-flash) AI coding agent
+
+### Decision: no new dependency
+
+Base UI is **not** a dependency of this repository (`package.json` has `radix-ui`, not
+`@base-ui-components/react`), and the dialog is already built on the Radix primitive
+(`components/ui/dialog.tsx` imports `Dialog as DialogPrimitive` from `radix-ui`). Per the repo's own
+package rule — check whether existing dependencies already provide the functionality before adding
+one — the fix is the Radix primitive the dialog already wraps, not a migration. Adding Base UI would
+mean a second headless UI library, two theming layers and a token reconciliation across all 20+
+existing dialogs, to fix a bug that is one wrong class name.
+
+### Root cause, verified rather than reasoned
+
+`twMerge` was run on the real class strings, which settled it:
+
+| Input | Merged width classes |
+| --- | --- |
+| the primitive alone | `max-w-[calc(100%-2rem)] sm:max-w-lg` |
+| `cn(primitive, 'max-w-2xl')` | `sm:max-w-lg max-w-2xl` — **both kept** |
+| `cn(primitive, 'sm:max-w-3xl')` | `max-w-[calc(100%-2rem)] sm:max-w-3xl` — replaced |
+| `cn(primitive, 'max-w-3xl')` | `sm:max-w-lg max-w-3xl` — guard **lost** |
+
+`max-w-2xl` and `sm:max-w-lg` are different utilities to tailwind-merge, so the caller's width did
+not replace the default; the `sm:` variant won from 640px up and every dialog asking for `max-w-*`
+rendered at 512px. The order dialog was never 672px wide, which is why the columns still clipped
+after the previous session's `min-w-0` fix — that fix stopped the overflow, it did not widen the box.
+
+There was a second, worse consequence: `max-w-3xl` *does* replace `max-w-[calc(100%-2rem)]`, because
+tailwind-merge reads both as the same utility. So the viewport guard that keeps a dialog on a phone
+screen was silently removed by any caller passing an unprefixed width.
+
+### The fix (all on the existing Radix primitive)
+
+- **`components/ui/dialog.tsx`** — the width is now `sm:max-w-lg` at the same variant a caller must
+  use, with the merge behaviour documented on the primitive. Reverted last session's `[&>*]:min-w-0`,
+  which is what let an unprefixed `max-w-*` replace the viewport guard; `min-w-0` on the content stays,
+  because that is the part that stops a wide table widening its grid track.
+- **`DIALOG_CONTENT_WIDE`** — a named `sm:max-w-3xl`, exported from the primitive, so a caller cannot
+  repeat the unprefixed-variant mistake. It is a constant rather than a doc comment precisely because
+  the failure mode is silent.
+- **`OrdersPanel.tsx`** — the order detail dialog uses it.
+- **`conversation/blocks.tsx`** — the image-preview dialog had the identical latent bug (`max-w-3xl`)
+  and now uses the same constant. `BlockActionDialogs.tsx` already passed `sm:max-w-md` and was
+  correct, which is the precedent the fix follows.
+
+### Tests
+
+- New `components/ui/dialog.dom.test.tsx` runs the real `cn` and pins the merge contract: the wide
+  variant replaces the default rather than joining it; the viewport guard survives; and the broken
+  form is asserted *as behaviour* (`['sm:max-w-lg', 'max-w-3xl']`, guard gone, with the 390px phone
+  case spelled out) so the gotcha is recorded executably rather than as prose.
+- `OrdersPanel.dom.test.tsx` now asserts the dialog keeps the viewport guard, has no unprefixed
+  `max-w-*`, and carries `sm:max-w-3xl`. The assertion that pinned `[&>*]:min-w-0` was removed with
+  the rule it described.
+
+### Verification
+
+- `bunx tsc -b` clean, `bun run test` **174 files / 1412 tests passed**, `bun run lint` 0 errors.
+- Still not verified: the rendered geometry. jsdom does not lay out, so the width is verified as a
+  class contract and as merge behaviour, not as pixels. The visual check needs a browser.
+
+### Files Modified
+
+- `frontend/web/src/components/ui/dialog.tsx`
+- `frontend/web/src/components/ui/dialog.dom.test.tsx` (new)
+- `frontend/web/src/components/dashboard/OrdersPanel.tsx`
+- `frontend/web/src/components/dashboard/OrdersPanel.dom.test.tsx`
+- `frontend/web/src/components/conversation/blocks.tsx`

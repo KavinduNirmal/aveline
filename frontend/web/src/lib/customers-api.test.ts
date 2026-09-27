@@ -19,7 +19,10 @@ import {
   deleteCustomer,
   fetchCustomer,
   fetchCustomerBook,
+  fetchCustomerBrief,
+  fetchCustomerEvents,
   fetchCustomerInteractions,
+  fetchCustomerMemories,
   recordCustomerInteraction,
   updateCustomer,
 } from './customers-api'
@@ -75,6 +78,53 @@ describe('customers-api', () => {
     const [path, config] = getMock.mock.calls[0]
     expect(path).toBe(`/api/v1/orgs/${ORG}/customers/${CUSTOMER}/interactions`)
     expect(config.params).toEqual({ page: 3, pageSize: 10 })
+  })
+
+  it('reads the pre-contact brief at the brief path', async () => {
+    // The brief is a read of its own, not a projection of the detail: it is what an associate opens
+    // before making contact, and its memories section is consent-gated server-side.
+    await fetchCustomerBrief(ORG, CUSTOMER)
+
+    expect(getMock).toHaveBeenCalledWith(
+      `/api/v1/orgs/${ORG}/customers/${CUSTOMER}/brief`,
+      expect.anything(),
+    )
+  })
+
+  it('reads a client\'s memories at the nested path', async () => {
+    // The memory panel reads the whole store rather than the brief's collapsed summary, because the
+    // categories it can show (complaint, sentiment) appear nowhere else on the screen.
+    await fetchCustomerMemories(ORG, CUSTOMER)
+
+    expect(getMock).toHaveBeenCalledWith(
+      `/api/v1/orgs/${ORG}/customers/${CUSTOMER}/memories`,
+      expect.anything(),
+    )
+  })
+
+  it('reads a client\'s occasions at the nested path', async () => {
+    // The list carries past occasions as well; deciding which are still ahead belongs to the reader,
+    // which is why this returns the collection rather than an "upcoming" one.
+    await fetchCustomerEvents(ORG, CUSTOMER)
+
+    expect(getMock).toHaveBeenCalledWith(
+      `/api/v1/orgs/${ORG}/customers/${CUSTOMER}/events`,
+      expect.anything(),
+    )
+  })
+
+  it('returns the server data from the new reads rather than re-shaping it', async () => {
+    // Each returns `response.data` unchanged: a client that re-mapped these would be a second place
+    // for the server's own vocabulary (category, isExplicit, source) to drift.
+    const memories = [{ id: 'mem-1', content: 'Prefers emerald silk' }]
+    const events = [{ id: 'evt-1', eventType: 'wedding' }]
+    const brief = { customerId: CUSTOMER, customerName: 'Nadia' }
+    getMock.mockResolvedValueOnce({ data: memories })
+    expect(await fetchCustomerMemories(ORG, CUSTOMER)).toEqual(memories)
+    getMock.mockResolvedValueOnce({ data: events })
+    expect(await fetchCustomerEvents(ORG, CUSTOMER)).toEqual(events)
+    getMock.mockResolvedValueOnce({ data: brief })
+    expect(await fetchCustomerBrief(ORG, CUSTOMER)).toEqual(brief)
   })
 
   it('sends an Idempotency-Key when creating a walk-in', async () => {

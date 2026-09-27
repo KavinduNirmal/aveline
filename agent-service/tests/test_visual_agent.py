@@ -39,6 +39,18 @@ class TestVisualAgent:
         res4 = await agent.parse_visual_intent({"message": "I need pastel lehengas for a reception", "org_id": "org-1"})
         assert res4["search_criteria"]["color_theme"] == "Pastels"
         assert res4["search_criteria"]["occasion"] == "Reception"
+        assert res4["search_criteria"]["category"] == "Lehengas"
+
+        # 5. Blue Saree query (user scenario: does not match other garment types)
+        res5 = await agent.parse_visual_intent({"message": "do u have blue saree in stock", "org_id": "org-1"})
+        assert res5["search_criteria"]["color"] == "Blue"
+        assert res5["search_criteria"]["category"] == "Sarees"
+
+        # 6. Red Saree query
+        res6 = await agent.parse_visual_intent({"message": "do we have any red saree in stock", "org_id": "org-1"})
+        assert res6["search_criteria"]["color"] == "Red"
+        assert res6["search_criteria"]["category"] == "Sarees"
+        assert "query" not in res6["search_criteria"]
 
 
 class TestDescribeWhatWasSeen:
@@ -86,18 +98,6 @@ class TestDescribeWhatWasSeen:
         assert _describe_what_was_seen({"image_attributes": {"primary_color": "Neutral"}}) is None
         # A malformed value must not reach the reply as the literal "none".
         assert _describe_what_was_seen({"image_attributes": "not-a-dict"}) is None
-        assert res4["search_criteria"]["category"] == "Lehengas"
-
-        # 5. Blue Saree query (user scenario: does not match other garment types)
-        res5 = await agent.parse_visual_intent({"message": "do u have blue saree in stock", "org_id": "org-1"})
-        assert res5["search_criteria"]["color"] == "Blue"
-        assert res5["search_criteria"]["category"] == "Sarees"
-
-        # 6. Red Saree query
-        res6 = await agent.parse_visual_intent({"message": "do we have any red saree in stock", "org_id": "org-1"})
-        assert res6["search_criteria"]["color"] == "Red"
-        assert res6["search_criteria"]["category"] == "Sarees"
-        assert "query" not in res6["search_criteria"]
 
     @pytest.mark.asyncio
     async def test_search_inventory_filters_out_mismatched_category(self):

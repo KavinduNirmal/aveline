@@ -683,40 +683,37 @@ async def test_a_matched_piece_reply_still_names_what_the_photo_showed():
 
     Both branches matter. Wiring the image in but leaving the wording generic is the defect
     restated, just after a successful round-trip, so the matched case is asserted too.
+
+    The node is driven directly with its own inputs rather than through ``search_inventory``: the
+    search applies a defensive category/colour filter of its own, so routing this assertion through
+    it would test that filter as a side effect and fail for a reason that has nothing to do with the
+    reply. The search's own behaviour is covered by the visual agent's tests.
     """
-
-    class _Registry:
-        async def analyze_product_image(self, **_kwargs):
-            return {
-                "attributes": {
-                    "category": "Saree",
-                    "primary_color": "Deep Crimson",
-                    "fabric": "Silk",
-                }
-            }
-
-        async def search_inventory(self, *, criteria):
-            return {"items": [{"itemId": "p-1", "name": "Crimson Kanjeevaram", "stock": 3}]}
+    from unittest.mock import AsyncMock
 
     from app.agents.visual_insight.nodes import VisualInsightAgent
 
-    agent = VisualInsightAgent(registry=_Registry(), llm=None)
-    analyzed = await agent.analyze_image(
+    agent = VisualInsightAgent(registry=AsyncMock(), llm=None)
+    composed = await agent.compose_looks(
         {
             "org_id": REAL_ORG,
             "message": "",
-            "image_ref_kind": "attachment",
-            "image_ref_id": REAL_ATTACHMENT,
+            "staff_query": False,
+            "image_attributes": {
+                "category": "Saree",
+                "primary_color": "Deep Crimson",
+                "fabric": "Silk",
+            },
+            "matched_items": [
+                {"itemId": "p-1", "name": "Crimson Kanjeevaram Saree", "stock": 3},
+            ],
         }
-    )
-    matched = await agent.search_inventory({"org_id": REAL_ORG, **analyzed})
-    composed = await agent.compose_looks(
-        {"org_id": REAL_ORG, "message": "", "staff_query": False, **analyzed, **matched}
     )
 
     assert "deep crimson silk saree" in composed["suggestion"].lower()
     # ...and the matched piece is still named, so the observation did not replace the offer.
-    assert "Crimson Kanjeevaram" in composed["suggestion"]
+    assert "Crimson Kanjeevaram Saree" in composed["suggestion"]
+
 
 @pytest.mark.asyncio
 async def test_a_text_only_run_never_calls_analyze_image():

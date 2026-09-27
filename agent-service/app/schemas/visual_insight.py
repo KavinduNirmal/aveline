@@ -9,6 +9,26 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class DetectedClothingItem(BaseModel):
+    """A detected garment item with visual attributes."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    clothing_type: str = Field(..., description="Specific clothing type e.g. T-shirt, Straight Kurti, Saree, Jeans")
+    category: str = Field(..., description="Broad category: top, bottom, dress, outerwear, ethnic_couture, accessory, footwear")
+    primary_color: str = Field(..., description="Dominant color name")
+    color_hex: str | None = Field(default=None, description="Hex color code e.g. #0F5132")
+    secondary_colors: list[str] = Field(default_factory=list, description="Secondary or accent colors")
+    pattern: str | None = Field(default=None, description="Pattern e.g. solid, striped, floral, brocade_zari, chikankari")
+    material: str | None = Field(default=None, description="Material or fabric type e.g. cotton, mulberry_silk, denim, velvet")
+    style: str | None = Field(default=None, description="Style classification e.g. casual, formal, traditional_heirloom")
+    confidence: float = Field(default=0.95, ge=0.0, le=1.0, description="Confidence score")
+    bounding_box: list[float] | None = Field(default=None, description="Normalized coordinates [ymin, xmin, ymax, xmax]")
+    suggested_item_name: str | None = None
+    description: str | None = None
+    styling_notes: str | None = None
+
+
 class ImageAttributes(BaseModel):
     """Structured fashion and aesthetic attributes extracted from an image."""
 
@@ -22,6 +42,7 @@ class ImageAttributes(BaseModel):
     pattern: str | None = Field(default=None, description="Pattern e.g. Floral, Striped, Solid, Geometric")
     occasion: str | None = Field(default=None, description="Occasion suitability e.g. Wedding, Cocktail, Black Tie, Casual")
     aesthetic_tags: list[str] = Field(default_factory=list, description="Aesthetic keywords e.g. Minimalist, Quiet Luxury, Editorial")
+    detected_items: list[DetectedClothingItem] = Field(default_factory=list, description="Decomposed multi-item clothing detections")
 
 
 class FoundItem(BaseModel):

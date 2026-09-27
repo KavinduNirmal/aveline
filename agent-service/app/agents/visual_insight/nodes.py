@@ -28,9 +28,20 @@ from app.tools.inventory.sourcing_tools import create_sourcing_request
 
 logger = logging.getLogger("aveline.agent.visual")
 
-#: Cap on the styling commentary shown in the Salon. A look's commentary is meant to be a few
-#: sentences; an unbounded reply can dominate the thread, which is exactly what staff saw.
-_MAX_COMMENTARY_CHARS = 700
+#: Color family mappings to allow shade synonyms while strictly pruning unrelated colors
+_COLOR_FAMILIES: dict[str, set[str]] = {
+    "red": {"red", "crimson", "deep crimson", "maroon", "deep maroon", "ruby", "ruby red", "burgundy", "royal burgundy", "scarlet", "wine", "cherry", "vermilion"},
+    "blue": {"blue", "navy", "midnight navy", "sapphire", "midnight sapphire", "cobalt", "royal blue", "indigo", "sky blue", "powder blue", "baby blue", "teal", "peacock teal", "aqua", "turquoise", "peacock"},
+    "green": {"green", "emerald", "emerald green", "sage", "sage green", "mint", "mint green", "olive", "deep olive", "jade", "forest green", "bottle green", "bottle", "forest", "dark green"},
+    "pink": {"pink", "blush", "blush pink", "rose", "dusty rose", "rose pink", "magenta", "fuchsia", "coral", "peach", "apricot", "salmon"},
+    "yellow": {"yellow", "gold", "champagne gold", "antique gold", "rose gold", "zari gold", "mustard", "mustard ochre", "ochre", "buttercup"},
+    "purple": {"purple", "violet", "lavender", "lilac", "amethyst", "deep amethyst", "plum"},
+    "white": {"white", "ivory", "heirloom ivory", "off-white", "cream", "pearl"},
+    "black": {"black", "midnight black", "charcoal", "slate grey", "grey", "gray"},
+    "brown": {"brown", "terracotta", "burnt terracotta", "rust", "camel", "taupe", "sand", "khaki", "espresso"},
+}
+
+_MAX_COMMENTARY_CHARS = 900
 
 
 class VisualInsightAgent:
@@ -87,7 +98,7 @@ class VisualInsightAgent:
             "burnt terracotta", "terracotta", "mustard ochre", "mustard", "deep olive", "olive", "rust",
             "camel", "taupe", "sand", "khaki", "ochre", "espresso",
             # Jewel Tones
-            "emerald green", "emerald", "ruby red", "ruby", "midnight sapphire", "sapphire",
+            "emerald green", "emerald", "forest green", "bottle green", "ruby red", "ruby", "midnight sapphire", "sapphire",
             "deep crimson", "crimson", "deep amethyst", "amethyst", "topaz", "jade",
             # Festive Metallics
             "champagne gold", "antique gold", "rose gold", "zari gold", "gold", "silver", "platinum",
@@ -113,13 +124,51 @@ class VisualInsightAgent:
         if not color and color_theme:
             color = color_theme
 
+        # 3. Comprehensive Garment Category Taxonomy
+        category = None
+        category_mappings = [
+            # Sarees
+            (r"\b(sarees?|saris?|kanjeevaram|kanjivaram|banarasi|chanderi|tussar|pochampally|patola|kasavu|silk saree)\b", "Sarees"),
+            # Lehengas
+            (r"\b(lehengas?|lehngas?|ghagras?|choli|lehenga choli)\b", "Lehengas"),
+            # Gowns & Dresses
+            (r"\b(gowns?|evening gowns?|ballgowns?|dress(?:es)?|maxi|midi|frocks?|jumpsuits?|rompers?)\b", "Gowns"),
+            # Kurtas & Tunics / Tops / Blouses
+            (r"\b(kurtas?|kurtis?|tunics?|silk blouses?|blouses?|anarkalis?|sherwanis?|tops?|shirts?)\b", "Kurtas & Tunics"),
+            # Outerwear
+            (r"\b(outerwear|blazers?|jackets?|coats?|overcoats?|trenches?|trenchcoats?|shrugs?|cardigans?|capes?|dusters?)\b", "Outerwear"),
+            # Drapes & Shawls
+            (r"\b(drapes?|shawls?|dupattas?|stoles?|scarfs?|scarves|wraps?|pallus?)\b", "Drapes & Shawls"),
+            # Jewelry & Accessories
+            (r"\b(jewelry|jewellery|accessories|accessory|necklaces?|earrings?|bangles?|clutch(?:es)?|bags?|footwear|heels?|shoes?|belts?)\b", "Jewelry & Accessories"),
+        ]
+
+        for pattern, cat_name in category_mappings:
+            if re.search(pattern, msg):
+                category = cat_name
+                break
+
+        # Extract leftover keywords for free-form query if no category/color was mapped
+        stop_words = {
+            "do", "we", "have", "any", "in", "stock", "is", "there", "are", "the", "a", "an",
+            "for", "with", "please", "show", "me", "can", "you", "find", "tell", "check",
+            "available", "look", "looking", "i", "want", "need", "pieces", "items", "u", "some", "of"
+        }
+        raw_words = [w for w in re.findall(r"\b\w+\b", msg) if len(w) > 2 and w not in stop_words]
+
+        cleaned_query = None
+        if not category and not color and raw_words:
+            cleaned_query = " ".join(raw_words)
+
         criteria = {
             "organizationId": org_id,
-            "query": state.get("message", ""),
             "occasion": occasion,
             "color": color,
+            "category": category,
             "color_theme": color_theme,
         }
+        if cleaned_query:
+            criteria["query"] = cleaned_query
 
         return {"search_criteria": criteria}
 
@@ -164,8 +213,10 @@ class VisualInsightAgent:
 
         attrs: ImageAttributes = outcome.attributes
         criteria = state.get("search_criteria") or {}
-        criteria["category"] = attrs.category
-        criteria["color"] = attrs.primary_color
+        if attrs.category and not criteria.get("category"):
+            criteria["category"] = attrs.category
+        if attrs.primary_color and not criteria.get("color"):
+            criteria["color"] = attrs.primary_color
         if attrs.occasion and not criteria.get("occasion"):
             criteria["occasion"] = attrs.occasion
 
@@ -189,6 +240,65 @@ class VisualInsightAgent:
 
         try:
             items: list[PieceItem] = await search_inventory(self._registry, criteria)
+
+            # Defensive category filter: when a category is requested, filter out mismatched pieces
+            target_category = criteria.get("category")
+            if target_category and items:
+                norm_target = target_category.lower()
+                singular_target = norm_target[:-1] if norm_target.endswith("s") and len(norm_target) > 3 else norm_target
+
+                # Extract significant category keywords (ignoring & and common small noise words)
+                raw_words = [w for w in re.findall(r"\b\w+\b", norm_target) if len(w) > 2 and w not in ("and", "the", "for", "with")]
+                category_tokens = set(raw_words + [singular_target, norm_target])
+                for w in raw_words:
+                    if w.endswith("s") and len(w) > 3:
+                        category_tokens.add(w[:-1])
+                if "saree" in category_tokens or "sarees" in category_tokens:
+                    category_tokens.add("sari")
+
+                def _is_category_match(item: PieceItem) -> bool:
+                    item_cat = (item.category or "").lower()
+                    item_name = (item.name or "").lower()
+                    if item_cat:
+                        if norm_target in item_cat or item_cat in norm_target or singular_target in item_cat:
+                            return True
+                        if any(token in item_cat for token in category_tokens):
+                            return True
+                    if norm_target in item_name or singular_target in item_name:
+                        return True
+                    if any(token in item_name for token in category_tokens):
+                        return True
+                    return False
+
+                items = [item for item in items if _is_category_match(item)]
+
+            # Defensive color filter: when a specific color is requested, prune mismatched colors
+            target_color = criteria.get("color")
+            if target_color and items:
+                norm_color = target_color.lower().strip()
+
+                def _is_color_match(item: PieceItem) -> bool:
+                    item_color = (item.color or "").lower().strip()
+                    item_name = (item.name or "").lower().strip()
+
+                    # Direct match
+                    if item_color and (norm_color in item_color or item_color in norm_color):
+                        return True
+                    if re.search(r"\b" + re.escape(norm_color) + r"\b", item_name):
+                        return True
+
+                    # Color family expansion
+                    family_shades = _COLOR_FAMILIES.get(norm_color)
+                    if family_shades:
+                        if any(shade in item_color for shade in family_shades):
+                            return True
+                        if any(re.search(r"\b" + re.escape(shade) + r"\b", item_name) for shade in family_shades):
+                            return True
+
+                    return False
+
+                items = [item for item in items if _is_color_match(item)]
+
             return {"matched_items": [item.model_dump() for item in items], "search_failed": False}
         except Exception as e:  # noqa: BLE001 - recorded in state, surfaced by compose_output
             logger.warning("Inventory search failed: %s", e)

@@ -16,7 +16,7 @@ from typing import Any
 
 import httpx
 
-from app.schemas.visual_insight import ImageAttributes
+from app.schemas.visual_insight import DetectedClothingItem, ImageAttributes
 
 #: 4xx statuses that are retryable rather than a refusal of the analysis itself.
 _RETRYABLE_CLIENT_STATUSES = frozenset({408, 429})
@@ -63,6 +63,42 @@ def parse_image_attributes_dict(data: dict[str, Any]) -> ImageAttributes:
     if isinstance(aesthetic_tags, str):
         aesthetic_tags = [t.strip() for t in aesthetic_tags.split(",") if t.strip()]
 
+    detected_items: list[DetectedClothingItem] = []
+    items_raw = data.get("items") or data.get("detected_items") or []
+    if isinstance(items_raw, list):
+        for itm in items_raw:
+            if isinstance(itm, dict):
+                c_type = str(itm.get("clothing_type") or itm.get("garment_type") or "Garment")
+                p_col = str(itm.get("primary_color") or itm.get("color") or "Neutral")
+                cat = str(itm.get("category") or category or "top")
+                sec = itm.get("secondary_colors") or []
+                if isinstance(sec, str):
+                    sec = [s.strip() for s in sec.split(",") if s.strip()]
+
+                conf = itm.get("confidence") or itm.get("confidence_score") or 0.95
+                try:
+                    conf_val = float(conf)
+                except (ValueError, TypeError):
+                    conf_val = 0.95
+
+                detected_items.append(
+                    DetectedClothingItem(
+                        clothing_type=c_type,
+                        category=cat,
+                        primary_color=p_col,
+                        color_hex=itm.get("color_hex"),
+                        secondary_colors=sec if isinstance(sec, list) else [],
+                        pattern=itm.get("pattern"),
+                        material=itm.get("material") or itm.get("fabric"),
+                        style=itm.get("style"),
+                        confidence=conf_val,
+                        bounding_box=itm.get("bounding_box"),
+                        suggested_item_name=itm.get("suggested_item_name"),
+                        description=itm.get("description"),
+                        styling_notes=itm.get("styling_notes"),
+                    )
+                )
+
     return ImageAttributes(
         category=str(category),
         silhouette=data.get("silhouette"),
@@ -72,6 +108,7 @@ def parse_image_attributes_dict(data: dict[str, Any]) -> ImageAttributes:
         pattern=data.get("pattern"),
         occasion=data.get("occasion"),
         aesthetic_tags=aesthetic_tags,
+        detected_items=detected_items,
     )
 
 

@@ -72,6 +72,39 @@ class CompactedContext:
     compacted: bool = False
 
 
+def has_inbound_media(org_context: dict[str, Any] | None) -> bool:
+    """Whether this run carries an image the vision path can actually read.
+
+    The API describes a turn's media as ``attachments[]``, each with a ``reference`` of
+    ``{kind, id}`` that the vision backend resolves tenant-scoped (salon plan §9.1). ``image_url``
+    is the older bridge: an absolute, single-use, opaque tokenised URL.
+
+    The distinction matters because the two travel independently. ``image_url`` is minted
+    best-effort, so a host without a media signing key sends the reference and **no** URL - and a
+    caller that tested only for the bridge would answer a photo with no knowledge that a photo was
+    sent, which is exactly the defect this predicate exists to prevent. The message text is
+    deliberately not part of this test: the webhook records a captionless image rather than
+    dropping it, so an empty message carrying a reference is a real, expected shape.
+
+    Returns ``False`` for anything malformed, so a broken attachment entry degrades to the text
+    path rather than routing a run to an agent with nothing to analyse.
+    """
+    context = org_context or {}
+
+    attachments = context.get("attachments")
+    if isinstance(attachments, list):
+        for attachment in attachments:
+            if not isinstance(attachment, dict):
+                continue
+            reference = attachment.get("reference")
+            if not isinstance(reference, dict):
+                continue
+            if reference.get("kind") and reference.get("id"):
+                return True
+
+    return bool(context.get("image_url"))
+
+
 def render_turns(turns: list[dict[str, Any]] | None) -> str:
     """Render ``turns`` as ``authorKind: text`` lines, oldest first.
 

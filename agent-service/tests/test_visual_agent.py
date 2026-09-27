@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.agents.visual_insight.nodes import VisualInsightAgent
+from app.agents.visual_insight.nodes import VisualInsightAgent, _describe_what_was_seen
 
 
 class TestVisualAgent:
@@ -51,6 +51,53 @@ class TestVisualAgent:
         assert res6["search_criteria"]["color"] == "Red"
         assert res6["search_criteria"]["category"] == "Sarees"
         assert "query" not in res6["search_criteria"]
+
+
+class TestDescribeWhatWasSeen:
+    """The analysed image becomes the words the customer reads back.
+
+    The acceptance test for the inbound-image lane is that a reply refers to what is actually in
+    the picture, and the analysis was being computed on every run without any reply-composing node
+    reading it. These cover that rendering, including the cases that must stay silent so a
+    text-only reply is unchanged.
+    """
+
+    def test_it_reads_the_analysed_attributes_not_the_message(self):
+        seen = _describe_what_was_seen(
+            {
+                "message": "what do you think?",
+                "image_attributes": {
+                    "category": "Saree",
+                    "primary_color": "Deep Crimson",
+                    "fabric": "Silk",
+                },
+            }
+        )
+
+        assert seen == "deep crimson silk saree"
+
+    def test_it_tolerates_a_partial_analysis(self):
+        assert _describe_what_was_seen({"image_attributes": {"primary_color": "Emerald"}}) == "emerald"
+        assert _describe_what_was_seen({"image_attributes": {"category": "Gown"}}) == "gown"
+
+    def test_the_parse_fallback_colour_is_not_an_observation(self):
+        """"Neutral" is what the parser substitutes when it found no colour.
+
+        Describing a garment as "a neutral silk saree" reads as something the model saw while
+        carrying none of it, so the fallback is dropped rather than spoken.
+        """
+        assert _describe_what_was_seen(
+            {"image_attributes": {"category": "Saree", "primary_color": "Neutral", "fabric": "Silk"}}
+        ) == "silk saree"
+
+    def test_no_analysis_means_nothing_to_say(self):
+        """No media, a denied call or a failed one all leave the reply on the text path."""
+        assert _describe_what_was_seen({}) is None
+        assert _describe_what_was_seen({"image_attributes": None}) is None
+        assert _describe_what_was_seen({"image_attributes": {}}) is None
+        assert _describe_what_was_seen({"image_attributes": {"primary_color": "Neutral"}}) is None
+        # A malformed value must not reach the reply as the literal "none".
+        assert _describe_what_was_seen({"image_attributes": "not-a-dict"}) is None
 
     @pytest.mark.asyncio
     async def test_search_inventory_filters_out_mismatched_category(self):

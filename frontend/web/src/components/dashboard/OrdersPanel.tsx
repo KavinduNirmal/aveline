@@ -16,6 +16,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import {
+  DIALOG_CONTENT_WIDE,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -505,7 +506,7 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
 
       {/* Order Details Modal */}
       <Dialog open={selectedOrder !== null} onOpenChange={(open) => !open && setSelectedOrder(null)}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className={DIALOG_CONTENT_WIDE}>
           <DialogHeader>
             <DialogTitle>Order Details</DialogTitle>
             <DialogDescription>
@@ -516,7 +517,7 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
           {selectedOrder && (
             <div className="flex flex-col gap-4 py-2">
               {/* Order status banner */}
-              <div className="flex items-center justify-between rounded-lg border p-3 bg-muted/40">
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3 bg-muted/40">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium">Status:</span>
                   <Badge variant={STATUS_BADGE_VARIANTS[selectedOrder.status]?.variant ?? 'outline'}>
@@ -529,11 +530,11 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
               </div>
 
               {/* Items Table */}
-              <div className="border rounded-md overflow-hidden">
+              <div className="border rounded-md">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Item</TableHead>
+                      <TableHead className="min-w-[12rem]">Item</TableHead>
                       <TableHead className="text-right">Qty</TableHead>
                       <TableHead className="text-right">Price</TableHead>
                       <TableHead className="text-right">Cost</TableHead>

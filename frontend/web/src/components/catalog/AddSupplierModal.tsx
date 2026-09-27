@@ -138,14 +138,16 @@ export function AddSupplierModal({
               </p>
             </div>
           </div>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon"
             onClick={handleClose}
-            className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            className="rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors size-8"
             aria-label="Close"
           >
             <X className="size-4" />
-          </button>
+          </Button>
         </div>
 
         {/* Modal Form */}

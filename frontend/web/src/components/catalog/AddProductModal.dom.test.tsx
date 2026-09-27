@@ -255,8 +255,10 @@ describe('the add/edit piece drawer', () => {
       await user.click(screen.getByRole('button', { name: /re-analyze/i }))
 
       await waitFor(() =>
-        expect(screen.getByLabelText(/item name/i)).toHaveValue('Client Extracted Saree'),
+        expect(screen.getByLabelText(/cloth \/ garment/i)).toHaveValue('Client Silk Saree'),
       )
+      // The item name must not be overwritten by visual analysis; it is left to the operator.
+      expect(screen.getByLabelText(/item name/i)).toHaveValue('Royal Emerald Silk Saree')
       expect(extractVisualAttributesAndColorMock).toHaveBeenCalledWith(RELATIVE_URL, undefined)
       expect(analyzeProductImageMock).not.toHaveBeenCalled()
     })
@@ -415,4 +417,47 @@ describe('the add/edit piece drawer', () => {
       expect(saved.colorHex).toBeFalsy()
     })
   })
+
+  describe('automatic description regeneration on cloth type or category change', () => {
+    it('automatically updates description when cloth / garment type is edited', async () => {
+      const user = userEvent.setup()
+      renderDrawer({
+        editingItem: item({
+          category: 'Sarees',
+          color: 'Emerald Green',
+          fabric: 'Pure Mulberry Silk',
+          description: 'Old manual description',
+        }),
+      })
+
+      const garmentInput = screen.getByLabelText(/cloth \/ garment/i)
+      await user.clear(garmentInput)
+      await user.type(garmentInput, 'Kanjeevaram Pattu Saree')
+
+      const descTextarea = screen.getByPlaceholderText(/detailed description, weave information/i) as HTMLTextAreaElement
+      expect(descTextarea.value).toMatch(/kanjeevaram pattu saree/i)
+      expect(descTextarea.value).toMatch(/pure mulberry silk/i)
+    })
+
+    it('automatically updates description and switches styling when garment type implies another category', async () => {
+      const user = userEvent.setup()
+      renderDrawer({
+        editingItem: item({
+          category: 'Sarees',
+          color: 'Midnight Blue',
+          fabric: 'Georgette',
+        }),
+      })
+
+      const garmentInput = screen.getByLabelText(/cloth \/ garment/i)
+      await user.clear(garmentInput)
+      await user.type(garmentInput, 'Luminous Evening Gown')
+
+      const descTextarea = screen.getByPlaceholderText(/detailed description, weave information/i) as HTMLTextAreaElement
+      // Category should auto-align to Gowns and adopt gown styling notes (diamond drop earrings, etc.)
+      expect(descTextarea.value).toMatch(/Sculpted midnight blue luminous evening gown in luminous georgette/i)
+      expect(descTextarea.value).toMatch(/Styling: Complement with diamond drop earrings/i)
+    })
+  })
 })
+

@@ -2,7 +2,6 @@ import { useState, useMemo } from 'react'
 import {
   Search,
   AlertTriangle,
-  Plus,
   PackageCheck,
 } from 'lucide-react'
 
@@ -21,7 +20,7 @@ import type { InventoryItemMock } from './mockData'
 
 interface InventoryTabProps {
   inventory: InventoryItemMock[]
-  onAddNewPiece: () => void
+  onAddNewPiece?: () => void
   /** Absent means the grid is a plain list of tiles with no piece page to open. */
   onOpenItem?: (item: InventoryItemMock) => void
   onViewMatches: (item: InventoryItemMock) => void
@@ -39,8 +38,12 @@ const CATEGORY_PILLS = [
   'Lehengas',
   'Gowns',
   'Kurtas & Tunics',
+  'Tops & Blouses',
+  'Trousers & Pants',
   'Outerwear',
   'Drapes & Shawls',
+  'Jewelry & Accessories',
+  'Footwear',
 ]
 
 export function InventoryTab({
@@ -131,7 +134,7 @@ export function InventoryTab({
           />
         </div>
 
-        {/* Status Filter & Add Button */}
+        {/* Status Filter */}
         <div className="flex items-center gap-2.5">
           <Select
             value={statusFilter}
@@ -152,16 +155,6 @@ export function InventoryTab({
               <SelectItem value="reserved">Reserved</SelectItem>
             </SelectContent>
           </Select>
-
-          <Button
-            type="button"
-            size="sm"
-            onClick={onAddNewPiece}
-            className="gap-1.5 rounded-xl text-xs h-9 px-4 shadow-sm cursor-pointer"
-          >
-            <Plus className="size-4" />
-            <span>Add Piece</span>
-          </Button>
         </div>
       </div>
 

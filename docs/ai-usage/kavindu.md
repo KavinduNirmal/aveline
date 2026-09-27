@@ -7756,3 +7756,101 @@ Two environment facts worth recording for whoever runs this next:
   - `docs/ai-usage/kavindu.md`
 
 
+## Session 2026-09-27 — Inbound WhatsApp images never reached the vision path
+
+**Task:** Make the agent actually see a customer's inbound WhatsApp image, per the handoff brief at
+`.agents/plans/inbound-image-vision-handoff.ignore.md`. The reported symptom was a saree photo whose
+suggested reply never mentioned the saree and instead asked the customer to describe it.
+**Tool used:** Antigravity AI Assistant
+
+### Summary of Activities
+
+- **Established the branch state first.** The handoff brief §9 names PR #460 (`feature/visual-insight-agent`) as
+  out of scope, and §8 asks for a `fix/inbound-image-vision` branch off `development`. The working tree was
+  already on a local `fix/visual-insight-agent` branch sitting exactly at `origin/development`. PR #460 was
+  pulled in as a clean fast-forward (`0a570db` → `25e8fd8`, 23 files, +2588/−262) on the owner's explicit
+  instruction, and the fix itself was then branched off `development` so it stays deliverable on its own.
+- **Answered both findings the brief required before writing code** (§4), and both changed the fix's shape:
+  1. `image_ref_kind` is **not** an enum in the Python layer and is not validated there either. The API's
+     `MediaReferenceKinds` accepts exactly two values, `attachment` (a `MessageAttachment` row) and
+     `inventoryImage` (an `InventoryImage` row); `MediaTokenMintService` and
+     `DatabaseMediaAssetLocator.FindByReferenceAsync` resolve `image_ref_id` as that row's GUID,
+     org-scoped. No re-registration is needed: the conversation attachment can be referenced directly.
+  2. **The agent can already fetch a customer attachment**, so no new endpoint was required. The inbound
+     path already publishes the reference (`ConversationService.DescribeAttachment` emits
+     `reference = {kind = "attachment", id = attachment.Id}`) and the agent already reads it
+     (`concierge_workflow._first_attachment_reference`), which landed in #388 / `74ff7f1`.
+     `DatabaseMediaAssetLocator.FindAttachmentByIdAsync` matches on `OrganizationId` + `Id` only, so an
+     attachment is resolvable even before `RecordInboundClientMessageAsync` binds `MessageId`.
+  - **This means the brief's §3 diagnosis was incomplete.** The bridge existed; the picture was still
+    ignored for two reasons it did not name, both verified by running the code rather than reading it:
+    - `_route_after_memory` gated the visual lane on `org_context.get("image_url")` alone. The reference
+      arm is the contract and `image_url` is minted **best-effort**, so a host without a media signing key
+      sends the reference and no URL - and the guard then refused the one route that could read the image.
+    - The classifier reads **text only**, so a captionless image (which the webhook deliberately records
+      rather than drops) and a caption with no rule keyword ("what do you think of this?") both landed on
+      `general_inquiry`, whose only agent is memory.
+- **Implemented the fix across four files:**
+  - `app/context/__init__.py`: new `has_inbound_media(org_context)` predicate, the single definition of
+    "this run carries a readable image", covering `attachments[].reference` and the legacy `image_url`,
+    returning `False` for malformed entries so a broken attachment degrades to the text path.
+  - `app/gate.py`: new `_with_the_media_lane`, applied in every `supervise` return path, which adds
+    `visual` to the ordered agent set when media is present (preserving `commerce` ordering), lifts
+    `general_inquiry` to `item_search` for a wordless image, and clears the conversational reply so a
+    specialist answers instead of two answers being produced. New `NO_SPECIALIST_INTENTS` keeps a lane
+    answered in code (`tenant_account`, `out_of_scope`) out of Elle's lane - a bug found by exercising the
+    router, where an account question with a photo was being pulled into visual. A plan already carrying
+    `visual` skips the supervisor consult, since media presence is read from `org_context`, which the model
+    is not shown and therefore cannot weigh.
+  - `app/workflows/concierge_workflow.py`: `_route_after_memory` uses `has_inbound_media` instead of the
+    `image_url`-only test, so the decision and its guard cannot disagree; `NO_SPECIALIST_INTENTS` is checked
+    first.
+  - `app/agents/visual_insight/nodes.py`: new `_describe_what_was_seen` renders the already-computed
+    `image_attributes` ("deep crimson silk saree"), and both reply-producing nodes use it -
+    `check_sourcing`'s out-of-stock answer and the matched-pieces `compose_looks` suggestion. Without this
+    the routing fix would have produced the same generic reply, only after a successful vision round-trip,
+    which is why it was treated as part of the acceptance criterion rather than a follow-up. The parser's
+    `"Neutral"` fallback is dropped rather than spoken, since it is the absence of a colour rather than an
+    observation. The text-only path is byte-identical: no attributes means no change in wording.
+- **Tests** (9 new, in `tests/test_concierge_workflow.py` and `tests/test_visual_agent.py`) pin the four
+  behaviours the brief asked for: an inbound event with an attachment id reaches `analyze_image` with
+  `kind=attachment` / the row id set; a text-only run never calls vision at all; a captionless image is not
+  dropped and routes to `visual_agent`; and both reply paths name what the photo showed. Malformed
+  attachment entries, the reference-without-URL case, and the two code-answered lanes are covered as
+  regressions. The visual-tools tests already asserted that the reference arm wins over the URL bridge on
+  the wire and that `org_id` is never the all-zeros sentinel.
+
+### Verification Performed
+
+- **Agent test suite**: executed `python -m pytest -q` in `agent-service/` after the change -
+  **943 passed, 2 skipped, 2 xfailed, 0 failed** (baseline before the change was 936 passed, 2 skipped,
+  2 xfailed, captured first so the delta is attributable to the new tests).
+- **Lint**: `ruff check app tests` - **All checks passed**.
+- **Router exercised directly** before and after, across three contexts (no media, reference only, legacy
+  URL only) and six messages, which is how the `tenant_account` leak above was caught.
+- **Graph exercised directly** with a stubbed registry to confirm the captionless case reaches
+  `analyze_product_image` with `image_ref_kind="attachment"`, `image_ref_id` set, and `image_url=None`.
+- **API side**: no C# was modified, so `VisionServiceTests` was not re-run; the two reference kinds were
+  read from `MediaReferenceKinds`/`DatabaseMediaAssetLocator` instead, and the reference arm's wire shape is
+  already pinned by `tests/tools/test_visual_tools.py`.
+- **Diff & hygiene inspection**: `git status` and `git diff --stat` inspected; no `.env`, secrets or
+  generated artifacts introduced.
+
+### Files Created & Modified
+
+- **Modified**:
+  - `agent-service/app/context/__init__.py`
+  - `agent-service/app/gate.py`
+  - `agent-service/app/workflows/concierge_workflow.py`
+  - `agent-service/app/agents/visual_insight/nodes.py`
+  - `agent-service/tests/test_concierge_workflow.py`
+  - `agent-service/tests/test_visual_agent.py`
+  - `docs/ai-usage/kavindu.md`
+
+### What I Changed From the AI Output
+
+- Rejected the brief's §3 premise (missing bridge) in favour of what the code actually does; the brief's
+  own instruction to confirm the two unknowns first is what surfaced the real cause.
+- Kept PR #460 out of the fix branch after pulling it in, per §9, so the inbound-image fix does not depend
+  on an unmerged feature branch.
+

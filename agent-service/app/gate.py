@@ -16,6 +16,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.context import has_inbound_media
+
 logger = logging.getLogger("aveline.agent.gate")
 
 IntentType = Literal[
@@ -458,6 +460,13 @@ _SUPERVISOR_INSTRUCTION = (
 #: joins it for the same reason, from live figures rather than from documentation.
 _CONSULTABLE_INTENTS = frozenset({"general_inquiry", "aveline_help", "tenant_account"})
 
+#: Intents whose answer is produced in code and which route **no** specialist. An image attached to
+#: one of these does not make it a request to look at a garment - a photo of a receipt is still a
+#: refund question - so the media lane must not claim it. Public because the graph's routing guards
+#: enforce the same boundary as :func:`_with_the_media_lane`, and one list is what keeps the two
+#: from drifting.
+NO_SPECIALIST_INTENTS = frozenset({"tenant_account", "out_of_scope"})
+
 #: What Aveline says when a platform question reached the model but no answer came back. Better a
 #: plain admission than silence on a question the person explicitly asked about the product.
 _HANDBOOK_MISS_REPLY = (
@@ -617,7 +626,7 @@ async def supervise(
     produce *something*, and the rules are a complete fallback rather than a partial one.
     """
     rule_intent = classify_by_rules(message)
-    rule_plan = _rules_to_plan(rule_intent)
+    rule_plan = _with_the_media_lane(_rules_to_plan(rule_intent), org_context)
 
     if llm is None:
         return _with_a_bounded_reply(
@@ -627,10 +636,15 @@ async def supervise(
             org_context=org_context,
         )
 
-    if rule_intent.intent_type not in _CONSULTABLE_INTENTS:
+    if rule_intent.intent_type not in _CONSULTABLE_INTENTS or "visual" in rule_plan.suggested_agents:
         # Bounded even though no model is involved: the rules resolve *routing*, not the reply, and
         # a rule-decided plan that routes no content specialist would otherwise leave the turn with
         # nobody to answer it (see `_fallback_reply`).
+        #
+        # A plan already carrying the visual lane is settled for the same reason, in the opposite
+        # direction: media presence is read from ``org_context``, which the model is not shown and
+        # therefore cannot weigh, so consulting it could only talk the run *out* of analysing a
+        # picture the caller demonstrably attached.
         return _with_a_bounded_reply(
             rule_plan,
             tenant_usage=tenant_usage,
@@ -654,7 +668,7 @@ async def supervise(
     except Exception:  # noqa: BLE001 - routing must not break on a provider failure
         logger.exception("Supervisor call failed; falling back to the rule-based plan.")
         return _with_a_bounded_reply(
-            _or_general_inquiry(rule_plan),
+            _with_the_media_lane(_or_general_inquiry(rule_plan), org_context),
             tenant_usage=tenant_usage,
             customer_book=customer_book,
             org_context=org_context,
@@ -664,13 +678,15 @@ async def supervise(
     if refined is None:
         logger.warning("Supervisor returned no usable plan; keeping the rule-based decision.")
         return _with_a_bounded_reply(
-            _or_general_inquiry(rule_plan),
+            _with_the_media_lane(_or_general_inquiry(rule_plan), org_context),
             tenant_usage=tenant_usage,
             customer_book=customer_book,
             org_context=org_context,
         )
 
-    refined = _pin_authoritative_lane(refined, rule_plan)
+    # The account lane is pinned first, then media: a question about the boutique's own figures is
+    # not a request to look at a garment, so an accompanying image must not pull it into Elle's lane.
+    refined = _with_the_media_lane(_pin_authoritative_lane(refined, rule_plan), org_context)
     return _with_a_bounded_reply(
         refined,
         tenant_usage=tenant_usage,
@@ -821,6 +837,52 @@ def _rules_to_plan(rules: IntentGateOutput) -> SupervisorPlan:
         safety_flags=list(rules.safety_flags),
         # A conversational message the rules cannot route has nobody else to answer it.
         reply=_DEFAULT_REPLY if rules.intent_type == "general_inquiry" else None,
+    )
+
+
+def _with_the_media_lane(plan: SupervisorPlan, org_context: dict[str, Any] | None) -> SupervisorPlan:
+    """Route a run that carries an image to the visual lane, whatever its text says.
+
+    The classifier reads **text only**, and an image is not text. A photo sent bare - which the
+    webhook deliberately records rather than dropping - arrives with an empty message, and one sent
+    with "what do you think of this?" carries no word from any rule keyword. Both land on
+    ``general_inquiry``, whose only agent is memory, so the picture was never analysed and the
+    customer was answered by a specialist that did not know they had sent one.
+
+    Media presence is therefore treated as evidence rather than a hint: it is read from
+    ``org_context`` (which the rules cannot see and the model is not shown) and it pins the lane in
+    code. This is the same shape as ``_pin_authoritative_lane``: a fact the decision depends on
+    belongs to the code that can actually observe it.
+
+    The plan's own routing is otherwise respected. ``visual`` is added to the ordered agent set
+    rather than replacing it, so a photo sent with "I want to buy this" still reaches commerce, and
+    a run with no media is returned untouched - which is what keeps a text-only message off the
+    vision path. The two lanes answered in code rather than by a specialist are left alone: an
+    account question is answered from fetched figures, and an out-of-scope request is refused, so an
+    image attached to either does not turn it into a request to look at a garment.
+    """
+    if (
+        not has_inbound_media(org_context)
+        or "visual" in plan.suggested_agents
+        or plan.intent_type in NO_SPECIALIST_INTENTS
+    ):
+        return plan
+
+    agents = list(plan.suggested_agents)
+    # Before commerce when both are present: Elle's analysis is what Lina's deal is priced from,
+    # and the graph's own edges already encode that order.
+    insert_at = agents.index("commerce") if "commerce" in agents else len(agents)
+    agents.insert(insert_at, "visual")
+
+    return plan.model_copy(
+        update={
+            # An image with no recognisable words is still a request to look at a garment, which is
+            # item search - not the conversational fallback the empty text would otherwise imply.
+            "intent_type": "item_search" if plan.intent_type == "general_inquiry" else plan.intent_type,
+            "suggested_agents": agents,
+            # Whoever ends up answering, it is a specialist rather than the conversational default.
+            "reply": None,
+        }
     )
 
 

@@ -33,6 +33,39 @@ logger = logging.getLogger("aveline.agent.visual")
 _MAX_COMMENTARY_CHARS = 700
 
 
+def _describe_what_was_seen(state: VisualAgentState) -> str | None:
+    """A short noun phrase for the piece the vision path found in the customer's image.
+
+    The acceptance test for this lane is that a reply *refers to what is actually in the picture*
+    rather than asking the customer to describe it, and the analysis was already being computed:
+    ``analyze_image`` fills ``image_attributes`` on every run, and every reply-composing node
+    ignored it. Wiring the image through while leaving the wording generic would answer the
+    customer the same way the defect did, only after a round-trip.
+
+    Reads the analysed attributes rather than the raw message, so the phrase is grounded in what
+    the model saw - "a deep crimson silk saree" - and not in what the customer typed. Returns
+    ``None`` when no analysis happened (no media, or a denied/failed call), which is what keeps the
+    text-only replies byte-identical to before.
+    """
+    raw = state.get("image_attributes")
+    if not isinstance(raw, dict):
+        return None
+
+    # Attribute order is the order a person would describe a garment in: colour, fabric, type.
+    # "Neutral" is the parse fallback rather than something the model saw, and describing a garment
+    # as "a neutral silk saree" reads as an observation while carrying none - so it is dropped
+    # here rather than allowed to stand in for a colour nobody actually reported.
+    parts = [
+        str(value).strip()
+        for value in (raw.get("primary_color"), raw.get("fabric"), raw.get("category"))
+        if value and str(value).strip() and str(value).strip().lower() != "neutral"
+    ]
+    if not parts:
+        return None
+
+    return " ".join(parts).lower()
+
+
 class VisualInsightAgent:
     """LangGraph node suite for Elle (Visual Intelligence & Sourcing)."""
 
@@ -268,7 +301,20 @@ class VisualInsightAgent:
                 }
             else:
                 name = items[0].name
-                suggestion = f"Elle curated {len(items)} piece(s) harmonizing with your aesthetic, including the {name}."
+                # When the customer sent a picture, the reply says what was seen in it. This is the
+                # difference between "we found something" and "we found something for the piece you
+                # photographed", and it is the whole point of the vision path.
+                seen = _describe_what_was_seen(state)
+                if seen:
+                    suggestion = (
+                        f"From your photo, this reads as a {seen} - Elle curated {len(items)} "
+                        f"piece(s) in that spirit, including the {name}."
+                    )
+                else:
+                    suggestion = (
+                        f"Elle curated {len(items)} piece(s) harmonizing with your aesthetic, "
+                        f"including the {name}."
+                    )
                 return {
                     "composed_looks": [look.model_dump()],
                     "suggestion": suggestion,
@@ -328,9 +374,18 @@ class VisualInsightAgent:
                 "status": "pending",
             }
         else:
+            # The out-of-stock answer names the piece the customer actually photographed, so it
+            # reads as a response to their image rather than a generic "not available". This is the
+            # live case from the handoff: a saree photo whose reply never mentioned the saree.
+            seen = _describe_what_was_seen(state)
             suggestion = (
-                "We do not have this exact piece in stock right now, but Elle has initiated a custom "
+                f"We do not have that {seen} in stock right now, but Elle has initiated a custom "
                 "sourcing request with our partner ateliers."
+                if seen
+                else (
+                    "We do not have this exact piece in stock right now, but Elle has initiated a "
+                    "custom sourcing request with our partner ateliers."
+                )
             )
             return {
                 "sourcing_request": req.model_dump(),

@@ -505,6 +505,244 @@ async def test_run_visual_agent_keeps_the_legacy_arm_when_no_reference_is_presen
 
 
 # ---------------------------------------------------------------------------
+# Inbound media reaches the visual lane (the image -> vision bridge)
+# ---------------------------------------------------------------------------
+#
+# The defect these cover: ``image_url`` and ``attachments[].reference`` travel independently, and
+# ``image_url`` is minted best-effort. A host with no media signing key therefore sends the
+# reference and no URL, so a route that tested only the bridge answered a customer's photo without
+# ever analysing it - and the classifier, which reads text alone, sent a captionless image to
+# ``general_inquiry``, whose only agent is memory. Both halves are asserted here, plus the two
+# routes that must stay untouched: no media at all, and a lane answered in code.
+
+#: The bridge's contract, exactly as ``ConversationService.DescribeAttachment`` publishes it.
+ATTACHMENT_CONTEXT = {
+    "organization_id": REAL_ORG,
+    "attachments": [
+        {
+            "attachmentId": REAL_ATTACHMENT,
+            "contentType": "image/jpeg",
+            "publicId": f"aveline/{REAL_ORG}/conversations/{REAL_ATTACHMENT}",
+            "reference": {"kind": "attachment", "id": REAL_ATTACHMENT},
+        }
+    ],
+}
+
+
+def _route_for(intent: dict, org_context: dict) -> str:
+    from app.workflows.concierge_workflow import _route_after_memory
+
+    return _route_after_memory(
+        {
+            "intent": intent,
+            "org_context": org_context,
+            "consent_status": "granted",
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_captionless_image_is_routed_to_the_visual_agent():
+    """A photo with no words is still a request to look at a garment.
+
+    The webhook records a captionless image rather than dropping it, so an empty message is a real
+    shape. The rules read text only and classify it ``general_inquiry``; the media lane is what
+    stops that from being the last word.
+    """
+    from app.gate import supervise
+
+    plan = await supervise("", llm=None, org_context=ATTACHMENT_CONTEXT)
+
+    assert plan.intent_type == "item_search"
+    assert "visual" in plan.suggested_agents
+    assert plan.reply is None
+    assert _route_for(plan.model_dump(), ATTACHMENT_CONTEXT) == "visual_agent"
+
+
+@pytest.mark.asyncio
+async def test_a_caption_with_no_rule_keyword_still_reaches_the_visual_agent():
+    """'what do you think of this?' names no keyword, but it does carry a picture."""
+    from app.gate import supervise
+
+    plan = await supervise("what do you think of this?", llm=None, org_context=ATTACHMENT_CONTEXT)
+
+    assert "visual" in plan.suggested_agents
+    assert _route_for(plan.model_dump(), ATTACHMENT_CONTEXT) == "visual_agent"
+
+
+@pytest.mark.asyncio
+async def test_the_reference_alone_routes_to_vision_without_the_url_bridge():
+    """The regression: the reference arm is the contract and ``image_url`` is best-effort.
+
+    A run carrying a reference and no minted URL is the shape a host without a media signing key
+    produces. It reached ``formulate_response`` before this fix, so the picture was never read.
+    """
+    context = {"organization_id": REAL_ORG, "image_url": None, **{"attachments": ATTACHMENT_CONTEXT["attachments"]}}
+
+    assert _route_for({"intent_type": "general_inquiry", "suggested_agents": ["memory"]}, context) == (
+        "visual_agent"
+    )
+
+
+def test_a_text_only_message_never_reaches_the_visual_agent():
+    """No attachment and no bridge means no vision call - the text path is untouched."""
+    from app.context import has_inbound_media
+    from app.gate import classify_by_rules
+
+    context = {"organization_id": REAL_ORG}
+    assert has_inbound_media(context) is False
+
+    plan = classify_by_rules("what do you think of this?")
+    assert _route_for(plan.model_dump(), context) == "formulate_response"
+
+
+@pytest.mark.parametrize(
+    ("message", "intent_type"),
+    [("how many Blossoms do I have left?", "tenant_account"), ("tell me a joke", "out_of_scope")],
+)
+@pytest.mark.asyncio
+async def test_a_lane_answered_in_code_is_not_claimed_by_an_image(message, intent_type):
+    """A photo attached to an account question or a refusal does not turn it into a styling job."""
+    from app.gate import supervise
+
+    plan = await supervise(message, llm=None, org_context=ATTACHMENT_CONTEXT)
+
+    assert plan.intent_type == intent_type
+    assert plan.suggested_agents == []
+    assert _route_for(plan.model_dump(), ATTACHMENT_CONTEXT) == "formulate_response"
+
+
+def test_an_attachment_without_a_resolvable_reference_is_not_media():
+    """Malformed entries degrade to the text path instead of routing a run with nothing to read."""
+    from app.context import has_inbound_media
+
+    assert has_inbound_media({"attachments": [{"attachmentId": REAL_ATTACHMENT}]}) is False
+    assert has_inbound_media({"attachments": [None, "not-a-dict"]}) is False
+    assert has_inbound_media({"attachments": [{"reference": {"kind": "attachment"}}]}) is False
+    assert has_inbound_media({"attachments": []}) is False
+    assert has_inbound_media(None) is False
+    # The legacy bridge still counts on its own, which is what the old guard tested.
+    assert has_inbound_media({"image_url": "https://example.com/legacy.jpg"}) is True
+
+
+@pytest.mark.asyncio
+async def test_a_captionless_image_reaches_analyze_image_with_the_reference_set(monkeypatch):
+    """End of the bridge: the inbound attachment id arrives at vision as kind ``attachment``.
+
+    Drives ``run_visual_agent`` with the analysis and the inventory lookup stubbed, so the assertion
+    is about the contract the vision backend is handed rather than about the backend. ``attachment``
+    is one of the two kinds the API's ``MediaReferenceKinds`` admits.
+    """
+    sent: dict = {}
+
+    class _Registry:
+        async def analyze_product_image(self, **kwargs):
+            sent.update(kwargs)
+            return {
+                "attributes": {
+                    "category": "Saree",
+                    "primary_color": "Deep Crimson",
+                    "fabric": "Silk",
+                }
+            }
+
+        async def search_inventory(self, *, criteria):
+            return {"items": []}
+
+    monkeypatch.setattr("app.workflows.concierge_workflow.ToolRegistry", lambda: _Registry())
+
+    from app.workflows.concierge_workflow import run_visual_agent
+
+    # Captionless on purpose: no words at all, which is the shape the webhook records rather than
+    # drops, and the one that used to be answered without the picture ever being read. Direction is
+    # part of the contract, not incidental: it is what makes this the customer's answer rather than
+    # the staff summary `run_visual_agent` produces for an internal run.
+    out = await run_visual_agent(
+        {
+            "message": "",
+            "org_context": {**ATTACHMENT_CONTEXT, "direction": "inbound"},
+            "intent": {"intent_type": "item_search", "suggested_agents": ["memory", "visual"]},
+        }
+    )
+
+    assert sent["image_ref_kind"] == "attachment"
+    assert sent["image_ref_id"] == REAL_ATTACHMENT
+    assert sent["org_id"] == REAL_ORG
+    # The reference arm wins, so the rotating bridge is not sent alongside it.
+    assert sent["image_url"] is None
+
+    # Nothing matched, so the sourcing path answers - and it names what was in the photo rather
+    # than treating it as an unnamed "exact piece".
+    suggestion = out["visual_output"]["suggestion"]
+    assert "deep crimson silk saree" in suggestion.lower()
+
+
+@pytest.mark.asyncio
+async def test_a_matched_piece_reply_still_names_what_the_photo_showed():
+    """The other reply path: pieces were found, and the answer still refers to the image.
+
+    Both branches matter. Wiring the image in but leaving the wording generic is the defect
+    restated, just after a successful round-trip, so the matched case is asserted too.
+    """
+
+    class _Registry:
+        async def analyze_product_image(self, **_kwargs):
+            return {
+                "attributes": {
+                    "category": "Saree",
+                    "primary_color": "Deep Crimson",
+                    "fabric": "Silk",
+                }
+            }
+
+        async def search_inventory(self, *, criteria):
+            return {"items": [{"itemId": "p-1", "name": "Crimson Kanjeevaram", "stock": 3}]}
+
+    from app.agents.visual_insight.nodes import VisualInsightAgent
+
+    agent = VisualInsightAgent(registry=_Registry(), llm=None)
+    analyzed = await agent.analyze_image(
+        {
+            "org_id": REAL_ORG,
+            "message": "",
+            "image_ref_kind": "attachment",
+            "image_ref_id": REAL_ATTACHMENT,
+        }
+    )
+    matched = await agent.search_inventory({"org_id": REAL_ORG, **analyzed})
+    composed = await agent.compose_looks(
+        {"org_id": REAL_ORG, "message": "", "staff_query": False, **analyzed, **matched}
+    )
+
+    assert "deep crimson silk saree" in composed["suggestion"].lower()
+    # ...and the matched piece is still named, so the observation did not replace the offer.
+    assert "Crimson Kanjeevaram" in composed["suggestion"]
+
+@pytest.mark.asyncio
+async def test_a_text_only_run_never_calls_analyze_image():
+    """The mirror of the test above: with no media the analysis is not attempted at all.
+
+    A text-only message must never produce a vision call, so the analysis outcome carries no
+    attributes and no reason - not a denial, not a failure, simply nothing to look at.
+    """
+    from app.agents.visual_insight.nodes import VisualInsightAgent
+
+    called: list[dict] = []
+
+    class _Registry:
+        async def analyze_product_image(self, **kwargs):
+            called.append(kwargs)
+            return {"attributes": {"category": "Saree", "primary_color": "Deep Crimson"}}
+
+    agent = VisualInsightAgent(registry=_Registry(), llm=None)
+
+    out = await agent.analyze_image({"org_id": REAL_ORG, "message": "do you have a blue saree?"})
+
+    assert called == []
+    assert out == {"image_attributes": None}
+
+
+# ---------------------------------------------------------------------------
 # Context loading (ADR-023, W1.4-W1.7)
 # ---------------------------------------------------------------------------
 

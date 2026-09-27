@@ -15,7 +15,7 @@ class OrderCreationController extends ChangeNotifier {
   String? _customerTier;
   String? _notes;
   final List<OrderItem> _items = [];
-  double _discount = 0.0;
+  double _discountPercent = 0.0;
   bool _isSubmitting = false;
   String? _errorMessage;
 
@@ -25,19 +25,20 @@ class OrderCreationController extends ChangeNotifier {
   String? get customerTier => _customerTier;
   String? get notes => _notes;
   List<OrderItem> get items => List.unmodifiable(_items);
-  double get discount => _discount;
+  double get discountPercent => _discountPercent;
+  double get discount => (subtotal * (_discountPercent / 100.0)).clamp(0.0, subtotal);
   bool get isSubmitting => _isSubmitting;
   String? get errorMessage => _errorMessage;
 
   double get subtotal => _items.fold(0.0, (sum, i) => sum + i.totalPrice);
   double get totalCost =>
       _items.fold(0.0, (sum, i) => sum + (i.wholesaleCost * i.quantity));
-  double get total => (subtotal - _discount).clamp(0.0, double.infinity);
+  double get total => (subtotal - discount).clamp(0.0, double.infinity);
   double get margin => total - totalCost;
   double get marginPercent => total > 0 ? (margin / total) * 100 : 0.0;
 
   bool get triggersApprovalWarning =>
-      (subtotal > 0 && (_discount / subtotal) > 0.15) || (subtotal > 0 && marginPercent < 20.0);
+      (subtotal > 0 && _discountPercent > 15.0) || (subtotal > 0 && marginPercent < 20.0);
 
   bool get canSubmit =>
       _customerName.trim().isNotEmpty && _items.isNotEmpty && !_isSubmitting;
@@ -69,9 +70,13 @@ class OrderCreationController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setDiscount(double amount) {
-    _discount = amount.clamp(0.0, double.infinity);
+  void setDiscountPercent(double percent) {
+    _discountPercent = percent.clamp(0.0, 100.0);
     notifyListeners();
+  }
+
+  void setDiscount(double percent) {
+    setDiscountPercent(percent);
   }
 
   void addItem(OrderItem item) {
@@ -119,7 +124,7 @@ class OrderCreationController extends ChangeNotifier {
         orderType: _orderType,
         items: _items,
         customerId: _customerId,
-        discount: _discount > 0 ? _discount : null,
+        discount: discount > 0 ? discount : null,
         customerTier: _customerTier,
         notes: _notes,
       );
@@ -141,7 +146,7 @@ class OrderCreationController extends ChangeNotifier {
     _customerTier = null;
     _notes = null;
     _items.clear();
-    _discount = 0.0;
+    _discountPercent = 0.0;
     _isSubmitting = false;
     _errorMessage = null;
     notifyListeners();

@@ -129,24 +129,33 @@ public class OrderService : IOrderService
                     evalRequest,
                     cancellationToken);
 
-                if (evaluation.RequiresApproval)
+                if (evaluation.RequiresApproval || dto.RequireApproval)
                 {
                     initialStatus = "pending_approval";
                     if (evaluation.TriggeredRules != null && evaluation.TriggeredRules.Count > 0)
                     {
                         approvalReason = string.Join(", ", evaluation.TriggeredRules);
                     }
+                    else if (dto.RequireApproval)
+                    {
+                        approvalReason = "Conversational order queued for owner approval";
+                    }
                     _logger.LogInformation(
                         "Order {OrderId} requires approval due to rules: {Rules}",
                         orderId,
-                        string.Join(", ", evaluation.TriggeredRules));
+                        approvalReason);
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to evaluate business rules for order {OrderId}. Defaulting to pending_hold.", orderId);
-                initialStatus = "pending_hold";
+                initialStatus = dto.RequireApproval ? "pending_approval" : "pending_hold";
             }
+        }
+        else if (dto.RequireApproval)
+        {
+            initialStatus = "pending_approval";
+            approvalReason = "Conversational order queued for owner approval";
         }
 
         var order = new Order

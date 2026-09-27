@@ -47,6 +47,7 @@ import {
   isValidImageFile,
 } from '@/lib/image-optimizer'
 import type { InventoryItemMock } from './mockData'
+import type { DetectedClothingItem } from '@/types/catalog'
 import { FloorTagStudio } from './FloorTagStudio'
 
 interface AddProductModalProps {
@@ -140,8 +141,8 @@ export function AddProductModal({
   const [fabric, setFabric] = useState(editingItem?.fabric ?? '')
   const [style, setStyle] = useState(editingItem?.style ?? '')
   const [pattern, setPattern] = useState(editingItem?.pattern ?? '')
-  const [price, setPrice] = useState(editingItem?.price ? String(editingItem.price) : '1250')
-  const [cost, setCost] = useState(editingItem?.cost ? String(editingItem.cost) : '550')
+  const [price, setPrice] = useState(editingItem?.price ? String(editingItem.price) : '')
+  const [cost, setCost] = useState(editingItem?.cost ? String(editingItem.cost) : '')
   const [stockQuantity, setStockQuantity] = useState(
     editingItem?.stockQuantity ? String(editingItem.stockQuantity) : '4',
   )
@@ -174,6 +175,8 @@ export function AddProductModal({
   const [selectedFileSize, setSelectedFileSize] = useState<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isSaving, setIsSaving] = useState(false)
+  const [detectedGarments, setDetectedGarments] = useState<DetectedClothingItem[]>([])
+  const [selectedGarmentIndex, setSelectedGarmentIndex] = useState<number>(0)
 
   // The floor-tag studio owns its own encoding, copy, download and print state; it was extracted
   // into `FloorTagStudio`, so this drawer keeps only the identity that tag needs.
@@ -181,6 +184,8 @@ export function AddProductModal({
 
   useEffect(() => {
     if (open) {
+      setDetectedGarments([])
+      setSelectedGarmentIndex(0)
       if (editingItem) {
         setName(editingItem.name || '')
         setSku(editingItem.sku || `AVL-${Math.floor(100 + Math.random() * 900)}`)
@@ -190,8 +195,8 @@ export function AddProductModal({
         setFabric(editingItem.fabric || '')
         setStyle(editingItem.style || '')
         setPattern(editingItem.pattern || '')
-        setPrice(editingItem.price ? String(editingItem.price) : '1250')
-        setCost(editingItem.cost ? String(editingItem.cost) : '550')
+        setPrice(editingItem.price ? String(editingItem.price) : '')
+        setCost(editingItem.cost ? String(editingItem.cost) : '')
         setStockQuantity(editingItem.stockQuantity ? String(editingItem.stockQuantity) : '4')
         setSizesInput(
           Array.isArray(editingItem.sizes)
@@ -219,8 +224,8 @@ export function AddProductModal({
         setFabric('')
         setStyle('')
         setPattern('')
-        setPrice('1250')
-        setCost('550')
+        setPrice('')
+        setCost('')
         setStockQuantity('4')
         setSizesInput('38, 40, 42')
         setImageUrl('')
@@ -233,60 +238,208 @@ export function AddProductModal({
     }
   }, [open, editingItem])
 
+  const handleSelectGarment = (index: number) => {
+    const garment = detectedGarments[index]
+    if (!garment) return
+    setSelectedGarmentIndex(index)
+    const normCat = normalizeCategory(garment.category)
+    const gType = garment.clothingType || `${garment.primaryColor} ${normCat}`
+    const gColor = garment.primaryColor && garment.primaryColor.toLowerCase() !== 'unknown' ? garment.primaryColor : ''
+    const gHex = garment.colorHex || ''
+    const gFabric = garment.material || ''
+    const gPattern = garment.pattern && garment.pattern.toLowerCase() !== 'unknown' ? garment.pattern : ''
+    const gStyle = garment.style && garment.style.toLowerCase() !== 'unknown' ? garment.style : ''
+    const gDesc = garment.description || ''
+
+    setColor(gColor)
+    setColorHex(gHex ? gHex.toLowerCase() : '')
+    setCategory(normCat)
+    setGarmentType(gType)
+    setFabric(gFabric)
+    setPattern(gPattern)
+    setStyle(gStyle)
+    if (typeof garment.confidence === 'number') {
+      setAiConfidence(garment.confidence)
+    }
+    if (gDesc) setDescription(gDesc)
+    toast.info(`Selected ${gType}`, {
+      description: `${gColor} · ${normCat}`,
+    })
+  }
+
   if (!open) return null
+
+  const buildBespokeDescription = (
+    targetCategory: string,
+    targetColor?: string,
+    targetFabric?: string,
+    targetGarmentType?: string | null,
+    targetPattern?: string,
+  ): string => {
+    const activeCategory = targetCategory || 'Sarees'
+    const activeColor = (targetColor && targetColor.trim()) || 'Emerald Green'
+    const activeFabric = (targetFabric && targetFabric.trim()) || 'Pure Mulberry Silk'
+    const activePattern = (targetPattern && targetPattern.trim()) || 'Gold Zari Brocade'
+
+    let cleanGarment = (targetGarmentType && targetGarmentType.trim()) || ''
+    const catLower = activeCategory.toLowerCase()
+    const gLower = cleanGarment.toLowerCase()
+
+    const isCrossCategory =
+      !cleanGarment ||
+      (catLower.includes('gown') && (gLower.includes('saree') || gLower.includes('lehenga') || gLower.includes('kurta') || gLower.includes('pant') || gLower.includes('trouser') || gLower.includes('blouse'))) ||
+      (catLower.includes('saree') && (gLower.includes('gown') || gLower.includes('lehenga') || gLower.includes('trouser') || gLower.includes('coat') || gLower.includes('dress') || gLower.includes('pant'))) ||
+      (catLower.includes('lehenga') && (gLower.includes('saree') || gLower.includes('gown') || gLower.includes('trouser') || gLower.includes('coat') || gLower.includes('dress') || gLower.includes('pant'))) ||
+      (catLower.includes('kurta') && (gLower.includes('saree') || gLower.includes('gown') || gLower.includes('lehenga') || gLower.includes('coat') || gLower.includes('dress') || gLower.includes('pant'))) ||
+      (catLower.includes('top') && (gLower.includes('saree') || gLower.includes('gown') || gLower.includes('lehenga') || gLower.includes('pant') || gLower.includes('trouser') || gLower.includes('dress'))) ||
+      (catLower.includes('trouser') && (gLower.includes('saree') || gLower.includes('gown') || gLower.includes('lehenga') || gLower.includes('blouse') || gLower.includes('dress') || gLower.includes('top'))) ||
+      (catLower.includes('outerwear') && (gLower.includes('saree') || gLower.includes('gown') || gLower.includes('lehenga') || gLower.includes('dress') || gLower.includes('pant'))) ||
+      (catLower.includes('drape') && (gLower.includes('gown') || gLower.includes('trouser') || gLower.includes('coat') || gLower.includes('dress') || gLower.includes('pant'))) ||
+      (catLower.includes('jewelry') && (gLower.includes('saree') || gLower.includes('gown') || gLower.includes('pant') || gLower.includes('dress') || gLower.includes('trouser'))) ||
+      (catLower.includes('footwear') && (gLower.includes('saree') || gLower.includes('gown') || gLower.includes('blouse') || gLower.includes('dress') || gLower.includes('pant')))
+
+    if (isCrossCategory) {
+      switch (activeCategory) {
+        case 'Sarees': cleanGarment = 'Silk Kanjeevaram Saree'; break;
+        case 'Lehengas': cleanGarment = 'Flared Silk Lehenga'; break;
+        case 'Gowns': cleanGarment = 'Luminous Evening Gown'; break;
+        case 'Kurtas & Tunics': cleanGarment = 'Handloom Kurti & Tunic'; break;
+        case 'Tops & Blouses': cleanGarment = 'Tailored Silk Blouse'; break;
+        case 'Trousers & Pants': cleanGarment = 'Tailored Formal Trousers'; break;
+        case 'Outerwear': cleanGarment = 'Tailored Boutique Blazer'; break;
+        case 'Drapes & Shawls': cleanGarment = 'Handwoven Cashmere Shawl'; break;
+        case 'Jewelry & Accessories': cleanGarment = 'Heirloom Kundan Necklace'; break;
+        case 'Footwear': cleanGarment = 'Handcrafted Artisan Footwear'; break;
+        default: cleanGarment = `${activeCategory} Piece`;
+      }
+    }
+
+    let narrative = ''
+    let styling = ''
+
+    switch (activeCategory) {
+      case 'Sarees':
+        narrative = `Exquisite ${activeColor.toLowerCase()} ${cleanGarment.toLowerCase()} woven from authentic ${activeFabric.toLowerCase()}, featuring an opulent ${activePattern.toLowerCase()} with a lustrous heirloom drape. Tailored with meticulous craftsmanship, making it a centerpiece for weddings, celebratory galas, and festive receptions.`
+        styling = 'Accentuate with handcrafted polki or antique gold jewelry, an embellished clutch, and sleek stilettos for a timeless boutique statement.'
+        break
+      case 'Lehengas':
+        narrative = `Regal ${activeColor.toLowerCase()} ${cleanGarment.toLowerCase()} tailored in rich ${activeFabric.toLowerCase()}, accented with intricate ${activePattern.toLowerCase()} and a voluminous bridal flare. Designed for high-octane celebrations and modern royal occasions.`
+        styling = 'Pair with a statement kundan choker set, embellished juttis, and an artisan potli bag.'
+        break
+      case 'Gowns':
+        narrative = `Sculpted ${activeColor.toLowerCase()} ${cleanGarment.toLowerCase()} in luminous ${activeFabric.toLowerCase()}, showcasing refined ${activePattern.toLowerCase()} detailing and modern red-carpet allure. Crafted for black-tie galas and luxury evening receptions.`
+        styling = 'Complement with diamond drop earrings, minimalist strappy heels, and an elegant satin minaudière.'
+        break
+      case 'Kurtas & Tunics':
+        narrative = `Sophisticated ${activeColor.toLowerCase()} ${cleanGarment.toLowerCase()} crafted from breathable ${activeFabric.toLowerCase()}, highlighted by subtle ${activePattern.toLowerCase()} accents and tailored comfort. Ideal for intimate festive gatherings and curated daytime luxury.`
+        styling = 'Pair with tapered silk trousers, kolhapuri wedges, and understated pearl studs.'
+        break
+      case 'Tops & Blouses':
+        narrative = `Artisanal ${activeColor.toLowerCase()} ${cleanGarment.toLowerCase()} tailored in luxurious ${activeFabric.toLowerCase()}, showcasing refined ${activePattern.toLowerCase()} accents and precision fit. Designed for elegant layering and bespoke couture styling.`
+        styling = 'Pair with high-waisted silk trousers or flared skirts with delicate gold jewelry.'
+        break
+      case 'Trousers & Pants':
+        narrative = `Impeccably cut ${activeColor.toLowerCase()} ${cleanGarment.toLowerCase()} tailored from premium ${activeFabric.toLowerCase()}, detailed with clean ${activePattern.toLowerCase()} lines and structured drape.`
+        styling = 'Style with an architectural silk blouse, tailored blazer, and sleek leather footwear.'
+        break
+      case 'Outerwear':
+        narrative = `Distinguished ${activeColor.toLowerCase()} ${cleanGarment.toLowerCase()} crafted from structured ${activeFabric.toLowerCase()}, showcasing artisanal ${activePattern.toLowerCase()} finishes. Designed for regal winter ceremonies and formal receptions.`
+        styling = 'Layer over monochromatic silk ensembles with polished leather mojaris or dress shoes.'
+        break
+      case 'Drapes & Shawls':
+        narrative = `Heirloom-grade ${activeColor.toLowerCase()} ${cleanGarment.toLowerCase()} spun from ultra-fine ${activeFabric.toLowerCase()}, detailed with traditional ${activePattern.toLowerCase()} motifs. Perfect for adding warmth and regal distinction.`
+        styling = 'Drape gracefully over tailored sherwanis, classic silk sarees, or sleeveless evening gowns.'
+        break
+      case 'Jewelry & Accessories':
+        narrative = `Bespoke ${activeColor.toLowerCase()} ${cleanGarment.toLowerCase()} fashioned in ${activeFabric.toLowerCase()}, adorned with brilliant ${activePattern.toLowerCase()} craftsmanship. Designed to elevate luxury evening ensembles with radiant elegance.`
+        styling = 'Pair as the focal statement piece with deep neckline silks or classic monochromatic silhouettes.'
+        break
+      case 'Footwear':
+        narrative = `Handcrafted ${activeColor.toLowerCase()} ${cleanGarment.toLowerCase()} in fine ${activeFabric.toLowerCase()}, highlighted with signature ${activePattern.toLowerCase()} detailing and comfort engineering.`
+        styling = 'Pair with bespoke couture tailoring or celebratory celebratory ensembles.'
+        break
+      default:
+        narrative = `Exquisite ${activeColor.toLowerCase()} ${cleanGarment.toLowerCase()} crafted from premium ${activeFabric.toLowerCase()} featuring a refined ${activePattern.toLowerCase()} aesthetic with fluid drape. Designed with timeless boutique elegance, ideal for celebratory soirees.`
+        styling = 'Pair with fine artisan jewelry, tonal evening accessories, and structured footwear for a polished boutique statement.'
+    }
+
+    return `${narrative} Styling: ${styling}`
+  }
+
+  const handleCategoryChange = (newCategory: string) => {
+    setCategory(newCategory)
+
+    let nextGarment = garmentType
+    const gLower = (garmentType || '').toLowerCase()
+    const catLower = newCategory.toLowerCase()
+
+    const isCrossCategory =
+      !garmentType ||
+      (catLower.includes('gown') && (gLower.includes('saree') || gLower.includes('lehenga') || gLower.includes('kurta') || gLower.includes('pant') || gLower.includes('trouser') || gLower.includes('blouse'))) ||
+      (catLower.includes('saree') && (gLower.includes('gown') || gLower.includes('lehenga') || gLower.includes('trouser') || gLower.includes('coat') || gLower.includes('dress') || gLower.includes('pant'))) ||
+      (catLower.includes('lehenga') && (gLower.includes('saree') || gLower.includes('gown') || gLower.includes('trouser') || gLower.includes('coat') || gLower.includes('dress') || gLower.includes('pant'))) ||
+      (catLower.includes('kurta') && (gLower.includes('saree') || gLower.includes('gown') || gLower.includes('lehenga') || gLower.includes('coat') || gLower.includes('dress') || gLower.includes('pant'))) ||
+      (catLower.includes('top') && (gLower.includes('saree') || gLower.includes('gown') || gLower.includes('lehenga') || gLower.includes('pant') || gLower.includes('trouser') || gLower.includes('dress'))) ||
+      (catLower.includes('trouser') && (gLower.includes('saree') || gLower.includes('gown') || gLower.includes('lehenga') || gLower.includes('blouse') || gLower.includes('dress') || gLower.includes('top'))) ||
+      (catLower.includes('outerwear') && (gLower.includes('saree') || gLower.includes('gown') || gLower.includes('lehenga') || gLower.includes('dress') || gLower.includes('pant'))) ||
+      (catLower.includes('drape') && (gLower.includes('gown') || gLower.includes('trouser') || gLower.includes('coat') || gLower.includes('dress') || gLower.includes('pant'))) ||
+      (catLower.includes('jewelry') && (gLower.includes('saree') || gLower.includes('gown') || gLower.includes('pant') || gLower.includes('dress') || gLower.includes('trouser'))) ||
+      (catLower.includes('footwear') && (gLower.includes('saree') || gLower.includes('gown') || gLower.includes('blouse') || gLower.includes('dress') || gLower.includes('pant')))
+
+    if (isCrossCategory) {
+      switch (newCategory) {
+        case 'Sarees': nextGarment = 'Silk Kanjeevaram Saree'; break;
+        case 'Lehengas': nextGarment = 'Flared Silk Lehenga'; break;
+        case 'Gowns': nextGarment = 'Luminous Evening Gown'; break;
+        case 'Kurtas & Tunics': nextGarment = 'Handloom Kurti & Tunic'; break;
+        case 'Tops & Blouses': nextGarment = 'Tailored Silk Blouse'; break;
+        case 'Trousers & Pants': nextGarment = 'Tailored Formal Trousers'; break;
+        case 'Outerwear': nextGarment = 'Tailored Boutique Blazer'; break;
+        case 'Drapes & Shawls': nextGarment = 'Handwoven Cashmere Shawl'; break;
+        case 'Jewelry & Accessories': nextGarment = 'Heirloom Kundan Necklace'; break;
+        case 'Footwear': nextGarment = 'Handcrafted Artisan Footwear'; break;
+        default: nextGarment = `${newCategory} Piece`;
+      }
+      setGarmentType(nextGarment)
+    }
+
+    // Automatically update the description to reflect the new category & cloth type
+    const newDesc = buildBespokeDescription(newCategory, color, fabric, nextGarment, pattern)
+    setDescription(newDesc)
+  }
+
+  const handleGarmentTypeChange = (newGarmentType: string) => {
+    setGarmentType(newGarmentType)
+
+    const gLower = newGarmentType.toLowerCase()
+    let activeCat = category
+    if (gLower.includes('saree') || gLower.includes('sari')) activeCat = 'Sarees'
+    else if (gLower.includes('lehenga') || gLower.includes('ghagra')) activeCat = 'Lehengas'
+    else if (gLower.includes('gown') || gLower.includes('dress') || gLower.includes('maxi')) activeCat = 'Gowns'
+    else if (gLower.includes('kurta') || gLower.includes('kurti') || gLower.includes('anarkali')) activeCat = 'Kurtas & Tunics'
+    else if (gLower.includes('top') || gLower.includes('shirt') || gLower.includes('blouse') || gLower.includes('corset')) activeCat = 'Tops & Blouses'
+    else if (gLower.includes('trouser') || gLower.includes('pant') || gLower.includes('jeans') || gLower.includes('skirt')) activeCat = 'Trousers & Pants'
+    else if (gLower.includes('blazer') || gLower.includes('jacket') || gLower.includes('coat') || gLower.includes('outerwear')) activeCat = 'Outerwear'
+    else if (gLower.includes('shawl') || gLower.includes('dupatta') || gLower.includes('drape') || gLower.includes('scarf')) activeCat = 'Drapes & Shawls'
+    else if (gLower.includes('necklace') || gLower.includes('earring') || gLower.includes('jewelry') || gLower.includes('clutch')) activeCat = 'Jewelry & Accessories'
+    else if (gLower.includes('shoe') || gLower.includes('heel') || gLower.includes('footwear') || gLower.includes('jutti')) activeCat = 'Footwear'
+
+    if (activeCat !== category) {
+      setCategory(activeCat)
+    }
+
+    // Automatically update description with the new cloth type
+    const newDesc = buildBespokeDescription(activeCat, color, fabric, newGarmentType, pattern)
+    setDescription(newDesc)
+  }
 
   const handleGenerateDescriptionWithAi = () => {
     setGeneratingDescription(true)
     try {
-      const activeCategory = category || 'Sarees'
-      const activeColor = (color && color.trim()) || 'Crimson Red'
-      const activeFabric = (fabric && fabric.trim()) || 'Pure Mulberry Silk'
-      const activeGarment = (garmentType && garmentType.trim()) ||
-        (name && name.trim()) ||
-        (activeCategory === 'Sarees' ? 'Silk Kanjeevaram Saree' : `${activeColor} ${activeCategory}`)
-      const activePattern = (pattern && pattern.trim()) || 'Gold Zari Brocade'
-
-      let narrative = ''
-      let styling = ''
-
-      switch (activeCategory) {
-        case 'Sarees':
-          narrative = `Exquisite ${activeColor.toLowerCase()} ${activeGarment.toLowerCase()} woven from authentic ${activeFabric.toLowerCase()}, featuring an opulent ${activePattern.toLowerCase()} with a lustrous heirloom drape. Tailored with meticulous craftsmanship, making it a centerpiece for weddings, celebratory galas, and festive receptions.`
-          styling = 'Accentuate with handcrafted polki or antique gold jewelry, an embellished clutch, and sleek stilettos for a timeless boutique statement.'
-          break
-        case 'Lehengas':
-          narrative = `Regal ${activeColor.toLowerCase()} ${activeGarment.toLowerCase()} tailored in rich ${activeFabric.toLowerCase()}, accented with intricate ${activePattern.toLowerCase()} and a voluminous bridal flare. Designed for high-octane celebrations and modern royal occasions.`
-          styling = 'Pair with a statement kundan choker set, embellished juttis, and an artisan potli bag.'
-          break
-        case 'Gowns':
-          narrative = `Sculpted ${activeColor.toLowerCase()} ${activeGarment.toLowerCase()} in luminous ${activeFabric.toLowerCase()}, showcasing refined ${activePattern.toLowerCase()} detailing and modern red-carpet allure. Crafted for black-tie galas and luxury evening receptions.`
-          styling = 'Complement with diamond drop earrings, minimalist strappy heels, and an elegant satin minaudière.'
-          break
-        case 'Kurtas & Tunics':
-          narrative = `Sophisticated ${activeColor.toLowerCase()} ${activeGarment.toLowerCase()} crafted from breathable ${activeFabric.toLowerCase()}, highlighted by subtle ${activePattern.toLowerCase()} accents and tailored comfort. Ideal for intimate festive gatherings and curated daytime luxury.`
-          styling = 'Pair with tapered silk trousers, kolhapuri wedges, and understated pearl studs.'
-          break
-        case 'Outerwear':
-          narrative = `Distinguished ${activeColor.toLowerCase()} ${activeGarment.toLowerCase()} crafted from structured ${activeFabric.toLowerCase()}, showcasing artisanal ${activePattern.toLowerCase()} finishes. Designed for regal winter ceremonies and formal receptions.`
-          styling = 'Layer over monochromatic silk ensembles with polished leather mojaris or dress shoes.'
-          break
-        case 'Drapes & Shawls':
-          narrative = `Heirloom-grade ${activeColor.toLowerCase()} ${activeGarment.toLowerCase()} spun from ultra-fine ${activeFabric.toLowerCase()}, detailed with traditional ${activePattern.toLowerCase()} motifs. Perfect for adding warmth and regal distinction.`
-          styling = 'Drape gracefully over tailored sherwanis, classic silk sarees, or sleeveless evening gowns.'
-          break
-        case 'Jewelry & Accessories':
-          narrative = `Bespoke ${activeColor.toLowerCase()} ${activeGarment.toLowerCase()} fashioned in ${activeFabric.toLowerCase()}, adorned with brilliant ${activePattern.toLowerCase()} craftsmanship. Designed to elevate luxury evening ensembles with radiant elegance.`
-          styling = 'Pair as the focal statement piece with deep neckline silks or classic monochromatic silhouettes.'
-          break
-        default:
-          narrative = `Exquisite ${activeColor.toLowerCase()} ${activeGarment.toLowerCase()} crafted from premium ${activeFabric.toLowerCase()} featuring a refined ${activePattern.toLowerCase()} aesthetic with fluid drape. Designed with timeless boutique elegance, ideal for celebratory soirees.`
-          styling = 'Pair with fine artisan jewelry, tonal evening accessories, and structured footwear for a polished boutique statement.'
-      }
-
-      const generated = `${narrative} Styling: ${styling}`
+      const generated = buildBespokeDescription(category, color, fabric, garmentType, pattern)
       setDescription(generated)
       toast.success('Bespoke description generated with AI', {
-        description: `${activeGarment} (${activeColor} · ${activeFabric})`,
+        description: `${garmentType || category} (${color || 'Boutique Palette'} · ${fabric || 'Fine Fabric'})`,
       })
     } catch {
       toast.error('Failed to generate description')
@@ -356,7 +509,6 @@ export function AddProductModal({
       let resolvedPattern: string
       let resolvedStyle: string
       let resolvedConfidence: number | null
-      let resolvedName: string
       let resolvedDesc: string
 
       // 3. Precedence. A real multimodal analysis of this image beats the client-side heuristic,
@@ -385,7 +537,6 @@ export function AddProductModal({
         resolvedPattern = backendResult.pattern || ''
         resolvedStyle = backendResult.style || ''
         resolvedConfidence = backendResult.confidenceScore ?? null
-        resolvedName = backendResult.suggestedItemName || [resolvedColor, resolvedFabric, resolvedGarment].filter(Boolean).join(' ').trim()
         // Only the provider's own copy. A synthesized sentence built from absent attributes would
         // invent a weave and a finish the analysis never observed; the drawer's explicit
         // "generate description" action is where prose is composed, and it is the operator's call.
@@ -403,7 +554,6 @@ export function AddProductModal({
         resolvedPattern = visualClientAnalysis.pattern
         resolvedStyle = visualClientAnalysis.style
         resolvedConfidence = visualClientAnalysis.confidenceScore ?? null
-        resolvedName = visualClientAnalysis.suggestedItemName
         resolvedDesc = visualClientAnalysis.description
       } else if (backendResult) {
         // The backend's deterministic fallback with no client measurement to arbitrate. Its answer
@@ -419,13 +569,20 @@ export function AddProductModal({
         resolvedPattern = backendResult.pattern || ''
         resolvedStyle = backendResult.style || ''
         resolvedConfidence = backendResult.confidenceScore ?? null
-        resolvedName = backendResult.suggestedItemName || [resolvedColor, resolvedFabric, resolvedGarment].filter(Boolean).join(' ').trim()
         resolvedDesc = backendResult.description || ''
       } else {
         throw new Error('Analysis yielded no attributes')
       }
 
       // Update state hooks to refresh all form inputs immediately
+      if (backendResult?.items && backendResult.items.length > 0) {
+        setDetectedGarments(backendResult.items)
+        setSelectedGarmentIndex(0)
+      } else {
+        setDetectedGarments([])
+        setSelectedGarmentIndex(0)
+      }
+
       setColor(resolvedColor)
       // Normalised to lowercase: the swatch below is the HTML colour control, which accepts only
       // `#rrggbb` and silently renders black for an uppercase value. An unmeasured colour stays
@@ -437,7 +594,6 @@ export function AddProductModal({
       setPattern(resolvedPattern)
       setStyle(resolvedStyle)
       setAiConfidence(resolvedConfidence)
-      setName(resolvedName)
       setDescription(resolvedDesc)
 
       setAnalyzing(false)
@@ -523,6 +679,8 @@ export function AddProductModal({
     setUploadedImageId(null)
     setSelectedFileName(null)
     setSelectedFileSize(null)
+    setDetectedGarments([])
+    setSelectedGarmentIndex(0)
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
@@ -796,6 +954,46 @@ export function AddProductModal({
 
             </FormSection>
 
+            {/* Multi-garment Decomposition Selector */}
+            {detectedGarments.length > 1 && (
+              <div className="rounded-xl border border-primary/20 bg-primary/5 p-3.5 transition-all">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-primary">
+                    <Sparkles className="size-3.5" /> Multiple Garments Detected ({detectedGarments.length})
+                  </span>
+                  <span className="text-[11px] text-muted-foreground">Select piece to populate</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {detectedGarments.map((g, idx) => {
+                    const isSelected = selectedGarmentIndex === idx
+                    return (
+                      <Button
+                        key={idx}
+                        type="button"
+                        variant={isSelected ? 'default' : 'outline'}
+                        size="sm"
+                        onClick={() => handleSelectGarment(idx)}
+                        className={`h-7 gap-2 px-3 text-xs font-medium ${
+                          isSelected
+                            ? 'bg-primary text-primary-foreground shadow-xs'
+                            : 'border-border bg-background text-foreground hover:bg-muted'
+                        }`}
+                      >
+                        {g.colorHex && (
+                          <span
+                            className="size-2.5 shrink-0 rounded-full border border-black/10"
+                            style={{ backgroundColor: g.colorHex }}
+                          />
+                        )}
+                        <span className="capitalize">{g.clothingType}</span>
+                        <span className="text-[10px] opacity-70">({g.primaryColor})</span>
+                      </Button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
             <FormSection
               step={2}
               title="The piece"
@@ -827,7 +1025,7 @@ export function AddProductModal({
 
               <div className="grid gap-3.5 sm:grid-cols-3">
                 <Field label="Category">
-                  <Select value={category} onValueChange={setCategory}>
+                  <Select value={category} onValueChange={handleCategoryChange}>
                     <SelectTrigger aria-label="Category" className="w-full">
                       <SelectValue placeholder="Choose a category" />
                     </SelectTrigger>
@@ -846,8 +1044,7 @@ export function AddProductModal({
                     type="number"
                     value={price}
                     onChange={(e) => setPrice(e.target.value)}
-                    placeholder="1450"
-                    required
+                    placeholder="e.g. 1450"
                   />
                 </Field>
 
@@ -856,7 +1053,7 @@ export function AddProductModal({
                     type="number"
                     value={cost}
                     onChange={(e) => setCost(e.target.value)}
-                    placeholder="650"
+                    placeholder="e.g. 650"
                   />
                 </Field>
               </div>
@@ -868,48 +1065,60 @@ export function AddProductModal({
               title="What Aveline read"
               description="Filled from the photograph and editable. A value below was returned by the analysis, not guessed."
             >
-              <div className="flex flex-col gap-3 rounded-xl border border-primary/20 bg-primary/5 p-3.5">
-                <div className="flex items-center justify-between">
+              <div className="flex flex-col gap-3.5 rounded-xl border border-primary/20 bg-primary/5 p-4 shadow-2xs">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-primary/10 pb-2.5">
                   <div className="flex items-center gap-1.5 text-xs font-semibold text-primary">
                     <Sparkles className="size-3.5" />
                     <span>Visual AI Extracted Attributes</span>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {category && (
+                      <Badge variant="outline" className="text-[10px] border-primary/30 text-primary font-medium">
+                        {category}
+                      </Badge>
+                    )}
                     {garmentType && (
-                      <Badge variant="secondary" className="text-[10px] bg-primary/10 text-primary border border-primary/30">
+                      <Badge variant="secondary" className="text-[10px] bg-primary/10 text-primary border border-primary/30 max-w-[200px] truncate" title={garmentType}>
                         {garmentType}
                       </Badge>
                     )}
                     {aiConfidence && (
-                      <Badge variant="outline" className="text-[10px] border-primary/30 text-primary">
+                      <Badge variant="outline" className="text-[10px] border-primary/30 text-primary font-mono">
                         {Math.round(aiConfidence * 100)}% Confidence
                       </Badge>
                     )}
                   </div>
                 </div>
 
-                <div className="grid grid-cols-4 gap-3">
-                  <div className="flex flex-col gap-1">
-                    <Label className="text-[11px] text-muted-foreground">Cloth / Garment</Label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="detected-garment" className="text-xs font-medium text-foreground/80">
+                      Cloth / Garment
+                    </Label>
                     <Input
-                      value={garmentType || category}
-                      onChange={(e) => setGarmentType(e.target.value)}
-                      placeholder="e.g. Silk Saree"
-                      className="h-7 text-xs"
+                      id="detected-garment"
+                      value={garmentType !== null ? garmentType : category}
+                      onChange={(e) => handleGarmentTypeChange(e.target.value)}
+                      placeholder="e.g. Banarasi Silk Brocade Saree"
+                      title={garmentType !== null ? garmentType : category}
+                      className="h-8 text-xs bg-background/90"
                     />
                   </div>
 
-                  <div className="flex flex-col gap-1">
-                    <Label className="text-[11px] text-muted-foreground">Dominant Color</Label>
-                    <div className="flex items-center gap-1.5">
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="detected-color" className="text-xs font-medium text-foreground/80">
+                      Dominant Color
+                    </Label>
+                    <div className="flex items-center gap-2">
                       <Input
                         type="color"
                         aria-label="Dominant colour"
                         value={colorHex || DEFAULT_COLOR_HEX}
                         onChange={(e) => setColorHex(e.target.value)}
-                        className="size-6 shrink-0 cursor-pointer rounded border border-border p-0"
+                        className="size-8 shrink-0 cursor-pointer rounded-md border border-border p-0.5 shadow-2xs"
                       />
                       <Input
+                        id="detected-color"
                         value={color}
                         aria-label="Colour name"
                         onChange={(e) => {
@@ -918,34 +1127,43 @@ export function AddProductModal({
                           const hex = getColorHex(val, '')
                           if (hex) setColorHex(hex)
                         }}
-                        placeholder="Enter colour name"
-                        className="h-7 text-xs min-w-0"
+                        placeholder="e.g. Emerald Green"
+                        title={color}
+                        className="h-8 text-xs min-w-0 flex-1 bg-background/90"
                       />
                     </div>
                   </div>
 
-                  <div className="flex flex-col gap-1">
-                    <Label className="text-[11px] text-muted-foreground">Detected Fabric</Label>
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="detected-fabric" className="text-xs font-medium text-foreground/80">
+                      Detected Fabric
+                    </Label>
                     <Input
+                      id="detected-fabric"
                       value={fabric}
                       onChange={(e) => setFabric(e.target.value)}
                       aria-label="Detected fabric"
-                      placeholder="Pure Mulberry Silk"
-                      className="h-7 text-xs"
+                      placeholder="e.g. Pure Mulberry Silk"
+                      title={fabric}
+                      className="h-8 text-xs bg-background/90"
                     />
                   </div>
 
-                  <div className="flex flex-col gap-1">
-                    <Label className="text-[11px] text-muted-foreground">Style / Pattern</Label>
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="detected-pattern" className="text-xs font-medium text-foreground/80">
+                      Style / Pattern
+                    </Label>
                     <Input
+                      id="detected-pattern"
                       value={pattern || style}
                       onChange={(e) => {
                         setPattern(e.target.value)
                         setStyle(e.target.value)
                       }}
                       aria-label="Style and pattern"
-                      placeholder="Zari Brocade"
-                      className="h-7 text-xs"
+                      placeholder="e.g. Gold Zari Brocade"
+                      title={pattern || style}
+                      className="h-8 text-xs bg-background/90"
                     />
                   </div>
                 </div>

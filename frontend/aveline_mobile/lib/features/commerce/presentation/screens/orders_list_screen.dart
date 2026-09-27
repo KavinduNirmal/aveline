@@ -75,7 +75,7 @@ class _OrdersListScreenState extends State<OrdersListScreen> {
       backgroundColor: scheme.surface,
       appBar: AppBar(
         title: Text(
-          'Commerce Orders',
+          'All Orders',
           style: theme.textTheme.titleLarge?.copyWith(
             fontFamily: 'Playfair Display',
             fontWeight: FontWeight.w600,
@@ -89,13 +89,6 @@ class _OrdersListScreenState extends State<OrdersListScreen> {
             onPressed: () => _controller.fetchOrders(),
           ),
         ],
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => context.push(AppRoutes.createOrder),
-        backgroundColor: scheme.primary,
-        foregroundColor: scheme.onPrimary,
-        icon: const Icon(Icons.add_rounded),
-        label: const Text('New Order'),
       ),
       body: SafeArea(
         child: Column(

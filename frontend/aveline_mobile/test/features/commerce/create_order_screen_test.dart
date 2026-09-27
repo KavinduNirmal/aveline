@@ -95,9 +95,10 @@ void main() {
       ),
     );
 
-    expect(find.text('New Commerce Order'), findsOneWidget);
+    expect(find.text('New Order'), findsOneWidget);
     expect(find.text('In-Store Counter'), findsOneWidget);
     expect(find.text('WhatsApp Concierge'), findsOneWidget);
+    expect(find.text('Add Piece'), findsNothing);
 
     // Switch to WhatsApp
     await tester.tap(find.text('WhatsApp Concierge'));
@@ -122,6 +123,18 @@ void main() {
     // Verify item is now in the order list with price
     expect(find.text('Banarasi Saree'), findsOneWidget);
     expect(find.text('LKR 45000'), findsWidgets);
+
+    // Enter a 10% discount
+    final discountField = find.widgetWithText(TextField, 'Custom Discount (%)');
+    expect(discountField, findsOneWidget);
+    await tester.enterText(discountField, '10');
+    await tester.pumpAndSettle();
+
+    // Verify discount summary shows 10% and calculated amount: 45000 * 0.10 = 4500
+    // Total should show Subtotal (45000) - Discount (4500) = 40500
+    expect(find.text('Discount (10%)'), findsOneWidget);
+    expect(find.text('- LKR 4500'), findsOneWidget);
+    expect(find.text('LKR 40500'), findsOneWidget);
 
     // Verify Create Order button is now active
     final createBtn = find.widgetWithText(FilledButton, 'Create Order');

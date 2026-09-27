@@ -1,3 +1,428 @@
+## Session 2026-09-27 (Python Agent Service CI Lint & Test Resolution)
+
+**Task:** Resolve GitHub Actions CI failure on `Aveline CI / Lint & Test Python Agent Service (pull_request)` caused by `ruff check` detecting `F821 Undefined name _MAX_COMMENTARY_CHARS` in `agent-service/app/agents/visual_insight/nodes.py`.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Defined Missing Module Constant (`agent-service/app/agents/visual_insight/nodes.py`)**:
+   - Added module-level constant `_MAX_COMMENTARY_CHARS = 900` referenced during commentary formatting.
+
+2. **Automated Linting & Test Coverage Verification**:
+   - Ran `ruff check app/`: Passed with 0 errors.
+   - Ran `pytest tests/ --cov=app --cov-report=term --cov-fail-under=90`: 161/161 tests passed across all agent test suites with **96.47% coverage** (exceeding the 90% CI threshold).
+   - Pushed fix commit to `origin/feature/visual-insight-agent`.
+
+### Files Created or Modified
+
+- `agent-service/app/agents/visual_insight/nodes.py`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `ruff check app/`: 0 errors.
+- `pytest tests/ --cov=app --cov-report=term --cov-fail-under=90`: 161/161 passed (96.47% coverage).
+
+---
+
+## Session 2026-09-27 (Vercel Production Build & TypeScript Verification)
+
+**Task:** Diagnose and resolve Vercel deployment build failure caused by strict TypeScript compiler checks (`tsc -b && vite build`) in `frontend/web`.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **TypeScript Compiler Resolutions (`frontend/web`)**:
+   - Fixed missing `DetectedClothingItem` type import in [catalog-api.ts](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/lib/catalog-api.ts).
+   - Cleaned up unused `gName` and `resolvedName` variable declarations in [AddProductModal.tsx](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/components/catalog/AddProductModal.tsx).
+   - Updated `buildBespokeDescription` type signature to accept `targetGarmentType?: string | null` to eliminate TS2345 type errors.
+   - Removed unused `onAddNewPiece` from destructured component props in [InventoryTab.tsx](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/components/catalog/InventoryTab.tsx).
+
+2. **Automated Testing & Build Verification**:
+   - Executed `npm run build` (`tsc -b && vite build`): built cleanly with 0 TypeScript/build errors.
+   - Executed `npx vitest run src/components/catalog/ src/lib/catalog-api.test.ts src/test/tenant-conformance.test.ts`: 95/95 tests passed across 9 suites.
+   - Pushed fix commit to `origin/feature/visual-insight-agent`.
+
+### Files Created or Modified
+
+- `frontend/web/src/lib/catalog-api.ts`
+- `frontend/web/src/components/catalog/AddProductModal.tsx`
+- `frontend/web/src/components/catalog/InventoryTab.tsx`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `npm run build`: Success (0 errors, 2.21s).
+- `npx vitest run src/components/catalog/ src/lib/catalog-api.test.ts src/test/tenant-conformance.test.ts`: 95/95 passed.
+
+---
+
+## Session 2026-09-27 (Removal of Default Pricing in Add Product Drawer)
+
+**Task:** Remove default hardcoded pricing values (`price: 1250`, `cost: 550`) so both **Retail price (LKR)** and **Atelier cost (LKR)** start blank for user input.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Blank Initial Pricing (`AddProductModal.tsx`)**:
+   - Updated initial state and `useEffect` reset handlers for `price` and `cost` from `'1250'` and `'550'` to empty string `''`.
+   - Updated input placeholders to `"e.g. 1450"` and `"e.g. 650"`.
+   - Maintained fallback parsing on submit (`parseFloat(price) || 0`) while allowing operator to enter custom values.
+
+2. **Automated Testing & Verification**:
+   - Ran `npx vitest run src/components/catalog/`: 53/53 tests passed across 7 test suites.
+
+### Files Created or Modified
+
+- `frontend/web/src/components/catalog/AddProductModal.tsx`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `npx vitest run src/components/catalog/`: 53/53 passed.
+
+---
+
+## Session 2026-09-27 (Item Name Left for Operator / User Input)
+
+**Task:** Disable automatic item name generation during visual analysis, category changes, and garment selection so the **Item name** field in Section 2 is left entirely to the user to fill with their desired boutique title.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Removed Auto-Generated Item Name Logic (`AddProductModal.tsx`)**:
+   - Removed `setName(resolvedName)` from `runVisionAnalysis` so analyzing a garment photograph populates detected attributes (color, fabric, pattern, cloth type, description) without overwriting or auto-filling the **Item name** field.
+   - Removed `setName(...)` from `handleCategoryChange` so switching categories does not overwrite any custom name typed by the user.
+   - Removed `setName(gName)` from `handleSelectGarment` for multi-garment selection.
+
+2. **Automated Testing & Verification**:
+   - Updated DOM tests in `AddProductModal.dom.test.tsx` to verify that image analysis updates visual attributes (`cloth / garment`, `detected fabric`, `colour name`) while preserving user-defined `item name`.
+   - Executed `npx vitest run src/components/catalog/`: 53/53 tests passed across 7 test suites.
+
+### Files Created or Modified
+
+- `frontend/web/src/components/catalog/AddProductModal.tsx`
+- `frontend/web/src/components/catalog/AddProductModal.dom.test.tsx`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `npx vitest run src/components/catalog/`: 53/53 passed.
+
+---
+
+## Session 2026-09-27 (Removal of Redundant Add Piece Button in Catalog Toolbar)
+
+**Task:** Remove the duplicate "+ Add Piece" button from the catalog pieces filter toolbar in `InventoryTab.tsx` so only the primary "+ Add piece" button in the top header action area remains visible.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Toolbar Cleanup (`InventoryTab.tsx`)**:
+   - Removed the duplicate `<Button>Add Piece</Button>` located inside the filter bar next to the availability select dropdown in [InventoryTab.tsx](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/components/catalog/InventoryTab.tsx).
+   - Preserved the main, primary `+ Add piece` button in the top header action bar of [CatalogPanel.tsx](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/components/catalog/CatalogPanel.tsx).
+   - Cleaned up unused `Plus` icon import and updated `InventoryTabProps` to make `onAddNewPiece` optional.
+
+2. **Automated Testing & Verification**:
+   - Ran `npx vitest run src/components/catalog/`: 53/53 tests passing across 7 suites.
+   - Ran `npx vitest run src/test/tenant-conformance.test.ts`: 8/8 tests passing.
+
+### Files Created or Modified
+
+- `frontend/web/src/components/catalog/InventoryTab.tsx`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `npx vitest run src/components/catalog/`: 53/53 passed.
+- `npx vitest run src/test/tenant-conformance.test.ts`: 8/8 passed.
+
+---
+
+## Session 2026-09-27 (Real-time Automatic Description & Styling Synchronization on Cloth Type / Category Change)
+
+**Task:** Ensure that changing the cloth / garment type or category dropdown in `AddProductModal.tsx` automatically updates and synchronizes the piece Description / Styling Notes in real time, with intelligent category alignment and bespoke luxury narratives.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Automatic Description Synchronization Logic (`AddProductModal.tsx`)**:
+   - Wired `handleCategoryChange` and `handleGarmentTypeChange` to immediately re-generate and update `description` state using `buildBespokeDescription(category, color, fabric, garmentType, pattern)`.
+   - Built cross-category sanitization in `buildBespokeDescription` so that if an item had an extracted saree garment type (e.g. `Banarasi Silk Brocade Saree`) and the user switches the category to `Gowns`, the description automatically transitions to a tailored gown description (`Sculpted [color] luminous evening gown in [fabric]...`) and red-carpet styling suggestions (`diamond drop earrings, minimalist strappy heels, satin minaudière`) rather than retaining obsolete saree wording.
+   - Fixed `detected-garment` input binding (`value={garmentType !== null ? garmentType : category}`) to ensure smooth user typing and clearing without sticking to default fallback text.
+
+2. **Automated Testing & Verification**:
+   - Added DOM test cases in `AddProductModal.dom.test.tsx` verifying:
+     - Editing the Cloth / Garment text field automatically updates the description textarea with the new garment name and styling notes.
+     - Typing a garment name that implies another category automatically switches the active category and re-renders the bespoke narrative and styling advice.
+   - Executed full test suite: 18/18 tests in `AddProductModal.dom.test.tsx` and 136/136 tests across all 15 test files in `frontend/web` passing (100%).
+
+### Files Created or Modified
+
+- `frontend/web/src/components/catalog/AddProductModal.tsx`
+- `frontend/web/src/components/catalog/AddProductModal.dom.test.tsx`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `npx vitest run src/components/catalog/AddProductModal.dom.test.tsx`: 18/18 passed.
+- `npx vitest run`: 136/136 passed across 15 test suites.
+
+---
+
+## Session 2026-09-27 (Frontend Category Alignment & Visual AI Attributes Card UI Redesign)
+
+**Task:** Synchronize frontend catalog category taxonomy and dropdowns with backend Visual Intelligence categories (`top`, `bottom`, `dress`, `outerwear`, `ethnic_couture`, `accessory`, `footwear`) and resolve UI text truncation in Section 3 ("What Aveline read" - Visual AI Extracted Attributes card in `AddProductModal.tsx`).
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Category Taxonomy Synchronization across Frontend & Backend**:
+   - Updated `CATALOG_CATEGORIES` in [catalog-api.ts](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/lib/catalog-api.ts) and [AddProductModal.tsx](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/components/catalog/AddProductModal.tsx) to support comprehensive boutique & backend taxonomy: `Sarees`, `Lehengas`, `Gowns`, `Kurtas & Tunics`, `Tops & Blouses`, `Trousers & Pants`, `Outerwear`, `Drapes & Shawls`, `Jewelry & Accessories`, `Footwear`.
+   - Updated `normalizeCategory` in [catalog-api.ts](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/lib/catalog-api.ts) and [color-extractor.ts](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/lib/color-extractor.ts) to map backend categories (`top`, `bottom`, `dress`, `outerwear`, `ethnic_couture`, `accessory`, `footwear`) and synonyms (`trousers`, `pants`, `jeans`, `shoes`, `heels`, `juttis`, `shirts`, `blouses`).
+   - Extended `CATEGORY_PILLS` in [InventoryTab.tsx](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/components/catalog/InventoryTab.tsx) to allow filtering by all standard boutique categories.
+   - Added bespoke haute-couture AI description generation narratives in `AddProductModal.tsx` for `Tops & Blouses`, `Trousers & Pants`, and `Footwear`.
+
+2. **Visual AI Extracted Attributes Card Redesign (`AddProductModal.tsx`)**:
+   - Replaced cramped 4-column layout (`grid-cols-4`, ~140px per field) with a responsive 2-column grid (`grid grid-cols-1 sm:grid-cols-2 gap-3.5`, ~290px per field) so attribute values like "Banarasi Silk Brocade Saree", "Pure Mulberry Silk", "Gold Zari Brocade", and "Emerald Green" are never truncated or clipped.
+   - Refined input styling with full-width layout, background tints, labels, clear placeholder hints, and hover tooltips.
+   - Upgraded multi-garment selector buttons to shadcn/ui `Button` components for full tenant conformance.
+
+3. **Automated Testing & Verification**:
+   - Updated and expanded unit tests in `catalog-api.test.ts` for `normalizeCategory`.
+   - Verified 116/116 unit and DOM tests pass across all catalog components (`vitest`).
+   - Verified 59/59 unit and integration tests pass in .NET (`VisionServiceTests` & `VisualEndpointsIntegrationTests`).
+   - Verified tenant conformance tests pass (8/8).
+
+### Files Created or Modified
+
+- `frontend/web/src/lib/catalog-api.ts`
+- `frontend/web/src/lib/catalog-api.test.ts`
+- `frontend/web/src/lib/color-extractor.ts`
+- `frontend/web/src/components/catalog/AddProductModal.tsx`
+- `frontend/web/src/components/catalog/InventoryTab.tsx`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `npx vitest run src/lib/catalog-api.test.ts src/lib/color-extractor.test.ts src/components/catalog/AddProductModal.dom.test.tsx src/components/catalog/ProductCard.dom.test.tsx src/components/catalog/CatalogPanel.dom.test.tsx src/components/catalog/FloorTagStudio.dom.test.tsx src/components/catalog/SourcingTab.dom.test.tsx src/components/catalog/LookbooksTab.dom.test.tsx`: 116/116 passed.
+- `npx vitest run src/test/tenant-conformance.test.ts`: 8/8 passed.
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~VisionServiceTests|FullyQualifiedName~VisualEndpointsIntegrationTests"`: 59/59 passed.
+
+---
+
+## Session 2026-09-27 (Visual Agent Kurti / Kurta Set Classification & Pastel Hue Accuracy Fix)
+
+**Task:** Resolve issue where light mint green kurti / kurta tunic sets with pants without keyword cues were misidentified as "Silver Pure Mulberry Silk Banarasi Silk Brocade Saree" due to low-saturation threshold defaulting to Silver and low edge thresholds prematurely matching the Saree branch in `color-extractor.ts`.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Root Cause Analysis**:
+   - In `getClosestColorName`, saturation < 0.15 caused delicate pastel tints (such as Mint Green, Light Sage, Powder Blue) to skip all chromatic swatches and default to `Silver` / grey.
+   - In `inferGarmentFromMetricsAndMetadata`, `highFreqEdgeCount > 50 && specularPoints > 6` matched nearly every portrait photo of a model, classifying smooth kurti tunic suits as `Banarasi Silk Brocade Saree`.
+
+2. **Classifier & Color Extractor Resolution (`frontend/web/src/lib/color-extractor.ts`)**:
+   - Refined `getClosestColorName` achromatic condition: only true greys (`delta < 8` or `saturation < 0.06`) or pale ivory neutrals (`saturation < 0.13` when `lightness > 0.82` and `hue ~ 60°`) compete against achromatic swatches, enabling accurate resolution of soft pastel colors (`Mint Green`, `Sage Green`, `Powder Blue`, `Blush Pink`).
+   - Refined geometric silhouette classification:
+     - `Kurtas & Tunics` (`Silk Kurta Set` / `Straight Handloom Kurti`) is now correctly matched for straight/tailored tunic silhouettes (`flareRatio <= 1.30`, `aspectRatio <= 1.55`).
+     - `Sarees` now strictly requires authentic metallic zari brocade evidence (`isWarmEthnicTone && highFreqEdgeCount > 70 && specularPoints > 10` or `highFreqEdgeCount > 90 && specularPoints > 12`).
+
+3. **Automated Testing & Verification**:
+   - Added unit test in `color-extractor.test.ts` verifying that light mint green kurti suits are accurately classified as `Kurtas & Tunics` (`Silk Kurta Set`) with `Mint Green` dominant color.
+   - Ran `vitest` (84/84 passed).
+   - Ran `dotnet test` (23/23 passed in `VisionServiceTests`).
+   - Ran `pytest` (4/4 passed in `test_visual_agent.py`).
+   - Rebuilt and restarted Docker containers.
+
+### Files Created or Modified
+
+- `frontend/web/src/lib/color-extractor.ts`
+- `frontend/web/src/lib/color-extractor.test.ts`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `npx vitest run src/lib/color-extractor.test.ts src/lib/catalog-api.test.ts src/components/catalog/AddProductModal.dom.test.tsx`: 84/84 passed.
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~VisionServiceTests"`: 23/23 passed.
+- `pytest agent-service/tests/test_visual_agent.py`: 4/4 passed.
+- Rebuilt and restarted Docker containers.
+
+---
+
+## Session 2026-09-27 (Visual Agent Outerwear, Long Overcoat & Trench Coat Recognition Resolution)
+
+**Task:** Diagnose and resolve visual agent misclassification where long coats, overcoats, and trench coats (specifically deep green double-breasted long woolen overcoats over turtlenecks and pants) were misidentified or defaulted to Sarees/Gowns in the client-side canvas classifier and deterministic fallback taxonomy.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Root Cause Analysis**:
+   - Diagnosed that in [color-extractor.ts](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/lib/color-extractor.ts), jewel-toned green garments with tall vertical aspect ratios (`aspectRatio >= 1.0`, `isRoyalJewelTone == true`) were prematurely matched by the Saree silhouette branch (`Silk Kanjeevaram Saree`), ignoring structured outerwear coats and overcoats.
+   - Diagnosed that keyword extraction in both `color-extractor.ts` and [VisionService.cs](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/Aveline.Api/Modules/VisualIntelligence/Services/VisionService.cs) mapped `coat` to generic blazer instead of distinguishing tailored long overcoats, double-breasted trench coats, and wool blends.
+
+2. **Frontend Canvas & Silhouette Classifier Enhancements (`frontend/web`)**:
+   - Updated `inferGarmentFromMetricsAndMetadata` in `color-extractor.ts`:
+     - Added explicit keyword mappings for `overcoat`, `trench`, `trenchcoat`, `long coat`, `wool coat`, `duster`, `parka`, `cardigan` mapping to `Outerwear` (`Double-Breasted Trench Coat`, `Tailored Woolen Overcoat`), with fabrics `Pure Wool Blend` and `Structured Cotton Gabardine`.
+     - Refined autonomous geometric silhouette inference: requires high edge frequency and specular zari points for Sarees, and accurately identifies structured tall silhouettes (`aspectRatio` 1.2-1.55, `flareRatio` 1.05-1.35, low edge noise) as `Outerwear` (`Tailored Woolen Overcoat`, `Pure Wool Blend`).
+
+3. **Backend Multimodal & Deterministic Taxonomy (`Aveline.Api` & `agent-service`)**:
+   - Updated `GenerateDeterministicAnalysis` in `VisionService.cs` to map `overcoat`, `trench`, `coat`, `duster` to `category = "outerwear"`, `garmentType = "Tailored Long Overcoat"` / `"Double-Breasted Trench Coat"`, and fabric `"Wool / Cashmere Blend"`.
+   - Updated `InventoryRepository.cs` and `nodes.py` to support `forest green` and `bottle green` in color search and synonym expansions.
+
+4. **Automated Testing & Verification**:
+   - Added unit tests in `color-extractor.test.ts` for overcoat keywords and geometric silhouette extraction.
+   - Added unit tests in `VisionServiceTests.cs` for overcoat and trench coat deterministic analysis.
+   - Verified 84/84 tests pass in `vitest`.
+   - Verified 23/23 tests pass in `VisionServiceTests` and 36/36 in `VisualEndpointsIntegrationTests`.
+   - Verified 4/4 tests pass in `pytest`.
+   - Rebuilt and restarted `aveline_api` and `aveline_agent` Docker containers.
+
+### Files Created or Modified
+
+- `frontend/web/src/lib/color-extractor.ts`
+- `frontend/web/src/lib/color-extractor.test.ts`
+- `Aveline.Api/Modules/VisualIntelligence/Services/VisionService.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/InventoryRepository.cs`
+- `Aveline.Api.Tests/VisionServiceTests.cs`
+- `agent-service/app/agents/visual_insight/nodes.py`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `npx vitest run src/lib/color-extractor.test.ts src/lib/catalog-api.test.ts src/components/catalog/AddProductModal.dom.test.tsx`: 84/84 passed.
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~VisionServiceTests"`: 23/23 passed.
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~VisualEndpointsIntegrationTests"`: 36/36 passed.
+- `pytest agent-service/tests/test_visual_agent.py`: 4/4 passed.
+- Rebuilt and deployed Docker containers `aveline_api` and `aveline_agent`.
+
+---
+
+## Session 2026-09-27 (Visual Agent Multi-Item Garment Extraction & Structured Visual Attribute Analysis)
+
+**Task:** Implement the Visual Agent in Aveline according to the approved implementation plan: supporting multi-item clothing decomposition (`items: [...]`), strict background/studio wall exclusion, standard category taxonomy mapping, decoupled multi-model vision provider integration (Gemini 2.0 Flash / OpenAI / DeepSeek), and robust edge-case validation with comprehensive test suites.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Backend DTOs & Multi-Item Response Models (`Aveline.Api`)**:
+   - Created [DetectedClothingItemDto.cs](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/Aveline.Api/Modules/VisualIntelligence/DTOs/DetectedClothingItemDto.cs) defining attributes: `ClothingType`, `Category`, `PrimaryColor`, `ColorHex`, `SecondaryColors`, `Pattern`, `Material`, `Style`, `Confidence`, `BoundingBox`, `SuggestedItemName`, `Description`, and `StylingNotes`.
+   - Updated [ImageAnalysisResultDto.cs](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/Aveline.Api/Modules/VisualIntelligence/DTOs/ImageAnalysisResultDto.cs) with `Success`, `Error`, and `Items` (`List<DetectedClothingItemDto>`), maintaining 100% backward-compatibility by automatically mirroring the primary detected item into top-level legacy fields.
+
+2. **Multimodal Prompt & Decoupled Vision Engine (`VisionService.cs`)**:
+   - Upgraded multimodal prompt with 4 critical mandates:
+     1. Multi-Item Extraction (`items: [...]` array).
+     2. Strict Background/Studio Wall Exclusion (ignoring white, gray, cream, beige, peach, textured studio walls, furniture, props, and skin tones).
+     3. Non-clothing and blurry image rejection (`success: false`, `error: "..."`, `items: []`).
+     4. High-precision attribute classification across western & couture categories (`top`, `bottom`, `dress`, `outerwear`, `ethnic_couture`, `accessory`, `footwear`).
+   - Upgraded `BuildResultFromParsed` to deserialize multi-item arrays (`items: [...]`) with robust fallback for flat responses.
+   - Upgraded `GenerateDeterministicAnalysis` to populate `Items` with the deterministic `DetectedClothingItemDto`.
+   - Enhanced `EnumerateClosedVariants` to dynamically close open JSON arrays (`"}]}`) and truncated nested strings without unhandled JSON deserialization exceptions.
+
+3. **Python Agent Service Pydantic Models & Tools (`agent-service`)**:
+   - Added `DetectedClothingItem` Pydantic model and `detected_items: list[DetectedClothingItem]` to `ImageAttributes` in [visual_insight.py](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/agent-service/app/schemas/visual_insight.py).
+   - Updated `parse_image_attributes_dict` in [image_tools.py](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/agent-service/app/tools/inventory/image_tools.py) to parse multi-item clothing detections.
+
+4. **Frontend Web Catalog Modal UI (`frontend/web`)**:
+   - Extended `VisionAnalysisResult` and added `DetectedClothingItem` interface in [types/catalog.ts](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/types/catalog.ts) and [catalog-api.ts](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/lib/catalog-api.ts).
+   - Enhanced [AddProductModal.tsx](file:///c:/Users/Admin/Desktop/3Y%201%20SEM/New%20folder/aveline/frontend/web/src/components/catalog/AddProductModal.tsx) with multi-garment chip selector UI: when multiple garments are detected (e.g. 2+ pieces in an outfit), luxury toggle chips are rendered allowing the operator to switch between detected pieces to auto-populate the form.
+
+5. **Automated Testing & Verification**:
+   - Extended `VisionServiceTests.cs` with 7 automated unit tests covering all required scenarios:
+     1. `AnalyzeAsync_SimpleShirt_ExtractsSingleGarmentWithPrimaryColorAndCategory`
+     2. `AnalyzeAsync_Jeans_ExtractsBottomGarmentWithDenimFabric`
+     3. `AnalyzeAsync_MultipleGarments_DecomposesTopAndBottomOutfit`
+     4. `AnalyzeAsync_BackgroundInterference_StrictlyExcludesBackdropStudioWall`
+     5. `AnalyzeAsync_NonClothingImage_ReturnsSuccessFalseWithDescriptiveError`
+     6. `AnalyzeAsync_BlurryImage_HandlesDegradedConfidenceGracefully`
+     7. `AnalyzeAsync_MalformedOrTruncatedJson_RepairsGracefullyWithoutThrowing`
+   - Added Python unit tests in `test_visual_agent.py` for multi-item `parse_image_attributes_dict`.
+   - Verified 121/121 C# Visual Intelligence tests pass.
+   - Verified 83/83 vitest tests pass.
+   - Verified 4/4 pytest tests pass.
+
+### Files Created or Modified
+
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/DetectedClothingItemDto.cs` [NEW]
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/ImageAnalysisResultDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/VisionService.cs`
+- `Aveline.Api.Tests/VisionServiceTests.cs`
+- `agent-service/app/schemas/visual_insight.py`
+- `agent-service/app/tools/inventory/image_tools.py`
+- `agent-service/tests/test_visual_agent.py`
+- `frontend/web/src/types/catalog.ts`
+- `frontend/web/src/lib/catalog-api.ts`
+- `frontend/web/src/components/catalog/AddProductModal.tsx`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~Vision|FullyQualifiedName~VisualEndpoints|FullyQualifiedName~AnalyzeImage"`: 121/121 passed.
+- `npx vitest run src/lib/color-extractor.test.ts src/lib/catalog-api.test.ts src/components/catalog/AddProductModal.dom.test.tsx`: 83/83 passed.
+- `pytest agent-service/tests/test_visual_agent.py`: 4/4 passed.
+- Restarted `aveline_api` and `aveline_agent` docker containers cleanly.
+
+---
+
+## Session 2026-09-27 (Visual Insight Agent Garment Precision & Inventory Query Resolution)
+
+**Task:** Fix inventory querying in the Salon visual agent (Elle) so searching for specific garment pieces like "blue saree" does not return unrelated garments (e.g. evening gowns) matching only the color keyword, and ensure natural language queries (e.g. "do we have any red saree in stock") accurately match only in-stock items of the requested color without returning false positives (such as Peacock Teal or Terracotta) caused by English description words or broad substring matches.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Root Cause Diagnosis**:
+   - Identified that `VisualInsightAgent.parse_visual_intent` passed the entire conversational sentence (`"do we have any red saree in stock"`) into `search_criteria["query"]`.
+   - In `Aveline.Api`, `InventoryRepository.SearchAsync` previously performed substring checks against `Description` (e.g., matching `"structured footwear"` containing `"red"`), which caused every saree with boilerplate descriptions to match red queries.
+   - Identified the need for strict color filtering based on `Color` / `ItemName` and color family synonym mappings without description false positives.
+
+2. **Agent Service Taxonomy, Intent Parsing & Color Pruning (`agent-service/app/agents/visual_insight/nodes.py`)**:
+   - Added garment category taxonomy parsing (Sarees, Lehengas, Gowns, Kurtas & Tunics, Outerwear, Drapes & Shawls, Jewelry & Accessories) to `parse_visual_intent`.
+   - Refined `parse_visual_intent` so conversational boilerplate phrases (e.g., "do we have any", "in stock", "is there") are stripped.
+   - Added `_COLOR_FAMILIES` dictionary and defensive `_is_color_match` along with `_is_category_match` in `search_inventory` to strictly prune mismatched colors (e.g., Peacock Teal, Terracotta) when querying for Red.
+
+3. **Backend Query & Color Isolation (`Aveline.Api`)**:
+   - Enhanced `InventoryRepository.SearchAsync` to tokenize multi-word `query` strings, filter out common conversational stop words, and match significant terms across `ItemName`, `Category`, `Description`, `Fabric`, `Color`, and `Sku`.
+   - Removed description substring checks from color filtering in `InventoryRepository.SearchAsync` to prevent English word false positives (`"structured"` -> `"red"`), ensuring color filtering operates strictly on `Color` and `ItemName`.
+   - Added color family expansion in `InventoryRepository.SearchAsync` (`red` -> `crimson`, `maroon`, `ruby`, `burgundy`, `scarlet`; `blue` -> `navy`, `sapphire`, `cobalt`, `indigo`, `teal`, `aqua`; `green` -> `emerald`, `sage`, `mint`, `olive`, `jade`).
+
+4. **Automated Unit & Integration Testing**:
+   - Updated `agent-service/tests/test_visual_agent.py` with test cases verifying category parsing, blue saree vs evening gown distinction, and color filtering pruning Peacock Teal and Terracotta sarees on Red queries.
+   - Added unit tests in `Aveline.Api.Tests/InventoryRepositoryTests.cs` verifying that `SearchAsync` with color "Red" only matches Red/Crimson sarees and strictly excludes Peacock Teal, Terracotta, and blue gowns.
+   - Ran `agent-service` full pytest test suite (934 passed, 2 skipped, 2 xfailed).
+   - Ran .NET tests for Inventory and Visual endpoints (81/81 and 36/36 tests passed).
+   - Rebuilt and restarted `aveline_api` and `aveline_agent` Docker containers.
+
+### Files Created or Modified
+
+- `agent-service/app/agents/visual_insight/nodes.py`
+- `agent-service/tests/test_visual_agent.py`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/SearchInventoryDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/IInventoryRepository.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/InventoryRepository.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/InventoryService.cs`
+- `Aveline.Api.Tests/InventoryRepositoryTests.cs`
+- `Aveline.Api.Tests/InventoryServiceTests.cs`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `pytest` (agent-service): 934 passed, 2 skipped, 2 xfailed in 106s; `tests/test_visual_agent.py` 3/3 passed.
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~Inventory"`: 81/81 passed.
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~VisualEndpointsIntegrationTests"`: 36/36 passed.
+
+---
 
 ## Session 2026-09-25 (Client Thread & Mobile App Shell Live API Repository Integration)
 
@@ -2981,4 +3406,46 @@
   - Branches: **86.65%** (Threshold: >= 70%)
   - Functions: **86.20%** (Threshold: >= 70%)
 - `bun run build`: `tsc -b && vite build` built clean (0 TypeScript errors, production assets bundled successfully).
+
+---
+
+## Session 2026-09-27 (Visual Intelligence Background Studio Wall Rejection & Garment Color Isolation)
+
+**Task:** Fix Visual Agent mistakenly extracting the background wall color (e.g. peach/beige studio wall) as the garment dominant color, and accurately classify straight Kurta/Tunic silhouettes on neutral hash filenames.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Perimeter Backdrop Sampling & Studio Wall Rejection (`color-extractor.ts`)**:
+   - Implemented `extractPerimeterBackdropColors` to sample outer image border bands (top 8%, left 8%, right 8%, bottom 8%) and identify dominant studio backdrop wall/floor color clusters (warm peach, beige, cream, studio paper).
+   - Updated `isBackdropPixel` to accept detected perimeter backdrop clusters and mask out any pixel matching the backdrop wall within RGB color distance tolerance.
+   - Updated `analyzeCanvasMetrics` to exclude perimeter backdrop pixels when calculating silhouette proportions.
+   - Replaced aggressive `maxSaturation * 0.72` ceiling with a stable `0.10` saturation floor so soft pastel fabrics (Mint Green, Sage Green, Powder Blue, Lavender) are preserved.
+   - Added `borderRatio` tracking to connected component segmentation, penalizing and disqualifying components that bleed into outer perimeter borders to prevent background walls from competing with center garments.
+
+2. **Accurate Silhouette Classification (`color-extractor.ts`)**:
+   - Refined geometric silhouette classification in `inferGarmentFromMetricsAndMetadata` to correctly recognize straight Kurta/Tunic proportions (`flareRatio < 1.18`, `aspectRatio < 1.45`) and assign appropriate garment type and fabric.
+
+3. **Multimodal Vision Prompt Enhancement (`VisionService.cs`)**:
+   - Enhanced Step 1 background isolation instructions in `VisionService.cs` to explicitly exclude studio backdrop walls (peach, beige, cream, textured walls, seamless paper/floors).
+
+4. **Test Suite Coverage & Verification**:
+   - Added unit tests in `color-extractor.test.ts` for peach studio wall rejection with mint green garments, cream/beige backdrop rejection with sage green garments, powder blue garments, and perimeter backdrop extraction (33/33 tests passing).
+   - Verified DOM integration tests (`AddProductModal.dom.test.tsx`: 16/16 passed).
+   - Verified backend vision service tests (`VisionServiceTests`: 66/66 passed).
+   - Verified python agent tests (`test_visual_agent.py`: 3/3 passed).
+
+### Files Created or Modified
+- `frontend/web/src/lib/color-extractor.ts`
+- `frontend/web/src/lib/color-extractor.test.ts`
+- `Aveline.Api/Modules/VisualIntelligence/Services/VisionService.cs`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+- `npx vitest run src/lib/color-extractor.test.ts` (33/33 passed).
+- `npx vitest run src/components/catalog/AddProductModal.dom.test.tsx` (16/16 passed).
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~VisionService|FullyQualifiedName~VisualEndpoints"` (66/66 passed).
+- `agent-service/.venv/Scripts/python.exe -m pytest agent-service/tests/test_visual_agent.py` (3/3 passed).
+
 

@@ -3,6 +3,7 @@ import {
   COLOR_PALETTE,
   analyzeCanvasMetrics,
   extractDominantColor,
+  extractPerimeterBackdropColors,
   extractVisualAttributesAndColor,
   getClosestColorName,
   isolateGarmentColor,
@@ -299,6 +300,15 @@ describe('color-extractor', () => {
       const blazer = await extractVisualAttributesAndColor('data:image/jpeg;base64,xxx', 'boutique_blazer.jpg')
       expect(blazer?.category).toBe('Outerwear')
       expect(blazer?.garmentType).toBe('Tailored Boutique Blazer')
+
+      const trench = await extractVisualAttributesAndColor('data:image/jpeg;base64,xxx', 'double_breasted_trench.jpg')
+      expect(trench?.category).toBe('Outerwear')
+      expect(trench?.garmentType).toBe('Double-Breasted Trench Coat')
+
+      const overcoat = await extractVisualAttributesAndColor('data:image/jpeg;base64,xxx', 'long_wool_overcoat_green.jpg')
+      expect(overcoat?.category).toBe('Outerwear')
+      expect(overcoat?.garmentType).toBe('Tailored Woolen Overcoat')
+      expect(overcoat?.fabric).toBe('Pure Wool Blend')
     })
 
     it('classifies Drapes & Shawls variants from metadata and context hints', async () => {
@@ -385,14 +395,14 @@ describe('color-extractor', () => {
 
       const kanjeevaramMetric = {
         ...banarasiMetric,
-        highFreqEdgeCount: 45,
+        highFreqEdgeCount: 75,
       }
       const kanjeevaramRes = inferWithEvidence(kanjeevaramMetric, 'data:image/jpeg;base64,123')
       expect(kanjeevaramRes.category).toBe('Sarees')
       expect(kanjeevaramRes.garmentType).toBe('Silk Kanjeevaram Saree')
     })
 
-    it('infers Kurtas & Tunics for fitted tunic proportions', () => {
+    it('infers Kurtas & Tunics for fitted tunic proportions and pastel kurti suits', () => {
       const tunicMetric = {
         color: { hex: '#9CAF88', colorName: 'Sage Green', r: 156, g: 175, b: 136 },
         aspectRatio: 1.2,
@@ -408,6 +418,23 @@ describe('color-extractor', () => {
       const res = inferWithEvidence(tunicMetric, 'data:image/jpeg;base64,123')
       expect(res.category).toBe('Kurtas & Tunics')
       expect(res.garmentType).toBe('Silk Kurta Set')
+
+      const mintKurtiMetric = {
+        color: { hex: '#98FF98', colorName: 'Mint Green', r: 185, g: 218, b: 190 },
+        aspectRatio: 1.45,
+        topMassWidth: 20,
+        midMassWidth: 22,
+        bottomMassWidth: 24,
+        flareRatio: 1.09,
+        highFreqEdgeCount: 45,
+        specularPoints: 6,
+        isWarmEthnicTone: false,
+        isRoyalJewelTone: false,
+      }
+      const mintRes = inferWithEvidence(mintKurtiMetric, 'data:image/jpeg;base64,123')
+      expect(mintRes.category).toBe('Kurtas & Tunics')
+      expect(mintRes.garmentType).toBe('Silk Kurta Set')
+      expect(mintRes.colorName).toBe('Mint Green')
     })
 
     it('infers Gowns for monochrome evening vertical silhouettes', () => {
@@ -426,6 +453,25 @@ describe('color-extractor', () => {
       const res = inferWithEvidence(gownMetric, 'data:image/jpeg;base64,123')
       expect(res.category).toBe('Gowns')
       expect(res.garmentType).toBe('Luminous Evening Gown')
+    })
+
+    it('infers Outerwear for structured tall overcoat silhouettes', () => {
+      const overcoatMetric = {
+        color: { hex: '#228B22', colorName: 'Forest Green', r: 34, g: 139, b: 34 },
+        aspectRatio: 1.4,
+        topMassWidth: 20,
+        midMassWidth: 20,
+        bottomMassWidth: 24,
+        flareRatio: 1.2,
+        highFreqEdgeCount: 20,
+        specularPoints: 2,
+        isWarmEthnicTone: false,
+        isRoyalJewelTone: true,
+      }
+      const res = inferWithEvidence(overcoatMetric, 'data:image/jpeg;base64,123')
+      expect(res.category).toBe('Outerwear')
+      expect(res.garmentType).toBe('Tailored Woolen Overcoat')
+      expect(res.fabric).toBe('Pure Wool Blend')
     })
 
     it('infers landscape/square framing for Jewelry or Drapes', () => {
@@ -577,6 +623,75 @@ describe('color-extractor', () => {
       expect(small).not.toBeNull()
       expect(large).not.toBeNull()
       expect(small!.colorName).toBe(large!.colorName)
+    })
+
+    it('rejects warm peach studio wall backdrop and extracts mint green garment in center', () => {
+      // The exact failure reported by the user: A model wearing a Mint Green tunic in front of
+      // a warm Peach/Beige studio wall (R=250, G=218, B=185). The backdrop surrounds the model,
+      // but the garment sits in the vertical center column.
+      const width = 64
+      const height = 64
+      const buffer = frameOf(width, height, (x, y) => {
+        // Mint Green garment in center
+        const inGarment = x >= 22 && x <= 42 && y >= 14 && y <= 56
+        if (inGarment) return [152, 255, 152]
+        // Warm Peach studio wall backdrop
+        return [250, 218, 185]
+      })
+
+      const result = isolateGarmentColor(buffer, width, height)
+      expect(result).not.toBeNull()
+      expect(result!.colorName).toBe('Mint Green')
+      expect(result!.colorName).not.toBe('Peach')
+      expect(result!.g).toBeGreaterThan(result!.r)
+      expect(result!.g).toBeGreaterThan(result!.b)
+    })
+
+    it('rejects cream and beige studio backdrops and extracts sage green garment in center', () => {
+      const width = 64
+      const height = 64
+      const buffer = frameOf(width, height, (x, y) => {
+        const inGarment = x >= 20 && x <= 44 && y >= 16 && y <= 54
+        if (inGarment) return [156, 175, 136] // Sage Green
+        return [240, 228, 210] // Cream / Beige studio paper
+      })
+
+      const result = isolateGarmentColor(buffer, width, height)
+      expect(result).not.toBeNull()
+      expect(result!.colorName).toBe('Sage Green')
+      expect(result!.colorName).not.toBe('Champagne Gold')
+      expect(result!.colorName).not.toBe('Peach')
+    })
+
+    it('rejects warm terracotta/peach backdrop and extracts powder blue garment', () => {
+      const width = 64
+      const height = 64
+      const buffer = frameOf(width, height, (x, y) => {
+        const inGarment = x >= 22 && x <= 42 && y >= 16 && y <= 54
+        if (inGarment) return [176, 224, 230] // Powder Blue
+        return [235, 180, 150] // Warm Terracotta/Peach backdrop
+      })
+
+      const result = isolateGarmentColor(buffer, width, height)
+      expect(result).not.toBeNull()
+      expect(result!.colorName).toBe('Powder Blue')
+      expect(result!.colorName).not.toBe('Burnt Terracotta')
+      expect(result!.colorName).not.toBe('Peach')
+    })
+
+    it('extracts perimeter backdrop colors from outer frame borders', () => {
+      const width = 32
+      const height = 32
+      const buffer = frameOf(width, height, (x, y) => {
+        const isPerimeter = x < 4 || x >= 28 || y < 4 || y >= 28
+        if (isPerimeter) return [255, 218, 185] // Peach
+        return [152, 255, 152] // Mint green center
+      })
+
+      const backdrops = extractPerimeterBackdropColors(buffer, width, height)
+      expect(backdrops.length).toBeGreaterThan(0)
+      expect(backdrops[0].r).toBeGreaterThan(230)
+      expect(backdrops[0].g).toBeGreaterThan(200)
     })
   })
 

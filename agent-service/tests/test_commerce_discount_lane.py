@@ -237,6 +237,65 @@ async def test_a_quote_where_the_tier_cap_binds_reports_the_tier_cap():
     assert "LKR 627.50" in summary  # 5% of LKR 12,550.00
 
 
+async def test_a_quote_with_requested_discount_exceeding_tier_cap_explains_signoff_requirement():
+    result = await _graph().ainvoke(
+        {
+            "org_id": ORG,
+            "items": [HEALTHY_MARGIN],
+            "purpose": "quote",
+            "staff_query": True,
+            "proposed_discount": 0.10,
+            "message": "Calculate the discount if we give a 10% off for the dress",
+        }
+    )
+
+    summary = result["output"]["summary"]
+    # 10% of 12,550 is 1,255.00; net is 11,295.00
+    assert "10%" in summary
+    assert "LKR 1,255.00" in summary
+    assert "LKR 11,295.00" in summary
+    assert "owner sign-off" in summary
+    assert "This customer is" not in summary
+
+
+async def test_a_quote_with_requested_discount_within_cap_states_it_can_be_applied():
+    result = await _graph().ainvoke(
+        {
+            "org_id": ORG,
+            "items": [HEALTHY_MARGIN],
+            "purpose": "quote",
+            "staff_query": True,
+            "proposed_discount": 0.03,
+            "message": "Calculate the discount if we give a 3% off for the dress",
+        }
+    )
+
+    summary = result["output"]["summary"]
+    # 3% of 12,550 is 376.50
+    assert "3%" in summary
+    assert "LKR 376.50" in summary
+    assert "without sign-off" in summary
+    assert "This customer is" not in summary
+
+
+async def test_a_quote_extracts_requested_discount_from_message_when_not_in_state():
+    result = await _graph().ainvoke(
+        {
+            "org_id": ORG,
+            "items": [HEALTHY_MARGIN],
+            "purpose": "quote",
+            "staff_query": True,
+            "message": "Calculate the discount if we give a 10% off for the dress",
+        }
+    )
+
+    summary = result["output"]["summary"]
+    assert "10%" in summary
+    assert "LKR 1,255.00" in summary
+    assert "owner sign-off" in summary
+    assert "This customer is" not in summary
+
+
 async def test_a_quote_is_never_a_pause_even_when_the_rules_would_pause_an_order():
     """The load-bearing difference: the same items, evaluated, and still not a commitment."""
     order = await _graph().ainvoke(

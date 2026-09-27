@@ -31,4 +31,7 @@ public class CreateOrderDto
 
     /// <summary>The Salon conversation this order originates from (ADR-016).</summary>
     public Guid? ConversationId { get; set; }
+
+    /// <summary>Whether this order explicitly requires manual owner approval (e.g. conversational agent orders).</summary>
+    public bool RequireApproval { get; set; }
 }

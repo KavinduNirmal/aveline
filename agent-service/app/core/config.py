@@ -3,6 +3,7 @@ from functools import lru_cache
 from typing import Annotated
 
 from pydantic import field_validator
+
 try:
     from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 except ImportError:

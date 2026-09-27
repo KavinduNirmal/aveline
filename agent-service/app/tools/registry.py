@@ -501,6 +501,16 @@ class ToolRegistry:
             url += f"&maxPrice={max_price}"
         return await self._client.request("GET", url)
 
+    async def get_suppliers(self, org_id: str | None = None) -> list[dict[str, Any]]:
+        """Fetch registered partner ateliers/suppliers for an organization."""
+        path = f"/api/v1/orgs/{org_id}/catalog/suppliers" if org_id else "/internal/visual/suppliers"
+        res = await self._client.request("GET", path)
+        if isinstance(res, list):
+            return res
+        if isinstance(res, dict) and "items" in res:
+            return res["items"]
+        return []
+
     # ============================== COMMERCE AGENT ==============================
 
     async def calculate_margin(self, order_id: str, org_id: str | None = None) -> dict[str, Any]:

@@ -8,31 +8,54 @@ import {
   Coins,
   Package,
   Layers,
+  Globe,
+  ExternalLink,
+  Plus,
   X,
 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { formatMoney } from '@/lib/format-money'
+import { AddSupplierModal } from './AddSupplierModal'
 import type { SupplierMock } from './mockData'
 
 interface SuppliersTabProps {
   suppliers: SupplierMock[]
+  organizationId?: string
+  onAddSupplier?: (supplier: SupplierMock) => void
 }
 
-export function SuppliersTab({ suppliers }: SuppliersTabProps) {
+export function SuppliersTab({ suppliers, organizationId, onAddSupplier }: SuppliersTabProps) {
   const [activeCatalogSupplier, setActiveCatalogSupplier] = useState<SupplierMock | null>(null)
+  const [addModalOpen, setAddModalOpen] = useState(false)
+
+  const handleSaveSupplier = (newSupplier: SupplierMock) => {
+    if (onAddSupplier) {
+      onAddSupplier(newSupplier)
+    }
+  }
 
   return (
     <div className="flex flex-col gap-6">
       {/* Tab Header */}
-      <div>
-        <h3 className="font-serif text-base font-semibold text-foreground">
-          Partner Ateliers & Heritage Fabric Mills
-        </h3>
-        <p className="text-xs text-muted-foreground">
-          Direct supplier integrations for handloom silks, bespoke zari embroidery, and fabric sourcing
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h3 className="font-serif text-base font-semibold text-foreground">
+            Partner Ateliers & Heritage Fabric Mills
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            Direct supplier integrations for handloom silks, bespoke zari embroidery, and fabric sourcing
+          </p>
+        </div>
+        <Button
+          size="sm"
+          className="gap-1.5 self-start sm:self-auto text-xs font-medium"
+          onClick={() => setAddModalOpen(true)}
+        >
+          <Plus className="size-3.5" />
+          <span>Add Partner Atelier</span>
+        </Button>
       </div>
 
       {/* Suppliers Grid */}
@@ -40,9 +63,18 @@ export function SuppliersTab({ suppliers }: SuppliersTabProps) {
         <Card className="flex flex-col items-center justify-center p-12 text-center border-dashed border-border/80 bg-card/50">
           <Building2 className="size-12 text-muted-foreground/40 mb-3" />
           <h4 className="font-serif text-base font-medium">No Partner Ateliers Found</h4>
-          <p className="text-xs text-muted-foreground max-w-sm mt-1 mb-4">
+          <p className="text-xs text-muted-foreground max-w-sm mt-1 mb-5">
             Connect your heritage suppliers and fabric mills to track sourcing lead times and minimum orders.
           </p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5 text-xs"
+            onClick={() => setAddModalOpen(true)}
+          >
+            <Plus className="size-3.5" />
+            <span>Add Your First Atelier</span>
+          </Button>
         </Card>
       ) : (
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
@@ -86,8 +118,27 @@ export function SuppliersTab({ suppliers }: SuppliersTabProps) {
                   {supplier.specialty}
                 </div>
 
-                {/* Contact Info */}
+                {/* Contact & Storefront Info */}
                 <div className="flex flex-col gap-1.5 text-xs text-muted-foreground mb-4">
+                  {supplier.websiteUrl && (
+                    <div className="flex items-center justify-between gap-1.5 rounded-lg bg-primary/5 px-2.5 py-1.5 border border-primary/10">
+                      <div className="flex items-center gap-1.5 truncate text-[11px]">
+                        <Globe className="size-3 text-primary shrink-0" />
+                        <a
+                          href={supplier.websiteUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="truncate hover:underline text-foreground font-medium flex items-center gap-1"
+                        >
+                          <span>{supplier.websiteUrl.replace(/^https?:\/\//, '')}</span>
+                          <ExternalLink className="size-2.5 opacity-60" />
+                        </a>
+                      </div>
+                      <Badge variant="outline" className="text-[9px] bg-primary/10 text-primary border-primary/20 shrink-0">
+                        AI Scraper Ready
+                      </Badge>
+                    </div>
+                  )}
                   <div className="flex items-center gap-2">
                     <Mail className="size-3 text-muted-foreground/70" />
                     <span className="truncate">{supplier.contactEmail}</span>
@@ -206,6 +257,14 @@ export function SuppliersTab({ suppliers }: SuppliersTabProps) {
           </Card>
         </div>
       )}
+
+      {/* Add Partner Atelier Modal */}
+      <AddSupplierModal
+        open={addModalOpen}
+        organizationId={organizationId}
+        onClose={() => setAddModalOpen(false)}
+        onSave={handleSaveSupplier}
+      />
     </div>
   )
 }

@@ -28,9 +28,53 @@ from app.tools.inventory.sourcing_tools import create_sourcing_request
 
 logger = logging.getLogger("aveline.agent.visual")
 
-#: Cap on the styling commentary shown in the Salon. A look's commentary is meant to be a few
-#: sentences; an unbounded reply can dominate the thread, which is exactly what staff saw.
-_MAX_COMMENTARY_CHARS = 700
+#: Color family mappings to allow shade synonyms while strictly pruning unrelated colors
+_COLOR_FAMILIES: dict[str, set[str]] = {
+    "red": {"red", "crimson", "deep crimson", "maroon", "deep maroon", "ruby", "ruby red", "burgundy", "royal burgundy", "scarlet", "wine", "cherry", "vermilion"},
+    "blue": {"blue", "navy", "midnight navy", "sapphire", "midnight sapphire", "cobalt", "royal blue", "indigo", "sky blue", "powder blue", "baby blue", "teal", "peacock teal", "aqua", "turquoise", "peacock"},
+    "green": {"green", "emerald", "emerald green", "sage", "sage green", "mint", "mint green", "olive", "deep olive", "jade", "forest green", "bottle green", "bottle", "forest", "dark green"},
+    "pink": {"pink", "blush", "blush pink", "rose", "dusty rose", "rose pink", "magenta", "fuchsia", "coral", "peach", "apricot", "salmon"},
+    "yellow": {"yellow", "gold", "champagne gold", "antique gold", "rose gold", "zari gold", "mustard", "mustard ochre", "ochre", "buttercup"},
+    "purple": {"purple", "violet", "lavender", "lilac", "amethyst", "deep amethyst", "plum"},
+    "white": {"white", "ivory", "heirloom ivory", "off-white", "cream", "pearl"},
+    "black": {"black", "midnight black", "charcoal", "slate grey", "grey", "gray"},
+    "brown": {"brown", "terracotta", "burnt terracotta", "rust", "camel", "taupe", "sand", "khaki", "espresso"},
+}
+
+_MAX_COMMENTARY_CHARS = 900
+
+
+def _describe_what_was_seen(state: VisualAgentState) -> str | None:
+    """A short noun phrase for the piece the vision path found in the customer's image.
+
+    The acceptance test for this lane is that a reply *refers to what is actually in the picture*
+    rather than asking the customer to describe it, and the analysis was already being computed:
+    ``analyze_image`` fills ``image_attributes`` on every run, and every reply-composing node
+    ignored it. Wiring the image through while leaving the wording generic would answer the
+    customer the same way the defect did, only after a round-trip.
+
+    Reads the analysed attributes rather than the raw message, so the phrase is grounded in what
+    the model saw - "a deep crimson silk saree" - and not in what the customer typed. Returns
+    ``None`` when no analysis happened (no media, or a denied/failed call), which is what keeps the
+    text-only replies byte-identical to before.
+    """
+    raw = state.get("image_attributes")
+    if not isinstance(raw, dict):
+        return None
+
+    # Attribute order is the order a person would describe a garment in: colour, fabric, type.
+    # "Neutral" is the parse fallback rather than something the model saw, and describing a garment
+    # as "a neutral silk saree" reads as an observation while carrying none - so it is dropped
+    # here rather than allowed to stand in for a colour nobody actually reported.
+    parts = [
+        str(value).strip()
+        for value in (raw.get("primary_color"), raw.get("fabric"), raw.get("category"))
+        if value and str(value).strip() and str(value).strip().lower() != "neutral"
+    ]
+    if not parts:
+        return None
+
+    return " ".join(parts).lower()
 
 
 class VisualInsightAgent:
@@ -87,7 +131,7 @@ class VisualInsightAgent:
             "burnt terracotta", "terracotta", "mustard ochre", "mustard", "deep olive", "olive", "rust",
             "camel", "taupe", "sand", "khaki", "ochre", "espresso",
             # Jewel Tones
-            "emerald green", "emerald", "ruby red", "ruby", "midnight sapphire", "sapphire",
+            "emerald green", "emerald", "forest green", "bottle green", "ruby red", "ruby", "midnight sapphire", "sapphire",
             "deep crimson", "crimson", "deep amethyst", "amethyst", "topaz", "jade",
             # Festive Metallics
             "champagne gold", "antique gold", "rose gold", "zari gold", "gold", "silver", "platinum",
@@ -113,13 +157,51 @@ class VisualInsightAgent:
         if not color and color_theme:
             color = color_theme
 
+        # 3. Comprehensive Garment Category Taxonomy
+        category = None
+        category_mappings = [
+            # Sarees
+            (r"\b(sarees?|saris?|kanjeevaram|kanjivaram|banarasi|chanderi|tussar|pochampally|patola|kasavu|silk saree)\b", "Sarees"),
+            # Lehengas
+            (r"\b(lehengas?|lehngas?|ghagras?|choli|lehenga choli)\b", "Lehengas"),
+            # Gowns & Dresses
+            (r"\b(gowns?|evening gowns?|ballgowns?|dress(?:es)?|maxi|midi|frocks?|jumpsuits?|rompers?)\b", "Gowns"),
+            # Kurtas & Tunics / Tops / Blouses
+            (r"\b(kurtas?|kurtis?|tunics?|silk blouses?|blouses?|anarkalis?|sherwanis?|tops?|shirts?)\b", "Kurtas & Tunics"),
+            # Outerwear
+            (r"\b(outerwear|blazers?|jackets?|coats?|overcoats?|trenches?|trenchcoats?|shrugs?|cardigans?|capes?|dusters?)\b", "Outerwear"),
+            # Drapes & Shawls
+            (r"\b(drapes?|shawls?|dupattas?|stoles?|scarfs?|scarves|wraps?|pallus?)\b", "Drapes & Shawls"),
+            # Jewelry & Accessories
+            (r"\b(jewelry|jewellery|accessories|accessory|necklaces?|earrings?|bangles?|clutch(?:es)?|bags?|footwear|heels?|shoes?|belts?)\b", "Jewelry & Accessories"),
+        ]
+
+        for pattern, cat_name in category_mappings:
+            if re.search(pattern, msg):
+                category = cat_name
+                break
+
+        # Extract leftover keywords for free-form query if no category/color was mapped
+        stop_words = {
+            "do", "we", "have", "any", "in", "stock", "is", "there", "are", "the", "a", "an",
+            "for", "with", "please", "show", "me", "can", "you", "find", "tell", "check",
+            "available", "look", "looking", "i", "want", "need", "pieces", "items", "u", "some", "of"
+        }
+        raw_words = [w for w in re.findall(r"\b\w+\b", msg) if len(w) > 2 and w not in stop_words]
+
+        cleaned_query = None
+        if not category and not color and raw_words:
+            cleaned_query = " ".join(raw_words)
+
         criteria = {
             "organizationId": org_id,
-            "query": state.get("message", ""),
             "occasion": occasion,
             "color": color,
+            "category": category,
             "color_theme": color_theme,
         }
+        if cleaned_query:
+            criteria["query"] = cleaned_query
 
         return {"search_criteria": criteria}
 
@@ -164,8 +246,10 @@ class VisualInsightAgent:
 
         attrs: ImageAttributes = outcome.attributes
         criteria = state.get("search_criteria") or {}
-        criteria["category"] = attrs.category
-        criteria["color"] = attrs.primary_color
+        if attrs.category and not criteria.get("category"):
+            criteria["category"] = attrs.category
+        if attrs.primary_color and not criteria.get("color"):
+            criteria["color"] = attrs.primary_color
         if attrs.occasion and not criteria.get("occasion"):
             criteria["occasion"] = attrs.occasion
 
@@ -189,6 +273,65 @@ class VisualInsightAgent:
 
         try:
             items: list[PieceItem] = await search_inventory(self._registry, criteria)
+
+            # Defensive category filter: when a category is requested, filter out mismatched pieces
+            target_category = criteria.get("category")
+            if target_category and items:
+                norm_target = target_category.lower()
+                singular_target = norm_target[:-1] if norm_target.endswith("s") and len(norm_target) > 3 else norm_target
+
+                # Extract significant category keywords (ignoring & and common small noise words)
+                raw_words = [w for w in re.findall(r"\b\w+\b", norm_target) if len(w) > 2 and w not in ("and", "the", "for", "with")]
+                category_tokens = set(raw_words + [singular_target, norm_target])
+                for w in raw_words:
+                    if w.endswith("s") and len(w) > 3:
+                        category_tokens.add(w[:-1])
+                if "saree" in category_tokens or "sarees" in category_tokens:
+                    category_tokens.add("sari")
+
+                def _is_category_match(item: PieceItem) -> bool:
+                    item_cat = (item.category or "").lower()
+                    item_name = (item.name or "").lower()
+                    if item_cat:
+                        if norm_target in item_cat or item_cat in norm_target or singular_target in item_cat:
+                            return True
+                        if any(token in item_cat for token in category_tokens):
+                            return True
+                    if norm_target in item_name or singular_target in item_name:
+                        return True
+                    if any(token in item_name for token in category_tokens):
+                        return True
+                    return False
+
+                items = [item for item in items if _is_category_match(item)]
+
+            # Defensive color filter: when a specific color is requested, prune mismatched colors
+            target_color = criteria.get("color")
+            if target_color and items:
+                norm_color = target_color.lower().strip()
+
+                def _is_color_match(item: PieceItem) -> bool:
+                    item_color = (item.color or "").lower().strip()
+                    item_name = (item.name or "").lower().strip()
+
+                    # Direct match
+                    if item_color and (norm_color in item_color or item_color in norm_color):
+                        return True
+                    if re.search(r"\b" + re.escape(norm_color) + r"\b", item_name):
+                        return True
+
+                    # Color family expansion
+                    family_shades = _COLOR_FAMILIES.get(norm_color)
+                    if family_shades:
+                        if any(shade in item_color for shade in family_shades):
+                            return True
+                        if any(re.search(r"\b" + re.escape(shade) + r"\b", item_name) for shade in family_shades):
+                            return True
+
+                    return False
+
+                items = [item for item in items if _is_color_match(item)]
+
             return {"matched_items": [item.model_dump() for item in items], "search_failed": False}
         except Exception as e:  # noqa: BLE001 - recorded in state, surfaced by compose_output
             logger.warning("Inventory search failed: %s", e)
@@ -268,7 +411,20 @@ class VisualInsightAgent:
                 }
             else:
                 name = items[0].name
-                suggestion = f"Elle curated {len(items)} piece(s) harmonizing with your aesthetic, including the {name}."
+                # When the customer sent a picture, the reply says what was seen in it. This is the
+                # difference between "we found something" and "we found something for the piece you
+                # photographed", and it is the whole point of the vision path.
+                seen = _describe_what_was_seen(state)
+                if seen:
+                    suggestion = (
+                        f"From your photo, this reads as a {seen} - Elle curated {len(items)} "
+                        f"piece(s) in that spirit, including the {name}."
+                    )
+                else:
+                    suggestion = (
+                        f"Elle curated {len(items)} piece(s) harmonizing with your aesthetic, "
+                        f"including the {name}."
+                    )
                 return {
                     "composed_looks": [look.model_dump()],
                     "suggestion": suggestion,
@@ -328,9 +484,18 @@ class VisualInsightAgent:
                 "status": "pending",
             }
         else:
+            # The out-of-stock answer names the piece the customer actually photographed, so it
+            # reads as a response to their image rather than a generic "not available". This is the
+            # live case from the handoff: a saree photo whose reply never mentioned the saree.
+            seen = _describe_what_was_seen(state)
             suggestion = (
-                "We do not have this exact piece in stock right now, but Elle has initiated a custom "
+                f"We do not have that {seen} in stock right now, but Elle has initiated a custom "
                 "sourcing request with our partner ateliers."
+                if seen
+                else (
+                    "We do not have this exact piece in stock right now, but Elle has initiated a "
+                    "custom sourcing request with our partner ateliers."
+                )
             )
             return {
                 "sourcing_request": req.model_dump(),

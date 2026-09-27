@@ -30,10 +30,11 @@ from app.agents.customer_memory.graph import build_memory_graph
 from app.agents.customer_memory.parsing import parse_message
 from app.agents.visual_insight.graph import build_visual_graph
 from app.agents.visual_insight.routing import route_after_visual
-from app.context import compact
+from app.context import compact, has_inbound_media
 from app.core.config import get_settings
 from app.customer_resolution import resolve_customer
 from app.gate import (
+    NO_SPECIALIST_INTENTS,
     classify_by_rules,
     is_customer_book_question,
     may_read_tenant_account,
@@ -957,7 +958,20 @@ def _route_after_memory(state: ConciergeState) -> str:
     intent = state.get("intent") or {}
     agents = intent.get("suggested_agents", [])
     org_context = state.get("org_context") or {}
-    if "visual" in agents or org_context.get("image_url"):
+
+    # A lane answered in code routes no specialist, so it is decided before the media arm below.
+    # The media arm is a *guard*, not a lane of its own: it exists to let the run through to Elle
+    # when the plan already carries her, and must not manufacture that route for an intent whose
+    # answer is fetched figures or a refusal.
+    if intent.get("intent_type") in NO_SPECIALIST_INTENTS:
+        return "formulate_response"
+
+    # The second arm used to test ``image_url`` alone, the legacy bridge. The reference arm is the
+    # contract, and the two travel independently: a host with no media signing key sends the
+    # attachment reference and no URL at all, so this guard refused the one route that could have
+    # read the picture. `has_inbound_media` covers both, and is the same predicate the supervisor
+    # routes on, so the decision and its guard cannot disagree.
+    if "visual" in agents or has_inbound_media(org_context):
         return "visual_agent"
     if "commerce" in agents:
         return "commerce_agent"

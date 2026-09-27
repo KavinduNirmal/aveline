@@ -106,6 +106,11 @@ on:
         required: false
         type: boolean
         default: false
+      seed_handbook:
+        description: "Seed the handbook knowledge base from this commit's markdown. Idempotent, but it embeds and upserts, so it costs an API round-trip per changed chunk."
+        required: false
+        type: boolean
+        default: false
 
 # Only ever one deployment at a time, and never cancel one mid-flight: a cancelled
 # roll can leave the API on a half-applied revision.
@@ -322,3 +327,86 @@ jobs:
           done
           echo "::error::API did not report Healthy within the timeout."
           exit 1
+
+  # ---------------------------------------------------------------------------
+  # Job 4: Seed the handbook knowledge base (opt-in)
+  #
+  # Nothing else seeds it. Without this job the handbook table exists, is migrated, and is empty -
+  # so every question the agent should answer from the handbook is answered from nowhere, and
+  # nothing about the deployment looks wrong while that is true. That is precisely the shape of
+  # failure a checkbox is good at removing: the work is real, and it is easy to leave undone.
+  #
+  # Opt-in and last, because it runs against the revision this run has just rolled and it is the
+  # only step here that writes content rather than images or revisions. Re-running is safe: the API
+  # embeds each chunk and upserts it, so an unchanged source writes nothing.
+  # ---------------------------------------------------------------------------
+  seed-handbook:
+    name: Seed the handbook
+    needs: [build-and-push, deploy]
+    # `always()` so that a skipped `migrate` job cannot silently skip this one too; the real gate
+    # is that the roll actually succeeded.
+    if: ${{ always() && inputs.seed_handbook && needs.deploy.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install the seeder's dependencies
+        working-directory: agent-service
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # The token comes from Key Vault rather than a GitHub secret, for the same reason the
+      # migration job reads the connection string there: the vault is already the source of truth,
+      # and the token never has to be copied into a second place.
+      - name: Seed the handbook
+        working-directory: agent-service
+        run: |
+          TOKEN=$(az keyvault secret show \
+            --vault-name "$KEY_VAULT_NAME" \
+            --name agent-internal-token \
+            --query value -o tsv)
+          if [ -z "$TOKEN" ]; then
+            echo "::error::Empty internal token from Key Vault; refusing to seed."
+            exit 1
+          fi
+
+          FQDN=$(az containerapp show \
+            --name "$API_APP" --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn -o tsv)
+
+          python scripts/seed_handbook.py --base-url "https://${FQDN}" --token "$TOKEN"
+
+      # A seed that "succeeds" while the handbook stays empty is the exact failure this job was
+      # added to prevent, so it asserts the result rather than trusting the seeder's exit code.
+      - name: Verify the handbook is not empty
+        run: |
+          FQDN=$(az containerapp show \
+            --name "$API_APP" --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          TOKEN=$(az keyvault secret show \
+            --vault-name "$KEY_VAULT_NAME" \
+            --name agent-internal-token \
+            --query value -o tsv)
+
+          SOURCES=$(curl -sS -m 30 -H "X-Internal-Token: ${TOKEN}" \
+            "https://${FQDN}/internal/handbook/sources")
+          echo "Indexed sources: ${SOURCES}"
+
+          case "$SOURCES" in
+            '[]'|'')
+              echo "::error::The handbook still reports no sources after seeding."
+              exit 1
+              ;;
+          esac

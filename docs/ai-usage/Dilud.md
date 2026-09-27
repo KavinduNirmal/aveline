@@ -65,6 +65,8 @@
 - `pytest tests/test_visual_agent.py tests/test_visual_insight_schemas.py tests/test_visual_routing.py tests/tools/test_visual_tools.py tests/tools/test_inventory_tools.py`: 66/66 passed.
 - `pytest tests/ --cov=app --cov-fail-under=90`: 963/963 passed (92.43% coverage).
 - `ruff check app/ tests/`: 0 errors.
+- `npx vitest run src/test/admin-install.test.ts src/test/admin-conformance.test.ts src/test/tenant-conformance.test.ts`: 20/20 passed.
+- `npm run build`: 0 errors (built in <1s).
 
 ---
 

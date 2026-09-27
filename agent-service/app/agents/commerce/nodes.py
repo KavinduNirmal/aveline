@@ -57,6 +57,27 @@ _DISCOUNT_QUESTION = re.compile(
     re.IGNORECASE,
 )
 
+_DISCOUNT_RATE_RE = re.compile(
+    r"\b(?P<rate>\d+(?:\.\d+)?)\s*(?:%|percent\b|pct\b|off\b)",
+    re.IGNORECASE,
+)
+
+
+def extract_discount_rate(message: str) -> float | None:
+    """Extract a proposed discount rate from message if present (e.g. '10% off' -> 0.10)."""
+    if not message:
+        return None
+    match = _DISCOUNT_RATE_RE.search(message)
+    if not match:
+        return None
+    try:
+        val = float(match.group("rate"))
+        if 0.0 < val <= 100.0:
+            return round(val / 100.0, 4)
+    except (ValueError, TypeError):
+        pass
+    return None
+
 
 def is_discount_question(message: str) -> bool:
     """Whether ``message`` asks what a discount may be, rather than what something costs.
@@ -159,6 +180,7 @@ def _quote_sentence(
     cap: float,
     floor: float,
     name: str | None,
+    proposed_discount: float = 0.0,
 ) -> str:
     """What a discount on the named pieces would actually be (ADR-028).
 
@@ -167,8 +189,7 @@ def _quote_sentence(
     the tier cap alone would be answering a different question, so each piece is priced against both
     and named with the number that actually applies to it.
     """
-    who = f"{name} is" if name else "This customer is"
-    sentences = [f"{who} on the {tier} tier."]
+    sentences = [f"{name} is on the {tier} tier."] if name else []
 
     for item in items[:5]:
         label = str(item.get("item_name") or "This piece")
@@ -182,29 +203,55 @@ def _quote_sentence(
         free = min(cap, room)
         amount = line_total * free
 
-        if cap <= 0:
-            sentences.append(
-                f"{label} at {_money(line_total)} carries no standing discount for this tier, so "
-                f"any reduction needs the owner."
-            )
-        elif free <= 0:
-            # True whether the floor is already breached or leaves under a whole percent: a ceiling
-            # rounded down to nothing is nothing.
-            sentences.append(
-                f"{label} at {_money(line_total)} has no whole-percent room under the {floor:.0%} "
-                f"margin floor, so any reduction on it needs the owner."
-            )
-        elif room < cap:
-            sentences.append(
-                f"{label} at {_money(line_total)} takes {free:.0%} off ({_money(amount)}) without "
-                f"sign-off, capped there by the {floor:.0%} margin floor rather than by the tier's "
-                f"{cap:.0%}."
-            )
+        if proposed_discount > 0.0:
+            prop_amount = line_total * proposed_discount
+            discounted_total = max(0.0, line_total - prop_amount)
+            limit_desc = f"{name}'s {tier} tier limit" if name else "the standard limit"
+            if proposed_discount > free:
+                if free <= 0.0:
+                    sentences.append(
+                        f"A {proposed_discount:.0%} discount ({_money(prop_amount)}) on {label} at "
+                        f"{_money(line_total)} would bring it to {_money(discounted_total)}, but "
+                        f"requires owner sign-off because there is no standing discount and the "
+                        f"{floor:.0%} margin floor allows no reductions without approval."
+                    )
+                else:
+                    sentences.append(
+                        f"A {proposed_discount:.0%} discount ({_money(prop_amount)}) on {label} at "
+                        f"{_money(line_total)} would bring it to {_money(discounted_total)}, but "
+                        f"requires owner sign-off because {limit_desc} without sign-off is "
+                        f"{free:.0%} ({_money(amount)})."
+                    )
+            else:
+                sentences.append(
+                    f"A {proposed_discount:.0%} discount ({_money(prop_amount)}) on {label} at "
+                    f"{_money(line_total)} brings it to {_money(discounted_total)}, which is "
+                    f"within {limit_desc} of {free:.0%} and can be applied without sign-off."
+                )
         else:
-            sentences.append(
-                f"{label} at {_money(line_total)} takes the full {free:.0%} off ({_money(amount)}) "
-                f"without sign-off."
-            )
+            if cap <= 0:
+                sentences.append(
+                    f"{label} at {_money(line_total)} carries no standing discount for this tier, so "
+                    f"any reduction needs the owner."
+                )
+            elif free <= 0:
+                # True whether the floor is already breached or leaves under a whole percent: a ceiling
+                # rounded down to nothing is nothing.
+                sentences.append(
+                    f"{label} at {_money(line_total)} has no whole-percent room under the {floor:.0%} "
+                    f"margin floor, so any reduction on it needs the owner."
+                )
+            elif room < cap:
+                sentences.append(
+                    f"{label} at {_money(line_total)} takes {free:.0%} off ({_money(amount)}) without "
+                    f"sign-off, capped there by the {floor:.0%} margin floor rather than by the tier's "
+                    f"{cap:.0%}."
+                )
+            else:
+                sentences.append(
+                    f"{label} at {_money(line_total)} takes the full {free:.0%} off ({_money(amount)}) "
+                    f"without sign-off."
+                )
 
     return " ".join(sentences)
 
@@ -326,6 +373,8 @@ class CommerceAgent:
         items = state.get("items") or []
         proposed_discount = float(state.get("proposed_discount") or 0.0)
         customer_id = state.get("customer_id")
+        customer_name = state.get("customer_name")
+        purpose = state.get("purpose")
 
         # 1. Tally line items and costs
         if not items:
@@ -349,6 +398,30 @@ class CommerceAgent:
                     "status": SKIPPED,
                     "reason": "no items in order context to evaluate",
                 },
+            }
+
+        # 1b. Missing registered customer for an order intent: prompt the boutique owner
+        if purpose != QUOTE_PURPOSE and not customer_name and not customer_id and items:
+            first_item = items[0]
+            item_name = first_item.get("name") or first_item.get("item_name") or "this item"
+            unit_price = float(first_item.get("unit_price") or 0.0)
+            qty = int(first_item.get("quantity") or 1)
+            item_label = f"{qty}x {item_name}" if qty > 1 else str(item_name)
+            prompt_text = (
+                f"I'm ready to prepare the order for **{item_label}** ({_money(unit_price * qty)}). "
+                f"Which registered client is this for? You can provide their first name or phone number."
+            )
+            output = CommerceAgentOutput(
+                status=SUCCESS,
+                summary=prompt_text,
+                needs_approval=False,
+                action_required="Awaiting client name or phone number from staff.",
+            )
+            return {
+                "status": SUCCESS,
+                "summary": prompt_text,
+                "output": output.model_dump(),
+                "requires_approval": False,
             }
 
         subtotal = sum(float(item.get("total_price") or (float(item.get("unit_price", 0.0)) * int(item.get("quantity", 1)))) for item in items)
@@ -394,6 +467,13 @@ class CommerceAgent:
             elif "DISCOUNT_LIMIT_EXCEEDED" in triggered_rules:
                 approval_type = "discount"
                 approval_reason = f"Requested discount {proposed_discount:.1%} exceeds {tier} tier cap"
+
+        # Orders placed via conversational flow always queue for owner review and manual sign-off
+        if purpose != QUOTE_PURPOSE:
+            requires_approval = True
+            is_auto_approved = False
+            approval_type = approval_type or "order_approval"
+            approval_reason = approval_reason or f"Order for {customer_name or 'customer'} awaiting owner review and approval"
 
         logger.info(
             "Evaluated deal for org %s: subtotal=%.2f total=%.2f margin=%.4f requires_approval=%s",
@@ -491,6 +571,11 @@ class CommerceAgent:
         tier = str(state.get("loyalty_tier") or "Regular")
         cap = _rate(state.get("max_allowed_discount"))
         floor = _rate(state.get("min_required_margin"))
+        proposed_discount = _rate(state.get("proposed_discount"))
+        if proposed_discount <= 0.0:
+            extracted = extract_discount_rate(state.get("message", ""))
+            if extracted is not None:
+                proposed_discount = extracted
 
         summary = _quote_sentence(
             items=items,
@@ -498,6 +583,7 @@ class CommerceAgent:
             cap=cap,
             floor=floor,
             name=state.get("customer_name"),
+            proposed_discount=proposed_discount,
         )
         output = CommerceAgentOutput(
             status=SUCCESS,
@@ -530,8 +616,17 @@ class CommerceAgent:
         reason = state.get("approval_reason") or "Order requires manager sign-off"
         approval_type = state.get("approval_type") or "high_value_order"
         total = state.get("total", 0.0)
+        customer_name = state.get("customer_name")
+        tier = state.get("loyalty_tier") or "Regular"
 
-        fallback_summary = f"Deal requires owner approval: {reason} (Total: LKR {total:,.2f}). Workflow paused."
+        if customer_name:
+            fallback_summary = (
+                f"Order queued for **{customer_name}** ({tier} Tier)! Total: {_money(total)}. "
+                f"The order is now live on your Live Orders page awaiting your manual review and approval."
+            )
+        else:
+            fallback_summary = f"Deal requires owner approval: {reason} (Total: {_money(total)}). Workflow paused."
+
         summary, usage = await self._compose_narrative(state, "approval_required", fallback_summary)
 
         deal_eval = DealEvaluation(

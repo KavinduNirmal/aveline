@@ -77,7 +77,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       backgroundColor: scheme.surface,
       appBar: AppBar(
         title: Text(
-          'New Commerce Order',
+          'New Order',
           style: theme.textTheme.titleLarge?.copyWith(
             fontFamily: 'Playfair Display',
             fontWeight: FontWeight.w600,
@@ -143,27 +143,11 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
               const SizedBox(height: 20),
 
               // Line Items header
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Order Items (${_controller.items.length})',
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  TextButton.icon(
-                    onPressed: () {
-                      CatalogItemPickerSheet.show(
-                        context,
-                        catalogRepository: widget.catalogRepository,
-                        onItemSelected: _controller.addItem,
-                      );
-                    },
-                    icon: const Icon(Icons.add_rounded, size: 18),
-                    label: const Text('Add Piece'),
-                  ),
-                ],
+              Text(
+                'Order Items (${_controller.items.length})',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               const SizedBox(height: 8),
 
@@ -271,6 +255,24 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                     );
                   },
                 ),
+              if (_controller.items.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        CatalogItemPickerSheet.show(
+                          context,
+                          catalogRepository: widget.catalogRepository,
+                          onItemSelected: _controller.addItem,
+                        );
+                      },
+                      icon: const Icon(Icons.search_rounded, size: 18),
+                      label: const Text('Browse Catalog'),
+                    ),
+                  ),
+                ),
               const SizedBox(height: 20),
 
               // Discount & Notes
@@ -278,10 +280,10 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 controller: _discountController,
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 decoration: InputDecoration(
-                  labelText: 'Custom Discount (LKR)',
+                  labelText: 'Custom Discount (%)',
                   hintText: '0',
-                  prefixText: 'LKR ',
                   prefixIcon: const Icon(Icons.percent_rounded),
+                  suffixText: '%',
                   filled: true,
                   fillColor: scheme.surfaceContainerLow,
                   border: OutlineInputBorder(
@@ -291,7 +293,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 ),
                 onChanged: (val) {
                   final parsed = double.tryParse(val) ?? 0.0;
-                  _controller.setDiscount(parsed);
+                  _controller.setDiscountPercent(parsed);
                 },
               ),
               const SizedBox(height: 12),
@@ -371,7 +373,10 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text('Discount', style: TextStyle(color: scheme.error)),
+                          Text(
+                            'Discount (${_controller.discountPercent.toStringAsFixed(_controller.discountPercent.truncateToDouble() == _controller.discountPercent ? 0 : 1)}%)',
+                            style: TextStyle(color: scheme.error),
+                          ),
                           Text(
                             '- LKR ${_controller.discount.toStringAsFixed(0)}',
                             style: TextStyle(color: scheme.error, fontWeight: FontWeight.w600),

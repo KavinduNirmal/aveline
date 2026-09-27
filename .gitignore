@@ -78,6 +78,12 @@ $RECYCLE.BIN/
 
 # Build outputs
 [Dd]ebug/
+# ...but the Android project's `src/debug/` is a *source set*, not a build output. This pattern was
+# silently excluding frontend/aveline_mobile/android/app/src/debug/ from version control, which is
+# exactly where a debug-only AndroidManifest.xml belongs. Re-include it. (`src/profile/` was never
+# affected because `[Pp]rofile/` is not in this list - which is why that manifest has always been
+# tracked while the debug one could not be added at all.)
+!frontend/aveline_mobile/android/app/src/debug/
 [Dd]ebugPublic/
 [Rr]elease/
 [Rr]eleases/

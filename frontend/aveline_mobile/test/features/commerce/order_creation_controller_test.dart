@@ -115,7 +115,32 @@ void main() {
       expect(controller.subtotal, 30000.0);
     });
 
-    test('high discount triggers threshold warning', () {
+    test('percentage discount calculates currency discount amount and total accurately', () {
+      controller.setCustomerName('Chamari Atapattu');
+      controller.addItem(
+        const OrderItem(
+          itemId: 'item-1',
+          itemName: 'Chanderi Saree',
+          quantity: 1,
+          unitPrice: 30000.0,
+          wholesaleCost: 18000.0,
+        ),
+      );
+
+      expect(controller.subtotal, 30000.0);
+      expect(controller.discountPercent, 0.0);
+      expect(controller.discount, 0.0);
+      expect(controller.total, 30000.0);
+
+      // Apply 10% discount
+      controller.setDiscountPercent(10.0);
+      expect(controller.discountPercent, 10.0);
+      expect(controller.discount, 3000.0);
+      expect(controller.total, 27000.0);
+      expect(controller.triggersApprovalWarning, false);
+    });
+
+    test('high discount percentage (> 15%) triggers threshold warning', () {
       controller.setCustomerName('Chamari Atapattu');
       controller.addItem(
         const OrderItem(
@@ -129,13 +154,15 @@ void main() {
 
       expect(controller.triggersApprovalWarning, false);
 
-      // Apply 30% discount
-      controller.setDiscount(9000.0);
-      expect(controller.total, 21000.0);
+      // Apply 20% discount
+      controller.setDiscountPercent(20.0);
+      expect(controller.discountPercent, 20.0);
+      expect(controller.discount, 6000.0);
+      expect(controller.total, 24000.0);
       expect(controller.triggersApprovalWarning, true);
     });
 
-    test('submitOrder creates order and resets or holds result', () async {
+    test('submitOrder passes computed currency discount to repository and resets', () async {
       controller.setOrderType('whatsapp');
       controller.setCustomerName('Niluka Fernando');
       controller.addItem(
@@ -147,14 +174,19 @@ void main() {
           wholesaleCost: 8000.0,
         ),
       );
-      controller.setDiscount(6000.0);
+      // Subtotal = 30000. 20% discount = 6000 LKR
+      controller.setDiscountPercent(20.0);
+      expect(controller.discount, 6000.0);
 
       final order = await controller.submitOrder();
 
       expect(order.customerName, 'Niluka Fernando');
       expect(order.orderType, 'whatsapp');
+      expect(order.discount, 6000.0);
+      expect(order.total, 24000.0);
       expect(order.status, 'pending_approval');
       expect(repository.lastCallParams?['orderType'], 'whatsapp');
+      expect(repository.lastCallParams?['discount'], 6000.0);
       expect(controller.isSubmitting, false);
     });
   });

@@ -14,6 +14,22 @@ from typing import Any
 from app.schemas.customer_memory import normalise_memory_content
 
 
+def _provenance(item: dict[str, Any]) -> str:
+    """How one note came to be known, in a reader's words.
+
+    The store has always held the distinction - a note the customer stated versus one the agent
+    inferred - and the block never showed it, so the one surface where a reader decides whether to
+    trust a note could not tell (gap B5). "Stated" and "Inferred" are the two words an associate
+    works in; the raw source vocabulary is not.
+    """
+    explicit = item.get("is_explicit")
+    if explicit is True:
+        return "Stated"
+    if explicit is False:
+        return "Inferred"
+    return ""
+
+
 def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
@@ -60,9 +76,17 @@ def build_ava_blocks(memory_output: Any) -> list[dict[str, Any]]:
             if key in seen:
                 continue
             seen.add(key)
-            rows.append([str(item.get("category") or "memory"), content])
+            rows.append(
+                [str(item.get("category") or "memory"), content, _provenance(item)]
+            )
     if rows:
-        blocks.append({"type": "at_a_glance", "columns": ["Category", "Content"], "rows": rows})
+        blocks.append(
+            {
+                "type": "at_a_glance",
+                "columns": ["Category", "Content", "Known"],
+                "rows": rows,
+            }
+        )
 
     draft = memory.get("draft_response")
     if draft:

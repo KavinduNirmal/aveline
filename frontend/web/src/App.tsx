@@ -156,6 +156,13 @@ export default function App() {
                       survives a refresh. React Router ranks the literal `catalog` above `:section`, so
                       this route wins for `/app/b/:slug/catalog/:itemId`. */}
                   <Route path="/app/b/:slug/catalog/:itemId" element={<TenantDashboard />} />
+                  {/* One client has their own URL, for the same reason: a client record is something
+                      an associate shares, links to and returns to, and a side sheet could not be
+                      linked to at all. */}
+                  <Route
+                    path="/app/b/:slug/customers/:customerId"
+                    element={<TenantDashboard />}
+                  />
                   <Route path="/app/b/:slug/:section" element={<TenantDashboard />} />
 
                   {/* Administrator console. Nested inside the same guards as the tenant app, so an

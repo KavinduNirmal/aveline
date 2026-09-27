@@ -59,7 +59,13 @@ in-memory provider cannot exercise the vector column.
   embeds the query text server-side via `IEmbeddingService`.
 - CI's `build-api` job must be able to run Docker (Testcontainers) for the pgvector tests.
 - Because the column is external to EF, the `.NET` model never reads the raw vector into memory —
-  search returns projected `(content, category, similarity)` results, never the embedding blob.
+  search returns a projection (`content`, `category`, `source`, `confidence`, `isExplicit`,
+  `similarity`), never the embedding blob. `source` and `isExplicit` are selected because the
+  stated-versus-inferred distinction is the one a reader acts on, and it used to be unrecoverable
+  from a search round trip.
+- Search accepts a `minSimilarity` floor and applies it as a predicate rather than a post-filter,
+  alongside the tenant, customer, soft-delete and expiry predicates. Ranking alone always returns
+  `topK` rows however irrelevant, which is the wrong answer for an agent asking for context.
 - `Embeddings:ApiKey`/`Embeddings:BaseUrl`/`Embeddings:Model` must be configured before the
   search/save endpoints can call the provider.
 

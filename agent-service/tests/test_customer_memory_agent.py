@@ -17,7 +17,7 @@ class FakeRegistry:
     """Records calls and returns canned backend responses."""
 
     def __init__(self) -> None:
-        self.saved_memories: list[tuple[str, str, str]] = []
+        self.saved_memories: list[dict] = []
         self.recorded_interactions: list[tuple[str, str, str, str, str | None]] = []
         self.added_events: list[tuple[str, str, str, str | None]] = []
         self.consent_status = "granted"
@@ -30,6 +30,7 @@ class FakeRegistry:
         }
         self.identify_calls = 0
         self.search_calls = 0
+        self.search_min_similarity: float | None = None
         self.brief_calls = 0
         self.memories_raise = False
         self.consent_error: Exception | None = None
@@ -43,14 +44,44 @@ class FakeRegistry:
             raise self.consent_error
         return {"consentStatus": self.consent_status}
 
-    async def get_customer_memories(self, org_id, customer_id, query, top_k=5):
+    async def get_customer_memories(self, org_id, customer_id, query, top_k=5, min_similarity=0.0):
         if self.memories_raise:
             raise RuntimeError("semantic search backend unavailable")
         self.search_calls += 1
-        return [{"id": "mem-old", "content": "Prefers emerald silk", "category": "preference", "similarity": 0.98}]
+        self.search_min_similarity = min_similarity
+        return [
+            {
+                "id": "mem-old",
+                "content": "Prefers emerald silk",
+                "category": "preference",
+                "source": "conversation",
+                "isExplicit": True,
+                "confidence": 0.9,
+                "similarity": 0.98,
+            }
+        ]
 
-    async def save_customer_memory(self, org_id, customer_id, content, category):
-        self.saved_memories.append((customer_id, content, category))
+    async def save_customer_memory(
+        self,
+        org_id,
+        customer_id,
+        content,
+        category,
+        source=None,
+        is_explicit=None,
+        confidence=None,
+        metadata_json=None,
+    ):
+        self.saved_memories.append(
+            {
+                "customer_id": customer_id,
+                "content": content,
+                "category": category,
+                "source": source,
+                "is_explicit": is_explicit,
+                "confidence": confidence,
+            }
+        )
         return {"id": f"mem-{len(self.saved_memories)}"}
 
     async def record_customer_interaction(
@@ -108,8 +139,8 @@ async def test_wedding_inquiry_success_with_consenting_customer():
     assert result["output"]["parsed_intent"]["intent_type"] == "item_search"
     assert result["output"]["parsed_intent"]["occasion"] == "wedding"
     # Detected event persisted as an event memory.
-    event_memories = [m for m in registry.saved_memories if m[2] == "event"]
-    assert any("wedding" in content for _, content, _ in event_memories)
+    event_memories = [m for m in registry.saved_memories if m["category"] == "event"]
+    assert any("wedding" in m["content"] for m in event_memories)
     # Semantic context was retrieved and a draft produced.
     assert registry.search_calls == 1
     assert "emerald silk" in result["output"]["interaction_brief"]
@@ -208,9 +239,9 @@ async def test_explicit_preference_is_saved():
     registry = FakeRegistry()
     result = await _run(registry, message="I really like silk sarees, please.")
 
-    pref_memories = [m for m in registry.saved_memories if m[2] == "preference"]
+    pref_memories = [m for m in registry.saved_memories if m["category"] == "preference"]
     assert pref_memories, "expected at least one preference memory to be saved"
-    assert any("silk" in content.lower() for _, content, _ in pref_memories)
+    assert any("silk" in m["content"].lower() for m in pref_memories)
     assert result["status"] == "success"
 
 
@@ -218,8 +249,8 @@ async def test_negative_preference_saved_as_dislikes():
     registry = FakeRegistry()
     await _run(registry, message="I don't like flashy blouses at all.")
 
-    pref_memories = [m for m in registry.saved_memories if m[2] == "preference"]
-    assert any("dislikes flashy" in content.lower() for _, content, _ in pref_memories)
+    pref_memories = [m for m in registry.saved_memories if m["category"] == "preference"]
+    assert any("dislikes flashy" in m["content"].lower() for m in pref_memories)
 
 
 # ---------------------------------------------------------------------------
@@ -502,7 +533,7 @@ async def test_undated_event_falls_back_to_text_memory_only():
     assert result["status"] == "success"
     # No structured event (no date) — but an event text memory is still saved.
     assert registry.added_events == []
-    assert any(m[2] == "event" for m in registry.saved_memories)
+    assert any(m["category"] == "event" for m in registry.saved_memories)
 
 
 async def test_output_brief_uses_backend_events_and_semantic_context():
@@ -551,7 +582,7 @@ async def test_output_is_schema_consistent_and_excludes_undated_events():
     # The undated "wedding on Saturday" event is saved as a memory but not emitted as a
     # structured DetectedEvent (which requires a date), keeping the output schema-valid.
     assert result["output"]["detected_events"] == []
-    assert any(m[2] == "event" for m in registry.saved_memories)
+    assert any(m["category"] == "event" for m in registry.saved_memories)
 
 
 # ---------------------------------------------------------------------------
@@ -883,7 +914,16 @@ async def test_staff_query_surfaces_what_is_actually_on_file():
     assert "emerald silk" not in brief_text, "the brief must summarise, not recite"
     assert "One note is on file." in brief_text
     assert result["output"]["memories_on_file"] == [
-        {"content": "Prefers emerald silk", "category": "preference"}
+        {
+            "content": "Prefers emerald silk",
+            "category": "preference",
+            # Provenance now travels with the note, so the block can say a fact was stated rather
+            # than inferred (gaps B2, B3).
+            "source": "conversation",
+            "is_explicit": True,
+            "confidence": 0.9,
+            "similarity": 0.98,
+        }
     ]
     assert "nothing on file yet" not in brief_text
 
@@ -1030,7 +1070,7 @@ async def test_stored_notes_are_collapsed_in_the_staff_answer():
     """
     registry = FakeRegistry()
 
-    async def memories(org_id, customer_id, query, top_k=5):
+    async def memories(org_id, customer_id, query, top_k=5, min_similarity=0.0):
         return [
             {"content": "The customer has a party", "category": "event"},
             {"content": "The customer has a party", "category": "event"},
@@ -1075,7 +1115,7 @@ async def test_stored_notes_are_collapsed_in_the_staff_answer():
 async def test_the_staff_answer_counts_the_notes_it_is_about_to_show():
     registry = FakeRegistry()
 
-    async def memories(org_id, customer_id, query, top_k=5):
+    async def memories(org_id, customer_id, query, top_k=5, min_similarity=0.0):
         return [
             {"content": "Prefers emerald silk", "category": "preference"},
             {"content": "Has a party on 2026-12-01", "category": "event"},

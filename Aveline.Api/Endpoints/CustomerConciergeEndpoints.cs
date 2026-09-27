@@ -1,6 +1,7 @@
 using Aveline.Api.Configurations;
 using Aveline.Api.Modules.CustomerConcierge.DTOs;
 using Aveline.Api.Modules.CustomerConcierge.Models;
+using Aveline.Api.Modules.CustomerConcierge.Repositories;
 using Aveline.Api.Modules.CustomerConcierge.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -71,6 +72,35 @@ public static class CustomerConciergeEndpoints
             .WithSummary("Semantically search a customer's memories by free-text query.")
             .Produces<IReadOnlyList<MemorySearchResultDto>>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized);
+
+        group.MapGet("/{customerId:guid}/memories", ListMemoriesAsync)
+            .WithName("ListCustomerMemories")
+            .WithSummary("List a customer's live memories, newest first.")
+            .Produces<IReadOnlyList<CustomerMemoryDto>>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status401Unauthorized);
+
+        group.MapPost("/{customerId:guid}/preferences", SavePreferenceAsync)
+            .WithName("SaveCustomerPreference")
+            .WithSummary("Record a stated preference in the customer's preferences table.")
+            .Produces<CustomerPreferenceDto>(StatusCodes.Status201Created)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized);
+
+        group.MapPatch("/{customerId:guid}/memories/{memoryId:guid}", CorrectMemoryAsync)
+            .WithName("CorrectCustomerMemory")
+            .WithSummary("Rewrite the statement of one memory and re-embed it.")
+            .Produces<CustomerMemoryDto>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status409Conflict)
+            .Produces(StatusCodes.Status401Unauthorized);
+
+        group.MapDelete("/{customerId:guid}/memories/{memoryId:guid}", RemoveMemoryAsync)
+            .WithName("RemoveCustomerMemory")
+            .WithSummary("Withdraw one memory (soft delete).")
+            .Produces(StatusCodes.Status204NoContent)
+            .Produces(StatusCodes.Status404NotFound)
             .Produces(StatusCodes.Status401Unauthorized);
 
         group.MapGet("/{customerId:guid}/brief", GenerateBriefAsync)
@@ -262,6 +292,92 @@ public static class CustomerConciergeEndpoints
 
         var results = await memories.SearchAsync(request, cancellationToken);
         return Results.Ok(results);
+    }
+
+    private static async Task<IResult> ListMemoriesAsync(
+        Guid customerId,
+        [FromQuery] Guid organizationId,
+        ICustomerMemoryService memories,
+        CancellationToken cancellationToken)
+    {
+        var results = await memories.ListMemoriesAsync(organizationId, customerId, cancellationToken);
+        return Results.Ok(results);
+    }
+
+    /// <summary>
+    /// Corrects one memory's statement (gap A5).
+    /// </summary>
+    private static async Task<IResult> SavePreferenceAsync(
+        Guid customerId,
+        SavePreferenceRequest request,
+        ICustomerMemoryService memories,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.PreferenceKey)
+            || string.IsNullOrWhiteSpace(request.PreferenceValue))
+        {
+            return Results.BadRequest(new { message = "PreferenceKey and PreferenceValue are required." });
+        }
+
+        var saved = await memories.SavePreferenceAsync(customerId, request, cancellationToken);
+        return saved is null
+            ? Results.BadRequest(new { message = "Consent revoked; preference not stored." })
+            : Results.Created($"/internal/customers/{customerId}/preferences/{saved.Id}", saved);
+    }
+
+    /// <remarks>
+    /// A correction that would collapse onto another of the customer's notes is a <c>409</c> rather
+    /// than a silent merge: the caller named one memory and would otherwise be handed a different
+    /// row's content, or lose one of the two notes without being told which.
+    /// </remarks>
+    private static async Task<IResult> CorrectMemoryAsync(
+        Guid customerId,
+        Guid memoryId,
+        [FromQuery] Guid organizationId,
+        CorrectMemoryRequest request,
+        ICustomerMemoryService memories,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.Content))
+        {
+            return Results.BadRequest(new { message = "Content is required." });
+        }
+
+        var corrected = await memories.CorrectMemoryAsync(
+            organizationId, customerId, memoryId, request, cancellationToken);
+        if (corrected is not null)
+        {
+            return Results.Ok(corrected);
+        }
+
+        // The service answers null for both "not there" and "would duplicate". The second is only
+        // knowable by asking the store again, so the distinction is drawn here rather than guessed.
+        var existing = await memories.ListMemoriesAsync(organizationId, customerId, cancellationToken);
+        var wouldCollapse = existing.Any(memory =>
+            memory.Id != memoryId
+            && MemoryContentKey.From(memory.Content)
+                == MemoryContentKey.From(request.Content));
+
+        return wouldCollapse
+            ? Results.Conflict(new
+            {
+                code = "memory-duplicate",
+                message = "That note already exists for this customer. Correct or remove the other one instead.",
+            })
+            : Results.NotFound(new { message = "No such memory for this customer." });
+    }
+
+    private static async Task<IResult> RemoveMemoryAsync(
+        Guid customerId,
+        Guid memoryId,
+        [FromQuery] Guid organizationId,
+        ICustomerMemoryService memories,
+        CancellationToken cancellationToken)
+    {
+        var removed = await memories.RemoveMemoryAsync(organizationId, customerId, memoryId, cancellationToken);
+        return removed
+            ? Results.NoContent()
+            : Results.NotFound(new { message = "No such memory for this customer." });
     }
 
     private static async Task<IResult> GenerateBriefAsync(

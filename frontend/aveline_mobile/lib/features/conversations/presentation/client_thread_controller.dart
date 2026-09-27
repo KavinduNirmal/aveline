@@ -720,8 +720,8 @@ class ClientThreadController extends ChangeNotifier {
   /// What a refused delivery should say.
   ///
   /// Each refusal code gets its own sentence, because "no client is linked", "there is no
-  /// handle", "the channel is not connected" and "the provider said no" call for
-  /// different things from the associate. Every one ends by saying nothing was sent.
+  /// handle", "the channel is not connected", "the client opted out" and "the provider said no"
+  /// call for different things from the associate. Every one ends by saying nothing was sent.
   String _deliveryFailure(Object error) {
     if (error is DeliveryRefused) {
       return _refusalSentence(
@@ -753,6 +753,10 @@ class ClientThreadController extends ChangeNotifier {
       'This client is not connected on a channel. Nothing was sent.',
     'channel_unsupported' =>
       'This client\u2019s channel cannot carry a message. Nothing was sent.',
+    // The one refusal that is a promise rather than a fault: the client asked not to be
+    // messaged, so an associate must not read it as a delivery problem to retry.
+    'consent_revoked' =>
+      'This client has opted out of messages. Nothing was sent.',
     'provider_refused' => 'The channel refused the message. Nothing was sent.',
     _ => fallback,
   };

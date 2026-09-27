@@ -159,9 +159,14 @@ export function DashboardShell({
   const { signOut } = useClerk()
   // The section is part of the URL (`/app/b/:slug/:section`), not component state, so a section
   // is linkable and survives a refresh. The bare slug route redirects here with `overview`.
-  const { section: sectionParam, itemId: catalogItemId } = useParams<{
+  const {
+    section: sectionParam,
+    itemId: catalogItemId,
+    customerId,
+  } = useParams<{
     section?: string
     itemId?: string
+    customerId?: string
   }>()
   // One window for the whole shell: every KPI panel reads this value, so two panels on the same
   // screen cannot describe different periods.
@@ -188,14 +193,17 @@ export function DashboardShell({
   // role may not open is refused by the same `allowedSections` filter the nav uses — so a
   // hand-typed URL cannot render a panel the nav hides.
   //
-  // The piece route (`/app/b/:slug/catalog/:itemId`) spells `catalog` as a literal, so it carries an
-  // `itemId` param and **no** `section` param. Reading only `section` therefore sent a piece URL to
-  // `overview`; an `itemId` is what says the catalog is the section being viewed.
+  // Two routes spell their section as a literal and carry a second param instead of `:section`: a
+  // catalogue piece (`…/catalog/:itemId`) and a client record (`…/customers/:customerId`). Reading
+  // only `section` sent both to `overview`; the presence of the second param is what says which
+  // section is being viewed.
   const section: SectionId = catalogItemId
     ? 'catalog'
-    : SECTIONS.some((item) => item.id === sectionParam) || sectionParam === 'upgrade'
-      ? (sectionParam as SectionId)
-      : 'overview'
+    : customerId
+      ? 'customers'
+      : SECTIONS.some((item) => item.id === sectionParam) || sectionParam === 'upgrade'
+        ? (sectionParam as SectionId)
+        : 'overview'
 
   const activeSection =
     section !== 'overview' && !allowedSections.some((s) => s.id === section)
@@ -530,7 +538,15 @@ export function DashboardShell({
           ) : activeSection === 'salon' ? (
             <SalonPanel />
           ) : activeSection === 'customers' ? (
-            <CustomersPanel organization={organization} role={role} />
+            <CustomersPanel
+              organization={organization}
+              role={role}
+              openCustomerId={customerId ?? null}
+              onOpenCustomer={(customer) =>
+                navigate(`/app/b/${organization.slug}/customers/${customer.customerId}`)
+              }
+              onCloseCustomer={() => navigate(`/app/b/${organization.slug}/customers`)}
+            />
           ) : activeSection === 'income' ? (
             <IncomePanel organizationId={organization.id} organizationName={organization.name} />
           ) : activeSection === 'catalog' ? (

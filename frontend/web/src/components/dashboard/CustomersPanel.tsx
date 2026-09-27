@@ -28,13 +28,17 @@ import type { OrganizationProfileDto } from '@/types/organization'
 
 import { usePanelLoad } from '@/hooks/usePanelLoad'
 
-import { CustomerDetailSheet } from './customers/CustomerDetailSheet'
+import { CustomerDetailPanel } from './customers/CustomerDetailPanel'
 import { LogVisitDialog } from './customers/LogVisitDialog'
 import { WalkInDialog } from './customers/WalkInDialog'
 
 interface CustomersPanelProps {
   organization: OrganizationProfileDto
   role: string
+  /** The client whose page the URL names, or null when the book itself is the page. */
+  openCustomerId?: string | null
+  onOpenCustomer: (customer: CustomerBookItem) => void
+  onCloseCustomer: () => void
 }
 
 const LEVEL_FILTERS = [
@@ -46,10 +50,20 @@ const LEVEL_FILTERS = [
 ] as const
 
 /**
- * The client book (E-6…E-9). Search, level filter and paging are server-side, so the table never
- * invents a total from a page it did not fetch.
+ * The client book (E-6…E-9), and the client's own page when the URL names one.
+ *
+ * The two are one component because they are one section: the book is `/…/customers`, a client is
+ * `/…/customers/{id}`, and switching between them is navigation rather than a mode. Search, level
+ * filter and paging are server-side, so the table never invents a total from a page it did not
+ * fetch.
  */
-export function CustomersPanel({ organization, role }: CustomersPanelProps) {
+export function CustomersPanel({
+  organization,
+  role,
+  openCustomerId,
+  onOpenCustomer,
+  onCloseCustomer,
+}: CustomersPanelProps) {
   const organizationId = organization.id
   const canManage = hasPermission(role, 'customers:manage')
 
@@ -61,7 +75,6 @@ export function CustomersPanel({ organization, role }: CustomersPanelProps) {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const [selected, setSelected] = useState<CustomerBookItem | null>(null)
   const [visitTarget, setVisitTarget] = useState<CustomerBookItem | null>(null)
   const [walkInOpen, setWalkInOpen] = useState(false)
 
@@ -101,11 +114,25 @@ export function CustomersPanel({ organization, role }: CustomersPanelProps) {
     [load],
   )
 
+  // The book is not fetched while a client's page is open. The two are different URLs, and a list
+  // load behind an open record is a request whose result nothing on screen can use.
   useEffect(() => {
+    if (openCustomerId) return
     const controller = new AbortController()
     void runLoad(controller.signal)
     return () => controller.abort()
-  }, [runLoad])
+  }, [openCustomerId, runLoad])
+
+  if (openCustomerId) {
+    return (
+      <CustomerDetailPanel
+        organization={organization}
+        role={role}
+        customerId={openCustomerId}
+        onClose={onCloseCustomer}
+      />
+    )
+  }
 
   const lastPage = Math.max(1, Math.ceil(total / pageSize))
 
@@ -214,7 +241,7 @@ export function CustomersPanel({ organization, role }: CustomersPanelProps) {
                   <TableRow
                     key={item.customerId}
                     className="cursor-pointer"
-                    onClick={() => setSelected(item)}
+                    onClick={() => onOpenCustomer(item)}
                   >
                     <TableCell className="font-medium">
                       {item.fullName ?? item.nickname ?? 'Unnamed client'}
@@ -277,20 +304,6 @@ export function CustomersPanel({ organization, role }: CustomersPanelProps) {
         </CardContent>
       </Card>
 
-      <CustomerDetailSheet
-        organizationId={organizationId}
-        customerId={selected?.customerId ?? null}
-        canManage={canManage}
-        open={selected !== null}
-        onOpenChange={(open) => {
-          if (!open) setSelected(null)
-        }}
-        onChanged={() => void runLoad()}
-        onLogVisit={(customerId) => {
-          const target = items.find((item) => item.customerId === customerId) ?? null
-          setVisitTarget(target)
-        }}
-      />
 
       <LogVisitDialog
         organizationId={organizationId}

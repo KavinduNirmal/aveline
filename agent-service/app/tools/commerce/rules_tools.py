@@ -67,7 +67,8 @@ async def validate_business_rules(
         flags.append(f"Profit margin {margin:.1%} is below minimum requirement of {DEFAULT_MIN_MARGIN:.1%}")
 
     # 3. Discount cap check
-    max_discount = 0.10 if (customer_tier or "").upper() == "VIP" else 0.05
+    # 3. Discount cap check
+    max_discount = 0.15 if (customer_tier or "").upper() == "VIP" else 0.05
     if requested_discount > max_discount:
         triggered_rules.append("DISCOUNT_LIMIT_EXCEEDED")
         flags.append(f"Requested discount {requested_discount:.1%} exceeds {customer_tier or 'Regular'} tier limit of {max_discount:.1%}")
@@ -95,7 +96,7 @@ def check_approval_threshold(
         return True
     if margin < DEFAULT_MIN_MARGIN:
         return True
-    max_discount = 0.10 if (customer_tier or "").upper() == "VIP" else 0.05
+    max_discount = 0.15 if (customer_tier or "").upper() == "VIP" else 0.05
     if requested_discount > max_discount:
         return True
     return False

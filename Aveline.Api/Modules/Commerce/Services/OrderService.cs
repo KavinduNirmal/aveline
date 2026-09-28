@@ -14,7 +14,7 @@ public class OrderService : IOrderService
     private static readonly Dictionary<string, HashSet<string>> ValidTransitions = new(StringComparer.OrdinalIgnoreCase)
     {
         { "pending_hold", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "pending_approval", "payment_requested", "cancelled" } },
-        { "pending_approval", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "approved", "confirmed", "rejected", "cancelled", "revised" } },
+        { "pending_approval", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "approved", "confirmed", "rejected", "cancelled", "revised", "payment_requested" } },
         { "approved", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "payment_requested", "cancelled" } },
         { "confirmed", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "payment_requested", "cancelled" } },
         { "revised", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "payment_requested", "cancelled" } },
@@ -28,10 +28,11 @@ public class OrderService : IOrderService
     private readonly IApprovalRepository? _approvalRepository;
     private readonly IBoutiqueSaleLedgerService? _ledger;
     private readonly IPaymentRepository? _paymentRepository;
+    private readonly ICommerceSalonNotifier? _salonNotifier;
 
     /// <summary>
     /// Every status the product can write, derived from the transition map rather than transcribed
-    /// from the model's comment — which names eleven and forgets `confirmed` and `revised`, both of
+    /// from the model's comment - which names eleven and forgets `confirmed` and `revised`, both of
     /// which the approval path writes.
     /// </summary>
     /// <remarks>
@@ -51,7 +52,8 @@ public class OrderService : IOrderService
         IBusinessRulesService? businessRulesService = null,
         IApprovalRepository? approvalRepository = null,
         IBoutiqueSaleLedgerService? ledger = null,
-        IPaymentRepository? paymentRepository = null)
+        IPaymentRepository? paymentRepository = null,
+        ICommerceSalonNotifier? salonNotifier = null)
     {
         _orderRepository = orderRepository ?? throw new ArgumentNullException(nameof(orderRepository));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -59,6 +61,7 @@ public class OrderService : IOrderService
         _approvalRepository = approvalRepository;
         _ledger = ledger;
         _paymentRepository = paymentRepository;
+        _salonNotifier = salonNotifier;
     }
 
     public async Task<OrderResponseDto> CreateOrderAsync(
@@ -366,6 +369,56 @@ public class OrderService : IOrderService
                     RecordedByUserId: null,
                     OrderId: id,
                     CustomerId: order.CustomerId), cancellationToken);
+            }
+        }
+
+        if (_approvalRepository is not null)
+        {
+            try
+            {
+                var approval = await _approvalRepository.GetByOrderIdAsync(id, organizationId, cancellationToken);
+                if (approval is not null && approval.Status.Equals("pending", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (targetStatus is "approved" or "confirmed" or "payment_requested")
+                    {
+                        approval.Status = "approved";
+                        approval.DecidedAt = DateTime.UtcNow;
+                        await _approvalRepository.UpdateAsync(approval, cancellationToken);
+                    }
+                    else if (targetStatus is "cancelled" or "rejected")
+                    {
+                        approval.Status = "rejected";
+                        approval.DecidedAt = DateTime.UtcNow;
+                        await _approvalRepository.UpdateAsync(approval, cancellationToken);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to sync approval queue status for order {OrderId}", id);
+            }
+        }
+
+        if (_salonNotifier is not null)
+        {
+            try
+            {
+                if (targetStatus is "approved" or "confirmed")
+                {
+                    await _salonNotifier.NotifyOrderApprovedAsync(organizationId, id, cancellationToken);
+                }
+                else if (targetStatus is "payment_requested")
+                {
+                    await _salonNotifier.NotifyPaymentRequestedAsync(organizationId, id, cancellationToken: cancellationToken);
+                }
+                else if (targetStatus is "cancelled" or "rejected")
+                {
+                    await _salonNotifier.NotifyOrderRejectedAsync(organizationId, id, cancellationToken: cancellationToken);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to send salon notification for order {OrderId} status transition to {Status}", id, targetStatus);
             }
         }
 

@@ -62,6 +62,7 @@ export function SalonPanel() {
     openOrCreateSalon,
     send,
     decide,
+    requestPayment,
     selectCustomer,
     deliverToClient,
     regenerate,
@@ -196,6 +197,7 @@ export function SalonPanel() {
               agentActivity={agentActivity}
               blockActions={blockActions}
               onSignOff={(messageId, approved) => void decide(messageId, approved)}
+              onRequestPayment={(orderId) => void requestPayment(orderId)}
               onSelectCustomer={(customerId) => void selectCustomer(customerId)}
             />
           </div>

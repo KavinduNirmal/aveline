@@ -72,8 +72,27 @@ def build_agent_messages(
         sub_output = output.get(field) if isinstance(output, dict) else None
         blocks = builder(sub_output)
         if blocks:
+            kind = "Note"
+            if agent_key == "lina" and isinstance(sub_output, dict):
+                if sub_output.get("status") == "pending_approval" or sub_output.get("needs_approval"):
+                    kind = "SignOff"
+                    total = sub_output.get("total")
+                    if total is None:
+                        deal = sub_output.get("deal") or {}
+                        total = deal.get("total") if isinstance(deal, dict) else None
+                    sign_off_block: dict[str, Any] = {
+                        "type": "sign_off",
+                        "reason": sub_output.get("approval_reason") or sub_output.get("reason") or "Order prepared and awaiting sign-off",
+                        "actions": ["approve", "request_payment", "reject"],
+                    }
+                    if total is not None:
+                        sign_off_block["amount"] = total
+                    order_id = sub_output.get("order_id")
+                    if order_id:
+                        sign_off_block["orderId"] = str(order_id)
+                    blocks = [sign_off_block, *blocks]
             specialist_messages.append(
-                _message(agent_key, "Note", blocks, thread_id, workflow_run_id)
+                _message(agent_key, kind, blocks, thread_id, workflow_run_id)
             )
 
     # Aveline (the entry point) answers only when no specialist did, and never with a routing

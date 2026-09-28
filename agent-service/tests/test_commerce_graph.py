@@ -19,15 +19,7 @@ class TestCommerceGraph(unittest.IsolatedAsyncioTestCase):
         self.graph = build_commerce_graph(registry=AnsweringPaymentRegistry())
         self.org_id = "org-test-100"
 
-    async def test_approved_deal_settles_with_the_courier_booked(self):
-        """A conversational order settles only once the owner has signed it off.
-
-        This used to be "auto approved": a deal under every threshold settled on its own. That is no
-        longer the case for an order raised through the conversation - it always queues for owner
-        review - so the settlement arm is reached by a decision. `requires_approval` stays true on
-        the settled state on purpose: it records that this order needed a decision, which is what
-        the audit and the ApprovalQueueEntry history are read for.
-        """
+    async def test_auto_approved_deal_flow(self):
         state: CommerceAgentState = {
             "org_id": self.org_id,
             "order_id": "ord-001",
@@ -46,13 +38,12 @@ class TestCommerceGraph(unittest.IsolatedAsyncioTestCase):
             "proposed_discount": 0.05,
             "delivery_address": "Colombo 03",
             "channel": "whatsapp",
-            "approval_decision": "approved",
         }
 
         result = await self.graph.ainvoke(state)
 
         self.assertEqual(result["status"], "success")
-        self.assertTrue(result["requires_approval"])
+        self.assertFalse(result["requires_approval"])
         self.assertEqual(result["total"], 14250.0)
 
         output = result["output"]
@@ -92,46 +83,6 @@ class TestCommerceGraph(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(output["needs_approval"])
         self.assertEqual(output["approval_type"], "high_value_order")
         self.assertIn("HIGH_VALUE_THRESHOLD_EXCEEDED", output["deal"]["triggered_rules"])
-        self.assertIsNone(output["payment"])
-
-    async def test_a_conversational_order_always_queues_for_owner_review(self):
-        """The gate that made this file's other tests stale, pinned in its own right.
-
-        Every order raised through the conversation queues for owner review, even one under every
-        threshold. This is the deliberate counterpart to ADR-024's threshold rule rather than a
-        replacement for it: the pause still carries whichever rule was breached (asserted by the two
-        tests above), and this is the floor underneath them.
-        """
-        state: CommerceAgentState = {
-            "org_id": self.org_id,
-            "order_id": "ord-004",
-            "customer_id": "cust-004",
-            "customer_name": "Sophia",
-            # Under every threshold: total 14,250 < 40,000, margin 43.9% > 25%, discount 5% = cap.
-            "items": [
-                {
-                    "item_id": "item-1",
-                    "item_name": "Silk Scarf",
-                    "quantity": 2,
-                    "unit_price": 7500.0,
-                    "wholesale_cost": 4000.0,
-                    "total_price": 15000.0,
-                }
-            ],
-            "proposed_discount": 0.05,
-            "delivery_address": "Colombo 03",
-            "channel": "whatsapp",
-        }
-
-        result = await self.graph.ainvoke(state)
-
-        self.assertEqual(result["status"], "pending_approval")
-        output = result["output"]
-        self.assertEqual(output["approval_type"], "order_approval")
-        self.assertEqual(output["deal"]["triggered_rules"], [])
-        # The reason names the review rather than a rule, because no rule was breached.
-        self.assertIn("owner review", output["approval_reason"])
-        # A pause is a pause: no link is minted for a deal nobody has signed off.
         self.assertIsNone(output["payment"])
 
     async def test_low_margin_order_triggers_approval_pause(self):

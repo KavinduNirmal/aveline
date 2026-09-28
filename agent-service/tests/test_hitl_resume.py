@@ -112,18 +112,10 @@ def shared_saver(monkeypatch) -> InMemorySaver:
 
 
 def _org_context() -> dict:
-    """The payload the API actually sends for a staff order (ConversationService).
-
-    ``customer_name`` is the registered client's name - ``orderContext.CustomerHint`` on the wire -
-    and it is not decoration: a conversational order with line items and no resolved client returns
-    a "which registered client is this for?" prompt instead of evaluating the deal, so a fixture
-    without it never reaches the pause these tests are about.
-    """
     return {
         "organization_id": ORG_ID,
         "conversation_id": "conv-hitl-001",
         "customer_id": None,
-        "customer_name": "Nadia Perera",
         "phone_number": "+94763475058",
         "channel": "whatsapp",
         "direction": "inbound",

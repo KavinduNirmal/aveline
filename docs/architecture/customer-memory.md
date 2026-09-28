@@ -54,7 +54,7 @@ All entities are tenant-scoped (`OrganizationId`) and created by the
 | `Customers` | Customer identity | unique `(OrganizationId, PhoneNumber)`, status `new/returning/vip/dormant/deleted`, optional staff-written `Description`, soft-delete |
 | `Customer_Preferences` | Stated / inferred preferences | `preference_key/value`, `is_explicit`, `confidence` |
 | `Customer_Events` | Weddings, birthdays, parties… | `event_type`, `event_date`, `is_active` |
-| `Customer_Memory` | Semantic memory | `embedding vector(1536)` + HNSW cosine index (raw SQL, ADR-017); normalised `ContentKey` with a partial unique index over `(OrganizationId, CustomerId, ContentKey)` where `DeletedAt IS NULL`; optional `ExpiresAt` |
+| `Customer_Memory` | Semantic memory | `embedding vector(1536)` + HNSW cosine index and a generated `SearchVector tsvector` + partial GIN index over live rows (both raw SQL, ADR-017; `AddCustomerMemorySearchVector`); normalised `ContentKey` with a partial unique index over `(OrganizationId, CustomerId, ContentKey)` where `DeletedAt IS NULL`; optional `ExpiresAt` |
 | `Customer_Interactions` | Inbound/outbound log | `channel`, `direction`, `parsed_intent` (jsonb) |
 | `Customer_Consent` | Data-processing consent | one row per org + customer |
 | `Customer_Tags` | Free-form labels | unique per customer |
@@ -73,7 +73,7 @@ Routed under `/internal/customers`, all require the `InternalServicePolicy`
 | GET | `/{id}/memories` | List a customer's live memories, newest first |
 | PATCH | `/{id}/memories/{memoryId}` | Correct one memory's statement and re-embed it (409 on a collapse) |
 | DELETE | `/{id}/memories/{memoryId}` | Withdraw one memory (soft delete) |
-| POST | `/memories/search` | pgvector cosine search with a `minSimilarity` floor |
+| POST | `/memories/search` | hybrid (dense + lexical, RRF-fused) search; `mode` = `hybrid`\|`lexical`\|`vector`, `minSimilarity` bounds the dense leg only |
 | POST | `/{id}/preferences` | Record a stated preference in the preferences table |
 | GET | `/{id}/brief` | Staff-facing interaction brief (description/events/tags/preferences) |
 | POST | `/{id}/interactions` | Record an interaction (with parsed-intent JSON) |
@@ -289,32 +289,71 @@ The metrics are `aveline_otp_{issued,verified,failed,start_refused}_total`
 
 1. **resolve_customer** — from an org id plus customer id **or** phone number, load/create the
    profile. Without any customer context the agent short-circuits (`skipped`).
-2. **check_consent** — revoked consent short-circuits; nothing is retrieved or stored. A backend
+2. **apply_staff_update** — a staff instruction to change the bound customer's details. This is the
+   only path that writes identity fields or staff notes from chat, and it runs **before**
+   `check_consent`, so it consults consent itself and refuses a revoked or unreadable customer:
+   revocation means nothing is stored, and who is asking does not change that. A **note**
+   instruction ("add a note for this customer: he prefers green tea") is stored verbatim as a
+   `category="note"`, `source="staff"`, `confidence=1.0` memory and confirmed back to staff; a
+   note-only instruction sends no identity PATCH. A failure is reported, never swallowed.
+3. **check_consent** — revoked consent short-circuits; nothing is retrieved or stored. A backend
    failure fails closed (reports `unavailable`) instead of raising — see the enforcement table
    above. The resolved status is promoted to the orchestrator, which stops the visual and commerce
    agents too.
-3. **parse** — deterministic rule parsing extracts intent (occasion/colour/size/budget), explicit
+4. **parse** — deterministic rule parsing extracts intent (occasion/colour/size/budget), explicit
    preferences ("I like/prefer/love/hate …"), event signals, and a complaint or sentiment signal.
-4. **retrieve** — semantic search over prior memories for context, with a similarity floor
-   (`MEMORY_SIMILARITY_FLOOR = 0.25`) so an unrelated note is not handed back as context, and with
-   each hit's `source`, `isExplicit`, `confidence` and `similarity` preserved.
-5. **persist** — saves explicit preferences, detected events and the quoted complaint/sentiment as
+   A preference's polarity comes from the pattern's own negation group, and a value that names
+   nothing on its own (a bare pronoun, a whole trailing clause) is dropped rather than stored.
+5. **retrieve** — hybrid search over prior memories for context: a pgvector cosine leg and a
+   PostgreSQL full-text leg fused with Reciprocal Rank Fusion (ADR-025). The similarity floor
+   (`MEMORY_SIMILARITY_FLOOR = 0.25`) bounds **the dense leg only**, so an unrelated note is not
+   handed back as context while an exact-token match still is, and each hit's `source`, `isExplicit`,
+   `confidence`, `similarity`, `vectorRank` and `lexicalRank` are preserved.
+6. **persist** — saves explicit preferences, detected events and the quoted complaint/sentiment as
    `Customer_Memory` rows **with their provenance** (`source="conversation"`, `IsExplicit=true`,
    `confidence=0.90`), mirrors a stated preference into `Customer_Preferences` (the table the
    brief's summary is assembled from), records the inbound interaction with its parsed intent
    (`Customer_Interactions`), and creates a **structured `Customer_Event` row** for each dated
    event (undated signals stay text-only).
-6. **compose_output** — enriches the `interaction_brief` from the backend
-   `CustomerMemoryService.GenerateBriefAsync` (real events/tags/status) plus semantic context,
-   generates a draft reply via the LLM (falling back to a deterministic template when no LLM/key
-   is configured or the provider fails), and validates the result against `MemoryAgentOutput`
-   before returning it.
+7. **compose_output** — enriches the `interaction_brief` from the backend
+   `CustomerMemoryService.GenerateBriefAsync` (real events/tags/status), **leads it with the
+   customer's own `description`** when one is on file, and adds the semantic context. An inbound
+   customer message also gets a draft reply via the LLM (falling back to a deterministic template
+   when no LLM/key is configured or the provider fails); a **staff question is answered from the
+   same grounded facts and retrieved memories** rather than by counting them, again falling back to
+   the deterministic template. The result is validated against `MemoryAgentOutput` before return.
+
+### Memory retrieval (hybrid, per-leg modes)
+
+`POST /internal/customers/memories/search` runs the same retrieval pattern as the handbook
+(ADR-025): one statement, two legs over the same filter, fused by Reciprocal Rank Fusion.
+
+- **`mode`** is `hybrid` (default; both legs fused), `lexical` (PostgreSQL full-text only) or
+  `vector` (pgvector cosine only). The single-leg modes exist so the retrieval evaluation can report
+  vector, lexical and hybrid recall separately; the agent always asks for the default. An absent
+  value means `hybrid`, and a value the store cannot run is refused (`400`) rather than silently
+  defaulted.
+- **`minSimilarity`** bounds the **dense leg only**. A lexical hit has no cosine score to floor, and
+  a post-fusion floor would delete exactly the lexical-only hits the hybrid exists to surface. The
+  agent sends `MEMORY_SIMILARITY_FLOOR = 0.25`.
+- **Per-leg ranks are returned.** `vectorRank`, `lexicalRank` and the fused `score` travel with each
+  hit alongside `similarity` (which is NULL for a lexical-only hit: a note with no cosine is not
+  reported as `0`), so the eval scores each leg from the same response.
+- **Degradation.** A failed query embedding runs the lexical leg alone rather than failing the
+  request; every hit then carries a NULL `vectorRank`, which is how the degradation is visible on
+  the wire.
+- **Scope and liveness hold in every mode.** The org + customer scope, `DeletedAt IS NULL` and the
+  `ExpiresAt` predicate are applied to both legs and to the outer select, so a withdrawn note, an
+  expired note, or another customer's note is never returned in any mode.
 
 ### LLM, usage and runtime validation
 
 - **LLM (Issue #163).** Draft generation uses `create_chat_model` when `AGENT_LLM_ENABLED` and an
-  `LLM_API_KEY`/`LLM_MODEL` are set (`app/llm/runtime.py`). Without them, or on provider failure,
-  the agent is fully deterministic — CI and keyless dev never require a live model.
+  `LLM_API_KEY`/`LLM_MODEL` are set (`app/llm/runtime.py`). A **staff question** is answered by the
+  same model from the grounded facts and retrieved memories, so the answer is about the customer
+  rather than a count of notes; its prompt confines it to the supplied facts, and "that is not on
+  file" is preferred over an invented detail. Without a model, or on provider failure, both paths
+  fall back to their deterministic templates — CI and keyless dev never require a live model.
 - **Usage (Issue #165).** Every completed `/agents/query` run reports usage to
   `/internal/usage/record` (ADR-010) — real provider/model + token split when the LLM ran, else a
   `rule-based` sentinel with zero tokens. Reporting is best-effort and never fails a query.
@@ -358,9 +397,11 @@ The graph is a dependency-injected `ToolRegistry` consumer, so it is fully testa
 
 - **.NET in-memory** — entities/EF config, repository CRUD, service logic, endpoint auth + happy
   paths (stubbed `IEmbeddingService`).
-- **.NET Testcontainers Postgres** — real `vector(1536)` column, HNSW index, cosine ordering, the
-  similarity floor as a predicate, and the end-to-end search path plus the live `/brief` payload
-  shape (`pgvector/pgvector:pg16`).
+- **.NET Testcontainers Postgres** — real `vector(1536)` column, generated `SearchVector tsvector`
+  + partial GIN index, cosine ordering, the similarity floor as a dense-leg predicate, the fused
+  hybrid path (a lexical-only hit surfacing beside the dense winner), the tenant / soft-delete /
+  expiry filters in every mode, and the end-to-end search path plus the live `/brief` payload shape
+  (`pgvector/pgvector:pg16`).
 - **Python pytest** — schema validation, `ToolRegistry` routing against a mocked client, the
   sub-graph golden cases (wedding inquiry, revoked consent, missing context, preference
   extraction), and rule-based parsing — all plain assertions.

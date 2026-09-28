@@ -20,6 +20,12 @@ from app.tools.client import InternalApiClient
 
 logger = logging.getLogger("aveline.agent.tools.registry")
 
+#: The retrieval mode the agent asks for by default. Customer-memory search fuses a dense pgvector
+#: leg with a PostgreSQL full-text leg (the pattern ADR-025 established for the handbook); the
+#: backend applies the same default, so this is stated here rather than left implicit in the wire
+#: payload. Single-leg modes are for the retrieval evaluation, not for the agent's own reads.
+MEMORY_SEARCH_MODE = "hybrid"
+
 
 def _instrument_tool(tool_name: str, tool_fn: Any) -> Any:
     """Wrap one registry tool so a tool call is both a step row and a metric (G-6)."""
@@ -133,13 +139,20 @@ class ToolRegistry:
         query: str,
         top_k: int = 5,
         min_similarity: float = 0.0,
+        mode: str = MEMORY_SEARCH_MODE,
     ) -> dict[str, Any]:
-        """Semantic search over a customer's memories (pgvector via backend).
+        """Search a customer's memories (dense, lexical, or fused by the backend).
 
         ``min_similarity`` is the cosine floor a hit must clear. Top-k always returns k rows
         however unrelated, so without a floor a customer whose notes say nothing about the current
         message is handed the five least-unrelated ones as if they were context (gap B1). The
-        backend applies it as a predicate, mirroring the handbook search.
+        backend applies it as a predicate **on the dense leg**, mirroring the handbook search: the
+        lexical leg has no cosine score to floor.
+
+        ``mode`` selects which legs run and defaults to ``hybrid``. The single-leg modes exist so
+        each leg's contribution can be measured rather than assumed (see
+        ``app/agents/customer_memory/eval.py``); everything that is not evaluating gets the fused
+        result.
         """
         return await self._client.request(
             "POST",
@@ -150,6 +163,7 @@ class ToolRegistry:
                 "query": query,
                 "topK": top_k,
                 "minSimilarity": min_similarity,
+                "mode": mode,
             },
         )
 

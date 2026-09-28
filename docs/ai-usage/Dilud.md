@@ -1,3 +1,145 @@
+## Session 2026-09-28 (Dismissible Low Stock Warning Banner in Inventory Tab)
+
+**Task:** Add a dismiss (X) button to the low-stock alert banner in the catalog `InventoryTab.tsx` so users can easily dismiss and hide the warning banner during their active session.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Dismiss State & Action in InventoryTab (`frontend/web/src/components/catalog/InventoryTab.tsx`)**:
+   - Added `isWarningDismissed` local state initialized to `false`.
+   - Updated condition to render low-stock alert banner only when `!isWarningDismissed && lowStockItems.length > 0`.
+   - Added accessible dismiss icon button (`<Button size="icon" variant="ghost" aria-label="Dismiss low stock warning">`) using `X` from `lucide-react`.
+   - Fixed singular/plural grammar string for single-item low-stock notices (`"1 piece has low stock levels..."` vs `"N pieces have..."`).
+
+2. **Automated Unit Testing & Verification (`frontend/web/src/components/catalog/InventoryTab.dom.test.tsx`)**:
+   - Added DOM tests verifying:
+     - Warning banner renders when items with low stock exist (`stockQuantity <= 2` / `status: 'low_stock'`).
+     - Clicking the dismiss button removes the warning banner from view.
+   - Verified 2/2 tests in `InventoryTab.dom.test.tsx` pass.
+   - Ran full catalog test suite: 63/63 tests passed across 10 test files.
+   - Ran `npm run lint` (0 errors) and `npm run build` (successful compilation).
+
+### Files Created or Modified
+
+- `frontend/web/src/components/catalog/InventoryTab.tsx`
+- `frontend/web/src/components/catalog/InventoryTab.dom.test.tsx`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `npm test -- src/components/catalog/InventoryTab.dom.test.tsx`: 2 passed (100%).
+- `npm test -- src/components/catalog/`: 63 passed across 10 test files (100%).
+- `npm run lint`: 0 errors.
+- `npm run build`: built in 842ms without errors.
+
+---
+
+## Session 2026-09-28 (Visual Insight Agent Partner Atelier Scraping & Piece Sourcing)
+
+**Task:** Refine the Visual Insight Agent (Elle) behavior when an in-stock search fails (e.g. "is there any yellow saree"): Elle should first scrape partner atelier websites using refined search criteria (color + category) to find matches before emitting responses or creating fallback tickets, and render found partner pieces with images, titles, and pricing in Salon chat blocks.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Refined Query Construction & Proactive Atelier Scraping (`agent-service/app/agents/visual_insight/nodes.py`)**:
+   - Updated `check_sourcing()` in `VisualInsightAgent`:
+     - Builds concise search terms from extracted `search_criteria` (`criteria["color"] + " " + criteria["category"]` or `criteria["query"]`) rather than falling back to conversational chat sentences.
+     - Calls `scrape_atelier_catalog(...)` across registered partner ateliers (e.g. Adithri, Rithihi) before formulating the final summary or customer suggestion.
+     - In both staff queries and customer suggestions, accurately reports the number of matching pieces discovered and names the partner ateliers where pieces were found.
+
+2. **Salon Block Builder Integration (`agent-service/app/events/block_builders.py`)**:
+   - Enhanced `build_elle_blocks()` to map `partner_sourcing_options` into `piece` content blocks carrying `name`, `price`, `imageUrl`, and `size` (`"Atelier: <name>"`), enabling the Salon Web UI to render interactive visual piece cards with pictures and prices directly.
+
+3. **Automated Testing & Verification**:
+   - Added unit test `test_visual_insight_graph_scrapes_partner_ateliers_first_on_out_of_stock` in `tests/agents/test_visual_insight_graph.py`.
+   - Added unit test `test_elle_blocks_includes_partner_sourcing_options` in `tests/test_block_builders.py`.
+   - Verified 14/14 tests in `test_visual_insight_graph.py` and 40/40 tests in `test_block_builders.py` pass.
+   - Ran full `agent-service` test suite: **975 passed**, 2 skipped, 2 xfailed.
+   - Ran `ruff check app/ tests/`: 0 errors.
+
+### Files Created or Modified
+
+- `agent-service/app/agents/visual_insight/nodes.py`
+- `agent-service/app/events/block_builders.py`
+- `agent-service/tests/agents/test_visual_insight_graph.py`
+- `agent-service/tests/test_block_builders.py`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `python -m pytest tests/agents/test_visual_insight_graph.py tests/test_block_builders.py`: 54 passed (100%).
+- `python -m pytest tests/`: 975 passed, 2 skipped, 2 xfailed (100% passing).
+- `ruff check app/ tests/`: All checks passed.
+
+---
+
+## Session 2026-09-28 (Customer Purchase History Intent Routing & Visual Agent Disambiguation)
+
+**Task:** Diagnose and resolve issue where asking questions about customer purchase history / past purchases in the Salon (e.g. "Any recent purchases for Kavindu Nirmal?") caused Elle (Visual Insight Agent) to incorrectly trigger, search the inventory for customer names, and emit partner atelier sourcing requests alongside Ava (Customer Memory Agent).
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Root Cause Analysis**:
+   - In `app/gate.py`, deterministic keyword rule matching for `order_placement` checked for substrings `"purchase"`, `"order"`, `"buy"`.
+   - When a user asked "Any recent purchases for Kavindu Nirmal?", `"purchase"` matched as a substring of `"purchases"`, incorrectly categorizing the inquiry as `order_placement`.
+   - The `order_placement` lane dispatches `["memory", "visual", "commerce"]`. Consequently, Elle (Visual Insight Agent) was executed, stripped stopwords, queried inventory for `"purchases Kavindu Nirmal"` (returning 0 items), and created an extraneous partner atelier sourcing ticket.
+
+2. **Customer History Intent Routing Implementation (`agent-service/app/gate.py`)**:
+   - Added `_CUSTOMER_HISTORY_PATTERNS` regex pattern set matching customer purchase history, past orders, previous transactions, and customer profile questions (e.g., `"recent purchases"`, `"purchase history"`, `"purchases for/by"`, `"what did ... buy"`).
+   - Added `is_customer_history_query(message)` helper function in `gate.py`.
+   - Updated `classify_by_rules()` in `gate.py` to check `is_customer_history_query(lowered)` before general product/order-placement keywords, cleanly routing these inquiries to `customer_preference` (which exclusively dispatches `["memory"]` for Ava).
+
+3. **Automated Testing & Verification**:
+   - Added unit test `test_classify_by_rules_customer_history_suggests_memory_only` in `tests/test_intent_gate.py`.
+   - Added parameterized tests for customer purchase history queries in `tests/test_intent_gate.py` verifying `intent_type == "customer_preference"` and `suggested_agents == ["memory"]`.
+   - Ran full `agent-service` test suite: **973 passed**, 2 skipped, 2 xfailed in 84.75s.
+   - Rebuilt and restarted `aveline_agent` Docker container.
+
+### Files Created or Modified
+
+- `agent-service/app/gate.py`
+- `agent-service/tests/test_intent_gate.py`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `python -m pytest tests/test_intent_gate.py`: 36 passed, 2 xfailed.
+- `python -m pytest tests/`: 973 passed, 2 skipped, 2 xfailed (100% passing).
+- `docker compose up -d --build agent`: successfully rebuilt and restarted.
+
+---
+
+## Session 2026-09-28 (Catalog Authorization Policy Test Verification & Branch Status Check)
+
+**Task:** Diagnose and verify the reported test failure in `CatalogWriteAuthorizationTests.ExactlyElevenRoutesUseThePermissionFreeMemberGate` (Expected 11, Actual 12) resulting from the addition of the partner supplier creation route (`POST /api/v1/orgs/{organizationId}/catalog/suppliers`).
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Root Cause Analysis**:
+   - Identified that when `POST /catalog/suppliers` was introduced and gated by `AuthorizationConfiguration.BoutiqueMemberPolicy`, the count of member-gated operational endpoints increased from 11 to 12.
+   - Verified that the `development` branch was updated in commit `2ec94de` where the test was renamed to `ExactlyTwelveRoutesUseThePermissionFreeMemberGate` and asserted `Assert.Equal(12, CountPolicy(nameof(AuthorizationConfiguration.BoutiqueMemberPolicy)))`.
+
+2. **Automated Testing & Verification**:
+   - Ran `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~CatalogWriteAuthorizationTests"`: 22/22 passed.
+   - Ran `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~Catalog|FullyQualifiedName~Visual"`: 231/231 passed with 0 failures.
+
+### Files Created or Modified
+
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~CatalogWriteAuthorizationTests"`: 22/22 passed (0 failures).
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~Catalog|FullyQualifiedName~Visual"`: 231/231 passed (0 failures).
+
+---
+
 ## Session 2026-09-27 (Dynamic Atelier Web Scraper & Search Tool Implementation)
 
 **Task:** Implement the Dynamic Website Scraping & Search Tool (Atelier Web Scraper Tool) and integrate it into the Visual Insight Agent (Elle) sub-graph in `agent-service`, with SSRF security guardrails, zero-dependency HTML catalog parsing, fabric match verification, and automated test coverage.

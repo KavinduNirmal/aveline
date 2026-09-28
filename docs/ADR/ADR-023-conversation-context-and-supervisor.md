@@ -182,6 +182,22 @@ Three constraints:
   (`app/gate._with_a_bounded_reply`) and in the publisher, not merely requested in the prompt. The
   offline path keeps a deterministic reply so a greeting is never silently dropped.
 
+**Implementation note (correction).** The first implementation inverted this decision's pre-filter:
+rather than listing the cases the rules may settle alone, it listed the three intents the model was
+consulted for, so a keyword *hit* was treated as proof that the message was unambiguous. The model
+was therefore reached only for the bucket the keyword table had already failed to match, and was
+locked out of exactly the false positives where it was most needed: `_RULE_KEYWORDS` matches
+"prefers" anywhere in a message, so a staff instruction to *record* a preference ("please add a note
+for this customer: he prefers green tea") was routed as a customer stating one, the supervisor never
+ran, and the memory agent's first-person extractor then found nothing to store. The pre-filter is
+now the narrow, explicitly enumerated set Decision 3 asks for - `out_of_scope`, plus a plan that
+already carries the visual lane, whose media signal comes from `org_context` and is invisible to the
+model - and everything else is the supervisor's to decide. `app/gate.rules_are_authoritative` is the
+single implementation of that question, because it had been answered in three places at once. The
+rollback lever section 8 requires now exists as `SUPERVISOR_AUTHORITATIVE_ENABLED`: it restores the
+previous routing exactly, which `AGENT_LLM_ENABLED` could not do alone because that switch also
+disables draft replies.
+
 ### Decision 4 — Clarification becomes a first-class outcome, not a veto
 
 Customer resolution stops being a gate that discards work. `resolve_customer` records a fact

@@ -2,7 +2,35 @@ using Aveline.Api.Modules.CustomerConcierge.Models;
 
 namespace Aveline.Api.Modules.CustomerConcierge.Repositories;
 
-/// <summary>A result of a semantic (pgvector cosine) memory search.</summary>
+/// <summary>The inputs to one memory search.</summary>
+/// <param name="Query">The raw query text, used by the lexical leg.</param>
+/// <param name="QueryEmbedding">
+/// The dense query vector, or <c>null</c> when it could not be produced. A null embedding runs the
+/// lexical leg alone rather than failing the search.
+/// </param>
+/// <param name="Mode">
+/// <c>hybrid</c> (default, both legs fused), <c>lexical</c> or <c>vector</c>. The single-leg modes
+/// exist so retrieval quality can be measured per leg; the agent always asks for hybrid.
+/// </param>
+/// <param name="TopK">How many fused results to return.</param>
+/// <param name="MinSimilarity">Cosine floor for the vector leg only.</param>
+public sealed record CustomerMemorySearchQuery(
+    string Query,
+    float[]? QueryEmbedding,
+    string Mode,
+    Guid OrganizationId,
+    Guid CustomerId,
+    int TopK,
+    double MinSimilarity);
+
+/// <summary>
+/// One memory search hit. Both legs' ranks are exposed, not just the fused score, so the retrieval
+/// eval can report vector, lexical and hybrid recall separately (ADR-025).
+/// </summary>
+/// <param name="Similarity">
+/// The dense leg's cosine similarity, or <c>null</c> when only the lexical leg found the row: a
+/// lexical-only hit has no cosine, and reporting <c>0</c> would be a fabricated measurement.
+/// </param>
 public sealed record CustomerMemorySearchResult(
     Guid Id,
     Guid CustomerId,
@@ -11,12 +39,16 @@ public sealed record CustomerMemorySearchResult(
     string Source,
     decimal Confidence,
     bool IsExplicit,
-    double Similarity);
+    double? Similarity,
+    long? VectorRank,
+    long? LexicalRank,
+    double Score);
 
 /// <summary>
 /// Data access for <see cref="CustomerMemory"/> rows and their pgvector embeddings.
-/// The <c>embedding vector(1536)</c> column is not part of the EF model (see ADR-017); it is
-/// written and searched through raw SQL. Tenant-scoped and soft-delete aware.
+/// The <c>embedding vector(1536)</c> column and the generated <c>SearchVector tsvector</c> column
+/// are not part of the EF model (see ADR-017); both are written and searched through raw SQL.
+/// Tenant-scoped and soft-delete aware.
 /// </summary>
 public interface ICustomerMemoryRepository
 {
@@ -57,21 +89,20 @@ public interface ICustomerMemoryRepository
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Returns the memories nearest to <paramref name="queryEmbedding"/> by pgvector cosine
-    /// distance, restricted to an org + customer, and to those at or above
-    /// <paramref name="minSimilarity"/>. Requires a relational (PostgreSQL) provider.
+    /// Runs the requested search mode over one customer's live memories. <c>hybrid</c> fuses the
+    /// dense (pgvector cosine) and lexical (PostgreSQL full-text) legs with Reciprocal Rank Fusion
+    /// in one statement; <c>lexical</c> and <c>vector</c> run a single leg so the eval can report
+    /// per-leg recall. Requires a relational (PostgreSQL + pgvector) provider.
     /// </summary>
     /// <remarks>
-    /// A floor is a filter, not a ranking: top-k always returns k rows however irrelevant, and a
-    /// customer whose notes say nothing about the current message must retrieve nothing rather than
-    /// the five least-unrelated notes on file (gap B1).
+    /// The organisation + customer scope, the <c>DeletedAt IS NULL</c> filter and the
+    /// <c>ExpiresAt</c> filter are applied to every leg and in every mode. The
+    /// <see cref="CustomerMemorySearchQuery.MinSimilarity"/> floor bounds the dense leg only: a
+    /// lexical hit has no cosine score to floor, and a post-fusion floor would delete exactly the
+    /// lexical-only hits the hybrid exists to surface.
     /// </remarks>
-    Task<IReadOnlyList<CustomerMemorySearchResult>> SearchSemanticAsync(
-        Guid orgId,
-        Guid customerId,
-        float[] queryEmbedding,
-        int topK = 5,
-        double minSimilarity = 0.0,
+    Task<IReadOnlyList<CustomerMemorySearchResult>> SearchAsync(
+        CustomerMemorySearchQuery query,
         CancellationToken cancellationToken = default);
 
     /// <summary>Persists changes (bumps <see cref="CustomerMemory.UpdatedAt"/>).</summary>

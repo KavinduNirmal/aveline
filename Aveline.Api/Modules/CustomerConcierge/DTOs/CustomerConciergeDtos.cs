@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using Aveline.Api.Modules.CustomerConcierge.Common;
 using Aveline.Api.Modules.CustomerConcierge.Models;
 using Aveline.Api.Modules.CustomerConcierge.Repositories;
 
@@ -237,19 +238,38 @@ public sealed record MemorySearchRequest
     public int TopK { get; init; } = 5;
 
     /// <summary>
+    /// hybrid (default) | lexical | vector. The single-leg modes exist for retrieval evaluation;
+    /// the agent always asks for the default.
+    /// </summary>
+    /// <remarks>
+    /// The same vocabulary as the handbook search (ADR-025). Hybrid runs a pgvector cosine leg and a
+    /// PostgreSQL full-text leg over the customer's live notes and fuses them (Reciprocal Rank
+    /// Fusion); <c>lexical</c> and <c>vector</c> run one leg so a retrieval eval can report vector,
+    /// lexical and hybrid recall separately. An absent value means <c>hybrid</c>; a value this store
+    /// cannot run is refused rather than silently defaulted.
+    /// </remarks>
+    [MaxLength(16)]
+    public string Mode { get; init; } = MemorySearchModes.Hybrid;
+
+    /// <summary>
     /// The cosine-similarity floor a hit must clear to be returned (gap B1).
     /// </summary>
     /// <remarks>
     /// Defaults to <c>0</c> - the previous behaviour - because the two callers want opposite
     /// things: the agent retrieves context and wants nothing when nothing is relevant, while a
     /// debugging or review surface may want to see the nearest rows regardless. The floor mirrors
-    /// the handbook search's <c>minSimilarity</c>, which is the same idea on the same store.
+    /// the handbook search's <c>minSimilarity</c>, which is the same idea on the same store. It
+    /// bounds the dense leg only: a lexical hit has no cosine to floor, so a post-fusion floor would
+    /// delete exactly the lexical-only hits the hybrid exists to surface.
     /// </remarks>
     [Range(0.0, 1.0)]
     public double MinSimilarity { get; init; }
 }
 
-/// <summary>A single semantic-search hit with its cosine similarity.</summary>
+/// <summary>
+/// A single memory-search hit, carrying both legs' ranks as well as the fused score so an eval can
+/// report vector, lexical and hybrid recall separately instead of one opaque number (ADR-025).
+/// </summary>
 public sealed record MemorySearchResultDto(
     Guid Id,
     Guid CustomerId,
@@ -258,10 +278,14 @@ public sealed record MemorySearchResultDto(
     string Source,
     decimal Confidence,
     bool IsExplicit,
-    double Similarity)
+    double? Similarity,
+    long? VectorRank,
+    long? LexicalRank,
+    double Score)
 {
     public static MemorySearchResultDto From(CustomerMemorySearchResult r) => new(
-        r.Id, r.CustomerId, r.Content, r.Category, r.Source, r.Confidence, r.IsExplicit, r.Similarity);
+        r.Id, r.CustomerId, r.Content, r.Category, r.Source, r.Confidence, r.IsExplicit,
+        r.Similarity, r.VectorRank, r.LexicalRank, r.Score);
 }
 
 /// <summary>A customer event.</summary>
@@ -386,12 +410,24 @@ public sealed record InteractionBriefDto(
         profile.FullName ?? "Unknown customer",
         profile.Description,
         profile.Status,
-        profile.Preferences.Count == 0 ? null
-            : string.Join("; ", profile.Preferences.Select(p => $"{p.PreferenceKey}: {p.PreferenceValue}")),
+        // The same rules as `CustomerTenantService.GetBriefAsync`: the nickname is an internal key
+        // mirrored from `Customer.Nickname`, not a stated preference, and an empty value is an
+        // absence rather than a fact. Rendering either put `nickname:` and `key:` on the brief.
+        PreferenceSummaryOrNull(profile.Preferences),
         // Only events that have not already happened. The repository orders by date but filters on
         // `IsActive` alone, so a past event is included and the field name lied (gap B-brief).
         UpcomingEventsOrNull(events),
         profile.Tags);
+
+    private static string? PreferenceSummaryOrNull(IReadOnlyList<CustomerPreferenceDto> preferences)
+    {
+        var summarised = preferences
+            .Where(preference => preference.PreferenceKey != CustomerPreferenceKeys.Nickname)
+            .Where(preference => !string.IsNullOrWhiteSpace(preference.PreferenceValue))
+            .Select(preference => $"{preference.PreferenceKey}: {preference.PreferenceValue}")
+            .ToList();
+        return summarised.Count == 0 ? null : string.Join("; ", summarised);
+    }
 
     private static string? UpcomingEventsOrNull(IReadOnlyList<CustomerEventDto> events)
     {

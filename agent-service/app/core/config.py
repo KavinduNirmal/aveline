@@ -40,6 +40,19 @@ class Settings(BaseSettings):
     # workflow uses an LLM only if LLM_API_KEY and LLM_MODEL are also configured; otherwise
     # it stays fully deterministic (rule-based), keeping CI/dev green without keys.
     agent_llm_enabled: bool = True
+    # Whether the supervisor is *the routing authority* (ADR-023, Decision 3) or whether the
+    # deterministic keyword table keeps deciding for the intents it recognises.
+    #
+    # This is the rollback lever ADR-023 §8 requires, and it exists separately from
+    # `agent_llm_enabled` on purpose: turning that one off also disables draft replies, so it could
+    # not restore routing alone. Setting this to False restores the pre-Decision-3 behaviour
+    # exactly - the model is consulted only for `general_inquiry`, `aveline_help` and
+    # `tenant_account` - while every other LLM use is untouched.
+    #
+    # Default True because Decision 3 is the agreed steady state: a keyword *hit* is not proof that
+    # a message is unambiguous, and treating it as such was what locked a staff instruction to
+    # record a preference out of the model's reach.
+    supervisor_authoritative_enabled: bool = True
 
     # --- Agent workflow pacing ---
     # Artificial delay (ms) inserted between emitted lifecycle states so clients can

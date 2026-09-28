@@ -1,4 +1,5 @@
 using Aveline.Api.Configurations;
+using Aveline.Api.Modules.CustomerConcierge.Common;
 using Aveline.Api.Modules.CustomerConcierge.DTOs;
 using Aveline.Api.Modules.CustomerConcierge.Models;
 using Aveline.Api.Modules.CustomerConcierge.Repositories;
@@ -288,6 +289,17 @@ public static class CustomerConciergeEndpoints
         if (string.IsNullOrWhiteSpace(request.Query))
         {
             return Results.BadRequest(new { message = "Query is required." });
+        }
+
+        if (!MemorySearchModes.IsValid(request.Mode))
+        {
+            // Refused rather than silently defaulted: a caller that names an unknown mode and gets
+            // hybrid results would read a fused answer as a single-leg measurement.
+            return Results.BadRequest(new
+            {
+                message = $"mode must be one of: {MemorySearchModes.Hybrid}, "
+                          + $"{MemorySearchModes.Lexical}, {MemorySearchModes.Vector}.",
+            });
         }
 
         var results = await memories.SearchAsync(request, cancellationToken);

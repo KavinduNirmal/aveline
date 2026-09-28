@@ -3,6 +3,7 @@ import {
   Search,
   AlertTriangle,
   PackageCheck,
+  X,
 } from 'lucide-react'
 
 import { Input } from '@/components/ui/input'
@@ -60,6 +61,7 @@ export function InventoryTab({
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('All')
   const [statusFilter, setStatusFilter] = useState<'all' | 'available' | 'low_stock' | 'reserved'>('all')
+  const [isWarningDismissed, setIsWarningDismissed] = useState(false)
 
   // Low stock counter
   const lowStockItems = useMemo(
@@ -100,23 +102,34 @@ export function InventoryTab({
   return (
     <div className="flex flex-col gap-6">
       {/* Low Stock Warning Alert Banner if any */}
-      {lowStockItems.length > 0 && (
+      {!isWarningDismissed && lowStockItems.length > 0 && (
         <div className="flex items-center justify-between rounded-xl border border-warning/30 bg-warning/10 p-3.5 text-xs text-warning-foreground dark:text-warning">
           <div className="flex items-center gap-2.5">
             <AlertTriangle className="size-4 shrink-0 text-warning dark:text-warning" />
             <span>
-              <strong>{lowStockItems.length} pieces</strong> have low stock levels (2 units or fewer).
+              <strong>{lowStockItems.length} {lowStockItems.length === 1 ? 'piece' : 'pieces'}</strong> {lowStockItems.length === 1 ? 'has' : 'have'} low stock levels (2 units or fewer).
               Consider placing an atelier re-order.
             </span>
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 text-xs border-warning/40 bg-background/60 hover:bg-background text-warning-foreground dark:text-warning"
-            onClick={() => setStatusFilter('low_stock')}
-          >
-            Filter Low Stock
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs border-warning/40 bg-background/60 hover:bg-background text-warning-foreground dark:text-warning"
+              onClick={() => setStatusFilter('low_stock')}
+            >
+              Filter Low Stock
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label="Dismiss low stock warning"
+              className="size-7 rounded-lg text-warning-foreground/70 hover:text-warning-foreground hover:bg-warning/20 dark:text-warning/70 dark:hover:text-warning"
+              onClick={() => setIsWarningDismissed(true)}
+            >
+              <X className="size-3.5" />
+            </Button>
+          </div>
         </div>
       )}
 

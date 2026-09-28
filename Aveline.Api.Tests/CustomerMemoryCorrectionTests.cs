@@ -52,7 +52,8 @@ public class CustomerMemoryCorrectionTests
             new CustomerEventRepository(_context),
             gate,
             new CustomerTagRepository(_context),
-            new StubEmbeddingService());
+            new StubEmbeddingService(),
+            NullLogger<CustomerMemoryService>.Instance);
         var consent = new CustomerConsentService(new CustomerConsentRepository(_context));
         return new Services(customers, memories, consent);
     }

@@ -50,7 +50,8 @@ public class CustomerConciergeServiceTests
             new CustomerEventRepository(_context),
             gate,
             new CustomerTagRepository(_context),
-            StubEmbeddings(embeddingVector ?? DummyVector()));
+            StubEmbeddings(embeddingVector ?? DummyVector()),
+            NullLogger<CustomerMemoryService>.Instance);
         var consent = new CustomerConsentService(new CustomerConsentRepository(_context));
         var interactions = new CustomerInteractionService(new CustomerInteractionRepository(_context), gate);
         var events = new CustomerEventService(new CustomerEventRepository(_context), gate);

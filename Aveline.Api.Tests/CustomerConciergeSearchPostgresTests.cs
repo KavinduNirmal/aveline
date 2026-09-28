@@ -151,7 +151,9 @@ public class CustomerConciergeSearchPostgresTests : IAsyncLifetime
         Assert.NotNull(results);
         Assert.Equal(3, results.Count);
         Assert.Equal("wedding saree", results[0].Content);
-        Assert.Equal(1.0, results[0].Similarity, precision: 3);
+        // Hybrid is the default: the dense winner is rank 1 on the vector leg.
+        Assert.Equal(1, results[0].VectorRank);
+        Assert.Equal(1.0, results[0].Similarity!.Value, precision: 3);
     }
 
     [Fact]
@@ -199,6 +201,68 @@ public class CustomerConciergeSearchPostgresTests : IAsyncLifetime
         // unrelated note from being handed to the agent as context (gap B1).
         var hit = Assert.Single(hits!);
         Assert.Equal("wedding saree", hit.Content);
+    }
+
+    [Fact]
+    public async Task LexicalSearch_ReturnsAnExactTokenHitWithNoCosine()
+    {
+        var orgId = Guid.NewGuid();
+        await SeedOrganizationAsync(orgId);
+
+        var identify = await InternalPostAsync("/internal/customers/identify",
+            new IdentifyCustomerRequest { OrganizationId = orgId, PhoneNumber = "+94771234567", FullName = "Sarah" });
+        var profile = await identify.Content.ReadFromJsonAsync<CustomerProfileDto>();
+
+        await InternalPostAsync($"/internal/customers/{profile!.CustomerId}/consent",
+            new UpdateConsentRequest { OrganizationId = orgId, ConsentStatus = "granted" });
+
+        await InternalPostAsync($"/internal/customers/{profile.CustomerId}/memories",
+            new SaveMemoryRequest
+            {
+                OrganizationId = orgId, Content = "Wants a Banarasi silk saree", Category = "preference",
+            });
+
+        var search = await InternalPostAsync("/internal/customers/memories/search",
+            new MemorySearchRequest
+            {
+                OrganizationId = orgId,
+                CustomerId = profile.CustomerId,
+                Query = "banarasi silk",
+                Mode = "lexical",
+            });
+        Assert.Equal(HttpStatusCode.OK, search.StatusCode);
+
+        var results = await search.Content.ReadFromJsonAsync<List<MemorySearchResultDto>>();
+        var hit = Assert.Single(results!);
+        Assert.Equal("Wants a Banarasi silk saree", hit.Content);
+        Assert.Equal(1, hit.LexicalRank);
+        Assert.Null(hit.VectorRank);
+        // A lexical-only hit has no cosine; reporting 0 would be a fabricated measurement.
+        Assert.Null(hit.Similarity);
+    }
+
+    [Fact]
+    public async Task Search_WithAnUnknownMode_IsRefusedWith400()
+    {
+        var orgId = Guid.NewGuid();
+        await SeedOrganizationAsync(orgId);
+
+        var identify = await InternalPostAsync("/internal/customers/identify",
+            new IdentifyCustomerRequest { OrganizationId = orgId, PhoneNumber = "+94771234567", FullName = "Sarah" });
+        var profile = await identify.Content.ReadFromJsonAsync<CustomerProfileDto>();
+
+        // Refused rather than silently defaulted to hybrid: a fused answer read as a single-leg
+        // measurement is exactly the confusion the eval modes exist to remove.
+        var response = await InternalPostAsync("/internal/customers/memories/search",
+            new MemorySearchRequest
+            {
+                OrganizationId = orgId,
+                CustomerId = profile!.CustomerId,
+                Query = "silk",
+                Mode = "bm25",
+            });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     /// <summary>

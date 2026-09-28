@@ -913,8 +913,12 @@ book. `limit` bounds the *named* clients, not the book, and is clamped by the se
 | `POST` | `/internal/customers/identify` | Resolve/create a customer from a message |
 | `GET` | `/internal/customers/{customerId:guid}/profile` | Customer profile for the agent |
 | `POST` | `/internal/customers/lookup` | Search by name/phone/email |
-| `POST` | `/internal/customers/{customerId:guid}/memories` | Store a memory |
-| `POST` | `/internal/customers/memories/search` | pgvector semantic search |
+| `POST` | `/internal/customers/{customerId:guid}/memories` | Store a memory (carries `source`, `isExplicit`, `confidence`, `metadataJson`, `expiresAt`) |
+| `GET` | `/internal/customers/{customerId:guid}/memories` | List a customer's live memories, newest first |
+| `PATCH` | `/internal/customers/{customerId:guid}/memories/{memoryId:guid}` | Correct one memory's statement and re-embed it |
+| `DELETE` | `/internal/customers/{customerId:guid}/memories/{memoryId:guid}` | Withdraw one memory (soft delete) |
+| `POST` | `/internal/customers/memories/search` | pgvector semantic search (honours `minSimilarity`) |
+| `POST` | `/internal/customers/{customerId:guid}/preferences` | Record a stated preference in the preferences table |
 | `GET` | `/internal/customers/{customerId:guid}/brief` | Interaction brief |
 | `POST` | `/internal/customers/{customerId:guid}/interactions` | Record an interaction |
 | `GET`/`POST` | `/internal/customers/{customerId:guid}/consent` | Read/update consent |
@@ -1334,6 +1338,24 @@ discount.
 | `POST` | `/api/v1/orgs/{organizationId:guid}/approvals/{id:guid}/reject` | `BoutiqueOrderManage` | **cancels the order**; requires `orders:manage` (T6) |
 | `POST` | `/api/v1/orgs/{organizationId:guid}/approvals/{id:guid}/revise` | `BoutiqueOrderManage` | **rewrites discount/total/margin**; requires `orders:manage` (T6) |
 
+**The decision body, per route.** The three verb routes take the decision from the **URL**, so the
+body carries only the optional fields and `decision` may be omitted entirely:
+
+| Route | Body |
+| --- | --- |
+| `…/approve` | `{ reason? }` — a body is optional |
+| `…/reject` | `{ reason? }` — a body is optional |
+| `…/revise` | `{ revisedDiscount, reason? }` — a body is required, because the discount is the point of the verb |
+| `…/decision` | `{ decision, reason?, revisedDiscount? }` — `decision` is **required** and is one of `approve` \| `reject` \| `revise` |
+
+`decision` is deliberately **not** a `[Required]` body field on the DTO: it used to be, and because
+`[ApiController]` validates the body before the action runs, every verb route answered
+`400 {"errors":{"Decision":["The Decision field is required."]}}` to the dashboard's own payload.
+The requirement is enforced by `ApprovalService.ProcessDecisionAsync` instead, which is the one
+boundary that is true for the `/decision` route and harmless for the other three. The verb routes
+overwrite whatever `decision` a body tries to send, so the Q14 permission split cannot be bypassed
+by posting `reject` to `…/approve`.
+
 **Commerce order payments (Phase 9).** The `payments/**` row above was a wildcard, which is exactly
 how the fabricated-URL and caller-trusted-confirmation defects survived
 (`docs/reports/PR-290-slice3-review.md:269`). They are itemised here, and the behaviour they carry
@@ -1395,6 +1417,7 @@ nothing correct to gate a write on).
 | `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/interactions` | `customers:view` | **E-9.** Paged history, newest first |
 | `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/consent` | `customers:view` | Tenant-safe consent read (returns `unknown` when no row exists) |
 | `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/memories` | `customers:view` | Tenant-safe customer memories |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/brief` | `customers:view` | **Pre-contact brief.** Description, preferences, tags, upcoming occasions and (consent-gated) memories |
 | `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/events` | `customers:view` | Customer life/boutique events list |
 | `POST` | `/api/v1/orgs/{organizationId:guid}/customers` | `customers:view` | Walk-in creation; requires `Idempotency-Key`. Also creates the client's organization-shared Salon, seeded with Aveline's greeting (see below) |
 | `POST` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/interactions` | `customers:view` | Records an interaction; requires `Idempotency-Key` |

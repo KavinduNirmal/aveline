@@ -108,6 +108,11 @@ public interface IVisualService
         Guid orgId,
         CancellationToken cancellationToken = default);
 
+    Task<SupplierDto> CreateSupplierAsync(
+        Guid orgId,
+        CreateSupplierDto dto,
+        CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<SupplierCatalogItemDto>> GetSupplierCatalogAsync(
         Guid supplierId,
         Guid orgId,

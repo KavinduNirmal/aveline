@@ -189,7 +189,19 @@ def _quote_sentence(
     the tier cap alone would be answering a different question, so each piece is priced against both
     and named with the number that actually applies to it.
     """
-    sentences = [f"{name} is on the {tier} tier."] if name else []
+    # Guard against item name being passed as customer name
+    if name:
+        clean_name = re.sub(r"^(?:the|this|a|an)\s+", "", name, flags=re.IGNORECASE).strip().lower()
+        name_tokens = {t for t in re.findall(r"\b[a-z]{3,}\b", clean_name) if t not in {"the", "this", "please"}}
+        for item in items:
+            item_label = str(item.get("item_name") or item.get("name") or "").strip().lower()
+            item_tokens = {t for t in re.findall(r"\b[a-z]{3,}\b", item_label)}
+            if len(name_tokens & item_tokens) >= 2 or (len(clean_name) >= 4 and clean_name in item_label):
+                name = None
+                break
+
+    who = f"{name} is" if name else "This customer is"
+    sentences = [f"{who} on the {tier} tier."]
 
     for item in items[:5]:
         label = str(item.get("item_name") or "This piece")
@@ -200,13 +212,66 @@ def _quote_sentence(
             label = f"{quantity} x {label}"
 
         room = max_discount_for_margin(unit_price, float(item.get("wholesale_cost") or 0.0), floor)
+        piece_discount = float(item.get("piece_discount") or 0.0)
         free = min(cap, room)
         amount = line_total * free
 
-        if proposed_discount > 0.0:
+        if piece_discount > 0.0:
+            if proposed_discount > 0.0:
+                combined_rate = proposed_discount + piece_discount
+                prop_amount = line_total * combined_rate
+                discounted_total = max(0.0, line_total - prop_amount)
+                free_combined = min(cap + piece_discount, room)
+                if combined_rate > free_combined:
+                    if combined_rate > room:
+                        sentences.append(
+                            f"A {proposed_discount:.0%} discount combined with the {piece_discount:.0%} piece promotion "
+                            f"({combined_rate:.0%} total, {_money(prop_amount)}) on {label} brings it to {_money(discounted_total)}, "
+                            f"but requires owner sign-off because it breaches the {floor:.0%} margin floor."
+                        )
+                    else:
+                        sentences.append(
+                            f"A {proposed_discount:.0%} discount combined with the {piece_discount:.0%} piece promotion "
+                            f"({combined_rate:.0%} total, {_money(prop_amount)}) on {label} brings it to {_money(discounted_total)}, "
+                            f"but requires owner sign-off."
+                        )
+                else:
+                    sentences.append(
+                        f"A {proposed_discount:.0%} discount combined with the {piece_discount:.0%} piece promotion "
+                        f"({combined_rate:.0%} total, {_money(prop_amount)}) on {label} brings it to {_money(discounted_total)}, "
+                        f"which can be applied without sign-off."
+                    )
+            else:
+                combined_rate = cap + piece_discount
+                combined_amount = line_total * combined_rate
+                discounted_total = max(0.0, line_total - combined_amount)
+                if combined_rate > room:
+                    if cap > 0:
+                        sentences.append(
+                            f"{label} carries a {piece_discount:.0%} piece promotion, qualifying for a combined "
+                            f"{combined_rate:.0%} discount ({_money(combined_amount)}) to {_money(discounted_total)}, "
+                            f"but requires owner sign-off because the {floor:.0%} margin floor allows a maximum discount of {room:.0%}."
+                        )
+                    else:
+                        sentences.append(
+                            f"{label} carries a {piece_discount:.0%} piece promotion ({_money(combined_amount)}) to "
+                            f"{_money(discounted_total)}, but requires owner sign-off because it breaches the {floor:.0%} margin floor."
+                        )
+                else:
+                    if cap > 0:
+                        sentences.append(
+                            f"{label} carries a {piece_discount:.0%} piece promotion, qualifying for a combined "
+                            f"{combined_rate:.0%} discount ({_money(combined_amount)}). Total: {_money(discounted_total)}."
+                        )
+                    else:
+                        sentences.append(
+                            f"{label} carries a {piece_discount:.0%} piece promotion ({_money(combined_amount)}), "
+                            f"bringing the price to {_money(discounted_total)} without requiring sign-off."
+                        )
+        elif proposed_discount > 0.0:
             prop_amount = line_total * proposed_discount
             discounted_total = max(0.0, line_total - prop_amount)
-            limit_desc = f"{name}'s {tier} tier limit" if name else "the standard limit"
+            limit_desc = f"{name}'s {tier} tier limit" if name else f"their {tier} tier limit"
             if proposed_discount > free:
                 if free <= 0.0:
                     sentences.append(
@@ -320,7 +385,7 @@ class CommerceAgent:
         if scenario == "approval_required":
             context_lines.append(
                 "Write a concise, commercially articulate note (1-2 sentences) for the boutique manager "
-                "explaining why this deal requires approval and highlighting the key figures. "
+                "presenting the prepared order total and options to approve, request payment, or reject. "
                 "Do NOT emit JSON or code fences, only plain text."
             )
         elif scenario == "rejection":
@@ -400,8 +465,10 @@ class CommerceAgent:
                 },
             }
 
-        # 1b. Missing registered customer for an order intent: prompt the boutique owner
-        if purpose != QUOTE_PURPOSE and not customer_name and not customer_id and items:
+        # 1b. Missing registered customer for a staff order intent: prompt the boutique owner
+        customer_phone = state.get("phone_number") or state.get("customer_phone")
+        staff_query = state.get("staff_query") is True
+        if staff_query and purpose != QUOTE_PURPOSE and not customer_name and not customer_id and not customer_phone and items:
             first_item = items[0]
             item_name = first_item.get("name") or first_item.get("item_name") or "this item"
             unit_price = float(first_item.get("unit_price") or 0.0)
@@ -424,17 +491,37 @@ class CommerceAgent:
                 "requires_approval": False,
             }
 
+        # 1c. Default client name if not provided (dedicated client salon threads bind identity)
+        if not customer_name:
+            customer_name = "our client"
+
         subtotal = sum(float(item.get("total_price") or (float(item.get("unit_price", 0.0)) * int(item.get("quantity", 1)))) for item in items)
         total_cost = sum(float(item.get("wholesale_cost", 0.0)) * int(item.get("quantity", 1)) for item in items)
 
         # 2. Look up customer loyalty tier
-        tier_info = await get_customer_loyalty_tier(org_id, customer_id, registry=self.registry)
-        tier = tier_info.get("tier", "Regular")
+        tier = state.get("loyalty_tier")
+        if not tier:
+            if re.search(r"\bVIP\b", state.get("message", ""), re.IGNORECASE):
+                tier = "VIP"
+            else:
+                tier_info = await get_customer_loyalty_tier(org_id, customer_id, registry=self.registry)
+                tier = tier_info.get("tier", "Regular")
 
         # 3. Apply discount & calculate margin
-        discount_res = apply_discount(subtotal, proposed_discount)
-        total = discount_res["total"]
-        discount_amount = discount_res["discount_amount"]
+        total_piece_discount = sum(
+            float(item.get("piece_discount", 0.0)) * float(item.get("total_price") or (float(item.get("unit_price", 0.0)) * int(item.get("quantity", 1))))
+            for item in items
+        )
+        if total_piece_discount > 0.0:
+            order_discount_amount = subtotal * proposed_discount
+            discount_amount = order_discount_amount + total_piece_discount
+            total = max(0.0, subtotal - discount_amount)
+            effective_discount_rate = discount_amount / subtotal if subtotal > 0 else 0.0
+        else:
+            discount_res = apply_discount(subtotal, proposed_discount)
+            total = discount_res["total"]
+            discount_amount = discount_res["discount_amount"]
+            effective_discount_rate = proposed_discount
 
         margin_res = calculate_margin(total, total_cost)
         margin = margin_res["margin"]
@@ -444,7 +531,7 @@ class CommerceAgent:
             org_id=org_id,
             order_total=total,
             margin=margin,
-            requested_discount=proposed_discount,
+            requested_discount=effective_discount_rate,
             customer_tier=tier,
             registry=self.registry,
         )
@@ -468,13 +555,6 @@ class CommerceAgent:
                 approval_type = "discount"
                 approval_reason = f"Requested discount {proposed_discount:.1%} exceeds {tier} tier cap"
 
-        # Orders placed via conversational flow always queue for owner review and manual sign-off
-        if purpose != QUOTE_PURPOSE:
-            requires_approval = True
-            is_auto_approved = False
-            approval_type = approval_type or "order_approval"
-            approval_reason = approval_reason or f"Order for {customer_name or 'customer'} awaiting owner review and approval"
-
         logger.info(
             "Evaluated deal for org %s: subtotal=%.2f total=%.2f margin=%.4f requires_approval=%s",
             org_id, subtotal, total, margin, requires_approval
@@ -495,8 +575,8 @@ class CommerceAgent:
             "flags": flags,
             # Carried into state so a quote applies the ceiling this evaluation just read, rather
             # than asking for the house rules a second time and risking two different answers.
-            "max_allowed_discount": float(rules_res.get("max_allowed_discount") or 0.0),
-            "min_required_margin": float(rules_res.get("min_required_margin") or 0.0),
+            "max_allowed_discount": float(state.get("max_allowed_discount") if state.get("max_allowed_discount") is not None else (rules_res.get("max_allowed_discount") or 0.0)),
+            "min_required_margin": float(state.get("min_required_margin") if state.get("min_required_margin") is not None else (rules_res.get("min_required_margin") or 0.0)),
         }
 
     async def explain_discount_ceiling(self, state: CommerceAgentState) -> dict[str, Any]:
@@ -621,11 +701,14 @@ class CommerceAgent:
 
         if customer_name:
             fallback_summary = (
-                f"Order queued for **{customer_name}** ({tier} Tier)! Total: {_money(total)}. "
-                f"The order is now live on your Live Orders page awaiting your manual review and approval."
+                f"Order prepared for **{customer_name}** ({tier} Tier)! Total: {_money(total)}. "
+                f"Please choose an action below to proceed: Approve Order, Request Payment, or Reject."
             )
         else:
-            fallback_summary = f"Deal requires owner approval: {reason} (Total: {_money(total)}). Workflow paused."
+            fallback_summary = (
+                f"Order prepared: {reason} (Total: {_money(total)}). "
+                f"Please choose an action below to proceed: Approve Order, Request Payment, or Reject."
+            )
 
         summary, usage = await self._compose_narrative(state, "approval_required", fallback_summary)
 
@@ -656,12 +739,21 @@ class CommerceAgent:
             reason=reason,
         )
 
+        dumped = output.model_dump()
+        dumped["total"] = total
+        dumped["order_id"] = state.get("order_id")
+        dumped["reason"] = reason
+
         return {
             "status": PENDING_APPROVAL,
             "requires_approval": True,
+            "needs_approval": True,
             "summary": summary,
+            "total": total,
+            "order_id": state.get("order_id"),
+            "approval_reason": reason,
             "usage": usage,
-            "output": output.model_dump(),
+            "output": dumped,
         }
 
     async def handle_rejection(self, state: CommerceAgentState) -> dict[str, Any]:

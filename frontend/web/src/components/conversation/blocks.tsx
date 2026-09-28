@@ -12,6 +12,7 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import {
+  DIALOG_CONTENT_WIDE,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -88,6 +89,7 @@ type AttachmentTone = 'own' | 'other'
 interface BlockRendererProps {
   block: ContentBlock
   onSignOff?: (approved: boolean) => void
+  onRequestPayment?: (orderId: string) => void
   onSelectCustomer?: (customerId: string) => void
   /** Called with the attachment id when a thread attachment is opened for viewing. */
   onOpenAttachment?: (attachmentId: string) => void
@@ -103,6 +105,7 @@ interface BlockRendererProps {
 export function BlockRenderer({
   block,
   onSignOff,
+  onRequestPayment,
   onSelectCustomer,
   onOpenAttachment,
   persona,
@@ -134,7 +137,14 @@ export function BlockRenderer({
     case 'at_a_glance':
       return <AtAGlanceBlock block={block} onSignOff={onSignOff} persona={persona} />
     case 'sign_off':
-      return <SignOffBlock block={block} onSignOff={onSignOff} persona={persona} />
+      return (
+        <SignOffBlock
+          block={block}
+          onSignOff={onSignOff}
+          onRequestPayment={onRequestPayment}
+          persona={persona}
+        />
+      )
     case 'client_message':
       return <ClientMessageBlock block={block} onSignOff={onSignOff} persona={persona} />
     case 'payment':
@@ -357,7 +367,25 @@ function AtAGlanceBlock({ block }: BlockRendererProps) {
   )
 }
 
-function SignOffBlock({ block, onSignOff }: BlockRendererProps) {
+function SignOffBlock({ block, onSignOff, onRequestPayment }: BlockRendererProps) {
+  const [requestingPayment, setRequestingPayment] = useState(false)
+  const orderId = block.orderId as string | undefined
+
+  const handleRequestPayment = async () => {
+    if (!orderId || !onRequestPayment) return
+    setRequestingPayment(true)
+    try {
+      await onRequestPayment(orderId)
+      if (onSignOff) {
+        onSignOff(true)
+      }
+    } catch (e) {
+      console.error('Failed to request payment', e)
+    } finally {
+      setRequestingPayment(false)
+    }
+  }
+
   return (
     <Card className="border-primary/20 bg-primary/5">
       <CardHeader className="p-3 pb-1">
@@ -373,10 +401,20 @@ function SignOffBlock({ block, onSignOff }: BlockRendererProps) {
           </p>
         )}
         {onSignOff && (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button size="sm" onClick={() => onSignOff(true)}>
-              Approve
+              Approve Order
             </Button>
+            {orderId && onRequestPayment && (
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={requestingPayment}
+                onClick={() => void handleRequestPayment()}
+              >
+                {requestingPayment ? 'Requesting...' : 'Request Payment'}
+              </Button>
+            )}
             <Button size="sm" variant="outline" onClick={() => onSignOff(false)}>
               Reject
             </Button>
@@ -465,13 +503,37 @@ function ClientMessageBlock({ block }: BlockRendererProps) {
 }
 
 function PaymentBlock({ block }: BlockRendererProps) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = () => {
+    if (block.url) {
+      void navigator.clipboard.writeText(block.url)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
+  }
+
   return (
     <div className="rounded-lg border border-commerce/20 bg-commerce/5 p-3">
-      <p className="text-xs font-medium text-commerce">Payment</p>
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium text-commerce">Payment</p>
+        {block.status && <Badge variant="outline" className="capitalize">{block.status}</Badge>}
+      </div>
       {typeof block.amount === 'number' && (
         <p className="mt-1 text-sm font-semibold">LKR {block.amount.toLocaleString()}</p>
       )}
-      {block.status && <Badge className="mt-2">{block.status}</Badge>}
+      {block.url && (
+        <div className="mt-2.5 flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleCopy}>
+            {copied ? 'Copied Link!' : 'Copy Payment Link'}
+          </Button>
+          <Button size="sm" className="h-7 text-xs" asChild>
+            <a href={block.url} target="_blank" rel="noopener noreferrer">
+              Open Checkout
+            </a>
+          </Button>
+        </div>
+      )}
     </div>
   )
 }
@@ -650,6 +712,7 @@ function TileGrid({
 export function BlockList({
   blocks,
   onSignOff,
+  onRequestPayment,
   onSelectCustomer,
   onOpenAttachment,
   persona,
@@ -659,6 +722,7 @@ export function BlockList({
 }: {
   blocks: unknown[]
   onSignOff?: (approved: boolean) => void
+  onRequestPayment?: (orderId: string) => void
   onSelectCustomer?: (customerId: string) => void
   onOpenAttachment?: (attachmentId: string) => void
   persona?: Persona | null
@@ -676,6 +740,7 @@ export function BlockList({
       key={key}
       block={block}
       onSignOff={onSignOff}
+      onRequestPayment={onRequestPayment}
       onSelectCustomer={onSelectCustomer}
       onOpenAttachment={onOpenAttachment}
       persona={persona}
@@ -851,7 +916,7 @@ function AttachmentViewer({
   const isPdf = contentType === 'application/pdf'
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent className={DIALOG_CONTENT_WIDE}>
         <DialogHeader>
           <DialogTitle className="truncate pr-6 text-sm">{fileName}</DialogTitle>
           <DialogDescription className="flex items-center gap-2">

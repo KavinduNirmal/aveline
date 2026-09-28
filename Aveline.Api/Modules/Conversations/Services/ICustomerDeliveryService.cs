@@ -24,6 +24,17 @@ public enum DeliveryRefusal
     /// <summary>The boutique's channel is one this platform cannot send on yet (Instagram).</summary>
     ChannelUnsupported,
 
+    /// <summary>
+    /// The customer has revoked consent, or their consent could not be read (gap D1).
+    /// </summary>
+    /// <remarks>
+    /// This is the outbound half of the consent control the rest of the concierge already has on
+    /// every inbound write. It is the most consequential refusal of the set: the others say the
+    /// message did not leave, this one says it must not, and an associate has to be told exactly
+    /// that rather than being shown a generic failure.
+    /// </remarks>
+    ConsentRevoked,
+
     /// <summary>The provider was reached and refused the send.</summary>
     ProviderRefused,
 }

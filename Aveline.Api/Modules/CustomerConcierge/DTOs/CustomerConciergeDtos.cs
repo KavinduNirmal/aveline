@@ -86,6 +86,7 @@ public sealed record CustomerProfileDto(
     string PhoneNumber,
     string? Email,
     string? FullName,
+    string? Description,
     string Status,
     decimal TotalSpent,
     int VisitCount,
@@ -98,6 +99,7 @@ public sealed record CustomerProfileDto(
         c.PhoneNumber,
         c.Email,
         c.FullName,
+        c.Description,
         c.Status,
         c.TotalSpent,
         c.VisitCount,
@@ -133,9 +135,29 @@ public sealed record SaveMemoryRequest
     [MaxLength(32)]
     public string Source { get; init; } = "conversation";
 
+    /// <summary>
+    /// True when the customer stated it directly; false when it was inferred (gap A1).
+    /// </summary>
+    /// <remarks>
+    /// Defaults to false so an omitted field is honest about what it is: a note nobody has vouched
+    /// for. The agent's own extraction sets it explicitly on the statements the customer made.
+    /// </remarks>
     public bool IsExplicit { get; init; }
 
+    /// <summary>0.00 - 1.00 confidence in the memory.</summary>
+    [Range(0.0, 1.0)]
     public decimal Confidence { get; init; } = 0.50m;
+
+    /// <summary>
+    /// Free-form metadata (JSONB), e.g. the originating interaction id. Defaults to <c>{}</c>.
+    /// </summary>
+    [MaxLength(4000)]
+    public string? MetadataJson { get; init; }
+
+    /// <summary>
+    /// When the note stops being true (gap A4). Null for a note that stays true.
+    /// </summary>
+    public DateTime? ExpiresAt { get; init; }
 
     /// <summary>Optional precomputed embedding. When omitted, the content is embedded server-side.</summary>
     public float[]? Embedding { get; init; }
@@ -150,10 +172,54 @@ public sealed record CustomerMemoryDto(
     string Source,
     bool IsExplicit,
     decimal Confidence,
-    DateTime CreatedAt)
+    string MetadataJson,
+    DateTime? ExpiresAt,
+    DateTime CreatedAt,
+    DateTime UpdatedAt)
 {
     public static CustomerMemoryDto From(CustomerMemory m) => new(
-        m.Id, m.CustomerId, m.Content, m.Category, m.Source, m.IsExplicit, m.Confidence, m.CreatedAt);
+        m.Id, m.CustomerId, m.Content, m.Category, m.Source, m.IsExplicit, m.Confidence,
+        m.MetadataJson, m.ExpiresAt, m.CreatedAt, m.UpdatedAt);
+}
+
+/// <summary>Request to record a stated preference for a customer (gap C4).</summary>
+/// <remarks>
+/// A memory and a preference are different records and the agent writes both: the memory is the
+/// searchable, dated statement, and this is the canonical key/value the interaction brief's
+/// summary is assembled from. Writing only the memory left the brief's own summary empty while the
+/// fact sat in the store.
+/// </remarks>
+public sealed record SavePreferenceRequest
+{
+    [Required]
+    public Guid OrganizationId { get; init; }
+
+    [Required, MaxLength(64)]
+    public string PreferenceKey { get; init; } = string.Empty;
+
+    [Required, MaxLength(255)]
+    public string PreferenceValue { get; init; } = string.Empty;
+
+    [MaxLength(32)]
+    public string Source { get; init; } = "conversation";
+
+    public bool IsExplicit { get; init; }
+
+    [Range(0.0, 1.0)]
+    public decimal Confidence { get; init; } = 0.50m;
+}
+
+/// <summary>Request to correct the statement of one memory (gap A5).</summary>
+/// <remarks>
+/// Content is the only editable field. The category, source and confidence describe how the note
+/// came to exist and what it is worth, and rewriting those from a correction form would let staff
+/// launder an inference into a stated fact; withdrawing the note and stating it fresh is the honest
+/// way to change them.
+/// </remarks>
+public sealed record CorrectMemoryRequest
+{
+    [Required, MaxLength(2000)]
+    public string Content { get; init; } = string.Empty;
 }
 
 /// <summary>Request to semantically search a customer's memories by free-text query.</summary>
@@ -169,6 +235,18 @@ public sealed record MemorySearchRequest
     public string Query { get; init; } = string.Empty;
 
     public int TopK { get; init; } = 5;
+
+    /// <summary>
+    /// The cosine-similarity floor a hit must clear to be returned (gap B1).
+    /// </summary>
+    /// <remarks>
+    /// Defaults to <c>0</c> - the previous behaviour - because the two callers want opposite
+    /// things: the agent retrieves context and wants nothing when nothing is relevant, while a
+    /// debugging or review surface may want to see the nearest rows regardless. The floor mirrors
+    /// the handbook search's <c>minSimilarity</c>, which is the same idea on the same store.
+    /// </remarks>
+    [Range(0.0, 1.0)]
+    public double MinSimilarity { get; init; }
 }
 
 /// <summary>A single semantic-search hit with its cosine similarity.</summary>
@@ -177,11 +255,13 @@ public sealed record MemorySearchResultDto(
     Guid CustomerId,
     string Content,
     string Category,
+    string Source,
     decimal Confidence,
+    bool IsExplicit,
     double Similarity)
 {
     public static MemorySearchResultDto From(CustomerMemorySearchResult r) => new(
-        r.Id, r.CustomerId, r.Content, r.Category, r.Confidence, r.Similarity);
+        r.Id, r.CustomerId, r.Content, r.Category, r.Source, r.Confidence, r.IsExplicit, r.Similarity);
 }
 
 /// <summary>A customer event.</summary>
@@ -275,23 +355,51 @@ public sealed record UpdateConsentRequest
 /// A concise, staff-facing interaction brief summarizing who the customer is, their known
 /// preferences and upcoming events, so an associate is prepared for the interaction.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <see cref="Description"/> is the customer-level prose field the brief exists to lead with. It is
+/// deliberately separate from <see cref="PreferenceSummary"/> (which is assembled from the
+/// preference rows) and from the memories (per-fact statements the agent extracts): an associate
+/// reading the brief before making contact wants to know who this person is, and a list of facts is
+/// not that.
+/// </para>
+/// <para>
+/// <see cref="Tags"/> is a list, not a joined string. It was previously serialised as
+/// <c>"vip, silk"</c>, and the agent read it only when it was a list, so the tags the backend
+/// actually held never reached a staff answer (the contract mismatch recorded in the memory-gap
+/// analysis). The shape now matches the profile DTO this is built from.
+/// </para>
+/// </remarks>
 public sealed record InteractionBriefDto(
     Guid CustomerId,
     string CustomerName,
+    string? Description,
     string Status,
     string? PreferenceSummary,
     string? UpcomingEvents,
-    string? Tags)
+    IReadOnlyList<string> Tags)
 {
     public static InteractionBriefDto From(
         CustomerProfileDto profile,
         IReadOnlyList<CustomerEventDto> events) => new(
         profile.CustomerId,
         profile.FullName ?? "Unknown customer",
+        profile.Description,
         profile.Status,
         profile.Preferences.Count == 0 ? null
             : string.Join("; ", profile.Preferences.Select(p => $"{p.PreferenceKey}: {p.PreferenceValue}")),
-        events.Count == 0 ? null
-            : string.Join("; ", events.Select(e => $"{e.EventType} on {e.EventDate:yyyy-MM-dd}")),
-        profile.Tags.Count == 0 ? null : string.Join(", ", profile.Tags));
+        // Only events that have not already happened. The repository orders by date but filters on
+        // `IsActive` alone, so a past event is included and the field name lied (gap B-brief).
+        UpcomingEventsOrNull(events),
+        profile.Tags);
+
+    private static string? UpcomingEventsOrNull(IReadOnlyList<CustomerEventDto> events)
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var upcoming = events
+            .Where(e => DateOnly.FromDateTime(e.EventDate) >= today)
+            .Select(e => $"{e.EventType} on {e.EventDate:yyyy-MM-dd}")
+            .ToList();
+        return upcoming.Count == 0 ? null : string.Join("; ", upcoming);
+    }
 }

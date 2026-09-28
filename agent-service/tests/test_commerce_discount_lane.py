@@ -255,7 +255,7 @@ async def test_a_quote_with_requested_discount_exceeding_tier_cap_explains_signo
     assert "LKR 1,255.00" in summary
     assert "LKR 11,295.00" in summary
     assert "owner sign-off" in summary
-    assert "This customer is" not in summary
+    assert "This customer is" in summary
 
 
 async def test_a_quote_with_requested_discount_within_cap_states_it_can_be_applied():
@@ -275,7 +275,7 @@ async def test_a_quote_with_requested_discount_within_cap_states_it_can_be_appli
     assert "3%" in summary
     assert "LKR 376.50" in summary
     assert "without sign-off" in summary
-    assert "This customer is" not in summary
+    assert "This customer is" in summary
 
 
 async def test_a_quote_extracts_requested_discount_from_message_when_not_in_state():
@@ -293,7 +293,7 @@ async def test_a_quote_extracts_requested_discount_from_message_when_not_in_stat
     assert "10%" in summary
     assert "LKR 1,255.00" in summary
     assert "owner sign-off" in summary
-    assert "This customer is" not in summary
+    assert "This customer is" in summary
 
 
 async def test_a_quote_is_never_a_pause_even_when_the_rules_would_pause_an_order():
@@ -369,12 +369,20 @@ async def test_a_no_items_skip_that_is_not_a_discount_question_is_still_silent()
     assert result["output"]["reason"] == "no items in order context to evaluate"
 
 
-async def test_an_order_still_settles_and_pauses_exactly_as_before():
+async def test_an_approved_order_still_settles():
+    """The settlement arm is unchanged; what changed is how an order reaches it.
+
+    A conversational order now always queues for owner review, so this is the state *after* that
+    review: the decision is checked before the rules, which is what routes an approved deal to
+    settlement rather than back into another pause. The ADR-028 lanes above never settle, and this
+    is the assertion that they have not swallowed the one lane that does.
+    """
     settled = await _graph().ainvoke(
         {
             "org_id": ORG,
             "order_id": "ord-1",
             "customer_name": "Sophia",
+            "approval_decision": "approved",
             "items": [
                 {
                     "item_id": "item-1",
@@ -431,3 +439,101 @@ async def test_margin_floor_is_read_from_the_rules_rather_than_assumed():
     assert "40%" in result["output"]["summary"]
     # Reading the policy must not trip it: zero total, full margin, no requested discount.
     assert captured == {"order_total": 0.0, "margin": 1.0, "requested_discount": 0.0}
+
+
+async def test_a_quote_with_piece_discount_combines_with_vip_loyalty_tier():
+    """VIP customer (15% cap) + piece discount (10%) = combined 25% discount."""
+    result = await _graph().ainvoke(
+        {
+            "org_id": ORG,
+            "purpose": "quote",
+            "staff_query": True,
+            "loyalty_tier": "VIP",
+            "max_allowed_discount": 0.15,
+            "min_required_margin": 0.25,
+            "items": [
+                {
+                    "item_id": "saree-1",
+                    "item_name": "Crimson Georgette Zari Saree",
+                    "quantity": 1,
+                    "unit_price": 1250.0,
+                    "wholesale_cost": 550.0,
+                    "total_price": 1250.0,
+                    "piece_discount": 0.10,
+                }
+            ],
+            "message": "What would the Crimson Saree cost for VIP customer?",
+        }
+    )
+
+    summary = result["output"]["summary"]
+    assert "This customer is on the VIP tier" in summary
+    assert "10% piece promotion" in summary
+    assert "combined 25% discount" in summary
+    assert "LKR 312.50" in summary
+    assert "LKR 937.50" in summary
+    assert result["output"]["needs_approval"] is False
+
+
+async def test_a_quote_with_piece_discount_on_new_tier_applies_piece_promo():
+    """New tier (0% cap) + piece discount (10%) = 10% piece promo."""
+    result = await _graph().ainvoke(
+        {
+            "org_id": ORG,
+            "purpose": "quote",
+            "staff_query": True,
+            "loyalty_tier": "New",
+            "max_allowed_discount": 0.0,
+            "min_required_margin": 0.25,
+            "items": [
+                {
+                    "item_id": "saree-1",
+                    "item_name": "Crimson Georgette Zari Saree",
+                    "quantity": 1,
+                    "unit_price": 1250.0,
+                    "wholesale_cost": 550.0,
+                    "total_price": 1250.0,
+                    "piece_discount": 0.10,
+                }
+            ],
+            "message": "What is the price of the Crimson Saree?",
+        }
+    )
+
+    summary = result["output"]["summary"]
+    assert "This customer is on the New tier" in summary
+    assert "10% piece promotion" in summary
+    assert "LKR 125.00" in summary
+    assert "LKR 1,125.00" in summary
+    assert "without requiring sign-off" in summary
+
+
+async def test_a_quote_with_piece_discount_breaching_margin_floor_explains_signoff():
+    """Piece promo + tier discount breaching margin floor requires sign-off."""
+    result = await _graph().ainvoke(
+        {
+            "org_id": ORG,
+            "purpose": "quote",
+            "staff_query": True,
+            "loyalty_tier": "VIP",
+            "max_allowed_discount": 0.15,
+            "min_required_margin": 0.25,
+            "items": [
+                {
+                    "item_id": "saree-tight",
+                    "item_name": "Tight Margin Saree",
+                    "quantity": 1,
+                    "unit_price": 1000.0,
+                    "wholesale_cost": 850.0,
+                    "total_price": 1000.0,
+                    "piece_discount": 0.10,
+                }
+            ],
+            "message": "How much for Tight Margin Saree?",
+        }
+    )
+
+    summary = result["output"]["summary"]
+    assert "requires owner sign-off" in summary
+    assert "25% margin floor" in summary
+

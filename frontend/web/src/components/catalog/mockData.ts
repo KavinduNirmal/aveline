@@ -99,6 +99,7 @@ export interface SupplierMock {
   contactEmail: string
   contactPhone: string
   location: string
+  websiteUrl?: string
   minimumOrder: number
   deliveryTimeDays: number
   isActive: boolean

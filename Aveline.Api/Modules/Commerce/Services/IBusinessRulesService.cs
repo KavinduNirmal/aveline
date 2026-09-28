@@ -34,4 +34,23 @@ public interface IBusinessRulesService
         Guid organizationId,
         EvaluateOrderRulesRequestDto request,
         CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<PieceDiscountResponseDto>> GetPieceDiscountsAsync(
+        Guid organizationId,
+        CancellationToken cancellationToken = default);
+
+    Task<PieceDiscountResponseDto?> GetPieceDiscountByItemIdAsync(
+        Guid organizationId,
+        Guid itemId,
+        CancellationToken cancellationToken = default);
+
+    Task<PieceDiscountResponseDto> SetPieceDiscountAsync(
+        Guid organizationId,
+        SetPieceDiscountDto dto,
+        CancellationToken cancellationToken = default);
+
+    Task<bool> DeletePieceDiscountAsync(
+        Guid organizationId,
+        Guid itemId,
+        CancellationToken cancellationToken = default);
 }

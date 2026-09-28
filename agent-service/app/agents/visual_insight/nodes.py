@@ -25,6 +25,7 @@ from app.tools.inventory.image_tools import analyze_product_image
 from app.tools.inventory.inventory_tools import search_inventory
 from app.tools.inventory.outfit_tools import compose_outfit
 from app.tools.inventory.sourcing_tools import create_sourcing_request
+from app.tools.inventory.supplier_tools import scrape_atelier_catalog
 
 logger = logging.getLogger("aveline.agent.visual")
 
@@ -474,10 +475,28 @@ class VisualInsightAgent:
             notes=notes,
         )
 
+        # Dynamic Partner Atelier Catalog Web Scraping
+        query_text = (state.get("search_criteria") or {}).get("query") or msg
+        detected_fabric = (state.get("image_attributes") or {}).get("fabric")
+        detected_color = (state.get("image_attributes") or {}).get("primary_color")
+
+        scraped_options: list[dict[str, Any]] = []
+        if query_text:
+            scraped_options = await scrape_atelier_catalog(
+                self._registry,
+                query=query_text,
+                org_id=org_id,
+                detected_fabric=detected_fabric,
+                detected_color=detected_color,
+            )
+
         if staff_query:
             summary_text = "No in-stock pieces matched. Sourcing request created with partner ateliers."
+            if scraped_options:
+                summary_text += f" Found {len(scraped_options)} partner options."
             return {
                 "sourcing_request": req.model_dump(),
+                "partner_sourcing_options": scraped_options or None,
                 "suggestion": None,
                 "summary": summary_text,
                 "text": summary_text,
@@ -488,17 +507,30 @@ class VisualInsightAgent:
             # reads as a response to their image rather than a generic "not available". This is the
             # live case from the handoff: a saree photo whose reply never mentioned the saree.
             seen = _describe_what_was_seen(state)
-            suggestion = (
-                f"We do not have that {seen} in stock right now, but Elle has initiated a custom "
-                "sourcing request with our partner ateliers."
-                if seen
-                else (
-                    "We do not have this exact piece in stock right now, but Elle has initiated a "
-                    "custom sourcing request with our partner ateliers."
+            if scraped_options:
+                partner_names = ", ".join({opt["atelier_name"] for opt in scraped_options if "atelier_name" in opt})
+                suggestion = (
+                    f"We do not have that {seen} in stock right now, but Elle found matching pieces at our partner ateliers "
+                    f"({partner_names}) and initiated a sourcing ticket."
+                    if seen
+                    else (
+                        f"We do not have this exact piece in stock right now, but Elle found matching pieces at our partner ateliers "
+                        f"({partner_names}) and initiated a sourcing ticket."
+                    )
                 )
-            )
+            else:
+                suggestion = (
+                    f"We do not have that {seen} in stock right now, but Elle has initiated a custom "
+                    "sourcing request with our partner ateliers."
+                    if seen
+                    else (
+                        "We do not have this exact piece in stock right now, but Elle has initiated a "
+                        "custom sourcing request with our partner ateliers."
+                    )
+                )
             return {
                 "sourcing_request": req.model_dump(),
+                "partner_sourcing_options": scraped_options or None,
                 "suggestion": suggestion,
                 "summary": None,
                 "text": None,
@@ -534,6 +566,7 @@ class VisualInsightAgent:
             "items": items,
             "looks": looks,
             "sourcing_request": sourcing_req,
+            "partner_sourcing_options": state.get("partner_sourcing_options"),
             "image_attributes": image_attrs,
             "reason": state.get("reason"),
         })

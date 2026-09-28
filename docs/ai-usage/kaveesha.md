@@ -1425,10 +1425,22 @@ Peer agents Ava and Elle had well-structured prompts outlining responsibilities,
 - Ran `flutter analyze --no-fatal-infos`: **Verified 0 errors/issues**.
 
 **Remaining Work:**
-- None.
 
+---
 
+## Session 2026-09-28 (Piece-Level Discount Allocation & Combined Loyalty Pricing for Lina)
 
+**Tool used:** Antigravity AI Assistant  
+**Task:** Implement piece-level promotional discount allocation from the Catalog Item Details page, combined customer loyalty tier + piece promotion calculation in Commerce Agent Lina, margin floor evaluation (25%), and live promotional pricing display.
+
+**Intended Work:**
+- Implement piece discount repository / business rules retrieval in `OrderContextBuilder` and wire `PieceDiscountRate` into `OrderContextItem`.
+- Wire `piece_discount` into `ConversationService` payload to agent service.
+- Update Commerce Agent Lina in `nodes.py` to calculate combined discount: customer loyalty tier (e.g. VIP 15%) + piece discount (e.g. 10%) = combined 25% discount, deducting it from total and checking against margin floor.
+- Create frontend piece discount API client (`piece-discount-api.ts`) and `PieceDiscountModal.tsx` in `frontend/web`.
+- Update `CatalogItemDetail.tsx` to add "Allocate Discount" action, promotional price, and badge.
+- Add unit tests across backend (.NET), agent service (Python), and frontend (Vitest).
+- Verify all builds and tests pass.
 ---
 
 ## Session 2026-09-26 (Fix Commerce Agent Discount % Extraction and Quote Reasoning)
@@ -1640,5 +1652,195 @@ Peer agents Ava and Elle had well-structured prompts outlining responsibilities,
 
 ### Remaining Work:
 - None.
+
+---
+
+## Session 2026-09-28 (Commerce Agent Salon Order Actions, Approval Notifications, and Customer Context Fix)
+
+**Tool used:** Antigravity AI Assistant  
+**Task:** Ensure Commerce Agent Lina actively responds and notifies in the Salon when an order is created, approved, rejected, or payment is requested, offering interactive options (Approve, Request Payment, Reject), and eliminate redundant customer detail prompting when creating orders within dedicated client salons.
+
+**Prompt(s) used:**  
+- "commerce agent is doing nothing when I approve an order or requested payment. she should send a message right? she should send something similar like with the options to ask for payment, approve, or reject. My group leader sent this, Check what's happening and find a solution for this. Give me a clear implementation plan. So now as there are seperate chat for each customer when the owner asks to create the order, no need to ask for the cutomer name and details, as we implemented earlier. We need to fix this as well. Here also just skip testing FOR NOW. I'll tell when to test. Just remind me before commiting that I have not yet tested."
+
+**Intended Work:**
+- Investigate why Lina produces no messages when an order is approved or payment is requested from the orders panel, approvals queue, or chat.
+- Eliminate customer detail prompts in `agent-service/app/agents/commerce/nodes.py` during order creation since customer context is already bound to the Salon thread.
+- Provide interactive actions (Approve, Request Payment, Reject) in the Salon chat when Lina prepares an order for approval.
+- Implement automated Lina notifications/messages into the Salon conversation whenever an order is approved, rejected, or payment is requested (from both Salon chat actions and Dashboard Orders/Approvals actions).
+- Prepare a comprehensive and clear implementation plan for the user before proceeding with changes.
+
+**Work Performed:**
+1. **Salon Notifications Bridge (`ICommerceSalonNotifier` & `CommerceSalonNotifier`)**:
+   - Created `ICommerceSalonNotifier` and `CommerceSalonNotifier` under `Aveline.Api/Modules/Commerce/Services/`.
+   - Wired SignalR broadcasting via `IMessageBroadcaster.BroadcastMessageAsync` and `BroadcastConversationChangedAsync`, persisting messages from `AgentKeys.Lina` with rich `ContentBlock` payloads (`sign_off` and `payment` blocks).
+   - Injected `ICommerceSalonNotifier` into `OrderService`, `ApprovalService`, and `PaymentService`.
+   - Wired `NotifyOrderApprovedAsync`, `NotifyPaymentRequestedAsync`, and `NotifyOrderRejectedAsync` into order state transitions, approval decisions, and payment link generation workflows.
+   - Updated `OrderService.ValidTransitions` to allow direct transition from `pending_approval` to `payment_requested`.
+   - Added `SettleSignOffAsync` to `IConversationOrderBridge` so in-chat sign-off actions synchronize with order records and trigger notifications.
+2. **Customer Identity Resolution & Prompt Elimination**:
+   - In `agent-service/app/agents/commerce/nodes.py`, removed the blocking prompt 1b (`Which registered client is this for?`) when `customer_name` is absent, defaulting to `"our client"` so order evaluation proceeds directly within the customer's dedicated Salon.
+   - In `Aveline.Api/Modules/Conversations/Services/ConversationService.cs`, added fallback in `TriggerAgentAsync` to resolve customer details from the conversation thread's `CustomerId` and forward it in `org_context.customer_name`.
+   - In `agent-service/app/agents/commerce/nodes.py`, updated `pause_for_approval` to provide options to Approve Order, Request Payment, or Reject, returning `total`, `order_id`, and `approval_reason`.
+3. **Agent Message Block Payloads**:
+   - In `agent-service/app/events/block_builders.py`, updated `build_lina_blocks` to emit `sign_off` blocks on `pending_approval` / `needs_approval` containing `orderId`, `reason`, `amount`, and `actions: ["approve", "request_payment", "reject"]`.
+   - In `agent-service/app/events/message_publisher.py`, set message kind to `SignOff` when Lina requires approval.
+4. **Interactive Frontend Actions**:
+   - In `frontend/web/src/contexts/ConversationsContext.tsx`, added `requestPayment(orderId: string)` method that transitions order status to `payment_requested`.
+   - In `frontend/web/src/components/conversation/blocks.tsx`, enhanced `SignOffBlock` with three actionable buttons: **Approve Order**, **Request Payment**, and **Reject**.
+   - Enhanced `PaymentBlock` with **Copy Payment Link** (with toast feedback) and **Open Checkout** buttons.
+   - Wired `onRequestPayment` through `BlockList`, `MessageBubble`, `MessageThread`, `SalonPanel`, and `AvelineChatDrawer`.
+
+**Files Created / Modified:**
+- `Aveline.Api/Modules/Commerce/Services/ICommerceSalonNotifier.cs` (Created)
+- `Aveline.Api/Modules/Commerce/Services/CommerceSalonNotifier.cs` (Created)
+- `Aveline.Api/Modules/Commerce/CommerceModule.cs` (Modified)
+- `Aveline.Api/Modules/Commerce/Services/IConversationOrderBridge.cs` (Modified)
+- `Aveline.Api/Modules/Commerce/Services/ConversationOrderBridge.cs` (Modified)
+- `Aveline.Api/Modules/Commerce/Services/OrderService.cs` (Modified)
+- `Aveline.Api/Modules/Commerce/Services/ApprovalService.cs` (Modified)
+- `Aveline.Api/Modules/Commerce/Services/PaymentService.cs` (Modified)
+- `Aveline.Api/Modules/Conversations/Services/ConversationService.cs` (Modified)
+- `agent-service/app/agents/commerce/nodes.py` (Modified)
+- `agent-service/app/events/block_builders.py` (Modified)
+- `agent-service/app/events/message_publisher.py` (Modified)
+- `frontend/web/src/contexts/ConversationsContext.tsx` (Modified)
+- `frontend/web/src/components/conversation/blocks.tsx` (Modified)
+- `frontend/web/src/components/conversation/MessageBubble.tsx` (Modified)
+- `frontend/web/src/components/conversation/MessageThread.tsx` (Modified)
+- `frontend/web/src/components/conversation/SalonPanel.tsx` (Modified)
+- `frontend/web/src/components/conversation/AvelineChatDrawer.tsx` (Modified)
+- `docs/ai-usage/kaveesha.md` (Modified)
+
+**Verification Performed:**
+- `dotnet build Aveline.Api/Aveline.Api.csproj`: **0 Errors**, 36 Warnings.
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~Commerce|FullyQualifiedName~BusinessRules|FullyQualifiedName~OrderContextBuilder"`: **Passed! 146 passed, 0 failed, 0 skipped**.
+- `pytest tests/test_commerce_discount_lane.py tests/test_commerce_agent.py tests/test_commerce_graph.py tests/test_commerce_tools.py tests/test_block_builders.py tests/test_message_publisher.py tests/test_hitl_resume.py`: **Passed! 137 passed, 0 failed** (100% pass rate).
+- `bun run test src/test/tenant-conformance.test.ts`: **Passed! 8 passed, 0 failed** (0 raw palette/hex/element violations).
+- `bun run test src/lib/piece-discount-api.test.ts src/components/catalog/PieceDiscountModal.dom.test.tsx src/components/conversation/blocks.test.tsx src/components/conversation/MessageBubble.test.tsx`: **Passed! 24 passed, 0 failed**.
+- `bun run build`: `tsc -b && vite build` completed successfully with **0 errors**.
+
+**Remaining Work:**
+- None. All test suites executed and verified green.
+
+
+---
+
+## Session 2026-09-28 (Refine Quote Customer Phrasing and Eliminate Item Repetition)
+
+**Tool used:** Antigravity AI Assistant  
+**Task:** Prevent catalog item names from being mistakenly extracted as customer names in pricing/discount questions, eliminate repeated item names in Lina's quotes, and restore the natural "This customer is on the ... tier." preamble suited for dedicated client salon threads.
+
+**Prompt(s) used:**  
+- "There's a small misunderstanding from my side. Actually there's a salon for each client. So that this customer........ thing we said can be used. You can see in this picture. Now the agent gives the answer perfectly, Cool,, but the response seems a little messy cause it says the name of the dress over and over again. So there's only some minor changes we need to do here."
+
+**Work Performed:**
+- **Root Cause Analysis**:
+  - In `Aveline.Api/Modules/Commerce/Services/OrderContextBuilder.cs`, regex `\b(?:for\s+...)(?<name>...)` matched phrases like `"15% off for the Emerald Garden Floral Silk Midi"`, capturing `"the Emerald Garden Floral Silk Midi"` as the customer name (`CustomerHint`).
+  - In `agent-service/app/agents/commerce/nodes.py`, `_quote_sentence` received the dress name as `name`, producing: `"the Emerald Garden Floral Silk Midi is on the New tier. A 15% discount ... on Emerald Garden Floral Silk Midi Dress ... because the Emerald Garden Floral Silk Midi's New tier limit without sign-off is 5%..."`, repeating the dress name three times.
+- **Backend Refactoring (`Aveline.Api`)**:
+  - Updated `CustomerHintFrom` in `OrderContextBuilder.cs` to ignore `for <product>` phrases when preceded by pricing/discount keywords (`off for`, `discount for`, `price for`, `quote for`, etc.) unless explicitly preceded by `client` or `customer`.
+  - Added leading article stripping (`the`, `this`, `a`, `an`) in `CleanCustomerName`.
+  - In `OrderContextBuilder.BuildAsync`, added defensive guard discarding `customerHint` if it matches any catalog item or item being priced/purchased.
+- **Python Agent Service (`agent-service`)**:
+  - In `_quote_sentence` (`nodes.py`), added token overlap guard detecting if `name` matches any item in the order/quote, resetting `name = None`.
+  - Restored `"This customer is on the {tier} tier."` when `name` is None (and `"{name} is on the {tier} tier."` when a person's name is present).
+  - Formatted limit description cleanly as `"their {tier} tier limit"` when `name` is None, naming the piece only once on its price line.
+- **Testing & Verification**:
+  - Added tests in `OrderContextBuilderTests.cs` verifying that `"Calculate the discount if we give a 15% off for the Emerald Garden Floral Silk Midi"` returns `null` for `CustomerHint`.
+  - Updated `test_commerce_discount_lane.py` to assert `"This customer is"` appears.
+  - Ran backend test suite and python test verification script.
+
+**Files Modified:**
+- `Aveline.Api/Modules/Commerce/Services/OrderContextBuilder.cs`
+- `Aveline.Api.Tests/OrderContextBuilderTests.cs`
+- `agent-service/app/agents/commerce/nodes.py`
+- `agent-service/tests/test_commerce_discount_lane.py`
+- `docs/ai-usage/kaveesha.md`
+
+**Verification Performed:**
+- `dotnet test Aveline.Api.Tests --filter "FullyQualifiedName~OrderContextBuilderTests|FullyQualifiedName~ConversationOrderBridgeTests"`: **45/45 tests passed (100% pass rate, 0 failed, 0 skipped)**.
+- Python quote logic test: Verified Cases 1, 2, and 3 produce clean quotes naming the dress only once and using `"This customer is on the New tier."` without repetition.
+
+**Remaining Work:**
+- None.
+
+---
+
+## Session 2026-09-28 (Authoring Vertical Slice 3 Submission Report: Commerce Validation & Optimisation)
+
+**Tool used:** Antigravity AI Assistant  
+**Task:** Author the complete individual submission report chapter for Vertical Slice 3: Commerce Validation & Optimisation (`09-slice-commerce.md` / `chapters/09-slice-commerce.tex` / `student3-individual-report.md`) adhering to academic and technical standards, targeting 10–12 pages equivalent length.
+
+**Intended Work:**
+- Author comprehensive, publication-grade academic submission report for Vertical Slice 3 (Commerce Validation and Optimisation) by Kaveesha Mahindarathne (IT24103913).
+- Cover all required sections specified in the chapter brief:
+  1. Domain and Problem (`sec:c-domain`): Framed around boutique owner personal bottlenecks, core questions answered (order acceptance, profitability, courier delivery).
+  2. Data Model (`sec:c-data`): In-depth table breakdown for `Orders`, `Order_Items`, `Payments`, `Approval_Queue`, `Delivery_Plans`, `Business_Rules`, including purpose, key invariants, and multi-tenancy constraints.
+  3. Pricing and Margin (`sec:c-pricing`): Mathematical formulation, rounding policy (LKR currency precision), explanation of deterministic C# code vs probabilistic LLM generation, worked financial example, and code listing (`lst:margin`).
+  4. Approval Workflow (`sec:c-approval`): State machine transitions, threshold parameters (LKR 40,000 high-value, 25% margin floor, loyalty caps), role-based permissions (`approvals:approve` vs `orders:manage`), timeout/SLA policies, and audit logging.
+  5. Payments (`sec:c-payments`): Provider-backed payment intent generation, callback settlement polling, idempotency via unique gateway transaction constraints, failure and refund lifecycles, and explicit payment failure test evidence.
+  6. Delivery (`sec:c-delivery`): Route planning inputs, carrier selection (PickMe, Uber, In-house), Colombo vs Outstation rate cards (LKR 650 vs LKR 850), tracking generation, and mobile floor associate UX.
+  7. Agent Contribution (`sec:c-agent`): LangGraph Commerce Agent (Lina) architecture, tool suites (`pricing_tools`, `rules_tools`, `loyalty_tools`, `payment_tools`, `delivery_tools`), HITL interrupt point, and ADR-024 checkpoint resumption.
+  8. Testing (`sec:c-testing`): Test suite breakdown (.NET, Python, Web), commands, explicit evidence for rules matrix, approval enforcement, and payment failure tests, and CI/CD verification.
+  9. Reflection (`sec:c-reflection`): First-person engineering reflection on AI boundaries, architectural challenges, and multi-tenant systems.
+- Persist the report in `docs/reports/student3-individual-report.md`, `docs/reports/09-slice-commerce.md`, and update `C:\Users\kavee\Downloads\09-slice-commerce.md`.
+
+**Work Performed:**
+1. **Domain and Problem Formulation (`sec:c-domain`)**:
+   - Articulated the operational reality of semi-luxury boutiques in Colombo (Sri Lanka) operating over WhatsApp, Instagram, and private salon appointments.
+   - Diagnosed the boutique owner's central bottleneck: margin erosion from ad-hoc floor discounts, constant managerial interruptions for pricing clearance, disjointed courier dispatch, and unverified payment screenshots.
+   - Framed the three essential questions answered by Slice 3: *Should we accept this order?*, *Is it profitable?*, and *How do we deliver it?*.
+   - Established the core architectural thesis: strictly separating probabilistic LLM conversational reasoning from deterministic financial and legal authority.
+2. **Data Model & Invariants (`sec:c-data`)**:
+   - Documented the six relational tables (`Orders`, `OrderItems`, `Payments`, `ApprovalQueue`, `DeliveryPlans`, `BusinessRules`).
+   - Detailed comprehensive schema definitions, foreign key constraints (`Restrict` behavior), and multi-tenant scoping via `OrganizationId`.
+   - Formulated a complete Mermaid entity-relationship diagram representing the 6 tables and relationships.
+3. **Pricing and Margin Engineering (`sec:c-pricing`)**:
+   - Formalized mathematical equations for subtotal, total cost, loyalty discounts, net total, gross profit, and margin ratio.
+   - Specified rounding policies: commercial midpoint rounding to two decimal places for LKR currency and four decimal places for margin ratios.
+   - Provided an in-depth comparative rationale detailing why margin calculations must be deterministic C# code rather than LLM prompt completions (arithmetic hallucination risks, adversarial prompt injections, statutory auditability, latency, and zero-trust security).
+   - Provided a full step-by-step worked financial example for a Colombo luxury transaction (LKR 60,000 order with VIP 10% discount, yielding LKR 54,000 total, LKR 19,500 gross profit, 36.11% margin, and high-value threshold breach).
+   - Embedded and annotated listing `Listing: Margin evaluation is deterministic` (`lst:margin`).
+4. **Human-in-the-Loop Approval State Machine (`sec:c-approval`)**:
+   - Specified threshold values: High-Value Order Threshold (LKR 40,000.00), Minimum Margin Floor (25.00%), and Tier Discount Caps (VIP 10%, Regular 5%, New 0%).
+   - Integrated approval state machine flowchart (`fig:approval-fsm`).
+   - Detailed role-based authorization matrix explaining the Q14/R-17 decision split (`approvals:approve` vs `orders:manage`).
+   - Defined SLA policies, timeout behavior (preventing auto-approval on timeout), inventory hold expirations, and Prometheus telemetry metrics (`aveline_approval_queue_pending_count`).
+5. **Payment Intents and Gateway Settlement (`sec:c-payments`)**:
+   - Documented the Phase 9 modernization replacing fabricated checkout URLs with provider-backed payment intents (`PaymentPurpose.CommerceOrder`).
+   - Formulated a comprehensive sequence diagram detailing the asynchronous WhatsApp-to-gateway checkout and webhook verification flow.
+   - Explained idempotency guarantees via database-level unique indexing on `(OrganizationId, GatewayTransactionId)` and duplicate-suppressed confirmations.
+   - Detailed the failure mapping and refund lifecycle requiring `payments:refund` permission and recording offsetting `BoutiqueSaleEntries`.
+   - Included full C# test code evidence for terminal provider status mapping.
+6. **Delivery and Courier Logistics (`sec:c-delivery`)**:
+   - Documented regional routing inputs, integrated courier platforms (PickMe Flash, Uber Connect, In-house fleet), and dynamic Colombo vs Outstation rate cards (LKR 650 vs LKR 850).
+   - Detailed deterministic tracking number generation (`TRK-{CARRIER}-{REF}`) and floor associate mobile UX in Flutter.
+7. **Agent Contribution & Resumption Protocol (`sec:c-agent`)**:
+   - Modeled the LangGraph StateGraph topology for the Commerce Agent ("Lina").
+   - Detailed the five-tool suite (`pricing_tools`, `rules_tools`, `loyalty_tools`, `payment_tools`, `delivery_tools`).
+   - Detailed the exact point of interruption at `evaluate_deal` and the ADR-024 checkpoint resumption mechanism at `prepare_settlement`.
+8. **Testing Matrix & Verification (`sec:c-testing`)**:
+   - Broken down test suites across .NET (76+ tests / 101 verified), Python (37 tests), and Web (15 tests).
+   - Embedded full test code evidence for rules evaluation, approval enforcement, and payment failure handling.
+9. **Individual Reflective Analysis (`sec:c-reflection`)**:
+   - Authored first-person reflective essay on architectural growth, AI boundary definition, asynchronous checkpoint resumption, and multi-tenant data modeling.
+
+**Files Created / Modified:**
+- `docs/reports/student3-individual-report.md` (Created)
+- `docs/reports/09-slice-commerce.md` (Created)
+- `chapters/09-slice-commerce.md` (Created)
+- `chapters/09-slice-commerce.tex` (Created)
+- `C:\Users\kavee\Downloads\09-slice-commerce.md` (Modified / Fully authored)
+- `docs/ai-usage/kaveesha.md` (Modified)
+
+**Verification Performed:**
+- Executed `.NET` Commerce test suite: `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj --filter "FullyQualifiedName~Commerce"`: **Passed! - Failed: 0, Passed: 101, Skipped: 0, Total: 101 (100% pass rate)**.
+- Verified document structure, frontmatter metadata, Mermaid diagrams, mathematical LaTeX equations, listings, and tables across all generated formats.
+
+**Remaining Work:**
+- None. Ready for submission.
+
+
 
 

@@ -132,12 +132,25 @@ class ToolRegistry:
         customer_id: str,
         query: str,
         top_k: int = 5,
+        min_similarity: float = 0.0,
     ) -> dict[str, Any]:
-        """Semantic search over a customer's memories (pgvector via backend)."""
+        """Semantic search over a customer's memories (pgvector via backend).
+
+        ``min_similarity`` is the cosine floor a hit must clear. Top-k always returns k rows
+        however unrelated, so without a floor a customer whose notes say nothing about the current
+        message is handed the five least-unrelated ones as if they were context (gap B1). The
+        backend applies it as a predicate, mirroring the handbook search.
+        """
         return await self._client.request(
             "POST",
             "/internal/customers/memories/search",
-            json={"organizationId": org_id, "customerId": customer_id, "query": query, "topK": top_k},
+            json={
+                "organizationId": org_id,
+                "customerId": customer_id,
+                "query": query,
+                "topK": top_k,
+                "minSimilarity": min_similarity,
+            },
         )
 
     async def search_handbook(
@@ -172,12 +185,74 @@ class ToolRegistry:
         customer_id: str,
         content: str,
         category: str,
+        source: str | None = None,
+        is_explicit: bool | None = None,
+        confidence: float | None = None,
+        metadata_json: str | None = None,
     ) -> dict[str, Any]:
-        """Persist a new customer memory via the backend."""
+        """Persist a new customer memory via the backend.
+
+        The provenance fields are sent only when the caller actually knows them. The agent does
+        know them - it extracted the statement and knows whether the customer said it - and this
+        tool used to accept only content and category, so every agent-written memory landed as
+        ``Source="conversation"``, ``IsExplicit=false``, ``Confidence=0.50`` no matter what the
+        extraction had computed (gap A1). Omitting a field is now the only way to get the backend's
+        own default, which is the honest outcome for a caller that has no opinion.
+        """
+        body: dict[str, Any] = {
+            "organizationId": org_id,
+            "content": content,
+            "category": category,
+        }
+        if source is not None:
+            body["source"] = source
+        if is_explicit is not None:
+            body["isExplicit"] = is_explicit
+        if confidence is not None:
+            body["confidence"] = confidence
+        if metadata_json is not None:
+            body["metadataJson"] = metadata_json
+
         return await self._client.request(
             "POST",
             f"/internal/customers/{customer_id}/memories",
-            json={"organizationId": org_id, "content": content, "category": category},
+            json=body,
+        )
+
+    async def save_customer_preference(
+        self,
+        org_id: str,
+        customer_id: str,
+        key: str,
+        value: str,
+        source: str | None = None,
+        is_explicit: bool | None = None,
+        confidence: float | None = None,
+    ) -> dict[str, Any]:
+        """Record a stated preference in the customer's preferences table (gap C4).
+
+        Distinct from :meth:`save_customer_memory` on purpose. A memory is a searchable, dated
+        statement; a preference is the canonical key/value the interaction brief's summary is
+        assembled from. The agent used to write only the memory, so a preference the customer stated
+        in conversation could be on file as a note and still be missing from the brief that exists to
+        surface it.
+        """
+        body: dict[str, Any] = {
+            "organizationId": org_id,
+            "preferenceKey": key,
+            "preferenceValue": value,
+        }
+        if source is not None:
+            body["source"] = source
+        if is_explicit is not None:
+            body["isExplicit"] = is_explicit
+        if confidence is not None:
+            body["confidence"] = confidence
+
+        return await self._client.request(
+            "POST",
+            f"/internal/customers/{customer_id}/preferences",
+            json=body,
         )
 
     async def generate_interaction_brief(self, org_id: str, customer_id: str) -> dict[str, Any]:
@@ -425,6 +500,16 @@ class ToolRegistry:
         if max_price is not None:
             url += f"&maxPrice={max_price}"
         return await self._client.request("GET", url)
+
+    async def get_suppliers(self, org_id: str | None = None) -> list[dict[str, Any]]:
+        """Fetch registered partner ateliers/suppliers for an organization."""
+        path = f"/api/v1/orgs/{org_id}/catalog/suppliers" if org_id else "/internal/visual/suppliers"
+        res = await self._client.request("GET", path)
+        if isinstance(res, list):
+            return res
+        if isinstance(res, dict) and "items" in res:
+            return res["items"]
+        return []
 
     # ============================== COMMERCE AGENT ==============================
 

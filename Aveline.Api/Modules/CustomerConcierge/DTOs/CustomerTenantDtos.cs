@@ -130,7 +130,8 @@ public sealed record TenantCustomerDetailDto(
     DateTime? UpdatedAtUtc,
     int InteractionCount,
     IReadOnlyList<string> Tags,
-    IReadOnlyList<CustomerPreferenceDto> Preferences);
+    IReadOnlyList<CustomerPreferenceDto> Preferences,
+    string? Description);
 
 /// <summary>
 /// A customer's consent status on the tenant surface.
@@ -160,6 +161,42 @@ public sealed record TenantCustomerMemoryDto(
     DateTime CreatedAtUtc);
 
 /// <summary>
+/// The pre-contact customer brief, as the tenant surface serves it.
+/// </summary>
+/// <remarks>
+/// <para>
+/// This is the staff-facing brief: who the client is, what is known about them, and what is coming
+/// up, assembled before an associate makes contact. It is deliberately **not** the internal
+/// <c>InteractionBriefDto</c> - the internal shape carries consent state and is reachable only with
+/// the service token, while this one is what a staff device reads under the customer-view policy.
+/// </para>
+/// <para>
+/// <see cref="Description"/> is the customer-level prose field; <see cref="Preferences"/> and
+/// <see cref="Tags"/> are the recorded facts; <see cref="UpcomingEvents"/> holds only events that
+/// have not already happened. <see cref="Memories"/> is empty when consent is not granted: the
+/// brief is personalization, and a revoked customer has none.
+/// </para>
+/// </remarks>
+public sealed record TenantCustomerBriefDto(
+    Guid CustomerId,
+    string CustomerName,
+    string? Description,
+    string Status,
+    string ConsentStatus,
+    string? PreferenceSummary,
+    IReadOnlyList<string> Tags,
+    IReadOnlyList<TenantCustomerBriefEventDto> UpcomingEvents,
+    IReadOnlyList<TenantCustomerMemoryDto> Memories,
+    DateTime GeneratedAtUtc);
+
+/// <summary>One upcoming occasion on the pre-contact brief.</summary>
+public sealed record TenantCustomerBriefEventDto(
+    Guid Id,
+    string EventType,
+    DateTime EventDate,
+    string? Description);
+
+/// <summary>
 /// The writable subset of a client's record. <c>Status</c> is deliberately absent: it is derived,
 /// so making it writable would let the UI contradict the loyalty rule.
 /// </summary>
@@ -168,7 +205,8 @@ public sealed record UpdateCustomerRequest(
     string? Nickname,
     string? PhoneNumber,
     string? Email,
-    string? Level);
+    string? Level,
+    string? Description);
 
 /// <summary>One recorded interaction, as the client detail sheet reads it.</summary>
 public sealed record CustomerInteractionItemDto(

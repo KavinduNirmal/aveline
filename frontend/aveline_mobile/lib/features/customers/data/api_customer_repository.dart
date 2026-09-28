@@ -319,6 +319,7 @@ class ApiCustomerRepository implements CustomerRepository {
       lastVisitAtUtc: _parseUtc(raw['lastVisitAtUtc']),
       createdAtUtc: _parseUtc(raw['createdAtUtc']),
       tags: tags,
+      description: raw['description'] as String?,
     );
   }
 

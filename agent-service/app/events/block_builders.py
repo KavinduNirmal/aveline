@@ -34,6 +34,29 @@ def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+#: Human-readable labels for the note categories the store uses. The table is read by an associate
+#: deciding what to do next, and "event"/"preference"/"complaint" are the store's vocabulary, not
+#: theirs. A category the mapping does not know is title-cased rather than dropped: a new category
+#: showing as "Sentiment" is honest, while falling back to a generic word would hide the distinction
+#: the store took the trouble to record.
+_CATEGORY_LABELS = {
+    "preference": "Preference",
+    "event": "Event",
+    "complaint": "Complaint",
+    "experience": "Experience",
+    "note": "Note",
+    "memory": "Memory",
+}
+
+
+def _category_label(item: dict[str, Any]) -> str:
+    """The Category cell for one note, in words a reader uses (see ``_CATEGORY_LABELS``)."""
+    raw = str(item.get("category") or "").strip()
+    if not raw:
+        return _CATEGORY_LABELS["memory"]
+    return _CATEGORY_LABELS.get(raw.lower(), raw.replace("_", " ").strip().title())
+
+
 # --------------------------------------------------------------------------- Ava (memory)
 
 
@@ -76,9 +99,7 @@ def build_ava_blocks(memory_output: Any) -> list[dict[str, Any]]:
             if key in seen:
                 continue
             seen.add(key)
-            rows.append(
-                [str(item.get("category") or "memory"), content, _provenance(item)]
-            )
+            rows.append([_category_label(item), content, _provenance(item)])
     if rows:
         blocks.append(
             {

@@ -71,8 +71,9 @@ def test_ava_blocks_include_memories_as_at_a_glance_table():
     assert table["columns"] == ["Category", "Content", "Known"]
     assert len(table["rows"]) == 2
     # The notes were stated by the customer, so the block says so (gap B5).
-    assert ["preference", "Michael prefers silk dresses", "Stated"] in table["rows"]
-    assert ["event", "Michael has a wedding on 2026-12-01", "Stated"] in table["rows"]
+    # Categories are shown in a reader's words, not the store's ("event", "preference").
+    assert ["Preference", "Michael prefers silk dresses", "Stated"] in table["rows"]
+    assert ["Event", "Michael has a wedding on 2026-12-01", "Stated"] in table["rows"]
 
 
 def test_ava_blocks_include_the_draft_response_as_a_suggestion():
@@ -485,7 +486,7 @@ def test_notes_on_file_become_their_own_block():
 
     table = next(b for b in blocks if b["type"] == "at_a_glance")
     assert table["columns"] == ["Category", "Content", "Known"]
-    assert table["rows"] == [["event", "The customer has a party", ""]]
+    assert table["rows"] == [["Event", "The customer has a party", ""]]
 
 
 def test_the_brief_does_not_recite_the_notes():
@@ -508,7 +509,7 @@ def test_a_note_extracted_this_turn_is_not_duplicated_by_the_block():
 
     tables = [b for b in blocks if b["type"] == "at_a_glance"]
     assert len(tables) == 1
-    assert tables[0]["rows"] == [["event", "The customer has a party", ""]]
+    assert tables[0]["rows"] == [["Event", "The customer has a party", ""]]
 
 
 def test_newly_extracted_memories_still_reach_the_block_alongside_on_file_notes():
@@ -523,8 +524,8 @@ def test_newly_extracted_memories_still_reach_the_block_alongside_on_file_notes(
     table = next(b for b in blocks if b["type"] == "at_a_glance")
     # On file first, then what this turn learned.
     assert table["rows"] == [
-        ["preference", "Prefers emerald silk", ""],
-        ["event", "Has a party on 2026-12-01", ""],
+        ["Preference", "Prefers emerald silk", ""],
+        ["Event", "Has a party on 2026-12-01", ""],
     ]
 
 
@@ -543,7 +544,7 @@ def test_a_note_the_agent_inferred_is_marked_as_inferred():
     blocks = build_ava_blocks(memory)
     table = next(b for b in blocks if b["type"] == "at_a_glance")
 
-    assert table["rows"] == [["preference", "Probably prefers pastels", "Inferred"]]
+    assert table["rows"] == [["Preference", "Probably prefers pastels", "Inferred"]]
 
 
 def test_a_note_without_provenance_leaves_the_known_cell_empty():
@@ -554,4 +555,40 @@ def test_a_note_without_provenance_leaves_the_known_cell_empty():
     blocks = build_ava_blocks(memory)
     table = next(b for b in blocks if b["type"] == "at_a_glance")
 
-    assert table["rows"] == [["preference", "Prefers silk", ""]]
+    assert table["rows"] == [["Preference", "Prefers silk", ""]]
+
+
+def test_categories_are_rendered_as_reader_facing_labels():
+    """Staff read the Category column, and "event"/"preference" are the store's words, not theirs.
+
+    A category the mapping does not know is title-cased rather than hidden behind a generic word:
+    a new category showing as "Sentiment" is honest, while "Memory" for everything would erase the
+    distinction the store took the trouble to record.
+    """
+    memory = _memory_with_customer()
+    memory["extracted_memories"] = [
+        {"content": "Prefers silk", "category": "preference"},
+        {"content": "Has a wedding", "category": "event"},
+        {"content": "Delivery was late", "category": "complaint"},
+        {"content": "Loved the fitting", "category": "experience"},
+        {"content": "He prefers green tea over coffee", "category": "note"},
+        {"content": "Known for years", "category": "memory"},
+        {"content": "Seemed tired", "category": "sentiment"},
+        {"content": "Flagged by staff", "category": "staff_note"},
+        {"content": "No category at all"},
+    ]
+
+    blocks = build_ava_blocks(memory)
+    table = next(b for b in blocks if b["type"] == "at_a_glance")
+
+    assert [row[0] for row in table["rows"]] == [
+        "Preference",
+        "Event",
+        "Complaint",
+        "Experience",
+        "Note",
+        "Memory",
+        "Sentiment",
+        "Staff Note",
+        "Memory",
+    ]

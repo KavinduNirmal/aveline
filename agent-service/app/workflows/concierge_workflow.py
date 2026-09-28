@@ -295,24 +295,22 @@ async def run_supervisor(state: ConciergeState) -> dict[str, Any]:
     Runs after ``load_context`` so it can see the transcript, and before ``resolve_customer`` so it
     can decide whether resolving a customer is even relevant to the request.
 
-    Deterministic rules run first as a cheap pre-filter; the LLM supervisor is consulted only for
-    input the rules cannot classify. With no LLM configured this node is exactly the old intent
-    gate, which is what keeps the offline path deterministic.
+    Deterministic rules run first as a cheap pre-filter for genuinely unambiguous input, and the
+    supervisor is the routing authority for everything else (Decision 3). With no LLM configured
+    this node is exactly the old intent gate, which is what keeps the offline path deterministic.
 
     The plan is stored as a plain dict so the state stays JSON-serializable for checkpointing.
     """
     settings = get_settings()
-    rule_intent = classify_by_rules(state["message"])
-    # The supervisor is consulted for the intents it can actually act on: an unclassifiable
-    # message it may route, a platform question it composes an answer to from the handbook, and an
-    # account question it composes from the fetched figures (ADR-026).
-    consultable = rule_intent.intent_type in {"general_inquiry", "aveline_help", "tenant_account"}
-
+    # Whether the model is actually consulted is the gate's decision, not this node's (ADR-023,
+    # Decision 3). Deciding it here as well meant the same question was answered in two places by
+    # two copies of one set, so widening either would have left the other routing the old way.
+    # Handing over the model is unconditional; `supervise` declines it for the unambiguous fast path.
+    #
+    # Temperature 0: routing is a decision, not a composition (ADR-023).
     plan = await supervise(
         state["message"],
-        # Only hand the model a call it can act on: the rules already resolved everything else.
-        # Temperature 0: routing is a decision, not a composition (ADR-023).
-        llm=supervisor_llm_or_none(settings) if consultable else None,
+        llm=supervisor_llm_or_none(settings),
         org_context=state.get("org_context"),
         history=state.get("history"),
         thread_summary=state.get("thread_summary"),
@@ -320,6 +318,7 @@ async def run_supervisor(state: ConciergeState) -> dict[str, Any]:
         handbook_hits=state.get("handbook_hits"),
         tenant_usage=state.get("tenant_usage"),
         customer_book=state.get("customer_book"),
+        authoritative=settings.supervisor_authoritative_enabled,
     )
     logger.debug(
         "Supervisor decided %s -> agents=%s clarification=%s",

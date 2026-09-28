@@ -11,7 +11,7 @@ slice business logic.
 import json
 import logging
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -485,12 +485,70 @@ _SUPERVISOR_INSTRUCTION = (
     "the answer, and keep the detail to what they actually need. Never recite an excerpt or a "
     "table back at them, and do not list the sources in your text - they are shown beside your "
     "reply already."
+    "\n\nWhen SPEAKER says boutique staff, the newest message may be an *instruction* about a "
+    "customer rather than a question: to record something about them (\"add a note for this "
+    "customer: he prefers green tea\"), to correct a detail, or to update their name or number. "
+    "Route those to `customer_preference`: the memory agent owns what the boutique knows about a "
+    "customer and is the only lane that can write it. The same words from a customer are a "
+    "statement about themselves; from staff they are an instruction, and only the memory lane can "
+    "tell the two apart."
 )
 
-#: The intents the model is consulted for. `aveline_help` joins the list because a platform
-#: question is composed, not routed: Aveline answers it herself from the handbook. `tenant_account`
-#: joins it for the same reason, from live figures rather than from documentation.
-_CONSULTABLE_INTENTS = frozenset({"general_inquiry", "aveline_help", "tenant_account"})
+#: The intents the deterministic rules settle without consulting the model.
+#:
+#: ADR-023 Decision 3 makes the supervisor *the routing authority* and the rules "a cheap pre-filter
+#: [for] unambiguous cases"; plan wave W2.6 says the same thing as "demote rules to pre-filter +
+#: fallback", and the ADR's own note is that with this decision "the keyword table stops being the
+#: authority".
+#:
+#: This was previously an *allow*list of the three intents the model was consulted for, which
+#: inverted that: a keyword hit counted as proof of unambiguity, so the substring table decided the
+#: route for every intent it matched and the model was reached only for the bucket the table had
+#: already failed to match. Hits are exactly where a substring table goes wrong - `_RULE_KEYWORDS`
+#: matches "prefers" anywhere in the message, so a staff instruction to *record* a preference
+#: ("please add a note for this customer: he prefers green tea") was locked to
+#: `customer_preference`, the model was never consulted, and the memory agent's first-person
+#: extractor then found nothing to store. The result was a silent no-op that read as a real answer.
+#:
+#: So the fast path is now the narrow, explicitly enumerated one and everything else is the
+#: supervisor's to decide. `out_of_scope` stays: it is a domain guard whose entire purpose is a
+#: deterministic refusal. `aveline_help` and `tenant_account` remain consultable because those
+#: answers are *composed* (from the handbook, and from live figures) rather than merely routed.
+_UNAMBIGUOUS_INTENTS = frozenset({"out_of_scope"})
+
+#: The intents the model used to be consulted for, before Decision 3 was implemented as written.
+#: Kept so the rollback lever restores the previous routing *exactly* rather than approximately
+#: (ADR-023 §8), which is what makes it safe to turn off in production.
+_LEGACY_CONSULTABLE_INTENTS = frozenset({"general_inquiry", "aveline_help", "tenant_account"})
+
+
+def rules_are_authoritative(
+    rule_intent: IntentGateOutput,
+    *,
+    suggested_agents: Sequence[str] = (),
+    authoritative: bool = True,
+) -> bool:
+    """Whether a rule decision settles the turn with no model call (ADR-023, Decision 3).
+
+    Deliberately one implementation. This decision previously existed three times - as this module's
+    consultable set, as an inline set in :mod:`app.workflows.concierge_workflow` and again as the
+    condition inside :func:`supervise` - so widening any one of them would have left the other two
+    deciding the old way.
+
+    ``authoritative=False`` is the rollback lever: it reproduces the pre-Decision-3 allowlist
+    without touching anything else about how the model is used.
+    """
+    if "visual" in suggested_agents:
+        # Media presence is read from ``org_context``, which the model is not shown and therefore
+        # cannot weigh; consulting it here could only talk the run *out* of analysing a picture the
+        # caller demonstrably attached. True under the rollback too: this branch is not part of the
+        # change Decision 3 makes.
+        return True
+    if rule_intent.intent_type in _UNAMBIGUOUS_INTENTS:
+        return True
+    if not authoritative:
+        return rule_intent.intent_type not in _LEGACY_CONSULTABLE_INTENTS
+    return False
 
 #: Intents whose answer is produced in code and which route **no** specialist. An image attached to
 #: one of these does not make it a request to look at a garment - a photo of a receipt is still a
@@ -638,16 +696,21 @@ async def supervise(
     handbook_hits: list[dict[str, Any]] | None = None,
     tenant_usage: dict[str, Any] | None = None,
     customer_book: dict[str, Any] | None = None,
+    authoritative: bool = True,
 ) -> SupervisorPlan:
     """Decide how ``message`` should be handled (ADR-023, Decision 3; ADR-025; ADR-026).
 
-    Deterministic rules run first as a cheap pre-filter: they are free, they are fast, and they are
-    right for unambiguous input. The LLM supervisor is consulted when the rules land on
-    ``general_inquiry`` (the case they cannot resolve - an unrecognised vocabulary, or a reference
-    that needs the conversation), on ``aveline_help`` (a platform question, composed from
-    ``handbook_hits``) and on ``tenant_account`` (a question about this boutique's own account,
-    composed from the live ``tenant_usage`` figures or, for a question about its clients, from the
-    ``customer_book``).
+    The supervisor is the routing authority (Decision 3) and the deterministic rules are both a
+    cheap pre-filter for genuinely unambiguous input and the complete fallback when no model is
+    configured. That pre-filter is :data:`_UNAMBIGUOUS_INTENTS` plus the media lane, and it is small
+    on purpose: a keyword table that matches on substrings cannot certify that a message is
+    unambiguous, and treating a hit as such is what left a staff instruction to record a preference
+    locked to ``customer_preference`` with the model never consulted. See
+    :func:`rules_are_authoritative`.
+
+    ``aveline_help`` and ``tenant_account`` are consultable because their answers are *composed*
+    rather than routed - the former from ``handbook_hits``, the latter from the live ``tenant_usage``
+    figures or, for a question about its clients, from the ``customer_book``.
 
     With no LLM this returns the rule-based decision, which is the guarantee that CI and offline
     development stay deterministic (``app/llm/runtime.py``). A platform question degrades to the
@@ -668,15 +731,12 @@ async def supervise(
             org_context=org_context,
         )
 
-    if rule_intent.intent_type not in _CONSULTABLE_INTENTS or "visual" in rule_plan.suggested_agents:
+    if rules_are_authoritative(
+        rule_intent, suggested_agents=rule_plan.suggested_agents, authoritative=authoritative
+    ):
         # Bounded even though no model is involved: the rules resolve *routing*, not the reply, and
         # a rule-decided plan that routes no content specialist would otherwise leave the turn with
         # nobody to answer it (see `_fallback_reply`).
-        #
-        # A plan already carrying the visual lane is settled for the same reason, in the opposite
-        # direction: media presence is read from ``org_context``, which the model is not shown and
-        # therefore cannot weigh, so consulting it could only talk the run *out* of analysing a
-        # picture the caller demonstrably attached.
         return _with_a_bounded_reply(
             rule_plan,
             tenant_usage=tenant_usage,
@@ -966,6 +1026,17 @@ def _build_supervisor_messages(
     for block in (render_tenant_block(tenant_usage), render_customer_block(customer_book)):
         if block:
             lines.append(block)
+
+    # Who is speaking changes what the newest message *is*, and the keyword table cannot see it.
+    # The API declares the sender explicitly (`staff_query`), and an absent flag is read as the
+    # inbound customer direction - the same fail-closed reading `may_read_tenant_account` uses, so a
+    # new channel that forgets to declare itself cannot have its text treated as staff instruction.
+    speaker = (
+        "boutique staff, using the Salon console"
+        if may_read_tenant_account(org_context)
+        else "a customer, messaging the boutique"
+    )
+    lines.append(f"SPEAKER: {speaker}")
 
     lines.append(f"NEWEST MESSAGE:\n{message}")
     lines.append(_SUPERVISOR_INSTRUCTION)

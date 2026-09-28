@@ -107,7 +107,25 @@ async def test_registry_get_customer_memories(client):
     assert route.called
     body = route.calls.last.request.content
     assert b"cust-1" in body
+    # The fused mode is the agent's default read, and it is stated in the payload rather than left
+    # to the backend's own default: the two agreeing by accident would hide a drift.
+    assert b'"mode":"hybrid"' in body.replace(b" ", b"")
     assert result == {"results": [{"content": "likes silk"}]}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_registry_get_customer_memories_can_request_a_single_leg(client):
+    """The single-leg modes exist for the retrieval evaluation, which must be able to ask for one."""
+    route = respx.post(f"{BASE_URL}/internal/customers/memories/search").respond(
+        status_code=200, json={"results": []}
+    )
+    registry = ToolRegistry(client)
+
+    await registry.get_customer_memories("org-1", "cust-1", "emerald", mode="lexical")
+
+    body = route.calls.last.request.content
+    assert b'"mode":"lexical"' in body.replace(b" ", b"")
 
 
 @pytest.mark.asyncio

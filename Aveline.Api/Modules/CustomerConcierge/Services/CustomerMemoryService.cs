@@ -1,8 +1,10 @@
 using Aveline.Api.Infrastructure.Data;
+using Aveline.Api.Modules.CustomerConcierge.Common;
 using Aveline.Api.Modules.CustomerConcierge.DTOs;
 using Aveline.Api.Modules.CustomerConcierge.Models;
 using Aveline.Api.Modules.CustomerConcierge.Repositories;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Aveline.Api.Modules.CustomerConcierge.Services;
 
@@ -15,6 +17,7 @@ public class CustomerMemoryService : ICustomerMemoryService
     private readonly IConsentGateService _consentGate;
     private readonly ICustomerTagRepository _tags;
     private readonly IEmbeddingService _embedding;
+    private readonly ILogger<CustomerMemoryService> _logger;
 
     public CustomerMemoryService(
         AppDbContext context,
@@ -23,7 +26,8 @@ public class CustomerMemoryService : ICustomerMemoryService
         ICustomerEventRepository events,
         IConsentGateService consentGate,
         ICustomerTagRepository tags,
-        IEmbeddingService embedding)
+        IEmbeddingService embedding,
+        ILogger<CustomerMemoryService> logger)
     {
         _context = context;
         _memories = memories;
@@ -32,6 +36,7 @@ public class CustomerMemoryService : ICustomerMemoryService
         _consentGate = consentGate;
         _tags = tags;
         _embedding = embedding;
+        _logger = logger;
     }
 
     public async Task<CustomerMemoryDto?> SaveMemoryAsync(
@@ -220,6 +225,11 @@ public class CustomerMemoryService : ICustomerMemoryService
         MemorySearchRequest request,
         CancellationToken cancellationToken = default)
     {
+        // Reject an unknown mode before it can be mistaken for hybrid: the single-leg modes exist
+        // so a retrieval eval can report per-leg recall, and a misspelled mode silently fused would
+        // be read as a single-leg measurement.
+        var mode = MemorySearchModes.Normalise(request.Mode);
+
         // §5.5: a revoked customer's memories must not be read back, whichever agent asks. The
         // gate is checked before the embedding call so a blocked read costs nothing and never
         // reaches the store.
@@ -230,15 +240,48 @@ public class CustomerMemoryService : ICustomerMemoryService
             return [];
         }
 
-        var queryEmbedding = await _embedding.GenerateAsync(request.Query, cancellationToken);
-        var results = await _memories.SearchSemanticAsync(
-            request.OrganizationId,
-            request.CustomerId,
-            queryEmbedding,
-            request.TopK,
-            request.MinSimilarity,
-            cancellationToken);
+        // `lexical` is the one mode that must not pay for an embedding call at all.
+        float[]? queryEmbedding = null;
+        if (!string.Equals(mode, MemorySearchModes.Lexical, StringComparison.Ordinal))
+        {
+            queryEmbedding = await TryEmbedQueryAsync(request.Query, cancellationToken);
+            if (queryEmbedding is null)
+            {
+                _logger.LogWarning(
+                    "Memory query embedding unavailable; the {Mode} search degrades to the lexical leg.",
+                    mode);
+            }
+        }
+
+        var query = new CustomerMemorySearchQuery(
+            Query: request.Query,
+            QueryEmbedding: queryEmbedding,
+            Mode: mode,
+            OrganizationId: request.OrganizationId,
+            CustomerId: request.CustomerId,
+            TopK: request.TopK > 0 ? request.TopK : 5,
+            MinSimilarity: request.MinSimilarity);
+
+        var results = await _memories.SearchAsync(query, cancellationToken);
         return results.Select(MemorySearchResultDto.From).ToList();
+    }
+
+    /// <summary>
+    /// Embeds a query, tolerating a provider failure. A failed query embedding degrades the search
+    /// to the lexical leg rather than failing the request: partial results beat an error page, and
+    /// the caller can see the degradation in the NULL vector ranks.
+    /// </summary>
+    private async Task<float[]?> TryEmbedQueryAsync(string query, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _embedding.GenerateAsync(query, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Memory query embedding failed.");
+            return null;
+        }
     }
 
     public async Task<InteractionBriefDto?> GenerateBriefAsync(

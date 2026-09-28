@@ -30,10 +30,11 @@ public class CustomerMemoryConfiguration : IEntityTypeConfiguration<CustomerMemo
             .IsRequired()
             .HasMaxLength(2000);
 
-        // NOTE: the pgvector `embedding vector(1536)` column and its HNSW cosine index are
-        // intentionally NOT part of the EF model (the in-memory test provider cannot map the
-        // pgvector type). They are created by the migration via raw SQL and accessed by
-        // CustomerMemoryRepository through raw SQL. See ADR-017.
+        // NOTE: the two search columns - the pgvector `embedding vector(1536)` column with its HNSW
+        // cosine index (dense leg) and the generated `SearchVector tsvector` with its partial GIN
+        // index (lexical leg) - are intentionally NOT part of the EF model (the in-memory test
+        // provider cannot map the pgvector or tsvector types). They are created by the migrations
+        // via raw SQL and accessed by CustomerMemoryRepository through raw SQL. See ADR-017, ADR-025.
 
         builder.Property(m => m.Category)
             .IsRequired()

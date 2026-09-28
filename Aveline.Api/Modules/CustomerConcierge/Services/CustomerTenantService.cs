@@ -128,8 +128,6 @@ public sealed class CustomerHasOpenOrdersException(int openOrders)
 
 public sealed class CustomerTenantService : ICustomerTenantService
 {
-    private const string NicknameKey = "nickname";
-
     /// <summary>
     /// How far back a client must have acted to appear as a highlight. One definition, because
     /// Home's client row and the agent's book summary both order by it.
@@ -373,7 +371,7 @@ public sealed class CustomerTenantService : ICustomerTenantService
             {
                 OrganizationId = organizationId,
                 CustomerId = customer.Id,
-                PreferenceKey = NicknameKey,
+                PreferenceKey = CustomerPreferenceKeys.Nickname,
                 PreferenceValue = request.Nickname!.Trim(),
             });
         }
@@ -483,8 +481,13 @@ public sealed class CustomerTenantService : ICustomerTenantService
                 customerEvent.Description))
             .ToList();
 
+        // The nickname is an internal key mirrored from `Customer.Nickname` rather than a stated
+        // preference, and a blank value is an absence rather than a fact. `InteractionBriefDto`
+        // applies the same two rules, so the internal brief the agent reads and this one cannot
+        // disagree about what a customer prefers (a row rendered as `nickname:` or `key:`).
         var preferences = customer.Preferences
-            .Where(preference => preference.PreferenceKey != NicknameKey)
+            .Where(preference => preference.PreferenceKey != CustomerPreferenceKeys.Nickname)
+            .Where(preference => !string.IsNullOrWhiteSpace(preference.PreferenceValue))
             .ToList();
 
         return new TenantCustomerBriefDto(
@@ -609,14 +612,27 @@ public sealed class CustomerTenantService : ICustomerTenantService
             var nickname = request.Nickname.Trim();
             customer.Nickname = nickname.Length == 0 ? null : nickname;
             var preference = customer.Preferences
-                .FirstOrDefault(candidate => candidate.PreferenceKey == NicknameKey);
-            if (preference is null)
+                .FirstOrDefault(candidate => candidate.PreferenceKey == CustomerPreferenceKeys.Nickname);
+
+            if (nickname.Length == 0)
+            {
+                // A blank nickname means "no nickname", so the derived row goes rather than being
+                // blanked. `PreferenceValue` is required and non-nullable, and an empty value is not
+                // an absence: the brief rendered the leftover row as `nickname:`. Removing it keeps
+                // this path consistent with create, which never writes a row for a blank nickname.
+                if (preference is not null)
+                {
+                    customer.Preferences.Remove(preference);
+                    _context.CustomerPreferences.Remove(preference);
+                }
+            }
+            else if (preference is null)
             {
                 _context.CustomerPreferences.Add(new CustomerPreference
                 {
                     OrganizationId = organizationId,
                     CustomerId = customerId,
-                    PreferenceKey = NicknameKey,
+                    PreferenceKey = CustomerPreferenceKeys.Nickname,
                     PreferenceValue = nickname,
                 });
             }
@@ -748,7 +764,7 @@ public sealed class CustomerTenantService : ICustomerTenantService
     private static TenantCustomerDetailDto ToDetail(Customer customer, int interactionCount) => new(
         customer.Id,
         customer.FullName,
-        customer.Nickname ?? customer.Preferences.FirstOrDefault(preference => preference.PreferenceKey == NicknameKey)?.PreferenceValue,
+        customer.Nickname ?? customer.Preferences.FirstOrDefault(preference => preference.PreferenceKey == CustomerPreferenceKeys.Nickname)?.PreferenceValue,
         customer.PhoneNumber,
         customer.Email,
         customer.Level,
@@ -763,13 +779,13 @@ public sealed class CustomerTenantService : ICustomerTenantService
         customer.UpdatedAt,
         interactionCount,
         customer.Tags.Select(tag => tag.Tag).OrderBy(tag => tag).ToList(),
-        customer.Preferences.Where(p => p.PreferenceKey != NicknameKey).Select(CustomerPreferenceDto.From).ToList(),
+        customer.Preferences.Where(p => p.PreferenceKey != CustomerPreferenceKeys.Nickname).Select(CustomerPreferenceDto.From).ToList(),
         customer.Description);
 
     private static CustomerBookItemDto ToBookItem(Customer customer) => new(
         customer.Id,
         customer.FullName,
-        customer.Nickname ?? customer.Preferences.FirstOrDefault(preference => preference.PreferenceKey == NicknameKey)?.PreferenceValue,
+        customer.Nickname ?? customer.Preferences.FirstOrDefault(preference => preference.PreferenceKey == CustomerPreferenceKeys.Nickname)?.PreferenceValue,
         customer.Level,
         customer.Status,
         customer.PhoneNumber,
@@ -780,7 +796,7 @@ public sealed class CustomerTenantService : ICustomerTenantService
     private static string DisplayName(Customer customer) =>
         FirstPresent(customer.FullName)
         ?? FirstPresent(customer.Nickname)
-        ?? FirstPresent(customer.Preferences.FirstOrDefault(p => p.PreferenceKey == NicknameKey)?.PreferenceValue)
+        ?? FirstPresent(customer.Preferences.FirstOrDefault(p => p.PreferenceKey == CustomerPreferenceKeys.Nickname)?.PreferenceValue)
         ?? FirstPresent(customer.PhoneNumber)
         ?? "A client";
 

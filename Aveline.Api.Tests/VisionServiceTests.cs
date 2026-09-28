@@ -720,6 +720,182 @@ public class VisionServiceTests
         result.Fabric.Should().Be("Wool / Cashmere Blend");
     }
 
+    [Fact]
+    public async Task AnalyzeAsync_WhenBodyIsTruncatedButCarriesUsage_RecordsTheBilledTokens()
+    {
+        var orgId = Guid.NewGuid();
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                { "Vision:ApiKey", "test-vision-key" },
+                { "Vision:Model", "deepseek-chat" }
+            })
+            .Build();
+
+        // The outer document never closes: this is the shape the class documents the provider
+        // returning when it hits the output ceiling (`finish_reason=length`). `JsonDocument.Parse`
+        // throws on it, so usage recorded after the parse was lost even though the call was billed.
+        // The usage block itself is intact and comes before the cut.
+        var truncatedBody = """
+        {
+            "usage": { "prompt_tokens": 1543, "completion_tokens": 0 },
+            "choices": [
+                {
+                    "finish_reason": "length",
+                    "message": {
+                        "content": "{\"success\":true,\"items\":[{\"clothing_type\":\"Kanjeevaram Silk Saree\",\"category\":\"ethnic_couture\",\"primary_color\":\"Crimson Red\",\"styling_notes\":\"Pair with heirloom gold zari
+        """;
+
+        var fakeHandler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(truncatedBody, Encoding.UTF8, "application/json")
+        });
+        var httpClient = new HttpClient(fakeHandler) { BaseAddress = new Uri("https://api.deepseek.com") };
+
+        var mockUsageTracker = new Mock<IUsageTrackerService>();
+        RecordUsageRequest? capturedRequest = null;
+        mockUsageTracker
+            .Setup(u => u.RecordWorkflowUsageAsync(It.IsAny<RecordUsageRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<RecordUsageRequest, CancellationToken>((req, _) => capturedRequest = req)
+            .ReturnsAsync(new AiUsageRecord());
+
+        var service = new VisionService(httpClient, config, NullLogger<VisionService>.Instance, mockUsageTracker.Object);
+        var result = await service.AnalyzeAsync("https://example.com/truncated-saree.jpg", orgId);
+
+        // The body could not be parsed, so the analysis degrades to the deterministic fallback - but
+        // the provider spent the tokens regardless, and the charge must be recorded.
+        result.IsFallback.Should().BeTrue("the provider body could not be parsed");
+
+        mockUsageTracker.Verify(
+            u => u.RecordWorkflowUsageAsync(It.IsAny<RecordUsageRequest>(), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "a billed call whose JSON is truncated must still be recorded");
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.InputTokens.Should().Be(1543);
+        capturedRequest.OutputTokens.Should().Be(0);
+        capturedRequest.WorkflowId.Should().Be("visual-image-analysis");
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_WhenProviderReturnsNonSuccessWithUsage_RecordsTheBilledTokens()
+    {
+        var orgId = Guid.NewGuid();
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                { "Vision:ApiKey", "test-vision-key" }
+            })
+            .Build();
+
+        // A 400 is still a completed round trip, and some providers report usage on the error body.
+        var errorBody = """
+        {
+            "error": { "message": "max_tokens too large" },
+            "usage": { "prompt_tokens": 33, "completion_tokens": 7 }
+        }
+        """;
+
+        var fakeHandler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent(errorBody, Encoding.UTF8, "application/json")
+        });
+        var httpClient = new HttpClient(fakeHandler) { BaseAddress = new Uri("https://api.openai.com") };
+
+        var mockUsageTracker = new Mock<IUsageTrackerService>();
+        RecordUsageRequest? capturedRequest = null;
+        mockUsageTracker
+            .Setup(u => u.RecordWorkflowUsageAsync(It.IsAny<RecordUsageRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<RecordUsageRequest, CancellationToken>((req, _) => capturedRequest = req)
+            .ReturnsAsync(new AiUsageRecord());
+
+        var service = new VisionService(httpClient, config, NullLogger<VisionService>.Instance, mockUsageTracker.Object);
+        var result = await service.AnalyzeAsync("https://example.com/saree.jpg", orgId);
+
+        result.IsFallback.Should().BeTrue("a non-success status degrades to the deterministic fallback");
+
+        mockUsageTracker.Verify(
+            u => u.RecordWorkflowUsageAsync(It.IsAny<RecordUsageRequest>(), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "usage on an error body must be recorded, not discarded");
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.OrganizationId.Should().Be(orgId);
+        capturedRequest.InputTokens.Should().Be(33);
+        capturedRequest.OutputTokens.Should().Be(7);
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_WhenProviderReturnsNonSuccessWithoutUsage_RecordsNothing()
+    {
+        var orgId = Guid.NewGuid();
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                { "Vision:ApiKey", "test-vision-key" }
+            })
+            .Build();
+
+        var fakeHandler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent("""{"error":{"message":"bad key"}}""", Encoding.UTF8, "application/json")
+        });
+        var httpClient = new HttpClient(fakeHandler) { BaseAddress = new Uri("https://api.openai.com") };
+
+        var mockUsageTracker = new Mock<IUsageTrackerService>();
+        var service = new VisionService(httpClient, config, NullLogger<VisionService>.Instance, mockUsageTracker.Object);
+
+        await service.AnalyzeAsync("https://example.com/saree.jpg", orgId);
+
+        mockUsageTracker.Verify(
+            u => u.RecordWorkflowUsageAsync(It.IsAny<RecordUsageRequest>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "an error body with no usage reports no spend; a zero-token row would be invented");
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_WithoutApiKey_FlagsTheDeterministicFallbackAsFallback()
+    {
+        var config = new ConfigurationBuilder().Build();
+        var service = new VisionService(new HttpClient(), config, NullLogger<VisionService>.Instance);
+
+        var result = await service.AnalyzeAsync("https://example.com/lavender-silk-lehenga.jpg", Guid.NewGuid());
+
+        result.IsFallback.Should().BeTrue(
+            "the deterministic analysis derives attributes from the file name and never reads the image");
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_WithAProviderAnswer_DoesNotFlagTheAnalysisAsFallback()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { { "Vision:ApiKey", "test-vision-key" } })
+            .Build();
+
+        var jsonResponse = """
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "{\"category\":\"saree\",\"primary_color\":\"gold\",\"confidence_score\":0.9}"
+                    }
+                }
+            ],
+            "usage": { "prompt_tokens": 50, "completion_tokens": 10 }
+        }
+        """;
+
+        var fakeHandler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(jsonResponse, Encoding.UTF8, "application/json")
+        });
+        var httpClient = new HttpClient(fakeHandler) { BaseAddress = new Uri("https://api.openai.com") };
+
+        var service = new VisionService(httpClient, config, NullLogger<VisionService>.Instance);
+        var result = await service.AnalyzeAsync("https://example.com/saree.jpg", Guid.NewGuid());
+
+        result.Success.Should().BeTrue();
+        result.IsFallback.Should().BeFalse("a provider answer was parsed, so this is not the deterministic fallback");
+    }
+
     private sealed class FakeHttpMessageHandler(HttpResponseMessage response) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)

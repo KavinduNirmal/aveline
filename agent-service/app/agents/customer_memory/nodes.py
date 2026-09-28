@@ -910,23 +910,49 @@ class CustomerMemoryAgent:
 
         context_lines = [f"Staff question: {state.get('message', '')}"]
 
+        # The record is fenced off and every part of it is named. A single unlabelled "Facts on
+        # file" blob let the model reclassify a row on the way out - an upcoming event came back as
+        # "the only preference we hold is a wedding" - because nothing in the prompt said which
+        # source a line came from.
+        record: list[str] = []
         description = backend.get("description")
         if isinstance(description, str) and description.strip():
-            context_lines.append(f"Customer description: {description.strip()}")
+            record.append(f"- Customer description: {description.strip()}")
 
-        facts = self._grounded_facts(backend)
-        if facts:
-            context_lines.append("Facts on file:\n" + "\n".join(f"- {fact}" for fact in facts))
+        prefs = backend.get("preferenceSummary")
+        if prefs:
+            record.append(f"- Preferences: {prefs}")
+
+        events = backend.get("upcomingEvents")
+        if events:
+            record.append(f"- Upcoming events: {events}")
+
+        tags = backend.get("tags") if isinstance(backend.get("tags"), list) else []
+        if tags:
+            record.append(f"- Tags: {', '.join(tags)}")
 
         remembered = [note["content"] for note in _unique_notes(state.get("semantic_context"))]
         if remembered:
-            context_lines.append("Memories on file:\n" + "\n".join(f"- {note}" for note in remembered))
+            record.append("- Recorded notes:")
+            record.extend(f"  - {note}" for note in remembered)
+
+        if record:
+            context_lines.append(
+                "ON FILE - the customer record, and the only thing that may be described as on "
+                "file:\n" + "\n".join(record)
+            )
 
         context_lines.append(
-            "Answer the staff member's question directly, in 1-3 sentences. Use ONLY the facts and "
-            "memories above; if they do not contain the answer, say what is not on file. Never "
-            "invent or guess a fact about the customer. Reply with ONLY the plain text of the "
-            "answer - no JSON, no code fences, no labels. Do not write a message to the customer."
+            "Answer the staff member's question directly, in 1-3 sentences. Answer from the ON "
+            "FILE section only. The conversation excerpt in the system prompt tells you what is "
+            "being discussed; it is NOT the record, so never present something merely said in the "
+            "conversation as though it were on file - if that is the situation, say it came up in "
+            "the conversation but is not recorded. Keep every fact in the category it is listed "
+            "under: an upcoming event is not a preference, and a preference is not a purchase. "
+            "Never invent or guess a fact about the customer, and never state what is on file when "
+            "the section is absent or empty - say nothing is on file instead. Reply with ONLY the "
+            "plain text of the answer - no JSON, no code fences, no labels. Do not write a message "
+            "to the customer."
         )
 
         # The bounded conversation window (ADR-023), rendered here rather than added to

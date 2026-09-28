@@ -273,8 +273,11 @@ class FakeChatModel:
         self.draft = draft
         self.fail = fail
         self.cached_tokens = cached_tokens
+        #: Everything the agent sent, so a test can assert what the prompt promised.
+        self.messages: list = []
 
     async def ainvoke(self, messages):
+        self.messages.append(messages)
         if self.fail:
             raise RuntimeError("provider unavailable")
         return _Msg(self.draft, cached_tokens=self.cached_tokens)
@@ -1412,6 +1415,64 @@ async def test_a_staff_query_is_answered_by_the_model_when_one_is_configured():
     # Still NO customer-facing draft / Suggestion: the staff/customer separation is deliberate.
     assert out["draft_response"] is None
     assert out["action_required"] is None
+
+
+async def test_the_staff_answer_prompt_fences_the_record_from_the_conversation():
+    """A recorded fact must not be confused with something merely said in the thread.
+
+    Observed live: a staff question in a customer thread answered with the customer's own words
+    ("prefers cotton, avoiding nylon and spandex") as though they were on file, while the record
+    block beside it held only an event. A second thread called that event "the only preference we
+    hold". The prompt must therefore name every record source, fence it, and say plainly that the
+    conversation excerpt is not the record.
+    """
+    registry = FakeRegistry()
+    llm = FakeChatModel(draft="Sarah prefers emerald silk.")
+    graph = build_memory_graph(registry, llm=llm)
+
+    await graph.ainvoke(dict(STAFF_STATE))
+
+    prompt = "\n".join(str(message.content) for message in llm.messages[0])
+
+    assert "ON FILE" in prompt
+    # Each source is named, so a row cannot be silently reclassified on the way out.
+    assert "- Upcoming events:" in prompt
+    assert "- Tags:" in prompt
+    assert "- Recorded notes:" in prompt
+    # And the transcript is explicitly not the record.
+    assert "it is NOT the record" in prompt
+    assert "an upcoming event is not a preference" in prompt
+
+
+async def test_a_preference_and_an_event_are_labelled_apart_in_the_staff_prompt():
+    """The exact conflation observed live: an event reported back as a preference.
+
+    The thread held one upcoming event and no preferences, and the answer said "the only preference
+    we hold is a wedding". With a preference summary present as well, the two must arrive as
+    separate labelled lines rather than one unlabelled facts blob.
+    """
+    registry = FakeRegistry()
+
+    async def brief(org_id, customer_id):
+        return {
+            "customerId": customer_id,
+            "customerName": "Sarah Perera",
+            "status": "vip",
+            "preferenceSummary": "colour: emerald",
+            "upcomingEvents": "wedding on 2026-12-01",
+            "tags": [],
+        }
+
+    registry.generate_interaction_brief = brief
+    llm = FakeChatModel(draft="She prefers emerald and has a wedding on 2026-12-01.")
+    graph = build_memory_graph(registry, llm=llm)
+
+    await graph.ainvoke(dict(STAFF_STATE))
+
+    prompt = "\n".join(str(message.content) for message in llm.messages[0])
+
+    assert "- Preferences: colour: emerald" in prompt
+    assert "- Upcoming events: wedding on 2026-12-01" in prompt
 
 
 async def test_a_staff_query_keeps_the_grounded_template_without_an_llm():

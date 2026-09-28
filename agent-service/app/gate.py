@@ -231,6 +231,28 @@ def is_customer_book_question(message: str) -> bool:
     return any(pattern.search(message) for pattern in _CUSTOMER_BOOK_PATTERNS)
 
 
+#: High-precision shapes for questions about a customer's past purchases, order history, or client profile.
+#: Checked before the order placement vocabulary so queries like "any recent purchases for Kavindu?"
+#: or "purchase history of Nadia" route to Ava (customer_preference / memory) rather than dispatching
+#: Elle (visual) and Lina (commerce) for an order placement action.
+_CUSTOMER_HISTORY_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\b(?:recent|past|previous|prior|last|all)\s+(?:purchases?|orders?|history|transactions?|items?)\b",
+        r"\b(?:purchase|order|transaction)\s+history\b",
+        r"\b(?:purchases?|orders?|bought|purchased|ordered)\s+(?:for|by|of|from)\b",
+        r"\b(?:any|check|show|list|tell|what)\b[^.?!]{0,30}\b(?:recent\s+)?(?:purchases?|orders?)\b",
+        r"\b(?:what|which|anything)\b[^.?!]{0,30}\b(?:did|has|have)\b[^.?!]{0,30}\b(?:buy|bought|purchase|purchased|order|ordered)\b",
+        r"\b(?:did|has|have)\b[^.?!]{0,30}\b(?:buy|bought|purchase|purchased|order|ordered)\s+(?:anything|something|before|recently)\b",
+    )
+)
+
+
+def is_customer_history_query(message: str) -> bool:
+    """Whether ``message`` asks about a customer's past purchases, orders, or history."""
+    return any(pattern.search(message) for pattern in _CUSTOMER_HISTORY_PATTERNS)
+
+
 #: Shapes that point at the *interface* rather than asking for a value. "Where can I see my Blossom
 #: balance?" is documentation - the handbook says which screen - while "what is my Blossom balance?"
 #: is a question about the account. Both carry the same possessive phrase, so the tense of the verb
@@ -354,6 +376,16 @@ def classify_by_rules(message: str) -> IntentGateOutput:
         return IntentGateOutput(
             intent_type="aveline_help",
             suggested_agents=_AGENT_ROUTING["aveline_help"],
+        )
+
+    # A question about customer purchase history, past orders, or client profile outranks the order
+    # placement vocabulary below so queries like "any recent purchases for Kavindu?" or "purchase
+    # history of Nadia" route to Ava (customer_preference / memory) rather than dispatching Elle
+    # (visual) and Lina (commerce) for an order placement action.
+    if is_customer_history_query(lowered):
+        return IntentGateOutput(
+            intent_type="customer_preference",
+            suggested_agents=_AGENT_ROUTING["customer_preference"],
         )
 
     for intent_type, keywords in _RULE_KEYWORDS:

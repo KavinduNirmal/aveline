@@ -57,18 +57,109 @@ async def test_returns_the_rule_plan_when_no_llm_is_configured():
 
 
 @pytest.mark.asyncio
-async def test_does_not_consult_the_model_when_the_rules_are_confident():
-    # A confident rule match is free and correct; paying for a model call there would be waste.
-    llm = _StubLlm(_plan())
+async def test_does_not_consult_the_model_for_the_deterministic_guard():
+    # The fast path is deliberately tiny: `out_of_scope` is a domain guard whose entire purpose is
+    # a deterministic refusal, so it never pays for a model call.
+    llm = _StubLlm(_plan(intent_type="item_search", agents=["visual"]))
 
-    plan = await supervise("How much is this dress?", llm=llm)
+    plan = await supervise("Tell me a joke about python scripts", llm=llm)
 
     assert llm.prompts == []
-    assert plan.intent_type == "pricing_query"
+    assert plan.intent_type == "out_of_scope"
 
 
 @pytest.mark.asyncio
-async def test_consults_the_model_only_for_general_inquiry():
+async def test_consults_the_model_even_when_a_keyword_matched():
+    """Decision 3: a keyword *hit* is not proof of unambiguity.
+
+    The substring table used to decide the route for every intent it matched, so the model was
+    reached only for the bucket the table had already failed. That inverted "rules are a pre-filter
+    for unambiguous cases": the false-positive hits - the ones that need the model most - were
+    exactly the ones locked out.
+    """
+    llm = _StubLlm(_plan(intent_type="customer_preference", agents=["memory"]))
+
+    # "prefers" is in the rule table, so the old gate returned this without ever calling the model.
+    plan = await supervise("please add a note for this customer: he prefers green tea", llm=llm)
+
+    assert len(llm.prompts) == 1
+    assert plan.intent_type == "customer_preference"
+    assert plan.suggested_agents == ["memory"]
+
+
+@pytest.mark.asyncio
+async def test_the_media_lane_skips_the_model():
+    """An attached image settles the route in code, media being invisible to the model.
+
+    ``has_inbound_media`` reads ``org_context``, which the supervisor is not shown, so consulting
+    it here could only talk the run *out* of analysing a picture the caller demonstrably attached.
+    """
+    llm = _StubLlm(_plan(intent_type="general_inquiry", agents=[]))
+    org_context = {
+        "attachments": [
+            {
+                "attachmentId": "11111111-1111-1111-1111-111111111111",
+                "contentType": "image/jpeg",
+                "reference": {
+                    "kind": "attachment",
+                    "id": "11111111-1111-1111-1111-111111111111",
+                },
+            }
+        ]
+    }
+
+    plan = await supervise("what do you think of this?", llm=llm, org_context=org_context)
+
+    assert llm.prompts == []
+    assert "visual" in plan.suggested_agents
+
+
+@pytest.mark.asyncio
+async def test_the_prompt_declares_who_is_speaking():
+    """The keyword table cannot see the speaker, so the model is told explicitly.
+
+    A staff instruction to *record* something and a customer *stating* the same words are one
+    string to a substring scan; the API declares which it is, and an absent flag reads as the
+    inbound customer direction so a channel that forgets to declare itself cannot have its text
+    treated as staff instruction.
+    """
+    staff = _StubLlm(_plan(intent_type="customer_preference", agents=["memory"]))
+    customer = _StubLlm(_plan(intent_type="customer_preference", agents=["memory"]))
+
+    await supervise("he prefers green tea", llm=staff, org_context={"staff_query": True})
+    await supervise("I prefer green tea", llm=customer, org_context={"staff_query": False})
+
+    def human(prompts) -> str:
+        # The last message carries the assembled block: context, then SPEAKER, then the message.
+        return str(prompts[0][-1].content)
+
+    assert "SPEAKER: boutique staff" in human(staff.prompts)
+    assert "SPEAKER: a customer" in human(customer.prompts)
+
+
+@pytest.mark.asyncio
+async def test_the_rollback_lever_restores_the_pre_decision_3_routing():
+    """ADR-023 §8 makes this the primary rollback, so it must be exact, not approximate.
+
+    With `supervisor_authoritative_enabled=False` a keyword hit settles the turn again, while
+    `general_inquiry` still reaches the model - that is precisely the old allowlist.
+    """
+    keyword = _StubLlm(_plan(intent_type="item_search", agents=["visual"]))
+    unrecognised = _StubLlm(_plan(intent_type="item_search", agents=["visual"]))
+
+    locked = await supervise("How much is this dress?", llm=keyword, authoritative=False)
+    reached = await supervise(
+        "Are there any pinkish gowns in your collection?", llm=unrecognised, authoritative=False
+    )
+
+    assert keyword.prompts == []
+    assert locked.intent_type == "pricing_query"
+    assert len(unrecognised.prompts) == 1
+    assert reached.intent_type == "item_search"
+
+
+@pytest.mark.asyncio
+async def test_consults_the_model_for_an_unrecognised_pickup():
     llm = _StubLlm(_plan(intent_type="item_search", agents=["memory", "visual"]))
 
     plan = await supervise("Are there any pinkish gowns in your collection?", llm=llm)

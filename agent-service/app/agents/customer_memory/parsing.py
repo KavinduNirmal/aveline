@@ -23,6 +23,59 @@ _ITEM_NOUNS = (
     "outfit", "dupatta", "shawl", "fabric",
 )
 
+#: The clause that names a preference, taken from "I (don't) <verb> <tail>". The negation and the
+#: verb are *captured* rather than re-scanned afterwards: the regex already accepts the
+#: apostrophe-less "dont", and matching the statement text against the literal "don't" afterwards
+#: silently reported a dislike as a preference for every customer who types without an apostrophe
+#: ("I dont like them" -> "The customer prefers them").
+_PREFERENCE_RE = re.compile(
+    r"\bi (?:really |truly |just |quite |so |absolutely )?"
+    r"(?P<negation>don'?t |do not |never )?"
+    r"(?P<verb>like|prefer|love|hate|dislike)\b"
+    r"(?P<tail>[^.!?;]*)",
+    re.IGNORECASE,
+)
+
+#: Verbs that are negative on their own, with no negation word in front of them.
+_NEGATIVE_VERBS = frozenset({"hate", "dislike"})
+
+#: Leading articles and possessives that are never part of the preference itself.
+_PREFERENCE_LEAD_NOISE = ("the ", "a ", "an ", "any ", "some ", "my ", "our ", "your ")
+
+#: A preference clause ends where the *reason* or *occasion* starts: "cotton for a beach wedding"
+#: states a preference for cotton. Cutting here is what keeps the value a thing rather than a
+#: sentence.
+_PREFERENCE_TRAILING_CLAUSE = re.compile(
+    r"\b(?:for|in|at|on|with|when|because|since|while|that|which|but)\b",
+    re.IGNORECASE,
+)
+
+#: Words that name no preference at all. "I don't like them" refers to a noun phrase in an earlier
+#: clause; storing "dislikes them" records nothing a reader can act on, and resolving the
+#: antecedent is beyond a regex. The signal is dropped instead of persisted as nonsense.
+_PREFERENCE_VALUE_STOPWORDS = frozenset({
+    "them", "they", "it", "that", "this", "these", "those", "him", "her", "hers", "one", "ones",
+    "thing", "things", "stuff", "everything", "anything", "something", "nothing", "me", "us",
+    "you", "please", "too", "also", "either", "much", "very", "all", "been", "just", "only",
+})
+
+#: A trailing generic noun adds nothing once the material is named: "cotton pieces" -> "cotton".
+_PREFERENCE_TRAILING_NOISE = frozenset({
+    "pieces", "piece", "ones", "items", "item", "things", "thing", "stuff", "fabrics", "fabric",
+    "clothes", "clothing", "garments", "garment", "material", "materials",
+})
+
+#: A comma-separated segment is only another item in the list if it opens like one. "silk, linen
+#: and wool" continues the list; "them, they make my skin itchy" starts a new clause, and taking it
+#: would invent a preference.
+_PREFERENCE_CLAUSE_STARTERS = frozenset({
+    "they", "it", "he", "she", "we", "you", "i", "but", "however", "although", "because", "since",
+    "so", "then", "and", "or", "please", "as", "if", "when",
+})
+
+#: A preference is a short noun phrase, not a sentence.
+_PREFERENCE_VALUE_MAX_WORDS = 4
+
 # event type -> keyword mapping
 _EVENT_TYPE_KEYWORDS = {
     "wedding": ("wedding", "bride", "groom"),
@@ -105,6 +158,83 @@ def _has_size(message: str) -> str | None:
     return None
 
 
+def _looks_like_a_list_item(segment: str) -> bool:
+    """Whether a comma-separated ``segment`` continues the list rather than starting a clause."""
+    words = [w for w in re.split(r"\s+", segment.strip()) if w]
+    if not words or not all(re.fullmatch(r"[A-Za-z][A-Za-z'-]*", w) for w in words):
+        return False
+    return words[0].lower() not in _PREFERENCE_CLAUSE_STARTERS
+
+
+def _clean_preference_value(raw: str) -> str | None:
+    """Reduce a raw clause to the thing preferred, or ``None`` when it names nothing.
+
+    ``None`` is the honest answer for a bare pronoun or a clause that opens a new sentence: the
+    alternative is a stored "prefers them", which reads as a fact and is not one.
+    """
+    value = raw.strip().strip(",;:").strip()
+    if not value:
+        return None
+
+    lowered = value.lower()
+    for noise in _PREFERENCE_LEAD_NOISE:
+        if lowered.startswith(noise):
+            value = value[len(noise):].strip()
+            lowered = value.lower()
+            break
+
+    # "cotton for a beach wedding" -> "cotton".
+    trailing = _PREFERENCE_TRAILING_CLAUSE.search(value)
+    if trailing and trailing.start() > 0:
+        value = value[: trailing.start()].strip()
+
+    words = [w for w in re.split(r"\s+", value) if w]
+    # A trailing generic noun is dropped only when a real one remains in front of it.
+    if len(words) > 1 and words[-1].lower().strip(".,") in _PREFERENCE_TRAILING_NOISE:
+        words = words[:-1]
+    if not words:
+        return None
+    if len(words) > _PREFERENCE_VALUE_MAX_WORDS:
+        words = words[:_PREFERENCE_VALUE_MAX_WORDS]
+
+    cleaned = " ".join(words).strip()
+    if len(cleaned) < 2:
+        return None
+    if cleaned.lower() in _PREFERENCE_VALUE_STOPWORDS:
+        return None
+    # Every word being a stopword means the phrase names nothing on its own.
+    if all(w.lower().strip(".,") in _PREFERENCE_VALUE_STOPWORDS for w in words):
+        return None
+    return cleaned
+
+
+def _preference_values(tail: str) -> list[str]:
+    """Every value a single "I like ..." clause names, in order.
+
+    A clause is cut at the first comma that starts a new clause, and each surviving comma segment
+    may itself be a list joined by "and"/"or".
+    """
+    segments = [segment for segment in re.split(r",", tail) if segment.strip()]
+    if not segments:
+        return []
+
+    accepted = [segments[0]]
+    for segment in segments[1:]:
+        if _looks_like_a_list_item(segment):
+            accepted.append(segment)
+        else:
+            # A new clause: the rest of the message is no longer describing the preference.
+            break
+
+    values: list[str] = []
+    for segment in accepted:
+        for piece in re.split(r"\s+(?:and|or|&)\s+", segment, flags=re.IGNORECASE):
+            cleaned = _clean_preference_value(piece)
+            if cleaned and cleaned not in values:
+                values.append(cleaned)
+    return values
+
+
 def parse_message(message: str, intent_hint: str | None = None) -> dict[str, Any]:
     """Parse ``message`` into a structured intent plus preference/event signals.
 
@@ -150,24 +280,24 @@ def parse_message(message: str, intent_hint: str | None = None) -> dict[str, Any
     if urgency:
         parsed_intent["urgency"] = urgency
 
-    # Explicit preferences from "I (don't) like/prefer/love/hate <thing>" patterns.
+    # Explicit preferences from "I (don't) like/prefer/love/hate <thing>" patterns. Polarity is read
+    # from the match's own negation group (and from hate/dislike), never by re-scanning the matched
+    # text for the apostrophe spelling: the regex accepts "dont", and the scan did not, so every
+    # apostrophe-less dislike was stored as its opposite.
     preference_signals: list[dict[str, Any]] = []
-    pref_re = re.compile(
-        r"i (?:really )?(?:don'?t |do not )?(?:like|prefer|love|hate|dislike) ([a-z0-9 ]{2,40})",
-        re.IGNORECASE,
-    )
-    for match in pref_re.finditer(message):
-        statement = match.group(0).strip()
-        negative = any(token in statement.lower() for token in ("don't", "do not", "hate", "dislike"))
-        preference_signals.append(
-            {
-                "statement": statement,
-                "preference_key": "general",
-                "preference_value": match.group(1).strip(),
-                "is_explicit": True,
-                "negative": negative,
-            }
-        )
+    for match in _PREFERENCE_RE.finditer(message):
+        statement = " ".join(match.group(0).split())
+        negative = bool(match.group("negation")) or match.group("verb").lower() in _NEGATIVE_VERBS
+        for value in _preference_values(match.group("tail")):
+            preference_signals.append(
+                {
+                    "statement": statement,
+                    "preference_key": "general",
+                    "preference_value": value,
+                    "is_explicit": True,
+                    "negative": negative,
+                }
+            )
 
     return {
         "parsed_intent": parsed_intent,

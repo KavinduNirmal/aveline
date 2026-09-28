@@ -1149,3 +1149,297 @@ async def test_the_staff_answer_counts_the_notes_it_is_about_to_show():
 
     assert result["output"]["interaction_brief"] == "Nadia (returning). 2 notes are on file."
     assert len(result["output"]["memories_on_file"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# A staff instruction to record a note
+# ---------------------------------------------------------------------------
+#
+# The headline defect: staff typed "Please add a note for this customer: He prefers green tea over
+# coffee" and got the ordinary customer brief, with no memory written and no explanation. There was
+# no path from a staff instruction to a memory at all.
+
+NOTE_MESSAGE = "Please add a note for this customer: He prefers green tea over coffee"
+
+
+class _FailingNoteRegistry(_UpdateRegistry):
+    """A registry whose memory store is down, to prove a failed note write is reported."""
+
+    async def save_customer_memory(self, *args, **kwargs):
+        raise RuntimeError("memory store unavailable")
+
+
+async def test_a_staff_note_instruction_is_stored_and_confirmed():
+    registry = _UpdateRegistry()
+
+    result = await _run_update(registry, message=NOTE_MESSAGE)
+
+    # The customer's words reach the store as the staff member wrote them, with staff provenance.
+    assert registry.saved_memories == [
+        {
+            "customer_id": "cust-kasha",
+            "content": "He prefers green tea over coffee",
+            "category": "note",
+            "source": "staff",
+            "is_explicit": True,
+            "confidence": 1.0,
+        }
+    ]
+    # A note is not a rename: no identity field was touched.
+    assert registry.updates == []
+
+    brief = result["output"]["interaction_brief"]
+    assert brief == "Noted for this customer: He prefers green tea over coffee."
+    assert "Nothing was changed" not in brief
+    # Still no customer-facing draft / Suggestion: this was an instruction, not a customer message.
+    assert result["output"]["draft_response"] is None
+    assert result["output"]["action_required"] is None
+
+
+async def test_a_note_keeps_its_own_punctuation_without_doubling_it():
+    registry = _UpdateRegistry()
+
+    result = await _run_update(registry, message="add a note: she prefers green tea.")
+
+    assert [m["content"] for m in registry.saved_memories] == ["she prefers green tea."]
+    assert result["output"]["interaction_brief"] == "Noted for this customer: she prefers green tea."
+
+
+async def test_a_note_instruction_without_a_customer_is_refused_not_guessed():
+    """The bound-customer rule holds for notes exactly as it does for identity updates."""
+    from app.agents.customer_memory.nodes import CustomerMemoryAgent
+
+    registry = _UpdateRegistry()
+    agent = CustomerMemoryAgent(registry)
+
+    result = await agent.apply_staff_update(
+        {
+            "org_id": "org-1",
+            "customer_id": None,
+            "message": NOTE_MESSAGE,
+            "staff_query": True,
+        }
+    )
+
+    assert "could not tell which customer" in result["customer_update_error"]
+    assert registry.saved_memories == []
+
+
+async def test_an_inbound_customer_message_never_records_a_staff_note():
+    registry = _UpdateRegistry()
+
+    result = await _run_update(registry, message=NOTE_MESSAGE, staff_query=False)
+
+    assert registry.saved_memories == []
+    # The customer's own message still gets a customer-facing draft.
+    assert result["output"]["draft_response"] is not None
+
+
+async def test_a_failed_note_write_is_reported_and_never_silently_dropped():
+    registry = _FailingNoteRegistry()
+
+    result = await _run_update(registry, message=NOTE_MESSAGE)
+
+    brief = result["output"]["interaction_brief"]
+    assert "nothing was noted" in brief.lower()
+    assert "Noted for this customer" not in brief
+
+
+async def test_a_note_and_an_identity_change_in_one_instruction_both_apply():
+    registry = _UpdateRegistry()
+
+    result = await _run_update(
+        registry,
+        message=(
+            "Please update this customer with the name Kasha Vivian Perera and number 0771234567 "
+            "and add a note: she prefers green tea"
+        ),
+    )
+
+    assert registry.updates == [("org-1", "cust-kasha", "Kasha Vivian Perera", "0771234567")]
+    assert [m["content"] for m in registry.saved_memories] == ["she prefers green tea"]
+    brief = result["output"]["interaction_brief"]
+    assert "Kasha Vivian Perera" in brief
+    assert "Noted for this customer: she prefers green tea." in brief
+
+
+# ---------------------------------------------------------------------------
+# The customer description leads the brief
+# ---------------------------------------------------------------------------
+#
+# The backend interaction brief carries `description`, the customer-level prose the brief exists to
+# surface. The agent fetched it and never read it, so a staff answer led with a mechanical fact dump.
+
+
+BRIEF_WITH_DESCRIPTION = {
+    "customerName": "Sarah Perera",
+    "status": "vip",
+    "description": "Sarah is a regular who loves emerald silk.",
+    "preferenceSummary": None,
+    "upcomingEvents": "wedding on 2026-12-01",
+    "tags": ["vip"],
+}
+
+
+async def test_the_inbound_brief_leads_with_the_customer_description():
+    registry = FakeRegistry()
+
+    async def brief(org_id, customer_id):
+        return dict(BRIEF_WITH_DESCRIPTION)
+
+    registry.generate_interaction_brief = brief
+    graph = build_memory_graph(registry)
+
+    result = await graph.ainvoke(await _llm_state())
+
+    assert result["output"]["interaction_brief"] == (
+        "Sarah is a regular who loves emerald silk. | "
+        "Sarah Perera (vip) | Context: Prefers emerald silk | "
+        "Upcoming: wedding on 2026-12-01 | Tags: vip"
+    )
+
+
+async def test_the_inbound_brief_is_unchanged_without_a_description():
+    """No description means exactly the brief the agent produced before the field was read."""
+    registry = FakeRegistry()
+    graph = build_memory_graph(registry)
+
+    result = await graph.ainvoke(await _llm_state())
+
+    assert result["output"]["interaction_brief"] == (
+        "Sarah Perera (vip) | Context: Prefers emerald silk | "
+        "Upcoming: wedding on 2026-12-01 | Tags: vip"
+    )
+
+
+async def test_a_note_is_refused_for_a_customer_who_revoked_consent():
+    """Consent is a property of the customer, not of who is asking.
+
+    ``apply_staff_update`` runs *before* ``check_consent`` and short-circuits the run when it
+    answers, so without its own guard a staff instruction would store a note - or apply a rename -
+    for a customer who had revoked. ``persist`` already refuses in that case, and the documented
+    contract is that revocation means nothing is stored.
+    """
+    registry = _UpdateRegistry()
+    registry.consent_status = "revoked"
+
+    result = await _run_update(registry, message=NOTE_MESSAGE)
+
+    assert registry.saved_memories == []
+    assert registry.updates == []
+
+    brief = result["output"]["interaction_brief"]
+    assert "revoked consent" in brief
+    assert "Noted for this customer" not in brief
+
+
+async def test_an_update_is_refused_when_consent_cannot_be_read():
+    """A privacy control that cannot read its own state must not write (fail closed)."""
+    registry = _UpdateRegistry()
+    registry.consent_error = RuntimeError("consent backend unavailable")
+
+    result = await _run_update(registry, message=UPDATE_MESSAGE)
+
+    assert registry.updates == []
+    assert registry.saved_memories == []
+    assert "could not check" in result["output"]["interaction_brief"]
+
+
+async def test_the_staff_answer_leads_with_the_customer_description():
+    registry = FakeRegistry()
+
+    async def brief(org_id, customer_id):
+        return {
+            "customerName": "Sarah Perera",
+            "status": "returning",
+            "description": "Sarah is a regular who loves emerald silk.",
+            "preferenceSummary": "colour: emerald",
+            "upcomingEvents": None,
+            "tags": [],
+        }
+
+    registry.generate_interaction_brief = brief
+    graph = build_memory_graph(registry)
+
+    result = await graph.ainvoke(
+        {
+            "org_id": "org-1",
+            "customer_id": "cust-sarah",
+            "customer_name": "Sarah Perera",
+            "message": "what do we know about @sarah?",
+            "intent_type": "general_inquiry",
+            "channel": "whatsapp",
+            "direction": None,
+            "staff_query": True,
+        }
+    )
+
+    assert result["output"]["interaction_brief"] == (
+        "Sarah is a regular who loves emerald silk. "
+        "Sarah Perera (returning) - preferences: colour: emerald. One note is on file."
+    )
+
+
+# ---------------------------------------------------------------------------
+# A staff query is answered by the model, with the template as the offline fallback
+# ---------------------------------------------------------------------------
+
+
+STAFF_STATE = {
+    "org_id": "org-1",
+    "customer_id": "cust-sarah",
+    "customer_name": "Sarah Perera",
+    "message": "what do we have on file for her?",
+    "intent_type": "general_inquiry",
+    "channel": "whatsapp",
+    "direction": None,
+    "staff_query": True,
+}
+
+
+async def test_a_staff_query_is_answered_by_the_model_when_one_is_configured():
+    registry = FakeRegistry()
+    llm = FakeChatModel(draft="Sarah has one note on file: she prefers emerald silk.")
+    graph = build_memory_graph(registry, llm=llm)
+
+    result = await graph.ainvoke(dict(STAFF_STATE))
+
+    assert result["status"] == "success"
+    out = result["output"]
+    assert out["interaction_brief"] == "Sarah has one note on file: she prefers emerald silk."
+    # Token usage reaches the same state path the customer draft reports on (ADR-010).
+    assert result["usage"] == {"input_tokens": 12, "output_tokens": 6}
+    # Still NO customer-facing draft / Suggestion: the staff/customer separation is deliberate.
+    assert out["draft_response"] is None
+    assert out["action_required"] is None
+
+
+async def test_a_staff_query_keeps_the_grounded_template_without_an_llm():
+    """The offline guarantee: no model configured means today's template answer, byte for byte."""
+    registry = FakeRegistry()
+    graph = build_memory_graph(registry)  # llm defaults to None
+
+    result = await graph.ainvoke(dict(STAFF_STATE))
+
+    out = result["output"]
+    assert out["interaction_brief"] == (
+        "Sarah Perera (vip) - upcoming events: wedding on 2026-12-01; tags: vip. "
+        "One note is on file."
+    )
+    assert out["draft_response"] is None
+    assert result.get("usage") is None
+
+
+async def test_a_staff_query_falls_back_to_the_template_when_the_provider_fails():
+    registry = FakeRegistry()
+    graph = build_memory_graph(registry, llm=FakeChatModel(fail=True))
+
+    result = await graph.ainvoke(dict(STAFF_STATE))
+
+    out = result["output"]
+    assert out["interaction_brief"] == (
+        "Sarah Perera (vip) - upcoming events: wedding on 2026-12-01; tags: vip. "
+        "One note is on file."
+    )
+    assert out["draft_response"] is None
+    assert result.get("usage") is None

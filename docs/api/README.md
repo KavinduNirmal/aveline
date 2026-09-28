@@ -917,7 +917,7 @@ book. `limit` bounds the *named* clients, not the book, and is clamped by the se
 | `GET` | `/internal/customers/{customerId:guid}/memories` | List a customer's live memories, newest first |
 | `PATCH` | `/internal/customers/{customerId:guid}/memories/{memoryId:guid}` | Correct one memory's statement and re-embed it |
 | `DELETE` | `/internal/customers/{customerId:guid}/memories/{memoryId:guid}` | Withdraw one memory (soft delete) |
-| `POST` | `/internal/customers/memories/search` | pgvector semantic search (honours `minSimilarity`) |
+| `POST` | `/internal/customers/memories/search` | Hybrid memory search (`mode` = `hybrid`\|`lexical`\|`vector`, default `hybrid`); `minSimilarity` bounds the dense leg only; each hit carries `vectorRank`, `lexicalRank` and `score` |
 | `POST` | `/internal/customers/{customerId:guid}/preferences` | Record a stated preference in the preferences table |
 | `GET` | `/internal/customers/{customerId:guid}/brief` | Interaction brief |
 | `POST` | `/internal/customers/{customerId:guid}/interactions` | Record an interaction |

@@ -8316,3 +8316,94 @@ screen was silently removed by any caller passing an unprefixed width.
 - `frontend/web/src/components/dashboard/OrdersPanel.tsx`
 - `frontend/web/src/components/dashboard/OrdersPanel.dom.test.tsx`
 - `frontend/web/src/components/conversation/blocks.tsx`
+
+## Session 2026-09-29 — stack recovery, Ava's memory corruption, and the routing authority the ADR asked for
+
+**Task:** Merge the outstanding PRs after the `gh stack` incident, investigate why Ava was answering
+badly, and close the plan-vs-code gap that investigation exposed.
+**Tool used:** DeepSeek Harness (deepseek-flash) AI coding agent, with two subagents covering the
+.NET and Python workstreams.
+
+### Summary of Activities
+
+- **Merged #471** (`visual-agent-tuning`) into `development` as `f87eadc`; all 13 checks green.
+- **Diagnosed the stack damage properly.** There was no second PR: `gh stack merge` on Stack #469
+  landed *every* PR in the stack on the trunk, so #424's merge commit `8f80623` has master `5e31fca`
+  as its first parent. `development` therefore never received 100 files of catalog work, inverting
+  the Git Flow invariant. Confirmed master was otherwise sound (the #470 recovery is present in both
+  branches), then opened **#472** to merge `master` back into `development`, verified conflict-free
+  with a read-only `git merge-tree` probe first. `origin/master` is now fully contained in
+  `origin/development`.
+- **Investigated "why is Ava so basic?"** and found four independent defects, each reproduced rather
+  than inferred:
+  - `parsing.py` decided preference polarity by scanning the matched text for the literal `"don't"`
+    while the pattern accepted `don'?t`, so `"I dont like them"` was stored as **"The customer
+    prefers them"** — a false fact, mirrored into `Customer_Preferences` and shown to staff. The only
+    polarity test used the apostrophe form, which is why the suite stayed green.
+  - A blank nickname on the update path created a `CustomerPreference` with an empty value, and
+    `InteractionBriefDto.From` joined every preference, producing
+    `preferences: nickname:; general: them; general: cotton`.
+  - The brief's `description` — documented as the prose field the brief exists to lead with — was
+    fetched and never read.
+  - A staff query took a branch that set `draft=None` and answered with a template that *counted*
+    memories ("3 notes are on file") rather than answering from them.
+- **Found the gap the user suspected.** ADR-023 Decision 3 says "the supervisor is the routing
+  authority; rules are a fast path and a fallback" and that "the keyword table stops being the
+  authority", with plan wave W2.6 saying "demote rules to pre-filter + fallback". The code did the
+  opposite: `_CONSULTABLE_INTENTS` was an *allow*list of three intents, so a keyword **hit** counted
+  as proof of unambiguity and the model was reached only for the bucket the table had already failed
+  to match — and hits are precisely where a substring table goes wrong. `supervise()` also had no
+  staff signal, and `classify_by_rules` cannot see one, so "he prefers green tea" (a staff
+  instruction to record something) and "I prefer green tea" (a customer statement) were one string.
+- **Implemented Decision 3 as written:** a narrow enumerated fast path (`out_of_scope` plus an
+  already-engaged visual lane); one implementation of the question in `rules_are_authoritative`,
+  replacing three copies (the gate's set, an inline set in `concierge_workflow`, and the condition
+  inside `supervise`); a `SPEAKER:` line in the supervisor prompt; and the
+  `SUPERVISOR_AUTHORITATIVE_ENABLED` rollback lever ADR-023 §8 requires but which did not exist
+  (`AGENT_LLM_ENABLED` could not serve, because it also disables drafting). Documented in
+  `.env.example`, `docker-compose.yml`, and as a correction note on the ADR.
+- **Built the missing "add a note" feature.** `update_instruction.extract_customer_update` returned
+  `None` when an instruction named neither a name nor a phone, so a note-only instruction was
+  discarded before anything could use it, and `apply_staff_update` knew only identity fields. Notes
+  are now parsed, stored verbatim as `category="note"` / `source="staff"` / `confidence=1.0`, and
+  confirmed to staff.
+- **Fixed the Blossoms accounting.** A new DI test (`VisualIntelligenceModuleRegistrationTests`)
+  proved the usage tracker *is* wired — my first hypothesis was wrong, and the existing
+  `VisionServiceTests` could not see the wiring because it injects the tracker itself. The real
+  defects were ordering: usage was recorded *after* `JsonDocument.Parse`, so a truncated reply (which
+  this class documents DeepSeek returning in practice) lost a billed charge, and a non-2xx body's
+  usage was discarded entirely. Both now record from the body before anything parse-fails. Also
+  identified the configuration gap behind the reported symptom: the API never loads `.env`, so under
+  `dotnet run` no vision key resolves and the deterministic fallback runs — spending nothing, by
+  design.
+- **Corrected my own claim.** I had asserted the deterministic fallback was invisible to operators.
+  It is not: `ImageAnalysisResultDto.IsFallback` already existed, `GenerateDeterministicAnalysis`
+  sets it, and `AddProductModal.tsx:502` branches on it. I had reasoned from the surrounding code
+  instead of reading the DTO first.
+- **Closed a consent hole the note feature would have shipped.** `apply_staff_update` runs before
+  `check_consent` and short-circuits, so a note — or a rename — could be stored for a customer who had
+  revoked consent, contradicting the documented "revocation means nothing is stored" and `persist`'s
+  own guard. It now consults consent itself and fails closed on an unreadable status.
+- **Started hybrid retrieval for customer memory**, the only single-leg retrieval left in the system,
+  mirroring the handbook's `hybrid | lexical | vector` modes, RRF fusion, per-leg ranks and the
+  weighted generated `tsvector` + GIN migration.
+
+### Verification
+
+- Python: **1010 passed, 2 skipped, 2 xfailed** (`pytest tests/`); `ruff check` clean. The two tests
+  pinning the old routing were rewritten deliberately, as plan item W2.8 anticipated.
+- .NET: **215 passed** across `CustomerConcierge|CustomerMemory|CustomerTenant|VisionService|
+  VisualIntelligence|InteractionBrief` with `Media__SigningKey` supplied, plus 38/38 on the four
+  classes covering the new work.
+- Not verified: the Postgres/Testcontainers classes do not boot in this sandbox (no Docker), so the
+  hybrid retrieval SQL and its recall are unproven locally and must be verified in CI. ADR-025's
+  point is that an unmeasured fusion leg is a guess, so the eval must run before a win is claimed.
+
+### Known tradeoffs recorded, not hidden
+
+- `remember that` is broad: on a bound-customer staff query, "remember that we close at 6pm" would be
+  stored as a customer note. Narrowing it would require a target clause or a colon.
+- The internal and tenant briefs now apply the same preference filters, so the two cannot disagree
+  about what a customer prefers.
+- `GetBriefAsync` and `InteractionBriefDto` share the filter rules but not the code; the duplication
+  is small and commented in both places.

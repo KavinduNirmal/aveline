@@ -8,10 +8,11 @@ namespace Aveline.Api.Modules.CustomerConcierge.Models;
 /// Tenant-scoped.
 ///
 /// <para>
-/// The pgvector <c>embedding vector(1536)</c> column and its HNSW cosine index are NOT part of
-/// the EF model (the in-memory test provider cannot map the pgvector type). They are created by
-/// the migration via raw SQL and accessed by <c>CustomerMemoryRepository</c> through raw SQL
-/// (cosine search). See ADR-017.
+/// Two search columns are NOT part of the EF model (the in-memory test provider cannot map the
+/// pgvector or tsvector types): the pgvector <c>embedding vector(1536)</c> column with its HNSW
+/// cosine index (the dense leg), and the generated <c>SearchVector tsvector</c> column with a
+/// partial GIN index (the lexical leg). Both are created by migrations via raw SQL and accessed by
+/// <c>CustomerMemoryRepository</c> through raw SQL (the hybrid search). See ADR-017 and ADR-025.
 /// </para>
 /// </summary>
 public class CustomerMemory : ITenantEntity

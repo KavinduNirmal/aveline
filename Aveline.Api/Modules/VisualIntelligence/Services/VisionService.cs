@@ -213,61 +213,41 @@ public class VisionService : IVisionService
             request.Headers.TryAddWithoutValidation("x-goog-api-key", _apiKey);
 
             var response = await _httpClient.SendAsync(request, cancellationToken);
+            // The body is read before anything else parses it. The request has already been sent, so
+            // the provider has already billed it, and usage must be recorded from whatever came back
+            // - including an error body, and including a reply whose JSON is truncated and makes
+            // `JsonDocument.Parse` below throw. Recording after that parse lost the charge for
+            // exactly the truncated replies this class documents DeepSeek returning in practice.
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+
             if (!response.IsSuccessStatusCode)
             {
                 // The body names the actual fault ("max_tokens too large", "unsupported content
                 // type", ...). Without it a 400/404 is indistinguishable from a bad key, which is
                 // how a misconfiguration stays invisible across many uploads.
-                var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
                 _logger.LogWarning(
                     "Vision API returned status {StatusCode}; falling back to deterministic analysis. Provider said: {ErrorBody}",
                     response.StatusCode,
-                    Truncate(errorBody, 800));
+                    Truncate(content, 800));
+
+                // A failed call is still a billed call when the provider returned a usage block.
+                // Recorded when present, and deliberately not invented as a zero-token row when the
+                // error body carries none: that would be a different false claim about spend.
+                if (TryExtractUsage(content, out var errorPromptTokens, out var errorCompletionTokens))
+                {
+                    await RecordUsageAsync(
+                        organizationId, errorPromptTokens, errorCompletionTokens, cancellationToken);
+                }
+
                 return GenerateDeterministicAnalysis(imageUrl, fileName, contextHint);
             }
 
-            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            // Record token usage if available (ADR-010), before any parse that is allowed to throw.
+            // An absent or unreadable usage block records zeros, exactly as the well-formed path did.
+            TryExtractUsage(content, out var promptTokens, out var completionTokens);
+            await RecordUsageAsync(organizationId, promptTokens, completionTokens, cancellationToken);
+
             using var doc = JsonDocument.Parse(content);
-
-            // Record token usage if available (ADR-010)
-            int promptTokens = 0;
-            int completionTokens = 0;
-            if (doc.RootElement.TryGetProperty("usage", out var usageElem))
-            {
-                if (usageElem.TryGetProperty("prompt_tokens", out var ptElem))
-                {
-                    promptTokens = ptElem.GetInt32();
-                }
-                if (usageElem.TryGetProperty("completion_tokens", out var ctElem))
-                {
-                    completionTokens = ctElem.GetInt32();
-                }
-            }
-
-            if (_usageTracker != null && organizationId != Guid.Empty)
-            {
-                try
-                {
-                    await _usageTracker.RecordWorkflowUsageAsync(new RecordUsageRequest(
-                        OrganizationId: organizationId,
-                        RequestId: Guid.NewGuid().ToString(),
-                        WorkflowId: "visual-image-analysis",
-                        // Derived from the configured BaseUrl rather than hardcoded to "openai":
-                        // the local stack runs this endpoint against DeepSeek, and recording that
-                        // traffic as OpenAI makes ADR-010 spend attribution wrong.
-                        Provider: ResolveProviderName(),
-                        Model: _model,
-                        InputTokens: promptTokens,
-                        OutputTokens: completionTokens,
-                        CachedTokens: 0,
-                        ActualCostUsd: 0m
-                    ), cancellationToken);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to record ADR-010 usage for vision analysis.");
-                }
-            }
 
             var choiceContent = doc.RootElement
                 .GetProperty("choices")[0]
@@ -334,6 +314,224 @@ public class VisionService : IVisionService
     /// <summary>Keeps a provider error body within a loggable size.</summary>
     private static string Truncate(string value, int maxLength)
         => value.Length <= maxLength ? value : value[..maxLength] + "...(truncated)";
+
+    /// <summary>
+    /// Reports one vision call's token consumption (ADR-010), swallowing any tracker fault.
+    /// </summary>
+    /// <remarks>
+    /// The guard and the field values are the ones the inline block used: a missing tracker or a
+    /// request with no organization records nothing, and a tracker failure must never fail the
+    /// analysis that has already been paid for.
+    /// </remarks>
+    private async Task RecordUsageAsync(
+        Guid organizationId,
+        int promptTokens,
+        int completionTokens,
+        CancellationToken cancellationToken)
+    {
+        if (_usageTracker is null || organizationId == Guid.Empty)
+        {
+            return;
+        }
+
+        try
+        {
+            await _usageTracker.RecordWorkflowUsageAsync(new RecordUsageRequest(
+                OrganizationId: organizationId,
+                RequestId: Guid.NewGuid().ToString(),
+                WorkflowId: "visual-image-analysis",
+                // Derived from the configured BaseUrl rather than hardcoded to "openai":
+                // the local stack runs this endpoint against DeepSeek, and recording that
+                // traffic as OpenAI makes ADR-010 spend attribution wrong.
+                Provider: ResolveProviderName(),
+                Model: _model,
+                InputTokens: promptTokens,
+                OutputTokens: completionTokens,
+                CachedTokens: 0,
+                ActualCostUsd: 0m
+            ), cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to record ADR-010 usage for vision analysis.");
+        }
+    }
+
+    /// <summary>
+    /// Reads the provider's <c>usage</c> block out of a response body and reports whether one was
+    /// found. Returns zero for either count the block omits.
+    /// </summary>
+    /// <remarks>
+    /// This deliberately does not parse the whole body with <see cref="JsonDocument.Parse(string)"/>
+    /// alone. The provider truncates replies in practice (see
+    /// <see cref="TryDeserializeVisionResponse"/>), and those tokens were billed even though the
+    /// enclosing document no longer parses; the usage object itself is usually intact and is
+    /// recovered here so the charge is not silently dropped while the repaired analysis succeeds.
+    /// </remarks>
+    private static bool TryExtractUsage(string? body, out int promptTokens, out int completionTokens)
+    {
+        promptTokens = 0;
+        completionTokens = 0;
+
+        var usageJson = TryReadUsageObject(body);
+        if (usageJson is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var usage = JsonDocument.Parse(usageJson);
+            if (usage.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            if (usage.RootElement.TryGetProperty("prompt_tokens", out var prompt)
+                && prompt.TryGetInt32(out var promptValue))
+            {
+                promptTokens = promptValue;
+            }
+
+            if (usage.RootElement.TryGetProperty("completion_tokens", out var completion)
+                && completion.TryGetInt32(out var completionValue))
+            {
+                completionTokens = completionValue;
+            }
+
+            return true;
+        }
+        catch (JsonException)
+        {
+            // The usage object was itself truncated or malformed, so there is nothing to report.
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The raw text of the body's root <c>usage</c> object, or <c>null</c> when the body carries
+    /// none.
+    /// </summary>
+    private static string? TryReadUsageObject(string? body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return null;
+        }
+
+        // The common case: one well-formed JSON document with a root `usage` property.
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                   && document.RootElement.TryGetProperty("usage", out var usage)
+                   && usage.ValueKind == JsonValueKind.Object
+                ? usage.GetRawText()
+                : null;
+        }
+        catch (JsonException)
+        {
+            // Truncated or malformed. The usage object may still be intact, so fall through to the
+            // tolerant scan instead of discarding a charge the provider has already incurred.
+        }
+
+        return ScanForUsageObject(body);
+    }
+
+    /// <summary>
+    /// A last-resort scan for a complete <c>"usage": { ... }</c> object inside a body that does not
+    /// parse as a whole.
+    /// </summary>
+    private static string? ScanForUsageObject(string body)
+    {
+        const string key = "\"usage\"";
+
+        var searchFrom = 0;
+        while (true)
+        {
+            var keyIndex = body.IndexOf(key, searchFrom, StringComparison.Ordinal);
+            if (keyIndex < 0)
+            {
+                return null;
+            }
+
+            var colonIndex = body.IndexOf(':', keyIndex + key.Length);
+            if (colonIndex >= 0)
+            {
+                var valueStart = colonIndex + 1;
+                while (valueStart < body.Length && char.IsWhiteSpace(body[valueStart]))
+                {
+                    valueStart++;
+                }
+
+                if (valueStart < body.Length && body[valueStart] == '{')
+                {
+                    var valueEnd = FindObjectEnd(body, valueStart);
+                    if (valueEnd > valueStart)
+                    {
+                        return body[valueStart..(valueEnd + 1)];
+                    }
+                }
+            }
+
+            // A `"usage"` inside the truncated content string is possible; try the next occurrence.
+            searchFrom = keyIndex + 1;
+        }
+    }
+
+    /// <summary>
+    /// The index of the brace that closes the object opened at <paramref name="openBrace"/>, or
+    /// <c>-1</c> when the object is not closed. Braces inside JSON strings are ignored.
+    /// </summary>
+    private static int FindObjectEnd(string body, int openBrace)
+    {
+        var depth = 0;
+        var inString = false;
+        var escaped = false;
+
+        for (var i = openBrace; i < body.Length; i++)
+        {
+            var ch = body[i];
+
+            if (inString)
+            {
+                if (escaped)
+                {
+                    escaped = false;
+                }
+                else if (ch == '\\')
+                {
+                    escaped = true;
+                }
+                else if (ch == '"')
+                {
+                    inString = false;
+                }
+
+                continue;
+            }
+
+            switch (ch)
+            {
+                case '"':
+                    inString = true;
+                    break;
+                case '{':
+                    depth++;
+                    break;
+                case '}':
+                    depth--;
+                    if (depth == 0)
+                    {
+                        return i;
+                    }
+
+                    break;
+            }
+        }
+
+        return -1;
+    }
 
     /// <summary>
     /// Refuses a target the provider cannot read, before a provider call is spent and before the

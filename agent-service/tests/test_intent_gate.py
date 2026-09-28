@@ -31,6 +31,10 @@ from app.gate import (
         ("What is the cost of the blouse?", "pricing_query"),
         ("Remember she prefers pastel colors", "customer_preference"),
         ("She prefers silk over cotton", "customer_preference"),
+        ("Any recent purchases for Kavindu Nirmal?", "customer_preference"),
+        ("What are the past purchases of @Sarah?", "customer_preference"),
+        ("Purchase history for Kavindu", "customer_preference"),
+        ("Did she buy anything recently?", "customer_preference"),
         ("We have a wedding event on Saturday", "event_query"),
         ("Her birthday is next month", "event_query"),
     ],
@@ -39,6 +43,13 @@ def test_classify_by_rules_known_intents(message, expected):
     result = classify_by_rules(message)
     assert result.intent_type == expected
     assert result.is_relevant is True
+
+
+def test_classify_by_rules_customer_history_suggests_memory_only():
+    """Customer history/purchase queries must route to Ava only, never triggering Elle/Lina."""
+    result = classify_by_rules("Any recent purchases for Kavindu Nirmal?")
+    assert result.intent_type == "customer_preference"
+    assert result.suggested_agents == ["memory"]
 
 
 def test_classify_by_rules_general_inquiry_fallback():

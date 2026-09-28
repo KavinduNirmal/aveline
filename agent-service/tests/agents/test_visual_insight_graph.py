@@ -215,6 +215,63 @@ async def test_visual_insight_graph_staff_query_emits_text_summary_no_suggestion
     assert "Found 1 matching inventory item(s)" in output["text"]
 
 
+@pytest.mark.asyncio
+async def test_visual_insight_graph_scrapes_partner_ateliers_first_on_out_of_stock(monkeypatch):
+    registry = MagicMock()
+    registry.search_inventory = AsyncMock(return_value={"items": []})
+    registry.create_sourcing_request = AsyncMock(
+        return_value={"requestId": "src_yellow_saree_01"}
+    )
+    registry.get_suppliers = AsyncMock(
+        return_value=[
+            {
+                "id": "sup-adithri",
+                "name": "Adithri",
+                "websiteUrl": "https://adithristudio.com",
+            }
+        ]
+    )
+
+    mock_scraped = [
+        {
+            "product_title": "Mustard Yellow Pure Silk Kanjeevaram Saree",
+            "product_url": "https://adithristudio.com/products/yellow-saree",
+            "image_url": "https://adithristudio.com/images/yellow-saree.jpg",
+            "price": 28500.0,
+            "currency": "LKR",
+            "atelier_id": "sup-adithri",
+            "atelier_name": "Adithri",
+            "fabric_details": "Pure Kanjeevaram Silk",
+            "match_score": 0.95,
+        }
+    ]
+
+    from unittest.mock import patch
+    with patch("app.agents.visual_insight.nodes.scrape_atelier_catalog", AsyncMock(return_value=mock_scraped)) as mock_scrape:
+        graph = build_visual_graph(registry)
+        state = {
+            "org_id": "org-boutique-1",
+            "customer_id": "cust-01",
+            "message": "is there any yellow saree",
+            "staff_query": True,
+            "direction": "outbound",
+        }
+
+        result = await graph.ainvoke(state)
+        output = result["output"]
+
+        # Verify scraper was called with refined search terms "Yellow Sarees"
+        mock_scrape.assert_called_once()
+        assert "Yellow" in mock_scrape.call_args[1]["query"] or "yellow" in mock_scrape.call_args[1]["query"].lower()
+
+        # Verify output reports partner atelier options found
+        assert output["status"] == "pending"
+        assert output["partner_sourcing_options"] is not None
+        assert len(output["partner_sourcing_options"]) == 1
+        assert "Adithri" in output["summary"]
+        assert "partner atelier option" in output["summary"]
+
+
 def test_coerce_visual_output_runtime_validation():
     from pydantic import ValidationError
 

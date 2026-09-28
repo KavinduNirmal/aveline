@@ -466,20 +466,22 @@ class VisualInsightAgent:
         image_url = state.get("image_url")
         staff_query = bool(state.get("staff_query"))
 
-        notes = f"Sourcing request initiated from inquiry: '{msg}'"
-        req: SourcingRequestDto = await create_sourcing_request(
-            self._registry,
-            org_id=org_id,
-            customer_id=customer_id,
-            image_url=image_url,
-            notes=notes,
-        )
+        # 1. Construct refined search terms from extracted visual criteria (color, category, query terms)
+        criteria = state.get("search_criteria") or {}
+        search_terms = []
+        if criteria.get("color"):
+            search_terms.append(str(criteria["color"]))
+        if criteria.get("category"):
+            search_terms.append(str(criteria["category"]))
+        if criteria.get("query"):
+            search_terms.append(str(criteria["query"]))
 
-        # Dynamic Partner Atelier Catalog Web Scraping
-        query_text = (state.get("search_criteria") or {}).get("query") or msg
+        query_text = " ".join(search_terms) if search_terms else msg
+
         detected_fabric = (state.get("image_attributes") or {}).get("fabric")
-        detected_color = (state.get("image_attributes") or {}).get("primary_color")
+        detected_color = (state.get("image_attributes") or {}).get("primary_color") or criteria.get("color")
 
+        # 2. First scrape partner atelier websites for matching garments
         scraped_options: list[dict[str, Any]] = []
         if query_text:
             scraped_options = await scrape_atelier_catalog(
@@ -490,12 +492,32 @@ class VisualInsightAgent:
                 detected_color=detected_color,
             )
 
+        # 3. Create backend sourcing request recording the inquiry and any atelier findings
+        partner_names = ", ".join(sorted({opt["atelier_name"] for opt in scraped_options if "atelier_name" in opt})) if scraped_options else ""
+        notes = f"Sourcing request initiated from inquiry: '{msg}'"
+        if partner_names:
+            notes += f" (Found {len(scraped_options)} partner option(s) at: {partner_names})"
+
+        req: SourcingRequestDto = await create_sourcing_request(
+            self._registry,
+            org_id=org_id,
+            customer_id=customer_id,
+            image_url=image_url,
+            notes=notes,
+        )
+
+        # 4. Formulate response based on whether partner atelier matches were found
         if staff_query:
-            summary_text = "No in-stock pieces matched. Sourcing request created with partner ateliers."
             if scraped_options:
-                summary_text += f" Found {len(scraped_options)} partner options."
+                summary_text = (
+                    f"No in-stock pieces matched in boutique inventory. "
+                    f"Found {len(scraped_options)} matching partner atelier option(s) from {partner_names}."
+                )
+            else:
+                summary_text = "No in-stock pieces matched. Sourcing request created with partner ateliers."
+
             return {
-                "sourcing_request": req.model_dump(),
+                "sourcing_request": req.model_dump() if req else None,
                 "partner_sourcing_options": scraped_options or None,
                 "suggestion": None,
                 "summary": summary_text,
@@ -503,33 +525,20 @@ class VisualInsightAgent:
                 "status": "pending",
             }
         else:
-            # The out-of-stock answer names the piece the customer actually photographed, so it
-            # reads as a response to their image rather than a generic "not available". This is the
-            # live case from the handoff: a saree photo whose reply never mentioned the saree.
             seen = _describe_what_was_seen(state)
+            item_desc = seen or (query_text.lower() if query_text else "piece")
             if scraped_options:
-                partner_names = ", ".join({opt["atelier_name"] for opt in scraped_options if "atelier_name" in opt})
                 suggestion = (
-                    f"We do not have that {seen} in stock right now, but Elle found matching pieces at our partner ateliers "
-                    f"({partner_names}) and initiated a sourcing ticket."
-                    if seen
-                    else (
-                        f"We do not have this exact piece in stock right now, but Elle found matching pieces at our partner ateliers "
-                        f"({partner_names}) and initiated a sourcing ticket."
-                    )
+                    f"We do not have that {item_desc} in stock right now, but Elle found {len(scraped_options)} matching "
+                    f"pieces at our partner ateliers ({partner_names}) and initiated a sourcing ticket."
                 )
             else:
                 suggestion = (
-                    f"We do not have that {seen} in stock right now, but Elle has initiated a custom "
+                    f"We do not have that {item_desc} in stock right now, but Elle has initiated a custom "
                     "sourcing request with our partner ateliers."
-                    if seen
-                    else (
-                        "We do not have this exact piece in stock right now, but Elle has initiated a "
-                        "custom sourcing request with our partner ateliers."
-                    )
                 )
             return {
-                "sourcing_request": req.model_dump(),
+                "sourcing_request": req.model_dump() if req else None,
                 "partner_sourcing_options": scraped_options or None,
                 "suggestion": suggestion,
                 "summary": None,

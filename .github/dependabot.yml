@@ -6,8 +6,10 @@ updates:
     schedule:
       interval: "weekly"
 
-  # Web dashboard (Vite / React).
-  - package-ecosystem: "npm"
+  # Web dashboard (Vite / React). Locked with bun.lock, so the npm ecosystem cannot
+  # update it: Dependabot reports "Dependabot's npm_and_yarn ecosystem cannot update
+  # bun.lock" and aborts every job for this directory.
+  - package-ecosystem: "bun"
     directory: "/frontend/web"
     schedule:
       interval: "weekly"

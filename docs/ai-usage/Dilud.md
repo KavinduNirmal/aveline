@@ -1,3 +1,43 @@
+## Session 2026-09-28 (Visual Insight Agent Partner Atelier Scraping & Piece Sourcing)
+
+**Task:** Refine the Visual Insight Agent (Elle) behavior when an in-stock search fails (e.g. "is there any yellow saree"): Elle should first scrape partner atelier websites using refined search criteria (color + category) to find matches before emitting responses or creating fallback tickets, and render found partner pieces with images, titles, and pricing in Salon chat blocks.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Refined Query Construction & Proactive Atelier Scraping (`agent-service/app/agents/visual_insight/nodes.py`)**:
+   - Updated `check_sourcing()` in `VisualInsightAgent`:
+     - Builds concise search terms from extracted `search_criteria` (`criteria["color"] + " " + criteria["category"]` or `criteria["query"]`) rather than falling back to conversational chat sentences.
+     - Calls `scrape_atelier_catalog(...)` across registered partner ateliers (e.g. Adithri, Rithihi) before formulating the final summary or customer suggestion.
+     - In both staff queries and customer suggestions, accurately reports the number of matching pieces discovered and names the partner ateliers where pieces were found.
+
+2. **Salon Block Builder Integration (`agent-service/app/events/block_builders.py`)**:
+   - Enhanced `build_elle_blocks()` to map `partner_sourcing_options` into `piece` content blocks carrying `name`, `price`, `imageUrl`, and `size` (`"Atelier: <name>"`), enabling the Salon Web UI to render interactive visual piece cards with pictures and prices directly.
+
+3. **Automated Testing & Verification**:
+   - Added unit test `test_visual_insight_graph_scrapes_partner_ateliers_first_on_out_of_stock` in `tests/agents/test_visual_insight_graph.py`.
+   - Added unit test `test_elle_blocks_includes_partner_sourcing_options` in `tests/test_block_builders.py`.
+   - Verified 14/14 tests in `test_visual_insight_graph.py` and 40/40 tests in `test_block_builders.py` pass.
+   - Ran full `agent-service` test suite: **975 passed**, 2 skipped, 2 xfailed.
+   - Ran `ruff check app/ tests/`: 0 errors.
+
+### Files Created or Modified
+
+- `agent-service/app/agents/visual_insight/nodes.py`
+- `agent-service/app/events/block_builders.py`
+- `agent-service/tests/agents/test_visual_insight_graph.py`
+- `agent-service/tests/test_block_builders.py`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `python -m pytest tests/agents/test_visual_insight_graph.py tests/test_block_builders.py`: 54 passed (100%).
+- `python -m pytest tests/`: 975 passed, 2 skipped, 2 xfailed (100% passing).
+- `ruff check app/ tests/`: All checks passed.
+
+---
+
 ## Session 2026-09-28 (Customer Purchase History Intent Routing & Visual Agent Disambiguation)
 
 **Task:** Diagnose and resolve issue where asking questions about customer purchase history / past purchases in the Salon (e.g. "Any recent purchases for Kavindu Nirmal?") caused Elle (Visual Insight Agent) to incorrectly trigger, search the inventory for customer names, and emit partner atelier sourcing requests alongside Ava (Customer Memory Agent).

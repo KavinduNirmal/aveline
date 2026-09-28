@@ -298,6 +298,32 @@ def test_elle_blocks_staff_query_emits_text_block_no_suggestion():
     assert any(b["type"] == "piece" for b in blocks)
 
 
+def test_elle_blocks_includes_partner_sourcing_options():
+    visual = {
+        "agent": "visual",
+        "ran": True,
+        "status": "pending",
+        "summary": "No in-stock pieces matched in boutique inventory. Found 1 matching partner atelier option(s) from Adithri.",
+        "partner_sourcing_options": [
+            {
+                "product_title": "Mustard Yellow Pure Silk Saree",
+                "price": 28500.0,
+                "image_url": "https://adithri.lk/images/saree.jpg",
+                "atelier_name": "Adithri",
+            }
+        ],
+    }
+    blocks = build_elle_blocks(visual)
+
+    assert blocks[0]["type"] == "text"
+    assert "Adithri" in blocks[0]["text"]
+    piece = next(b for b in blocks if b["type"] == "piece")
+    assert piece["name"] == "Mustard Yellow Pure Silk Saree"
+    assert piece["price"] == 28500.0
+    assert piece["imageUrl"] == "https://adithri.lk/images/saree.jpg"
+    assert piece["size"] == "Atelier: Adithri"
+
+
 # ----------------------------------------------------------------------- Lina (commerce)
 
 

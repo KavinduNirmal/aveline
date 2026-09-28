@@ -145,6 +145,18 @@ def build_elle_blocks(visual_output: Any) -> list[dict[str, Any]]:
             block["text"] = look["text"]
         blocks.append(block)
 
+    for option in visual.get("partner_sourcing_options") or []:
+        option = _as_dict(option)
+        title = option.get("product_title") or option.get("title") or "Partner Piece"
+        block = {"type": "piece", "name": title}
+        if option.get("price") is not None:
+            block["price"] = option["price"]
+        if option.get("image_url"):
+            block["imageUrl"] = option["image_url"]
+        if option.get("atelier_name"):
+            block["size"] = f"Atelier: {option['atelier_name']}"
+        blocks.append(block)
+
     return blocks
 
 
